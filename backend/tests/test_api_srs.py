@@ -10,7 +10,13 @@ from httpx import ASGITransport, AsyncClient
 
 from app.main import app
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
+
+# Frozen session_main_queue seeds must carry the current logic version, or the
+# reader discards them as stale (the deploy-time invalidation this field exists for).
+from app.srs.anki_mirror.cache_registry import REGISTRY as _CACHE_REGISTRY
 from tests.conftest import anki_day_anchor, seed_direction
+
+_SMQ_V = _CACHE_REGISTRY["session_main_queue"].logic_version
 
 
 def _add_review_due_collocation(db, text: str, today: date):
@@ -2756,7 +2762,7 @@ class TestSessionMainQueueFreeze:
         yesterday = today - timedelta(days=1)
         db.set_anki_state_cache(
             "session_main_queue",
-            json.dumps({"day": yesterday.isoformat(), "items": [{"cid": 99999, "dir": "recognition"}]}),
+            json.dumps({"v": _SMQ_V, "day": yesterday.isoformat(), "items": [{"cid": 99999, "dir": "recognition"}]}),
         )
 
         seed_direction(
@@ -2878,7 +2884,7 @@ class TestSessionMainQueueFreeze:
         # Cache pretends only card_a was in the original frozen order.
         db.set_anki_state_cache(
             "session_main_queue",
-            json.dumps({"day": today.isoformat(), "items": [{"cid": row_a, "dir": "recognition"}]}),
+            json.dumps({"v": _SMQ_V, "day": today.isoformat(), "items": [{"cid": row_a, "dir": "recognition"}]}),
         )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -3040,7 +3046,7 @@ class TestSessionMainQueueFreeze:
         # Cache contains only cached_card — graduated_card is the "latecomer".
         db.set_anki_state_cache(
             "session_main_queue",
-            json.dumps({"day": today.isoformat(), "items": [{"cid": row_a, "dir": "recognition"}]}),
+            json.dumps({"v": _SMQ_V, "day": today.isoformat(), "items": [{"cid": row_a, "dir": "recognition"}]}),
         )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

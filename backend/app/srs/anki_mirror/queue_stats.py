@@ -622,9 +622,15 @@ def get_session_main_queue(db: SRSDatabase, today: date) -> list[tuple[int, str]
     call and always serves the lowest-R review next, diverging from Anki whenever
     the intersperser would have placed a new card mid-sequence.
 
+    Validates both the day (implicit invalidation at rollover) and the logic_version
+    (explicit invalidation when queue-assembly algorithm changes). A mismatch on either
+    triggers a rebuild path (returns None).
+
     Returns a list of `(collocation_id, direction_str)` keys in build-time order,
     or None if no cache exists for today (caller should build and cache).
     """
+    from app.srs.anki_mirror.cache_registry import REGISTRY
+
     row = db.get_anki_state_cache(_SESSION_MAIN_QUEUE_KEY)
     if row is None:
         return None
@@ -634,13 +640,28 @@ def get_session_main_queue(db: SRSDatabase, today: date) -> list[tuple[int, str]
         return None
     if data.get("day") != today.isoformat():
         return None
+
+    # Validate logic_version: mismatch triggers rebuild (same as day mismatch)
+    expected_version = REGISTRY["session_main_queue"].logic_version
+    if data.get("v") != expected_version:
+        return None
+
     items = data.get("items", [])
     return [(int(item["cid"]), str(item["dir"])) for item in items]
 
 
 def set_session_main_queue(db: SRSDatabase, today: date, items: list[tuple[int, str]]) -> None:
-    """Cache the frozen main-queue order keyed by today's date."""
+    """Cache the frozen main-queue order keyed by today's date.
+
+    Stamps the payload with logic_version from the registry. When queue-assembly
+    logic changes, bump session_main_queue's logic_version in cache_registry.py;
+    stale cached queues will be invalidated (treated like day mismatch → rebuild).
+    """
+    from app.srs.anki_mirror.cache_registry import REGISTRY
+
+    logic_version = REGISTRY["session_main_queue"].logic_version
     payload = {
+        "v": logic_version,
         "day": today.isoformat(),
         "items": [{"cid": cid, "dir": d} for cid, d in items],
     }
