@@ -63,7 +63,7 @@ class OfflineWriter:
         notetype/fields tables are absent (some unit-test fixtures) or the mid has
         no field rows.
         """
-        from app.cards.notetype import SLOVENE_VOCAB_FIELD_NAMES
+        from app.cards.vocab_notetype import SLOVENE_VOCAB
 
         try:
             rows = self._conn.execute("SELECT name FROM fields WHERE ntid = ? ORDER BY ord", (mid,)).fetchall()
@@ -71,7 +71,7 @@ class OfflineWriter:
             rows = []
         if rows:
             return [r["name"] for r in rows]
-        return list(SLOVENE_VOCAB_FIELD_NAMES)
+        return list(SLOVENE_VOCAB.field_names)
 
     def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
         row = self._conn.execute("SELECT flds, mid FROM notes WHERE id = ?", (note_id,)).fetchone()

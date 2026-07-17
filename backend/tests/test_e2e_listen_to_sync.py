@@ -27,7 +27,7 @@ class FakeReaderE2E:
 def _make_dual_collection_conn():
     import sqlite3
 
-    from app.cards.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
+    from app.cards.vocab_notetype import SLOVENE_VOCAB
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -73,11 +73,11 @@ def _make_dual_collection_conn():
     conn.execute("INSERT INTO decks VALUES (12345, '0. Slovene', 0, 0, x'')")
     conn.execute(
         "INSERT INTO notetypes VALUES (1000001, ?, 0, 0, x'')",
-        (SLOVENE_VOCAB_NOTETYPE_NAME,),
+        (SLOVENE_VOCAB.name,),
     )
     conn.executemany(
         "INSERT INTO fields VALUES (?, ?, ?, x'')",
-        [(1000001, i, name) for i, name in enumerate(SLOVENE_VOCAB_FIELD_NAMES)],
+        [(1000001, i, name) for i, name in enumerate(list(SLOVENE_VOCAB.field_names))],
     )
     conn.executemany(
         "INSERT INTO templates VALUES (?, ?, ?, 0, 0, x'')",

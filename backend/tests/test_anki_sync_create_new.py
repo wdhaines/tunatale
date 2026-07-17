@@ -30,7 +30,7 @@ def _make_collection_conn():
     """Build minimal in-memory collection.anki2 for OfflineWriter.create_note tests."""
     import sqlite3
 
-    from app.cards.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
+    from app.cards.vocab_notetype import SLOVENE_VOCAB
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -76,11 +76,11 @@ def _make_collection_conn():
     conn.execute("INSERT INTO decks VALUES (12345, '0. Slovene', 0, 0, x'')")
     conn.execute(
         "INSERT INTO notetypes VALUES (1000001, ?, 0, 0, x'')",
-        (SLOVENE_VOCAB_NOTETYPE_NAME,),
+        (SLOVENE_VOCAB.name,),
     )
     conn.executemany(
         "INSERT INTO fields VALUES (?, ?, ?, x'')",
-        [(1000001, i, name) for i, name in enumerate(SLOVENE_VOCAB_FIELD_NAMES)],
+        [(1000001, i, name) for i, name in enumerate(SLOVENE_VOCAB.field_names)],
     )
     conn.executemany(
         "INSERT INTO templates VALUES (?, ?, ?, 0, 0, x'')",
@@ -370,7 +370,7 @@ def _make_dual_collection_conn():
     """In-memory collection.anki2 with both Slovene Vocabulary and Cloze notetypes."""
     import sqlite3
 
-    from app.cards.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
+    from app.cards.vocab_notetype import SLOVENE_VOCAB
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -414,14 +414,13 @@ def _make_dual_collection_conn():
     """)
     conn.execute("INSERT INTO col VALUES (1, 1704067200, 0, 1000, 18, 0, 0, 0, '{}', '{}', '{}', '{}', '{}')")
     conn.execute("INSERT INTO decks VALUES (12345, '0. Slovene', 0, 0, x'')")
-    # Slovene Vocabulary notetype
     conn.execute(
         "INSERT INTO notetypes VALUES (1000001, ?, 0, 0, x'')",
-        (SLOVENE_VOCAB_NOTETYPE_NAME,),
+        (SLOVENE_VOCAB.name,),
     )
     conn.executemany(
         "INSERT INTO fields VALUES (?, ?, ?, x'')",
-        [(1000001, i, name) for i, name in enumerate(SLOVENE_VOCAB_FIELD_NAMES)],
+        [(1000001, i, name) for i, name in enumerate(SLOVENE_VOCAB.field_names)],
     )
     conn.executemany(
         "INSERT INTO templates VALUES (?, ?, ?, 0, 0, x'')",
@@ -1199,7 +1198,7 @@ class TestSyncCreateNew:
 
     async def test_creates_notes_with_higher_due_for_newer_items(self):
         """sync_create_new with real OfflineWriter: newer items get higher cards.due."""
-        from app.cards.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
+        from app.cards.vocab_notetype import SLOVENE_VOCAB
         from app.plugins.anki_sync.sync import OfflineWriter
 
         db = _make_db()
@@ -1213,7 +1212,7 @@ class TestSyncCreateNew:
         anki_conn = _make_collection_conn()
         writer = OfflineWriter(anki_conn)
         await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
-            deck_name="0. Slovene", model_name=SLOVENE_VOCAB_NOTETYPE_NAME
+            deck_name="0. Slovene", model_name=SLOVENE_VOCAB.name
         )
         rows = anki_conn.execute(
             "SELECT n.guid, c.due FROM notes n JOIN cards c ON c.nid = n.id WHERE c.type = 0 ORDER BY c.due ASC"
@@ -1226,7 +1225,7 @@ class TestSyncCreateNew:
 
     async def test_preserves_existing_anki_due(self):
         """sync_create_new doesn't touch existing cards' due values."""
-        from app.cards.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
+        from app.cards.vocab_notetype import SLOVENE_VOCAB
         from app.plugins.anki_sync.sync import OfflineWriter
 
         db = _make_db()
@@ -1249,7 +1248,7 @@ class TestSyncCreateNew:
         anki_conn.commit()
 
         await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
-            deck_name="0. Slovene", model_name=SLOVENE_VOCAB_NOTETYPE_NAME
+            deck_name="0. Slovene", model_name=SLOVENE_VOCAB.name
         )
         unchanged = anki_conn.execute("SELECT due FROM cards WHERE id IN (9001, 9002, 9003) ORDER BY id").fetchall()
         assert [r["due"] for r in unchanged] == [1, 2, 3]

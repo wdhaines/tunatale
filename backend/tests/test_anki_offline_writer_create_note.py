@@ -8,7 +8,7 @@ import sqlite3
 
 import pytest
 
-from app.cards.notetype import SLOVENE_VOCAB_FIELD_NAMES, SLOVENE_VOCAB_NOTETYPE_NAME
+from app.cards.vocab_notetype import SLOVENE_VOCAB
 from app.common.guid import compute_guid
 from app.plugins.anki_sync.sync import DuplicateNoteError, OfflineWriter
 
@@ -63,11 +63,11 @@ def _make_collection_conn() -> sqlite3.Connection:
     conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, x'')", (_DECK_ID, _DECK_NAME))
     conn.execute(
         "INSERT INTO notetypes VALUES (?, ?, 0, 0, x'')",
-        (_SVNT_MID, SLOVENE_VOCAB_NOTETYPE_NAME),
+        (_SVNT_MID, SLOVENE_VOCAB.name),
     )
     conn.executemany(
         "INSERT INTO fields VALUES (?, ?, ?, x'')",
-        [(_SVNT_MID, i, name) for i, name in enumerate(SLOVENE_VOCAB_FIELD_NAMES)],
+        [(_SVNT_MID, i, name) for i, name in enumerate(list(SLOVENE_VOCAB.field_names))],
     )
     conn.executemany(
         "INSERT INTO templates VALUES (?, ?, ?, 0, 0, x'')",
@@ -97,7 +97,7 @@ class TestOfflineWriterCreateNote:
     def test_inserts_note_with_correct_guid(self):
         conn = _make_collection_conn()
         writer = OfflineWriter(conn)
-        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields(), ["tunatale"])
+        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields(), ["tunatale"])
 
         row = conn.execute("SELECT guid, mid, usn, flds, sfld FROM notes WHERE id = ?", (note_id,)).fetchone()
         assert row is not None
@@ -110,17 +110,17 @@ class TestOfflineWriterCreateNote:
         conn = _make_collection_conn()
         writer = OfflineWriter(conn)
         fields = _make_fields("hiša", "house", "B1")
-        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, fields, ["tunatale"])
+        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, fields, ["tunatale"])
 
         row = conn.execute("SELECT flds, sfld FROM notes WHERE id = ?", (note_id,)).fetchone()
-        expected_flds = "\x1f".join(fields.get(name, "") for name in SLOVENE_VOCAB_FIELD_NAMES)
+        expected_flds = "\x1f".join(fields.get(name, "") for name in list(SLOVENE_VOCAB.field_names))
         assert row["flds"] == expected_flds
         assert row["sfld"] == "hiša"
 
     def test_inserts_note_with_correct_csum(self):
         conn = _make_collection_conn()
         writer = OfflineWriter(conn)
-        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields(), ["tunatale"])
+        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields(), ["tunatale"])
 
         row = conn.execute("SELECT csum FROM notes WHERE id = ?", (note_id,)).fetchone()
         expected_csum = int(hashlib.sha1(b"banka").hexdigest()[:8], 16)
@@ -129,7 +129,7 @@ class TestOfflineWriterCreateNote:
     def test_inserts_note_with_usn_minus_one_and_mod_set(self):
         conn = _make_collection_conn()
         writer = OfflineWriter(conn)
-        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields(), ["tunatale"])
+        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields(), ["tunatale"])
 
         row = conn.execute("SELECT usn, mod FROM notes WHERE id = ?", (note_id,)).fetchone()
         assert row["usn"] == -1
@@ -138,7 +138,7 @@ class TestOfflineWriterCreateNote:
     def test_inserts_two_cards_for_two_template_notetype(self):
         conn = _make_collection_conn()
         writer = OfflineWriter(conn)
-        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields(), ["tunatale"])
+        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields(), ["tunatale"])
 
         cards = conn.execute(
             "SELECT ord, usn, type, queue FROM cards WHERE nid = ? ORDER BY ord", (note_id,)
@@ -152,7 +152,7 @@ class TestOfflineWriterCreateNote:
     def test_cards_have_correct_deck_id(self):
         conn = _make_collection_conn()
         writer = OfflineWriter(conn)
-        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields(), ["tunatale"])
+        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields(), ["tunatale"])
 
         cards = conn.execute("SELECT did FROM cards WHERE nid = ?", (note_id,)).fetchall()
         assert all(c["did"] == _DECK_ID for c in cards)
@@ -163,7 +163,7 @@ class TestOfflineWriterCreateNote:
         conn.commit()
 
         writer = OfflineWriter(conn)
-        writer.create_note(_DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields(), ["tunatale"])
+        writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields(), ["tunatale"])
 
         row = conn.execute("SELECT mod, usn FROM col").fetchone()
         assert row["mod"] > 100
@@ -177,7 +177,7 @@ class TestOfflineWriterCreateNote:
         scm_before = conn.execute("SELECT scm FROM col").fetchone()["scm"]
 
         writer = OfflineWriter(conn)
-        writer.create_note(_DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields(), ["tunatale"])
+        writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields(), ["tunatale"])
 
         scm_after = conn.execute("SELECT scm FROM col").fetchone()["scm"]
         assert scm_after == scm_before
@@ -185,7 +185,7 @@ class TestOfflineWriterCreateNote:
     def test_returns_positive_note_id(self):
         conn = _make_collection_conn()
         writer = OfflineWriter(conn)
-        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields(), ["tunatale"])
+        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields(), ["tunatale"])
 
         assert note_id > 0
         assert conn.execute("SELECT id FROM notes WHERE id = ?", (note_id,)).fetchone() is not None
@@ -193,18 +193,18 @@ class TestOfflineWriterCreateNote:
     def test_duplicate_guid_raises_duplicate_note_error(self):
         conn = _make_collection_conn()
         writer = OfflineWriter(conn)
-        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields(), ["tunatale"])
+        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields(), ["tunatale"])
 
         with pytest.raises(DuplicateNoteError) as exc_info:
-            writer.create_note(_DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields(), ["tunatale"])
+            writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields(), ["tunatale"])
 
         assert exc_info.value.note_id == note_id
 
     def test_different_words_create_different_notes(self):
         conn = _make_collection_conn()
         writer = OfflineWriter(conn)
-        id1 = writer.create_note(_DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields("banka", "bank"), ["tunatale"])
-        id2 = writer.create_note(_DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields("hiša", "house"), ["tunatale"])
+        id1 = writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields("banka", "bank"), ["tunatale"])
+        id2 = writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields("hiša", "house"), ["tunatale"])
 
         assert id1 != id2
         assert conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 2
@@ -212,12 +212,8 @@ class TestOfflineWriterCreateNote:
     def test_disambig_included_in_guid(self):
         conn = _make_collection_conn()
         writer = OfflineWriter(conn)
-        id1 = writer.create_note(
-            _DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields("barva", "color", "B1"), ["tunatale"]
-        )
-        id2 = writer.create_note(
-            _DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields("barva", "paint", "B2"), ["tunatale"]
-        )
+        id1 = writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields("barva", "color", "B1"), ["tunatale"])
+        id2 = writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields("barva", "paint", "B2"), ["tunatale"])
         assert id1 != id2
         assert conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 2
 
@@ -231,14 +227,14 @@ class TestOfflineWriterCreateNote:
         conn = _make_collection_conn()
         writer = OfflineWriter(conn)
         with pytest.raises(ValueError, match="not found"):
-            writer.create_note("No Such Deck", SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields(), ["tunatale"])
+            writer.create_note("No Such Deck", SLOVENE_VOCAB.name, _make_fields(), ["tunatale"])
 
 
 class TestOfflineWriterGetCardsForNote:
     def test_returns_ord_to_card_id_dict(self):
         conn = _make_collection_conn()
         writer = OfflineWriter(conn)
-        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields(), ["tunatale"])
+        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields(), ["tunatale"])
 
         cards = writer.get_cards_for_note(note_id)
         assert set(cards.keys()) == {0, 1}
@@ -252,7 +248,7 @@ class TestOfflineWriterGetCardsForNote:
     def test_card_ids_match_inserted_cards(self):
         conn = _make_collection_conn()
         writer = OfflineWriter(conn)
-        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB_NOTETYPE_NAME, _make_fields(), ["tunatale"])
+        note_id = writer.create_note(_DECK_NAME, SLOVENE_VOCAB.name, _make_fields(), ["tunatale"])
 
         cards_from_method = writer.get_cards_for_note(note_id)
         cards_from_db = {
@@ -421,7 +417,7 @@ def _make_norwegian_fields(word: str = "snakke", english: str = "to speak") -> d
 class TestGetSortFieldName:
     def test_returns_l2_field_for_slovene(self):
         conn = _make_collection_conn()
-        assert OfflineWriter(conn).get_sort_field_name(SLOVENE_VOCAB_NOTETYPE_NAME) == "Slovene"
+        assert OfflineWriter(conn).get_sort_field_name(SLOVENE_VOCAB.name) == "Slovene"
 
     def test_returns_l2_field_for_norwegian(self):
         conn = _make_norwegian_collection_conn()

@@ -251,49 +251,47 @@ def _is_loanword_monosyllable(word: str) -> bool:
     return any(d in word for d in _LOAN_DIGRAPHS)
 
 
-def _find_derivational_with_inflection(
-    word: str,
-) -> tuple[str, list[str], list[str]] | None:
-    """Find derivational suffix(es), possibly after stripping one inflection.
+def _strip_derivational_suffixes(word: str) -> tuple[str, list[str]]:
+    """Strip trailing derivational suffixes from *word*.
 
-    Returns (stem_remainder, [deriv_suffixes_reversed], [inflections]) or None
-    if no derivational boundary is found.
+    Returns ``(stem, [suffixes_reversed])`` where the suffix list is in
+    document order (left-to-right as they appear in the original word).
     """
-    # Direct derivational match (possibly multiple layers)
     remaining = word
-    deriv_found: list[str] = []
+    found: list[str] = []
     while True:
         matched = False
         for sfx in _DERIVATIONAL_SUFFIXES:
             if remaining.endswith(sfx) and len(remaining) - len(sfx) >= _MIN_STEM_LEN:
-                deriv_found.append(sfx)
+                found.append(sfx)
                 remaining = remaining[: -len(sfx)]
                 matched = True
                 break
         if not matched:
             break
+    found.reverse()
+    return remaining, found
+
+
+def _find_derivational_with_inflection(
+    word: str,
+) -> tuple[str, list[str], list[str]] | None:
+    """Find derivational suffix(es), possibly after stripping one inflection.
+
+    Returns (stem_remainder, [deriv_suffixes], [inflections]) or None
+    if no derivational boundary is found.
+    """
+    # Direct derivational match (possibly multiple layers)
+    remaining, deriv_found = _strip_derivational_suffixes(word)
     if deriv_found:
-        deriv_found.reverse()
         return remaining, deriv_found, []
 
     # Strip one inflection layer, then look for derivational suffix(es)
     for infl in sorted(_INFLECTIONS, key=len, reverse=True):
         if word.endswith(infl) and len(word) > len(infl):
             stripped = word[: -len(infl)]
-            deriv_found = []
-            remaining = stripped
-            while True:
-                matched = False
-                for sfx in _DERIVATIONAL_SUFFIXES:
-                    if remaining.endswith(sfx) and len(remaining) - len(sfx) >= _MIN_STEM_LEN:
-                        deriv_found.append(sfx)
-                        remaining = remaining[: -len(sfx)]
-                        matched = True
-                        break
-                if not matched:
-                    break
+            remaining, deriv_found = _strip_derivational_suffixes(stripped)
             if deriv_found:
-                deriv_found.reverse()
                 return remaining, deriv_found, [infl]
 
     return None
@@ -583,16 +581,20 @@ def syllabify_morpheme(part: str) -> list[str]:
     return stem_syllables + suffix_groups
 
 
-def _build_syllable_sequence(word: str, syllables: list[str]) -> list[str]:
-    """Classic per-syllable backward buildup for a single word."""
-    seq: list[str] = [word]
+def _build_syllable_inner(syllables: list[str]) -> list[str]:
+    """Per-syllable backward buildup: spoken chunks and rebuilds (no bookends)."""
+    seq: list[str] = []
     n = len(syllables)
     for i in range(n - 1, -1, -1):
         seq.append(_spoken_syllable(syllables, i))
         if i < n - 1:
             seq.append("".join(syllables[i:]))
-    seq.append(word)
     return seq
+
+
+def _build_syllable_sequence(word: str, syllables: list[str]) -> list[str]:
+    """Classic per-syllable backward buildup for a single word."""
+    return [word, *_build_syllable_inner(syllables), word]
 
 
 def _compound_buildup_units(morphemes: list[str]) -> list[tuple[str, list[str]]]:
@@ -684,10 +686,7 @@ def build_norwegian_breakdown(phrase: str) -> list[str]:
         else:
             syllables = syllabify_morpheme(word)
             if len(syllables) > 1:
-                for i in range(len(syllables) - 1, -1, -1):
-                    breakdown.append(_spoken_syllable(syllables, i))
-                    if i < len(syllables) - 1:
-                        breakdown.append("".join(syllables[i:]))
+                breakdown.extend(_build_syllable_inner(syllables))
             else:
                 breakdown.append(word)
 
