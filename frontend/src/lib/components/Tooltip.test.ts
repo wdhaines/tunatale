@@ -295,6 +295,53 @@ describe("Tooltip", () => {
     expect(onSetState).toHaveBeenCalledWith(15, "new");
   });
 
+  // --- Mastery label ---
+
+  describe("mastery label", () => {
+    it("renders masteryLabel when provided", () => {
+      const word = makeWordToken({ active_state: "unknown", srs_item_id: null });
+      const { getByRole } = render(TooltipTest, {
+        props: { translation: "hello", word, childText: "zdravo", masteryLabel: "not tracked" },
+      });
+      expect(getByRole("tooltip").textContent).toContain("not tracked");
+    });
+
+    it('renders "known" for known words', () => {
+      const word = makeWordToken({ active_state: "known", srs_item_id: 1 });
+      const { getByRole } = render(TooltipTest, {
+        props: { translation: "hello", word, childText: "zdravo", masteryLabel: "known" },
+      });
+      expect(getByRole("tooltip").textContent).toContain("known");
+    });
+
+    it('renders "ignored" for ignored words', () => {
+      const word = makeWordToken({ active_state: "ignored", srs_item_id: null });
+      const { getByRole } = render(TooltipTest, {
+        props: { translation: "hello", word, childText: "zdravo", masteryLabel: "ignored" },
+      });
+      expect(getByRole("tooltip").textContent).toContain("ignored");
+    });
+
+    it("renders percentage for words with numeric progress", () => {
+      const word = makeWordToken({ active_state: "learning", progress: 0.5, srs_item_id: 1 });
+      const { getByRole } = render(TooltipTest, {
+        props: { translation: "hello", word, childText: "zdravo", masteryLabel: "50%" },
+      });
+      expect(getByRole("tooltip").textContent).toContain("50%");
+    });
+
+    it("does not render mastery line when masteryLabel is null", () => {
+      const word = makeWordToken({ active_state: "suspended", progress: null, srs_item_id: 1 });
+      const { getByRole } = render(TooltipTest, {
+        props: { translation: "hello", word, childText: "zdravo", masteryLabel: null },
+      });
+      const tooltip = getByRole("tooltip");
+      expect(tooltip.textContent).not.toContain("not tracked");
+      expect(tooltip.textContent).not.toContain("known");
+      expect(tooltip.textContent).not.toMatch(/\d+%/);
+    });
+  });
+
   // --- Grade button (all grading lives in the popover) ---
 
   describe("grade button", () => {

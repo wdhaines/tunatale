@@ -482,7 +482,19 @@ describe("TunaTaleAPI", () => {
     });
 
     it("markAsListened calls POST /api/srs/listen with lesson_id and empty word_ratings by default", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ status: "ok", registered: 3 })));
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            status: "ok",
+            registered: 3,
+            created: 1,
+            graded: 2,
+            remaining_candidates: 5,
+            listen_count: 4,
+          }),
+        ),
+      );
 
       const result = await api.markAsListened("lesson-1");
 
@@ -495,10 +507,26 @@ describe("TunaTaleAPI", () => {
       );
       expect(result.status).toBe("ok");
       expect(result.registered).toBe(3);
+      expect(result.created).toBe(1);
+      expect(result.graded).toBe(2);
+      expect(result.remaining_candidates).toBe(5);
+      expect(result.listen_count).toBe(4);
     });
 
     it("markAsListened sends word_ratings when provided", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ status: "ok", registered: 5 })));
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            status: "ok",
+            registered: 5,
+            created: 2,
+            graded: 3,
+            remaining_candidates: 0,
+            listen_count: 6,
+          }),
+        ),
+      );
 
       await api.markAsListened("lesson-1", { banka: "hard", zdravo: "easy" });
 
@@ -1382,6 +1410,121 @@ describe("TunaTaleAPI", () => {
     it("throws on non-ok response", async () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Service Unavailable")));
       await expect(api.fetchReviewQueue()).rejects.toThrow("Service Unavailable");
+    });
+  });
+
+  describe("getListens", () => {
+    it("GETs /api/srs/listens and returns the lessons payload", async () => {
+      const lessons = [
+        { lesson_id: "l1", listen_count: 3, last_listened_at: "2026-01-01T00:00:00Z" },
+        { lesson_id: "l2", listen_count: 1, last_listened_at: "2026-01-02T00:00:00Z" },
+      ];
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ lessons })));
+
+      const result = await api.getListens();
+
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/listens`);
+      expect(result.lessons).toEqual(lessons);
+    });
+
+    it("returns empty array when no listens exist", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ lessons: [] })));
+
+      const result = await api.getListens();
+
+      expect(result.lessons).toEqual([]);
+    });
+
+    it("throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail()));
+      await expect(api.getListens()).rejects.toThrow("GET /api/srs/listens: Internal Server Error");
+    });
+  });
+
+  describe("importListens", () => {
+    it("POSTs to /api/srs/listens/import with lesson_ids", async () => {
+      const response = { imported: ["l1", "l2"], already_present: [], unknown: [] };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(response)));
+
+      const result = await api.importListens(["l1", "l2"]);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/listens/import`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ lesson_ids: ["l1", "l2"] }),
+        }),
+      );
+      expect(result.imported).toEqual(["l1", "l2"]);
+    });
+
+    it("returns already_present and unknown arrays from server", async () => {
+      const response = { imported: [], already_present: ["l1"], unknown: ["l3"] };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(response)));
+
+      const result = await api.importListens(["l1", "l3"]);
+
+      expect(result.already_present).toEqual(["l1"]);
+      expect(result.unknown).toEqual(["l3"]);
+    });
+
+    it("sets X-TT-Language header to languageCode, overriding the active language", async () => {
+      localStorage.setItem("tt-language", "sl");
+      const response = { imported: ["l1"], already_present: [], unknown: [] };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(response)));
+
+      await api.importListens(["l1"], "no");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/listens/import`,
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({ "X-TT-Language": "no" }),
+        }),
+      );
+      localStorage.removeItem("tt-language");
+    });
+
+    it("omits X-TT-Language override when languageCode is omitted", async () => {
+      localStorage.setItem("tt-language", "sl");
+      const response = { imported: [], already_present: [], unknown: [] };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(response)));
+
+      await api.importListens(["l1"]);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/listens/import`,
+        expect.objectContaining({
+          headers: expect.objectContaining({ "X-TT-Language": "sl" }),
+        }),
+      );
+      localStorage.removeItem("tt-language");
+    });
+
+    it("throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail()));
+      await expect(api.importListens(["l1"])).rejects.toThrow(
+        "POST /api/srs/listens/import: Internal Server Error",
+      );
+    });
+  });
+
+  describe("fetchLessonReviewQueue", () => {
+    it("GETs /api/srs/lesson/{id}/review-queue and returns queue", async () => {
+      const queue = [{ id: 1, text: "foo", direction: "recognition" }];
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ queue })));
+
+      const result = await api.fetchLessonReviewQueue("lesson-1");
+
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/lesson/lesson-1/review-queue`);
+      expect(result).toEqual({ queue });
+    });
+
+    it("throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Not Found")));
+      await expect(api.fetchLessonReviewQueue("missing")).rejects.toThrow(
+        "GET /api/srs/lesson/missing/review-queue: Not Found",
+      );
     });
   });
 });

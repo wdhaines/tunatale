@@ -11,6 +11,7 @@
 	import { themeStore } from '$lib/stores/theme.svelte';
 	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
 	import { llmHealthStore } from '$lib/stores/llmHealth.svelte';
+	import { listenedStore } from '$lib/stores/listened.svelte';
 	import LlmHealthBanner from '$lib/components/LlmHealthBanner.svelte';
 
 	let { children } = $props();
@@ -30,6 +31,7 @@
 		languageStore.init();
 		queueStatsStore.refresh();
 		llmHealthStore.refresh();
+		listenedStore.hydrate();
 		const healthTimer = setInterval(() => llmHealthStore.refresh(), 60000);
 		return () => clearInterval(healthTimer);
 	});
@@ -44,6 +46,17 @@
 
 	$effect(() => {
 		if (syncStore.lastResult) queueStatsStore.refresh();
+	});
+
+	// Re-hydrate the listened store when the active language changes so
+	// has()/count() reflect the new language's server state.
+	let prevLangCode = '';
+	$effect(() => {
+		const current = languageStore.code;
+		if (current && current !== prevLangCode) {
+			prevLangCode = current;
+			listenedStore.refresh();
+		}
 	});
 
 	const path = $derived($page.url.pathname);

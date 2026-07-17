@@ -2,7 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
-	import type { LessonAudio, TranscriptData } from '$lib/api';
+	import type { LessonAudio, TranscriptData, ListenResponse } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import LessonPlayer from '$lib/components/LessonPlayer.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
@@ -15,6 +15,7 @@
 	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
 	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
 	import LessonSourcePanel from '$lib/components/LessonSourcePanel.svelte';
+	import { lessonMastery, masteryColor } from '$lib/mastery';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -32,7 +33,8 @@
 	// client-side below) so the section shows the spinner from first paint.
 	let transcriptLoading = $state(untrack(() => data.transcript === null));
 	let listenLoading = $state(false);
-	let listenResult: { registered: number } | null = $state(null);
+	let listenResult = $state<ListenResponse | null>(null);
+	let queueCount = $state(0);
 	let audioLoading = $state(false);
 	// Stays true from the Regenerate click until the pipeline lands the new lesson
 	// (navigate) or fails — NOT just for the brief regenerateDay request, so the
@@ -241,22 +243,62 @@
 		}
 	});
 
+	async function fetchQueue() {
+		const lessonId = data.lesson.id;
+		try {
+			const { queue } = await api.fetchLessonReviewQueue(lessonId);
+			if (data.lesson.id === lessonId) queueCount = queue.length;
+		} catch {
+			// 404 or network error — leave queueCount at its last value.
+		}
+	}
+
+	// Fetch the review queue when the page loads with an already-listened lesson
+	// (so the "Check your work" link shows the right count from first paint).
+	$effect(() => {
+		if (isListened) fetchQueue();
+	});
+
 	async function handleMarkListened() {
 		const lessonId = data.lesson.id;
 		listenLoading = true;
 		error = '';
 		try {
-			const result = await api.markAsListened(lessonId, {});
+			const result = await listenedStore.markListened(lessonId);
 			listenResult = result;
-			listenedStore.add(lessonId);
 			const t = await api.getLessonTranscript(lessonId);
 			if (data.lesson.id === lessonId) transcript = t;
+			await fetchQueue();
 		} catch (e) {
 			if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
 		} finally {
 			listenLoading = false;
 		}
 	}
+
+	// Mastery computed from the current transcript state
+	const mastery = $derived(transcript ? lessonMastery(transcript) : null);
+	const masteryPct = $derived(mastery?.pct ?? null);
+	const masteryCounts = $derived(mastery?.counts ?? null);
+
+	const masteryCountsLine = $derived(
+		!masteryCounts ? null :
+		(masteryCounts.new > 0 ? `${masteryCounts.new} new` : '')
+		+ (masteryCounts.new > 0 && masteryCounts.learning > 0 ? ' · ' : '')
+		+ (masteryCounts.learning > 0 ? `${masteryCounts.learning} learning` : '')
+		+ ((masteryCounts.new > 0 || masteryCounts.learning > 0) && masteryCounts.review > 0 ? ' · ' : '')
+		+ (masteryCounts.review > 0 ? `${masteryCounts.review} review` : '')
+		+ ((masteryCounts.new > 0 || masteryCounts.learning > 0 || masteryCounts.review > 0) ? ' · ' : '')
+		+ `${masteryCounts.known} known`
+	);
+
+	// Fully acquired: no remaining candidates AND no words in the review queue
+	const fullyAcquired = $derived(listenResult !== null && listenResult.remaining_candidates === 0 && queueCount === 0);
+
+	// Derived booleans for template conditionals (avoid && phantom branches)
+	const showCheckWorkLink = $derived(isListened ? !fullyAcquired : false);
+	const showFullyAcquiredBtn = $derived(isListened ? fullyAcquired : false);
+	const listenCount = $derived(listenedStore.count(data.lesson.id));
 
 	// Single-level undo cycle: the last drill grade (word or phrase) stays
 	// reversible from its popover ("Undo ↩") until something else is graded,
@@ -505,21 +547,44 @@
 
 	{#if mode === 'listen'}
 		<section class="card listen-card">
-			<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened} disabled={listenLoading}>
-				{#if listenLoading}
-					Registering…
-				{:else if isListened}
-					✓ Listened
-				{:else}
-					Mark as Listened
-				{/if}
-			</button>
+		{#if showCheckWorkLink}
+			<a class="check-work-link" href="/review?lesson={data.lesson.id}">Check your work — review {queueCount} {queueCount === 1 ? 'word' : 'words'}</a>
+		{/if}
+		{#if showFullyAcquiredBtn}
+				<button class="listen-btn listened" disabled>
+					✓ Listened ({listenCount}×)
+				</button>
+			{:else}
+				<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened} disabled={listenLoading}>
+					{#if listenLoading}
+						Registering…
+					{:else}
+						Mark as Listened
+					{/if}
+				</button>
+			{/if}
 			{#if listenResult && !error}
 				<p class="listen-confirmation">
-					{listenResult.registered}
-					{listenResult.registered === 1 ? 'word' : 'words'} tracked in SRS
+					{#if listenResult.created > 0}
+						{listenResult.created} new {listenResult.created === 1 ? 'word' : 'words'} added
+					{/if}
+					{#if listenResult.created > 0 && listenResult.graded > 0} · {/if}
+					{#if listenResult.graded > 0}
+						{listenResult.graded} reviewed
+					{/if}
+					{#if listenResult.remaining_candidates > 0}
+						 · {listenResult.remaining_candidates} remaining — listen again to add more
+					{/if}
 				</p>
 			{/if}
+	{#if mastery && masteryPct !== null}
+		<p class="mastery-line">
+			<span class="mastery-pct" style:color={masteryColor(masteryPct)}>{Math.round(masteryPct * 100)}%</span>
+			{#if masteryCountsLine}
+				 {masteryCountsLine}
+			{/if}
+		</p>
+	{/if}
 		</section>
 	{/if}
 
@@ -806,6 +871,25 @@
 		color: var(--color-success);
 		font-size: 0.85rem;
 		margin: 0;
+	}
+	.check-work-link {
+		display: inline-block;
+		color: var(--color-primary);
+		font-weight: 600;
+		font-size: 0.9rem;
+		text-decoration: none;
+		margin-bottom: 0.5rem;
+	}
+	.check-work-link:hover {
+		text-decoration: underline;
+	}
+	.mastery-line {
+		color: var(--color-muted);
+		font-size: 0.82rem;
+		margin: 0;
+	}
+	.mastery-pct {
+		font-weight: 700;
 	}
 	.tools-card summary {
 		cursor: pointer;

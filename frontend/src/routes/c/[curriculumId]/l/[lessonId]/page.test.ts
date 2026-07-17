@@ -32,6 +32,7 @@ vi.mock("$lib/api", () => ({
     importStory: vi.fn(),
     audioUrl: vi.fn((id: string) => `/api/audio/${id}`),
     audioZipUrl: vi.fn((lessonId: string) => `/api/audio/lesson/${lessonId}/zip`),
+    fetchLessonReviewQueue: vi.fn(),
   },
 }));
 
@@ -42,13 +43,17 @@ vi.mock("$lib/stores/pipeline.svelte", () => ({
 vi.mock("$lib/stores/listened.svelte", () => ({
   listenedStore: {
     has: vi.fn().mockReturnValue(false),
-    add: vi.fn(),
+    count: vi.fn().mockReturnValue(0),
+    markListened: vi.fn(),
   },
 }));
 
 import { api } from "$lib/api";
 import type { TranscriptData } from "$lib/api";
 import { listenedStore } from "$lib/stores/listened.svelte";
+
+const mockListenedMarkListened = vi.mocked(listenedStore.markListened);
+const mockListenedCount = vi.mocked(listenedStore.count);
 import { syncStore } from "$lib/stores/sync.svelte";
 import { lessonModePref } from "$lib/stores/lessonModePref.svelte";
 import { pipelineStore } from "$lib/stores/pipeline.svelte";
@@ -83,6 +88,7 @@ const mockImportStory = vi.mocked(api.importStory);
 const mockIgnoreLemma = vi.mocked(api.ignoreLemma);
 const mockUnignoreLemma = vi.mocked(api.unignoreLemma);
 const mockRestoreKnown = vi.mocked(api.restoreKnown);
+const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
 
 const curriculum = {
   id: "cid-1",
@@ -133,6 +139,9 @@ beforeEach(() => {
   // bleed into the ungated regenStatus / follow-effect of an unrelated test.
   (pipelineStore as unknown as { status: unknown }).status = null;
   vi.mocked(listenedStore.has).mockReturnValue(false);
+  mockListenedCount.mockReturnValue(0);
+  mockListenedMarkListened.mockReset();
+  mockFetchLessonReviewQueue.mockReset();
   // When load supplies no transcript the component fetches it on mount. Default
   // to a pending promise so null-transcript renders sit in the loading state
   // without injecting content; tests that care override this.
@@ -320,9 +329,17 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(queryByText("Render Audio")).toBeFalsy();
   });
 
-  it("calls markAsListened and adds to listenedStore", async () => {
-    mockMarkAsListened.mockResolvedValue({ status: "ok", registered: 3 });
+  it("calls listenedStore.markListened and refetches transcript", async () => {
+    mockListenedMarkListened.mockResolvedValue({
+      status: "ok",
+      registered: 3,
+      created: 1,
+      graded: 2,
+      remaining_candidates: 0,
+      listen_count: 3,
+    });
     mockGetTranscript.mockResolvedValue(transcript);
+    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
 
     const { findByText, getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
@@ -332,19 +349,24 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     await fireEvent.click(btn);
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {});
+      expect(mockListenedMarkListened).toHaveBeenCalledWith("l1");
       expect(mockGetTranscript).toHaveBeenCalledWith("l1");
-      expect(listenedStore.add).toHaveBeenCalledWith("l1");
     });
   });
 
-  it("shows listened state when listenedStore.has returns true", () => {
+  it("shows listened state when listenedStore.has returns true", async () => {
     vi.mocked(listenedStore.has).mockReturnValue(true);
+    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
     const { getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
     });
     fireEvent.click(getByText("Listen"));
-    expect(getByText("✓ Listened")).toBeTruthy();
+    // has=true but no listenResult in this session → fullyAcquired is false,
+    // so the button says "Mark as Listened" (can listen again).
+    await waitFor(() => {
+      const btn = getByText("Mark as Listened");
+      expect(btn.classList.contains("listened")).toBe(true);
+    });
   });
 
   it("shows the plain transcript placeholder while the transcript is being fetched", () => {
@@ -555,8 +577,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(await findByText("plain string error")).toBeTruthy();
   });
 
-  it("shows error when markAsListened fails", async () => {
-    mockMarkAsListened.mockRejectedValue(new Error("listen failed"));
+  it("shows error when markListened fails", async () => {
+    mockListenedMarkListened.mockRejectedValue(new Error("listen failed"));
     mockGetTranscript.mockResolvedValue(transcript);
 
     const { findByText, getByText } = render(Page, {
@@ -568,8 +590,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(await findByText("listen failed")).toBeTruthy();
   });
 
-  it("shows stringified error when markAsListened throws a non-Error", async () => {
-    mockMarkAsListened.mockRejectedValue("plain listen error");
+  it("shows stringified error when markListened throws a non-Error", async () => {
+    mockListenedMarkListened.mockRejectedValue("plain listen error");
     mockGetTranscript.mockResolvedValue(transcript);
 
     const { findByText, getByText } = render(Page, {
@@ -581,9 +603,17 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(await findByText("plain listen error")).toBeTruthy();
   });
 
-  it("shows listen confirmation with plural words after markAsListened", async () => {
-    mockMarkAsListened.mockResolvedValue({ status: "ok", registered: 3 });
+  it("shows listen confirmation with created/graded/remaining after markListened", async () => {
+    mockListenedMarkListened.mockResolvedValue({
+      status: "ok",
+      registered: 3,
+      created: 2,
+      graded: 1,
+      remaining_candidates: 5,
+      listen_count: 3,
+    });
     mockGetTranscript.mockResolvedValue(transcript);
+    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
 
     const { findByText, getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
@@ -591,12 +621,22 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     await fireEvent.click(getByText("Listen"));
     await fireEvent.click(await findByText("Mark as Listened"));
 
-    expect(await findByText(/3.*words tracked/i)).toBeTruthy();
+    expect(await findByText(/2 new words added/)).toBeTruthy();
+    expect(await findByText(/1 reviewed/)).toBeTruthy();
+    expect(await findByText(/5 remaining/)).toBeTruthy();
   });
 
-  it("shows singular '1 word tracked' when registered is 1", async () => {
-    mockMarkAsListened.mockResolvedValue({ status: "ok", registered: 1 });
+  it("shows 'listen again to add more' in the confirmation", async () => {
+    mockListenedMarkListened.mockResolvedValue({
+      status: "ok",
+      registered: 1,
+      created: 0,
+      graded: 1,
+      remaining_candidates: 3,
+      listen_count: 2,
+    });
     mockGetTranscript.mockResolvedValue(transcript);
+    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
 
     const { findByText, getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
@@ -604,12 +644,19 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     await fireEvent.click(getByText("Listen"));
     await fireEvent.click(await findByText("Mark as Listened"));
 
-    expect(await findByText(/1 word tracked/i)).toBeTruthy();
+    expect(await findByText(/listen again to add more/i)).toBeTruthy();
   });
 
-  it("hides listen confirmation when error is set after markAsListened", async () => {
-    mockMarkAsListened.mockResolvedValue({ status: "ok", registered: 3 });
-    // The transcript refresh after markAsListened fails → error is set, which
+  it("hides listen confirmation when error is set after markListened", async () => {
+    mockListenedMarkListened.mockResolvedValue({
+      status: "ok",
+      registered: 3,
+      created: 1,
+      graded: 2,
+      remaining_candidates: 0,
+      listen_count: 3,
+    });
+    // The transcript refresh after markListened fails → error is set, which
     // should suppress the confirmation that was set by the successful listen.
     mockGetTranscript.mockRejectedValueOnce(new Error("refresh failed"));
 
@@ -620,7 +667,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     await fireEvent.click(getByText("Mark as Listened"));
 
     await vi.waitFor(() => {
-      expect(queryByText(/words tracked/i)).toBeFalsy();
+      expect(queryByText(/new words added|reviewed|remaining/i)).toBeFalsy();
     });
   });
 
@@ -630,6 +677,395 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     });
     expect(container.querySelector(".section-meta")).toBeFalsy();
     expect(queryByText(/1 phrase/)).toBeFalsy();
+  });
+
+  describe("B1 — check-your-work link and fully-acquired state", () => {
+    it("shows 'Check your work — review N words' link when listened and N > 0", async () => {
+      vi.mocked(listenedStore.has).mockReturnValue(true);
+      mockListenedCount.mockReturnValue(3);
+      mockFetchLessonReviewQueue.mockResolvedValue({
+        queue: [{ id: 1 } as never, { id: 2 } as never],
+      });
+
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      fireEvent.click(getByText("Listen"));
+
+      // $effect fetches queue asynchronously — wait for queueCount to update
+      await waitFor(() => {
+        const link = getByText(/Check your work/);
+        expect(link.textContent).toContain("2 words");
+        expect(link.getAttribute("href")).toBe("/review?lesson=l1");
+      });
+    });
+
+    it("does not show check-your-work when N = 0", async () => {
+      vi.mocked(listenedStore.has).mockReturnValue(true);
+      mockListenedCount.mockReturnValue(2);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+
+      const { queryByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+
+      await waitFor(() => {
+        expect(queryByText(/Check your work/)).toBeNull();
+      });
+    });
+
+    it("fetches review queue on mount when already listened", async () => {
+      vi.mocked(listenedStore.has).mockReturnValue(true);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+
+      render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+
+      await waitFor(() => {
+        expect(mockFetchLessonReviewQueue).toHaveBeenCalledWith("l1");
+      });
+    });
+
+    it("refetches review queue after each listen", async () => {
+      mockListenedMarkListened.mockResolvedValue({
+        status: "ok",
+        registered: 1,
+        created: 0,
+        graded: 1,
+        remaining_candidates: 2,
+        listen_count: 4,
+      });
+      mockGetTranscript.mockResolvedValue(transcript);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [{} as never] });
+
+      const { getByText, findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      fireEvent.click(getByText("Listen"));
+      await fireEvent.click(await findByText("Mark as Listened"));
+
+      await waitFor(() => {
+        expect(mockFetchLessonReviewQueue).toHaveBeenCalledWith("l1");
+      });
+    });
+
+    it("shows '✓ Listened (n×)' when fully acquired (remaining=0 AND N=0)", async () => {
+      vi.mocked(listenedStore.has).mockReturnValue(true);
+      mockListenedCount.mockReturnValue(5);
+      mockListenedMarkListened.mockResolvedValue({
+        status: "ok",
+        registered: 1,
+        created: 0,
+        graded: 1,
+        remaining_candidates: 0,
+        listen_count: 5,
+      });
+      mockGetTranscript.mockResolvedValue(transcript);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+
+      const { getByText, queryByText, findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      fireEvent.click(getByText("Listen"));
+      // Need a listen to set listenResult — only then can fullyAcquired be true.
+      await fireEvent.click(await findByText("Mark as Listened"));
+
+      await waitFor(() => {
+        expect(getByText(/✓ Listened \(5×\)/)).toBeTruthy();
+        expect(queryByText(/Mark as Listened/)).toBeNull();
+      });
+    });
+
+    it("shows 'Mark as Listened' when listened but remaining > 0", async () => {
+      vi.mocked(listenedStore.has).mockReturnValue(true);
+      mockListenedCount.mockReturnValue(3);
+      mockFetchLessonReviewQueue.mockResolvedValue({
+        queue: [{} as never],
+      });
+
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      fireEvent.click(getByText("Listen"));
+
+      expect(getByText("Mark as Listened")).toBeTruthy();
+    });
+
+    it("updates to fully-acquired after listen with remaining=0 and N=0", async () => {
+      vi.mocked(listenedStore.has).mockReturnValue(false);
+      mockListenedMarkListened.mockResolvedValue({
+        status: "ok",
+        registered: 1,
+        created: 0,
+        graded: 1,
+        remaining_candidates: 0,
+        listen_count: 3,
+      });
+      mockGetTranscript.mockResolvedValue(transcript);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      // After listen, has() now returns true
+      vi.mocked(listenedStore.has).mockReturnValue(true);
+      mockListenedCount.mockReturnValue(3);
+
+      const { getByText, findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      fireEvent.click(getByText("Listen"));
+      await fireEvent.click(await findByText("Mark as Listened"));
+
+      await waitFor(() => {
+        expect(getByText("✓ Listened (3×)")).toBeTruthy();
+      });
+    });
+
+    it("singular '1 word' in check-your-work link when N=1", async () => {
+      vi.mocked(listenedStore.has).mockReturnValue(true);
+      mockListenedCount.mockReturnValue(1);
+      mockFetchLessonReviewQueue.mockResolvedValue({
+        queue: [{} as never],
+      });
+
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      fireEvent.click(getByText("Listen"));
+
+      await waitFor(() => {
+        const link = getByText(/Check your work/);
+        expect(link.textContent).toContain("1 word");
+      });
+    });
+  });
+
+  describe("B2 — mastery indicator in listen mode", () => {
+    it("renders mastery percentage and counts from the transcript", async () => {
+      const transcriptWithWords = {
+        lesson_id: "l1",
+        key_phrases: [],
+        dialogue_lines: [
+          {
+            role: "A",
+            sentence: "zdravo kava prosim",
+            words: [
+              {
+                lemma: "zdravo",
+                active_state: "known",
+                progress: 1.0,
+                surface: "zdravo",
+                srs_state: "known",
+                srs_item_id: 1,
+                translation: null,
+                collocation_span_id: null,
+                collocation_start: false,
+                collocation_srs_state: null,
+                collocation_lemma: null,
+                collocation_translation: null,
+                card_type: "vocab",
+                active_direction: null,
+                is_due: false,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
+              },
+              {
+                lemma: "kava",
+                active_state: "learning",
+                progress: 0.3,
+                surface: "kava",
+                srs_state: "learning",
+                srs_item_id: 2,
+                translation: null,
+                collocation_span_id: null,
+                collocation_start: false,
+                collocation_srs_state: null,
+                collocation_lemma: null,
+                collocation_translation: null,
+                card_type: "vocab",
+                active_direction: "recognition",
+                is_due: true,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
+              },
+              {
+                lemma: "prosim",
+                active_state: "unknown",
+                progress: null,
+                surface: "prosim",
+                srs_state: "new",
+                srs_item_id: null,
+                translation: null,
+                collocation_span_id: null,
+                collocation_start: false,
+                collocation_srs_state: null,
+                collocation_lemma: null,
+                collocation_translation: null,
+                card_type: null,
+                active_direction: null,
+                is_due: false,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
+              },
+            ],
+          },
+        ],
+      };
+      mockGetTranscript.mockResolvedValue(transcriptWithWords);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: transcriptWithWords } },
+      });
+      fireEvent.click(getByText("Listen"));
+
+      // 1 known + 1 learning (0.3) + 1 unknown (0) = 1.3/3 ≈ 43%
+      expect(getByText(/43%/)).toBeTruthy();
+      expect(getByText(/1 known/)).toBeTruthy();
+    });
+
+    it("renders every counts segment when new, learning, review, and known all appear", async () => {
+      const word = (lemma: string, active_state: string, progress: number) => ({
+        lemma,
+        active_state,
+        progress,
+        surface: lemma,
+        srs_state: active_state,
+        srs_item_id: 1,
+        translation: null,
+        collocation_span_id: null,
+        collocation_start: false,
+        collocation_srs_state: null,
+        collocation_lemma: null,
+        collocation_translation: null,
+        card_type: "vocab",
+        active_direction: null,
+        is_due: false,
+        inflectable: false,
+        inflection_feature: null,
+        known_marked: false,
+      });
+      const transcriptAllStates = {
+        lesson_id: "l1",
+        key_phrases: [],
+        dialogue_lines: [
+          {
+            role: "A",
+            sentence: "ena dva tri štiri",
+            words: [
+              word("ena", "new", 0),
+              word("dva", "learning", 0.3),
+              word("tri", "review", 0.8),
+              word("štiri", "known", 1.0),
+            ],
+          },
+        ],
+      };
+      mockGetTranscript.mockResolvedValue(transcriptAllStates);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: transcriptAllStates } },
+      });
+      fireEvent.click(getByText("Listen"));
+
+      // (0 + 0.3 + 0.8 + 1.0) / 4 = 0.525 → 53%
+      expect(getByText(/53%/)).toBeTruthy();
+      expect(getByText(/1 new · 1 learning · 1 review · 1 known/)).toBeTruthy();
+    });
+
+    it("updates mastery after transcript refetch (post-listen)", async () => {
+      const beforeTranscript = {
+        lesson_id: "l1",
+        key_phrases: [],
+        dialogue_lines: [
+          {
+            role: "A",
+            sentence: "kava",
+            words: [
+              {
+                lemma: "kava",
+                active_state: "unknown",
+                progress: null,
+                surface: "kava",
+                srs_state: "new",
+                srs_item_id: null,
+                translation: null,
+                collocation_span_id: null,
+                collocation_start: false,
+                collocation_srs_state: null,
+                collocation_lemma: null,
+                collocation_translation: null,
+                card_type: null,
+                active_direction: null,
+                is_due: false,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
+              },
+            ],
+          },
+        ],
+      };
+      const afterTranscript = {
+        lesson_id: "l1",
+        key_phrases: [],
+        dialogue_lines: [
+          {
+            role: "A",
+            sentence: "kava",
+            words: [
+              {
+                lemma: "kava",
+                active_state: "learning",
+                progress: 0.15,
+                surface: "kava",
+                srs_state: "learning",
+                srs_item_id: 1,
+                translation: null,
+                collocation_span_id: null,
+                collocation_start: false,
+                collocation_srs_state: null,
+                collocation_lemma: null,
+                collocation_translation: null,
+                card_type: "vocab",
+                active_direction: "recognition",
+                is_due: false,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
+              },
+            ],
+          },
+        ],
+      };
+      mockGetTranscript.mockResolvedValue(afterTranscript);
+      mockListenedMarkListened.mockResolvedValue({
+        status: "ok",
+        registered: 1,
+        created: 1,
+        graded: 0,
+        remaining_candidates: 0,
+        listen_count: 1,
+      });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+
+      const { getByText, findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: beforeTranscript } },
+      });
+      // Switch to listen mode — mastery indicator is only visible there.
+      fireEvent.click(getByText("Listen"));
+      // Before listen: 0% mastery (unknown)
+      expect(getByText(/0%/)).toBeTruthy();
+
+      await fireEvent.click(await findByText("Mark as Listened"));
+
+      // After listen + refetch: 15% mastery (learning, progress 0.15)
+      await waitFor(() => {
+        expect(getByText(/15%/)).toBeTruthy();
+      });
+    });
   });
 
   describe("handleWordClick", () => {

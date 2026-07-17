@@ -58,6 +58,7 @@
 	const colorClass = $derived(
 		word.active_state === 'unknown'
 			? 'word-unknown'
+
 			: word.active_state === 'suspended' || word.active_state === 'ignored'
 				? 'word-ignored'
 				: ''
@@ -68,6 +69,16 @@
 	// structure stays stable — toggling Alt over a collocation must not reflow the
 	// line (the prior if/else swap caused a visible spacing jump).
 	const showTooltip = $derived(!requireModifier || altHover);
+
+	// Per-word mastery label for the tooltip popover.
+	const masteryLabel = $derived.by((): string | null => {
+		if (word.active_state === 'unknown') return 'not tracked';
+		if (word.active_state === 'known') return 'known';
+		if (word.active_state === 'ignored') return 'ignored';
+		if (word.progress != null) return `${Math.round(word.progress * 100)}%`;
+		// suspended, etc. — no mastery line
+		return null;
+	});
 
 	// Undo cycle: when the page says THIS word holds the last (still-local)
 	// grade, the grade button flips to "Undo ↩" — even though the word is no
@@ -127,6 +138,7 @@
 	{gradeLabel}
 	{gradeVariant}
 	{onGrade}
+	{masteryLabel}
 >
 	<span
 		class="word-wrapper"

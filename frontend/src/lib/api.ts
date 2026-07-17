@@ -189,6 +189,26 @@ export interface TranscriptData {
 export interface ListenResponse {
   status: string;
   registered: number;
+  created: number;
+  graded: number;
+  remaining_candidates: number;
+  listen_count: number;
+}
+
+export interface LessonListenRecord {
+  lesson_id: string;
+  listen_count: number;
+  last_listened_at: string;
+}
+
+export interface ListensResponse {
+  lessons: LessonListenRecord[];
+}
+
+export interface ImportListensResponse {
+  imported: string[];
+  already_present: string[];
+  unknown: string[];
 }
 
 export interface SectionAudio {
@@ -493,7 +513,7 @@ export class TunaTaleAPI {
     if (Object.keys(langHeader).length > 0) {
       res = await fetch(`${this.baseUrl}${path}`, {
         ...init,
-        headers: { ...(init?.headers as Record<string, string> | undefined), ...langHeader },
+        headers: { ...langHeader, ...(init?.headers as Record<string, string> | undefined) },
       });
     } else {
       res = init
@@ -744,6 +764,25 @@ export class TunaTaleAPI {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ lesson_id: lessonId, word_ratings: wordRatings }),
     });
+  }
+
+  async getListens(): Promise<ListensResponse> {
+    return this.request("/api/srs/listens");
+  }
+
+  async importListens(lessonIds: string[], languageCode?: string): Promise<ImportListensResponse> {
+    return this.request("/api/srs/listens/import", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(languageCode ? { "X-TT-Language": languageCode } : {}),
+      },
+      body: JSON.stringify({ lesson_ids: lessonIds }),
+    });
+  }
+
+  async fetchLessonReviewQueue(lessonId: string): Promise<{ queue: ReviewQueueItem[] }> {
+    return this.request(`/api/srs/lesson/${lessonId}/review-queue`);
   }
 
   async getLessonTranscript(lessonId: string): Promise<TranscriptData> {
