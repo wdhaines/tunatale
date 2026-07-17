@@ -190,6 +190,69 @@ class TestListenToSyncRoundTrip:
             assert len(cards) == 1
             assert cards[0]["ord"] == 0
 
+    async def test_capped_listen_created_rows_sync_via_sync_create_new(self):
+        """Budget-capped creation (plan Step 3) must leave rows in exactly the
+        shape ``sync_create_new`` consumes: the capped subset — and only it —
+        reaches Anki as real notes, matched by guid. Guards the contract that
+        the staged-creation pass keeps state NEW / anki ids None; a regression
+        there would make listen-created cards silently never reach Anki."""
+        db = SRSDatabase(":memory:")
+
+        store = ContentStore(":memory:")
+        # Occurrence counts: banka 3, center 2, hotel 1 — all content words
+        # (vocab), so with daily_new_cap=2 the ranked creation pass takes
+        # banka + center and leaves hotel as a remaining candidate.
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text=t, voice_id="female-1", language_code="sl", role="female-1")
+                        for t in ["banka center hotel", "banka center", "banka"]
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        app.state.srs_db = db
+        app.state.content_store = store
+        db.set_anki_state_cache("daily_new_cap", "2")
+
+        # ── 1. Capped listen ──────────────────────────────────────────────
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["created"] == 2
+        assert data["remaining_candidates"] == 1
+        assert db.count_collocations() == 2
+
+        banka = db.get_collocation_by_lemma("banka")
+        center = db.get_collocation_by_lemma("center")
+        assert banka is not None and center is not None
+        assert db.get_collocation_by_lemma("hotel") is None
+
+        # ── 2. Sync create new ────────────────────────────────────────────
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn)
+
+        report = await AnkiSync(db=db, _reader=FakeReaderE2E(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene",
+            model_name="Slovene Vocabulary",
+        )
+
+        # ── 3. Exactly the capped subset reaches Anki, matched by guid ────
+        assert report.created == 2
+        assert report.skipped == 0
+        assert report.linked == 0
+        note_guids = {r["guid"] for r in anki_conn.execute("SELECT guid FROM notes").fetchall()}
+        assert note_guids == {banka.guid, center.guid}
+
 
 class TestImageEndpointToSyncSeam:
     """Sociable seam: the real image-upload endpoint sets exactly the state the

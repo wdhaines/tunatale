@@ -15,7 +15,7 @@ In the user's stated frequency order:
 | # | Mode | Posture / context | Lineage | Today |
 |---|------|-------------------|---------|-------|
 | 1 | **Review** (daily anchor) | Clear the SRS queue every day. Audio-first drills. | Pimsleur GIR → FSRS; Fluent Forever card design | ✅ `/review` route |
-| 2 | **Listen** (immersion) | Hands-free / car. Play the 4-section lesson straight through. Glanceable. Passive (Refold *free-flow*). Cards created implicitly. | Pimsleur audio-first + Refold free-flow + LingQ listen-first + implicit grade | ⚠️ exists, crude (LessonPlayer + Mark-as-Listened) |
+| 2 | **Listen** (immersion) | Hands-free / car. Play the 4-section lesson straight through. Glanceable. Passive (Refold *free-flow*). Cards created implicitly. | Pimsleur audio-first + Refold free-flow + LingQ listen-first + implicit grade | ✅ slice 1 done (2026-07: staged creation, listen tracking, lesson-scoped review, mastery indicators) |
 | 3 | **Read** (study / cleanup) | Dense transcript. Active immersion. Fine-grained add/remove/grade of SRS by tapping words/phrases. BDT-flavored L2↔L1. | LingQ word-status transcript + Refold active immersion/1T + BDT reception | ⚠️ exists, **first build target** |
 | – | **Generate / Manage** | Setup: create curriculum, regenerate a day. Not a learning mode. | — | ✅ (lesson page Regenerate + `/` library) |
 | – | **Produce / BDT write-back** | Output practice; translate-back; spaced re-encounter. | BDT steps 5–6, PRD §7.4 output mode | ❌ future (`bdt.md` "Phase G") |
@@ -31,6 +31,8 @@ The habit: pop in (phone-first), clear the review queue. This is the SRS, and it
 - **Homepage:** if reviews are due, "Review (N due)" is the top suggested next action. (`QueueStatsWidget` already exists.)
 
 ## Mode 2 — Listen (immersion)
+
+**Status: slice 1 shipped 2026-07-16.** `POST /api/srs/listen` does staged, budget-capped creation (frequency-ranked, key phrases first, throttled by `daily_new_cap`) and records every listen in `lesson_listens` (server-backed listened store, localStorage migrated). The correction flow exists as the lesson-scoped review session: `/review?lesson={id}` served by `GET /api/srs/lesson/{id}/review-queue` (read-only w.r.t. queue-parity state), linked from the lesson page's "Check your work — review N words". The lesson page also shows aggregate + per-word mastery indicators. Still future from the decisions below: voice-command "I listened", CEFR/grammar-topic pedagogical ranking (swap the `_rank_listen_candidates` seam), and the listening-vs-reading recognition bucket split.
 
 Prototyped in `micro-demo-0.0/` + `micro-demo-0.1/`. Straight-through playback of the four Pimsleur sections (KEY_PHRASES listen-and-repeat → NATURAL_SPEED → SLOW_SPEED → TRANSLATED), then a single **"I listened"** action (click or voice command) that triggers a **bulk review + creation** pass. Decisions:
 
