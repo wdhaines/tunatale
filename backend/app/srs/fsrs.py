@@ -15,6 +15,7 @@ from app.config import ANKI_ROLLOVER_HOUR
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSItem, SRSState
 from app.srs._anki_rng import ChaCha12Rng, random_range_f32, random_range_u32
 from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index, review_due_at_for_col_day
+from app.srs.anki_mirror.rollover import anki_today
 
 # fsrs-rs (rslib/.../fsrs/model.rs) computes stability + difficulty in f32 end-to-end
 # via Burn tensors. TT mirrors that precision by casting all arithmetic operands and
@@ -826,12 +827,18 @@ def schedule(
     - REVIEW + AGAIN → RELEARNING (step 0)
     - REVIEW + HARD/GOOD/EASY → REVIEW (FSRS interval)
     """
+    # Anki-day rollover, not local midnight, for BOTH the default and the
+    # "is this a live grade" comparison below — they must use the same clock.
+    # Using date.today() for one and anki_today() for the other would
+    # misclassify a live grade made in the [midnight, 4 AM) local window as a
+    # backdated review, stamping last_review_dt from a midnight-combine
+    # instead of `now`.
     if review_date is None:
-        review_date = date.today()
+        review_date = anki_today()
 
     if now is None:
         now = datetime.now(tz=UTC)
-    if review_date == date.today():
+    if review_date == anki_today():
         last_review_dt = now
     else:
         last_review_dt = datetime.combine(review_date, datetime.min.time(), tzinfo=UTC)

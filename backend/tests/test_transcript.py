@@ -891,6 +891,37 @@ class TestIsDue:
         )
         assert _is_due(ds, date(2026, 6, 1)) is False
 
+    def test_not_due_at_midnight_before_rollover(self):
+        """A card with due_at on calendar-today is NOT is_due at 02:00 when
+        the active Anki day is still yesterday (4 AM rollover hasn't fired).
+
+        Anki-today = anki_today(frozen_now) returns yesterday's date in the
+        [midnight, 4 AM) window, so `due_at.date() <= today` is False for
+        a due_at on calendar-today. The pre-fix code used date.today() which
+        would bold the card as due up to 4 hours early.
+        """
+        from app.srs.anki_mirror.rollover import anki_today
+
+        # "now" = 02:00 — before 4 AM rollover.
+        frozen_now = datetime(2026, 5, 8, 2, 0, tzinfo=UTC)
+        today = anki_today(frozen_now)  # still May 7 (yesterday)
+        assert today == date(2026, 5, 7)
+
+        # due_at on calendar-today (May 8) but NOT in the active Anki day (May 7).
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_at=datetime(2026, 5, 8, 12, 0, tzinfo=UTC),
+        )
+        assert _is_due(ds, today) is False, (
+            "card due on calendar-today is NOT due when the active Anki day is still yesterday"
+        )
+
+        # Counter-case: using calendar date.today() at 02:00 WOULD mark it due.
+        assert _is_due(ds, date(2026, 5, 8)) is True, (
+            "calendar date.today() at 02:00 incorrectly marks the card as due (the pre-fix bug)"
+        )
+
 
 class TestTranscriptEnrichment:
     def setup_method(self):

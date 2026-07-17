@@ -69,6 +69,42 @@ def test_due_at_rollover_utc_convention():
     assert rollover.due_at_rollover_utc(date(2026, 1, 2)) == expected
 
 
+def test_anki_day_bounds_utc_dt_matches_string_variant():
+    """`anki_day_bounds_utc` must be a thin isoformat wrapper around
+    `anki_day_bounds_utc_dt` — single-sourced arithmetic, two return shapes."""
+    today = date(2026, 5, 8)
+    now = datetime(2026, 5, 8, 16, 0, tzinfo=UTC)
+    start_dt, end_dt = rollover.anki_day_bounds_utc_dt(today, now=now)
+    start_iso, end_iso = rollover.anki_day_bounds_utc(today, now=now)
+    assert (start_dt.isoformat(), end_dt.isoformat()) == (start_iso, end_iso)
+
+
+def test_anki_day_bounds_utc_dt_shifts_back_before_rollover(monkeypatch):
+    """Regression (docs/master-cleanup-list item 1): the datetime-returning
+    variant used by api/srs.py's grade-eligibility / touched-today windows
+    must shift the anchor back a day when `now` precedes today's rollover,
+    exactly like the ISO-string variant already does. Forces TZ so the
+    result is deterministic regardless of the host's real timezone (the
+    function always anchors on the REAL system-local tz, not `now`'s own
+    tzinfo — matching `test_anki_day_bounds_shifts_back_before_rollover` in
+    test_srs_database.py)."""
+    import time as _time
+
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    _time.tzset()
+    today = date(2026, 5, 8)
+
+    # 4 AM PDT == 11:00 UTC. 02:00 PDT (before rollover) → anchored on May 7.
+    start_before, end_before = rollover.anki_day_bounds_utc_dt(today, now=datetime(2026, 5, 8, 9, 0, tzinfo=UTC))
+    assert start_before == datetime(2026, 5, 7, 11, 0, tzinfo=UTC)
+    assert end_before == datetime(2026, 5, 8, 11, 0, tzinfo=UTC)
+
+    # 09:00 PDT (after rollover) → anchored on May 8 itself.
+    start_after, end_after = rollover.anki_day_bounds_utc_dt(today, now=datetime(2026, 5, 8, 16, 0, tzinfo=UTC))
+    assert start_after == datetime(2026, 5, 8, 11, 0, tzinfo=UTC)
+    assert end_after == datetime(2026, 5, 9, 11, 0, tzinfo=UTC)
+
+
 def test_no_hardcoded_rollover_literals_remain():
     # Ratchet: new day-boundary code must route through app.srs.anki_mirror.rollover
     # (or take the constant), never re-hardcode the hour.

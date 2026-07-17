@@ -10,7 +10,7 @@ the importing module).
 from __future__ import annotations
 
 import logging
-from datetime import UTC, date, datetime, time
+from datetime import UTC, datetime
 
 from app.cards.media.vocab_media import safe_stem as _safe_stem
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media
@@ -33,6 +33,7 @@ from app.plugins.anki_sync.sync_common import (
     build_cloze_back_extra,
 )
 from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index
+from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
 from app.srs.database import SRSDatabase
 from app.srs.direction_fields import SYNC_COMPARABLE_MODEL_FIELDS
 from app.srs.fsrs import is_day_level_last_review
@@ -476,9 +477,13 @@ class AnkiSync:
         The idempotency guard in ``unbury_if_needed`` prevents re-sweep within the
         same day, so state='buried' rows set by the current pull (today's sibling-
         buries from Anki) stick.
+
+        Keyed by ``anki_today()`` (the 4 AM rollover), not local midnight — a
+        pull in the ``[midnight, 4 AM)`` window is still the PRIOR Anki day, so
+        keying on ``date.today()`` would fire the sweep up to 4 hours early.
         """
         if not dry_run:
-            self._db.unbury_if_needed(date.today())
+            self._db.unbury_if_needed(anki_today())
 
     @staticmethod
     def _init_bury_stats() -> dict[str, int]:
@@ -493,18 +498,17 @@ class AnkiSync:
         }
 
     @staticmethod
-    def _compute_today_start_ms() -> int:
-        """Return the local-today UTC midnight in milliseconds.
+    def _compute_today_start_ms(now: datetime | None = None) -> int:
+        """Return the START OF THE CURRENT ANKI DAY (4 AM rollover) in UTC ms.
 
         Used to infer ``prior_state='new'`` for cards whose first revlog is today
         but TT lost the transition (synced before sync_pull learned to write prior_state).
+
+        Routes through ``anki_day_bounds_utc_dt`` so the boundary matches Anki's
+        4 AM local rollover, not local midnight.
         """
-        return int(
-            datetime.combine(date.today(), time(0), tzinfo=datetime.now().astimezone().tzinfo)
-            .astimezone(UTC)
-            .timestamp()
-            * 1000
-        )
+        start, _ = anki_day_bounds_utc_dt(anki_today(now), now)
+        return int(start.timestamp() * 1000)
 
     def _pull_merge_direction(
         self,
@@ -1163,7 +1167,10 @@ class AnkiSync:
             row_force_fsrs = (
                 force_fsrs or (guid, direction.value) in recovered or ds.state == SRSState.KNOWN or ds.fsrs_force_next
             )
-            days_str = str(max(0, (ds.due_at.date() - date.today()).days))
+            # Anki's set-due-date interprets "days from today" against ITS rollover
+            # day; computing the delta against calendar-today in [midnight, 4 AM)
+            # lands the due date one day early.
+            days_str = str(max(0, (ds.due_at.date() - anki_today()).days))
             if not dry_run:
                 # Snapshot Anki's pre-push card state for the anki_ahead
                 # conflict-resolution check. Must be captured BEFORE
@@ -1283,7 +1290,7 @@ class AnkiSync:
         bury_review, _ = resolve_bury_review(self._db)
         if not (bury_new or bury_review):
             return
-        today = date.today()
+        today = anki_today()
         for anki_card_id, state_value in self._db.list_anki_cards_graded_today(today):
             graded_queue = _STATE_VALUE_TO_ANKI_QUEUE.get(state_value)
             if graded_queue is None:

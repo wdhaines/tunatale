@@ -900,6 +900,38 @@ class TestSessionMainQueueCache:
         clear_session_main_queue(db)  # no-op, must not raise
         clear_session_main_queue(db)  # double-clear, must not raise
 
+    def test_session_cache_survives_midnight_same_anki_day(self):
+        """set_session_main_queue written under Anki-day D at 23:00 must still
+        be returned by get_session_main_queue at 02:00 (same Anki day D).
+        The cache key is anki_today(now), not date.today(), so a calendar
+        midnight crossing doesn't discard it until the 4 AM rollover.
+        """
+        from datetime import date as _date
+
+        from app.srs.anki_mirror.rollover import anki_today
+        from app.srs.database import SRSDatabase
+        from app.srs.queue_stats import get_session_main_queue, set_session_main_queue
+
+        db = SRSDatabase(":memory:")
+
+        # "now" = 23:00 on day D-1 → Anki day = D.
+        first_now = datetime(2026, 5, 7, 23, 0, tzinfo=UTC)
+        today_d = anki_today(first_now)
+        items_d = [(1001, "recognition"), (1002, "production")]
+        set_session_main_queue(db, today_d, items_d)
+
+        # "now" = 02:00 on day D → same Anki day D.
+        second_now = datetime(2026, 5, 8, 2, 0, tzinfo=UTC)
+        today_d_same = anki_today(second_now)
+        assert today_d_same == today_d, "same Anki day before rollover"
+
+        cached = get_session_main_queue(db, today_d_same)
+        assert cached == items_d, "session queue survives calendar midnight"
+
+        # Counter-case: using date.today() at 02:00 sees day D+1 → cache miss.
+        cache_miss = get_session_main_queue(db, _date(2026, 5, 8))
+        assert cache_miss is None, "calendar date.today() misses the cache (the pre-fix state)"
+
 
 class TestReadReviewsPerDayFromAnki:
     def test_reads_reviews_per_day_from_legacy_json(self):

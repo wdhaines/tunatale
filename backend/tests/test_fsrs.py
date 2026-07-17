@@ -128,6 +128,51 @@ class TestReviewScheduling:
         # Should not raise TypeError
         assert result.last_review.date() == past_date
 
+    def test_schedule_live_grade_in_midnight_window_uses_now(self):
+        """A live grade (default review_date) taken in the [midnight, 4 AM)
+        local window must stamp last_review = `now`, not a midnight-combine.
+
+        schedule()'s review_date default AND its "is this a live grade"
+        comparison both call anki_today(); if EITHER is reverted to
+        date.today(), the two clocks disagree inside the window (anki_today()
+        is still yesterday) and a live grade is misclassified as backdated.
+        The process TZ is shifted so the real wall clock sits at 02:xx local —
+        the actual window, no app internals patched (TZ idiom of
+        TestAnkiRolloverDayBoundary in test_srs_database.py).
+        """
+        import os
+        import time as _time
+
+        from app.srs.anki_mirror.rollover import anki_today
+
+        utc_now = datetime.now(tz=UTC)
+        # POSIX TZ offsets count WEST of UTC; pick the offset that puts local
+        # wall-clock at 02:xx. (Minutes carry over, so local stays inside
+        # [02:00, 04:00) even if the UTC hour ticks mid-test.)
+        west = (utc_now.hour - 2) % 24
+        if west > 12:
+            west -= 24
+        saved_tz = os.environ.get("TZ")
+        os.environ["TZ"] = f"TST{west:+d}"
+        _time.tzset()
+        try:
+            assert anki_today() == date.today() - timedelta(days=1), (
+                "precondition: inside [midnight, 4 AM) local the active Anki day is still yesterday"
+            )
+            item = _review_item()
+            now = datetime(2026, 5, 8, 2, 0, tzinfo=UTC)
+            result = schedule(item, Rating.GOOD, now=now)
+            assert result.last_review == now, (
+                "live grade in the [midnight, 4 AM) window must stamp last_review=now, "
+                "not a midnight-combine of a backdated review_date"
+            )
+        finally:
+            if saved_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = saved_tz
+            _time.tzset()
+
     def test_review_again_uses_integer_col_day_elapsed_LAYER_50(self):
         """REVIEW + AGAIN: grade-time R must use INTEGER col-day diff, NOT
         fractional days.
@@ -248,6 +293,7 @@ class TestReviewScheduling:
         from datetime import datetime as _dt
 
         from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index
+        from app.srs.anki_mirror.rollover import anki_today
         from app.srs.fsrs import (
             _forgetting_curve,
             _next_stability_recall,
@@ -271,8 +317,10 @@ class TestReviewScheduling:
 
         # Mirror schedule()'s internal last_review_dt derivation so the
         # expected value tracks the function under test regardless of when
-        # the test runs.
-        if grade_dt.date() == date.today():
+        # the test runs. Uses anki_today() (4 AM rollover) instead of
+        # date.today() so the mirror stays in sync with the implementation
+        # in the [midnight, 4 AM) window.
+        if grade_dt.date() == anki_today():
             ref_now_for_elapsed = grade_dt
         else:
             ref_now_for_elapsed = datetime.combine(grade_dt.date(), time(0, 0), tzinfo=UTC)

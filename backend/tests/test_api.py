@@ -2715,6 +2715,58 @@ class TestListenGradeEligible:
         assert _listen_grade_eligible(rec, today_start, today_end) is False
 
 
+class TestListenWindowUsesAnkiRollover:
+    """Regression (docs/master-cleanup-list-2026-07.md item 1): mark_lesson_listened's
+    grade-eligibility window must anchor on Anki's 4 AM local rollover, not local
+    midnight. A card graded late the previous evening is still within the SAME
+    active Anki day when `now` sits in [midnight, 4 AM) local — Anki's rollover
+    hasn't happened yet — so it must still block a same-Anki-day regrade.
+
+    The old local-midnight window (`date.today()` + `combine(time(0))`) would
+    wrongly treat that late-evening grade as "not today" once local midnight
+    passed, re-eligible-izing a card Anki still considers freshly graded.
+    """
+
+    def test_late_evening_grade_still_blocks_regrade_before_rollover(self):
+        from datetime import timedelta
+
+        from app.api.srs import _listen_grade_eligible
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
+
+        # "now" = 02:00 on day D — inside [midnight, 4 AM), before rollover.
+        # UTC stands in for "local" here (matching rollover.py's own test idiom
+        # of treating an aware tzinfo as the local zone under test).
+        now = datetime(2026, 5, 8, 2, 0, tzinfo=UTC)
+        # last_review = 23:00 the PRIOR evening — same active Anki day as `now`
+        # (Anki day D-1 spans [4 AM D-1, 4 AM D), and 23:00 D-1 falls inside it).
+        last_review = datetime(2026, 5, 7, 23, 0, tzinfo=UTC)
+
+        today = anki_today(now)
+        today_start, today_end = anki_day_bounds_utc_dt(today, now)
+
+        rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            due_at=today_start,
+            reps=5,
+            last_review=last_review,
+        )
+        assert _listen_grade_eligible(rec, today_start, today_end) is False, (
+            "a card graded late the prior evening is still 'today' by Anki's "
+            "4 AM rollover and must not be regraded before rollover"
+        )
+
+        # Sanity check: the OLD local-midnight window would have excluded
+        # last_review (23:00 the calendar day before `now`'s calendar day) and
+        # wrongly marked the card eligible — confirms this scenario actually
+        # distinguishes the two conventions, so a revert would flip the
+        # assertion above.
+        old_today_start = datetime(2026, 5, 8, 0, 0, tzinfo=UTC)
+        old_today_end = old_today_start + timedelta(days=1)
+        assert _listen_grade_eligible(rec, old_today_start, old_today_end) is True
+
+
 class TestQueueStatsEndpoint:
     """Tests for GET /api/srs/queue-stats."""
 
@@ -4926,3 +4978,43 @@ class TestLessonReviewQueue:
         resp = await self._get_queue()
 
         assert resp.json()["queue"] == []
+
+
+class TestReviewQueueTouchedTodayUsesAnkiRollover:
+    """Regression (docs/master-cleanup-list-2026-07.md item 1): the lesson
+    review-queue's "touched today" REVIEW bucketing (get_lesson_review_queue's
+    `_classify`) must use the same Anki-day-rollover window as
+    mark_lesson_listened's grade-eligibility check, not local midnight.
+
+    `_classify` is a route-local closure, so this test mirrors its exact
+    comparison (`today_start <= lr.astimezone(UTC) < today_end`) against the
+    window the shared rollover helper produces — the same technique
+    test_fsrs.py's Layer-50 tests use to track internal derivation logic.
+    """
+
+    def test_late_evening_review_buckets_as_touched_before_rollover(self):
+        from datetime import timedelta
+
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
+
+        # "now" = 02:00 on day D — inside [midnight, 4 AM), before rollover.
+        now = datetime(2026, 5, 8, 2, 0, tzinfo=UTC)
+        # Reviewed at 23:00 the prior evening — same active Anki day as `now`.
+        last_review = datetime(2026, 5, 7, 23, 0, tzinfo=UTC)
+
+        today = anki_today(now)
+        today_start, today_end = anki_day_bounds_utc_dt(today, now)
+
+        touched_today = today_start <= last_review.astimezone(UTC) < today_end
+        assert touched_today is True, (
+            "a review graded late the prior evening is still 'today' by "
+            "Anki's 4 AM rollover and must bucket as touched-today"
+        )
+
+        # Sanity: the OLD local-midnight window would have excluded this
+        # last_review, proving the scenario actually distinguishes the two
+        # conventions (a revert to date.today()-keyed midnight flips this).
+        old_today_start = datetime(2026, 5, 8, 0, 0, tzinfo=UTC)
+        old_today_end = old_today_start + timedelta(days=1)
+        old_touched_today = old_today_start <= last_review.astimezone(UTC) < old_today_end
+        assert old_touched_today is False

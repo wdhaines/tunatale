@@ -28,6 +28,7 @@ from app.srs.anki_mirror.queue_stats import (
     resolve_new_spread,
     set_session_main_queue,
 )
+from app.srs.anki_mirror.rollover import anki_today
 from app.srs.fsrs import compute_retrievability
 
 _FNV_OFFSET_BASIS_64 = 0xCBF29CE484222325
@@ -198,7 +199,11 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     apply the cache reconciliation, the learning cards, or the collapse hack —
     those live in the route handler where the response is shaped.
     """
-    today = datetime.date.today()
+    # Anki-day rollover, not local midnight: this keys the daily unbury sweep
+    # below (db.unbury_if_needed) and every today-scoped count that follows.
+    # date.today() would fire the sweep and reset the intro/review budgets up
+    # to 4 hours early, in the [midnight, 4 AM) local window.
+    today = anki_today()
 
     db.unbury_if_needed(today)
 
@@ -313,7 +318,10 @@ def build_and_freeze_main_queue(db) -> None:
     first /review-queue request after sync — which can be much later, with a
     different pool state, causing drift on the very-first-new-card position.
     """
-    today = datetime.date.today()
+    # Anki-day rollover, not local midnight — this is the frozen-queue cache
+    # key (session_main_queue is keyed by today.isoformat()); date.today()
+    # would discard the freeze at local midnight instead of at rollover.
+    today = anki_today()
     live_main = _compute_live_main(db)
     set_session_main_queue(db, today, [(t[0], t[3].value) for t in live_main])
 
@@ -328,7 +336,10 @@ def assemble_review_queue(db, *, session_start: bool) -> list[tuple[int, SRSItem
     NEW-latecomer tail-append, counts.all_zero auto-bump (Layer 36 trigger 4),
     and the learning collapse swap.
     """
-    today = datetime.date.today()
+    # Anki-day rollover, not local midnight — must match build_and_freeze_main_queue's
+    # cache key (read below via get_session_main_queue) so the frozen queue survives
+    # until rollover rather than being discarded early at local midnight.
+    today = anki_today()
     now = datetime.datetime.now(datetime.UTC)
 
     if session_start:

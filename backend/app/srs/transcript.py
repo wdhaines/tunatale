@@ -8,6 +8,7 @@ from datetime import date
 from app.languages import card_surface_variants, get_variant_separator
 from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
+from app.srs.anki_mirror.rollover import anki_today
 from app.srs.collocation_matcher import match_spans
 from app.srs.database import SRSDatabase
 from app.srs.function_words import is_a1_morphology_feature, is_clozes_only_verb, ud_feats_to_tt_feature
@@ -248,7 +249,11 @@ def extract_transcript(
     progress, inflectable, inflection_feature).
     """
     if today is None:
-        today = date.today()
+        # Anki-day rollover, not local midnight — feeds _is_due's `due_at.date()
+        # <= today` comparison. date.today() would bold a card as due up to a
+        # day early in the [midnight, 4 AM) local window (the documented
+        # is_due bolding divergence).
+        today = anki_today()
 
     natural_speed = next(
         (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),

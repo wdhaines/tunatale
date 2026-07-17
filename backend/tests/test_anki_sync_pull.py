@@ -888,6 +888,13 @@ class TestSyncPull:
         state but Anki's first revlog for that card is today, infer the
         NEW→graded transition happened today and set prior_state='new'. Without
         this, the new-card badge stays stuck for the rest of the day.
+
+        The "today" window is anchored on Anki's 4 AM rollover (not local
+        midnight), so `_compute_today_start_ms` now routes through
+        `anki_day_bounds_utc_dt` / `anki_today`. The `first_review_ms` below
+        is computed from the same Anki-day boundary so the self-heal fires
+        regardless of when the test runs (CI is UTC and may enter the
+        [00:00, 04:00) window where calendar midnight and Anki day differ).
         """
         db = _make_tt_db()
         guid = _add_banka(db)
@@ -909,10 +916,14 @@ class TestSyncPull:
         db.update_direction(guid, Direction.RECOGNITION, ds)
 
         # Anki record with same state but a first revlog from today.
-        today_local_midnight_ms = int(
-            _dt.combine(date.today(), _time(0), tzinfo=_dt.now().astimezone().tzinfo).astimezone(UTC).timestamp() * 1000
-        )
-        first_revlog_today = today_local_midnight_ms + 60_000  # 1m past midnight local
+        # Previously pinned local midnight + 1m (`date.today() + time(0)`).
+        # Now pinned against Anki's 4 AM rollover boundary: the first_review_ms
+        # is set to the Anki-day start + 1 minute, deterministically inside the
+        # same Anki day regardless of where calendar midnight falls.
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
+
+        today_start_dt, _ = anki_day_bounds_utc_dt(anki_today())
+        first_revlog_today = int(today_start_dt.timestamp() * 1000) + 60_000
         card = make_card_record(
             anki_card_id=90010,
             ord=0,
@@ -957,9 +968,9 @@ class TestSyncPull:
         )
         db.update_direction(guid, Direction.RECOGNITION, ds)
 
-        today_local_midnight_ms = int(
-            _dt.combine(date.today(), _time(0), tzinfo=_dt.now().astimezone().tzinfo).astimezone(UTC).timestamp() * 1000
-        )
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
+
+        today_start_dt, _ = anki_day_bounds_utc_dt(anki_today())
         card = make_card_record(
             anki_card_id=90010,
             ord=0,
@@ -970,7 +981,7 @@ class TestSyncPull:
             stability=2.0,
             difficulty=5.0,
             last_review=_dt.now(UTC) - timedelta(hours=1),
-            first_review_ms=today_local_midnight_ms + 3_600_000,  # 1h after midnight
+            first_review_ms=int(today_start_dt.timestamp() * 1000) + 3_600_000,  # 1h after Anki-day start
         )
         records = [make_note_record(anki_guid=guid, cards=[card])]
         AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()

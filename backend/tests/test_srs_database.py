@@ -1316,6 +1316,49 @@ class TestUnburyIfNeeded:
         assert cached is not None
         assert cached[0] == today.isoformat()
 
+    def test_unbury_idempotent_across_midnight_same_anki_day(self, srs_db):
+        """unbury_if_needed(anki_today(now)) keyed on the Anki-day date is
+        idempotent across local midnight. A call at 23:00 (Anki day D) sets
+        last_unbury_day=D; a call at 02:00 the same Anki day (D, because 4 AM
+        rollover hasn't hit yet) must return 0 and touch nothing.
+
+        The pre-fix bug: using date.today() at 02:00 would see calendar day D+1,
+        missing the cache and re-firing the sweep.
+        """
+        from app.srs.anki_mirror.rollover import anki_today
+
+        # "now" = 23:00 on day D-1 — sets cached day to Anki day D.
+        first_now = datetime(2026, 5, 7, 23, 0, tzinfo=UTC)
+        today_d = anki_today(first_now)
+
+        srs_db.add_collocation(_unit("midnight_crossing", "x"), language_code="sl")
+        self._bury_direction(srs_db, "midnight_crossing", Direction.RECOGNITION, reps=2)
+
+        first_count = srs_db.unbury_if_needed(today_d)
+        assert first_count == 1
+
+        # Re-bury for the second call scenario.
+        self._bury_direction(srs_db, "midnight_crossing", Direction.RECOGNITION, reps=2)
+
+        # "now" = 02:00 on day D — SAME Anki day D (before 4 AM rollover).
+        second_now = datetime(2026, 5, 8, 2, 0, tzinfo=UTC)
+        today_d_same = anki_today(second_now)
+        assert today_d_same == today_d, "same Anki day before rollover"
+
+        second_count = srs_db.unbury_if_needed(today_d_same)
+        assert second_count == 0, "must be idempotent within the same Anki day"
+
+        # Sanity: the buried row was NOT released (today's bury is preserved).
+        item = srs_db.get_collocation("midnight_crossing")
+        assert item.directions[Direction.RECOGNITION].state == SRSState.BURIED
+
+        # Counter-case: using calendar date.today() would see a DIFFERENT day
+        # at 02:00 and re-fire the sweep.
+        srs_db.delete_anki_state_cache("last_unbury_day")
+        calendar_today_d_plus_1 = date(2026, 5, 8)
+        refire_count = srs_db.unbury_if_needed(calendar_today_d_plus_1)
+        assert refire_count == 1, "calendar flip re-fires the sweep (the pre-fix bug)"
+
 
 class TestReviewedToday:
     """Tests for list_collocations_reviewed_today."""

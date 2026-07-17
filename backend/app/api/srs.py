@@ -35,7 +35,7 @@ from app.languages import get_tts_voice, known_language_codes
 from app.llm.translate import generate_word_gloss, translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
-from app.srs.anki_mirror.rollover import due_at_rollover_utc
+from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today, due_at_rollover_utc
 from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, build_revlog_row, schedule
 from app.srs.function_words import (
@@ -230,7 +230,7 @@ async def _generate_add_time_media(
 @router.get("/due", status_code=200)
 async def get_due_collocations(request: Request, direction: str = "recognition"):
     db = request.state.srs_db
-    today = datetime.date.today()
+    today = anki_today()
     if direction == "any":
         rec = db.get_due_items(today, Direction.RECOGNITION)
         prod = db.get_due_items(today, Direction.PRODUCTION)
@@ -533,11 +533,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     lemma_to_first_surface = words.first_surface
     surface_to_upos = words.surface_upos
 
-    # ── Today window (mirrors count_new_introduced_today convention) ────
-    local_tz = datetime.datetime.now().astimezone().tzinfo
-    today = datetime.date.today()
-    today_start = datetime.datetime.combine(today, datetime.time(0), tzinfo=local_tz).astimezone(datetime.UTC)
-    today_end = today_start + datetime.timedelta(days=1)
+    # ── Today window (Anki-day rollover, matches count_new_introduced_today's
+    # convention via the shared rollover helper — NOT local midnight; a card
+    # graded in [midnight, 4 AM) is still "today" for Anki until rollover) ────
+    today = anki_today()
+    today_start, today_end = anki_day_bounds_utc_dt(today)
 
     created_count = 0
     graded_count = 0
@@ -847,10 +847,10 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
 
     words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
 
-    local_tz = datetime.datetime.now().astimezone().tzinfo
-    today = datetime.date.today()
-    today_start = datetime.datetime.combine(today, datetime.time(0), tzinfo=local_tz).astimezone(datetime.UTC)
-    today_end = today_start + datetime.timedelta(days=1)
+    # Anki-day rollover window (NOT local midnight) — same convention as
+    # mark_lesson_listened's _listen_grade_eligible window, via the shared helper.
+    today = anki_today()
+    today_start, today_end = anki_day_bounds_utc_dt(today)
     now = datetime.datetime.now(datetime.UTC)
 
     seen: set[int] = set()
@@ -922,15 +922,16 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
 
 @router.get("/lesson/{lesson_id}/transcript", status_code=200)
 async def get_lesson_transcript(lesson_id: str, request: Request):
-    from datetime import date
-
     store = request.state.content_store
     lesson = store.get_lesson(lesson_id)
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
 
     db = request.state.srs_db
-    today = date.today()
+    # Anki-day rollover, not local midnight — feeds extract_transcript's is_due
+    # bolding (verdict item 5): a card due "tomorrow" by real calendar date but
+    # not yet due by Anki's still-active prior day must not bold early.
+    today = anki_today()
     # extract_transcript runs the (classla) lemmatizer synchronously and can take
     # seconds — especially right after restart before the warm-up finishes. Offload it
     # to a worker thread so it doesn't block the event loop and stall every other
@@ -1055,7 +1056,7 @@ async def backfill_translations(request: Request):
 @router.get("/stats", status_code=200)
 async def get_stats(request: Request):
     db = request.state.srs_db
-    today = datetime.date.today()
+    today = anki_today()
     return {"total": db.count_collocations(), "due_today": db.count_due_collocations(today)}
 
 
@@ -1065,7 +1066,7 @@ async def get_queue_stats(request: Request, response: Response):
     # served from heuristic disk cache and the badges go stale.
     response.headers["Cache-Control"] = "no-store"
     db = request.state.srs_db
-    today = datetime.date.today()
+    today = anki_today()
     db.unbury_if_needed(today)
     new_cap, new_cap_source = resolve_daily_new_cap(db)
     _, fsrs_source = resolve_fsrs_params(db)
@@ -1419,7 +1420,7 @@ async def set_item_state(item_id: int, body: SetStateRequest, request: Request):
         params, _ = resolve_fsrs_params(db)
         dr = params.desired_retention
         stability = stability_for_interval(max_ivl, dr)
-        due_date = datetime.date.today() + timedelta(days=max_ivl)
+        due_date = anki_today() + timedelta(days=max_ivl)
         due_at = due_at_rollover_utc(due_date)
         db.mark_known(item_id, due_at=due_at, stability=stability)
     else:

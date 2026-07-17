@@ -47,8 +47,11 @@ def local_today_rollover(now: datetime | None = None) -> datetime:
     return _most_recent_rollover(now.date(), now, now.tzinfo)
 
 
-def anki_day_bounds_utc(today: date, now: datetime | None = None) -> tuple[str, str]:
-    """Return the UTC [start, end) ISO bounds of the Anki day anchored on `today`.
+def anki_day_bounds_utc_dt(today: date, now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Return the UTC-aware [start, end) `datetime` bounds of the Anki day
+    anchored on `today` — the same arithmetic as `anki_day_bounds_utc`, but as
+    `datetime` objects for callers doing direct datetime comparison (e.g.
+    `today_start <= lr < today_end`) instead of SQL text-range queries.
 
     The window runs from `ANKI_ROLLOVER_HOUR` local on `today` to the same hour
     the next day. When the wall-clock `now` is *before* today's rollover, the
@@ -61,7 +64,19 @@ def anki_day_bounds_utc(today: date, now: datetime | None = None) -> tuple[str, 
     local_tz = datetime.now().astimezone().tzinfo
     now = (now or datetime.now(local_tz)).astimezone(local_tz)
     day_start = _most_recent_rollover(today, now, local_tz)
-    return day_start.astimezone(UTC).isoformat(), (day_start + timedelta(days=1)).astimezone(UTC).isoformat()
+    start_utc = day_start.astimezone(UTC)
+    return start_utc, start_utc + timedelta(days=1)
+
+
+def anki_day_bounds_utc(today: date, now: datetime | None = None) -> tuple[str, str]:
+    """Return the UTC [start, end) ISO bounds of the Anki day anchored on `today`.
+
+    Thin ISO-string wrapper around `anki_day_bounds_utc_dt` — see there for the
+    shared arithmetic and rationale (single-sourced so a future rollover-hour
+    change lands once, not once per return-shape).
+    """
+    start, end = anki_day_bounds_utc_dt(today, now)
+    return start.isoformat(), end.isoformat()
 
 
 def anki_today(now: datetime | None = None) -> date:
