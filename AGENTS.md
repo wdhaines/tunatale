@@ -73,6 +73,7 @@ All commands use `uv run` (no manual venv activation). Never commit `.env`. Groq
 - **No module-level side effects** — config via Pydantic Settings in `app/config.py`
 - **Anki safety**: hard invariants in `.claude/rules/anki-safety-core.md` (always loaded for Claude Code; other agents read it before any Anki/SRS work); full protocol in `.claude/rules/anki-sync.md`
 - **Cloze items**: set `card_type="cloze"` on the `SyntacticUnit`; PRODUCTION direction only; sync via `OfflineWriter.create_cloze_note()` against Anki's built-in Cloze notetype
+- **Doc citations**: cite code as `module.py::symbol` (symbol-anchored), not bare `file:line` — line numbers rot in weeks; symbols survive refactors.
 
 ## Instruction Files (path-scoped, lazy-loaded)
 

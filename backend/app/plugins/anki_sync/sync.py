@@ -1,8 +1,8 @@
-"""Bidirectional sync between TunaTale and Anki.
+"""Sync facade + runner — the single sync sequence ``run_full_sync``.
 
-S3.4: sync_pull (Anki → TunaTale).
-S3.5: sync_push (TunaTale → Anki).
-S3.6: --force-fsrs gate + setSpecificValueOfCard.
+Engine/reader/writer/common split per the 2026-06-11 refactor.  Exports stable
+re-export surface for tests and archive scripts; internal code imports the
+leaf modules directly.
 """
 
 from __future__ import annotations
@@ -20,9 +20,6 @@ from app.cards.media.vocab_media import store_tt_media as _store_tt_media  # noq
 # archive scripts import these names from app.plugins.anki_sync.sync). The redundant `X as X`
 # form marks them as explicit re-exports so ruff's F401 autofix never strips one
 # whose last in-module use moves out in a later split commit.
-from app.plugins.anki_sync.sync_common import (
-    _FSRS_REPLAY_TOLERANCE as _FSRS_REPLAY_TOLERANCE,
-)
 from app.plugins.anki_sync.sync_common import (
     KNOWN_ANKI_SCHEMA_VER as KNOWN_ANKI_SCHEMA_VER,
 )
@@ -51,13 +48,7 @@ from app.plugins.anki_sync.sync_common import (
     RecomputeDivergence as RecomputeDivergence,
 )
 from app.plugins.anki_sync.sync_common import (
-    SyncConflict as SyncConflict,
-)
-from app.plugins.anki_sync.sync_common import (
     _local_today_4am as _local_today_4am,
-)
-from app.plugins.anki_sync.sync_common import (
-    _ms_to_datetime as _ms_to_datetime,
 )
 from app.plugins.anki_sync.sync_common import (
     build_cloze_back_extra as build_cloze_back_extra,

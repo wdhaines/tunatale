@@ -1,4 +1,4 @@
-"""AnkiConnect model-name discovery with file-based cache."""
+"""Offline notetype-name discovery against the collection copy at sync time, with a cache in ``anki_state_cache``."""
 
 from __future__ import annotations
 
@@ -12,8 +12,7 @@ def get_or_discover_model_name_offline(conn: sqlite3.Connection, deck_name: str)
     """Return model name from the notetypes table, falling back to file cache.
 
     Reads the name of the notetype used by notes in `deck_name`.  Caches the
-    result in the same file as the online path so the two paths share the cache.
-    Returns '' when the deck doesn't exist or has no notes.
+    result.  Returns '' when the deck doesn't exist or has no notes.
     """
     if _CACHE_PATH.exists():
         cached = _CACHE_PATH.read_text().strip()
