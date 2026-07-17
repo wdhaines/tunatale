@@ -1,6 +1,6 @@
 # Master cleanup list — 2026-07-16
 
-Supersedes `docs/refactor-suggestions-2026-07.md` (its open items are absorbed
+Supersedes `docs/archive/refactor-suggestions-2026-07.md` (its open items are absorbed
 below; its fixed/ruled-out findings are recorded at the bottom so nobody
 re-investigates). Sources: critique of the 2026-07-09→16 commits, status
 verification of the ranked-architecture assessment (plan
@@ -55,7 +55,9 @@ never mechanical execution.
 
 ## Simplifications
 
-3. **`section_builder.py` scene-loop ×4.** The two functions added in
+3. ✅ FIXED (2026-07-17, 25a72ec — `_build_translated_phrases(en_first, slow)`
+   helper; test file unmodified as behavior lock).
+   **`section_builder.py` scene-loop ×4.** The two functions added in
    `eabfb4e` (`section_builder.py::build_en_translated_section` :312-356,
    `::build_slow_en_translated_section` :359-406) are near-verbatim copies of
    the pre-existing `build_translated_section`/`build_slow_translated_section`
@@ -64,7 +66,9 @@ never mechanical execution.
    parameterized helper. Well-tested area (`test_section_builder.py`).
    **Model: Big Pickle.**
 
-4. **`norwegian_breakdown.py` internal duplication** (was refactor-suggestions
+4. ✅ FIXED (2026-07-17, 25a72ec — `_strip_derivational_suffixes` +
+   `_build_syllable_inner` extracted; test file unmodified).
+   **`norwegian_breakdown.py` internal duplication** (was refactor-suggestions
    #1+#2, both still open at the file's new home
    `app/plugins/languages/no/norwegian_breakdown.py`): the
    derivational-suffix-strip loop at :265-274 vs :285-294, and the
@@ -83,22 +87,27 @@ never mechanical execution.
 
 ## Cleanups
 
-6. **Stale AnkiConnect-era docstrings** (was #4+#5):
+6. ✅ FIXED (2026-07-17, 5087188). **Stale AnkiConnect-era docstrings** (was #4+#5):
    `app/plugins/anki_sync/model_discovery.py:1,15-16` ("AnkiConnect
    model-name discovery", "cache shared with the online path" — no online
    path exists) and `app/plugins/anki_sync/sync.py:1-6` ("S3.6: --force-fsrs
    gate + setSpecificValueOfCard", removed 2026-06-30). **Model: Haiku.**
 
-7. **Trim `sync.py` facade re-exports** (was #8): `sync.py:24,54,60` re-export
+7. ✅ FIXED (2026-07-17, 5087188). **Trim `sync.py` facade re-exports** (was #8): `sync.py:24,54,60` re-export
    `_FSRS_REPLAY_TOLERANCE`, `SyncConflict`, `_ms_to_datetime`; zero external
    consumers import them via the facade. **Model: Haiku.**
 
-8. **Retire the `app/cards/notetype.py` shim** (was #7): 17-line back-compat
+8. ✅ FIXED (2026-07-17, 25a72ec). NOTE the premise was stale: archive
+   scripts were already repointed 2026-07-13; the real consumers were
+   `sync_writer.py` + 4 test files (8 sites), all moved to
+   `SLOVENE_VOCAB.name` / `list(SLOVENE_VOCAB.field_names)` direct use.
+   **Retire the `app/cards/notetype.py` shim** (was #7): 17-line back-compat
    module kept only for the archived one-shot migrations; repoint
    `scripts/anki_archive/*` at `vocab_notetype` directly and delete.
    **Model: Haiku.**
 
-9. **Guard against untracked scripts wired into the gate.**
+9. ✅ FIXED (2026-07-17, 5087188 — `test_gate_scripts_tracked.py`).
+   **Guard against untracked scripts wired into the gate.**
    `backend/scripts/.gitignore` is deny-by-default; `db6fcf7` wired
    `check_plugin_imports.py` into test.sh + CI while the script itself was
    still gitignored — fresh checkouts had a red gate until `9bc7278`
@@ -106,22 +115,26 @@ never mechanical execution.
    `scripts/*.py` referenced by `test.sh`/CI is in `git ls-files`.
    **Model: Haiku.**
 
-10. **Doc-citation convention** (was #9): add one line to AGENTS.md doc
+10. ✅ FIXED (2026-07-17, 5087188). **Doc-citation convention** (was #9): add one line to AGENTS.md doc
     conventions — cite `module::symbol`, not bare `file:line` (this sweep's
     most common rot class). **Model: Haiku (or by hand).**
 
 ## Test debt
 
-11. **Split `test_api.py` (4,928 lines).** It gained 757 pure-insertion lines
+11. ✅ FIXED (2026-07-17, 3e989f7 — 10 domain files; conservation-verified
+    pure move). **Split `test_api.py` (4,928 lines).** It gained 757 pure-insertion lines
     this week alone (879d377/7c6b0bf/321842a). Split by route domain; the new
     listens/lesson-queue tests get their own file. Mechanical moving, gate
     verifies. **Model: Big Pickle (moving tests, not writing them).**
 
-12. **Promote cross-test-file helper hubs into `tests/_helpers/`** (hamster #6):
+12. ✅ FIXED (2026-07-17, 3e989f7). **Promote cross-test-file helper hubs into `tests/_helpers/`** (hamster #6):
     `test_anki_sync_create_new.py` (4 consumers), `test_anki_sync_pull.py`
     (3), `test_anki_sync_push.py` (1). **Model: Big Pickle.**
 
-13. **`TestLessonReviewQueue` reaches into DB internals** — raw
+13. ✅ FIXED (2026-07-17, c797bd0 — `_set_dir` now
+    `get_collocation(text)` → mutate `DirectionState` →
+    `update_direction(guid)`; no new production API needed).
+    **`TestLessonReviewQueue` reaches into DB internals** — raw
     `UPDATE collocation_directions` via the private `db._get_conn()`
     (test_api.py:4595+, new in 321842a). Give it a public seam or use the
     directions mixin API. **Model: Sonnet (small API-design call).**

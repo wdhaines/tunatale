@@ -25,17 +25,20 @@ backend/
 │   ├── models/               # Pure domain models (no I/O)
 │   ├── llm/                  # Groq LLM client + cassette replay system
 │   ├── srs/                  # FSRS-5 + queue engine/stats + db_* mixins + lemmatizer/transcript
-│   ├── generation/           # Chat planner + story + section_builder + syllabify + norwegian_breakdown
+│   ├── generation/           # Chat planner + story + section_builder + generic syllabify engine
 │   ├── audio/                # TTS, pydub assembly, preprocessing
 │   ├── storage/              # ContentStore SQLite repository
 │   ├── media/                # In-app media import (refresh Anki media into TT cache)
-│   ├── anki/                 # Direct sqlite access to collection.anki2 (safety/sync/media)
-│   │   └── media/            # Forvo + EdgeTTS fallback + Pixabay + ffmpeg normalize
-│   └── api/                  # FastAPI route modules (56 endpoints, 8 routers)
+│   ├── cards/                # Vocab notetypes + media-fetch pipeline (Forvo/EdgeTTS/Pixabay/ffmpeg)
+│   ├── plugins/
+│   │   ├── anki_sync/        # Optional: safe_open envelope + offline-first sync to collection.anki2
+│   │   └── languages/        # Per-language plugins (sl/, no/): Language, preprocessor, syllabifier,
+│   │                         #   function words, compound breakdown — core never imports these directly
+│   └── api/                  # FastAPI route modules (~63 endpoints, 9 routers)
 └── tests/
     ├── conftest.py           # Cassette + DB + ASGI fixtures
     ├── cassettes/            # Recorded LLM responses (JSON)
-    └── test_*.py             # 139 test files, ~3700 tests, 100% coverage (enforced)
+    └── test_*.py             # 151 test files, ~4100 tests, 100% coverage (enforced)
 ```
 
 ---
@@ -540,14 +543,14 @@ cat -n backend/app/models/language.py
     75	        )
 ```
 
-**Key design decision:** The prototype hardcoded a `Language` enum with Tagalog/English/Spanish. Production replaces this with a data-driven `Language` dataclass. Adding a new language is just creating a new factory method — no enum changes, no code branching. The `tts_voice_map` dict maps roles (`narrator`, `female-1`, `female-2`, `male-1`, `male-2`, plus legacy `female`/`male`) to EdgeTTS voice names. The narrator slot is always English (it speaks the section titles and L1 translations), while the numbered roles let the multi-speaker dialogue assigned by the `section_builder` use distinct voices. Legacy `female`/`male` keys remain for backward compat with old curricula.
+**Key design decision:** The prototype hardcoded a `Language` enum with Tagalog/English/Spanish. Production replaces this with a data-driven `Language` dataclass. *(2026-07 update: the per-language factory methods shown above — `Language.slovene()`, `Language.norwegian()` — are gone; core `app/models/language.py` keeps only `english()`, and each language plugin under `app/plugins/languages/` constructs its own `Language` inline at registration. Adding a language is now creating a plugin package — see PART 30.1.)* Adding a new language means supplying this data — no enum changes, no code branching. The `tts_voice_map` dict maps roles (`narrator`, `female-1`, `female-2`, `male-1`, `male-2`, plus legacy `female`/`male`) to EdgeTTS voice names. The narrator slot is always English (it speaks the section titles and L1 translations), while the numbered roles let the multi-speaker dialogue assigned by the `section_builder` use distinct voices. Legacy `female`/`male` keys remain for backward compat with old curricula.
 
 Here's what a Language instance actually looks like:
 
 ```bash
 cd backend && uv run python -c "
-from app.models.language import Language
-sl = Language.slovene()
+from app.languages import get_language
+sl = get_language('sl')
 print(f\"code: {sl.code}\")
 print(f\"name: {sl.name}\")
 print(f\"native_name: {sl.native_name}\")
@@ -2315,6 +2318,8 @@ Errors raise `StoryGenerationError` with the bad JSON snippet for debugging.
 
 The `section_builder` module is the bridge between LLM creative output and the deterministic `Section`/`Phrase` structure the audio renderer expects. The LLM hands back a parsed dict of `key_phrases` (each with `phrase`/`translation`) and `scenes` (each with a `label` and a list of `lines`, where each line has a `speaker`/`text`/`translation`). The four builders below mechanically expand this into Pimsleur-shaped `Section`s.
 
+*(2026-07 note: this dump predates the language-plugin completion — `section_builder.py` now resolves per-language breakdown behavior through the registry (`get_breakdown`/`get_slow_word` from `app.languages`) instead of importing `app.generation.norwegian_breakdown`, which moved to `app/plugins/languages/no/norwegian_breakdown.py`. See PART 30.1; the section-building logic below is otherwise unchanged.)*
+
 ```bash
 cat -n backend/app/generation/section_builder.py
 ```
@@ -2655,6 +2660,8 @@ for phrase in ['dan', 'prosim', 'dober dan']:
 ### 5.5 Slovene Syllabification
 
 The breakdown algorithm needs to know where to split a word. For Slovene we use **onset maximization** — the longest consonant cluster that can legally start a Slovene syllable goes with the following vowel; the remainder closes the previous syllable. This is implemented as a small lookup table of valid onsets plus a left-to-right scan.
+
+*(2026-07 note: the dump below predates the plugin-owned-syllabifier refactor. `app/generation/syllabify.py` is now just the generic ~90-line engine — parameterized with `diphthongs` and `initial_only_onsets` for Norwegian — while the concrete `_VALID_ONSETS` tables and `syllabify_slovene_word`/`syllabify_norwegian_word` live in `app/plugins/languages/sl/syllabify.py` and `app/plugins/languages/no/syllabify.py`. See PART 30.1. The algorithm described here is unchanged.)*
 
 ```bash
 cat -n backend/app/generation/syllabify.py
@@ -4322,43 +4329,46 @@ The generation router is similarly slug-based. Lesson IDs are derived from the l
 
 ### 7.3 SRS API
 
-The SRS router is now the largest module in `app/api/` (~700 lines, 19 routes). The full surface:
+The SRS router is now the largest module in `app/api/` (~1,700 lines, 30 routes). The full surface:
 
 ```bash
 grep -nE "^@router\." backend/app/api/srs.py
 ```
 
 ```output
-227:@router.get("/due", status_code=200)
-244:@router.get("/new", status_code=200)
-255:@router.post("/items/{item_id}/direction/{direction}/feedback", status_code=200)
-316:@router.post("/items/{item_id}/direction/{direction}/undo", status_code=200)
-345:@router.get("/media/{filename}", status_code=200)
-376:@router.post("/listen", status_code=200)
-657:@router.get("/lesson/{lesson_id}/transcript", status_code=200)
-731:@router.post("/translate", status_code=200)
-747:@router.post("/translate-missing", status_code=200)
-779:@router.post("/backfill-translations", status_code=200)
-789:@router.get("/stats", status_code=200)
-796:@router.get("/queue-stats", status_code=200)
-883:@router.post("/items", status_code=201)
-985:@router.post("/items/base", status_code=200)
-1060:@router.get("/items", status_code=200)
-1086:@router.patch("/items/{item_id}", status_code=200)
-1099:@router.delete("/items/{item_id}", status_code=200)
-1108:@router.post("/items/bulk-delete", status_code=200)
-1115:@router.post("/items/{item_id}/reset", status_code=200)
-1125:@router.post("/items/{item_id}/state", status_code=200)
-1153:@router.post("/items/{item_id}/restore-known", status_code=200)
-1169:@router.post("/items/{item_id}/untrack", status_code=200)
-1181:@router.post("/items/{item_id}/suspend", status_code=200)
-1197:@router.post("/ignored-lemmas", status_code=200)
-1204:@router.delete("/ignored-lemmas", status_code=200)
-1249:@router.post("/inflection-clozes", status_code=200)
-1353:@router.get("/review-queue", status_code=200)
+230:@router.get("/due", status_code=200)
+247:@router.get("/new", status_code=200)
+258:@router.post("/items/{item_id}/direction/{direction}/feedback", status_code=200)
+319:@router.post("/items/{item_id}/direction/{direction}/undo", status_code=200)
+348:@router.get("/media/{filename}", status_code=200)
+498:@router.post("/listen", status_code=200)
+792:@router.get("/listens", status_code=200)
+798:@router.post("/listens/import", status_code=200)
+820:@router.get("/lesson/{lesson_id}/review-queue", status_code=200)
+923:@router.get("/lesson/{lesson_id}/transcript", status_code=200)
+997:@router.post("/translate", status_code=200)
+1013:@router.post("/translate-missing", status_code=200)
+1045:@router.post("/backfill-translations", status_code=200)
+1055:@router.get("/stats", status_code=200)
+1062:@router.get("/queue-stats", status_code=200)
+1149:@router.post("/items", status_code=201)
+1251:@router.post("/items/base", status_code=200)
+1326:@router.get("/items", status_code=200)
+1364:@router.patch("/items/{item_id}", status_code=200)
+1377:@router.delete("/items/{item_id}", status_code=200)
+1386:@router.post("/items/bulk-delete", status_code=200)
+1393:@router.post("/items/{item_id}/reset", status_code=200)
+1403:@router.post("/items/{item_id}/state", status_code=200)
+1431:@router.post("/items/{item_id}/restore-known", status_code=200)
+1447:@router.post("/items/{item_id}/untrack", status_code=200)
+1459:@router.post("/items/{item_id}/suspend", status_code=200)
+1475:@router.post("/ignored-lemmas", status_code=200)
+1482:@router.delete("/ignored-lemmas", status_code=200)
+1527:@router.post("/inflection-clozes", status_code=200)
+1631:@router.get("/review-queue", status_code=200)
 ```
 
-These cover four functional areas: **learner loop** (due/new/feedback), **per-word capture and transcript** (listen/transcript/translate-missing/backfill-translations/queue-stats/stats), **review queue and media** (review-queue, media/{filename}), and **admin CRUD** (items POST/GET/PATCH/DELETE/state/suspend/reset, items/bulk-delete).
+These cover four functional areas: **learner loop** (due/new/feedback), **per-word capture and transcript** (listen/listens/listens-import/transcript/translate-missing/backfill-translations/queue-stats/stats), **review queue and media** (review-queue, lesson/{id}/review-queue, media/{filename}), and **admin CRUD** (items POST/GET/PATCH/DELETE/state/suspend/reset, items/bulk-delete). The `listens` pair and the lesson-scoped review queue arrived with the 2026-07 listen/mastery arc (PART 30.2).
 
 #### Response shape — `_item_to_dict`
 
@@ -4467,7 +4477,9 @@ Three points worth noting:
 - `GET /queue-stats` — new + due breakdown using the cached daily-new-cap (so the UI can show "X new available, Y new used today, Z due"). Reads from `anki_state_cache.new_per_day` populated by the sync flow.
 
 **Per-word capture and content:**
-- `POST /listen` — hooks a finished lesson into SRS. Now reads `token_glosses` from `lesson.generation_metadata` (LingQ-style auto-gloss capture) so first-encounter translations are populated automatically rather than left blank. Tokenises the L2 NATURAL_SPEED text, lemmatises, upserts a per-lemma `SRSItem`. Also stores `source_sentence`, `source_lesson_id`, and `source_line_index` on each new item so the admin UI can show provenance. Optional `word_ratings` map lets the frontend pass per-word ratings; otherwise everything starts at GOOD.
+- `POST /listen` — hooks a finished lesson into SRS. Now reads `token_glosses` from `lesson.generation_metadata` (LingQ-style auto-gloss capture) so first-encounter translations are populated automatically rather than left blank. Tokenises the L2 NATURAL_SPEED text, lemmatises, upserts a per-lemma `SRSItem`. Also stores `source_sentence`, `source_lesson_id`, and `source_line_index` on each new item so the admin UI can show provenance. Optional `word_ratings` map lets the frontend pass per-word ratings; otherwise everything starts at GOOD. *(2026-07 update: creation is now staged and budget-capped — candidates are ranked and only created up to the remaining daily-new budget (`new_per_day` minus today's introduced + created), the rest returned as `remaining_candidates`; the call also appends a `lesson_listens` row. See PART 30.2.)*
+- `GET /listens` / `POST /listens/import` — read and bulk-import the server-backed per-lesson "listened" state (`lesson_listens` table, PART 30.2). The frontend's listened store is backed by these instead of localStorage.
+- `GET /lesson/{lesson_id}/review-queue` — read-only, lesson-scoped queue for the `/review?lesson=` "check your work" mode; never advances the global session cutoff.
 - `GET /lesson/{lesson_id}/transcript` — NATURAL_SPEED dialogue annotated with per-word `srs_state` for the colour-coded transcript view.
 - `POST /translate-missing` — bulk LLM-translate every collocation whose `translation` is empty. Used for cleanup after a `listen` registered words without glosses.
 - `POST /backfill-translations` — apply a stored `{lemma: gloss}` dict in one call (the bulk-edit path).
@@ -5860,7 +5872,9 @@ frontend/src/routes/
 
 The notable changes:
 
-- **`/review`** replaces the per-lesson `/practice` flow. It pulls from `/api/srs/review-queue`, which serves a unified queue blending due cards with a daily-capped slice of new ones (capped by the `new_per_day` value cached from Anki — see 12.6) and alternates direction per card. Each card shows L2 audio, image, English gloss, and optional grammar/note metadata; the user rates Again / Hard / Good / Easy. Media URLs come pre-populated in the queue payload (commit `52003c2`); `DrillCard` resets its revealed state between cards (commit `472b845`).
+- **`/review`** replaces the per-lesson `/practice` flow. It pulls from `/api/srs/review-queue`, which serves a unified queue blending due cards with a daily-capped slice of new ones (capped by the `new_per_day` value cached from Anki — see 12.6) and alternates direction per card. Each card shows L2 audio, image, English gloss, and optional grammar/note metadata; the user rates Again / Hard / Good / Easy. Media URLs come pre-populated in the queue payload (commit `52003c2`); `DrillCard` resets its revealed state between cards (commit `472b845`). *(2026-07: `/review?lesson=<id>&c=<curriculumId>` is a second, read-only mode fed by `/api/srs/lesson/{id}/review-queue` — a "check your work" pass over one lesson's words that never advances the global session cutoff; each drilled card also deep-links to its `/cards?focus=<id>` entry. PART 30.2–30.3.)*
+
+- **Server-backed listened state + mastery (2026-07, PART 30.2).** The per-lesson "listened" checkmark moved out of localStorage into the `lesson_listens` table, surfaced through `frontend/src/lib/stores/listened.svelte.ts` (`GET /api/srs/listens` on load, `POST /api/srs/listen` on mark). The lesson page shows a per-lesson mastery indicator (`lessonMastery()` in `lib/mastery.ts` — 25.2), and home-page progress reacts to the store via `$derived.by`.
 
 - **`/cards`** (originally `/admin/srs`) provides full CRUD over the SRS database: paginated table, search across text and translation, state filter, sortable columns, inline edit, single + bulk delete, reset schedule, suspend/unsuspend, force state, create new item.
 
@@ -5872,10 +5886,12 @@ The notable changes:
 |-----------|---------|
 | `CurriculumForm.svelte` | Topic + CEFR + days form on home page |
 | `DayPicker.svelte` | Day-list with progress badges per curriculum |
-| `AudioPlayer.svelte` | Section-aware audio player (full lesson + per-section) |
+| `LessonPlayer.svelte` | Phase-model lesson player, per-section cues (replaced `AudioPlayer.svelte` — PART 29.7) |
 | `Transcript.svelte` | Per-word colour-coded transcript (SRS state) |
-| `DrillCard.svelte` | Review card (used by `/review`); resets reveal state per card |
+| `DrillCard.svelte` | Review card (used by `/review`); resets reveal state per card; "Card details ↗" deep-link |
 | `Tooltip.svelte` | Reusable tooltip (used in Sync button gating) |
+
+(Illustrative subset — see the 2026-07 status note above; the full set of 18 includes `QueueStatsWidget`, `SyncButton`, `LanguageSelector`, `PlannerChat`, `ProposedBatch`, `LlmActivityLog`, `PipelineCard`, `ImageEditModal`, and friends.)
 
 Each component has a sibling `*.test.ts` Vitest spec. The vitest coverage thresholds were tuned for Opus 4.7 in commit `dfb24c9`.
 
@@ -5893,7 +5909,7 @@ Run with `./test.sh`, which chains ruff lint, pytest, vitest, and Playwright.
 
 ## PART 14: Updated Settings & Migrations
 
-> **2026-07 status.** The migration chain described here ends at v19; the schema is at **v36** today. Notable later migrations: v27 shadow columns (added) → v32 (dropped, Stage 3b decommission), **v35** — the `CHECK` constraints on `prior_state`/`bury_kind` driven by the field registry `app/srs/direction_fields.py` (PART 29.5), v36 current.
+> **2026-07 status.** The migration chain described here ends at v19; the schema is at **v38** today (`app/srs/migrations.py: CURRENT_VERSION`). Notable later migrations: v27 shadow columns (added) → v32 (dropped, Stage 3b decommission), **v35** — the `CHECK` constraints on `prior_state`/`bury_kind` driven by the field registry `app/srs/direction_fields.py` (PART 29.5), **v38** — the `lesson_listens` table backing the server-side "listened" state (PART 30.2).
 
 `app/config.py` gained an Anki/media block. Here's the full settings object as it stands now:
 
@@ -6016,9 +6032,9 @@ cat -n backend/app/config.py
 
 Most of the new fields are paths to the user's Anki install (`anki_collection_path`, `anki_media_path`, `anki_backup_dir`) plus three optional API keys (`forvo_api_key` is unused — Forvo's web scraper doesn't need one — but `pixabay_api_key` and `groq_api_key` are required if you want media or recording-mode cassettes). `anki_new_per_day_default` is the fallback when no value is in the cache and no deck_config protobuf is parseable.
 
-### 14.1 SRS Schema Migrations (v1 → v8)
+### 14.1 SRS Schema Migrations (v1 → v19; v38 today)
 
-`app/srs/migrations.py` runs every pending migration in dependency order, each in its own transaction. The current migrations:
+`app/srs/migrations.py` runs every pending migration in dependency order, each in its own transaction. The table below documents the chain through v19 as originally written; the chain has since reached **v38** (see the PART 14 status note above for the notable later entries — the full list is in `migrations.py` itself). The migrations through v19:
 
 | Version | Adds |
 |---------|------|
@@ -6220,8 +6236,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 Notable details:
 
 - **Lemma-keyed registration.** The natural-speed phrases are tokenized via `app.srs.tokenizer.tokenize` then lemmatized through `app.srs.lemmatizer.Lemmatizer.lemmatize` (a thin wrapper over a hand-curated dictionary). The lemma is what gets stored as `collocations.text`, so subsequent listens of the same lesson hit the existing row (`unique_lemmas` dedup is per-call; `db.add_collocation` ON CONFLICT DO NOTHING dedups across calls).
-- **Cloze branching.** When `enable_cloze_cards` is on (DB-backed flag, default OFF) and the language is Slovene, function words go through the cloze path: `card_type="cloze"`, `source_sentence` captured from the first natural-speed phrase containing the surface. Everything else gets `card_type="vocab"`. See PART 15.5 below for the cloze pipeline.
+- **Cloze branching.** *(As shipped in Phase F this sat behind an `enable_cloze_cards` flag and a Slovene-only gate; both are long gone — PART 23.1.)* Cloze cards are always on for every language; whether a word actually takes the cloze path is capability-driven per language (`is_function_word_for` / clozes-only-verb checks in `app/srs/function_words.py`, keyed off each plugin's function-word data). Cloze rows get `card_type="cloze"` with `source_sentence` captured from the first natural-speed phrase containing the surface; everything else gets `card_type="vocab"`. See PART 15.5 below for the cloze pipeline.
 - **Auto-grade.** Every registered lemma gets a `Rating.GOOD` grade immediately — the user already heard it, so the FSRS state advances on first listen rather than waiting for a manual review.
+- **Budget-capped creation (2026-07, PART 30.2).** New-item creation is staged: candidates are ranked (`_rank_listen_candidates`) and only created up to the remaining Anki-day budget (`new_per_day` minus new cards already introduced or created today); the overflow is reported back as `remaining_candidates` instead of being silently created. The call also records the listen itself (`db.record_listen` → `lesson_listens`), and the response now returns `{status, registered, created, graded, remaining_candidates, listen_count}`.
 - **Key phrases are preserved verbatim** (`kp.phrase` is the original surface form, not lemmatized). Their `translation` is already known from the curriculum, so it survives the `idempotent` guard at line 276 even on re-listen.
 
 ### 15.3 The Transcript Component (Phase D)
@@ -6292,7 +6309,7 @@ Below the dialogue lines, an `Add phrase…` collapsed section accepts free-form
 
 ### 15.5 Function-Word Cloze Cards (Phase F)
 
-The cloze spike (`feat(srs): Phase F` — commit `1006f49`) wires `/listen` to also create **Anki Cloze notes** for Slovene function words detected in NATURAL_SPEED phrases. It's behind a feature flag (`enable_cloze_cards`, set via `PUT /api/srs/settings/cloze` and surfaced as a checkbox on `/admin/srs`).
+The cloze spike (`feat(srs): Phase F` — commit `1006f49`) wires `/listen` to also create **Anki Cloze notes** for Slovene function words detected in NATURAL_SPEED phrases. As shipped it sat behind a feature flag (`enable_cloze_cards`, set via `PUT /api/srs/settings/cloze`); *the flag, its two endpoints, and the Slovene-only gate were all deleted when cloze went always-on — PART 23.1 is the current state; per-language function-word data now lives in each plugin (`app/plugins/languages/{sl,no}/data/function_words.json`).*
 
 The pipeline:
 
@@ -6302,7 +6319,7 @@ The pipeline:
 4. **Anki note creation.** `OfflineWriter.create_cloze_note` (`backend/app/plugins/anki_sync/sync.py:485`) targets Anki's built-in **Cloze** notetype (looked up by `name='Cloze'` in `notetypes`). The fields are `Text` (the cloze-wrapped sentence) and `Back Extra` (left empty). GUID is computed from the cloze-wrapped text + language code via `compute_guid` so duplicate detection works the same way as vocab notes. Each template's `cards.due` is allocated from `MAX(due)+1` over existing new cards.
 5. **Routing.** `sync_create_new` checks `item.syntactic_unit.card_type` and dispatches to `create_cloze_note` (cloze) or `create_note` (vocab). The dispatch is at `backend/app/plugins/anki_sync/sync.py:1449`.
 
-The flag default is OFF; turning it on only affects new function-word lemmas going forward. Existing rows aren't backfilled — they stay as `vocab` cards.
+Under the original flag, existing rows weren't backfilled when it flipped on — they stayed `vocab` cards. (Moot since PART 23 made cloze unconditional.)
 
 ### 15.6 Recency-Prioritized New Queue (Phase C)
 
@@ -6319,13 +6336,16 @@ Phase C threads recency through both the gather query and the sync_create_new al
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/api/srs/listen` | Mark lesson listened; auto-add words; auto-grade GOOD |
+| POST | `/api/srs/listen` | Mark lesson listened; auto-add words (budget-capped); auto-grade GOOD; record `lesson_listens` row |
+| GET | `/api/srs/listens` | Server-backed listened state for all lessons (PART 30.2) |
+| POST | `/api/srs/listens/import` | Bulk-import listened state (localStorage migration) |
+| GET | `/api/srs/lesson/{id}/review-queue` | Read-only lesson-scoped queue (`/review?lesson=`) |
 | GET | `/api/srs/lesson/{id}/transcript` | Per-word state for the Transcript component |
 | POST | `/api/srs/translate` | LLM-translate a free-form selection (✨ button) |
 | POST | `/api/srs/items/{id}/state` | Cycle to `new/learning/known/ignored` |
 | POST | `/api/srs/items/{id}/untrack` | Delete (never-synced) or suspend (synced) |
-| GET | `/api/srs/settings/cloze` | Read cloze flag |
-| PUT | `/api/srs/settings/cloze` | Toggle cloze flag |
+
+(The `GET`/`PUT /api/srs/settings/cloze` pair that used to close this table is gone — the cloze flag was deleted, PART 23.)
 
 ---
 
@@ -6670,7 +6690,7 @@ Cloze cards (introduced in PART 15.5) target Anki's built-in Cloze notetype with
 
 ### 20.1 Cloze Text And Function-Word Detection
 
-`make_cloze_text(sentence, target_word)` in `app/srs/function_words.py` wraps the target with Anki's `{{c1::word}}` syntax. The frontend rendering uses Unicode-aware lookarounds to mask the word — ASCII-only `\b` doesn't match around š/č/ž. `is_function_word(word, language)` keys off per-language JSON data (`app/srs/data/function_words/sl.json`, plus `no.json` for Norwegian); the `/listen` endpoint creates a cloze row for function-word matches (the feature flag mentioned below was later deleted — PART 23).
+`make_cloze_text(sentence, target_word)` in `app/srs/function_words.py` wraps the target with Anki's `{{c1::word}}` syntax. The frontend rendering uses Unicode-aware lookarounds to mask the word — ASCII-only `\b` doesn't match around š/č/ž. `is_function_word(word, language)` keys off per-language JSON data (now plugin-owned: `app/plugins/languages/sl/data/function_words.json`, plus the `no/` twin for Norwegian); the `/listen` endpoint creates a cloze row for function-word matches (the feature flag mentioned below was later deleted — PART 23).
 
 ### 20.2 TTS Audio (Sentence + Word)
 
@@ -7188,6 +7208,8 @@ cat -n frontend/src/lib/mastery.ts
 
 Lightness co-varies with progress (and due cards get an underline) as a red↔green colorblind hedge. Static states are off the ramp entirely: unknown is indigo, known/ignored are gray.
 
+*(2026-07 addition: `lib/mastery.ts` grew `lessonMastery()` — a lesson-level aggregate that dedupes the transcript by lemma, averages per-word progress (`ignored` excluded), and returns `{pct, counts: {new, learning, review, known}}`. It powers the mastery indicator on the lesson page. PART 30.2.)*
+
 ### 25.3 The Transcript Serializer Resolves the Active Card
 
 `extract_transcript` (`app/srs/transcript.py`) now enriches every `WordToken` with seven Phase-5 fields: `card_type`, `active_state`, `active_direction`, `is_due`, `progress`, `inflectable`, and `inflection_feature`. Resolution is **inflection-first**: an exact-surface inflection cloze wins over the base card, which wins over "unknown." The active direction follows the state machine:
@@ -7559,7 +7581,7 @@ The product gained a written identity. `README.md` is the pitch and the map; `do
 
 Two operational docs round it out: `docs/adding-a-language.md` (the plugin checklist — preprocessor, voice map, function-word list, lemmatizer) and `docs/anki-recovery.md` (disaster recovery for the user's primary Anki collection). `AGENTS.md` (this file, also `CLAUDE.md`) had its opening polished and absorbed the new-language and Anki-recovery pointers.
 
-The operational set has since grown: `docs/anki-parity-diagnostics.md` (every diagnostic snippet + the load-bearing-helper table), `docs/anki-mirror-audit.md` (the inspection-driven audit that found Layers 62–63), `docs/learning-modes.md` (the Review/Listen/Read/Generate/Produce mode map), `docs/language-plugin-hardening.md` (the registry + literal-gate rationale), `docs/curriculum-planning.md` (the chat planner), and `docs/archive/bp-brief-segmenter-homographs-overlap.md` (the Norwegian segmenter design).
+The operational set has since grown: `docs/anki-parity-diagnostics.md` (every diagnostic snippet + the load-bearing-helper table), `docs/anki-parity-layers.md` (the full layer-by-layer parity history cited throughout PARTs 16/26/29), `docs/anki-mirror-audit.md` (the inspection-driven audit that found Layers 62–63), `docs/learning-modes.md` (the Review/Listen/Read/Generate/Produce mode map), `docs/language-plugin-hardening.md` (the registry + literal-gate rationale), `docs/curriculum-planning.md` (the chat planner), and `docs/archive/bp-brief-segmenter-homographs-overlap.md` (the Norwegian segmenter design). Later additions: `docs/lesson-authoring.md`, `docs/image-quality.md`, `docs/offline-audio-plan.md` (the Opus + PWA/service-worker delivery plan), `docs/stage-3b-empirical-measurement.md`, `docs/ui-review-backlog.md`, and `docs/dependency-upgrade-2026-07.md` — plus transient per-branch working docs (`refactor-suggestions-*`, `master-cleanup-list-*`) that come and go.
 
 This is where a new contributor — human or agent — should start: the influence docs explain *why* the system is shaped the way the preceding parts describe.
 
@@ -7613,34 +7635,59 @@ wc -l backend/app/srs/database.py backend/app/srs/anki_mirror/queue_engine.py ba
 
 ### 29.3 The Language Registry & Norwegian
 
-Norwegian became the second wired language, and the wiring itself was hardened into a registry. `app/languages.py` holds one `LanguageConfig` per language — preprocessor, deck name, vocab notetype, lemmatizer engine, syllabifier, and the Norwegian-specific facets — and every consumer resolves through its accessors or the bundled `resolve_language_context(code, settings) → LanguageContext`. A CI-enforced gate (`backend/scripts/check_language_literals.py`) fails the build on any hardcoded language literal in `backend/app/**` outside the allowlisted plugin modules, so "add an `if code == 'no'` branch" is no longer a possible design. Details: `docs/language-plugin-hardening.md`, `docs/adding-a-language.md`.
+Norwegian became the second wired language, and the wiring itself was hardened into a registry — then (2026-07-12..14, PART 30.1) the registry's per-language *contents* moved out of core entirely. `app/languages.py` now holds only the `LanguageConfig` dataclass, `register()`/`discover()`, and the accessor functions (`get_language` / `get_preprocessor` / … / `resolve_language_context(code, settings) → LanguageContext`); each language's actual config lives in its plugin package, registered at import time by `app/plugins/languages/<code>/__init__.py`. `discover()` lazily walks `app.plugins.languages` via `pkgutil.iter_modules`, registers `en` directly in core (the one language core is allowed to know), and raises `RuntimeError` if no non-English plugin is installed. Two CI-enforced gates keep it honest: `backend/scripts/check_language_literals.py` fails the build on hardcoded language literals in `backend/app/**` outside allowlisted plugin modules, and `backend/scripts/check_plugin_imports.py` (AST-based) forbids core from importing concrete `app.plugins.*` modules. Details: `docs/language-plugin-hardening.md`, `docs/adding-a-language.md`.
+
+Here is the whole Norwegian registration — note `breakdown_fn`/`slow_word_fn`/`syllabifier_fn` are actual function references supplied by the plugin (they replaced the old `compound_word_breakdown=True` bool and `syllabifier="norwegian"` string), and the function-word list ships as plugin data:
 
 ```bash
-sed -n '91,101p' backend/app/languages.py
+sed -n '17,46p' backend/app/plugins/languages/no/__init__.py
 ```
 
 ```output
-    "no": LanguageConfig(
-        language=Language.norwegian(),
+register(
+    "no",
+    LanguageConfig(
+        language=Language(
+            code="no",
+            name="Norwegian",
+            native_name="norsk",
+            script="latin",
+            tts_voice_map={
+                "narrator": NARRATOR_VOICE,
+                "female-1": "nb-NO-PernilleNeural",
+                "female-2": "nb-NO-PernilleNeural",
+                "male-1": "nb-NO-FinnNeural",
+                "male-2": "nb-NO-FinnNeural",
+                "female": "nb-NO-PernilleNeural",
+                "male": "nb-NO-FinnNeural",
+            },
+        ),
         preprocessor_factory=NorwegianPreprocessor,
         deck_name="0. 6000 Most Frequent Norwegian Words [Part 1]",
         vocab_notetype=NORWEGIAN_VOCAB,
         lemmatizer_type="stanza",
-        compound_word_breakdown=True,
+        breakdown_fn=build_norwegian_breakdown,
+        slow_word_fn=slow_norwegian_word,
         variant_separator=",",
-        syllabifier="norwegian",
+        syllabifier_fn=syllabify_norwegian_word,
+        style_notes=_style_notes,
+        function_words_path=Path(__file__).parent / "data" / "function_words.json",
     ),
-}
+)
 ```
 
 Norwegian's empirical quirks: the deck is **recognition-only** (the direction model handles this structurally — directions are whatever rows exist), the lemmatizer is Stanza (classla silently no-ops on Norwegian), and card fronts can carry comma-separated spelling variants (`mot, imot`) split by `card_surface_variants`.
 
 ### 29.4 The Norwegian Compound Breakdown
 
-Norwegian is a compounding language, so the generic per-syllable backward buildup (PART 5's syllabifier) reads compounds wrong. `app/generation/norwegian_breakdown.py` (2026-07-07..10) segments a word into frequency-ranked free stems before building the Pimsleur steps — with a closed-class stem stoplist (so `sommer` never splits into `som`+`mer`), s-joint/geminate handling (`busstasjon` → segments `bus|stasjon` but *speaks* `buss, stasjon`), initial-only homograph guards, and preposition first-elements kept productive (`etterforskning` = `etter`+`forskning`). It dispatches through the registry flag `uses_compound_word_breakdown` in `section_builder.py`; the linguistic decisions (stoplist, golden splits) are human-confirmed by ear via the preview CLI. Design history: `docs/archive/bp-brief-segmenter-homographs-overlap.md`.
+Norwegian is a compounding language, so the generic per-syllable backward buildup (PART 5's syllabifier) reads compounds wrong. `app/plugins/languages/no/norwegian_breakdown.py` (2026-07-07..10; moved into the plugin with the rest of the Norwegian code, PART 30.1) segments a word into frequency-ranked free stems before building the Pimsleur steps — with a closed-class stem stoplist (so `sommer` never splits into `som`+`mer`), s-joint/geminate handling (`busstasjon` → segments `bus|stasjon` but *speaks* `buss, stasjon`), initial-only homograph guards, and preposition first-elements kept productive (`etterforskning` = `etter`+`forskning`). `section_builder.py` dispatches through the registry (`get_breakdown`/`get_slow_word`; `uses_compound_word_breakdown` is now just "did the plugin register a `breakdown_fn`"); the linguistic decisions (stoplist, golden splits) are human-confirmed by ear via the preview CLI (`python -m app.plugins.languages.no.breakdown_preview`, which also renders `<word>_breakdown.opus`/`<word>_slow.opus` — the block below calls the text report directly). Design history: `docs/archive/bp-brief-segmenter-homographs-overlap.md`.
 
 ```bash
-cd backend && uv run python -m app.generation.breakdown_preview etterforskningsteamet busstasjon sommer 2>&1 | head -14
+cd backend && uv run python -c "
+from app.plugins.languages.no.breakdown_preview import format_breakdown_preview
+for w in ['etterforskningsteamet', 'busstasjon', 'sommer']:
+    print(format_breakdown_preview(w))
+"
 ```
 
 ```output
@@ -7735,3 +7782,47 @@ grep -n "def derive_section_cues" backend/app/audio/render_service.py; grep -c "
 | `Language.slovene()` hardcoding, `settings.lemmatizer_type` singletons | `app/languages.py` registry + `LanguageContext` |
 | `/admin/srs` | `/cards` |
 | `AudioPlayer.svelte` | `LessonPlayer.svelte` |
+| `Language.slovene()` / `Language.norwegian()` factory methods | constructed inline in `app/plugins/languages/{sl,no}/__init__.py` (PART 30.1) |
+| Per-language onset tables in `app/generation/syllabify.py` | `app/plugins/languages/{sl,no}/syllabify.py` (generic engine stays in core) |
+| `app/generation/norwegian_breakdown.py`, `breakdown_preview` | `app/plugins/languages/no/` (PART 30.1) |
+| `app/srs/data/function_words/*.json` | `app/plugins/languages/*/data/function_words.json` |
+| `enable_cloze_cards` flag, `GET/PUT /api/srs/settings/cloze` | deleted — cloze always on (PART 23) |
+| localStorage "listened" state | `lesson_listens` table + `GET /api/srs/listens` (PART 30.2) |
+
+---
+
+## PART 30: Plugin Completion & the Listen/Mastery Loop
+
+*Added 2026-07-17.* Covers commits after PART 29 (2026-07-12..16 branch work, plus cleanup commits 2026-07-17): the language-plugin architecture reached its end state (core knows no concrete language), the listen-first loop evolved a server-backed "listened" store with budget-capped card creation, and the player gained an English-order cycle.
+
+### 30.1 Language Plugins Own Everything (and a Gate Enforces It)
+
+PART 29.3's registry hardening finished the job — per-language code left core entirely:
+
+- **Plugin-owned `Language` construction** (`ccd8f26`) — `Language.slovene()`/`Language.norwegian()` deleted; `app/models/language.py` keeps only `english()`. Each plugin constructs its `Language` inline at registration.
+- **Plugin-owned syllabifiers** (`715aa98`) — `app/generation/syllabify.py` is down to the ~90-line generic onset-maximization engine, now parameterized with `diphthongs` and `initial_only_onsets` (added for Norwegian: `ei/øy/au` diphthongs, `kn/gn/pn` initial-only onsets — `28bc115`). The concrete tables live in `app/plugins/languages/{sl,no}/syllabify.py`.
+- **Norwegian breakdown fully in-plugin** (`310e65a`) — `norwegian_breakdown.py`, `breakdown_preview.py`, `breakdown_audio.py` all under `app/plugins/languages/no/`, plus morphology-aware compound/onset split fixes (`512b906`).
+- **`breakdown_fn` replaces the bool flag** (`94ff733`) — `LanguageConfig.compound_word_breakdown` is gone; `uses_compound_word_breakdown` now just means "the plugin registered a `breakdown_fn`".
+- **Lazy discovery + `en` in core** (`3a36fbc`) — `discover()` walks `app.plugins.languages` via `pkgutil.iter_modules`, so single-plugin installs work and direct plugin imports no longer hard-fail; zero non-English plugins is a hard `RuntimeError`. English is the one language core registers itself.
+- **The import gate** (`db6fcf7`, `__init__.py` blind spot closed in `9bc7278`) — `scripts/check_plugin_imports.py` AST-walks `backend/app/**` and fails `./test.sh` + CI if core imports a concrete `app.plugins.*` module (sanctioned exceptions: the registry's discovery machinery and the lazy `anki_sync` imports in `api/anki.py`/`api/admin.py`). Together with the language-literal gate (PART 29.3), "just import the Slovene thing" is a build failure, not a review comment.
+
+### 30.2 The Listen/Mastery Arc — Server-Backed Listened State, Budget-Capped Creation
+
+Six commits (`879d377` → `976222c`) turned "mark listened" from a localStorage checkbox into a server-side, Anki-aware loop:
+
+- **`lesson_listens` (migration v38)** — every `POST /api/srs/listen` appends a row (`db.record_listen` in `db_listens.py`); `GET /api/srs/listens` returns per-lesson listen state; `POST /api/srs/listens/import` migrates old localStorage state. The frontend store (`lib/stores/listened.svelte.ts`, rewritten in `c57629e`) is a thin cache over these endpoints.
+- **Staged, budget-capped creation** (`7c6b0bf`) — `/listen` no longer creates an SRS item for every unknown lemma. Candidates are ranked (`_rank_listen_candidates`) and created only up to the remaining Anki-day new budget (`new_per_day` − introduced-today − created-today); the overflow comes back as `remaining_candidates` in the response (`{status, registered, created, graded, remaining_candidates, listen_count}`). Listening to three lessons back-to-back no longer floods the queue with 90 new cards.
+- **Lesson-scoped review queue** (`321842a`) — `GET /api/srs/lesson/{id}/review-queue` (sharing `_analyze_lesson_words` with `/listen`) feeds **`/review?lesson=<id>&c=<curriculumId>`** — a read-only "check your work" drill over one lesson's words that never advances the global session cutoff; its done-state links back to the lesson page.
+- **Mastery surfaces** (`c57629e`, `ada2daa`) — `lessonMastery()` in `lib/mastery.ts` (PART 25.2) aggregates per-lemma progress into a lesson-level `{pct, counts: {new, learning, review, known}}` indicator on the lesson page; home-page progress reacts to the listened store via `$derived.by`.
+- **Sync** (`976222c`) — capped-listen card rows reach Anki through the normal `sync_create_new` phase (PART 29.1). No new sync path; the one-sync-path rule held.
+
+### 30.3 Player & Review Polish
+
+- **English-order cycle** (`eabfb4e`) — the player's English-translation track went from a toggle to a three-state cycle: `off → l2_first ("English After") → en_first ("English Before")`. "English Before" plays real audio from the new `EN_TRANSLATED`/`SLOW_EN_TRANSLATED` section renders; lessons rendered without those sections cycle just `off ↔ l2_first`. The same commit added a "Restart section" control (`ctrl.restartSection()`).
+- **Deep-link from review** (`6aba5a0`) — every drilled card carries a "Card details ↗" link to its Cards-viewer entry (`/cards?focus=<id>&q=<text>`), so "why is this card shaped like this" is one click from the drill. Plus mobile UI nits.
+
+### 30.4 Dev-Experience
+
+- **Path-scoped instruction files + commit gate** (`da6e634`; matcher fix `572f9a2`) — most `.claude/rules/*.md` now carry `paths:` frontmatter and lazy-load only when files they cover are read (~84% leaner agent-session startup); `git commit` is hook-gated on a `./test.sh` pass recorded against the exact current tree fingerprint.
+- **`.env.example` moved to `backend/`** (`d3d950c`) alongside a dead-config purge.
+- **READMEs rewritten** (`514f2d9`, `b2d21b0`) — the root README now matches the 2026-07 system; the frontend README is no longer SvelteKit boilerplate.
