@@ -12,7 +12,6 @@ vi.mock("$lib/api", () => ({
     getLessonAudio: vi.fn(),
     renderAudio: vi.fn(),
     getLessonTranscript: vi.fn(),
-    markAsListened: vi.fn(),
     createSRSItem: vi.fn(),
     setSRSItemState: vi.fn(),
     restoreKnown: vi.fn(),
@@ -73,7 +72,6 @@ function stubViewport(mobile: boolean) {
 const mockGetLessonAudio = vi.mocked(api.getLessonAudio);
 const mockRenderAudio = vi.mocked(api.renderAudio);
 const mockGetTranscript = vi.mocked(api.getLessonTranscript);
-const mockMarkAsListened = vi.mocked(api.markAsListened);
 const mockCreateSRSItem = vi.mocked(api.createSRSItem);
 const mockSetSRSItemState = vi.mocked(api.setSRSItemState);
 const mockSuspendSRSItem = vi.mocked(api.suspendSRSItem);
