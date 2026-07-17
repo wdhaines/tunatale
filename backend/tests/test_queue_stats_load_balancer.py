@@ -145,6 +145,12 @@ class TestLoadBalancerEnabledReader:
         assert _read_load_balancer_enabled_from_config_table(conn) is None
         conn.close()
 
+    def test_returns_none_on_closed_connection(self):
+        """Closed connection raises sqlite3.ProgrammingError on the sqlite_master probe."""
+        conn = sqlite3.connect(":memory:")
+        conn.close()
+        assert _read_load_balancer_enabled_from_config_table(conn) is None
+
     def test_refresh_then_resolve(self):
         conn = _make_config_conn(b"true")
         db = SRSDatabase(":memory:")
@@ -195,6 +201,18 @@ class TestEasyDaysReader:
         conn = sqlite3.connect(":memory:")
         assert _read_easy_days_from_deck_config_table(conn, "0. Slovene") is None
         conn.close()
+
+    def test_returns_none_on_closed_connection(self):
+        """Closed connection raises sqlite3.ProgrammingError on the sqlite_master probe."""
+        conn = sqlite3.connect(":memory:")
+        conn.close()
+        assert _read_easy_days_from_deck_config_table(conn, "0. Slovene") is None
+
+    def test_resolve_corrupt_cache_value_falls_back_to_none(self):
+        """Non-JSON cached value: json.loads(row[0]) raises → None."""
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("easy_days_percentages", "not-json")
+        assert resolve_easy_days(db) is None
 
     def test_unknown_deck_returns_none(self):
         conn = _make_modern_anki_conn_with_easy_days(easy_days=[1.0] * 7)
@@ -325,6 +343,18 @@ class TestBuildLiveLoadBalancer:
         assert lb is not None
         assert lb.easy_days == [1.0] * 7
 
+    def test_now_omitted_defaults_to_current_utc_time(self):
+        """now=None (the default) falls back to datetime.now(UTC).
+
+        No time freeze — assert only structural properties (a working
+        LoadBalancer instance), not time-dependent values, per the recipe.
+        """
+        db = SRSDatabase(":memory:")
+        self._enable(db)
+        lb = build_live_load_balancer(db)  # now omitted entirely
+        assert lb is not None
+        assert lb.easy_days == [1.0] * 7
+
 
 class TestMultiDeckPresetWarning:
     def _conn_with_decks(self, deck_confs: dict[str, int]):
@@ -366,3 +396,11 @@ class TestMultiDeckPresetWarning:
             warn_if_multi_deck_preset(conn, "0. Slovene")
         assert not caplog.records
         conn.close()
+
+    def test_closed_connection_no_warning(self, caplog):
+        """Closed connection raises sqlite3.ProgrammingError on the sqlite_master probe."""
+        conn = sqlite3.connect(":memory:")
+        conn.close()
+        with caplog.at_level(logging.WARNING):
+            warn_if_multi_deck_preset(conn, "0. Slovene")  # must not raise
+        assert not caplog.records

@@ -126,8 +126,8 @@ def _read_config_value_from_deck_config_table(
     # Modern protobuf path (deck_config table)
     try:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    except sqlite3.Error:  # pragma: no cover
-        return None  # pragma: no cover
+    except sqlite3.Error:
+        return None
 
     if "deck_config" not in tables or "decks" not in tables:
         return None
@@ -146,7 +146,7 @@ def _read_config_value_from_deck_config_table(
         return find_varint_field(config_blob, proto_field)
     if wire_type == _WIRE_TYPE_FIXED32:
         return find_fixed32_field(config_blob, proto_field)
-    return None  # pragma: no cover
+    return None
 
 
 def _pb_find_packed_float_field(data: bytes, target_field: int) -> list[float] | None:
@@ -157,6 +157,8 @@ def _pb_find_packed_float_field(data: bytes, target_field: int) -> list[float] |
     while pos < len(data):
         try:
             tag, pos = decode_varint(data, pos)
+        # Unreachable: decode_varint is total on bytes (bounded loop; truncation
+        # returns early, never raises). Guard kept for parser robustness only.
         except Exception:  # pragma: no cover
             return None  # pragma: no cover
         field_num = tag >> 3
@@ -167,10 +169,12 @@ def _pb_find_packed_float_field(data: bytes, target_field: int) -> list[float] |
                 if length % 4 != 0:
                     return None
                 return list(struct.unpack(f"<{length // 4}f", data[pos : pos + length]))
-            except Exception:  # pragma: no cover
-                return None  # pragma: no cover
+            except Exception:
+                return None
         try:
             pos = skip_field(data, pos, wire_type)
+        # Unreachable: skip_field advances/returns within bounds for every wire
+        # type and never raises on bytes input. Guard kept for robustness only.
         except Exception:  # pragma: no cover
             return None  # pragma: no cover
     return None
@@ -184,16 +188,20 @@ def _pb_find_fixed32_float_field(data: bytes, target_field: int) -> float | None
     while pos < len(data):
         try:
             tag, pos = decode_varint(data, pos)
+        # Unreachable: decode_varint is total on bytes (bounded loop; truncation
+        # returns early, never raises). Guard kept for parser robustness only.
         except Exception:  # pragma: no cover
             return None  # pragma: no cover
         field_num = tag >> 3
         wire_type = tag & 0x7
         if field_num == target_field and wire_type == 5:
-            if pos + 4 > len(data):  # pragma: no cover
-                return None  # pragma: no cover
+            if pos + 4 > len(data):
+                return None
             return struct.unpack("<f", data[pos : pos + 4])[0]
         try:
             pos = skip_field(data, pos, wire_type)
+        # Unreachable: skip_field advances/returns within bounds for every wire
+        # type and never raises on bytes input. Guard kept for robustness only.
         except Exception:  # pragma: no cover
             return None  # pragma: no cover
     return None
@@ -203,8 +211,8 @@ def _read_fsrs_params_from_deck_config_table(conn: sqlite3.Connection, deck_name
     """Return FSRSParams from Anki's deck_config protobuf, or None if absent."""
     try:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    except sqlite3.Error:  # pragma: no cover
-        return None  # pragma: no cover
+    except sqlite3.Error:
+        return None
 
     if "deck_config" not in tables or "decks" not in tables:
         return None
@@ -227,6 +235,8 @@ def _read_fsrs_params_from_deck_config_table(conn: sqlite3.Connection, deck_name
         retention = float(retention_raw) if retention_raw is not None else 0.9
         try:
             return FSRSParams(weights=tuple(weights_6), desired_retention=retention)
+        # Unreachable: len(weights_6) == 21 is checked above and FSRSParams only
+        # raises on wrong length. Guard kept for robustness only.
         except ValueError, TypeError:  # pragma: no cover
             pass  # fall through to field 5
 
@@ -237,6 +247,8 @@ def _read_fsrs_params_from_deck_config_table(conn: sqlite3.Connection, deck_name
         retention = float(retention_raw) if retention_raw is not None else 0.9
         try:
             return FSRSParams(weights=tuple(weights_5), desired_retention=retention)
+        # Unreachable: len(weights_5) == 19 is checked above and FSRSParams only
+        # raises on wrong length. Guard kept for robustness only.
         except ValueError, TypeError:  # pragma: no cover
             return None  # pragma: no cover
 
@@ -534,7 +546,7 @@ def refresh_col_crt(db: SRSDatabase, conn: sqlite3.Connection) -> None:
         row = conn.execute("SELECT crt FROM col LIMIT 1").fetchone()
         if row:
             db.set_anki_state_cache("col_crt", str(row[0]))
-    except sqlite3.Error:  # pragma: no cover - defensive
+    except sqlite3.Error:
         pass
 
 
@@ -544,7 +556,7 @@ def resolve_col_crt(db: SRSDatabase | None = None) -> int | None:
     Pre-sync (no cache entry) or a corrupt value falls through to *None*;
     callers must accept the UTC-date fallback.
     """
-    if db is None:  # pragma: no cover - convenience for ad-hoc scripts
+    if db is None:
         try:
             from app.srs.database import SRSDatabase as _SRSDatabase
 
@@ -556,7 +568,7 @@ def resolve_col_crt(db: SRSDatabase | None = None) -> int | None:
         return None
     try:
         return int(row[0])
-    except ValueError, TypeError:  # pragma: no cover - defensive
+    except ValueError, TypeError:
         return None
 
 
@@ -651,8 +663,8 @@ def refresh_fsrs_params(db: SRSDatabase, conn: sqlite3.Connection, deck_name: st
     # Check if decks table exists (modern Anki format)
     try:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    except sqlite3.Error:  # pragma: no cover
-        return  # pragma: no cover
+    except sqlite3.Error:
+        return
 
     if "decks" in tables:
         deck_row = conn.execute("SELECT 1 FROM decks WHERE name = ?", (deck_name,)).fetchone()
@@ -815,8 +827,8 @@ def _read_easy_days_from_deck_config_table(conn: sqlite3.Connection, deck_name: 
     """
     try:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    except sqlite3.Error:  # pragma: no cover - defensive
-        return None  # pragma: no cover
+    except sqlite3.Error:
+        return None
 
     if "deck_config" not in tables or "decks" not in tables:
         return None
@@ -826,8 +838,8 @@ def _read_easy_days_from_deck_config_table(conn: sqlite3.Connection, deck_name: 
         return None
 
     config_row = conn.execute("SELECT config FROM deck_config WHERE id = ?", (conf_id,)).fetchone()
-    if config_row is None or not config_row[0]:  # pragma: no cover - defensive
-        return None  # pragma: no cover
+    if config_row is None or not config_row[0]:
+        return None
 
     config_blob = config_row[0]
     config_blob = bytes(config_blob) if isinstance(config_blob, memoryview) else config_blob
@@ -860,8 +872,8 @@ def resolve_easy_days(db: SRSDatabase | None = None) -> list[float] | None:
         return None
     try:
         return json.loads(row[0])
-    except ValueError, TypeError:  # pragma: no cover - defensive
-        return None  # pragma: no cover
+    except ValueError, TypeError:
+        return None
 
 
 def _read_load_balancer_enabled_from_config_table(conn: sqlite3.Connection) -> bool | None:
@@ -872,8 +884,8 @@ def _read_load_balancer_enabled_from_config_table(conn: sqlite3.Connection) -> b
     """
     try:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    except sqlite3.Error:  # pragma: no cover - defensive
-        return None  # pragma: no cover
+    except sqlite3.Error:
+        return None
 
     if "config" not in tables:
         return None
@@ -964,8 +976,8 @@ def warn_if_multi_deck_preset(conn: sqlite3.Connection, deck_name: str) -> None:
     """
     try:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    except sqlite3.Error:  # pragma: no cover - defensive
-        return  # pragma: no cover
+    except sqlite3.Error:
+        return
     if "decks" not in tables:
         return
 
@@ -1005,8 +1017,8 @@ def build_live_load_balancer(
     """
     if not resolve_load_balancer_enabled(db):
         return None
-    if now is None:  # pragma: no cover - convenience; callers pass an explicit now
-        now = datetime.now(UTC)  # pragma: no cover
+    if now is None:
+        now = datetime.now(UTC)
     if col_crt is None:
         col_crt = resolve_col_crt(db)
     if col_crt is None:
@@ -1035,7 +1047,7 @@ def _read_fsrs_short_term_from_config_table(conn: sqlite3.Connection) -> bool | 
     """
     try:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    except sqlite3.Error:  # pragma: no cover
+    except sqlite3.Error:
         return None
 
     if "config" not in tables:

@@ -83,6 +83,41 @@ def test_refresh_review_settings_early_sqlite_error():
     assert db.get_anki_state_cache("bury_review") is None
 
 
+def test_read_config_value_returns_none_on_closed_connection():
+    """Closed connection raises sqlite3.ProgrammingError on the sqlite_master probe.
+
+    No legacy_keys passed, so the legacy-JSON branch is skipped entirely and the
+    first statement executed is the protobuf-path table probe — hits the
+    `except sqlite3.Error` guard directly.
+    """
+    from app.srs.queue_stats import _read_config_value_from_deck_config_table
+
+    conn = sqlite3.connect(":memory:")
+    conn.close()
+    result = _read_config_value_from_deck_config_table(conn, "any", proto_field=9, wire_type=0)
+    assert result is None
+
+
+def test_read_config_value_wire_type_fallthrough_returns_none(tmp_path):
+    """An unrecognized wire_type (neither VARINT=0 nor FIXED32=5) falls through to None."""
+    from app.srs.queue_stats import _read_config_value_from_deck_config_table
+
+    db_path = tmp_path / "wire_type_fallthrough.anki2"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE decks (id INTEGER, name TEXT, kind BLOB)")
+    conn.execute("CREATE TABLE deck_config (id INTEGER, config BLOB)")
+    inner = pb_varint_field(1, 1)  # conf_id=1
+    kind_blob = pb_len_field(1, inner)
+    conn.execute("INSERT INTO decks VALUES (1, 'Test', ?)", (kind_blob,))
+    conn.execute("INSERT INTO deck_config VALUES (1, ?)", (pb_varint_field(9, 20),))
+    conn.commit()
+
+    # wire_type=3 (deprecated START_GROUP) is neither VARINT(0) nor FIXED32(5).
+    result = _read_config_value_from_deck_config_table(conn, "Test", proto_field=9, wire_type=3)
+    assert result is None
+    conn.close()
+
+
 def test_refresh_review_settings_skips_on_missing_deck_config_table(tmp_path):
     """Test early return when deck_config table is missing."""
     import sqlite3
@@ -782,6 +817,14 @@ class TestReadFSRSParamsFromDeckConfig:
         conn.close()
         assert result is None
 
+    def test_returns_none_on_closed_connection(self):
+        """Closed connection raises sqlite3.ProgrammingError on the sqlite_master probe."""
+        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+
+        conn = sqlite3.connect(":memory:")
+        conn.close()
+        assert _read_fsrs_params_from_deck_config_table(conn, "Test") is None
+
     def test_reads_fsrs_short_term_when_present(self, tmp_path):
         """_read_fsrs_short_term_from_config_table returns True for b'true'."""
         from app.srs.queue_stats import _read_fsrs_short_term_from_config_table
@@ -829,6 +872,14 @@ class TestReadFSRSParamsFromDeckConfig:
         result = _read_fsrs_short_term_from_config_table(conn)
         assert result is None
         conn.close()
+
+    def test_reads_fsrs_short_term_returns_none_on_closed_connection(self):
+        """Closed connection raises sqlite3.ProgrammingError on the sqlite_master probe."""
+        from app.srs.queue_stats import _read_fsrs_short_term_from_config_table
+
+        conn = sqlite3.connect(":memory:")
+        conn.close()
+        assert _read_fsrs_short_term_from_config_table(conn) is None
 
     def test_refresh_fsrs_short_term_flag_writes_cache(self, tmp_path):
         """refresh_fsrs_short_term_flag writes the flag to anki_state_cache."""

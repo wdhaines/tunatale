@@ -446,6 +446,16 @@ class TestRefreshFSRSParams:
             refresh_fsrs_params(db, conn, "0. Slovene")
         assert any("FSRS" in r.message and "0. Slovene" in r.message for r in caplog.records)
 
+    def test_returns_early_on_closed_connection(self):
+        """Closed connection raises sqlite3.ProgrammingError on the sqlite_master probe."""
+        import sqlite3
+
+        db = SRSDatabase(":memory:")
+        conn = sqlite3.connect(":memory:")
+        conn.close()
+        refresh_fsrs_params(db, conn, "0. Slovene")  # must not raise
+        assert db.get_anki_state_cache("fsrs_params") is None
+
 
 class TestDesiredRetentionCache:
     """Tests for refresh_desired_retention."""
@@ -595,6 +605,29 @@ class TestPbFSRSHelpersExtra:
 
         # Blob with no field 40 at all
         blob = pb_varint_field(9, 20)
+        result = _pb_find_fixed32_float_field(blob, DESIRED_RETENTION_FIELD)
+        assert result is None
+
+    def test_pb_find_packed_float_returns_none_when_declared_length_exceeds_remaining_bytes(self):
+        """Declared LEN length (8, a multiple of 4) but only 2 bytes actually follow.
+
+        struct.unpack("<2f", ...) requires an 8-byte buffer; slicing past the end
+        of `data` silently truncates instead of raising, so struct.unpack is what
+        raises — caught by the `except Exception` guard around the unpack call.
+        """
+        from app.srs.queue_stats import _pb_find_packed_float_field
+
+        tag = encode_varint((FSRS5_WEIGHTS_FIELD << 3) | 2)
+        blob = tag + encode_varint(8) + b"\x00\x01"  # declares 8 bytes, only 2 present
+        result = _pb_find_packed_float_field(blob, FSRS5_WEIGHTS_FIELD)
+        assert result is None
+
+    def test_pb_find_fixed32_returns_none_when_body_truncated(self):
+        """Tag matches the target field (wire_type=5) but fewer than 4 bytes remain."""
+        from app.srs.queue_stats import _pb_find_fixed32_float_field
+
+        tag = encode_varint((DESIRED_RETENTION_FIELD << 3) | 5)
+        blob = tag + b"\x00\x01"  # only 2 bytes remain, need 4
         result = _pb_find_fixed32_float_field(blob, DESIRED_RETENTION_FIELD)
         assert result is None
 
@@ -1258,3 +1291,43 @@ class TestRefreshAndResolveColCrt:
 
         refresh_col_crt(db, anki_conn)
         assert resolve_col_crt(db) is None
+
+    def test_refresh_no_op_on_closed_connection(self):
+        """Closed connection raises sqlite3.ProgrammingError; refresh swallows it silently."""
+        from app.srs.queue_stats import refresh_col_crt, resolve_col_crt
+
+        db = SRSDatabase(":memory:")
+        anki_conn = sqlite3.connect(":memory:")
+        anki_conn.close()
+
+        refresh_col_crt(db, anki_conn)  # must not raise
+        assert resolve_col_crt(db) is None
+
+    def test_resolve_corrupt_cache_value_falls_back_to_none(self):
+        """Non-integer cached value: int(row[0]) raises ValueError → None."""
+        from app.srs.queue_stats import resolve_col_crt
+
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("col_crt", "not-an-integer")
+        assert resolve_col_crt(db) is None
+
+    def test_resolve_db_none_creates_fresh_from_settings(self, monkeypatch):
+        """db=None constructs a default SRSDatabase from settings.database_url."""
+        from app.config import settings as app_settings
+        from app.srs.queue_stats import resolve_col_crt
+
+        monkeypatch.setattr(app_settings, "database_url", "sqlite:///:memory:")
+        # Fresh in-memory DB has no col_crt cache entry → resolves to None without raising.
+        assert resolve_col_crt(db=None) is None
+
+    def test_resolve_db_none_falls_back_to_none_when_creation_fails(self, monkeypatch):
+        """db=None and settings.database_url is an unopenable path → except Exception: return None.
+
+        A null byte in the path is rejected by the OS path APIs before any I/O
+        happens — a genuine ValueError, no mock needed.
+        """
+        from app.config import settings as app_settings
+        from app.srs.queue_stats import resolve_col_crt
+
+        monkeypatch.setattr(app_settings, "database_url", "sqlite:////tmp/\x00bad.db")
+        assert resolve_col_crt(db=None) is None
