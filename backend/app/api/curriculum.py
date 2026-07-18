@@ -13,12 +13,29 @@ from app.api.models import (
     PlanTurnRequest,
     StartPlanRequest,
 )
-from app.generation.planner import PlannerError
+from app.generation.planner import CurriculumPlanner, PlannerError, build_turn_prompt, parse_turn
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.srs.planner_snapshot import build_learner_snapshot
 from app.storage.plan_io import export_plan, get_planner_state, import_plan, mint_curriculum_id
 
 router = APIRouter(prefix="/api/curriculum", tags=["curriculum"])
+
+
+def _turn_inputs(curriculum_id: str, request: Request) -> tuple:
+    """Assemble the common inputs for ``plan_turn`` and the prompt export endpoint.
+
+    Returns ``(store, curriculum, planner, snapshot, language)``.
+
+    Shared helper so the exported prompt can never drift from what the Groq
+    path sends — both handlers call this and pass the result to
+    ``build_turn_prompt``.
+    """
+    store = request.state.content_store
+    curriculum = _get_curriculum_or_404(store, curriculum_id)
+    planner: CurriculumPlanner = request.app.state.curriculum_planner
+    snapshot = build_learner_snapshot(request.state.srs_db)
+    language = request.state.language
+    return store, curriculum, planner, snapshot, language
 
 
 @router.post("/import", status_code=201)
@@ -69,22 +86,26 @@ async def start_plan(body: StartPlanRequest, request: Request):
 
 @router.post("/{curriculum_id}/plan/turn", status_code=200)
 async def plan_turn(curriculum_id: str, body: PlanTurnRequest, request: Request):
-    """One planner chat turn: snapshot → LLM → append chat, set/replace proposed."""
-    store = request.state.content_store
-    curriculum = _get_curriculum_or_404(store, curriculum_id)
-    planner = request.app.state.curriculum_planner
+    """One planner chat turn: snapshot → LLM / pasted response → append chat, set/replace proposed."""
+    store, curriculum, planner, snapshot, language = _turn_inputs(curriculum_id, request)
 
-    snapshot = build_learner_snapshot(request.state.srs_db)
     try:
-        turn = await planner.turn(
-            curriculum=curriculum,
-            user_message=body.message,
-            batch_size=body.batch_size,
-            learner_snapshot=snapshot,
-            language=request.state.language,
-        )
+        if body.pasted_response is not None:
+            turn = parse_turn(
+                body.pasted_response,
+                curriculum=curriculum,
+                batch_size=body.batch_size,
+            )
+        else:
+            turn = await planner.turn(
+                curriculum=curriculum,
+                user_message=body.message,
+                batch_size=body.batch_size,
+                learner_snapshot=snapshot,
+                language=language,
+            )
     except PlannerError as e:
-        # Nothing is persisted for a failed turn — the user retries in chat.
+        # Nothing is persisted for a failed turn — the user retries.
         raise HTTPException(status_code=502, detail=str(e)) from e
 
     state = get_planner_state(curriculum)
@@ -92,7 +113,7 @@ async def plan_turn(curriculum_id: str, body: PlanTurnRequest, request: Request)
     state["chat"].append({"role": "planner", "content": turn.reply})
     if turn.proposed_days is not None:
         # A new proposing turn replaces any prior proposal (latest-wins);
-        # a pure-chat turn leaves the existing proposal in place.
+        # a pure-chat/pure-prose turn leaves the existing proposal in place.
         state["proposed"] = {
             "start_day": turn.proposed_days[0].day,
             "days": [asdict(d) for d in turn.proposed_days],
@@ -100,6 +121,24 @@ async def plan_turn(curriculum_id: str, body: PlanTurnRequest, request: Request)
     curriculum.metadata["planner"] = state
     store.save_curriculum(curriculum_id, curriculum)
     return {"reply": turn.reply, "proposed": state["proposed"]}
+
+
+@router.post("/{curriculum_id}/plan/turn/prompt", status_code=200)
+async def plan_turn_prompt(curriculum_id: str, body: PlanTurnRequest, request: Request):
+    """Export the exact prompts for a planner turn, without calling any LLM.
+
+    The system and user prompts returned are byte-identical to what the
+    Groq path would send for the same inputs.  Persists nothing.
+    """
+    _, curriculum, _planner, snapshot, language = _turn_inputs(curriculum_id, request)
+    system_prompt, user_prompt = build_turn_prompt(
+        curriculum=curriculum,
+        user_message=body.message,
+        batch_size=body.batch_size,
+        learner_snapshot=snapshot,
+        language=language,
+    )
+    return {"system_prompt": system_prompt, "user_prompt": user_prompt}
 
 
 @router.post("/{curriculum_id}/plan/commit", status_code=200)

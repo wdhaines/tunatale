@@ -40,6 +40,84 @@ class PlannerTurn:
     proposed_days: list[CurriculumDay] | None
 
 
+def build_turn_prompt(
+    *,
+    curriculum: Curriculum,
+    user_message: str,
+    batch_size: int,
+    learner_snapshot: str,
+    language: Language,
+) -> tuple[str, str]:
+    """Build the system and user prompts for one planner turn.
+
+    Pure function of its inputs — no LLM, no DB.  Returns
+    ``(PLANNER_SYSTEM_PROMPT, user_prompt)``.
+    """
+    start_day = max(d.day for d in curriculum.days) + 1 if curriculum.days else 1
+
+    state = get_planner_state(curriculum)
+
+    chat = [*state.get("chat", []), {"role": "user", "content": user_message}]
+
+    user_prompt = build_planner_turn_prompt(
+        topic=curriculum.topic,
+        cefr_level=curriculum.cefr_level,
+        language_name=language.name,
+        language_code=language.code,
+        days=curriculum.days,
+        learner_snapshot=learner_snapshot,
+        feedback=state.get("feedback", []),
+        chat=chat,
+        batch_size=batch_size,
+        start_day=start_day,
+    )
+
+    return (PLANNER_SYSTEM_PROMPT, user_prompt)
+
+
+def parse_turn(
+    raw: str,
+    *,
+    curriculum: Curriculum,
+    batch_size: int,
+) -> PlannerTurn:
+    """Parse the raw LLM (or pasted) reply into a ``PlannerTurn``.
+
+    Extracts the JSON block, validates day count and field schema, and
+    renumbers days starting from ``curriculum.days``.  All validation is
+    identical to what ``turn()`` applies — no weakening for manual mode.
+    """
+    start_day = max(d.day for d in curriculum.days) + 1 if curriculum.days else 1
+
+    try:
+        prose, data = split_reply_and_json(raw)
+    except ValueError as e:
+        raise PlannerError(str(e)) from e
+
+    if data is None:
+        return PlannerTurn(reply=prose, proposed_days=None)
+
+    days_list = data.get("days")
+    if not isinstance(days_list, list):
+        raise PlannerError("LLM response JSON missing 'days' list")
+
+    for i, d in enumerate(days_list):
+        if not isinstance(d, dict):
+            raise PlannerError(f"days[{i}] must be an object")
+        d["day"] = start_day + i
+
+    if len(days_list) != batch_size:
+        raise PlannerError(f"Expected {batch_size} days, got {len(days_list)}")
+
+    try:
+        validate_plan_days(days_list, start_day=start_day)
+    except ValueError as e:
+        raise PlannerError(str(e)) from e
+
+    proposed = [CurriculumDay(**d) for d in days_list]
+    return PlannerTurn(reply=prose, proposed_days=proposed)
+
+
 class CurriculumPlanner:
     """One-turn curriculum planner backed by an LLM client."""
 
@@ -73,61 +151,19 @@ class CurriculumPlanner:
             PlannerError: When the LLM returns malformed JSON, wrong day
                 count, or invalid day fields.
         """
-        start_day = max(d.day for d in curriculum.days) + 1 if curriculum.days else 1
-
-        state = get_planner_state(curriculum)
-
-        # Persisted chat holds only completed turns (the API appends the user
-        # message after the turn succeeds), so inject the current message here.
-        chat = [*state.get("chat", []), {"role": "user", "content": user_message}]
-
-        user_prompt = build_planner_turn_prompt(
-            topic=curriculum.topic,
-            cefr_level=curriculum.cefr_level,
-            language_name=language.name,
-            language_code=language.code,
-            days=curriculum.days,
-            learner_snapshot=learner_snapshot,
-            feedback=state.get("feedback", []),
-            chat=chat,
+        system_prompt, user_prompt = build_turn_prompt(
+            curriculum=curriculum,
+            user_message=user_message,
             batch_size=batch_size,
-            start_day=start_day,
+            learner_snapshot=learner_snapshot,
+            language=language,
         )
 
         raw = await self._llm.complete(
             user_prompt,
-            system_prompt=PLANNER_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             temperature=0.7,
             max_tokens=5500,
         )
 
-        try:
-            prose, data = split_reply_and_json(raw)
-        except ValueError as e:
-            raise PlannerError(str(e)) from e
-
-        if data is None:
-            return PlannerTurn(reply=prose, proposed_days=None)
-
-        days_list = data.get("days")
-        if not isinstance(days_list, list):
-            raise PlannerError("LLM response JSON missing 'days' list")
-
-        # Server-side renumbering — LLM-emitted numbers are discarded.
-        # Dict guard must precede the assignment: validate_plan_days would
-        # reject non-dict entries, but it only runs after renumbering.
-        for i, d in enumerate(days_list):
-            if not isinstance(d, dict):
-                raise PlannerError(f"days[{i}] must be an object")
-            d["day"] = start_day + i
-
-        if len(days_list) != batch_size:
-            raise PlannerError(f"Expected {batch_size} days, got {len(days_list)}")
-
-        try:
-            validate_plan_days(days_list, start_day=start_day)
-        except ValueError as e:
-            raise PlannerError(str(e)) from e
-
-        proposed = [CurriculumDay(**d) for d in days_list]
-        return PlannerTurn(reply=prose, proposed_days=proposed)
+        return parse_turn(raw, curriculum=curriculum, batch_size=batch_size)

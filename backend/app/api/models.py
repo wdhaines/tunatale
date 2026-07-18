@@ -117,6 +117,7 @@ class PlanTurnRequest(BaseModel):
     # Mirrors the frontend clamp (clampBatchSize, 1..14) — 0 days is meaningless
     # and large values ask the LLM for more days than the token budget can hold.
     batch_size: int = Field(5, ge=1, le=14)
+    pasted_response: str | None = None
 
 
 class PlanFeedbackRequest(BaseModel):

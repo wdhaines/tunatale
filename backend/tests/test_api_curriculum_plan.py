@@ -5,7 +5,8 @@ from dataclasses import asdict, dataclass, field
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.generation.planner import PlannerError, PlannerTurn
+from app.generation.planner import CurriculumPlanner, PlannerError, PlannerTurn
+from app.generation.prompts import PLANNER_SYSTEM_PROMPT
 from app.languages import get_language
 from app.llm.activity import ActivityLog
 from app.main import app
@@ -445,3 +446,173 @@ class TestDeleteCurriculum:
         assert store.get_curriculum("trip") is None
         assert store.get_lesson("less_1") is None
         assert store.get_audio_file_row("aud_1") is None
+
+
+class _FakeLLMForPlanner:
+    """Records complete() calls and returns canned responses (boundary-safe, no patch)."""
+
+    def __init__(self, response: str = ""):
+        self.calls: list[dict] = []
+        self.response = response
+
+    async def complete(self, prompt, *, system_prompt=None, temperature=0.7, max_tokens=5500):
+        self.calls.append({"prompt": prompt, "system_prompt": system_prompt})
+        return self.response
+
+
+class TestPlanTurnManual:
+    async def test_manual_turn_with_json_fence_persists_proposal(self):
+        """pasted_response with prose + json fence of exactly batch_size days →
+        200, proposal persisted, chat gains user+planner, LLM never called."""
+        stub = StubPlanner()
+        store = _setup(curriculum=_planned_curriculum(), planner=stub)
+
+        paste = (
+            "Here are the days.\n"
+            "```json\n"
+            '{"days": [{"title": "At the market", "focus": "Buying fruit", '
+            '"collocations": ["jabolka, prosim"], "learning_objective": "Buy fruit"}]}\n'
+            "```"
+        )
+        async with _client() as client:
+            resp = await client.post(
+                "/api/curriculum/trip/plan/turn",
+                json={"message": "plan 1 day", "batch_size": 1, "pasted_response": paste},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["reply"].startswith("Here are the days.")
+        assert data["proposed"] is not None
+        assert len(data["proposed"]["days"]) == 1
+
+        saved = store.get_curriculum("trip").metadata["planner"]
+        assert len(saved["chat"]) == 2
+        assert saved["chat"][0]["role"] == "user"
+        assert saved["chat"][1]["role"] == "planner"
+        assert saved["proposed"] == data["proposed"]
+        assert stub.calls == []  # LLM never called
+
+    async def test_manual_turn_wrong_day_count_502(self):
+        """pasted_response with wrong number of days → 502, nothing persisted."""
+        curriculum = _planned_curriculum(chat=[{"role": "user", "content": "old"}])
+        stub = StubPlanner()
+        store = _setup(curriculum=curriculum, planner=stub)
+
+        paste = (
+            "```json\n"
+            '{"days": [{"title": "Only one day", "focus": "x", '
+            '"collocations": ["dober dan"], "learning_objective": "x"}]}\n'
+            "```"
+        )
+        async with _client() as client:
+            resp = await client.post(
+                "/api/curriculum/trip/plan/turn",
+                json={"message": "plan 2 days", "batch_size": 2, "pasted_response": paste},
+            )
+
+        assert resp.status_code == 502
+        assert "Expected 2 days" in resp.json()["detail"]
+
+        saved = store.get_curriculum("trip").metadata["planner"]
+        assert saved["chat"] == [{"role": "user", "content": "old"}]
+        assert saved["proposed"] is None
+
+    async def test_manual_turn_pure_prose_chat_only(self):
+        """pasted_response with no json fence → 200, chat-only turn, proposed unchanged."""
+        existing_proposed = {"start_day": 1, "days": [asdict(_day(1))]}
+        curriculum = _planned_curriculum(proposed=existing_proposed)
+        stub = StubPlanner()
+        store = _setup(curriculum=curriculum, planner=stub)
+
+        async with _client() as client:
+            resp = await client.post(
+                "/api/curriculum/trip/plan/turn",
+                json={"message": "thoughts?", "pasted_response": "Sounds good!"},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["reply"] == "Sounds good!"
+        assert data["proposed"] == existing_proposed
+
+        saved = store.get_curriculum("trip").metadata["planner"]
+        assert len(saved["chat"]) == 2
+        assert saved["proposed"] == existing_proposed
+
+
+class TestPlanTurnPrompt:
+    async def test_prompt_returns_both_prompts(self):
+        """POST /plan/turn/prompt → 200 with system_prompt and user_prompt."""
+        _setup(curriculum=_planned_curriculum(), planner=StubPlanner())
+
+        async with _client() as client:
+            resp = await client.post(
+                "/api/curriculum/trip/plan/turn/prompt",
+                json={"message": "plan 2 days", "batch_size": 2},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["system_prompt"] == PLANNER_SYSTEM_PROMPT
+        assert isinstance(data["user_prompt"], str)
+        assert len(data["user_prompt"]) > 0
+        # user_prompt contains the learner-snapshot marker
+        assert "no tracked vocabulary" in data["user_prompt"]
+
+    async def test_prompt_persists_nothing(self):
+        """Follow-up GET shows chat/proposed unchanged after /plan/turn/prompt."""
+        existing = _planned_curriculum(
+            chat=[{"role": "user", "content": "old"}],
+            proposed={"start_day": 1, "days": [asdict(_day(1))]},
+        )
+        store = _setup(curriculum=existing, planner=StubPlanner())
+
+        async with _client() as client:
+            await client.post(
+                "/api/curriculum/trip/plan/turn/prompt",
+                json={"message": "new idea", "batch_size": 2},
+            )
+
+        saved = store.get_curriculum("trip").metadata["planner"]
+        assert saved["chat"] == [{"role": "user", "content": "old"}]
+        assert saved["proposed"] == {"start_day": 1, "days": [asdict(_day(1))]}
+
+    async def test_prompt_works_without_groq_key(self):
+        """Endpoint works with no GROQ_API_KEY configured (just the stub planner)."""
+        _setup(curriculum=_planned_curriculum(), planner=StubPlanner())
+
+        async with _client() as client:
+            resp = await client.post(
+                "/api/curriculum/trip/plan/turn/prompt",
+                json={"message": "test", "batch_size": 1},
+            )
+
+        assert resp.status_code == 200
+        assert "system_prompt" in resp.json()
+        assert "user_prompt" in resp.json()
+
+    async def test_drift_guard_prompt_identical_to_llm_path(self):
+        """user_prompt from /plan/turn/prompt is byte-identical to what
+        CurriculumPlanner.turn() passes to llm.complete (same inputs)."""
+        curriculum = _planned_curriculum()
+        fake_llm = _FakeLLMForPlanner(response="ok")
+        planner_obj = CurriculumPlanner(llm=fake_llm)
+        _setup(curriculum=curriculum, planner=planner_obj)
+
+        async with _client() as client:
+            prompt_resp = await client.post(
+                "/api/curriculum/trip/plan/turn/prompt",
+                json={"message": "plan 3 days", "batch_size": 3},
+            )
+            turn_resp = await client.post(
+                "/api/curriculum/trip/plan/turn",
+                json={"message": "plan 3 days", "batch_size": 3},
+            )
+
+        assert prompt_resp.status_code == 200
+        assert turn_resp.status_code == 200
+
+        exported_user_prompt = prompt_resp.json()["user_prompt"]
+        (llm_call,) = fake_llm.calls
+        assert exported_user_prompt == llm_call["prompt"]
