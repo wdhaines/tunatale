@@ -111,6 +111,7 @@ class LessonPipeline:
         curriculum = store.get_curriculum(curriculum_id)
         if curriculum is None:
             return
+        manual = curriculum.metadata.get("generation_mode", "auto") == "manual"
         for curriculum_day in sorted(curriculum.days, key=lambda d: d.day):
             day = curriculum_day.day
             key = (language_code, curriculum_id, day)
@@ -120,7 +121,8 @@ class LessonPipeline:
                 continue
             lesson_result = store.get_latest_lesson_by_day(curriculum_id, day)
             if lesson_result is None:
-                self.enqueue(language_code, curriculum_id, day, "generate")
+                if not manual:
+                    self.enqueue(language_code, curriculum_id, day, "generate")
             else:
                 lesson_id, lesson = lesson_result
                 audio_rows = store.list_audio_files_for_lesson(lesson_id)

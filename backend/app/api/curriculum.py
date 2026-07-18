@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.api._serializers import serialize_lesson
 from app.api.models import (
+    GenerationModeRequest,
     ImportPlanRequest,
     PlanFeedbackRequest,
     PlanTurnRequest,
@@ -170,9 +171,9 @@ async def plan_commit(curriculum_id: str, request: Request):
     curriculum.metadata["planner"] = state
     store.save_curriculum(curriculum_id, curriculum)
 
-    # Enqueue pipeline jobs for the newly committed days
+    # Enqueue pipeline jobs for the newly committed days (gated on generation_mode)
     pipeline = getattr(request.app.state, "pipeline", None)
-    if pipeline is not None:
+    if pipeline is not None and curriculum.metadata.get("generation_mode", "auto") != "manual":
         for day_entry in days:
             pipeline.enqueue(request.state.language_code, curriculum_id, day_entry.day, "generate")
 
@@ -207,6 +208,16 @@ async def plan_feedback(curriculum_id: str, body: PlanFeedbackRequest, request: 
     return {"feedback": state["feedback"]}
 
 
+@router.post("/{curriculum_id}/generation-mode", status_code=200)
+async def set_generation_mode(curriculum_id: str, body: GenerationModeRequest, request: Request):
+    """Set the generation mode for a curriculum: 'auto' (default, Groq pipeline) or 'manual' (copy/paste)."""
+    store = request.state.content_store
+    curriculum = _get_curriculum_or_404(store, curriculum_id)
+    curriculum.metadata["generation_mode"] = body.mode
+    store.save_curriculum(curriculum_id, curriculum)
+    return {"mode": body.mode}
+
+
 @router.get("", status_code=200)
 async def list_curricula(request: Request):
     store = request.state.content_store
@@ -226,6 +237,7 @@ async def get_curriculum(curriculum_id: str, request: Request):
         "cefr_level": curriculum.cefr_level,
         "days": sorted((asdict(d) for d in curriculum.days), key=lambda d: d["day"]),
         "proposed": get_planner_state(curriculum)["proposed"],
+        "generation_mode": curriculum.metadata.get("generation_mode", "auto"),
     }
 
 

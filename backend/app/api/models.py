@@ -133,6 +133,10 @@ class PlanFeedbackRequest(BaseModel):
     note: str
 
 
+class GenerationModeRequest(BaseModel):
+    mode: Literal["auto", "manual"]
+
+
 class InflectionClozeRequest(BaseModel):
     surface: str
     lemma: str

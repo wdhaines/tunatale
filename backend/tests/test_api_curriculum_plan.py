@@ -616,3 +616,160 @@ class TestPlanTurnPrompt:
         exported_user_prompt = prompt_resp.json()["user_prompt"]
         (llm_call,) = fake_llm.calls
         assert exported_user_prompt == llm_call["prompt"]
+
+
+class TestGenerationMode:
+    async def test_set_generation_mode_manual(self):
+        store = _setup(_planned_curriculum())
+        async with _client() as client:
+            resp = await client.post(
+                "/api/curriculum/trip/generation-mode",
+                json={"mode": "manual"},
+            )
+        assert resp.status_code == 200
+        assert resp.json() == {"mode": "manual"}
+        assert store.get_curriculum("trip").metadata["generation_mode"] == "manual"
+
+    async def test_set_generation_mode_auto(self):
+        curriculum = _planned_curriculum()
+        curriculum.metadata["generation_mode"] = "manual"
+        store = _setup(curriculum)
+        async with _client() as client:
+            resp = await client.post(
+                "/api/curriculum/trip/generation-mode",
+                json={"mode": "auto"},
+            )
+        assert resp.status_code == 200
+        assert resp.json() == {"mode": "auto"}
+        assert store.get_curriculum("trip").metadata["generation_mode"] == "auto"
+
+    async def test_set_generation_mode_unknown_curriculum_404(self):
+        _setup()
+        async with _client() as client:
+            resp = await client.post(
+                "/api/curriculum/no-such/generation-mode",
+                json={"mode": "manual"},
+            )
+        assert resp.status_code == 404
+
+    async def test_set_generation_mode_invalid_value_422(self):
+        _setup(_planned_curriculum())
+        async with _client() as client:
+            resp = await client.post(
+                "/api/curriculum/trip/generation-mode",
+                json={"mode": "bogus"},
+            )
+        assert resp.status_code == 422
+
+
+class TestGetCurriculumGenerationMode:
+    async def test_absent_key_returns_auto(self):
+        """A curriculum with no generation_mode key returns 'auto' (default)."""
+        _setup(_planned_curriculum())
+        async with _client() as client:
+            resp = await client.get("/api/curriculum/trip")
+        assert resp.status_code == 200
+        assert resp.json()["generation_mode"] == "auto"
+
+    async def test_manual_mode_returned(self):
+        curriculum = _planned_curriculum()
+        curriculum.metadata["generation_mode"] = "manual"
+        _setup(curriculum)
+        async with _client() as client:
+            resp = await client.get("/api/curriculum/trip")
+        assert resp.status_code == 200
+        assert resp.json()["generation_mode"] == "manual"
+
+    async def test_unknown_curriculum_404(self):
+        _setup()
+        async with _client() as client:
+            resp = await client.get("/api/curriculum/no-such")
+        assert resp.status_code == 404
+
+
+class TestPlanCommitManualMode:
+    async def test_manual_mode_commit_no_enqueue(self, tmp_path):
+        """plan_commit in manual mode commits days but does NOT enqueue generate jobs."""
+        from app.generation.pipeline import LessonPipeline
+
+        proposed = {"start_day": 1, "days": [asdict(_day(1)), asdict(_day(2))]}
+        curriculum = _planned_curriculum(proposed=proposed)
+        curriculum.metadata["generation_mode"] = "manual"
+        store = _setup(curriculum)
+
+        pipeline = LessonPipeline(
+            story_generator=None,
+            renderer=None,
+            audio_dir=tmp_path,
+            content_stores={"sl": store},
+            languages={"sl": get_language("sl")},
+            srs_dbs={},
+            activity_log=ActivityLog(maxlen=100),
+            llm_client=None,
+        )
+        app.state.pipeline = pipeline
+
+        async with _client() as client:
+            resp = await client.post("/api/curriculum/trip/plan/commit", json={})
+
+        assert resp.status_code == 200
+        assert resp.json() == {"id": "trip", "days": 2}
+        saved = store.get_curriculum("trip")
+        assert [d.day for d in saved.days] == [1, 2]
+        assert saved.metadata["planner"]["proposed"] is None
+        # No pipeline jobs enqueued in manual mode
+        assert len(pipeline._jobs) == 0
+
+    async def test_auto_mode_commit_enqueues(self, tmp_path):
+        """plan_commit in auto mode (explicit) enqueues generate jobs — same as default."""
+        from app.generation.pipeline import LessonPipeline
+
+        proposed = {"start_day": 1, "days": [asdict(_day(1))]}
+        curriculum = _planned_curriculum(proposed=proposed)
+        curriculum.metadata["generation_mode"] = "auto"
+        store = _setup(curriculum)
+
+        pipeline = LessonPipeline(
+            story_generator=None,
+            renderer=None,
+            audio_dir=tmp_path,
+            content_stores={"sl": store},
+            languages={"sl": get_language("sl")},
+            srs_dbs={},
+            activity_log=ActivityLog(maxlen=100),
+            llm_client=None,
+        )
+        app.state.pipeline = pipeline
+
+        async with _client() as client:
+            resp = await client.post("/api/curriculum/trip/plan/commit", json={})
+
+        assert resp.status_code == 200
+        assert pipeline._jobs[("sl", "trip", 1)]["state"] == "queued"
+
+    async def test_absent_key_commit_enqueues(self, tmp_path):
+        """plan_commit with no generation_mode key enqueues (default = auto)."""
+        from app.generation.pipeline import LessonPipeline
+
+        proposed = {"start_day": 1, "days": [asdict(_day(1))]}
+        curriculum = _planned_curriculum(proposed=proposed)
+        # No generation_mode key set
+        store = _setup(curriculum)
+
+        pipeline = LessonPipeline(
+            story_generator=None,
+            renderer=None,
+            audio_dir=tmp_path,
+            content_stores={"sl": store},
+            languages={"sl": get_language("sl")},
+            srs_dbs={},
+            activity_log=ActivityLog(maxlen=100),
+            llm_client=None,
+        )
+        app.state.pipeline = pipeline
+
+        async with _client() as client:
+            resp = await client.post("/api/curriculum/trip/plan/commit", json={})
+
+        assert resp.status_code == 200
+        assert pipeline._jobs[("sl", "trip", 1)]["state"] == "queued"

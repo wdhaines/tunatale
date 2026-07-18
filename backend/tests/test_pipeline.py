@@ -1384,3 +1384,99 @@ class TestWorkerSurvival:
         assert pipeline._worker_task is None
         await pipeline.shutdown()
         assert pipeline._worker_task is None
+
+
+class TestReconcileManualMode:
+    async def test_manual_mode_skips_generate_for_lessonless_day(self, pipeline):
+        """reconcile in manual mode does NOT enqueue generate for a day without a lesson."""
+        store = sl_store(pipeline)
+        cid = "cur-1"
+        curriculum = Curriculum(
+            id=cid,
+            topic="test",
+            language_code="sl",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(day=1, title="D1", focus="f", collocations=["c"], learning_objective="lo"),
+                CurriculumDay(day=2, title="D2", focus="f", collocations=["c"], learning_objective="lo"),
+            ],
+            metadata={"generation_mode": "manual"},
+        )
+        store.save_curriculum(cid, curriculum)
+
+        pipeline.reconcile("sl", cid)
+
+        # No generate jobs enqueued for either day
+        assert ("sl", cid, 1) not in pipeline._jobs
+        assert ("sl", cid, 2) not in pipeline._jobs
+
+    async def test_manual_mode_still_renders_lesson_without_audio(self, pipeline):
+        """reconcile in manual mode still enqueues render for a lesson missing audio."""
+        store = sl_store(pipeline)
+        cid = "cur-1"
+        curriculum = Curriculum(
+            id=cid,
+            topic="test",
+            language_code="sl",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(day=1, title="D1", focus="f", collocations=["c"], learning_objective="lo"),
+            ],
+            metadata={"generation_mode": "manual"},
+        )
+        store.save_curriculum(cid, curriculum)
+        lesson = Lesson(
+            title="No Audio",
+            language_code="sl",
+            sections=[Section(section_type=SectionType.KEY_PHRASES, phrases=[])],
+        )
+        store.save_lesson("lesson-1", cid, 1, lesson)
+
+        pipeline.reconcile("sl", cid)
+
+        record = pipeline._jobs.get(("sl", cid, 1))
+        assert record is not None
+        assert record["kind"] == "render"
+
+    async def test_absent_key_enqueues_generate(self, pipeline):
+        """reconcile with no generation_mode key enqueues generate (default = auto)."""
+        store = sl_store(pipeline)
+        cid = "cur-1"
+        curriculum = Curriculum(
+            id=cid,
+            topic="test",
+            language_code="sl",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(day=1, title="D1", focus="f", collocations=["c"], learning_objective="lo"),
+            ],
+        )
+        store.save_curriculum(cid, curriculum)
+
+        pipeline.reconcile("sl", cid)
+
+        record = pipeline._jobs.get(("sl", cid, 1))
+        assert record is not None
+        assert record["kind"] == "generate"
+
+    async def test_auto_mode_enqueues_generate(self, pipeline):
+        """reconcile with explicit 'auto' mode enqueues generate (same as default)."""
+        store = sl_store(pipeline)
+        cid = "cur-1"
+        curriculum = Curriculum(
+            id=cid,
+            topic="test",
+            language_code="sl",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(day=1, title="D1", focus="f", collocations=["c"], learning_objective="lo"),
+            ],
+            metadata={"generation_mode": "auto"},
+        )
+        store.save_curriculum(cid, curriculum)
+
+        pipeline.reconcile("sl", cid)
+
+        record = pipeline._jobs.get(("sl", cid, 1))
+        assert record is not None
+        assert record["kind"] == "generate"
