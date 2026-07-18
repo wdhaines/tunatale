@@ -59,6 +59,7 @@ from app.srs.queue_stats import (
     advance_learning_cutoff,
     build_live_load_balancer,
     effective_review_budget,
+    live_review_budget,
     resolve_bury_new,
     resolve_col_crt,
     resolve_daily_new_cap,
@@ -391,22 +392,55 @@ def _resolve_gloss_translation(
     return ""
 
 
-def _listen_grade_eligible(
-    rec: DirectionState | None, today_start: datetime.datetime, today_end: datetime.datetime
-) -> bool:
-    """True iff the recognition direction should accept a /listen Good grade."""
+def _listen_grade_class(
+    rec: DirectionState | None,
+    today_start: datetime.datetime,
+    today_end: datetime.datetime,
+    *,
+    end_of_day_utc: str,
+) -> str | None:
+    """Classify a recognition direction for /listen grading.
+
+    Returns one of ``"learning"``, ``"due"``, ``"ahead"``, or ``None`` (not
+    eligible).  ``last_review`` gates ONLY the once-per-day window
+    (already-graded-today returns ``None`` for both due and ahead); a missing
+    or legacy non-datetime ``last_review`` means "not graded today" and falls
+    through to the dueness check.  The REVIEW-state dueness boundary matches
+    ``count_review_due_collocations`` (``due_at <= end_of_day_utc``; a NULL
+    ``due_at`` is not counted as due there, so it classifies as ``"ahead"``).
+    """
     if rec is None:
-        return False
+        return None
     if rec.state in (SRSState.LEARNING, SRSState.RELEARNING):
-        return True
-    if rec.state == SRSState.REVIEW:
-        if rec.last_review is None:
-            return True
-        lr = rec.last_review
-        if not isinstance(lr, datetime.datetime):
-            return True
-        return not (today_start <= lr.astimezone(datetime.UTC) < today_end)
-    return False
+        return "learning"
+    if rec.state != SRSState.REVIEW:
+        return None
+    lr = rec.last_review
+    if isinstance(lr, datetime.datetime) and today_start <= lr.astimezone(datetime.UTC) < today_end:
+        return None
+    if rec.due_at is not None:
+        due_str = rec.due_at.isoformat() if isinstance(rec.due_at, datetime.datetime) else str(rec.due_at)
+        if due_str <= end_of_day_utc:
+            return "due"
+    return "ahead"
+
+
+def _bump_grade_clock(last_ms: int) -> tuple[datetime.datetime, int]:
+    """Monotonic per-grade timestamp for multi-grade listens.
+
+    ``tt_revlog.id`` is a millisecond-epoch primary key and ``append_revlog``
+    is INSERT OR IGNORE (sync-replay idempotency), so two grades landing in
+    the same millisecond would silently drop the second row — losing FSRS
+    replay history and under-counting ``count_reviews_completed_today``.
+    Anki never faces this (one answer per user interaction); a listen grades
+    a whole lesson in one request, so bump into the next free millisecond.
+    """
+    now = datetime.datetime.now(datetime.UTC)
+    ms = int(now.timestamp() * 1000)
+    if ms <= last_ms:
+        ms = last_ms + 1
+        now = datetime.datetime.fromtimestamp(ms / 1000, tz=datetime.UTC)
+    return now, ms
 
 
 def _rank_listen_candidates(key_phrases, lemmas, occurrences) -> list[tuple[str, object]]:
@@ -538,9 +572,15 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # graded in [midnight, 4 AM) is still "today" for Anki until rollover) ────
     today = anki_today()
     today_start, today_end = anki_day_bounds_utc_dt(today)
+    end_of_day_utc = datetime.datetime.combine(today, datetime.time.max).isoformat()
 
     created_count = 0
     graded_count = 0
+
+    # ── Live review budget: due-today grades count against it, ahead/learning
+    # grades are unlimited (brief Step B) ──────────────────────────────────
+    review_budget = live_review_budget(db, today)
+    last_grade_ms = 0  # revlog-id monotonicity across this listen's grades
 
     # ── Per-listen creation budget (plan D1) ────────────────────────────
     # One listen queues at most one Anki-day's worth of new cards, net of
@@ -551,7 +591,6 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     new_cap, _ = resolve_daily_new_cap(db)
     creation_budget = max(0, new_cap - db.count_new_introduced_today(today) - db.count_new_created_today(today))
     lemma_candidates: list[str] = []
-    kp_candidates: list = []
 
     for lemma in lemma_to_sentence:
         # Cloze cards are always on, for every language (no feature flag, no
@@ -610,170 +649,145 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             if rec is None:
                 continue
 
-            if _listen_grade_eligible(rec, today_start, today_end):
-                rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
-                now = datetime.datetime.now(datetime.UTC)
-                prev_dir = existing.directions[Direction.RECOGNITION]
-                updated = schedule(
-                    existing,
-                    rating,
-                    direction=Direction.RECOGNITION,
-                    params=resolve_fsrs_params(db)[0],
-                    now=now,
-                    col_crt=col_crt,
-                    load_balancer=balancer,
-                )
-                db.update_collocation(updated)
-                # `existing` came from db.get_collocation(); guid is valid → row always exists.
-                listen_coll_id = db.get_collocation_id_by_guid(existing.guid)
-                assert listen_coll_id is not None
-                row = build_revlog_row(
-                    listen_coll_id,
-                    Direction.RECOGNITION,
-                    prev_dir,
-                    updated.directions[Direction.RECOGNITION],
-                    rating,
-                    0,
-                    now=now,
-                    col_crt=col_crt,
-                )
-                db.append_revlog(row)
-                _balancer_add(
-                    balancer, card_id=prev_dir.anki_card_id, note_id=existing.anki_note_id, interval=row.interval
-                )
-                graded_count += 1
+            grade_cls = _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc)
+            if grade_cls is None:
+                continue
+            if grade_cls == "due" and review_budget <= 0:
+                continue
+            rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
+            now, last_grade_ms = _bump_grade_clock(last_grade_ms)
+            prev_dir = existing.directions[Direction.RECOGNITION]
+            updated = schedule(
+                existing,
+                rating,
+                direction=Direction.RECOGNITION,
+                params=resolve_fsrs_params(db)[0],
+                now=now,
+                col_crt=col_crt,
+                load_balancer=balancer,
+            )
+            db.update_collocation(updated)
+            listen_coll_id = db.get_collocation_id_by_guid(existing.guid)
+            assert listen_coll_id is not None
+            row = build_revlog_row(
+                listen_coll_id,
+                Direction.RECOGNITION,
+                prev_dir,
+                updated.directions[Direction.RECOGNITION],
+                rating,
+                0,
+                now=now,
+                col_crt=col_crt,
+                review_kind=3 if grade_cls == "ahead" else None,
+            )
+            db.append_revlog(row)
+            _balancer_add(balancer, card_id=prev_dir.anki_card_id, note_id=existing.anki_note_id, interval=row.interval)
+            graded_count += 1
+            if grade_cls == "due":
+                review_budget -= 1
 
-    # ── Key phrase registration + auto-grade ────────────────────────────
+    # ── Key phrase auto-grade (existing cards only; creation deferred) ────
     for kp in lesson.key_phrases:
         existing = db.get_collocation(kp.phrase)
         if existing is None:
-            kp_candidates.append(kp)
-        else:
-            if existing.syntactic_unit.card_type == "cloze":
-                continue
-            rec = existing.directions.get(Direction.RECOGNITION)
-            if rec is None:
-                continue
-            if _listen_grade_eligible(rec, today_start, today_end):
-                now = datetime.datetime.now(datetime.UTC)
-                prev_dir = existing.directions[Direction.RECOGNITION]
-                updated = schedule(
-                    existing,
-                    Rating.GOOD,
-                    direction=Direction.RECOGNITION,
-                    params=resolve_fsrs_params(db)[0],
-                    now=now,
-                    col_crt=col_crt,
-                    load_balancer=balancer,
-                )
-                db.update_collocation(updated)
-                # `existing` came from db.get_collocation(); guid is valid → row always exists.
-                kp_coll_id = db.get_collocation_id_by_guid(existing.guid)
-                assert kp_coll_id is not None
-                row = build_revlog_row(
-                    kp_coll_id,
-                    Direction.RECOGNITION,
-                    prev_dir,
-                    updated.directions[Direction.RECOGNITION],
-                    Rating.GOOD,
-                    0,
-                    now=now,
-                    col_crt=col_crt,
-                )
-                db.append_revlog(row)
-                _balancer_add(
-                    balancer, card_id=prev_dir.anki_card_id, note_id=existing.anki_note_id, interval=row.interval
-                )
-                graded_count += 1
+            continue
+        if existing.syntactic_unit.card_type == "cloze":
+            continue
+        rec = existing.directions.get(Direction.RECOGNITION)
+        if rec is None:
+            continue
+        grade_cls = _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc)
+        if grade_cls is None:
+            continue
+        if grade_cls == "due" and review_budget <= 0:
+            continue
+        now, last_grade_ms = _bump_grade_clock(last_grade_ms)
+        prev_dir = existing.directions[Direction.RECOGNITION]
+        updated = schedule(
+            existing,
+            Rating.GOOD,
+            direction=Direction.RECOGNITION,
+            params=resolve_fsrs_params(db)[0],
+            now=now,
+            col_crt=col_crt,
+            load_balancer=balancer,
+        )
+        db.update_collocation(updated)
+        kp_coll_id = db.get_collocation_id_by_guid(existing.guid)
+        assert kp_coll_id is not None
+        row = build_revlog_row(
+            kp_coll_id,
+            Direction.RECOGNITION,
+            prev_dir,
+            updated.directions[Direction.RECOGNITION],
+            Rating.GOOD,
+            0,
+            now=now,
+            col_crt=col_crt,
+            review_kind=3 if grade_cls == "ahead" else None,
+        )
+        db.append_revlog(row)
+        _balancer_add(balancer, card_id=prev_dir.anki_card_id, note_id=existing.anki_note_id, interval=row.interval)
+        graded_count += 1
+        if grade_cls == "due":
+            review_budget -= 1
 
     # ── Staged creation over ranked candidates, truncated to budget (D2/D3) ──
     # No persisted cursor: each listen recomputes lesson-word-set minus tracked
     # cards and takes the top of the ranking; cards created by this listen are
     # "existing" for the next one.
-    ranked = _rank_listen_candidates(kp_candidates, lemma_candidates, lemma_occurrences)
-    already_tracked = 0
-    for kind, cand in ranked:
+    ranked = _rank_listen_candidates([], lemma_candidates, lemma_occurrences)
+    for _kind, cand in ranked:
         if created_count >= creation_budget:
             break
-        if kind == "kp":
-            kp = cand
-            # A single-word key phrase can share its text with a lemma (or a
-            # duplicate key phrase earlier in the list) created moments ago in
-            # this pass — re-check so it isn't double-created or double-counted.
-            if db.get_collocation(kp.phrase) is not None:
-                already_tracked += 1
-                continue
-            unit = SyntacticUnit(
-                text=kp.phrase,
-                translation=kp.translation,
-                word_count=min(8, max(1, len(kp.phrase.split()))),
-                difficulty=1,
-                source="llm",
-            )
-            db.add_collocation(unit, language_code=lesson.language_code)
-            # Just inserted, so the guid always resolves. Complete the card inline.
-            kp_id = db.get_collocation_id_by_guid(
-                compute_guid(unit.text, lesson.language_code, unit.disambig_key or "")
-            )
-            await _generate_add_time_media(
-                db, llm, kp_id, unit, language_code=lesson.language_code, used_image_urls=used_image_urls
-            )
-        else:
-            lemma = cand
-            # Same re-check as the key-phrase arm: a single-word key phrase
-            # created above may have auto-filled this lemma.
-            if db.get_collocation_by_lemma_with_id(lemma) is not None:
-                already_tracked += 1
-                continue
-            is_func = is_function_word_for(
-                lemma, lemma_to_surfaces.get(lemma, set()), lesson.language_code, surface_to_upos
-            )
-            sent = lemma_to_sentence.get(lemma, "")
-            # Cloze rows blank the surface as it appeared, not the dictionary lemma:
-            # the lemmatizer may map an inflected surface to a different lemma (classla
-            # "sem" → "biti") that isn't in the sentence. Store the cloze pre-built;
-            # sync's idempotent make_cloze_text passes it through. (Phase 2b.)
-            stored_sentence = make_cloze_text(lemma_to_first_surface.get(lemma, lemma), sent) if is_func else sent
-            unit = SyntacticUnit(
-                text=lemma,
-                translation=_resolve_gloss_translation(
-                    lemma,
-                    token_glosses,
-                    lemma_to_surfaces.get(lemma, set()),
+        lemma = cand
+        is_func = is_function_word_for(
+            lemma, lemma_to_surfaces.get(lemma, set()), lesson.language_code, surface_to_upos
+        )
+        sent = lemma_to_sentence.get(lemma, "")
+        # Cloze rows blank the surface as it appeared, not the dictionary lemma:
+        # the lemmatizer may map an inflected surface to a different lemma (classla
+        # "sem" → "biti") that isn't in the sentence. Store the cloze pre-built;
+        # sync's idempotent make_cloze_text passes it through. (Phase 2b.)
+        stored_sentence = make_cloze_text(lemma_to_first_surface.get(lemma, lemma), sent) if is_func else sent
+        unit = SyntacticUnit(
+            text=lemma,
+            translation=_resolve_gloss_translation(
+                lemma,
+                token_glosses,
+                lemma_to_surfaces.get(lemma, set()),
+                lemma_to_first_surface.get(lemma, lemma),
+                language_code=lesson.language_code,
+            ),
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma=lemma,
+            card_type="cloze" if is_func else "vocab",
+            source_sentence=stored_sentence,
+            source_sentence_translation=sentence_translations.get(sent, ""),
+        )
+        db.add_collocation(unit, language_code=lesson.language_code)
+        if is_func:
+            coll = db.get_collocation_by_lemma_with_id(lemma)
+            new_id, _ = coll
+            try:
+                await synthesize_cloze_audios(
+                    db,
+                    new_id,
+                    sent,
                     lemma_to_first_surface.get(lemma, lemma),
-                    language_code=lesson.language_code,
-                ),
-                word_count=1,
-                difficulty=1,
-                source="llm",
-                lemma=lemma,
-                card_type="cloze" if is_func else "vocab",
-                source_sentence=stored_sentence,
-                source_sentence_translation=sentence_translations.get(sent, ""),
-            )
-            db.add_collocation(unit, language_code=lesson.language_code)
-            if is_func:
-                coll = db.get_collocation_by_lemma_with_id(lemma)
-                new_id, _ = coll
-                try:
-                    await synthesize_cloze_audios(
-                        db,
-                        new_id,
-                        sent,
-                        lemma_to_first_surface.get(lemma, lemma),
-                        voice=get_tts_voice(lesson.language_code),
-                    )
-                except Exception:
-                    _logger.warning("Failed to synthesize cloze audio for %r", lemma)
-            else:
-                # Mirror the cloze sibling above: the row was just inserted, so
-                # the lookup always resolves. Complete the vocab card inline.
-                new_id, _ = db.get_collocation_by_lemma_with_id(lemma)
-                await _generate_add_time_media(
-                    db, llm, new_id, unit, language_code=lesson.language_code, used_image_urls=used_image_urls
+                    voice=get_tts_voice(lesson.language_code),
                 )
+            except Exception:
+                _logger.warning("Failed to synthesize cloze audio for %r", lemma)
+        else:
+            new_id, _ = db.get_collocation_by_lemma_with_id(lemma)
+            await _generate_add_time_media(
+                db, llm, new_id, unit, language_code=lesson.language_code, used_image_urls=used_image_urls
+            )
         created_count += 1
-    remaining_candidates = len(ranked) - created_count - already_tracked
+    remaining_candidates = len(ranked) - created_count
 
     # Server-side listened state (TT-only, never syncs): one row per listen.
     db.record_listen(body.lesson_id)
@@ -833,7 +847,7 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     Inclusion: learning/relearning cards; tracked NEW cards in D2 rank order
     (grading one introduces it, same as Read mode's tap-to-introduce); REVIEW
     cards touched today (the /listen auto-Good correction set — same
-    local-midnight window as ``_listen_grade_eligible``) or already due.
+    local-midnight window as ``_listen_grade_class``) or already due.
     Everything else (known/suspended/buried/untracked, future-due untouched
     REVIEW) is excluded. Vocab serves recognition only — never fighting
     Layer 65's production gate — and cloze serves production only.
@@ -848,7 +862,7 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
 
     # Anki-day rollover window (NOT local midnight) — same convention as
-    # mark_lesson_listened's _listen_grade_eligible window, via the shared helper.
+    # mark_lesson_listened's _listen_grade_class window, via the shared helper.
     today = anki_today()
     today_start, today_end = anki_day_bounds_utc_dt(today)
     now = datetime.datetime.now(datetime.UTC)

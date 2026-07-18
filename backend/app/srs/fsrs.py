@@ -1562,6 +1562,7 @@ def build_revlog_row(
     *,
     now: datetime | None = None,
     col_crt: int | None = None,
+    review_kind: int | None = None,
 ) -> RevlogRow:
     """Construct a RevlogRow from the outcome of a ``schedule()`` call.
 
@@ -1569,6 +1570,11 @@ def build_revlog_row(
     epoch, taken from ``now``. ``time_ms`` is the elapsed time the user spent
     on the card (Anki's ``revlog.time``) and goes into ``taken_millis``.
     The caller persists the result via ``SRSDatabase.append_revlog()``.
+
+    When *review_kind* is ``None`` (the default), it is computed via
+    ``_compute_review_kind`` from the previous state — the standard path.
+    Callers may override it (e.g. ``3`` for Anki's ``Filtered`` /
+    review-ahead kind).
     """
     if now is None:
         now = datetime.now(tz=UTC)
@@ -1588,6 +1594,6 @@ def build_revlog_row(
         last_interval=_compute_revlog_last_interval(prev, col_crt),
         factor=factor,
         taken_millis=time_ms,
-        review_kind=_compute_review_kind(prev.state),
+        review_kind=review_kind if review_kind is not None else _compute_review_kind(prev.state),
         anki_card_id=prev.anki_card_id,
     )

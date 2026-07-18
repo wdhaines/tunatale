@@ -6,7 +6,6 @@ from httpx import ASGITransport, AsyncClient
 
 from app.main import app
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
-from app.models.srs_item import SRSState
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 
 
@@ -189,16 +188,14 @@ class TestSRSEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
-        assert data["registered"] == 2
-        assert db.count_collocations() == 2
-        assert db.get_collocation("dober dan") is not None
-        assert db.get_collocation("prosim kavo") is not None
+        assert data["registered"] == 0
+        assert db.count_collocations() == 0
 
     async def test_listen_creates_collocations_with_source_llm_and_no_anki_link(self):
-        """Layer 34 spec: /listen creates TT collocations with source='llm' and
-        anki_note_id=NULL — guaranteeing the next sync_create_new picks them up
-        and pushes them as proper Slovene Vocabulary notes (or links via guid if
-        Anki already has them)."""
+        """Layer 34 spec: /listen creates individual-word collocations with
+        source='llm' and anki_note_id=NULL — guaranteeing the next
+        sync_create_new picks them up and pushes them as proper Slovene
+        Vocabulary notes.  Key phrases no longer create collocations."""
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
 
@@ -207,8 +204,8 @@ class TestSRSEndpoints:
             language_code="sl",
             sections=[
                 Section(
-                    section_type=SectionType.KEY_PHRASES,
-                    phrases=[Phrase(text="dober dan", voice_id="sl-SI-PetraNeural", language_code="sl")],
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="Kje je banka?", voice_id="female-1", language_code="sl", role="female-1")],
                 )
             ],
             key_phrases=[KeyPhraseInfo(phrase="dober dan", translation="good day")],
@@ -223,12 +220,21 @@ class TestSRSEndpoints:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
 
-        # Inspect the persisted collocation
+        # Key phrases no longer create collocations
         with db._get_conn() as conn:
-            row = conn.execute("SELECT text, source, anki_note_id FROM collocations WHERE text='dober dan'").fetchone()
-        assert row is not None
-        assert row["source"] == "llm"
-        assert row["anki_note_id"] is None
+            kp_row = conn.execute(
+                "SELECT text, source, anki_note_id FROM collocations WHERE text='dober dan'"
+            ).fetchone()
+        assert kp_row is None
+
+        # Individual-word lemma created with source='llm' and no Anki link
+        with db._get_conn() as conn:
+            lemma_row = conn.execute(
+                "SELECT text, source, anki_note_id FROM collocations WHERE text='banka'"
+            ).fetchone()
+        assert lemma_row is not None
+        assert lemma_row["source"] == "llm"
+        assert lemma_row["anki_note_id"] is None
 
     async def test_listen_is_idempotent(self):
         from app.srs.database import SRSDatabase
@@ -257,7 +263,7 @@ class TestSRSEndpoints:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
         assert response.status_code == 200
-        assert db.count_collocations() == 1
+        assert db.count_collocations() == 0
 
     async def test_listen_returns_404_for_missing_lesson(self):
         from app.srs.database import SRSDatabase
@@ -382,8 +388,7 @@ class TestSRSEndpoints:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
         item = db.get_collocation("dober dan")
-        assert item is not None
-        assert item.syntactic_unit.translation == "good day"
+        assert item is None
 
     async def test_listen_lemma_auto_filled_on_single_word_collocation(self):
         """Single-word collocations now auto-fill lemma = casefolded text,
@@ -421,14 +426,20 @@ class TestSRSEndpoints:
         assert db.get_collocation_by_lemma("banka") is not None
 
     async def test_listen_auto_added_cards_have_null_anki_note_id(self):
-        """Auto-added key_phrase collocations have anki_note_id IS NULL and appear in list_items_without_anki_note."""
+        """Listen-created lemma collocations have anki_note_id=NULL so
+        sync_create_new will push them to Anki."""
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
 
         lesson = Lesson(
             title="Day 1",
             language_code="sl",
-            sections=[],
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="Kje je banka?", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
             key_phrases=[
                 KeyPhraseInfo(phrase="dober dan", translation="good day"),
                 KeyPhraseInfo(phrase="prosim kavo", translation="a coffee please"),
@@ -442,15 +453,16 @@ class TestSRSEndpoints:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
+        assert response.status_code == 200
         items_without_anki = db.list_items_without_anki_note()
-        assert len(items_without_anki) == 2
-        for _guid, item, _coll_id in items_without_anki:
+        assert len(items_without_anki) >= 1
+        for _guid, item, _rid in items_without_anki:
             assert item.anki_note_id is None
 
-    async def test_listen_key_phrases_state_is_new_on_first_listen(self):
-        """Key phrases get state=NEW on first listen — no FSRS grade (soft exposure only)."""
+    async def test_listen_key_phrases_not_created_as_collocations(self):
+        """Key phrases no longer create collocations on first listen."""
         from app.srs.database import SRSDatabase
         from app.storage.store import ContentStore
 
@@ -471,9 +483,7 @@ class TestSRSEndpoints:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
         item = db.get_collocation("dober dan")
-        assert item is not None
-        assert item.state == SRSState.NEW
-        assert item.reps == 0
+        assert item is None
 
     async def test_listen_key_phrases_do_not_duplicate_on_relisten(self):
         """Second listen with same key_phrases does not create duplicate collocations."""
@@ -502,7 +512,7 @@ class TestSRSEndpoints:
 
         assert first.status_code == 200
         assert second.status_code == 200
-        assert db.count_collocations() == 2
+        assert db.count_collocations() == 0
 
     async def test_listen_empty_word_ratings_does_not_crash(self):
         """Explicitly verify that word_ratings={} (as sent by the frontend) works."""
@@ -531,7 +541,7 @@ class TestSRSEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
-        assert data["registered"] == 1
+        assert data["registered"] == 0
 
 
 class TestResolveGlossTranslation:

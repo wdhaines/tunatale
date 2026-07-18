@@ -385,6 +385,30 @@ def effective_review_budget(
     return max(0, budget)
 
 
+def live_review_budget(db: SRSDatabase, today: date) -> int:
+    """Remaining review budget for the current Anki-day, mirroring the badge path.
+
+    Composes exactly the same inputs as the ``/api/srs/queue-stats`` badge
+    path (``effective_review_budget`` call at ``srs.py::get_queue_stats``):
+    ``resolve_daily_review_cap``, ``count_reviews_completed_today``,
+    ``count_new_introduced_today``, ``count_interday_learning_due``, and
+    ``resolve_new_cards_ignore_review_limit``.  The /listen handler calls this
+    once before its grading loop to cap the number of due-today auto-grades.
+    """
+    review_cap, _ = resolve_daily_review_cap(db)
+    reviews_today = db.count_reviews_completed_today(today)
+    introduced_today = db.count_new_introduced_today(today)
+    interday_learning_due = db.count_interday_learning_due(today)
+    ignore_review_limit = resolve_new_cards_ignore_review_limit(db)
+    return effective_review_budget(
+        review_cap,
+        reviews_today,
+        introduced_today,
+        interday_learning_due=interday_learning_due,
+        new_cards_ignore_review_limit=ignore_review_limit,
+    )
+
+
 def refresh_review_settings(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
     """Read newSpread/bury flags from Anki's deck_config protobuf and write to cache."""
     try:

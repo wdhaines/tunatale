@@ -491,7 +491,8 @@ class TestListenClozeIntegration:
         assert kje["state"] == "learning"
         assert kje["reps"] == 2
 
-    async def test_listen_with_flag_on_still_registers_key_phrases(self):
+    async def test_listen_no_longer_creates_key_phrase_cards(self):
+        """Untracked key phrases are not created; only lemma cards are created."""
         from app.storage.store import ContentStore
 
         db = await self._setup_lesson()
@@ -508,10 +509,8 @@ class TestListenClozeIntegration:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
 
-        kp1 = db.get_collocation("dober dan")
-        assert kp1 is not None
-        kp2 = db.get_collocation("hvala lepa")
-        assert kp2 is not None
+        assert db.get_collocation("dober dan") is None
+        assert db.get_collocation("hvala lepa") is None
 
         assert db.get_collocation_by_lemma("kje") is not None
         banka = db.get_collocation_by_lemma("banka")
@@ -522,6 +521,7 @@ class TestListenClozeIntegration:
 
     async def test_listen_grades_key_phrase_when_recognition_learning(self):
         """Pre-existing KP with rec state=LEARNING → reps incremented, production untouched."""
+        from app.models.syntactic_unit import SyntacticUnit
         from app.storage.store import ContentStore
 
         db = await self._setup_lesson()
@@ -530,9 +530,8 @@ class TestListenClozeIntegration:
         lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-
+        unit = SyntacticUnit(text="dober dan", translation="good day", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
         item = db.get_collocation("dober dan")
         assert item is not None
         rec = item.directions[Direction.RECOGNITION]
@@ -560,6 +559,7 @@ class TestListenClozeIntegration:
         """Pre-existing KP with rec state=REVIEW, last_review 2 days ago → graded (reps+1)."""
         from datetime import timedelta
 
+        from app.models.syntactic_unit import SyntacticUnit
         from app.storage.store import ContentStore
 
         db = await self._setup_lesson()
@@ -568,9 +568,8 @@ class TestListenClozeIntegration:
         lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-
+        unit = SyntacticUnit(text="dober dan", translation="good day", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
         item = db.get_collocation("dober dan")
         assert item is not None
         rec = item.directions[Direction.RECOGNITION]
@@ -589,6 +588,7 @@ class TestListenClozeIntegration:
     async def test_listen_skips_key_phrase_when_review_already_today(self):
         """Pre-existing KP with rec state=REVIEW, last_review today → no grade."""
 
+        from app.models.syntactic_unit import SyntacticUnit
         from app.storage.store import ContentStore
 
         db = await self._setup_lesson()
@@ -597,9 +597,8 @@ class TestListenClozeIntegration:
         lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-
+        unit = SyntacticUnit(text="dober dan", translation="good day", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
         item = db.get_collocation("dober dan")
         assert item is not None
         rec = item.directions[Direction.RECOGNITION]
@@ -617,6 +616,7 @@ class TestListenClozeIntegration:
 
     async def test_listen_skips_key_phrase_when_recognition_new(self):
         """Pre-existing KP with rec state=NEW → no grade."""
+        from app.models.syntactic_unit import SyntacticUnit
         from app.storage.store import ContentStore
 
         db = await self._setup_lesson()
@@ -625,9 +625,8 @@ class TestListenClozeIntegration:
         lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-
+        unit = SyntacticUnit(text="dober dan", translation="good day", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
         item = db.get_collocation("dober dan")
         assert item is not None
         rec_reps_before = item.directions[Direction.RECOGNITION].reps
@@ -641,6 +640,7 @@ class TestListenClozeIntegration:
 
     async def test_listen_skips_key_phrase_when_recognition_known(self):
         """Pre-existing KP with rec state=KNOWN → no grade."""
+        from app.models.syntactic_unit import SyntacticUnit
         from app.storage.store import ContentStore
 
         db = await self._setup_lesson()
@@ -649,9 +649,8 @@ class TestListenClozeIntegration:
         lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-
+        unit = SyntacticUnit(text="dober dan", translation="good day", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
         item = db.get_collocation("dober dan")
         assert item is not None
         rec = item.directions[Direction.RECOGNITION]
@@ -745,6 +744,7 @@ class TestListenClozeIntegration:
 
     async def test_listen_skips_key_phrase_when_cloze(self):
         """Key phrase existing as cloze (defensive) → skip, no crash."""
+        from app.models.syntactic_unit import SyntacticUnit
         from app.storage.store import ContentStore
 
         db = await self._setup_lesson()
@@ -753,10 +753,9 @@ class TestListenClozeIntegration:
         lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        unit = SyntacticUnit(text="dober dan", translation="good day", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
 
-        # Manually change card_type to cloze
         with db._get_conn() as conn:
             conn.execute("UPDATE collocations SET card_type = 'cloze' WHERE text = 'dober dan'")
             conn.commit()
@@ -770,6 +769,7 @@ class TestListenClozeIntegration:
 
     async def test_listen_skips_key_phrase_without_recognition_direction(self):
         """Key phrase existing without RECOGNITION direction (defensive) → skip, no crash."""
+        from app.models.syntactic_unit import SyntacticUnit
         from app.storage.store import ContentStore
 
         db = await self._setup_lesson()
@@ -778,10 +778,9 @@ class TestListenClozeIntegration:
         lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        unit = SyntacticUnit(text="dober dan", translation="good day", word_count=2, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
 
-        # Delete recognition direction
         with db._get_conn() as conn:
             conn.execute(
                 "DELETE FROM collocation_directions WHERE collocation_id = (SELECT id FROM collocations WHERE text = 'dober dan') AND direction = 'recognition'"
@@ -815,7 +814,7 @@ class TestListenClozeIntegration:
         dirty = db.get_dirty_fields(item.guid)
         assert dirty == ""  # not re-marked
 
-    # ── Edge cases for _listen_grade_eligible (lines 228, 233, 236, 238) ──
+    # ── Edge cases for _listen_grade_class ──
 
     async def test_listen_skips_known_state(self):
         """Pre-existing vocab, recognition state=KNOWN → skip (no grade)."""
@@ -965,69 +964,333 @@ class TestListenClozeIntegration:
             assert "{{c1" not in sent, f"sentence arg contains cloze markup: {sent!r}"
             assert sent == "Kje je banka?"
 
+    async def test_kp_arm_budget_skip(self):
+        """Pre-existing tracked KP card that is review-due today: budget exhausted
+        before the kp arm reaches it → kp card NOT graded and still in the
+        review-queue due bucket (key-phrase twin of the lemma-arm budget test)."""
+        from datetime import timedelta
 
-class TestListenGradeEligible:
-    """Direct unit tests for _listen_grade_eligible edge cases."""
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.storage.store import ContentStore
 
-    def test_rec_is_none_returns_false(self):
+        db = await self._setup_lesson()
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("lesson-1")
+        lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
 
-        from app.api.srs import _listen_grade_eligible
+        # Seed a lemma card that will consume the entire review budget first
+        lemma_unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="test")
+        db.add_collocation(lemma_unit, language_code="sl")
+        banka = db.get_collocation("banka")
+        rec_banka = banka.directions[Direction.RECOGNITION]
+        rec_banka.state = SRSState.REVIEW
+        rec_banka.last_review = datetime.now(UTC) - timedelta(days=5)
+        rec_banka.due_at = datetime.now(UTC) - timedelta(hours=1)
+        rec_banka.reps = 5
+        db.update_collocation(banka)
 
-        assert _listen_grade_eligible(None, datetime.now(UTC), datetime.now(UTC)) is False
+        # Seed the KP card — also review-due today
+        kp_unit = SyntacticUnit(
+            text="dober dan",
+            translation="good day",
+            word_count=2,
+            difficulty=1,
+            source="test",
+        )
+        db.add_collocation(kp_unit, language_code="sl")
+        kp = db.get_collocation("dober dan")
+        rec_kp = kp.directions[Direction.RECOGNITION]
+        rec_kp.state = SRSState.REVIEW
+        rec_kp.last_review = datetime.now(UTC) - timedelta(days=5)
+        rec_kp.due_at = datetime.now(UTC) - timedelta(hours=1)
+        rec_kp.reps = 5
+        db.update_collocation(kp)
 
-    def test_legacy_date_last_review_returns_true(self):
-        from datetime import date, timedelta
+        # Budget = 1 → lemma arm takes the slot, kp arm skips
+        db.set_anki_state_cache("daily_new_cap", "0")
+        db.set_anki_state_cache("daily_review_cap", "1")
 
-        from app.api.srs import _listen_grade_eligible
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert resp.status_code == 200
+
+        # kp card was NOT graded — reps and due_at unchanged
+        kp_after = db.get_collocation("dober dan")
+        rec_kp_after = kp_after.directions[Direction.RECOGNITION]
+        assert rec_kp_after.reps == 5
+        assert rec_kp_after.due_at < datetime.now(UTC)  # still due (not rescheduled)
+
+        # kp card still appears in the lesson review-queue due bucket
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            queue_resp = await client.get("/api/srs/lesson/lesson-1/review-queue")
+        assert queue_resp.status_code == 200
+        queue_data = queue_resp.json()
+        due_texts = [item["text"] for item in queue_data.get("queue", [])]
+        assert "dober dan" in due_texts
+
+
+class TestBumpGradeClock:
+    """tt_revlog.id is a ms-epoch PK behind INSERT OR IGNORE — a multi-grade
+    listen must never mint the same millisecond twice or rows silently drop."""
+
+    def test_same_millisecond_calls_yield_strictly_increasing_unique_ids(self):
+        from app.api.srs import _bump_grade_clock
+
+        last = 0
+        seen = []
+        for _ in range(50):
+            now, last = _bump_grade_clock(last)
+            assert int(now.timestamp() * 1000) == last
+            seen.append(last)
+        assert len(set(seen)) == 50
+        assert seen == sorted(seen)
+
+
+class TestListenGradeClass:
+    """Direct unit tests for _listen_grade_class edge cases."""
+
+    def test_rec_is_none_returns_none(self):
+        from datetime import date as _date
+
+        from app.api.srs import _listen_grade_class
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
+
+        today = anki_today()
+        today_start, today_end = anki_day_bounds_utc_dt(today)
+        end_of_day_utc = datetime.combine(_date.today(), time.max).isoformat()
+        assert _listen_grade_class(None, today_start, today_end, end_of_day_utc=end_of_day_utc) is None
+
+    def test_legacy_date_last_review_returns_due(self):
+        from datetime import date
+
+        from app.api.srs import _listen_grade_class
         from app.models.srs_item import DirectionState
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
 
+        today = anki_today()
+        today_start, today_end = anki_day_bounds_utc_dt(today)
+        end_of_day_utc = datetime.combine(date.today(), time.max).isoformat()
         rec = DirectionState(
             direction=Direction.RECOGNITION,
             due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
             state=SRSState.REVIEW,
             reps=5,
-            last_review=date(2026, 5, 1),  # legacy date, not datetime
+            last_review=date(2026, 5, 1),
         )
-        today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-        today_end = today_start + timedelta(days=1)
-        assert _listen_grade_eligible(rec, today_start, today_end) is True
+        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) == "due"
 
-    def test_non_cloze_without_recognition_skipped(self):
-        """Line 314: existing item is vocab but has no RECOGNITION direction → skip (no crash)."""
+    def test_review_future_due_returns_ahead(self):
+        from datetime import date, timedelta
 
-        from app.models.syntactic_unit import SyntacticUnit
-        from app.srs.database import SRSDatabase
+        from app.api.srs import _listen_grade_class
+        from app.models.srs_item import DirectionState
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
 
-        db = SRSDatabase(":memory:")
-        unit = SyntacticUnit(
-            text="testword",
-            translation="",
-            word_count=1,
-            difficulty=1,
-            source="test",
-            lemma="testword",
-            card_type="vocab",
+        today = anki_today()
+        today_start, today_end = anki_day_bounds_utc_dt(today)
+        end_of_day_utc = datetime.combine(date.today(), time.max).isoformat()
+        rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(date.today() + timedelta(days=5), time(4, 0), tzinfo=UTC),
+            state=SRSState.REVIEW,
+            reps=5,
+            last_review=datetime.now(UTC) - timedelta(days=10),
         )
-        db.add_collocation(unit, language_code="sl")
-        with db._get_conn() as conn:
-            conn.execute(
-                "DELETE FROM collocation_directions WHERE collocation_id = (SELECT id FROM collocations WHERE lemma = 'testword') AND direction = 'recognition'"
-            )
-            conn.commit()
+        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) == "ahead"
 
-        item = db.get_collocation_by_lemma("testword")
-        assert item is not None
-        assert Direction.RECOGNITION not in item.directions
-        assert item.syntactic_unit.card_type == "vocab"
+    def test_review_due_today_returns_due(self):
+        from datetime import date, timedelta
 
-        from datetime import timedelta
+        from app.api.srs import _listen_grade_class
+        from app.models.srs_item import DirectionState
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
 
-        from app.api.srs import _listen_grade_eligible
+        today = anki_today()
+        today_start, today_end = anki_day_bounds_utc_dt(today)
+        end_of_day_utc = datetime.combine(date.today(), time.max).isoformat()
+        rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+            state=SRSState.REVIEW,
+            reps=5,
+            last_review=datetime.now(UTC) - timedelta(days=10),
+        )
+        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) == "due"
 
-        today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-        today_end = today_start + timedelta(days=1)
-        rec = item.directions.get(Direction.RECOGNITION)
-        assert _listen_grade_eligible(rec, today_start, today_end) is False
+    def test_review_already_graded_today_returns_none(self):
+        from datetime import date
+
+        from app.api.srs import _listen_grade_class
+        from app.models.srs_item import DirectionState
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
+
+        today = anki_today()
+        today_start, today_end = anki_day_bounds_utc_dt(today)
+        end_of_day_utc = datetime.combine(date.today(), time.max).isoformat()
+        rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+            state=SRSState.REVIEW,
+            reps=5,
+            last_review=datetime.now(UTC),
+        )
+        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) is None
+
+    def test_learning_returns_learning(self):
+        from datetime import date
+
+        from app.api.srs import _listen_grade_class
+        from app.models.srs_item import DirectionState
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
+
+        today = anki_today()
+        today_start, today_end = anki_day_bounds_utc_dt(today)
+        end_of_day_utc = datetime.combine(date.today(), time.max).isoformat()
+        rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+            state=SRSState.LEARNING,
+            reps=1,
+        )
+        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) == "learning"
+
+    def test_relearning_returns_learning(self):
+        from datetime import date
+
+        from app.api.srs import _listen_grade_class
+        from app.models.srs_item import DirectionState
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
+
+        today = anki_today()
+        today_start, today_end = anki_day_bounds_utc_dt(today)
+        end_of_day_utc = datetime.combine(date.today(), time.max).isoformat()
+        rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+            state=SRSState.RELEARNING,
+            reps=3,
+        )
+        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) == "learning"
+
+    def test_review_overdue_returns_due(self):
+        from datetime import date, timedelta
+
+        from app.api.srs import _listen_grade_class
+        from app.models.srs_item import DirectionState
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
+
+        today = anki_today()
+        today_start, today_end = anki_day_bounds_utc_dt(today)
+        end_of_day_utc = datetime.combine(date.today(), time.max).isoformat()
+        rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(date.today() - timedelta(days=7), time(4, 0), tzinfo=UTC),
+            state=SRSState.REVIEW,
+            reps=5,
+            last_review=datetime.now(UTC) - timedelta(days=10),
+        )
+        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) == "due"
+
+    def test_review_future_due_already_graded_today_returns_none(self):
+        """The once-per-day window applies to the ahead class too."""
+        from datetime import date, timedelta
+
+        from app.api.srs import _listen_grade_class
+        from app.models.srs_item import DirectionState
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
+
+        today = anki_today()
+        today_start, today_end = anki_day_bounds_utc_dt(today)
+        end_of_day_utc = datetime.combine(date.today(), time.max).isoformat()
+        rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(date.today() + timedelta(days=5), time(4, 0), tzinfo=UTC),
+            state=SRSState.REVIEW,
+            reps=5,
+            last_review=datetime.now(UTC),
+        )
+        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) is None
+
+    def test_review_no_last_review_future_due_returns_ahead(self):
+        """last_review gates only the once-per-day window — a card never
+        graded locally (e.g. imported/synced) classifies by due_at, not
+        as due-by-default."""
+        from datetime import date, timedelta
+
+        from app.api.srs import _listen_grade_class
+        from app.models.srs_item import DirectionState
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
+
+        today = anki_today()
+        today_start, today_end = anki_day_bounds_utc_dt(today)
+        end_of_day_utc = datetime.combine(date.today(), time.max).isoformat()
+        rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(date.today() + timedelta(days=5), time(4, 0), tzinfo=UTC),
+            state=SRSState.REVIEW,
+            reps=5,
+            last_review=None,
+        )
+        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) == "ahead"
+
+    def test_review_no_last_review_past_due_returns_due(self):
+        from datetime import date, timedelta
+
+        from app.api.srs import _listen_grade_class
+        from app.models.srs_item import DirectionState
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
+
+        today = anki_today()
+        today_start, today_end = anki_day_bounds_utc_dt(today)
+        end_of_day_utc = datetime.combine(date.today(), time.max).isoformat()
+        rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(date.today() - timedelta(days=1), time(4, 0), tzinfo=UTC),
+            state=SRSState.REVIEW,
+            reps=5,
+            last_review=None,
+        )
+        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) == "due"
+
+    def test_review_null_due_at_returns_ahead(self):
+        """count_review_due_collocations does not count NULL due_at as due,
+        so the class boundary must not either."""
+        from datetime import date, timedelta
+
+        from app.api.srs import _listen_grade_class
+        from app.models.srs_item import DirectionState
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
+
+        today = anki_today()
+        today_start, today_end = anki_day_bounds_utc_dt(today)
+        end_of_day_utc = datetime.combine(date.today(), time.max).isoformat()
+        rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=None,
+            state=SRSState.REVIEW,
+            reps=5,
+            last_review=datetime.now(UTC) - timedelta(days=10),
+        )
+        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) == "ahead"
+
+    def test_new_state_returns_none(self):
+        from datetime import date
+
+        from app.api.srs import _listen_grade_class
+        from app.models.srs_item import DirectionState
+        from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
+
+        today = anki_today()
+        today_start, today_end = anki_day_bounds_utc_dt(today)
+        end_of_day_utc = datetime.combine(date.today(), time.max).isoformat()
+        rec = DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+            state=SRSState.NEW,
+            reps=0,
+        )
+        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) is None
 
 
 class TestListenWindowUsesAnkiRollover:
@@ -1043,22 +1306,18 @@ class TestListenWindowUsesAnkiRollover:
     """
 
     def test_late_evening_grade_still_blocks_regrade_before_rollover(self):
-        from datetime import timedelta
+        from datetime import date
 
-        from app.api.srs import _listen_grade_eligible
+        from app.api.srs import _listen_grade_class
         from app.models.srs_item import DirectionState
         from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
 
-        # "now" = 02:00 on day D — inside [midnight, 4 AM), before rollover.
-        # UTC stands in for "local" here (matching rollover.py's own test idiom
-        # of treating an aware tzinfo as the local zone under test).
         now = datetime(2026, 5, 8, 2, 0, tzinfo=UTC)
-        # last_review = 23:00 the PRIOR evening — same active Anki day as `now`
-        # (Anki day D-1 spans [4 AM D-1, 4 AM D), and 23:00 D-1 falls inside it).
         last_review = datetime(2026, 5, 7, 23, 0, tzinfo=UTC)
 
         today = anki_today(now)
         today_start, today_end = anki_day_bounds_utc_dt(today, now)
+        end_of_day_utc = datetime.combine(date(2026, 5, 8), time.max).isoformat()
 
         rec = DirectionState(
             direction=Direction.RECOGNITION,
@@ -1067,16 +1326,7 @@ class TestListenWindowUsesAnkiRollover:
             reps=5,
             last_review=last_review,
         )
-        assert _listen_grade_eligible(rec, today_start, today_end) is False, (
+        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) is None, (
             "a card graded late the prior evening is still 'today' by Anki's "
             "4 AM rollover and must not be regraded before rollover"
         )
-
-        # Sanity check: the OLD local-midnight window would have excluded
-        # last_review (23:00 the calendar day before `now`'s calendar day) and
-        # wrongly marked the card eligible — confirms this scenario actually
-        # distinguishes the two conventions, so a revert would flip the
-        # assertion above.
-        old_today_start = datetime(2026, 5, 8, 0, 0, tzinfo=UTC)
-        old_today_end = old_today_start + timedelta(days=1)
-        assert _listen_grade_eligible(rec, old_today_start, old_today_end) is True

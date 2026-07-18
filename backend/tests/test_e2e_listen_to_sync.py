@@ -253,6 +253,136 @@ class TestListenToSyncRoundTrip:
         note_guids = {r["guid"] for r in anki_conn.execute("SELECT guid FROM notes").fetchall()}
         assert note_guids == {banka.guid, center.guid}
 
+    async def test_listen_ahead_grade_round_trips_as_filtered_and_skips_anki_daily_counter(self, monkeypatch, tmp_path):
+        """Brief Step B round-trip: a listen's ahead grade pushes to Anki's
+        revlog verbatim as type=3 (Filtered / review-ahead) with factor>0,
+        which the Anki-side per-deck studied recompute
+        (``count_reviews_today_for_deck``, Layer 73) does NOT count — while
+        the due grade's type=1 lastIvl>=1 row DOES count. This pins the
+        divergence-free design: neither app's daily review counter charges
+        review-ahead grades, on either side of a full sync."""
+        from datetime import UTC, datetime, timedelta
+
+        from app.models.srs_item import Direction, SRSState
+        from app.plugins.anki_sync.sync import run_full_sync
+        from app.plugins.anki_sync.sync_common import _local_today_4am
+        from app.plugins.anki_sync.sync_reader import OfflineReader
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="banka center", voice_id="female-1", language_code="sl", role="female-1"),
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        # Two tracked REVIEW cards linked to Anki: banka due yesterday ("due"
+        # class, kind 1), center due in 5 days ("ahead" class, kind 3).
+        anki_conn = _make_dual_collection_conn()
+        col_crt = anki_conn.execute("SELECT crt FROM col").fetchone()[0]
+        seeds = {
+            "banka": (9001, 90010, datetime.now(UTC) - timedelta(days=1)),
+            "center": (9002, 90020, datetime.now(UTC) + timedelta(days=5)),
+        }
+        from app.models.syntactic_unit import SyntacticUnit
+
+        for text, (note_id, card_id, due_at) in seeds.items():
+            unit = SyntacticUnit(text=text, translation=text, word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            item = db.get_collocation(text)
+            db.set_anki_ids(item.guid, note_id, {Direction.RECOGNITION: card_id})
+            item = db.get_collocation(text)
+            rec = item.directions[Direction.RECOGNITION]
+            rec.state = SRSState.REVIEW
+            rec.last_review = datetime.now(UTC) - timedelta(days=10)
+            rec.due_at = due_at
+            rec.stability = 9.0
+            rec.fsrs_difficulty = 5.0
+            rec.reps = 5
+            db.update_collocation(item)
+            anki_conn.execute(
+                "INSERT INTO notes VALUES (?, ?, 1000001, 0, 0, '', ?, ?, 0, 0, '')",
+                (note_id, item.guid, f"{text}\x1f{text}", text),
+            )
+            anki_conn.execute(
+                "INSERT INTO cards VALUES (?, ?, 12345, 0, 0, 0, 2, 2, 100, 9, 0, 5, 0, 0, 0, 0, 0, '{}')",
+                (card_id, note_id),
+            )
+        anki_conn.commit()
+
+        app.state.srs_db = db
+        app.state.content_store = store
+        db.set_anki_state_cache("daily_new_cap", "0")
+        db.set_anki_state_cache("daily_review_cap", "10")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+        assert response.json()["graded"] == 2
+
+        # TT wrote one kind-1 and one kind-3 row.
+        with db._get_conn() as conn:
+            kinds = {
+                r["collocation_id"]: r["review_kind"]
+                for r in conn.execute("SELECT collocation_id, review_kind FROM tt_revlog").fetchall()
+            }
+        assert sorted(kinds.values()) == [1, 3]
+
+        # ── Full sync (the single canonical sequence — no phase subset) ────
+        sync = AnkiSync(
+            db=db,
+            _reader=OfflineReader(anki_conn, "0. Slovene"),
+            _writer=OfflineWriter(anki_conn),
+            _anki_col_crt=col_crt,
+        )
+        for name in (
+            "refresh_daily_new_cap",
+            "refresh_daily_review_cap",
+            "refresh_desired_retention",
+            "refresh_fsrs_params",
+            "refresh_fsrs_short_term_flag",
+            "refresh_maximum_review_interval",
+            "refresh_review_settings",
+            "refresh_learning_steps",
+            "refresh_load_balancer_enabled",
+            "refresh_new_cards_ignore_review_limit",
+            "refresh_easy_days",
+            "warn_if_multi_deck_preset",
+        ):
+            monkeypatch.setattr(f"app.srs.queue_stats.{name}", lambda *a, **k: None)
+        await run_full_sync(
+            sync,
+            anki_conn,
+            db,
+            deck_name="0. Slovene",
+            model_name="Slovene Vocabulary",
+            sync_log_path=tmp_path / "sync.log",
+        )
+
+        # Ahead grade landed verbatim: type=3, factor>0. Due grade: type=1,
+        # lastIvl>=1 (review footing).
+        ahead_rows = anki_conn.execute("SELECT type, factor, lastIvl FROM revlog WHERE cid = 90020").fetchall()
+        assert len(ahead_rows) == 1
+        assert ahead_rows[0]["type"] == 3
+        assert ahead_rows[0]["factor"] > 0
+        due_rows = anki_conn.execute("SELECT type, factor, lastIvl FROM revlog WHERE cid = 90010").fetchall()
+        assert len(due_rows) == 1
+        assert due_rows[0]["type"] == 1
+        assert due_rows[0]["lastIvl"] >= 1
+
+        # Anki's per-deck studied counter counts the due grade only.
+        today_4am_ms = int(_local_today_4am().timestamp() * 1000)
+        assert OfflineWriter(anki_conn).count_reviews_today_for_deck(12345, today_4am_ms) == 1
+
 
 class TestImageEndpointToSyncSeam:
     """Sociable seam: the real image-upload endpoint sets exactly the state the

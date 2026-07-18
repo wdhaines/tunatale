@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.main import app
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
+from app.models.srs_item import Direction, SRSState
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 
 
@@ -98,20 +99,70 @@ class TestListenStagedCreation:
         assert db.get_collocation_by_lemma("center") is not None
         assert db.get_collocation_by_lemma("hotel") is None
 
-    async def test_key_phrases_outrank_lemmas_under_tight_budget(self):
+    async def test_listen_no_longer_creates_key_phrase_cards(self):
+        """Untracked key phrases are skipped; only lemmas are created."""
         db = self._setup(
             self._lesson(
                 ["banka banka banka"],
                 key_phrases=[KeyPhraseInfo(phrase="dober dan", translation="good day")],
             )
         )
-        db.set_anki_state_cache("daily_new_cap", "1")
+        db.set_anki_state_cache("daily_new_cap", "10")
 
         data = await self._listen()
 
+        assert db.get_collocation("dober dan") is None
         assert data["created"] == 1
-        assert db.get_collocation("dober dan") is not None
-        assert db.get_collocation_by_lemma("banka") is None
+        assert db.get_collocation_by_lemma("banka") is not None
+
+    async def test_remaining_candidates_counts_only_untracked_lemmas(self):
+        """remaining_candidates excludes untracked key phrases."""
+        db = self._setup(
+            self._lesson(
+                ["banka banka banka"],
+                key_phrases=[KeyPhraseInfo(phrase="dober dan", translation="good day")],
+            )
+        )
+        db.set_anki_state_cache("daily_new_cap", "10")
+
+        data = await self._listen()
+
+        assert data["remaining_candidates"] == 0
+
+    async def test_already_tracked_key_phrase_still_graded_when_budget_zero(self):
+        """An ALREADY-tracked key-phrase card is still auto-graded by a listen."""
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = self._setup(
+            self._lesson(
+                [],
+                key_phrases=[KeyPhraseInfo(phrase="dober dan", translation="good day")],
+            )
+        )
+        unit = SyntacticUnit(
+            text="dober dan",
+            translation="good day",
+            word_count=2,
+            difficulty=1,
+            source="test",
+        )
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation("dober dan")
+        assert item is not None
+        rec = item.directions.get(Direction.RECOGNITION)
+        assert rec is not None
+        rec.state = SRSState.LEARNING
+        rec.reps = 1
+        db.update_collocation(item)
+
+        db.set_anki_state_cache("daily_new_cap", "0")
+
+        data = await self._listen()
+
+        assert data["created"] == 0
+        item = db.get_collocation("dober dan")
+        rec = item.directions[Direction.RECOGNITION]
+        assert rec.reps == 2
 
     async def test_same_day_relisten_creates_zero(self):
         db = self._setup(self._lesson(["banka center hotel kava mesto"]))
@@ -228,5 +279,300 @@ class TestListenStagedCreation:
 
         data = await self._listen()
 
-        assert data["created"] == 2
-        assert db.count_collocations() == 2
+        assert data["created"] == 1
+        assert db.count_collocations() == 1
+
+
+class TestListenReviewCap:
+    """Step B: /listen respects the daily review cap for due-today cards;
+    future-due cards are graded as review-ahead (revlog kind 3)."""
+
+    def _lesson(self, phrases, key_phrases=None, language_code="sl"):
+        return Lesson(
+            title="Day 1",
+            language_code=language_code,
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text=t, voice_id="female-1", language_code=language_code, role="female-1")
+                        for t in phrases
+                    ],
+                )
+            ],
+            key_phrases=key_phrases or [],
+        )
+
+    def _setup(self, lesson):
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+        return db
+
+    async def _listen(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert resp.status_code == 200
+        return resp.json()
+
+    async def test_budget_caps_due_today_grades(self):
+        """With daily_review_cap=2 and 4 due-today tracked review cards, exactly 2 are graded."""
+        from datetime import timedelta
+
+        db = self._setup(self._lesson(["banka center hotel kava"]))
+        db.set_anki_state_cache("daily_new_cap", "0")
+
+        for text in ("banka", "center", "hotel", "kava"):
+            from app.models.syntactic_unit import SyntacticUnit
+
+            unit = SyntacticUnit(text=text, translation=text, word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            item = db.get_collocation(text)
+            rec = item.directions[Direction.RECOGNITION]
+            rec.state = SRSState.REVIEW
+            rec.last_review = datetime.now(UTC) - timedelta(days=10)
+            rec.due_at = datetime.now(UTC) - timedelta(days=1)
+            rec.reps = 5
+            db.update_collocation(item)
+
+        db.set_anki_state_cache("daily_review_cap", "2")
+
+        data = await self._listen()
+
+        assert data["graded"] == 2
+
+        def _revlog_rows(text):
+            item = db.get_collocation(text)
+            with db._get_conn() as conn:
+                return conn.execute(
+                    "SELECT review_kind FROM tt_revlog WHERE collocation_id = ?",
+                    (db.get_collocation_id_by_guid(item.guid),),
+                ).fetchall()
+
+        # The first two in iteration order (lemma first-appearance) get one
+        # kind-1 row each; the two beyond the budget are skipped entirely —
+        # no revlog row, state and due_at untouched, so they stay due for
+        # the lesson review queue ("Check your work").
+        for text in ("banka", "center"):
+            rows = _revlog_rows(text)
+            assert len(rows) == 1
+            assert rows[0]["review_kind"] == 1
+        for text in ("hotel", "kava"):
+            assert _revlog_rows(text) == []
+            rec = db.get_collocation(text).directions[Direction.RECOGNITION]
+            assert rec.state == SRSState.REVIEW
+            assert rec.due_at < datetime.now(UTC)
+            assert rec.reps == 5
+
+    async def test_ahead_grades_unlimited_with_kind_3(self):
+        """Future-due review cards are graded even when budget is 0, with review_kind=3."""
+        from datetime import timedelta
+
+        db = self._setup(self._lesson(["banka center"]))
+        db.set_anki_state_cache("daily_new_cap", "0")
+
+        for text in ("banka", "center"):
+            from app.models.syntactic_unit import SyntacticUnit
+
+            unit = SyntacticUnit(text=text, translation=text, word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            item = db.get_collocation(text)
+            rec = item.directions[Direction.RECOGNITION]
+            rec.state = SRSState.REVIEW
+            rec.last_review = datetime.now(UTC) - timedelta(days=10)
+            rec.due_at = datetime.now(UTC) + timedelta(days=5)
+            rec.reps = 5
+            db.update_collocation(item)
+
+        db.set_anki_state_cache("daily_review_cap", "0")
+
+        data = await self._listen()
+
+        assert data["graded"] == 2
+        for text in ("banka", "center"):
+            item = db.get_collocation(text)
+            with db._get_conn() as conn:
+                rows = conn.execute(
+                    "SELECT review_kind, factor FROM tt_revlog WHERE collocation_id = ?",
+                    (db.get_collocation_id_by_guid(item.guid),),
+                ).fetchall()
+            assert len(rows) >= 1
+            assert rows[-1]["review_kind"] == 3
+            assert rows[-1]["factor"] > 0
+
+    async def test_learning_card_graded_when_budget_zero(self):
+        """LEARNING-state cards are always graded, even when budget is 0."""
+        db = self._setup(self._lesson(["banka"]))
+        db.set_anki_state_cache("daily_new_cap", "0")
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation("banka")
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.LEARNING
+        rec.reps = 1
+        db.update_collocation(item)
+
+        db.set_anki_state_cache("daily_review_cap", "0")
+
+        data = await self._listen()
+
+        assert data["graded"] == 1
+        item = db.get_collocation("banka")
+        assert item.directions[Direction.RECOGNITION].reps == 2
+
+    async def test_same_day_relisten_grades_zero(self):
+        """Same-day re-listen grades nothing (once-per-day window)."""
+        from datetime import timedelta
+
+        db = self._setup(self._lesson(["banka"]))
+        db.set_anki_state_cache("daily_new_cap", "0")
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation("banka")
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.REVIEW
+        rec.last_review = datetime.now(UTC) - timedelta(days=10)
+        rec.reps = 5
+        db.update_collocation(item)
+
+        db.set_anki_state_cache("daily_review_cap", "100")
+
+        first = await self._listen()
+        assert first["graded"] == 1
+
+        second = await self._listen()
+        assert second["graded"] == 0
+
+    async def _queue_stats(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+        assert resp.status_code == 200
+        return resp.json()
+
+    async def test_ahead_grade_moves_due_out_and_charges_no_counter(self):
+        """An ahead grade reschedules the card further out but charges neither
+        TT's completed-today counter nor the queue-stats badges (kind-3 rows
+        are excluded from count_reviews_completed_today's kind IN (0,1,2))."""
+        from datetime import timedelta
+
+        from app.srs.anki_mirror.rollover import anki_today
+
+        db = self._setup(self._lesson(["banka"]))
+        db.set_anki_state_cache("daily_new_cap", "0")
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="test")
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation("banka")
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.REVIEW
+        rec.last_review = datetime.now(UTC) - timedelta(days=10)
+        rec.due_at = datetime.now(UTC) + timedelta(days=5)
+        rec.stability = 9.0
+        rec.reps = 5
+        db.update_collocation(item)
+        due_before = rec.due_at
+
+        db.set_anki_state_cache("daily_review_cap", "0")
+        badges_before = await self._queue_stats()
+
+        data = await self._listen()
+
+        assert data["graded"] == 1
+        rec = db.get_collocation("banka").directions[Direction.RECOGNITION]
+        assert rec.due_at > due_before
+        assert db.count_reviews_completed_today(anki_today()) == 0
+        badges_after = await self._queue_stats()
+        for key in ("new", "learning", "review"):
+            assert badges_after[key] == badges_before[key]
+
+    async def test_field_regression_badge_never_below_budget_minus_graded(self):
+        """Field pin (observed 2026-07-17, all-zero badges): a listen may drive
+        the review badge down only by the due cards it actually graded — never
+        further. With due cards ≥ remaining budget the post-listen badge equals
+        previous_budget − graded_due (here 0: BY DESIGN), while the skipped due
+        cards stay due for Check your work. Ahead grades move nothing."""
+        from datetime import timedelta
+
+        from app.srs.anki_mirror.rollover import anki_today
+
+        db = self._setup(self._lesson(["banka center hotel kava mesto"]))
+        db.set_anki_state_cache("daily_new_cap", "0")
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        for text, due_delta in (
+            ("banka", -1),
+            ("center", -1),
+            ("hotel", -1),
+            ("kava", -1),
+            ("mesto", +5),
+        ):
+            unit = SyntacticUnit(text=text, translation=text, word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            item = db.get_collocation(text)
+            rec = item.directions[Direction.RECOGNITION]
+            rec.state = SRSState.REVIEW
+            rec.last_review = datetime.now(UTC) - timedelta(days=10)
+            rec.due_at = datetime.now(UTC) + timedelta(days=due_delta)
+            rec.reps = 5
+            db.update_collocation(item)
+
+        db.set_anki_state_cache("daily_review_cap", "2")
+
+        previous_budget = (await self._queue_stats())["review"]
+        assert previous_budget == 2  # min(4 due, budget 2)
+
+        data = await self._listen()
+        assert data["graded"] == 3  # 2 due (budget) + 1 ahead
+
+        graded_due = db.count_reviews_completed_today(anki_today())
+        assert graded_due == 2  # the ahead grade charged nothing
+        badge_after = (await self._queue_stats())["review"]
+        assert badge_after >= previous_budget - graded_due
+        assert badge_after == 0  # due (2 skipped) ≥ remaining budget (0) → all-zero is by design
+        assert db.count_review_due_collocations(anki_today()) == 2  # skipped cards still due
+
+    async def test_skipped_due_cards_surface_in_lesson_review_queue(self):
+        """Due cards skipped for budget stay due and appear in the lesson
+        review queue, so "Check your work" picks them up."""
+        from datetime import timedelta
+
+        db = self._setup(self._lesson(["banka center hotel"]))
+        db.set_anki_state_cache("daily_new_cap", "0")
+
+        from app.models.syntactic_unit import SyntacticUnit
+
+        for text in ("banka", "center", "hotel"):
+            unit = SyntacticUnit(text=text, translation=text, word_count=1, difficulty=1, source="test")
+            db.add_collocation(unit, language_code="sl")
+            item = db.get_collocation(text)
+            rec = item.directions[Direction.RECOGNITION]
+            rec.state = SRSState.REVIEW
+            rec.last_review = datetime.now(UTC) - timedelta(days=10)
+            rec.due_at = datetime.now(UTC) - timedelta(days=1)
+            rec.reps = 5
+            db.update_collocation(item)
+
+        db.set_anki_state_cache("daily_review_cap", "1")
+
+        data = await self._listen()
+        assert data["graded"] == 1
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/lesson/lesson-1/review-queue")
+        assert resp.status_code == 200
+        texts = {q["text"] for q in resp.json()["queue"]}
+        assert {"center", "hotel"} <= texts
