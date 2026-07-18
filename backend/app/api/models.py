@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # ── SRS models ──────────────────────────────────────────────────────────────
 
@@ -74,13 +74,21 @@ class GenerateStoryRequest(BaseModel):
 class ImportLessonRequest(BaseModel):
     """Self-describing Story-JSON file (docs/lesson-authoring.md).
 
-    `story` stays a free dict — its schema is validated by
-    `lesson_io.validate_story` so errors carry field paths.
+    Provide exactly one of ``story`` (pre-parsed dict) or ``raw`` (pasted text
+    containing prose + fenced JSON, cleaned via ``parse_json_object``).
     """
 
     curriculum_id: str
     day: int
-    story: dict
+    story: dict | None = None
+    raw: str | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_story_or_raw(self):
+        if (self.story is None) == (self.raw is None):
+            msg = "Exactly one of 'story' or 'raw' must be provided"
+            raise ValueError(msg)
+        return self
 
 
 # ── Audio models ────────────────────────────────────────────────────────────

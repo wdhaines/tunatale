@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Literal
 
 import anyio
 from fastapi import APIRouter, HTTPException, Request
@@ -11,7 +12,8 @@ from fastapi import APIRouter, HTTPException, Request
 from app.api._serializers import serialize_lesson
 from app.api.models import GenerateStoryRequest, ImportLessonRequest
 from app.generation.ids import mint_id
-from app.generation.story import StoryGenerationError
+from app.generation.json_parsing import parse_json_object
+from app.generation.story import StoryGenerationError, build_story_prompts
 from app.llm.client import LLMError
 from app.models.lesson import Lesson, SectionType
 from app.models.strategy import ContentStrategy
@@ -131,10 +133,18 @@ async def import_story(body: ImportLessonRequest, request: Request):
         raise HTTPException(status_code=404, detail="Curriculum not found")
 
     language = request.state.language
+    if body.raw is not None:
+        try:
+            story = parse_json_object(body.raw)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+    else:
+        story = body.story  # guaranteed non-None by model validator
+
     try:
         lesson_id, lesson = import_lesson(
             store,
-            {"curriculum_id": body.curriculum_id, "day": body.day, "story": body.story},
+            {"curriculum_id": body.curriculum_id, "day": body.day, "story": story},
             language,
         )
     except ValueError as e:
@@ -155,8 +165,32 @@ async def import_story(body: ImportLessonRequest, request: Request):
         "id": lesson_id,
         "title": lesson.title,
         "sections": sections,
-        "warnings": speaker_warnings(body.story, language),
+        "warnings": speaker_warnings(story, language),
     }
+
+
+@router.get("/prompt", status_code=200)
+async def get_story_prompt(
+    request: Request,
+    curriculum_id: str,
+    day: int,
+    strategy: Literal["WIDER", "DEEPER"] = "WIDER",
+):
+    """Export the exact prompts that the generate path would send to the LLM."""
+    store = request.state.content_store
+    curriculum = store.get_curriculum(curriculum_id)
+    if curriculum is None:
+        raise HTTPException(status_code=404, detail="Curriculum not found")
+
+    days = [d for d in curriculum.days if d.day == day]
+    if not days:
+        raise HTTPException(status_code=404, detail=f"Day {day} not found in curriculum")
+
+    language = request.state.language
+    system_prompt, user_prompt = build_story_prompts(
+        days[0], language, ContentStrategy[strategy], curriculum.cefr_level
+    )
+    return {"system_prompt": system_prompt, "user_prompt": user_prompt}
 
 
 @router.get("/{lesson_id}/source", status_code=200)

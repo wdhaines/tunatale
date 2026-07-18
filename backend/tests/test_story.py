@@ -636,3 +636,37 @@ class TestNorwegianStoryGeneration:
         system_prompt = client.complete.call_args_list[0].kwargs.get("system_prompt", "")
         assert "Bokmål" in system_prompt
         assert "Allowed cases for A1" not in system_prompt
+
+
+class TestBuildStoryPrompts:
+    """Unit tests for the extracted build_story_prompts function."""
+
+    def test_returns_system_and_user_prompts(self, language):
+        from app.generation.story import build_story_prompts
+
+        day = _make_curriculum_day()
+        system, user = build_story_prompts(day, language, ContentStrategy.WIDER, "A2")
+        assert isinstance(system, str) and len(system) > 0
+        assert isinstance(user, str) and len(user) > 0
+
+    def test_user_prompt_contains_collocations(self, language):
+        from app.generation.story import build_story_prompts
+
+        day = _make_curriculum_day()
+        _, user = build_story_prompts(day, language, ContentStrategy.WIDER, "A2")
+        for c in day.collocations:
+            assert c in user
+
+    def test_user_prompt_contains_cefr_level(self, language):
+        from app.generation.story import build_story_prompts
+
+        day = _make_curriculum_day()
+        _, user = build_story_prompts(day, language, ContentStrategy.WIDER, "B1")
+        assert "B1" in user
+
+    def test_deeper_strategy_user_prompt_contains_source_transcript_marker(self, language):
+        from app.generation.story import build_story_prompts
+
+        day = _make_curriculum_day()
+        _, user = build_story_prompts(day, language, ContentStrategy.DEEPER, "A2")
+        assert "source_day_transcript" in user or "SOURCE TRANSCRIPT" in user

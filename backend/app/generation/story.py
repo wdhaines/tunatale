@@ -48,6 +48,35 @@ def _missing_log(missing: list[str], language_code: str) -> None:
     )
 
 
+def build_story_prompts(
+    curriculum_day: CurriculumDay,
+    language: Language,
+    strategy: ContentStrategy,
+    cefr_level: str,
+) -> tuple[str, str]:
+    """Build the (system_prompt, user_prompt) pair for story generation.
+
+    Shared by ``StoryGenerator.generate`` and the ``GET /api/story/prompt``
+    export endpoint so the manual-paste path can never drift from the Groq path.
+    """
+    system_prompt = build_story_system_prompt(language)
+
+    new_collocations = "\n".join(f"- {c}" for c in curriculum_day.collocations)
+    user_prompt_template = get_strategy_prompt(strategy)
+    user_prompt = user_prompt_template.format(
+        language_name=language.name,
+        language_code=language.code,
+        learning_objective=curriculum_day.learning_objective,
+        focus=curriculum_day.focus,
+        story_guidance=curriculum_day.story_guidance,
+        new_collocations=new_collocations,
+        review_collocations="(none yet)",
+        source_day_transcript="(not available)",
+        cefr_block=_build_cefr_block(cefr_level),
+    )
+    return system_prompt, user_prompt
+
+
 class StoryGenerator:
     """Generates a Lesson from a CurriculumDay using the LLM client."""
 
@@ -72,21 +101,7 @@ class StoryGenerator:
         Returns:
             Parsed Lesson with 4 Pimsleur sections built mechanically from LLM JSON.
         """
-        system_prompt = build_story_system_prompt(language)
-
-        new_collocations = "\n".join(f"- {c}" for c in curriculum_day.collocations)
-        user_prompt_template = get_strategy_prompt(strategy)
-        user_prompt = user_prompt_template.format(
-            language_name=language.name,
-            language_code=language.code,
-            learning_objective=curriculum_day.learning_objective,
-            focus=curriculum_day.focus,
-            story_guidance=curriculum_day.story_guidance,
-            new_collocations=new_collocations,
-            review_collocations="(none yet)",
-            source_day_transcript="(not available)",
-            cefr_block=_build_cefr_block(cefr_level),
-        )
+        system_prompt, user_prompt = build_story_prompts(curriculum_day, language, strategy, cefr_level)
 
         logger.info("Generating story for day %d (%s)", curriculum_day.day, strategy.value)
         # 4096, NOT 5500. gpt-oss-120b's free-tier budget is 8000 tokens/request and
