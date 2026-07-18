@@ -3,6 +3,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
+import { tick } from "svelte";
 
 const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
@@ -12,6 +13,8 @@ vi.mock("$lib/api", () => ({
     getLessonByDay: vi.fn(),
     getCurriculumProgress: vi.fn().mockResolvedValue([]),
     retryPipelineDay: vi.fn(),
+    getStoryPrompt: vi.fn().mockResolvedValue({ system_prompt: "sys", user_prompt: "usr" }),
+    importStory: vi.fn(),
   },
 }));
 
@@ -75,8 +78,14 @@ const curriculum = {
   proposed: null,
 };
 
+const manualCurriculum = {
+  ...curriculum,
+  generation_mode: "manual" as const,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
+  Object.defineProperty(pipelineStore, "status", { value: null, configurable: true });
 });
 
 describe("/c/[curriculumId] page", () => {
@@ -339,6 +348,57 @@ describe("/c/[curriculumId] page", () => {
       Object.defineProperty(llmActivityStore, "events", { value: [], configurable: true });
       Object.defineProperty(llmActivityStore, "currentLine", { value: "", configurable: true });
     }
+  });
+
+  it("manual-mode: selecting a lesson-less day opens the story panel", async () => {
+    mockGetLessonByDay.mockRejectedValue(new Error("Not Found"));
+
+    const { getByText, container } = render(Page, {
+      props: { data: { curriculum: manualCurriculum } },
+    });
+    const btn = getByText(/Day 1 ·/);
+    await fireEvent.click(btn);
+    await waitFor(() => {
+      expect(getByText("Copy story prompt")).toBeTruthy();
+    });
+    expect(container.querySelector("textarea")).toBeTruthy();
+  });
+
+  it("manual-mode: completing an import navigates to the new lesson", async () => {
+    mockGetLessonByDay.mockRejectedValue(new Error("Not Found"));
+    vi.mocked(api.importStory).mockResolvedValue({
+      id: "l-new",
+      title: "T",
+      sections: [],
+      warnings: [],
+    });
+
+    const { getByText, container } = render(Page, {
+      props: { data: { curriculum: manualCurriculum } },
+    });
+    const btn = getByText(/Day 1 ·/);
+    await fireEvent.click(btn);
+    await waitFor(() => {
+      expect(getByText("Copy story prompt")).toBeTruthy();
+    });
+    const textarea = container.querySelector("textarea")!;
+    await fireEvent.input(textarea, { target: { value: '{"title":"X"}' } });
+    const importBtn = container.querySelector('[data-testid="import-btn"]')!;
+    await fireEvent.click(importBtn);
+    await waitFor(() => {
+      expect(mockGoto).toHaveBeenCalledWith("/c/cid-1/l/l-new");
+    });
+  });
+
+  it("auto-mode: selecting a lesson-less day renders NO story panel", async () => {
+    mockGetLessonByDay.mockRejectedValue(new Error("Not Found"));
+
+    const { getByText, container } = render(Page, {
+      props: { data: { curriculum } },
+    });
+    await fireEvent.click(getByText(/Day 1 ·/));
+    await tick();
+    expect(container.querySelector("textarea")).toBeNull();
   });
 });
 

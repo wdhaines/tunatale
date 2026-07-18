@@ -178,6 +178,22 @@ Two endpoints under the existing `/api/story` router (language resolved from the
 - `POST /api/story/import` → body is a self-describing file; rebuilds the Lesson via
   `_parse_response` and `save_lesson`; returns the new `lesson_id`.
 
+### Story prompt export (manual mode)
+
+`GET /api/story/prompt?curriculum_id={id}&day={day}&strategy={WIDER|DEEPER}` returns
+`{system_prompt, user_prompt}` — the exact prompts the Groq story generator would send.
+No LLM call, no persistence. Used by the manual copy/paste flow: the user copies the
+prompts into Claude chat and pastes the reply back via the `raw` import variant.
+
+### Raw paste import
+
+`POST /api/story/import` accepts an optional `raw` field (string) instead of `story`
+(dict). Exactly one of `story` or `raw` must be provided (Pydantic model validator
+→ 422 otherwise). When `raw` is set, the text is parsed through `parse_json_object()`
+(`app/generation/json_parsing.py`) which strips think-blocks, fences, and surrounding
+prose — the single hygiene path for pasted text. The parsed dict then flows through the
+existing `import_lesson` path unchanged.
+
 **Lemmatizer-on-request-path is already the norm** — `POST /api/story/generate` runs
 `_parse_response` (and thus classla) on the request path today, with a background
 `_prewarm_lesson` task. Import mirrors that exactly, so it adds no new architectural

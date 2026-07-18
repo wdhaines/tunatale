@@ -290,6 +290,94 @@ describe("TunaTaleAPI", () => {
         "GET /api/curriculum/cid-1/days/1/lesson: Not Found",
       );
     });
+
+    it("setGenerationMode calls POST /api/curriculum/:id/generation-mode", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ mode: "manual" })));
+
+      const result = await api.setGenerationMode("trip-1", "manual");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/trip-1/generation-mode`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ mode: "manual" }),
+        }),
+      );
+      expect(result.mode).toBe("manual");
+    });
+
+    it("setGenerationMode throws on 404", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Not Found")));
+
+      await expect(api.setGenerationMode("missing", "manual")).rejects.toThrow(
+        "POST /api/curriculum/missing/generation-mode: Not Found",
+      );
+    });
+
+    it("getPlanTurnPrompt calls POST /api/curriculum/:id/plan/turn/prompt", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockOk({ system_prompt: "sys", user_prompt: "plan 3 days" })),
+      );
+
+      const result = await api.getPlanTurnPrompt("trip-1", "plan 3 days", 3);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/trip-1/plan/turn/prompt`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ message: "plan 3 days", batch_size: 3 }),
+        }),
+      );
+      expect(result.system_prompt).toBe("sys");
+      expect(result.user_prompt).toBe("plan 3 days");
+    });
+
+    it("getPlanTurnPrompt defaults batch_size to 5", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockOk({ system_prompt: "sys", user_prompt: "msg" })),
+      );
+
+      await api.getPlanTurnPrompt("trip-1", "msg");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/trip-1/plan/turn/prompt`,
+        expect.objectContaining({
+          body: JSON.stringify({ message: "msg", batch_size: 5 }),
+        }),
+      );
+    });
+
+    it("planTurn passes pasted_response when provided", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ reply: "ok", proposed: null })));
+
+      await api.planTurn("trip-1", "plan 1 day", 1, "Here are the days\n```json\n{...}\n```");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/trip-1/plan/turn`,
+        expect.objectContaining({
+          body: JSON.stringify({
+            message: "plan 1 day",
+            batch_size: 1,
+            pasted_response: "Here are the days\n```json\n{...}\n```",
+          }),
+        }),
+      );
+    });
+
+    it("planTurn omits pasted_response when not provided", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ reply: "ok", proposed: null })));
+
+      await api.planTurn("trip-1", "plan", 5);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/trip-1/plan/turn`,
+        expect.objectContaining({
+          body: JSON.stringify({ message: "plan", batch_size: 5 }),
+        }),
+      );
+    });
   });
 
   describe("story", () => {
@@ -386,6 +474,52 @@ describe("TunaTaleAPI", () => {
       await expect(api.importStory({ curriculum_id: "cid-1", day: 1, story: {} })).rejects.toThrow(
         "POST /api/story/import: Bad Request",
       );
+    });
+
+    it("importStory passes raw when provided", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(mockOk({ id: "new-l1", title: "Day 1", sections: [], warnings: [] })),
+      );
+
+      const rawText = "Here is the story\n```json\n{...}\n```";
+      await api.importStory({ curriculum_id: "cid-1", day: 1, raw: rawText });
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/story/import`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ curriculum_id: "cid-1", day: 1, raw: rawText }),
+        }),
+      );
+    });
+
+    it("getStoryPrompt calls GET /api/story/prompt with query params", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockOk({ system_prompt: "sys", user_prompt: "user" })),
+      );
+
+      const result = await api.getStoryPrompt("cid-1", 3, "DEEPER");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/story/prompt?curriculum_id=cid-1&day=3&strategy=DEEPER`,
+      );
+      expect(result.system_prompt).toBe("sys");
+      expect(result.user_prompt).toBe("user");
+    });
+
+    it("getStoryPrompt defaults strategy to WIDER", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockOk({ system_prompt: "sys", user_prompt: "user" })),
+      );
+
+      await api.getStoryPrompt("cid-1", 1);
+
+      expect(fetch).toHaveBeenCalledWith(expect.stringContaining("strategy=WIDER"));
     });
   });
 

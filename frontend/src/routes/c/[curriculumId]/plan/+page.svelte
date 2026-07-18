@@ -37,6 +37,15 @@
 	let confirmingReset = $state(false);
 	let chat: PlannerChat;
 
+	// Manual mode state
+	let generationMode: 'auto' | 'manual' = $state(initial.generation_mode ?? 'auto');
+	let modeLoading = $state(false);
+	let manualMessage = $state('');
+	let copiedPrompt = $state(false);
+	let pastedReply = $state('');
+
+	const isManual = $derived(generationMode === 'manual');
+
 	const pipelineStatus = $derived(pipelineStore.status);
 	const showPipeline = $derived(
 		pipelineStatus != null && pipelineStatus.days.some(d => d.state !== 'ready'),
@@ -111,6 +120,59 @@
 		}
 	}
 
+	async function handleToggleMode() {
+		modeLoading = true;
+		error = '';
+		try {
+			const newMode = isManual ? 'auto' : 'manual';
+			const result = await api.setGenerationMode(data.curriculum.id, newMode);
+			generationMode = result.mode as 'auto' | 'manual';
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			modeLoading = false;
+		}
+	}
+
+	function handleEditMessage() {
+		// Re-open the message input after a Copy so the user can revise before
+		// submitting — the input is frozen between copy and submit so the pasted
+		// reply always corresponds to the prompt that was actually copied.
+		copiedPrompt = false;
+		pastedReply = '';
+	}
+
+	async function handleCopyPrompt() {
+		error = '';
+		try {
+			const result = await api.getPlanTurnPrompt(data.curriculum.id, manualMessage, batchSize);
+			await navigator.clipboard.writeText(result.system_prompt + '\n\n' + result.user_prompt);
+			copiedPrompt = true;
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		}
+	}
+
+	async function handlePasteSubmit() {
+		pending = true;
+		error = '';
+		try {
+			const turn = await api.planTurn(data.curriculum.id, manualMessage, batchSize, pastedReply);
+			messages = appendTurn(messages, manualMessage, turn.reply);
+			proposed = turn.proposed;
+			// Reset for next turn
+			manualMessage = '';
+			pastedReply = '';
+			copiedPrompt = false;
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			pending = false;
+			rateLimitStore.refresh();
+			llmActivityStore.refresh();
+		}
+	}
+
 	onDestroy(() => {
 		pipelineStore.stop();
 	});
@@ -125,10 +187,74 @@
 				{data.curriculum.cefr_level} · {committedCount}
 				{committedCount === 1 ? 'day' : 'days'} committed
 			</p>
-			<RateLimitWidget />
+			<div class="head-controls">
+				<RateLimitWidget />
+				<button
+					class="mode-toggle"
+					disabled={modeLoading}
+					onclick={handleToggleMode}
+				>
+					{isManual ? 'Auto' : 'Manual'}
+				</button>
+			</div>
 		</header>
 
-		<PlannerChat bind:this={chat} {messages} {pending} bind:batchSize onSend={handleSend} />
+		{#if isManual}
+			<div class="manual-flow">
+				<div class="manual-input">
+					<textarea
+						placeholder="Message the planner…"
+						rows="2"
+						bind:value={manualMessage}
+						disabled={pending || copiedPrompt}
+					></textarea>
+					<div class="controls">
+						<label class="batch-size">
+							Days per batch
+							<input
+								type="number"
+								min="1"
+								max="14"
+								bind:value={batchSize}
+								disabled={pending || copiedPrompt}
+							/>
+						</label>
+						<button
+							class="copy-prompt"
+							onclick={handleCopyPrompt}
+							disabled={pending || copiedPrompt || !manualMessage.trim()}
+						>
+							Copy prompt
+						</button>
+					</div>
+				</div>
+				{#if copiedPrompt}
+					<div class="paste-area">
+						<textarea
+							class="paste-reply"
+							placeholder="Paste Claude's reply…"
+							rows="4"
+							bind:value={pastedReply}
+							disabled={pending}
+						></textarea>
+						<div class="paste-controls">
+							<button class="edit-message" onclick={handleEditMessage} disabled={pending}>
+								Edit message
+							</button>
+							<button
+								class="send"
+								onclick={handlePasteSubmit}
+								disabled={pending || !pastedReply.trim()}
+							>
+								{pending ? 'Submitting…' : 'Submit reply'}
+							</button>
+						</div>
+					</div>
+				{/if}
+			</div>
+		{:else}
+			<PlannerChat bind:this={chat} {messages} {pending} bind:batchSize onSend={handleSend} />
+		{/if}
 
 		{#if error}
 			<p class="error">{error}</p>
@@ -152,7 +278,7 @@
 			proposed={batch}
 			{pending}
 			onCommit={() => handleCommit(batch)}
-			onRevise={() => chat.focusInput()}
+			onRevise={() => isManual ? undefined : chat.focusInput()}
 		/>
 	{/if}
 
@@ -195,6 +321,12 @@
 	.plan-head {
 		margin-bottom: 1rem;
 	}
+	.head-controls {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.5rem;
+	}
 	h2 {
 		margin: 0;
 		font-size: 1.4rem;
@@ -233,5 +365,115 @@
 	.reset.confirming {
 		border-color: var(--color-danger);
 		color: var(--color-danger);
+	}
+	.mode-toggle {
+		padding: 0.35rem 0.8rem;
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-pill);
+		background: var(--color-surface);
+		color: var(--color-primary);
+		font-size: 0.8rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.mode-toggle:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.manual-flow {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+	.manual-input textarea,
+	.paste-reply {
+		width: 100%;
+		resize: vertical;
+		padding: 0.6rem 0.75rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		font: inherit;
+		font-size: 0.92rem;
+		background: var(--color-surface);
+		color: var(--color-text);
+		box-sizing: border-box;
+	}
+	.controls {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.5rem;
+	}
+	.batch-size {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.8rem;
+		color: var(--color-muted);
+	}
+	.batch-size input {
+		width: 3.5rem;
+		padding: 0.35rem 0.4rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		font: inherit;
+		font-size: 0.85rem;
+		background: var(--color-surface);
+		color: var(--color-text);
+	}
+	.copy-prompt {
+		padding: 0.45rem 0.9rem;
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-pill);
+		background: var(--color-surface);
+		color: var(--color-primary);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.copy-prompt:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.paste-area {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+	.paste-controls {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 0.5rem;
+	}
+	.edit-message {
+		padding: 0.45rem 0.9rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-pill);
+		background: var(--color-surface);
+		color: var(--color-muted);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.edit-message:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.send {
+		align-self: flex-end;
+		padding: 0.45rem 1.1rem;
+		border: none;
+		border-radius: var(--radius-pill);
+		background: var(--color-primary);
+		color: var(--color-on-primary);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.send:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 </style>

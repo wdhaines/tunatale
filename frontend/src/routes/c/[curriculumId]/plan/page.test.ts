@@ -9,6 +9,8 @@ vi.mock("$lib/api", () => ({
     getPipeline: vi.fn(),
     getLlmActivity: vi.fn().mockResolvedValue({ latest: 0, events: [] }),
     retryPipelineDay: vi.fn(),
+    setGenerationMode: vi.fn(),
+    getPlanTurnPrompt: vi.fn(),
   },
 }));
 
@@ -429,6 +431,278 @@ describe("/c/[curriculumId]/plan page", () => {
       });
       // Button reverted
       expect(getByRole("button", { name: "Reset chat" })).toBeTruthy();
+    });
+  });
+});
+
+describe("manual mode", () => {
+  const mockSetGenerationMode = vi.mocked(api.setGenerationMode);
+  const mockGetPlanTurnPrompt = vi.mocked(api.getPlanTurnPrompt);
+  const mockClipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+
+  function makeManualCurriculum(overrides: Partial<CurriculumSummary> = {}): CurriculumSummary {
+    return {
+      id: "trip-1",
+      topic: "Visiting Ljubljana",
+      language_code: "sl",
+      cefr_level: "A2",
+      days: [],
+      proposed: null,
+      generation_mode: "manual",
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockClipboard.writeText.mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: mockClipboard,
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  it("renders mode toggle showing Auto when in manual mode", () => {
+    const { getByRole } = render(Page, {
+      props: { data: { curriculum: makeManualCurriculum() } },
+    });
+    // Toggle shows the target mode: in manual mode, button says "Auto" (click to switch)
+    expect(getByRole("button", { name: /auto/i })).toBeTruthy();
+  });
+
+  it("mode toggle calls setGenerationMode and switches to auto", async () => {
+    mockSetGenerationMode.mockResolvedValue({ mode: "auto" });
+
+    const { getByText, getByRole } = render(Page, {
+      props: { data: { curriculum: makeManualCurriculum() } },
+    });
+
+    // Click the mode toggle to switch to auto
+    const toggle = getByRole("button", { name: /auto/i });
+    await fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(mockSetGenerationMode).toHaveBeenCalledWith("trip-1", "auto");
+    });
+  });
+
+  it("Copy prompt button calls getPlanTurnPrompt and copies to clipboard", async () => {
+    mockGetPlanTurnPrompt.mockResolvedValue({
+      system_prompt: "You are a planner",
+      user_prompt: "Plan 5 days about coffee",
+    });
+
+    const { getByRole, getByPlaceholderText } = render(Page, {
+      props: { data: { curriculum: makeManualCurriculum() } },
+    });
+
+    // Type a message
+    await fireEvent.input(getByPlaceholderText(/message the planner/i), {
+      target: { value: "Plan 5 days about coffee" },
+    });
+
+    // Click Copy prompt
+    await fireEvent.click(getByRole("button", { name: /copy prompt/i }));
+
+    await waitFor(() => {
+      expect(mockGetPlanTurnPrompt).toHaveBeenCalledWith("trip-1", "Plan 5 days about coffee", 5);
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+        expect.stringContaining("You are a planner"),
+      );
+    });
+  });
+
+  it("paste textarea submits planTurn with pasted_response", async () => {
+    vi.mocked(api.planTurn).mockResolvedValue({
+      reply: "Here are the days",
+      proposed: { start_day: 1, days: [day(1)] },
+    });
+    mockGetPlanTurnPrompt.mockResolvedValue({
+      system_prompt: "sys",
+      user_prompt: "plan 1 day",
+    });
+
+    const { getByRole, getByPlaceholderText } = render(Page, {
+      props: { data: { curriculum: makeManualCurriculum() } },
+    });
+
+    // Type a message
+    await fireEvent.input(getByPlaceholderText(/message the planner/i), {
+      target: { value: "plan 1 day" },
+    });
+
+    // Click Copy prompt
+    await fireEvent.click(getByRole("button", { name: /copy prompt/i }));
+
+    // Wait for paste textarea and type into it
+    await waitFor(() => {
+      expect(getByPlaceholderText(/paste claude/i)).toBeTruthy();
+    });
+    const pasteTextarea = getByPlaceholderText(/paste claude/i);
+    await fireEvent.input(pasteTextarea, {
+      target: { value: "Here are the days" },
+    });
+
+    // The submit button should now be enabled — click it
+    const submitBtn = getByRole("button", { name: /submit reply/i });
+    expect(submitBtn).not.toBeNull();
+    await fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(api.planTurn).toHaveBeenCalled();
+    });
+  });
+
+  it("freezes the message and batch-size inputs between Copy prompt and submit", async () => {
+    mockGetPlanTurnPrompt.mockResolvedValue({
+      system_prompt: "sys",
+      user_prompt: "plan 5 days about coffee",
+    });
+
+    const { getByRole, getByPlaceholderText } = render(Page, {
+      props: { data: { curriculum: makeManualCurriculum() } },
+    });
+
+    const messageBox = getByPlaceholderText(/message the planner/i);
+    const batchInput = getByRole("spinbutton");
+    await fireEvent.input(messageBox, { target: { value: "plan 5 days about coffee" } });
+
+    // Before copy: both editable.
+    expect((messageBox as HTMLTextAreaElement).disabled).toBe(false);
+    expect((batchInput as HTMLInputElement).disabled).toBe(false);
+
+    await fireEvent.click(getByRole("button", { name: /copy prompt/i }));
+
+    // After copy: frozen so the pasted reply can't diverge from the copied prompt.
+    await waitFor(() => {
+      expect((messageBox as HTMLTextAreaElement).disabled).toBe(true);
+    });
+    expect((batchInput as HTMLInputElement).disabled).toBe(true);
+    expect((getByRole("button", { name: /copy prompt/i }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("Edit message re-opens the inputs and clears the paste area", async () => {
+    mockGetPlanTurnPrompt.mockResolvedValue({
+      system_prompt: "sys",
+      user_prompt: "plan 5 days about coffee",
+    });
+
+    const { getByRole, getByPlaceholderText, queryByPlaceholderText } = render(Page, {
+      props: { data: { curriculum: makeManualCurriculum() } },
+    });
+
+    const messageBox = getByPlaceholderText(/message the planner/i);
+    await fireEvent.input(messageBox, { target: { value: "plan 5 days about coffee" } });
+    await fireEvent.click(getByRole("button", { name: /copy prompt/i }));
+
+    // Put text in the paste box, then bail out via Edit message.
+    await waitFor(() => expect(getByPlaceholderText(/paste claude/i)).toBeTruthy());
+    await fireEvent.input(getByPlaceholderText(/paste claude/i), {
+      target: { value: "half-typed reply" },
+    });
+    await fireEvent.click(getByRole("button", { name: /edit message/i }));
+
+    // Paste area is gone and the message input is editable again.
+    await waitFor(() => {
+      expect(queryByPlaceholderText(/paste claude/i)).toBeNull();
+    });
+    expect((messageBox as HTMLTextAreaElement).disabled).toBe(false);
+  });
+
+  it("mode toggle is absent for auto mode curriculum", () => {
+    const { queryByRole } = render(Page, {
+      props: { data: { curriculum: makeCurriculum() } },
+    });
+    // Auto mode should not show a mode toggle button
+    expect(queryByRole("button", { name: /auto/i })).toBeNull();
+  });
+
+  it("batch size input changes batch size in manual mode", async () => {
+    mockGetPlanTurnPrompt.mockResolvedValue({
+      system_prompt: "sys",
+      user_prompt: "plan 3 days",
+    });
+
+    const { getByRole, getByPlaceholderText } = render(Page, {
+      props: { data: { curriculum: makeManualCurriculum() } },
+    });
+
+    // Change batch size
+    const batchInput = getByRole("spinbutton");
+    await fireEvent.input(batchInput, { target: { value: "3" } });
+
+    // Type a message and copy prompt
+    await fireEvent.input(getByPlaceholderText(/message the planner/i), {
+      target: { value: "plan 3 days" },
+    });
+    await fireEvent.click(getByRole("button", { name: /copy prompt/i }));
+
+    await waitFor(() => {
+      expect(mockGetPlanTurnPrompt).toHaveBeenCalledWith("trip-1", "plan 3 days", 3);
+    });
+  });
+
+  it("setGenerationMode failure shows error", async () => {
+    mockSetGenerationMode.mockRejectedValue(new Error("POST …/generation-mode: Not found"));
+
+    const { getByText, getByRole } = render(Page, {
+      props: { data: { curriculum: makeManualCurriculum() } },
+    });
+
+    await fireEvent.click(getByRole("button", { name: /auto/i }));
+
+    await waitFor(() => {
+      expect(getByText(/not found/i)).toBeTruthy();
+    });
+  });
+
+  it("getPlanTurnPrompt failure shows error", async () => {
+    mockGetPlanTurnPrompt.mockRejectedValue(new Error("POST …/prompt: Not found"));
+
+    const { getByText, getByRole, getByPlaceholderText } = render(Page, {
+      props: { data: { curriculum: makeManualCurriculum() } },
+    });
+
+    await fireEvent.input(getByPlaceholderText(/message the planner/i), {
+      target: { value: "plan 1 day" },
+    });
+    await fireEvent.click(getByRole("button", { name: /copy prompt/i }));
+
+    await waitFor(() => {
+      expect(getByText(/not found/i)).toBeTruthy();
+    });
+  });
+
+  it("planTurn failure in paste mode shows error", async () => {
+    mockGetPlanTurnPrompt.mockResolvedValue({
+      system_prompt: "sys",
+      user_prompt: "plan 1 day",
+    });
+    vi.mocked(api.planTurn).mockRejectedValue(new Error("POST …/turn: Expected 5 days, got 1"));
+
+    const { getByText, getByRole, getByPlaceholderText } = render(Page, {
+      props: { data: { curriculum: makeManualCurriculum() } },
+    });
+
+    await fireEvent.input(getByPlaceholderText(/message the planner/i), {
+      target: { value: "plan 1 day" },
+    });
+    await fireEvent.click(getByRole("button", { name: /copy prompt/i }));
+
+    await waitFor(() => {
+      expect(getByPlaceholderText(/paste claude/i)).toBeTruthy();
+    });
+    const pasteTextarea = getByPlaceholderText(/paste claude/i);
+    await fireEvent.input(pasteTextarea, {
+      target: { value: "Here are the days" },
+    });
+    await fireEvent.click(getByRole("button", { name: /submit reply/i }));
+
+    await waitFor(() => {
+      expect(getByText(/expected 5 days/i)).toBeTruthy();
     });
   });
 });

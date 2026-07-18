@@ -35,6 +35,8 @@ The chat transcript is not the source. It's the conversation that *produced* the
 | `GET` | `/api/curriculum/{id}/source` | Export plan as self-describing JSON (the full Curriculum model) |
 | `POST` | `/api/curriculum/import` | Import a plan JSON (self-describing: `topic`, `language_code`, `cefr_level`, `days`) |
 | `POST` | `/api/curriculum/generate` | **(deleted)** — one-shot generation, replaced by the chat planner |
+| `POST` | `/api/curriculum/{id}/plan/turn/prompt` | Export the exact prompts for a planner turn (no LLM call, no persistence) |
+| `POST` | `/api/curriculum/{id}/generation-mode` | Set generation mode: `auto` (default, Groq pipeline) or `manual` (copy/paste with Claude chat) |
 
 ## Chat flow
 
@@ -119,3 +121,37 @@ The library page (`+page.svelte`) exposes "+ New curriculum" which opens an inli
 | 3 | Latest-proposal-wins | Each proposing turn replaces any prior uncommitted proposal; only committed days accumulate |
 | 4 | Learner snapshot | Included in every turn prompt via `build_learner_snapshot()`; updates every turn from the current SRS state |
 | 5 | No endpoint exposes the full chat | `GET /{id}` returns days + proposed + cefr, but not the chat transcript (which is session-local) |
+
+## Manual mode (Claude chat)
+
+Free Groq models produce noticeably worse curricula and stories than a Claude chat subscription. Manual mode lets the user author both **curriculum days** (planner turns) and **story/day JSON** by pasting TunaTale's exact prompts into Claude chat and pasting Claude's reply back — no paid API calls, no API key, pure copy/paste.
+
+### Mode toggle
+
+`curriculum.metadata["generation_mode"]` stores `"auto"` (default, byte-for-byte unchanged) or `"manual"`. Absent key = `"auto"`. The mode is exposed via `GET /api/curriculum/{id}` (top-level `generation_mode` field) and set via `POST /api/curriculum/{id}/generation-mode`.
+
+### Copy/paste planner loop
+
+1. User types a message (same textarea as auto mode) → clicks **"Copy prompt"**
+2. `POST /api/curriculum/{id}/plan/turn/prompt` returns `{system_prompt, user_prompt}` — the exact prompts the Groq path would send for the same inputs (byte-identical, enforced by a drift-guard test)
+3. The prompts are copied to the clipboard as `system_prompt + "\n\n" + user_prompt`
+4. User pastes into Claude chat, gets a reply
+5. User pastes Claude's final reply into the "Paste Claude's reply" textarea → clicks **"Submit reply"**
+6. `POST /api/curriculum/{id}/plan/turn` with `pasted_response` — skips the LLM call, parses the paste directly through `parse_turn()`. All validation (renumbering, batch_size, validate_plan_days) applies identically to pasted responses.
+7. Proposal/commit UI unchanged.
+
+**Important:** Only Claude's FINAL reply gets pasted back. Side conversation in Claude chat is not persisted.
+
+### Pipeline gating
+
+When mode == `"manual"`:
+- `plan_commit` does **NOT** enqueue `"generate"` pipeline jobs (days still commit to the curriculum)
+- `reconcile` does **NOT** enqueue `"generate"` for lesson-less days, but **STILL** enqueues `"render"` for lessons missing audio (rendering is EdgeTTS/ffmpeg, no LLM — a pasted-in day must still get its audio automatically)
+- Explicit per-day endpoints (`pipeline/retry`, `regenerate`, `POST /api/story/generate`) keep working unchanged — deliberate user actions may still use Groq
+
+### Code references
+
+- Prompt export: `planner.py::build_turn_prompt`, `story.py::build_story_prompts`
+- Paste parsing: `json_parsing.py::parse_json_object`, `split_reply_and_json` (single parse path invariant)
+- Mode endpoint: `curriculum.py::set_generation_mode`
+- Pipeline gate: `curriculum.py::plan_commit`, `pipeline.py::reconcile`

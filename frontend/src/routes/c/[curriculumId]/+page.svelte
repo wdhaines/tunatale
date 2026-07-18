@@ -5,6 +5,7 @@
 	import DayPicker from '$lib/components/DayPicker.svelte';
 	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
 	import LlmActivityLog from '$lib/components/LlmActivityLog.svelte';
+	import ManualStoryPanel from '$lib/components/ManualStoryPanel.svelte';
 	import { pipelineStore } from '$lib/stores/pipeline.svelte';
 	import { llmActivityStore } from '$lib/stores/llmActivity.svelte';
 	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
@@ -14,6 +15,9 @@
 
 	let error = $state('');
 	let progress: Map<number, string> = $state(new Map());
+	let manualStoryDay: number | null = $state(null);
+
+	const isManual = $derived((data.curriculum.generation_mode ?? 'auto') === 'manual');
 
 	const pipelineStatus = $derived(pipelineStore.status);
 	const pipelineStates = $derived(new Map(
@@ -65,7 +69,10 @@
 			const lesson = await api.getLessonByDay(data.curriculum.id, day);
 			await goto(`/c/${data.curriculum.id}/l/${lesson.id}`);
 		} catch {
-			// No lesson yet — the pipeline will handle it
+			// No lesson yet — in manual mode, offer story authoring
+			if (isManual) {
+				manualStoryDay = day;
+			}
 		}
 	}
 </script>
@@ -80,6 +87,13 @@
 		</p>
 		<RateLimitWidget />
 		<DayPicker curriculum={data.curriculum} onSelectDay={handleSelectDay} {progress} pipelineStates={pipelineStates} />
+		{#if manualStoryDay != null}
+			<ManualStoryPanel
+				curriculumId={data.curriculum.id}
+				day={manualStoryDay}
+				onImported={(id) => goto(`/c/${data.curriculum.id}/l/${id}`)}
+			/>
+		{/if}
 		<a class="plan-link" href="/c/{data.curriculum.id}/plan">Plan next days →</a>
 		{#if error}
 			<p class="error">{error}</p>

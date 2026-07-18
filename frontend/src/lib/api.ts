@@ -56,6 +56,7 @@ export interface CurriculumSummary {
   cefr_level: string;
   days: DayPlan[];
   proposed: ProposedBatch | null;
+  generation_mode?: "auto" | "manual";
 }
 
 /** POST /generate and /plan return a day COUNT, not day objects. */
@@ -70,6 +71,11 @@ export interface CurriculumCreated {
 export interface PlanTurnResponse {
   reply: string;
   proposed: ProposedBatch | null;
+}
+
+export interface PromptExport {
+  system_prompt: string;
+  user_prompt: string;
 }
 
 export interface PlanSource {
@@ -466,7 +472,8 @@ export interface StorySourceResponse {
 export interface ImportStoryPayload {
   curriculum_id: string;
   day: number;
-  story: Record<string, unknown>;
+  story?: Record<string, unknown>;
+  raw?: string;
 }
 
 export interface ImportStoryResponse {
@@ -569,11 +576,20 @@ export class TunaTaleAPI {
     });
   }
 
-  async planTurn(id: string, message: string, batchSize = 5): Promise<PlanTurnResponse> {
+  async planTurn(
+    id: string,
+    message: string,
+    batchSize = 5,
+    pastedResponse?: string,
+  ): Promise<PlanTurnResponse> {
+    const body: Record<string, unknown> = { message, batch_size: batchSize };
+    if (pastedResponse !== undefined) {
+      body.pasted_response = pastedResponse;
+    }
     return this.request(`/api/curriculum/${id}/plan/turn`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, batch_size: batchSize }),
+      body: JSON.stringify(body),
     });
   }
 
@@ -599,6 +615,31 @@ export class TunaTaleAPI {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ day, note }),
     });
+  }
+
+  async setGenerationMode(id: string, mode: "auto" | "manual"): Promise<{ mode: string }> {
+    return this.request(`/api/curriculum/${id}/generation-mode`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    });
+  }
+
+  async getPlanTurnPrompt(id: string, message: string, batchSize = 5): Promise<PromptExport> {
+    return this.request(`/api/curriculum/${id}/plan/turn/prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, batch_size: batchSize }),
+    });
+  }
+
+  async getStoryPrompt(
+    curriculumId: string,
+    day: number,
+    strategy: ContentStrategy = "WIDER",
+  ): Promise<PromptExport> {
+    const params = new URLSearchParams({ day: String(day), strategy });
+    return this.request(`/api/story/prompt?curriculum_id=${curriculumId}&${params}`);
   }
 
   async getPlanSource(id: string): Promise<PlanSource> {
