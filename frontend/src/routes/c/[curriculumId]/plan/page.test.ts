@@ -474,7 +474,7 @@ describe("manual mode", () => {
   it("mode toggle calls setGenerationMode and switches to auto", async () => {
     mockSetGenerationMode.mockResolvedValue({ mode: "auto" });
 
-    const { getByText, getByRole } = render(Page, {
+    const { getByRole } = render(Page, {
       props: { data: { curriculum: makeManualCurriculum() } },
     });
 
