@@ -274,11 +274,17 @@ class TestListenClozeIntegration:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
 
+        from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
+
         banka = db.get_collocation_by_lemma("banka")
         assert banka is not None
         rec = banka.directions[Direction.RECOGNITION]
         rec.state = SRSState.REVIEW
         rec.last_review = datetime.now(UTC) - timedelta(days=2)
+        # Explicit due-today seed — the add_collocation default is a
+        # date.today() site (item #11) that flips this to "ahead" in the UTC
+        # [midnight, 4 AM) window. See the kp twin below for the full story.
+        rec.due_at = due_at_rollover_utc(anki_today())
         rec.reps = 5
         db.update_collocation(banka)
 
@@ -568,6 +574,8 @@ class TestListenClozeIntegration:
         lesson.key_phrases = [KeyPhraseInfo(phrase="dober dan", translation="good day")]
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
 
+        from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
+
         unit = SyntacticUnit(text="dober dan", translation="good day", word_count=2, difficulty=1, source="test")
         db.add_collocation(unit, language_code="sl")
         item = db.get_collocation("dober dan")
@@ -575,6 +583,12 @@ class TestListenClozeIntegration:
         rec = item.directions[Direction.RECOGNITION]
         rec.state = SRSState.REVIEW
         rec.last_review = datetime.now(UTC) - timedelta(days=2)
+        # Explicit due-today convention seed: add_collocation's DEFAULT due_at
+        # uses date.today() (item-#11 site), which lands "tomorrow" in the UTC
+        # [midnight, 4 AM) window — the kp would then classify "ahead", not
+        # "due", silently skipping the kp-arm budget decrement (srs.py:738
+        # went uncovered on the 02:17 UTC CI run, 2026-07-19).
+        rec.due_at = due_at_rollover_utc(anki_today())
         rec.reps = 5
         db.update_collocation(item)
 
