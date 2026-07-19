@@ -278,3 +278,82 @@ class TestTranscriptEndpoint:
         assert word["srs_state"] == "new"
         assert word["lemma"] == "banka"
         assert word["surface"] == "banka"
+
+    async def test_transcript_includes_recognition_fields(self):
+        """Payload must include recognition_state and recognition_is_due for
+        every word, enabling frontend recognition-based bucketing."""
+        from datetime import UTC, datetime
+
+        from app.models.srs_item import Direction, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="banka", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
+        db.add_collocation(unit, language_code="sl")
+        # Set recognition to REVIEW, due in past
+        item = db.get_collocation("banka")
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.REVIEW
+        rec.due_at = datetime(2026, 5, 1, tzinfo=UTC)
+        rec.last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        db.update_direction(item.guid, Direction.RECOGNITION, rec)
+
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/lesson/lesson-1/transcript")
+
+        data = response.json()
+        word = data["dialogue_lines"][0]["words"][0]
+        assert "recognition_state" in word
+        assert "recognition_is_due" in word
+        assert word["recognition_state"] == "review"
+        assert word["recognition_is_due"] is True
+
+    async def test_transcript_unknown_word_recognition_fields(self):
+        """Untracked word: recognition_state None, recognition_is_due False."""
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="xyzword", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/lesson/lesson-1/transcript")
+
+        data = response.json()
+        word = data["dialogue_lines"][0]["words"][0]
+        assert word["recognition_state"] is None
+        assert word["recognition_is_due"] is False

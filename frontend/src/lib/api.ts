@@ -166,6 +166,10 @@ export interface WordToken {
   // review even when the SRS wouldn't have surfaced it yet. Optional (not
   // required-with-null) so existing test literals need no update.
   recognition_reviewable?: boolean;
+  // Recognition-side state and dueness for mastery-line bucketing.
+  // None when the word has no recognition direction (untracked, production-only cloze).
+  recognition_state?: string | null;
+  recognition_is_due?: boolean;
 }
 
 export interface CreateSRSItemRequest {

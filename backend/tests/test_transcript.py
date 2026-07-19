@@ -1675,6 +1675,144 @@ class TestBitiTranscriptSpecialCase:
         assert word.inflectable is False  # no base → gated
 
 
+class TestRecognitionState:
+    """recognition_state and recognition_is_due: recognition-side bucketing fields.
+
+    The mastery line buckets words by their RECOGNITION direction's state,
+    independent of the active direction. 'new' must mean "not in the
+    recognition queue yet" — a word whose recognition graduated to REVIEW
+    (with active=production, active_state=new) must show as review, not new.
+    """
+
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.lemmatizer = LowercaseLemmatizer()
+        self.today = date(2026, 6, 1)
+        self.now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+
+    def _add_vocab(self, text: str, translation: str, lemma: str | None = None) -> int:
+        unit = SyntacticUnit(
+            text=text, translation=translation, word_count=1, difficulty=1, source="llm", lemma=lemma or text
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        return self.db.get_collocation_id_by_guid(unit.guid)
+
+    def test_untracked_word_recognition_state_none(self):
+        """Case 1: untracked word → recognition_state is None, recognition_is_due False."""
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.recognition_state is None
+        assert word.recognition_is_due is False
+
+    def test_recognition_learning_due_per_is_due(self):
+        """Case 2: recognition LEARNING → 'learning', due per _is_due."""
+        self._add_vocab("banka", "bank", lemma="banka")
+        item = self.db.get_collocation("banka")
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.LEARNING
+        rec.due_at = datetime(2026, 5, 30, 12, 0, tzinfo=UTC)  # past
+        self.db.update_direction(item.guid, Direction.RECOGNITION, rec)
+
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.recognition_state == "learning"
+        assert word.recognition_is_due is True
+
+    def test_recognition_review_past_due(self):
+        """Case 3: recognition REVIEW, due_at in past → 'review', recognition_is_due True."""
+        self._add_vocab("banka", "bank", lemma="banka")
+        item = self.db.get_collocation("banka")
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.REVIEW
+        rec.due_at = datetime(2026, 5, 30, 12, 0, tzinfo=UTC)  # past
+        rec.last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        self.db.update_direction(item.guid, Direction.RECOGNITION, rec)
+
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.recognition_state == "review"
+        assert word.recognition_is_due is True
+
+    def test_recognition_review_future_due(self):
+        """Case 4: recognition REVIEW, due_at in future → 'review', recognition_is_due False."""
+        self._add_vocab("banka", "bank", lemma="banka")
+        item = self.db.get_collocation("banka")
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.REVIEW
+        rec.due_at = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)  # future
+        rec.last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        self.db.update_direction(item.guid, Direction.RECOGNITION, rec)
+
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.recognition_state == "review"
+        assert word.recognition_is_due is False
+
+    def test_flip_case_recognition_review_production_new(self):
+        """Case 5 (guardrail): recognition REVIEW + production NEW → recognition_state
+        'review', NOT 'new'. The active direction is production (active_state='new'),
+        but /listen grades ONLY recognition — the mastery line must reflect recognition."""
+        self._add_vocab("banka", "bank", lemma="banka")
+        item = self.db.get_collocation("banka")
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.REVIEW
+        rec.due_at = datetime(2099, 1, 1, 4, 0, tzinfo=UTC)  # future (not due)
+        rec.last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        self.db.update_direction(item.guid, Direction.RECOGNITION, rec)
+        # Production stays at default NEW (never graded)
+
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        # Active direction is production (rec=REVIEW, prod=NEW, prod exists → prod active)
+        assert word.active_direction == "production"
+        assert word.active_state == "new"  # production is NEW
+        # But recognition is REVIEW
+        assert word.recognition_state == "review"
+        assert word.recognition_is_due is False
+
+    def test_cloze_production_only_recognition_state_none(self):
+        """Case 6: cloze (production-only) → recognition_state is None."""
+        unit = SyntacticUnit(
+            text="vsak",
+            translation="every",
+            word_count=1,
+            difficulty=1,
+            source="cloze",
+            lemma="vsak",
+            source_sentence="Odprto je vsak dan",
+            card_type="cloze",
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        item = self.db.get_collocation("vsak")
+        item.directions[Direction.PRODUCTION].state = SRSState.LEARNING
+        self.db.update_collocation(item)
+
+        lesson = _make_lesson([("female-1", "Odprto je vsak dan")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        vsak = next(w for w in result.dialogue_lines[0].words if w.lemma == "vsak")
+        assert vsak.recognition_state is None
+        assert vsak.recognition_is_due is False
+
+    def test_recognition_known_state(self):
+        """Recognition KNOWN → recognition_state 'known', recognition_is_due False."""
+        self._add_vocab("banka", "bank", lemma="banka")
+        item = self.db.get_collocation("banka")
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.KNOWN
+        self.db.update_direction(item.guid, Direction.RECOGNITION, rec)
+
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.recognition_state == "known"
+        assert word.recognition_is_due is False
+
+
 class TestExtractTranscriptCaching:
     """extract_transcript populates the persistent cache and reuses it on subsequent calls."""
 

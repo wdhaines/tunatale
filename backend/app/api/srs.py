@@ -572,6 +572,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # graded in [midnight, 4 AM) is still "today" for Anki until rollover) ────
     today = anki_today()
     today_start, today_end = anki_day_bounds_utc_dt(today)
+    # Naive local-date cutoff string. Correct ONLY because REVIEW-state due_at
+    # is date-encoded at 04:00 UTC (rollover.py::due_at_rollover_utc) — the
+    # lexicographic compare is a due-DATE <= today check in disguise. An
+    # instant-flavored due_at (e.g. now-1h) whose UTC date exceeds the local
+    # date would misclassify as "ahead" past 20:00 local (UTC-4).
     end_of_day_utc = datetime.datetime.combine(today, datetime.time.max).isoformat()
 
     created_count = 0
@@ -984,6 +989,8 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
                         "inflection_feature": w.inflection_feature,
                         "known_marked": w.known_marked,
                         "recognition_reviewable": w.recognition_reviewable,
+                        "recognition_state": w.recognition_state,
+                        "recognition_is_due": w.recognition_is_due,
                     }
                     for w in line.words
                 ],

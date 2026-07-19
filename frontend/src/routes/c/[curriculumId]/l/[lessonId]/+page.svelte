@@ -16,6 +16,7 @@
 	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
 	import LessonSourcePanel from '$lib/components/LessonSourcePanel.svelte';
 	import { lessonMastery, masteryColor } from '$lib/mastery';
+	import Tooltip from '$lib/components/Tooltip.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -281,16 +282,22 @@
 	const masteryPct = $derived(mastery?.pct ?? null);
 	const masteryCounts = $derived(mastery?.counts ?? null);
 
-	const masteryCountsLine = $derived(
-		!masteryCounts ? null :
-		(masteryCounts.new > 0 ? `${masteryCounts.new} new` : '')
-		+ (masteryCounts.new > 0 && masteryCounts.learning > 0 ? ' · ' : '')
-		+ (masteryCounts.learning > 0 ? `${masteryCounts.learning} learning` : '')
-		+ ((masteryCounts.new > 0 || masteryCounts.learning > 0) && masteryCounts.review > 0 ? ' · ' : '')
-		+ (masteryCounts.review > 0 ? `${masteryCounts.review} review` : '')
-		+ ((masteryCounts.new > 0 || masteryCounts.learning > 0 || masteryCounts.review > 0) ? ' · ' : '')
-		+ `${masteryCounts.known} known`
+	const masterySegments = $derived(
+		!masteryCounts ? [] :
+		[
+			{ key: 'new', count: masteryCounts.new, label: 'new', lemmas: mastery?.lemmas?.new ?? [] },
+			{ key: 'learning', count: masteryCounts.learning, label: 'learning', lemmas: mastery?.lemmas?.learning ?? [] },
+			{ key: 'due', count: masteryCounts.due, label: 'due', lemmas: mastery?.lemmas?.due ?? [] },
+			{ key: 'review', count: masteryCounts.review, label: 'review', lemmas: mastery?.lemmas?.review ?? [] },
+			{ key: 'known', count: masteryCounts.known, label: 'known', lemmas: mastery?.lemmas?.known ?? [] },
+		].filter(s => s.count > 0 || s.key === 'known')
 	);
+
+	const LEMMA_TOOLTIP_MAX = 15;
+	function formatLemmaTooltip(lemmas: string[]): string {
+		if (lemmas.length <= LEMMA_TOOLTIP_MAX) return lemmas.join(', ');
+		return lemmas.slice(0, LEMMA_TOOLTIP_MAX).join(', ') + ` … +${lemmas.length - LEMMA_TOOLTIP_MAX} more`;
+	}
 
 	// Fully acquired: no remaining candidates AND no words in the review queue
 	const fullyAcquired = $derived(listenResult !== null && listenResult.remaining_candidates === 0 && queueCount === 0);
@@ -545,48 +552,44 @@
 		{/if}
 	</section>
 
-	{#if mode === 'listen'}
-		<section class="card listen-card">
-		{#if showCheckWorkLink}
-			<a class="check-work-link" href="/review?lesson={data.lesson.id}&c={data.curriculum.id}">Check your work — review {queueCount} {queueCount === 1 ? 'word' : 'words'}</a>
+	<section class="card listen-card">
+	{#if showCheckWorkLink}
+		<a class="check-work-link" href="/review?lesson={data.lesson.id}&c={data.curriculum.id}">Check your work — review {queueCount} {queueCount === 1 ? 'word' : 'words'}</a>
+	{/if}
+	{#if showFullyAcquiredBtn}
+			<button class="listen-btn listened" disabled>
+				✓ Listened ({listenCount}×)
+			</button>
+		{:else}
+			<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened} disabled={listenLoading}>
+				{#if listenLoading}
+					Registering…
+				{:else}
+					Mark as Listened
+				{/if}
+			</button>
 		{/if}
-		{#if showFullyAcquiredBtn}
-				<button class="listen-btn listened" disabled>
-					✓ Listened ({listenCount}×)
-				</button>
-			{:else}
-				<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened} disabled={listenLoading}>
-					{#if listenLoading}
-						Registering…
-					{:else}
-						Mark as Listened
-					{/if}
-				</button>
-			{/if}
-			{#if listenResult && !error}
-				<p class="listen-confirmation">
-					{#if listenResult.created > 0}
-						{listenResult.created} new {listenResult.created === 1 ? 'word' : 'words'} added
-					{/if}
-					{#if listenResult.created > 0 && listenResult.graded > 0} · {/if}
-					{#if listenResult.graded > 0}
-						{listenResult.graded} reviewed
-					{/if}
-					{#if listenResult.remaining_candidates > 0}
-						 · {listenResult.remaining_candidates} remaining — listen again to add more
-					{/if}
-				</p>
-			{/if}
+		{#if listenResult && !error}
+			<p class="listen-confirmation">
+				{#if listenResult.created > 0}
+					{listenResult.created} new {listenResult.created === 1 ? 'word' : 'words'} added
+				{/if}
+				{#if listenResult.created > 0 && listenResult.graded > 0} · {/if}
+				{#if listenResult.graded > 0}
+					{listenResult.graded} reviewed
+				{/if}
+				{#if listenResult.remaining_candidates > 0}
+					 · {listenResult.remaining_candidates} remaining — listen again to add more
+				{/if}
+			</p>
+		{/if}
 	{#if mastery && masteryPct !== null}
 		<p class="mastery-line">
 			<span class="mastery-pct" style:color={masteryColor(masteryPct)}>{Math.round(masteryPct * 100)}%</span>
-			{#if masteryCountsLine}
-				 {masteryCountsLine}
-			{/if}
+			{#each masterySegments as seg, i (seg.key)}{#if i > 0}{' · '}{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" tabindex="0">{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}
 		</p>
 	{/if}
-		</section>
-	{/if}
+	</section>
 
 	{#if mode === 'read'}
 		<section class="card">
@@ -890,6 +893,9 @@
 	}
 	.mastery-pct {
 		font-weight: 700;
+	}
+	.mastery-segment {
+		cursor: default;
 	}
 	.tools-card summary {
 		cursor: pointer;

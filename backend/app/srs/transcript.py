@@ -48,6 +48,12 @@ class WordToken:
     # (LEARNING/REVIEW/RELEARNING), regardless of due date. Reading the word is a
     # valid recognition review even when the SRS wouldn't have surfaced it yet.
     recognition_reviewable: bool = False
+    # Recognition-side state and dueness for mastery-line bucketing.
+    # Independent of the active direction: a word whose recognition graduated to
+    # REVIEW (active=production, active_state=new) shows recognition_state='review'.
+    # None when the word has no recognition direction (untracked, production-only cloze).
+    recognition_state: str | None = None
+    recognition_is_due: bool = False
 
 
 @dataclass
@@ -374,6 +380,8 @@ def extract_transcript(
                 inflectable_flag: bool = False
                 inflection_feature_val: str | None = None
                 recognition_reviewable_flag: bool = False
+                recognition_state_val: str | None = None
+                recognition_is_due_flag: bool = False
 
                 # Step 3b: Check card-less ignore list (inside the Step-3 unknown branch only)
                 if resolved_item is None and lemma.lower() in ignored_lemmas:
@@ -396,6 +404,8 @@ def extract_transcript(
                     # direction has flipped to production on graduation.
                     rec_ds = item.directions.get(Direction.RECOGNITION)
                     recognition_reviewable_flag = rec_ds is not None and _is_read_reviewable(rec_ds)
+                    recognition_state_val = rec_ds.state.value if rec_ds is not None else None
+                    recognition_is_due_flag = _is_due(rec_ds, today) if rec_ds is not None else False
                     valid_components = [c for c in components if c is not None]
                     progress_val = compute_mastery_progress(valid_components)
 
@@ -446,6 +456,8 @@ def extract_transcript(
                         inflection_feature=inflection_feature_val,
                         known_marked=known_marked_flag,
                         recognition_reviewable=recognition_reviewable_flag,
+                        recognition_state=recognition_state_val,
+                        recognition_is_due=recognition_is_due_flag,
                     )
                 )
 

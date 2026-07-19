@@ -273,6 +273,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
                 inflectable: false,
                 inflection_feature: null,
                 known_marked: false,
+                recognition_state: "known",
+                recognition_is_due: false,
               },
               {
                 lemma: "kava",
@@ -293,6 +295,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
                 inflectable: false,
                 inflection_feature: null,
                 known_marked: false,
+                recognition_state: "learning",
+                recognition_is_due: true,
               },
               {
                 lemma: "prosim",
@@ -313,6 +317,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
                 inflectable: false,
                 inflection_feature: null,
                 known_marked: false,
+                recognition_state: null,
+                recognition_is_due: false,
               },
             ],
           },
@@ -332,7 +338,13 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     });
 
     it("renders every counts segment when new, learning, review, and known all appear", async () => {
-      const word = (lemma: string, active_state: string, progress: number) => ({
+      const word = (
+        lemma: string,
+        active_state: string,
+        progress: number,
+        recognition_state: string,
+        recognition_is_due = false,
+      ) => ({
         lemma,
         active_state,
         progress,
@@ -351,6 +363,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         inflectable: false,
         inflection_feature: null,
         known_marked: false,
+        recognition_state,
+        recognition_is_due,
       });
       const transcriptAllStates = {
         lesson_id: "l1",
@@ -360,10 +374,10 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             role: "A",
             sentence: "ena dva tri štiri",
             words: [
-              word("ena", "new", 0),
-              word("dva", "learning", 0.3),
-              word("tri", "review", 0.8),
-              word("štiri", "known", 1.0),
+              word("ena", "new", 0, "new"),
+              word("dva", "learning", 0.3, "learning"),
+              word("tri", "review", 0.8, "review"),
+              word("štiri", "known", 1.0, "known"),
             ],
           },
         ],
@@ -371,14 +385,18 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       mockGetTranscript.mockResolvedValue(transcriptAllStates);
       mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
 
-      const { getByText } = render(Page, {
+      const { getByText, container } = render(Page, {
         props: { data: { curriculum, lesson, audio: null, transcript: transcriptAllStates } },
       });
       fireEvent.click(getByText("Listen"));
 
       // (0 + 0.3 + 0.8 + 1.0) / 4 = 0.525 → 53%
       expect(getByText(/53%/)).toBeTruthy();
-      expect(getByText(/1 new · 1 learning · 1 review · 1 known/)).toBeTruthy();
+      const masteryLine = container.querySelector(".mastery-line");
+      expect(masteryLine?.textContent).toContain("1 new");
+      expect(masteryLine?.textContent).toContain("1 learning");
+      expect(masteryLine?.textContent).toContain("1 review");
+      expect(masteryLine?.textContent).toContain("1 known");
     });
 
     it("updates mastery after transcript refetch (post-listen)", async () => {
@@ -470,6 +488,304 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       // After listen + refetch: 15% mastery (learning, progress 0.15)
       await waitFor(() => {
         expect(getByText(/15%/)).toBeTruthy();
+      });
+    });
+  });
+
+  describe("B4 — per-bucket breakdown tooltip", () => {
+    const makeWord = (
+      lemma: string,
+      recognition_state: string | null,
+      opts?: { recognition_is_due?: boolean; active_state?: string },
+    ) => ({
+      lemma,
+      active_state: opts?.active_state ?? "known",
+      progress: 1.0,
+      surface: lemma,
+      srs_state: "known",
+      srs_item_id: 1,
+      translation: null,
+      collocation_span_id: null,
+      collocation_start: false,
+      collocation_srs_state: null,
+      collocation_lemma: null,
+      collocation_translation: null,
+      card_type: "vocab",
+      active_direction: null,
+      is_due: false,
+      inflectable: false,
+      inflection_feature: null,
+      known_marked: false,
+      recognition_state,
+      recognition_is_due: opts?.recognition_is_due ?? false,
+    });
+
+    it("tooltip lists the bucket's lemmas for a non-zero segment", async () => {
+      const tx = {
+        lesson_id: "l1",
+        key_phrases: [],
+        dialogue_lines: [
+          {
+            role: "A",
+            sentence: "zdravo kava",
+            words: [
+              makeWord("zdravo", "known"),
+              makeWord("kava", "learning", { active_state: "learning", recognition_is_due: true }),
+            ],
+          },
+        ],
+      };
+      mockGetTranscript.mockResolvedValue(tx);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+
+      const { container } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: tx } },
+      });
+
+      await waitFor(() => {
+        const masteryLine = container.querySelector(".mastery-line");
+        expect(masteryLine).toBeTruthy();
+        const translations = masteryLine!.querySelectorAll(".tt-translation");
+        const texts = Array.from(translations).map((t) => t.textContent);
+        expect(texts).toContain("kava");
+      });
+    });
+
+    it("16 lemmas in a bucket shows 15 + '+1 more' in tooltip", async () => {
+      const words = Array.from({ length: 16 }, (_, i) => makeWord(`word${i}`, "known"));
+      const tx = {
+        lesson_id: "l1",
+        key_phrases: [],
+        dialogue_lines: [{ role: "A", sentence: words.map((w) => w.surface).join(" "), words }],
+      };
+      mockGetTranscript.mockResolvedValue(tx);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+
+      const { container } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: tx } },
+      });
+
+      await waitFor(() => {
+        const masteryLine = container.querySelector(".mastery-line");
+        expect(masteryLine).toBeTruthy();
+        const translations = masteryLine!.querySelectorAll(".tt-translation");
+        const texts = Array.from(translations).map((t) => t.textContent);
+        expect(texts.some((t) => t?.includes("+1 more"))).toBe(true);
+      });
+    });
+
+    it("zero-count segments do not render a tooltip trigger", async () => {
+      const tx = {
+        lesson_id: "l1",
+        key_phrases: [],
+        dialogue_lines: [
+          {
+            role: "A",
+            sentence: "zdravo",
+            words: [makeWord("zdravo", "known")],
+          },
+        ],
+      };
+      mockGetTranscript.mockResolvedValue(tx);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+
+      const { container } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: tx } },
+      });
+
+      await waitFor(() => {
+        const masteryLine = container.querySelector(".mastery-line");
+        expect(masteryLine).toBeTruthy();
+        const segments = masteryLine!.querySelectorAll(".mastery-segment");
+        const texts = Array.from(segments).map((s) => s.textContent);
+        expect(texts.every((t) => !t?.includes("new"))).toBe(true);
+        expect(texts.every((t) => !t?.includes("learning"))).toBe(true);
+        expect(texts.every((t) => !t?.includes("due"))).toBe(true);
+        expect(texts.every((t) => !t?.includes("review"))).toBe(true);
+        expect(texts.some((t) => t?.includes("known"))).toBe(true);
+      });
+    });
+
+    it("non-zero segments are keyboard-reachable (focus reveals via :focus-within); zero-count are not", async () => {
+      const tx = {
+        lesson_id: "l1",
+        key_phrases: [],
+        dialogue_lines: [
+          {
+            role: "A",
+            sentence: "kava",
+            words: [makeWord("kava", "learning", { active_state: "learning" })],
+          },
+        ],
+      };
+      mockGetTranscript.mockResolvedValue(tx);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+
+      const { container } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: tx } },
+      });
+
+      await waitFor(() => {
+        const segments = Array.from(
+          container.querySelectorAll<HTMLElement>(".mastery-line .mastery-segment"),
+        );
+        const learning = segments.find((s) => s.textContent?.includes("learning"));
+        const known = segments.find((s) => s.textContent?.includes("known"));
+        expect(learning).toBeTruthy();
+        expect(learning!.getAttribute("tabindex")).toBe("0");
+        expect(learning!.getAttribute("role")).toBe("button");
+        expect(known).toBeTruthy();
+        expect(known!.hasAttribute("tabindex")).toBe(false);
+      });
+
+      const segments = Array.from(
+        container.querySelectorAll<HTMLElement>(".mastery-line .mastery-segment"),
+      );
+      const learning = segments.find((s) => s.textContent?.includes("learning"))!;
+      const wrap = learning.closest(".tt-wrap")!;
+      // Enter activates (forwards a click → Tooltip toggles open); other keys don't.
+      await fireEvent.keyDown(learning, { key: "a" });
+      expect(wrap.classList.contains("open")).toBe(false);
+      await fireEvent.keyDown(learning, { key: "Enter" });
+      expect(wrap.classList.contains("open")).toBe(true);
+    });
+  });
+
+  describe("B3 — mastery line + listen card in read mode", () => {
+    const transcriptWithRecFields = {
+      lesson_id: "l1",
+      key_phrases: [],
+      dialogue_lines: [
+        {
+          role: "A",
+          sentence: "zdravo kava",
+          words: [
+            {
+              lemma: "zdravo",
+              active_state: "known",
+              progress: 1.0,
+              surface: "zdravo",
+              srs_state: "known",
+              srs_item_id: 1,
+              translation: null,
+              collocation_span_id: null,
+              collocation_start: false,
+              collocation_srs_state: null,
+              collocation_lemma: null,
+              collocation_translation: null,
+              card_type: "vocab",
+              active_direction: null,
+              is_due: false,
+              inflectable: false,
+              inflection_feature: null,
+              known_marked: false,
+              recognition_state: "known",
+              recognition_is_due: false,
+            },
+            {
+              lemma: "kava",
+              active_state: "learning",
+              progress: 0.3,
+              surface: "kava",
+              srs_state: "learning",
+              srs_item_id: 2,
+              translation: null,
+              collocation_span_id: null,
+              collocation_start: false,
+              collocation_srs_state: null,
+              collocation_lemma: null,
+              collocation_translation: null,
+              card_type: "vocab",
+              active_direction: "recognition",
+              is_due: true,
+              inflectable: false,
+              inflection_feature: null,
+              known_marked: false,
+              recognition_state: "learning",
+              recognition_is_due: true,
+            },
+          ],
+        },
+      ],
+    };
+
+    it("mastery line renders in read mode", async () => {
+      mockGetTranscript.mockResolvedValue(transcriptWithRecFields);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+
+      const { getByText } = render(Page, {
+        props: {
+          data: {
+            curriculum,
+            lesson: { ...lesson, day: 1 },
+            audio: null,
+            transcript: transcriptWithRecFields,
+          },
+        },
+      });
+
+      // Desktop defaults to read mode
+      await waitFor(() => {
+        expect(getByText(/65%/)).toBeTruthy();
+      });
+    });
+
+    it("'Mark as Listened' renders in read mode and fires on click", async () => {
+      mockGetTranscript.mockResolvedValue(transcriptWithRecFields);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockMarkAsListened.mockResolvedValue({
+        status: "ok",
+        registered: 1,
+        created: 0,
+        graded: 1,
+        remaining_candidates: 0,
+        listen_count: 1,
+      });
+
+      const { getByText, findByText } = render(Page, {
+        props: {
+          data: {
+            curriculum,
+            lesson: { ...lesson, day: 1 },
+            audio: null,
+            transcript: transcriptWithRecFields,
+          },
+        },
+      });
+
+      // "Mark as Listened" is visible in read mode
+      const btn = getByText("Mark as Listened");
+      expect(btn).toBeTruthy();
+      expect((btn as HTMLButtonElement).disabled).toBe(false);
+
+      // Click fires handleMarkListened
+      await fireEvent.click(btn);
+
+      await waitFor(() => {
+        expect(mockMarkAsListened).toHaveBeenCalled();
+      });
+    });
+
+    it("listen mode behavior unchanged — mastery line still renders", async () => {
+      mockGetTranscript.mockResolvedValue(transcriptWithRecFields);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+
+      const { getByText } = render(Page, {
+        props: {
+          data: {
+            curriculum,
+            lesson: { ...lesson, day: 1 },
+            audio,
+            transcript: transcriptWithRecFields,
+          },
+        },
+      });
+
+      // Switch to listen mode
+      fireEvent.click(getByText("Listen"));
+
+      await waitFor(() => {
+        expect(getByText(/65%/)).toBeTruthy();
       });
     });
   });

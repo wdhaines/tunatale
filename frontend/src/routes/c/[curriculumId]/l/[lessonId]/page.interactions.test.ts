@@ -105,12 +105,12 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(backLink!.closest("h1, h2, h3, h4, h5, h6")).toBeNull();
   });
 
-  it("defaults to Read mode with transcript visible", () => {
-    const { getByText, queryByText } = render(Page, {
+  it("defaults to Read mode with transcript visible and listen card in both modes", () => {
+    const { getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio: null, transcript } },
     });
     expect(getByText("a coffee please")).toBeTruthy();
-    expect(queryByText("Mark as Listened")).toBeFalsy();
+    expect(getByText("Mark as Listened")).toBeTruthy();
   });
 
   it("switches to Listen mode showing listen action", () => {
