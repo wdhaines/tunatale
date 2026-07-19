@@ -1396,14 +1396,18 @@ class TestSyncPullInvalidatesSessionMainQueue:
     def test_sync_pull_rebuilds_session_main_queue_on_completion(self):
         """Layer 29: non-dry-run sync_pull EAGERLY REBUILDS session_main_queue —
         the stale placeholder is replaced with a freshly computed order so the
-        freeze moment matches Anki's session-open rebuild."""
-        from datetime import date
+        freeze moment matches Anki's session-open rebuild.
+
+        Cache day-key is the ANKI day (build_and_freeze_main_queue keys by
+        anki_today()) — date.today() here read the wrong day in the UTC
+        [midnight, 4 AM) window and went red on every evening-EDT CI push."""
+        from app.srs.anki_mirror.rollover import anki_today
 
         db = _make_tt_db()
         guid = _add_banka(db)
 
         # Seed a stale cache from earlier today with bogus row ids.
-        today = date.today()
+        today = anki_today()
         from app.srs.queue_stats import get_session_main_queue, set_session_main_queue
 
         set_session_main_queue(db, today, [(9999, "recognition"), (8888, "production")])
@@ -1424,15 +1428,14 @@ class TestSyncPullInvalidatesSessionMainQueue:
         cached order reflects the pool at sync time. Otherwise TT's first /review-
         queue request can happen long after sync, freezing a queue from a different
         pool moment than Anki's session-start rebuild."""
-        from datetime import date
-
         from app.models.srs_item import Direction, DirectionState, SRSState
         from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.anki_mirror.rollover import anki_today
 
         db = _make_tt_db()
         # Add one review-state card and one new-state card. After sync, the
-        # cache should hold a non-empty rebuilt order.
-        today = date.today()
+        # cache should hold a non-empty rebuilt order (cache day-key = Anki day).
+        today = anki_today()
         for txt in ("rev_card", "new_card"):
             db.add_collocation(
                 SyntacticUnit(text=txt, translation="t", word_count=1, difficulty=1, source="test"),
@@ -1655,8 +1658,14 @@ class TestDirectionDiffersDetectsLastReviewTransition:
         """
         import logging
 
+        from app.srs.anki_mirror.rollover import anki_today
+
         db = _make_tt_db()
-        today = date.today()
+        # Anki day, not calendar day: last_unbury_day must match what
+        # sync_pull's unbury_if_needed(anki_today()) compares against, or the
+        # sweep this seed suppresses runs anyway in the UTC [midnight, 4 AM)
+        # window and releases the buried test rows (CI-only 3-vs-4 failure).
+        today = anki_today()
 
         # Set up 4 collocations, each with a recognition card (ord=0).
         guids = []
