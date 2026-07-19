@@ -284,3 +284,19 @@ class ContentStore:
         with self._get_conn() as conn:
             conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (lesson_id,))
             conn.commit()
+
+    def delete_lessons_for_day(self, curriculum_id: str, day: int) -> None:
+        """Delete all lesson rows (and their audio) for a given curriculum day.
+
+        There can be multiple lesson versions per day; every one is removed.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id FROM lessons WHERE curriculum_id = ? AND day = ?",
+                (curriculum_id, day),
+            ).fetchall()
+            lesson_ids = [row["id"] for row in rows]
+            for lesson_id in lesson_ids:
+                conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (lesson_id,))
+            conn.execute("DELETE FROM lessons WHERE curriculum_id = ? AND day = ?", (curriculum_id, day))
+            conn.commit()

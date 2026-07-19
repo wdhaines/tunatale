@@ -621,6 +621,13 @@ export class TunaTaleAPI {
     });
   }
 
+  async deleteCurriculumDay(
+    id: string,
+    day: number,
+  ): Promise<{ deleted_day: number; days: number }> {
+    return this.request(`/api/curriculum/${id}/days/${day}`, { method: "DELETE" });
+  }
+
   async setGenerationMode(id: string, mode: "auto" | "manual"): Promise<{ mode: string }> {
     return this.request(`/api/curriculum/${id}/generation-mode`, {
       method: "POST",

@@ -338,6 +338,24 @@ class LLMClient:
 
                 if not response.is_success:
                     msg = f"Groq returned HTTP {response.status_code}"
+                    try:
+                        body_text = response.text
+                        if body_text:
+                            try:
+                                body_json = response.json()
+                                detail = body_json.get("error", {}).get("message", "")
+                                if not detail:
+                                    detail = body_text
+                            except Exception:
+                                detail = body_text
+                            # `detail` is always truthy here (either the parsed
+                            # message or the guaranteed-non-empty body_text
+                            # fallback) — a non-string message (e.g. a number)
+                            # fails the slice and is caught below instead.
+                            detail = detail[:200]
+                            msg += f" — {detail}"
+                    except Exception:
+                        pass
                     self._fire_callback(
                         provider="groq",
                         model=self.groq_model,

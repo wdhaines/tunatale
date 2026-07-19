@@ -9,6 +9,7 @@ from app.generation.planner import CurriculumPlanner, PlannerError, PlannerTurn
 from app.generation.prompts import PLANNER_SYSTEM_PROMPT
 from app.languages import get_language
 from app.llm.activity import ActivityLog
+from app.llm.client import LLMError
 from app.main import app
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.storage.store import ContentStore
@@ -47,6 +48,18 @@ class StubPlanner:
         if self.error is not None:
             raise PlannerError(self.error)
         return self.result
+
+
+@dataclass
+class LLMErrorPlanner:
+    """Planner stub that raises LLMError on turn() — boundary-safe (no patch)."""
+
+    message: str = "Groq returned HTTP 413"
+    calls: list[dict] = field(default_factory=list)
+
+    async def turn(self, *, curriculum, user_message, batch_size, learner_snapshot, language):
+        self.calls.append({"user_message": user_message})
+        raise LLMError(self.message)
 
 
 def _day(day: int) -> CurriculumDay:
@@ -236,6 +249,21 @@ class TestPlanTurn:
 
         assert response.status_code == 200
         assert store.get_curriculum("old").metadata["planner"]["chat"][0]["content"] == "hi"
+
+    async def test_llm_error_502_and_nothing_persisted(self):
+        """LLMError from planner.turn → 502, chat state unchanged."""
+        curriculum = _planned_curriculum(chat=[{"role": "user", "content": "old"}])
+        planner = LLMErrorPlanner(message="Groq returned HTTP 413")
+        store = _setup(curriculum, planner)
+
+        async with _client() as client:
+            response = await client.post("/api/curriculum/trip/plan/turn", json={"message": "plan"})
+
+        assert response.status_code == 502
+        assert "413" in response.json()["detail"]
+        saved = store.get_curriculum("trip").metadata["planner"]
+        assert saved["chat"] == [{"role": "user", "content": "old"}]
+        assert saved["proposed"] is None
 
 
 class TestPlanCommit:
@@ -448,6 +476,78 @@ class TestDeleteCurriculum:
         assert store.get_audio_file_row("aud_1") is None
 
 
+class TestDeleteDay:
+    async def test_delete_day_removes_curriculum_day_and_lessons(self):
+        """DELETE /{id}/days/{day} removes the day from curriculum.days and all its lessons."""
+        curriculum = _planned_curriculum()
+        curriculum.days.extend([_day(1), _day(2), _day(3)])
+        store = _setup(curriculum)
+        from app.models.lesson import Lesson
+
+        lesson = Lesson(
+            title="L1",
+            language_code="sl",
+            generation_metadata={"source_prompt": "x", "model": "y"},
+        )
+        store.save_lesson("less_1", "trip", 2, lesson)
+        store.save_audio_file("aud_1", "less_1", "/tmp/foo.mp3", section_index=0, section_type="dialogue")
+
+        async with _client() as client:
+            response = await client.delete("/api/curriculum/trip/days/2")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["deleted_day"] == 2
+        assert data["days"] == 2  # days 1 and 3 remain
+
+        saved = store.get_curriculum("trip")
+        assert [d.day for d in saved.days] == [1, 3]
+        assert store.get_lesson("less_1") is None
+        assert store.get_audio_file_row("aud_1") is None
+
+    async def test_delete_day_appends_event_to_chat(self):
+        """Day deletion appends a planner chat event."""
+        curriculum = _planned_curriculum()
+        curriculum.days.extend([_day(1), _day(2)])
+        store = _setup(curriculum)
+
+        async with _client() as client:
+            await client.delete("/api/curriculum/trip/days/1")
+
+        saved = store.get_curriculum("trip").metadata["planner"]
+        assert len(saved["chat"]) == 1
+        assert saved["chat"][0]["role"] == "event"
+        assert "day 1" in saved["chat"][0]["content"].lower()
+
+    async def test_delete_day_unknown_curriculum_404(self):
+        _setup()
+        async with _client() as client:
+            response = await client.delete("/api/curriculum/no-such/days/1")
+        assert response.status_code == 404
+
+    async def test_delete_day_missing_day_404(self):
+        curriculum = _planned_curriculum()
+        curriculum.days.extend([_day(1)])
+        _setup(curriculum)
+
+        async with _client() as client:
+            response = await client.delete("/api/curriculum/trip/days/99")
+        assert response.status_code == 404
+
+    async def test_delete_day_no_lessons_still_removes_day(self):
+        """Day with no lessons still gets removed from curriculum.days."""
+        curriculum = _planned_curriculum()
+        curriculum.days.extend([_day(1), _day(2)])
+        store = _setup(curriculum)
+
+        async with _client() as client:
+            response = await client.delete("/api/curriculum/trip/days/1")
+
+        assert response.status_code == 200
+        saved = store.get_curriculum("trip")
+        assert [d.day for d in saved.days] == [2]
+
+
 class _FakeLLMForPlanner:
     """Records complete() calls and returns canned responses (boundary-safe, no patch)."""
 
@@ -518,10 +618,12 @@ class TestPlanTurnManual:
         assert saved["chat"] == [{"role": "user", "content": "old"}]
         assert saved["proposed"] is None
 
-    async def test_manual_turn_pure_prose_chat_only(self):
-        """pasted_response with no json fence → 200, chat-only turn, proposed unchanged."""
-        existing_proposed = {"start_day": 1, "days": [asdict(_day(1))]}
-        curriculum = _planned_curriculum(proposed=existing_proposed)
+    async def test_b5_pasted_reply_without_json_is_422_and_persists_nothing(self):
+        """B5: pasted_response with no JSON fence → 422, chat state unchanged."""
+        curriculum = _planned_curriculum(
+            chat=[{"role": "user", "content": "old"}],
+            proposed={"start_day": 1, "days": [asdict(_day(1))]},
+        )
         stub = StubPlanner()
         store = _setup(curriculum=curriculum, planner=stub)
 
@@ -531,14 +633,13 @@ class TestPlanTurnManual:
                 json={"message": "thoughts?", "pasted_response": "Sounds good!"},
             )
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["reply"] == "Sounds good!"
-        assert data["proposed"] == existing_proposed
+        assert resp.status_code == 422
+        assert "No plan JSON" in resp.json()["detail"]
 
         saved = store.get_curriculum("trip").metadata["planner"]
-        assert len(saved["chat"]) == 2
-        assert saved["proposed"] == existing_proposed
+        assert saved["chat"] == [{"role": "user", "content": "old"}]
+        assert saved["proposed"] == {"start_day": 1, "days": [asdict(_day(1))]}
+        assert stub.calls == []  # LLM never called
 
 
 class TestPlanTurnPrompt:

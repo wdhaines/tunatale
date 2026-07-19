@@ -43,6 +43,7 @@
 	let manualMessage = $state('');
 	let copiedPrompt = $state(false);
 	let pastedReply = $state('');
+	let manualTextarea: HTMLTextAreaElement | undefined = $state();
 
 	const isManual = $derived(generationMode === 'manual');
 
@@ -200,14 +201,16 @@
 		</header>
 
 		{#if isManual}
+			<PlannerChat {messages} {pending} bind:batchSize onSend={handleSend} readonly />
 			<div class="manual-flow">
 				<div class="manual-input">
-					<textarea
-						placeholder="Message the planner…"
-						rows="2"
-						bind:value={manualMessage}
-						disabled={pending || copiedPrompt}
-					></textarea>
+				<textarea
+					bind:this={manualTextarea}
+					placeholder="Message the planner…"
+					rows="2"
+					bind:value={manualMessage}
+					disabled={pending || copiedPrompt}
+				></textarea>
 					<div class="controls">
 						<label class="batch-size">
 							Days per batch
@@ -278,7 +281,7 @@
 			proposed={batch}
 			{pending}
 			onCommit={() => handleCommit(batch)}
-			onRevise={() => isManual ? undefined : chat.focusInput()}
+			onRevise={() => isManual ? manualTextarea?.focus() : chat.focusInput()}
 		/>
 	{/if}
 

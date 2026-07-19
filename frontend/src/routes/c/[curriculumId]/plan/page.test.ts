@@ -704,5 +704,76 @@ describe("manual mode", () => {
     await waitFor(() => {
       expect(getByText(/expected 5 days/i)).toBeTruthy();
     });
+    // The paste box lets you retry — its contents survive the error instead of
+    // being cleared, unlike the success branch of handlePasteSubmit.
+    expect((pasteTextarea as HTMLTextAreaElement).value).toBe("Here are the days");
+  });
+
+  it("manual mode shows the chat transcript after successful paste submit", async () => {
+    mockGetPlanTurnPrompt.mockResolvedValue({
+      system_prompt: "sys",
+      user_prompt: "plan 1 day",
+    });
+    vi.mocked(api.planTurn).mockResolvedValue({
+      reply: "Here is the plan",
+      proposed: { start_day: 1, days: [day(1)] },
+    });
+
+    const { getByText, getByRole, getByPlaceholderText } = render(Page, {
+      props: { data: { curriculum: makeManualCurriculum() } },
+    });
+
+    await fireEvent.input(getByPlaceholderText(/message the planner/i), {
+      target: { value: "plan 1 day" },
+    });
+    await fireEvent.click(getByRole("button", { name: /copy prompt/i }));
+
+    await waitFor(() => {
+      expect(getByPlaceholderText(/paste claude/i)).toBeTruthy();
+    });
+    await fireEvent.input(getByPlaceholderText(/paste claude/i), {
+      target: { value: "Here is the plan" },
+    });
+    await fireEvent.click(getByRole("button", { name: /submit reply/i }));
+
+    await waitFor(() => {
+      expect(getByText("plan 1 day")).toBeTruthy();
+      expect(getByText("Here is the plan")).toBeTruthy();
+    });
+  });
+
+  it("Revise in manual mode focuses the manual textarea", async () => {
+    mockGetPlanTurnPrompt.mockResolvedValue({
+      system_prompt: "sys",
+      user_prompt: "plan 1 day",
+    });
+    vi.mocked(api.planTurn).mockResolvedValue({
+      reply: "Here is the plan",
+      proposed: { start_day: 1, days: [day(1)] },
+    });
+
+    const { getByRole, getByPlaceholderText } = render(Page, {
+      props: { data: { curriculum: makeManualCurriculum() } },
+    });
+
+    // Submit a paste to get a proposal on screen
+    await fireEvent.input(getByPlaceholderText(/message the planner/i), {
+      target: { value: "plan 1 day" },
+    });
+    await fireEvent.click(getByRole("button", { name: /copy prompt/i }));
+    await waitFor(() => {
+      expect(getByPlaceholderText(/paste claude/i)).toBeTruthy();
+    });
+    await fireEvent.input(getByPlaceholderText(/paste claude/i), {
+      target: { value: "Here is the plan" },
+    });
+    await fireEvent.click(getByRole("button", { name: /submit reply/i }));
+    await waitFor(() => {
+      expect(getByRole("button", { name: /revise/i })).toBeTruthy();
+    });
+
+    // Click Revise — should focus the manual message textarea
+    await fireEvent.click(getByRole("button", { name: /revise/i }));
+    expect(document.activeElement).toBe(getByPlaceholderText(/message the planner/i));
   });
 });

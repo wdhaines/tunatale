@@ -96,6 +96,44 @@ class TestRateLimit:
             with pytest.raises(LLMError, match="500"):
                 await client.complete("q")
 
+    async def test_http_error_includes_response_body(self, client):
+        """Non-success Groq response body is excerpted in the LLMError message."""
+        groq_body = {
+            "error": {"message": "requested tokens (8192) exceed per-request limit", "type": "invalid_request_error"}
+        }
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(413, json=groq_body))
+            respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(500, json={}))
+            with pytest.raises(LLMError, match="413.*requested tokens"):
+                await client.complete("q")
+
+    async def test_http_error_empty_body_no_detail_appended(self, client):
+        """Non-success response with an empty body: message stays bare (no ' — ' suffix)."""
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(413, text=""))
+            respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(500, json={}))
+            with pytest.raises(LLMError) as exc_info:
+                await client.complete("q")
+        assert str(exc_info.value) == "Groq returned HTTP 413"
+
+    async def test_http_error_non_json_body_used_as_detail(self, client):
+        """Non-success response whose body isn't JSON: raw text is used verbatim as the excerpt."""
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(413, text="rate limit exceeded, try later"))
+            respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(500, json={}))
+            with pytest.raises(LLMError, match="413.*rate limit exceeded, try later"):
+                await client.complete("q")
+
+    async def test_http_error_non_string_message_falls_back_to_bare(self, client):
+        """A JSON error body whose message isn't a string can't be sliced — falls back to the bare message."""
+        groq_body = {"error": {"message": 12345}}
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(413, json=groq_body))
+            respx.post(OLLAMA_GENERATE_URL).mock(return_value=Response(500, json={}))
+            with pytest.raises(LLMError) as exc_info:
+                await client.complete("q")
+        assert str(exc_info.value) == "Groq returned HTTP 413"
+
     async def test_no_api_key_raises(self):
         client = LLMClient(groq_api_key=None)
         with pytest.raises(LLMError):

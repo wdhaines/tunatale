@@ -5,9 +5,10 @@
 		curriculumId: string;
 		day: number;
 		onImported: (lessonId: string) => void;
+		onDeleted: () => void;
 	}
 
-	let { curriculumId, day, onImported }: Props = $props();
+	let { curriculumId, day, onImported, onDeleted }: Props = $props();
 
 	let copyError = $state('');
 	let copyLabel = $state('');
@@ -16,6 +17,9 @@
 	let importWarnings: string[] = $state([]);
 	let importLoading = $state(false);
 	let importedLessonId: string | null = $state(null);
+	let confirmingDelete = $state(false);
+	let deleting = $state(false);
+	let deleteError = $state('');
 
 	async function handleCopy() {
 		copyError = '';
@@ -59,6 +63,35 @@
 		} finally {
 			importLoading = false;
 		}
+	}
+
+	// Two-click confirm (same pattern as the plan page's Reset chat button):
+	// deletes this lesson-less day's lessons/audio server-side (there may be
+	// none yet) so a wrongly planned day can be removed; existing SRS/Anki
+	// cards are untouched, no renumbering.
+	async function handleDelete() {
+		confirmingDelete = false;
+		deleting = true;
+		deleteError = '';
+		try {
+			await api.deleteCurriculumDay(curriculumId, day);
+			onDeleted();
+		} catch (e) {
+			deleteError = e instanceof Error ? e.message : String(e);
+			deleting = false;
+		}
+	}
+
+	function handleDeleteClick() {
+		if (confirmingDelete) {
+			handleDelete();
+		} else {
+			confirmingDelete = true;
+		}
+	}
+
+	function handleDeleteBlur() {
+		confirmingDelete = false;
 	}
 </script>
 
@@ -109,6 +142,22 @@
 				{importLoading ? 'Importing…' : 'Import'}
 			</button>
 		{/if}
+	</div>
+
+	{#if deleteError}
+		<p class="error">{deleteError}</p>
+	{/if}
+	<div class="delete-day-row">
+		<button
+			type="button"
+			class="delete-day-btn"
+			class:confirming={confirmingDelete}
+			onclick={handleDeleteClick}
+			onblur={handleDeleteBlur}
+			disabled={deleting}
+		>
+			{confirmingDelete ? 'Confirm delete' : 'Delete this day'}
+		</button>
 	</div>
 </div>
 
@@ -186,5 +235,28 @@
 	}
 	.warnings li {
 		margin: 0.15rem 0;
+	}
+	.delete-day-row {
+		display: flex;
+		justify-content: flex-end;
+		margin-top: 0.75rem;
+	}
+	.delete-day-btn {
+		padding: 0.4rem 1rem;
+		border: 1px solid var(--color-border, #ccc);
+		border-radius: var(--radius-pill);
+		background: var(--color-surface);
+		color: var(--color-text);
+		font-size: 0.82rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.delete-day-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.delete-day-btn.confirming {
+		border-color: var(--color-danger);
+		color: var(--color-danger);
 	}
 </style>

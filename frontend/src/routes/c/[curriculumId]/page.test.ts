@@ -15,6 +15,7 @@ vi.mock("$lib/api", () => ({
     retryPipelineDay: vi.fn(),
     getStoryPrompt: vi.fn().mockResolvedValue({ system_prompt: "sys", user_prompt: "usr" }),
     importStory: vi.fn(),
+    deleteCurriculumDay: vi.fn(),
   },
 }));
 
@@ -399,6 +400,31 @@ describe("/c/[curriculumId] page", () => {
     await fireEvent.click(getByText(/Day 1 ·/));
     await tick();
     expect(container.querySelector("textarea")).toBeNull();
+  });
+
+  it("manual-mode: deleting a lesson-less day closes the panel and refreshes progress", async () => {
+    mockGetLessonByDay.mockRejectedValue(new Error("Not Found"));
+    vi.mocked(api.deleteCurriculumDay).mockResolvedValue({ deleted_day: 1, days: 0 });
+
+    const { getByText, container } = render(Page, {
+      props: { data: { curriculum: manualCurriculum } },
+    });
+    await fireEvent.click(getByText(/Day 1 ·/));
+    await waitFor(() => {
+      expect(getByText("Copy story prompt")).toBeTruthy();
+    });
+
+    await fireEvent.click(getByText("Delete this day"));
+    await fireEvent.click(getByText("Confirm delete"));
+
+    await waitFor(() => {
+      expect(api.deleteCurriculumDay).toHaveBeenCalledWith("cid-1", 1);
+    });
+    // Panel closes (manualStoryDay reset) and progress is refetched (mount + after delete).
+    await waitFor(() => {
+      expect(container.querySelector("textarea")).toBeNull();
+      expect(vi.mocked(api.getCurriculumProgress)).toHaveBeenCalledTimes(2);
+    });
   });
 });
 

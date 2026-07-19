@@ -11,6 +11,7 @@ vi.mock("$lib/api", () => ({
   api: {
     getStoryPrompt: vi.fn(),
     importStory: vi.fn(),
+    deleteCurriculumDay: vi.fn(),
   },
 }));
 
@@ -18,6 +19,7 @@ import { api } from "$lib/api";
 
 const mockGetStoryPrompt = vi.mocked(api.getStoryPrompt);
 const mockImportStory = vi.mocked(api.importStory);
+const mockDeleteCurriculumDay = vi.mocked(api.deleteCurriculumDay);
 
 const PROMPT_EXPORT = {
   system_prompt: "You are a helpful story writer.",
@@ -32,10 +34,12 @@ const IMPORT_RESULT = {
 };
 
 const onImported = vi.fn();
+const onDeleted = vi.fn();
 const PROPS = {
   curriculumId: "cid-1",
   day: 5,
   onImported,
+  onDeleted,
 };
 
 beforeEach(() => {
@@ -197,6 +201,52 @@ describe("ManualStoryPanel", () => {
       expect(container.querySelector('[data-testid="import-btn"]')?.textContent).toContain(
         "Importing",
       );
+    });
+  });
+
+  describe("delete this day", () => {
+    it("renders a Delete this day button", () => {
+      const { getByText } = render(ManualStoryPanel, { props: PROPS });
+      expect(getByText("Delete this day")).toBeTruthy();
+    });
+
+    it("requires a second click to confirm before deleting", async () => {
+      const { getByText } = render(ManualStoryPanel, { props: PROPS });
+      await fireEvent.click(getByText("Delete this day"));
+      expect(getByText("Confirm delete")).toBeTruthy();
+      expect(mockDeleteCurriculumDay).not.toHaveBeenCalled();
+    });
+
+    it("deletes the day and calls onDeleted on the second click", async () => {
+      mockDeleteCurriculumDay.mockResolvedValue({ deleted_day: 5, days: 0 });
+      const { getByText } = render(ManualStoryPanel, { props: PROPS });
+      await fireEvent.click(getByText("Delete this day"));
+      await fireEvent.click(getByText("Confirm delete"));
+
+      await waitFor(() => {
+        expect(mockDeleteCurriculumDay).toHaveBeenCalledWith("cid-1", 5);
+        expect(onDeleted).toHaveBeenCalled();
+      });
+    });
+
+    it("resets the confirm state on blur without deleting", async () => {
+      const { getByText } = render(ManualStoryPanel, { props: PROPS });
+      await fireEvent.click(getByText("Delete this day"));
+      expect(getByText("Confirm delete")).toBeTruthy();
+
+      await fireEvent.blur(getByText("Confirm delete"));
+      expect(getByText("Delete this day")).toBeTruthy();
+      expect(mockDeleteCurriculumDay).not.toHaveBeenCalled();
+    });
+
+    it("shows an error and does not call onDeleted when deletion fails", async () => {
+      mockDeleteCurriculumDay.mockRejectedValue(new Error("delete failed"));
+      const { getByText, findByText } = render(ManualStoryPanel, { props: PROPS });
+      await fireEvent.click(getByText("Delete this day"));
+      await fireEvent.click(getByText("Confirm delete"));
+
+      expect(await findByText("delete failed")).toBeTruthy();
+      expect(onDeleted).not.toHaveBeenCalled();
     });
   });
 });

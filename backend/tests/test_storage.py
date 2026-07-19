@@ -228,6 +228,30 @@ class TestSectionAudioStorage:
         assert store.list_audio_files_for_lesson("l1") == []
         assert store.list_audio_files_for_lesson("l2") != []
 
+    def test_delete_lessons_for_day(self, store):
+        """delete_lessons_for_day removes all lessons and their audio for a given day."""
+        from app.models.lesson import Lesson
+
+        lesson = Lesson(
+            title="Test",
+            language_code="sl",
+            generation_metadata={"source_prompt": "x", "model": "y"},
+        )
+        store.save_lesson("l1", "c1", 2, lesson)
+        store.save_lesson("l2", "c1", 2, lesson)  # another version, same day
+        store.save_lesson("l3", "c1", 3, lesson)  # different day — should survive
+        store.save_audio_file("a1", "l1", "/a1.wav")
+        store.save_audio_file("a2", "l2", "/a2.wav")
+        store.save_audio_file("a3", "l3", "/a3.wav")  # different day — should survive
+
+        store.delete_lessons_for_day("c1", 2)
+        assert store.get_lesson("l1") is None
+        assert store.get_lesson("l2") is None
+        assert store.get_lesson("l3") is not None
+        assert store.get_audio_file_row("a1") is None
+        assert store.get_audio_file_row("a2") is None
+        assert store.get_audio_file_row("a3") is not None
+
     def test_schema_migration_adds_missing_columns(self, tmp_path):
         """ContentStore adds section_index/section_type columns when opening an old-schema DB."""
         import sqlite3

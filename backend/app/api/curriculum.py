@@ -15,6 +15,7 @@ from app.api.models import (
     StartPlanRequest,
 )
 from app.generation.planner import CurriculumPlanner, PlannerError, build_turn_prompt, parse_turn
+from app.llm.client import LLMError
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.srs.planner_snapshot import build_learner_snapshot
 from app.storage.plan_io import export_plan, get_planner_state, import_plan, mint_curriculum_id
@@ -97,6 +98,14 @@ async def plan_turn(curriculum_id: str, body: PlanTurnRequest, request: Request)
                 curriculum=curriculum,
                 batch_size=body.batch_size,
             )
+            if turn.proposed_days is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "No plan JSON block found in the pasted reply — paste Claude's "
+                        "complete final message including the JSON plan. Nothing was recorded."
+                    ),
+                )
         else:
             turn = await planner.turn(
                 curriculum=curriculum,
@@ -107,6 +116,8 @@ async def plan_turn(curriculum_id: str, body: PlanTurnRequest, request: Request)
             )
     except PlannerError as e:
         # Nothing is persisted for a failed turn — the user retries.
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    except LLMError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
 
     state = get_planner_state(curriculum)
@@ -264,6 +275,27 @@ async def delete_curriculum(curriculum_id: str, request: Request):
     if not store.delete_curriculum(curriculum_id):
         raise HTTPException(status_code=404, detail="Curriculum not found")
     return {"deleted": curriculum_id}
+
+
+@router.delete("/{curriculum_id}/days/{day}", status_code=200)
+async def delete_day(curriculum_id: str, day: int, request: Request):
+    """Delete a committed day: its lessons/audio are removed, the day itself is
+    dropped from ``curriculum.days`` (no renumbering of later days). Existing
+    SRS/Anki cards from a deleted lesson are untouched."""
+    store = request.state.content_store
+    curriculum = _get_curriculum_or_404(store, curriculum_id)
+    if day not in {d.day for d in curriculum.days}:
+        raise HTTPException(status_code=404, detail=f"Unknown day {day}")
+
+    curriculum.days = [d for d in curriculum.days if d.day != day]
+    store.delete_lessons_for_day(curriculum_id, day)
+
+    state = get_planner_state(curriculum)
+    state["chat"].append({"role": "event", "content": f"Deleted day {day}."})
+    curriculum.metadata["planner"] = state
+    store.save_curriculum(curriculum_id, curriculum)
+
+    return {"deleted_day": day, "days": len(curriculum.days)}
 
 
 @router.get("/{curriculum_id}/days/{day}/lesson", status_code=200)

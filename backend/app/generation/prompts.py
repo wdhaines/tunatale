@@ -10,6 +10,11 @@ from app.languages import get_morphology_profile, get_style_notes
 from app.models.language import Language
 from app.models.strategy import ContentStrategy
 
+# Cap for individual chat messages rendered in the planner prompt (section 5).
+# Keeps the prompt within Groq's per-request token budget when pasted Claude
+# replies are long prose.
+PLANNER_CHAT_MSG_CHARS = 1500
+
 # ── Story system prompt (always applied) ─────────────────────────────────
 
 # {language_style_notes} is replaced by build_story_system_prompt() before
@@ -375,6 +380,8 @@ def build_planner_turn_prompt(
         for msg in recent:
             role_label = msg.get("role", "unknown").upper()
             content = msg.get("content", "")
+            if len(content) > PLANNER_CHAT_MSG_CHARS:
+                content = content[:PLANNER_CHAT_MSG_CHARS] + " … [elided]"
             parts.append(f"{role_label}: {content}")
         parts.append("")
     else:

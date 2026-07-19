@@ -7,9 +7,10 @@
 		pending: boolean;
 		batchSize: number;
 		onSend: (message: string) => boolean | Promise<boolean>;
+		readonly?: boolean;
 	}
 
-	let { messages, pending, batchSize = $bindable(), onSend }: Props = $props();
+	let { messages, pending, batchSize = $bindable(), onSend, readonly = false }: Props = $props();
 
 	let draft = $state('');
 	let textareaEl: HTMLTextAreaElement | undefined = $state();
@@ -59,6 +60,7 @@
 		{/if}
 	</div>
 
+	{#if !readonly}
 	<div class="composer">
 		<textarea
 			bind:this={textareaEl}
@@ -86,6 +88,7 @@
 			</button>
 		</div>
 	</div>
+	{/if}
 </div>
 
 <style>

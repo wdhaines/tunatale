@@ -557,3 +557,43 @@ class TestBuildPlannerTurnPrompt:
         )
         assert "- Day 2: still exists" in result
         assert "Day 9" not in result
+
+    def test_long_chat_message_is_capped(self):
+        """A chat message exceeding PLANNER_CHAT_MSG_CHARS is truncated with an elision marker."""
+        from app.generation.prompts import PLANNER_CHAT_MSG_CHARS
+
+        long_msg = "x" * (PLANNER_CHAT_MSG_CHARS + 500)
+        result = build_planner_turn_prompt(
+            topic="t",
+            cefr_level="A1",
+            language_name="T",
+            language_code="t",
+            days=[],
+            learner_snapshot="s",
+            feedback=[],
+            chat=[{"role": "planner", "content": long_msg}],
+            batch_size=1,
+            start_day=1,
+        )
+        assert "… [elided]" in result
+        assert long_msg not in result
+        capped_part = long_msg[:PLANNER_CHAT_MSG_CHARS]
+        assert capped_part in result
+
+    def test_short_chat_message_unchanged(self):
+        """A chat message under the cap renders byte-identical to before."""
+        short_msg = "Sounds good!"
+        result = build_planner_turn_prompt(
+            topic="t",
+            cefr_level="A1",
+            language_name="T",
+            language_code="t",
+            days=[],
+            learner_snapshot="s",
+            feedback=[],
+            chat=[{"role": "planner", "content": short_msg}],
+            batch_size=1,
+            start_day=1,
+        )
+        assert "PLANNER: Sounds good!" in result
+        assert "… [elided]" not in result

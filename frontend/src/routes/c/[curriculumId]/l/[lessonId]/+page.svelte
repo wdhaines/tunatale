@@ -43,6 +43,8 @@
 	let regenerating = $state(false);
 	let syncStatus = $state('');
 	let error = $state('');
+	let confirmingDeleteDay = $state(false);
+	let deletingDay = $state(false);
 	let wordActionInFlight = $state(false);
 	let showRegenHelp = $state(false);
 
@@ -140,6 +142,34 @@
 			error = e instanceof Error ? e.message : String(e);
 			regenerating = false;
 		}
+	}
+
+	// Two-click confirm (same pattern as the plan page's Reset chat button):
+	// first click arms it, second click deletes. Deletes the day's lessons and
+	// audio server-side; existing SRS/Anki cards are untouched. No renumbering.
+	async function handleDeleteDay() {
+		confirmingDeleteDay = false;
+		deletingDay = true;
+		error = '';
+		try {
+			await api.deleteCurriculumDay(data.curriculum.id, data.lesson.day);
+			goto(`/c/${data.curriculum.id}`);
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+			deletingDay = false;
+		}
+	}
+
+	function handleDeleteDayClick() {
+		if (confirmingDeleteDay) {
+			handleDeleteDay();
+		} else {
+			confirmingDeleteDay = true;
+		}
+	}
+
+	function handleDeleteDayBlur() {
+		confirmingDeleteDay = false;
 	}
 
 	// A sync changes per-word due/known states in the backend, but nothing else on
@@ -655,6 +685,19 @@
 			day={data.lesson.day}
 			onImported={(newLessonId) => goto(`/c/${data.curriculum.id}/l/${newLessonId}`)}
 		/>
+		<hr />
+		<div class="delete-day-row">
+			<button
+				type="button"
+				class="delete-day-btn"
+				class:confirming={confirmingDeleteDay}
+				onclick={handleDeleteDayClick}
+				onblur={handleDeleteDayBlur}
+				disabled={deletingDay}
+			>
+				{confirmingDeleteDay ? 'Confirm delete' : `Delete day ${data.lesson.day}`}
+			</button>
+		</div>
 	</details>
 </main>
 
@@ -773,6 +816,29 @@
 	}
 	.regen-detail {
 		color: var(--color-muted);
+	}
+	.delete-day-row {
+		display: flex;
+		justify-content: flex-end;
+	}
+	.delete-day-btn {
+		margin-top: 0;
+		padding: 0.5rem 1.1rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-pill);
+		background: var(--color-surface);
+		color: var(--color-text);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.delete-day-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.delete-day-btn.confirming {
+		border-color: var(--color-danger);
+		color: var(--color-danger);
 	}
 	.mode-row {
 		display: flex;

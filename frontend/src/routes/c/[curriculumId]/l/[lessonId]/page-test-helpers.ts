@@ -33,6 +33,7 @@ export function createApiMock() {
     undoGrade: vi.fn(),
     fetchQueueStats: vi.fn(),
     regenerateDay: vi.fn(),
+    deleteCurriculumDay: vi.fn(),
     getRateLimit: vi.fn().mockResolvedValue(null),
     probeRateLimit: vi.fn().mockResolvedValue(null),
     ignoreLemma: vi.fn(),

@@ -24,14 +24,18 @@
 		(pipelineStatus?.days ?? []).map(d => [d.day, d.state]),
 	));
 
-	onMount(async () => {
-		// The rate-limit widget lives on this page now (not the global nav);
-		// seed its store so it doesn't sit empty while the pipeline is idle.
-		rateLimitStore.ensureFresh();
+	async function refreshProgress() {
 		try {
 			const days = await api.getCurriculumProgress(data.curriculum.id);
 			progress = new Map(days.map(d => [d.day, d.lesson_id]));
 		} catch { /* non-critical */ }
+	}
+
+	onMount(async () => {
+		// The rate-limit widget lives on this page now (not the global nav);
+		// seed its store so it doesn't sit empty while the pipeline is idle.
+		rateLimitStore.ensureFresh();
+		await refreshProgress();
 		pipelineStore.start(data.curriculum.id);
 	});
 
@@ -92,6 +96,10 @@
 				curriculumId={data.curriculum.id}
 				day={manualStoryDay}
 				onImported={(id) => goto(`/c/${data.curriculum.id}/l/${id}`)}
+				onDeleted={() => {
+					manualStoryDay = null;
+					refreshProgress();
+				}}
 			/>
 		{/if}
 		<a class="plan-link" href="/c/{data.curriculum.id}/plan">Plan next days →</a>

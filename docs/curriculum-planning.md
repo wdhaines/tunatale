@@ -37,6 +37,7 @@ The chat transcript is not the source. It's the conversation that *produced* the
 | `POST` | `/api/curriculum/generate` | **(deleted)** — one-shot generation, replaced by the chat planner |
 | `POST` | `/api/curriculum/{id}/plan/turn/prompt` | Export the exact prompts for a planner turn (no LLM call, no persistence) |
 | `POST` | `/api/curriculum/{id}/generation-mode` | Set generation mode: `auto` (default, Groq pipeline) or `manual` (copy/paste with Claude chat) |
+| `DELETE` | `/api/curriculum/{id}/days/{day}` | Delete a committed day: removes it from `curriculum.days` (no renumbering) and deletes its lessons/audio; existing SRS/Anki cards are untouched |
 
 ## Chat flow
 
@@ -141,6 +142,10 @@ Free Groq models produce noticeably worse curricula and stories than a Claude ch
 7. Proposal/commit UI unchanged.
 
 **Important:** Only Claude's FINAL reply gets pasted back. Side conversation in Claude chat is not persisted.
+
+A pasted reply containing no JSON plan block is rejected with an error and nothing is recorded — so a chat-only Claude reply (e.g. a clarifying question) can no longer be recorded as a turn in manual mode; edit your message and re-copy the prompt instead of pasting a pure-prose reply.
+
+A committed day (with or without a generated lesson yet) can be deleted from the Lesson tools panel (has a lesson) or the manual-mode story panel (lesson-less day): this deletes the day's lessons and audio and drops it from `curriculum.days` with no renumbering of later days; cards already synced to Anki from that day are left alone.
 
 ### Pipeline gating
 

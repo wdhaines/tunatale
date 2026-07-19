@@ -38,6 +38,7 @@ const mockRegenerateDay = vi.mocked(api.regenerateDay);
 const mockGetStorySource = vi.mocked(api.getStorySource);
 const mockImportStory = vi.mocked(api.importStory);
 const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
+const mockDeleteCurriculumDay = vi.mocked(api.deleteCurriculumDay);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -325,6 +326,64 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await waitFor(() => {
         expect(mockGoto).toHaveBeenCalledWith("/c/cid-1/l/new-l1");
       });
+    });
+  });
+
+  describe("delete day (Lesson tools)", () => {
+    it("renders a Delete day N button", () => {
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      expect(getByText("Delete day 1")).toBeTruthy();
+    });
+
+    it("requires a second click to confirm before deleting", async () => {
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      const btn = getByText("Delete day 1");
+      await fireEvent.click(btn);
+      expect(getByText("Confirm delete")).toBeTruthy();
+      expect(mockDeleteCurriculumDay).not.toHaveBeenCalled();
+    });
+
+    it("deletes the day and navigates to the curriculum on the second click", async () => {
+      mockDeleteCurriculumDay.mockResolvedValue({ deleted_day: 1, days: 0 });
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      await fireEvent.click(getByText("Delete day 1"));
+      await fireEvent.click(getByText("Confirm delete"));
+
+      await waitFor(() => {
+        expect(mockDeleteCurriculumDay).toHaveBeenCalledWith("cid-1", 1);
+        expect(mockGoto).toHaveBeenCalledWith("/c/cid-1");
+      });
+    });
+
+    it("resets the confirm state on blur without deleting", async () => {
+      const { getByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      const btn = getByText("Delete day 1");
+      await fireEvent.click(btn);
+      expect(getByText("Confirm delete")).toBeTruthy();
+
+      await fireEvent.blur(getByText("Confirm delete"));
+      expect(getByText("Delete day 1")).toBeTruthy();
+      expect(mockDeleteCurriculumDay).not.toHaveBeenCalled();
+    });
+
+    it("shows an error and does not navigate when deletion fails", async () => {
+      mockDeleteCurriculumDay.mockRejectedValue(new Error("delete failed"));
+      const { getByText, findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      await fireEvent.click(getByText("Delete day 1"));
+      await fireEvent.click(getByText("Confirm delete"));
+
+      expect(await findByText("delete failed")).toBeTruthy();
+      expect(mockGoto).not.toHaveBeenCalled();
     });
   });
 
