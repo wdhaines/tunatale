@@ -967,10 +967,20 @@ class TestListenClozeIntegration:
     async def test_kp_arm_budget_skip(self):
         """Pre-existing tracked KP card that is review-due today: budget exhausted
         before the kp arm reaches it → kp card NOT graded and still in the
-        review-queue due bucket (key-phrase twin of the lemma-arm budget test)."""
+        review-queue due bucket (key-phrase twin of the lemma-arm budget test).
+
+        Seeds due_at via the day-level convention (`due_at_rollover_utc`) —
+        REVIEW-state due_ats are date-encoded at 04:00 UTC in production, and
+        the listen/badge dueness boundary string-compares against a naive
+        local-date cutoff. An instant seed like `now - 1h` crosses the UTC
+        date line whenever local time is past 20:00 (UTC-4), classifying as
+        "ahead" and bypassing the budget — this test failed nightly in the
+        20:00→04:00 window until the 2026-07-18 seed fix.
+        """
         from datetime import timedelta
 
         from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
         from app.storage.store import ContentStore
 
         db = await self._setup_lesson()
@@ -986,7 +996,7 @@ class TestListenClozeIntegration:
         rec_banka = banka.directions[Direction.RECOGNITION]
         rec_banka.state = SRSState.REVIEW
         rec_banka.last_review = datetime.now(UTC) - timedelta(days=5)
-        rec_banka.due_at = datetime.now(UTC) - timedelta(hours=1)
+        rec_banka.due_at = due_at_rollover_utc(anki_today() - timedelta(days=1))
         rec_banka.reps = 5
         db.update_collocation(banka)
 
@@ -1003,7 +1013,7 @@ class TestListenClozeIntegration:
         rec_kp = kp.directions[Direction.RECOGNITION]
         rec_kp.state = SRSState.REVIEW
         rec_kp.last_review = datetime.now(UTC) - timedelta(days=5)
-        rec_kp.due_at = datetime.now(UTC) - timedelta(hours=1)
+        rec_kp.due_at = due_at_rollover_utc(anki_today() - timedelta(days=1))
         rec_kp.reps = 5
         db.update_collocation(kp)
 

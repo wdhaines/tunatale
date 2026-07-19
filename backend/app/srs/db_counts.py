@@ -56,6 +56,9 @@ class DbCountsMixin:
         served queue; this keeps the badge consistent with it.)
         """
         start_iso, end_iso = _anki_day_bounds_utc(today)
+        # Naive local-date cutoff: a due-DATE <= today check that relies on the
+        # 04:00-UTC due_at convention (rollover.py::due_at_rollover_utc) — see
+        # count_review_due_collocations for the full constraint.
         end_of_day_utc = datetime.combine(today, time.max).isoformat()
         with self._get_conn() as conn:
             return conn.execute(
@@ -112,6 +115,12 @@ class DbCountsMixin:
         share the same data.
         """
         start_iso, end_iso = _anki_day_bounds_utc(today)
+        # Naive local-date cutoff string. Correct ONLY because REVIEW-state
+        # due_at is date-encoded at 04:00 UTC (rollover.py::due_at_rollover_utc),
+        # making the lexicographic compare a due-DATE <= today check. Do NOT
+        # seed tests with instant-flavored due_ats (now-1h): past 20:00 local
+        # (UTC-4) their UTC date exceeds `today` and they read as not-due.
+        # `_listen_grade_class` shares this exact boundary — keep them identical.
         end_of_day_utc = datetime.combine(today, time.max).isoformat()
         with self._get_conn() as conn:
             return conn.execute(
