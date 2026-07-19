@@ -135,6 +135,70 @@ const transcriptWithCollocation: TranscriptData = {
   ],
 };
 
+const baseWord = {
+  srs_state: "new",
+  srs_item_id: null,
+  translation: null,
+  collocation_span_id: null,
+  collocation_start: false,
+  collocation_srs_state: null,
+  collocation_lemma: null,
+  collocation_translation: null,
+  card_type: null,
+  active_state: "new",
+  active_direction: null,
+  is_due: false,
+  progress: null,
+  inflectable: false,
+  inflection_feature: null,
+  known_marked: false,
+} as const;
+
+function makeWord(surface: string, overrides: Record<string, unknown> = {}) {
+  return { ...baseWord, surface, lemma: surface, ...overrides };
+}
+
+const transcriptMultiWord: TranscriptData = {
+  lesson_id: "l1",
+  key_phrases: [],
+  dialogue_lines: [
+    {
+      role: "Petra",
+      sentence: "",
+      words: [makeWord("Han"), makeWord("gikk"), makeWord("mot")],
+    },
+  ],
+};
+
+const transcriptCollocationInnerWords: TranscriptData = {
+  lesson_id: "l1",
+  key_phrases: [],
+  dialogue_lines: [
+    {
+      role: "Petra",
+      sentence: "",
+      words: [
+        makeWord("mot", {
+          collocation_span_id: 1,
+          collocation_start: true,
+          collocation_srs_state: "learning",
+          collocation_lemma: "mot, imot",
+          collocation_translation: "towards",
+          collocation_is_due: true,
+        }),
+        makeWord("imot", {
+          collocation_span_id: 1,
+          collocation_start: false,
+          collocation_srs_state: "learning",
+          collocation_lemma: "mot, imot",
+          collocation_translation: "towards",
+          collocation_is_due: true,
+        }),
+      ],
+    },
+  ],
+};
+
 function defaultProps(overrides = {}) {
   return {
     transcript: baseTranscript,
@@ -2960,6 +3024,55 @@ describe("Transcript", () => {
       await fireEvent.keyDown(window, { key: "Alt" });
       await fireEvent.click(getByRole("button", { name: "Start learning" }));
       expect(onWordClick).toHaveBeenCalledWith(expect.objectContaining({ lemma: "zdravo" }), 0);
+    });
+  });
+
+  describe("dialogue word inter-word spacing", () => {
+    /** True when every pair of consecutive ELEMENT children of `parent` has a
+     *  whitespace TEXT NODE between them. textContent-based assertions are
+     *  blind here: template whitespace INSIDE the inline-flex word-wrapper
+     *  shows up in textContent but is swallowed by flex layout, so a missing
+     *  separator still "contains" spaces textually (the vacuous-test bug this
+     *  replaced, caught by sabotage drill 2026-07-18). Layout renders a space
+     *  only for text nodes BETWEEN the sibling wrappers — assert exactly that. */
+    function elementsSpaceSeparated(parent: Element): boolean {
+      const nodes = Array.from(parent.childNodes).filter(
+        (n) =>
+          n.nodeType !== Node.COMMENT_NODE &&
+          !(n.nodeType === Node.TEXT_NODE && n.textContent === ""),
+      );
+      let sawElement = false;
+      let spacePending = false;
+      for (const n of nodes) {
+        if (n.nodeType === Node.TEXT_NODE) {
+          if (/\s/.test(n.textContent ?? "")) spacePending = true;
+        } else if (n.nodeType === Node.ELEMENT_NODE) {
+          if (sawElement && !spacePending) return false;
+          sawElement = true;
+          spacePending = false;
+        }
+      }
+      return sawElement;
+    }
+
+    it("separate dialogue words have whitespace text nodes between their wrappers", () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptMultiWord }),
+      });
+      const words = container.querySelector(".dialogue-words");
+      expect(words).not.toBeNull();
+      expect(words!.querySelectorAll(".word").length).toBe(3);
+      expect(elementsSpaceSeparated(words!)).toBe(true);
+    });
+
+    it("collocation inner words have whitespace text nodes between their wrappers", () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptCollocationInnerWords }),
+      });
+      const span = container.querySelector(".collocation-span");
+      expect(span).not.toBeNull();
+      expect(span!.querySelectorAll(".word").length).toBe(2);
+      expect(elementsSpaceSeparated(span!)).toBe(true);
     });
   });
 });

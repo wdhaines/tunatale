@@ -792,5 +792,68 @@ describe("review/+page.svelte", () => {
 
       expect(await findByText("Lesson not found")).toBeTruthy();
     });
+
+    it("scoped review shows scoped counts in the header widget, not global counts", async () => {
+      // Global stats say 0 new, 0 learning, 5 review — but the lesson queue
+      // has 2 new and 1 learning.  The widget must show 2+1+0, not 0+0+5.
+      mockFetchQueueStats.mockResolvedValue({
+        new: 0,
+        learning: 0,
+        review: 5,
+        daily_new_cap: 20,
+        cap_source: "default",
+        fsrs_source: "default",
+      });
+      const newCard = makeReviewQueueItem({
+        id: 1,
+        text: "en",
+        state: "new",
+        direction: "recognition",
+      });
+      const newCard2 = makeReviewQueueItem({
+        id: 2,
+        text: "to",
+        state: "new",
+        direction: "recognition",
+      });
+      const learnCard = makeReviewQueueItem({
+        id: 3,
+        text: "tre",
+        state: "learning",
+        direction: "recognition",
+      });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [newCard, newCard2, learnCard] });
+
+      const { container } = render(ReviewPage);
+      await screen.findByText("en");
+
+      const widget = container.querySelector(".queue-stats");
+      expect(widget).not.toBeNull();
+      expect(widget!.querySelector(".new")!.textContent).toBe("2");
+      expect(widget!.querySelector(".learning")!.textContent).toBe("1");
+      expect(widget!.querySelector(".review")!.textContent).toBe("0");
+    });
+  });
+
+  it("unscoped review shows global counts in the header widget", async () => {
+    mockFetchQueueStats.mockResolvedValue({
+      new: 3,
+      learning: 1,
+      review: 7,
+      daily_new_cap: 20,
+      cap_source: "default",
+      fsrs_source: "default",
+    });
+    const item = makeReviewQueueItem({ id: 1, text: "okno", direction: "recognition" });
+    mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+
+    const { container } = render(ReviewPage);
+    await screen.findByText("okno");
+
+    const widget = container.querySelector(".queue-stats");
+    expect(widget).not.toBeNull();
+    expect(widget!.querySelector(".new")!.textContent).toBe("3");
+    expect(widget!.querySelector(".learning")!.textContent).toBe("1");
+    expect(widget!.querySelector(".review")!.textContent).toBe("7");
   });
 });

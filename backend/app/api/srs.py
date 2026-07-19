@@ -68,7 +68,7 @@ from app.srs.queue_stats import (
     resolve_new_cards_ignore_review_limit,
 )
 from app.srs.tokenizer import tokenize
-from app.srs.transcript import extract_transcript
+from app.srs.transcript import _build_variant_index, extract_transcript
 
 _logger = logging.getLogger(__name__)
 
@@ -511,13 +511,22 @@ def _analyze_lesson_words(lesson, db) -> _LessonWords:
     return words
 
 
-def _resolve_card_for_lemma(db, lemma: str, surfaces: set[str]):
+def _resolve_card_for_lemma(
+    db,
+    lemma: str,
+    surfaces: set[str],
+    variant_index: dict[str, tuple[int, SRSItem]] | None = None,
+):
     """Resolve the tracked card for a lemma, or None if untracked.
 
     Falls back to surface-keyed rows (e.g. greeting "dobrodošli", whose
     dictionary lemma "dobrodošel" has no card) so /listen grades the surface
     card instead of spawning a duplicate — and the lesson review queue
     resolves the same card /listen would.
+
+    When *variant_index* is provided (built once per request by
+    ``_build_variant_index``), also resolves comma-variant card fronts
+    (Norwegian ``mot, imot``) whose surface matches a variant spelling.
     """
     res = db.get_collocation_by_lemma_with_id(lemma)
     if res is None:
@@ -526,6 +535,10 @@ def _resolve_card_for_lemma(db, lemma: str, surfaces: set[str]):
                 res = db.get_collocation_by_lemma_with_id(s.lower())
                 if res is not None:
                     break
+    if res is None and variant_index:
+        # Index keys are casefolded (_build_variant_index) — match that, or a
+        # capitalized lemma from the Norwegian lemmatizer silently misses.
+        res = variant_index.get(lemma.casefold())
     return res
 
 
@@ -597,6 +610,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     creation_budget = max(0, new_cap - db.count_new_introduced_today(today) - db.count_new_created_today(today))
     lemma_candidates: list[str] = []
 
+    # Build variant index once for this listen request — mirrors the transcript's
+    # _build_variant_index usage so /listen resolves the same cards the transcript
+    # shows as tracked.
+    variant_index = _build_variant_index(db, lesson.language_code)
+
     for lemma in lemma_to_sentence:
         # Cloze cards are always on, for every language (no feature flag, no
         # language gate — see ~/.claude/plans/word-learning-state-machine.md
@@ -608,7 +626,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             lemma, lemma_to_surfaces.get(lemma, set()), lesson.language_code, surface_to_upos
         )
 
-        res = _resolve_card_for_lemma(db, lemma, lemma_to_surfaces.get(lemma, set()))
+        res = _resolve_card_for_lemma(db, lemma, lemma_to_surfaces.get(lemma, set()), variant_index)
         existing_id, existing = res if res is not None else (None, None)
 
         if existing is None:
@@ -866,6 +884,10 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
 
     words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
 
+    # Build variant index once — mirrors the transcript's _build_variant_index
+    # so the lesson queue resolves the same cards the transcript shows as tracked.
+    variant_index = _build_variant_index(db, lesson.language_code)
+
     # Anki-day rollover window (NOT local midnight) — same convention as
     # mark_lesson_listened's _listen_grade_class window, via the shared helper.
     today = anki_today()
@@ -911,7 +933,7 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
             new_kp.append((rid, item, direction))
 
     for lemma in words.first_sentence:
-        res = _resolve_card_for_lemma(db, lemma, words.surfaces.get(lemma, set()))
+        res = _resolve_card_for_lemma(db, lemma, words.surfaces.get(lemma, set()), variant_index)
         if res is None:
             continue
         rid, item = res

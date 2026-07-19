@@ -165,7 +165,13 @@
 	.word {
 		cursor: pointer;
 		border-radius: 2px;
+		/* The 1px side padding widens the hover/tap highlight box, but it also
+		   pushed adjacent glyphs ~1.5 space-widths apart (measured 6px vs a
+		   4px font space, 2026-07-18 report). The negative margin refunds the
+		   padding in layout: highlight keeps its box, text keeps true
+		   one-space rhythm. */
 		padding: 0 1px;
+		margin: 0 -1px;
 		transition: background-color 0.1s;
 	}
 	.word:hover {

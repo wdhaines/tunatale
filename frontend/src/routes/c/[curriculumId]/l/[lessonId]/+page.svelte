@@ -270,6 +270,7 @@
 			const t = await api.getLessonTranscript(lessonId);
 			if (data.lesson.id === lessonId) transcript = t;
 			await fetchQueue();
+			queueStatsStore.refresh();
 		} catch (e) {
 			if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
 		} finally {

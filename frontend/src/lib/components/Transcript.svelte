@@ -545,7 +545,8 @@
 								onpointercancel={handlePointerCancel}
 							>
 								{#each segments as segment, segIdx (segIdx)}
-									{#if segment.type === 'collocation'}
+								{#if segIdx > 0}{@html ' '}{/if}
+								{#if segment.type === 'collocation'}
 										{@const collOffRamp = collocationOffRamp(segment.words[0].collocation_srs_state)}
 										{@const drilledIn = altHeld || expandedSpanId === segment.span_id}
 										{@const collUndoable = undoableItemId === segment.span_id && onCollocationUndo != null}
@@ -578,6 +579,7 @@
 											>
 												{#each segment.words as cw, innerIdx (innerIdx)}
 													{@const wIdx = wordIndexInLine(segments, segIdx, innerIdx)}
+													{#if innerIdx > 0}{@html ' '}{/if}
 													<WordSpan
 														word={cw}
 														onWordClick={onWordClick}

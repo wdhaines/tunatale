@@ -22,6 +22,17 @@ vi.mock("$lib/stores/pipeline.svelte", async () => {
   return { pipelineStore: createPipelineMock() };
 });
 
+const mockQueueStatsRefresh = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("$lib/stores/queueStats.svelte", () => ({
+  queueStatsStore: {
+    get stats() {
+      return null;
+    },
+    set: vi.fn(),
+    refresh: mockQueueStatsRefresh,
+  },
+}));
+
 import { api } from "$lib/api";
 import type { TranscriptData } from "$lib/api";
 import { listenedStore } from "$lib/stores/listened.svelte";
@@ -282,6 +293,31 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     await waitFor(() => {
       expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {});
       expect(mockGetTranscript).toHaveBeenCalledWith("l1");
+    });
+  });
+
+  it("refreshes queueStatsStore after mark-as-listened", async () => {
+    mockMarkAsListened.mockResolvedValue({
+      status: "ok",
+      registered: 3,
+      created: 1,
+      graded: 2,
+      remaining_candidates: 0,
+      listen_count: 3,
+    });
+    mockGetTranscript.mockResolvedValue(transcript);
+    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+    mockQueueStatsRefresh.mockClear();
+
+    const { getByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    await fireEvent.click(getByText("Listen"));
+    const btn = await getByText("Mark as Listened");
+    await fireEvent.click(btn);
+
+    await waitFor(() => {
+      expect(mockQueueStatsRefresh).toHaveBeenCalled();
     });
   });
 

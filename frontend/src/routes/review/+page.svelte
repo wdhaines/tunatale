@@ -29,6 +29,19 @@
 	let current = $derived(queue[0]);
 	let done = $derived(!loading && !error && queue.length === 0);
 
+	// In lesson mode, derive scoped counts from the lesson queue so the header
+	// widget underlines match the cards the user is actually studying.
+	let displayStats = $derived(
+		lessonMode && queue.length > 0 && stats
+			? {
+				...stats,
+				new: queue.filter((q) => q.item.state === 'new').length,
+				learning: queue.filter((q) => q.item.state === 'learning' || q.item.state === 'relearning').length,
+				review: queue.filter((q) => q.item.state === 'review').length,
+			}
+			: stats
+	);
+
 	async function refreshFromServer(sessionStart = false) {
 		try {
 			const [queueStats, queueData] = await Promise.all([
@@ -102,9 +115,9 @@
 <main>
 	<h1>Review</h1>
 
-	{#if stats}
+	{#if stats && displayStats}
 		<p class="stats">
-			<QueueStatsWidget {stats} currentState={current?.item?.state} />
+			<QueueStatsWidget stats={displayStats} currentState={current?.item?.state} />
 			{#if stats.cap_source !== 'cache'}
 				<span class="source"> ({stats.cap_source})</span>
 			{/if}
