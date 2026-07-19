@@ -586,7 +586,7 @@
 	{#if mastery && masteryPct !== null}
 		<p class="mastery-line">
 			<span class="mastery-pct" style:color={masteryColor(masteryPct)}>{Math.round(masteryPct * 100)}%</span>
-			{#each masterySegments as seg, i (seg.key)}{#if i > 0}{' · '}{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" tabindex="0">{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}
+			{#each masterySegments as seg, i (seg.key)}{#if i > 0}<span class="mastery-sep">·</span>{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}
 		</p>
 	{/if}
 	</section>
@@ -896,6 +896,11 @@
 	}
 	.mastery-segment {
 		cursor: default;
+	}
+	/* Element boundary instead of a bare text node: Svelte collapses inline
+	   whitespace around component tags, which ate the ` · ` separator. */
+	.mastery-sep {
+		margin: 0 0.3em;
 	}
 	.tools-card summary {
 		cursor: pointer;
