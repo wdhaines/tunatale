@@ -9,6 +9,7 @@ from app.languages import get_language
 from app.main import app
 from app.models.srs_item import Direction, SRSState
 from app.models.syntactic_unit import SyntacticUnit
+from app.srs.anki_mirror.rollover import anki_today
 from app.srs.database import SRSDatabase
 from app.storage.store import ContentStore
 
@@ -405,7 +406,7 @@ class TestSetState:
         assert ds.state == SRSState.KNOWN
         # Default max_ivl is 36500, default dr is 0.9
         expected_max_ivl = 36500
-        expected_due = date.today() + timedelta(days=expected_max_ivl)
+        expected_due = anki_today() + timedelta(days=expected_max_ivl)
         assert ds.due_at.date() == expected_due
         expected_stability = stability_for_interval(expected_max_ivl, 0.9)
         assert abs(ds.stability - expected_stability) < 1.0

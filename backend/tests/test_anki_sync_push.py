@@ -1071,7 +1071,9 @@ class TestSyncPush:
     def test_dirty_direction_calls_set_due_date(self):
         db = _make_tt_db()
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
-        due = date.today() + timedelta(days=7)
+        from app.srs.anki_mirror.rollover import anki_today
+
+        due = anki_today() + timedelta(days=7)
         _mark_direction_dirty(db, guid, due_date=due)
 
         writer = FakeWriter()

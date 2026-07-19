@@ -12,6 +12,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.plugins.anki_sync.sync import AnkiSync, CardRecord, NoteRecord, OfflineWriter
+from app.srs.anki_mirror.rollover import anki_today
 from app.srs.database import SRSDatabase
 
 
@@ -248,7 +249,7 @@ def test_known_direction_pushes_far_future_due_date():
     db, guid, row_id = _make_db_with_banka()
 
     max_ivl = 3650
-    due_at = datetime.combine(date.today() + timedelta(days=max_ivl), time(4, 0), tzinfo=UTC)
+    due_at = datetime.combine(anki_today() + timedelta(days=max_ivl), time(4, 0), tzinfo=UTC)
 
     db.mark_known(row_id, due_at=due_at, stability=float(max_ivl))
 
@@ -507,7 +508,7 @@ def test_known_push_via_offline_writer_writes_review_card():
     db.set_anki_ids(guid, 9001, {Direction.RECOGNITION: 90010})
 
     max_ivl = 3650
-    due_at = datetime.combine(date.today() + timedelta(days=max_ivl), time(4, 0), tzinfo=UTC)
+    due_at = datetime.combine(anki_today() + timedelta(days=max_ivl), time(4, 0), tzinfo=UTC)
     db.mark_known(row_id, due_at=due_at, stability=float(max_ivl), direction=Direction.RECOGNITION)
 
     anki_conn = _make_anki_conn()
@@ -555,7 +556,7 @@ def test_known_push_persists_stability_to_card_data():
 
     max_ivl = 36500
     stability = 24319.0  # deliberately != max_ivl so force_fsrs's ivl override is visible
-    due_at = datetime.combine(date.today() + timedelta(days=max_ivl), time(4, 0), tzinfo=UTC)
+    due_at = datetime.combine(anki_today() + timedelta(days=max_ivl), time(4, 0), tzinfo=UTC)
     db.mark_known(row_id, due_at=due_at, stability=stability, direction=Direction.RECOGNITION)
 
     anki_conn = _make_anki_conn()

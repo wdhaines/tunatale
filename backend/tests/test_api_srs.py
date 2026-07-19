@@ -14,6 +14,7 @@ from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 # Frozen session_main_queue seeds must carry the current logic version, or the
 # reader discards them as stale (the deploy-time invalidation this field exists for).
 from app.srs.anki_mirror.cache_registry import REGISTRY as _CACHE_REGISTRY
+from app.srs.anki_mirror.rollover import anki_today
 from tests.conftest import anki_day_anchor, seed_direction
 
 _SMQ_V = _CACHE_REGISTRY["session_main_queue"].logic_version
@@ -117,7 +118,6 @@ class TestQueueStats:
 
     async def test_queue_stats_splits_learning_and_review(self, api_app_state):
         """Test that queue-stats returns learning and review fields, not due."""
-        from datetime import date
 
         db = api_app_state
         # Seed a collocation with LEARNING and REVIEW states
@@ -130,7 +130,7 @@ class TestQueueStats:
 
         item1 = db.get_collocation("word1")
         item2 = db.get_collocation("word2")
-        today = date.today()
+        today = anki_today()
 
         # word1: both directions LEARNING (should count as learning)
         for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
@@ -176,12 +176,11 @@ class TestQueueStats:
         """Mirror Anki's 'new cards ignore review limit'=OFF (default): when the
         review budget is consumed by due reviews, the new badge is 0 even with new
         quota + available cards. Review cap 2 + 3 reviews due → 0 new."""
-        from datetime import date
 
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        due = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        due = datetime.combine(anki_today(), time(4, 0), tzinfo=UTC)
 
         # 3 review-due collocations (> the review cap of 2).
         for i in range(3):
@@ -222,12 +221,11 @@ class TestQueueStats:
         """Brief #4a: with `new_cards_ignore_review_limit` cached ON, the review
         budget no longer caps the new badge. Same saturated-review scenario as the
         OFF test above (review cap 2 + 3 due), but the available new card survives."""
-        from datetime import date
 
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        due = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        due = datetime.combine(anki_today(), time(4, 0), tzinfo=UTC)
 
         for i in range(3):
             db.add_collocation(
@@ -273,7 +271,7 @@ class TestQueueStats:
         these (`_compute_live_main`), so this aligns the badge with the queue.
         """
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         _add_new_with_graduated_sibling(db, "soglasnik", today)
         _add_new_with_graduated_sibling(db, "taliti", today)
 
@@ -290,7 +288,7 @@ class TestQueueStats:
         count (no new-sibling bury) — no regression for non-default decks."""
         db = api_app_state
         db.set_anki_state_cache("bury_new", "False")
-        today = date.today()
+        today = anki_today()
         _add_new_with_graduated_sibling(db, "soglasnik", today)
         _add_new_with_graduated_sibling(db, "taliti", today)
 
@@ -308,12 +306,12 @@ class TestQueueStats:
         'new' to 'learning' on a step-advance grade, so the card dropped out of
         `count_new_introduced_today` and `cap - introduced_today` rebounded by 1.
         """
-        from datetime import UTC, date, datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         db.set_anki_state_cache("daily_new_cap", "30")
         # Pool > cap so the badge is gated by remaining_quota (cap - introduced),
         # not by count_new_available — otherwise the assertion can't distinguish
@@ -370,10 +368,10 @@ class TestQueueStats:
         step, which can roll due_date past UTC midnight to tomorrow. Anki still
         counts that card; TunaTale must too.
         """
-        from datetime import date, timedelta
+        from datetime import timedelta
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         seed_direction(
             db,
             text="future_learn",
@@ -397,10 +395,10 @@ class TestQueueStats:
         out of `count_review_due_collocations`. Mirrors the user report:
         'I'm stuck at 126; should be 123' after grading 3 reviews in TT.
         """
-        from datetime import date, timedelta
+        from datetime import timedelta
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         # Seed 3 review-state cards due today.
         for i in range(3):
@@ -443,7 +441,6 @@ class TestQueueStats:
 
     async def test_queue_stats_learning_includes_relearning(self, api_app_state):
         """Test that RELEARNING states are counted in learning bucket."""
-        from datetime import date
 
         db = api_app_state
         from app.models.syntactic_unit import SyntacticUnit
@@ -451,7 +448,7 @@ class TestQueueStats:
         unit = SyntacticUnit(text="relearn_word", translation="rw", word_count=2, difficulty=1, source="test")
         db.add_collocation(unit, language_code="sl")
         item = db.get_collocation("relearn_word")
-        today = date.today()
+        today = anki_today()
 
         # Both directions in RELEARNING (should count as learning)
         for direction in [Direction.RECOGNITION, Direction.PRODUCTION]:
@@ -478,7 +475,7 @@ class TestQueueStats:
         """Review badge never goes negative when reviews_today exceeds cap."""
         db = api_app_state
         db.set_anki_state_cache("daily_review_cap", "97")
-        today = date.today()
+        today = anki_today()
         for i in range(101):
             _add_review_due_collocation(db, f"word{i}", today)
         _stamp_reviews_completed_today(db, today, count=200)
@@ -541,7 +538,7 @@ class TestReviewQueueArticleAndPos:
 
     async def test_article_serialized_and_pos_hidden_when_unambiguous(self, api_app_state):
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         _add_review_due_with_pos(db, "orden", today, pos="noun", article="en")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -553,7 +550,7 @@ class TestReviewQueueArticleAndPos:
 
     async def test_pos_shown_only_for_ambiguous_surface(self, api_app_state):
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         _add_review_due_with_pos(db, "fange", today, pos="noun")
         # Second "fange" with a different POS makes the surface ambiguous. It shares
         # the same guid-less text but a distinct disambig_key → separate collocation.
@@ -574,7 +571,7 @@ class TestReviewQueueArticleAndPos:
         from app.models.syntactic_unit import BackField, SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         extras = (
             BackField(label="IPA", html="/bɑŋkɑ/", tier="summary"),
             BackField(label="Dictionary entry", html="<h2>banka</h2>", tier="deep"),
@@ -608,7 +605,7 @@ class TestReviewQueueArticleAndPos:
 
     async def test_extras_empty_list_when_absent(self, api_app_state):
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         _add_review_due_with_pos(db, "orden", today, pos="noun", article="en")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -634,7 +631,7 @@ class TestReviewQueue:
         the queue served all due reviews (user report).
         """
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         for i in range(6):
             _add_review_due_collocation(db, f"rev{i}", today)
         db.set_anki_state_cache("daily_review_cap", "2")
@@ -649,7 +646,7 @@ class TestReviewQueue:
         """Sanity: a generous cap leaves every due review in the queue (the cap is
         a ceiling, not a fixed size)."""
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         for i in range(4):
             _add_review_due_collocation(db, f"rev{i}", today)
         db.set_anki_state_cache("daily_review_cap", "50")
@@ -673,7 +670,7 @@ class TestReviewQueue:
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         for i in range(3):
             _add_review_due_collocation(db, f"rev{i}", today)
         for i in range(2):
@@ -705,7 +702,7 @@ class TestReviewQueue:
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         for i in range(2):
             _add_review_due_collocation(db, f"rev{i}", today)
         for i in range(4):
@@ -738,7 +735,7 @@ class TestReviewQueue:
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         for i in range(5):
             _add_review_due_collocation(db, f"rev{i}", today)
         due = anki_day_anchor(today) + timedelta(hours=8)
@@ -778,7 +775,7 @@ class TestReviewQueue:
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         for i in range(5):
             _add_review_due_collocation(db, f"rev{i}", today)
         due = anki_day_anchor(today) + timedelta(hours=8)
@@ -815,7 +812,7 @@ class TestReviewQueue:
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         for i in range(3):
             _add_review_due_collocation(db, f"rev{i}", today)
         for i in range(2):
@@ -887,10 +884,9 @@ class TestReviewQueue:
         assert len(new_in_queue) > 0
 
     async def test_no_bury_when_sibling_reviewed_and_bury_disabled(self, api_app_state):
-        from datetime import date
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         # Create a collocation with both directions
         from app.models.syntactic_unit import SyntacticUnit
@@ -929,10 +925,9 @@ class TestReviewQueue:
         assert len(prod_in_queue) > 0
 
     async def test_new_spread_after_review(self, api_app_state):
-        from datetime import date
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         # Create due and new items
         from app.models.syntactic_unit import SyntacticUnit
@@ -966,10 +961,9 @@ class TestReviewQueue:
                 assert max(due_indices) < min(new_indices)
 
     async def test_new_spread_mix(self, api_app_state):
-        from datetime import date
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         # Create several due and new items
         from app.models.syntactic_unit import SyntacticUnit
@@ -1003,10 +997,9 @@ class TestReviewQueue:
         assert any(s != "new" for s in states)
 
     async def test_new_spread_before_review(self, api_app_state):
-        from datetime import date
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         # Create due and new items
         from app.models.syntactic_unit import SyntacticUnit
@@ -1037,13 +1030,12 @@ class TestReviewQueue:
 
     async def test_proactive_sibling_bury_disabled_keeps_dup_review(self, api_app_state):
         """With bury_review=false, both review siblings stay in the queue."""
-        from datetime import date
 
         from app.models.srs_item import DirectionState, SRSState
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         unit = SyntacticUnit(text="majica_t", translation="shirt", word_count=1, difficulty=1, source="t")
         db.add_collocation(unit, language_code="sl")
         rows, _ = db.list_collocations(search="majica_t", limit=1)
@@ -1134,14 +1126,13 @@ class TestReviewQueue:
         assert duplicates == {}, f"Relearning cards duplicated: {duplicates}"
 
     async def test_orders_by_anki_card_id(self, api_app_state):
-        from datetime import date
 
         db = api_app_state
 
         # Create new items with different anki_card_ids
         from app.models.syntactic_unit import SyntacticUnit
 
-        today = date.today()
+        today = anki_today()
         for text, anki_id in [("word_b", 100), ("word_c", 200), ("word_a", None)]:
             unit = SyntacticUnit(text=text, translation=f"trans_{text}", word_count=2, difficulty=1, source="test")
             db.add_collocation(unit, language_code="sl")
@@ -1421,12 +1412,11 @@ class TestReviewQueue:
 
     async def test_review_queue_excludes_own_buried_direction(self, api_app_state):
         """Buried directions must not appear in /api/srs/review-queue."""
-        from datetime import date
 
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         # Pin last_unbury_day=today so the queue's daily unbury sweep is a no-op
         # and the buried state survives long enough to be filtered out.
@@ -1462,12 +1452,12 @@ class TestReviewQueue:
 
     async def test_review_queue_runs_daily_unbury_sweep(self, api_app_state):
         """Stale state='buried' rows (from a prior day) are restored on first queue load."""
-        from datetime import date, timedelta
+        from datetime import timedelta
 
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        yesterday = (anki_today() - timedelta(days=1)).isoformat()
         # Pretend the last sweep ran yesterday.
         db.set_anki_state_cache("last_unbury_day", yesterday)
 
@@ -1544,12 +1534,12 @@ class TestReviewQueue:
         un-truncated. Empirically Anki introduces recognition before production
         (604/36 across the user's paired notes), so recognition-first is correct.
         """
-        from datetime import date, timedelta
+        from datetime import timedelta
 
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         db.set_anki_state_cache("daily_new_cap", "5")
 
         # Lots of high-due production-only-new notes (recognition is state=review).
@@ -1646,12 +1636,11 @@ class TestReviewQueue:
         Both productions are gated out (recognition still NEW); the surviving
         recognitions order by gather (anki_due DESC): časa, then sekira.
         """
-        from datetime import date
 
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         # No reviews or learning today — just probe the new-bucket head.
         for txt, rec_due, prod_due in [
             ("časa", 1001997, 1001998),
@@ -1765,12 +1754,12 @@ class TestReviewQueue:
         recognition had different stats. Confuses any frontend that inspects
         those fields to decide rendering.
         """
-        from datetime import UTC, date, datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         unit = SyntacticUnit(text="podpisati", translation="sign", word_count=1, difficulty=1, source="test")
         db.add_collocation(unit, language_code="sl")
@@ -1824,7 +1813,6 @@ class TestAudioUrlGrammarNote:
     """Tests for audio_url, grammar, note in API responses."""
 
     async def test_due_item_has_audio_url_when_audio_exists(self, api_app_state):
-        from datetime import date
 
         from app.models.srs_item import Direction, DirectionState, SRSState
         from app.models.syntactic_unit import SyntacticUnit
@@ -1854,7 +1842,7 @@ class TestAudioUrlGrammarNote:
         # Set to REVIEW so it appears in /due
         rec_dir = DirectionState(
             direction=Direction.RECOGNITION,
-            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+            due_at=datetime.combine(anki_today(), time(4, 0), tzinfo=UTC),
             state=SRSState.REVIEW,
         )
         db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
@@ -1870,7 +1858,6 @@ class TestAudioUrlGrammarNote:
         assert item["note"] == "common"
 
     async def test_due_item_audio_url_null_when_no_audio(self, api_app_state):
-        from datetime import date
 
         from app.models.srs_item import Direction, DirectionState, SRSState
         from app.models.syntactic_unit import SyntacticUnit
@@ -1882,7 +1869,7 @@ class TestAudioUrlGrammarNote:
         row_id = rows[0][0]
         rec_dir = DirectionState(
             direction=Direction.RECOGNITION,
-            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+            due_at=datetime.combine(anki_today(), time(4, 0), tzinfo=UTC),
             state=SRSState.REVIEW,
         )
         db.update_direction_by_id(row_id, Direction.RECOGNITION, rec_dir)
@@ -2040,10 +2027,10 @@ class TestLearningStatePriority:
 
     async def test_review_queue_learning_state_sorts_before_overdue_review(self, api_app_state):
         """Regression: ženska prod (learning) should appear before tovornjak prod (overdue review)."""
-        from datetime import date, timedelta
+        from datetime import timedelta
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         # Anchor learning due_at to a definite past instant, not today-04:00-UTC.
         # `seed_direction(due_date=...)` derives due_at from `date + 04:00 UTC`,
         # which lands in the future when CI runs between 00:00–04:00 UTC and
@@ -2095,10 +2082,9 @@ class TestLearningStatePriority:
         Stability is NOT in the key (regression: TT used to insert stability between
         anki_due and anki_card_id, which diverged from Anki when two cards shared due).
         """
-        from datetime import date
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         # Anki-card-id ordering: lower id should come first.
         # Stabilities are assigned out-of-order on purpose so the test would fail if
@@ -2144,12 +2130,11 @@ class TestLearningStatePriority:
         queue even when its recognition sibling was reviewed today (which
         would normally bury the collocation under bury_review=True).
         """
-        from datetime import date
 
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         unit = SyntacticUnit(text="bury_test", translation="test", word_count=1, difficulty=1, source="test")
         db.add_collocation(unit, language_code="sl")
@@ -2190,10 +2175,9 @@ class TestLearningStatePriority:
         """Regression for ženska/dojenček: when anki_due is set (queue=1 sub-day timestamp),
         it must override stability as the sort key. Anki dispatches queue=1 by raw `due` ASC.
         """
-        from datetime import date
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         # Real-world case: dojenček has lower stability but LATER sub-day due than ženska.
         # Anki shows ženska first (earlier sub-day due); TunaTale must agree.
@@ -2234,10 +2218,10 @@ class TestLearningStatePriority:
         Pre-fix bug: TT inserted `stability` between `anki_due` and `anki_card_id`, so the
         less-stable card jumped ahead even when Anki showed the lower-id card first.
         """
-        from datetime import UTC, date, datetime
+        from datetime import UTC, datetime
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         # Both cards lapsed in the same review session: identical due_at, identical anki_due.
         shared_due_at = datetime(2026, 5, 9, 2, 11, 16, tzinfo=UTC)
         shared_anki_due = 1778292676
@@ -2284,10 +2268,10 @@ class TestLearningStatePriority:
         Pre-fix bug: TT used live `now` for the ready/pending split, so a learning card
         ticking past-due mid-session jumped ahead of the new card Anki was still showing.
         """
-        from datetime import UTC, date, datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         now = datetime.now(UTC)
 
         # Cutoff is 5 minutes ago — simulates "user graded a card 5 min ago, hasn't graded since".
@@ -2345,10 +2329,10 @@ class TestLearningStatePriority:
     )
     async def test_review_queue_auto_bump(self, label, ripe, has_future, main_card, expect_bump, api_app_state):
         """Anki-parity auto-bump behavior across 4 scenarios (see parametrize table)."""
-        from datetime import UTC, date, datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         now = datetime.now(UTC)
         cutoff = now - timedelta(minutes=5)
         db.set_anki_state_cache("learning_cutoff", cutoff.isoformat())
@@ -2409,10 +2393,10 @@ class TestLearningStatePriority:
         """Grading any card must advance `learning_cutoff` to ~now, mirroring Anki's
         update_learning_cutoff_and_count call after each answer.
         """
-        from datetime import UTC, date, datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         # Stale cutoff far in the past.
         stale_cutoff = datetime(2020, 1, 1, tzinfo=UTC)
@@ -2449,10 +2433,10 @@ class TestLearningStatePriority:
         so ``count_reviews_completed_today`` missed the grade and the review
         badge stayed pinned at the daily cap instead of charging the budget.
         """
-        from datetime import UTC, date, datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         lr = datetime.now(UTC) - timedelta(hours=16)
         row_id = seed_direction(
             db,
@@ -2491,12 +2475,12 @@ class TestJustGradedLearningCollapse:
         """Two pending learning cards. Head was just graded (last_review ==
         cutoff). With main empty, queue must serve the OTHER card first.
         """
-        from datetime import UTC, date, datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         from app.srs.queue_stats import advance_learning_cutoff
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         now = datetime.now(UTC)
 
         # Pin the learning cutoff at `now` (simulates the grade event).
@@ -2536,12 +2520,12 @@ class TestJustGradedLearningCollapse:
         fails because the head's last_review doesn't match the cutoff (no
         recent grade). Order stays as-sorted by due_at.
         """
-        from datetime import UTC, date, datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         from app.srs.queue_stats import advance_learning_cutoff
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         now = datetime.now(UTC)
         # Cutoff is "now", but no card has last_review matching it.
         advance_learning_cutoff(db, now)
@@ -2573,12 +2557,12 @@ class TestJustGradedLearningCollapse:
     async def test_collapse_does_not_fire_when_main_is_nonempty(self, api_app_state):
         """When main has cards, the collapse must NOT fire — main is served
         next, so the just-graded card stays in pending naturally."""
-        from datetime import UTC, date, datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         from app.srs.queue_stats import advance_learning_cutoff
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         now = datetime.now(UTC)
         advance_learning_cutoff(db, now)
 
@@ -2639,10 +2623,9 @@ class TestSessionMainQueueFreeze:
 
     async def test_two_consecutive_calls_return_same_order_when_state_unchanged(self, api_app_state):
         """The frozen main queue must not reorder between calls when underlying state is stable."""
-        from datetime import date
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         # Two reviews with very different retrievabilities — the lower-R one would
         # jump to the head if we recomputed instead of using the cached order.
         seed_direction(
@@ -2678,10 +2661,10 @@ class TestSessionMainQueueFreeze:
         frozen main queue, the next card must be whatever the intersperser placed at the
         next position — even if it's a new card sitting between higher-R reviews.
         """
-        from datetime import date, timedelta
+        from datetime import timedelta
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         # 4 reviews + 1 new. Intersperser ratio=(4+1)/(1+1)=2.5; the new card
         # lands at position 2: [rev0, rev1, new0, rev2, rev3].
@@ -2753,10 +2736,10 @@ class TestSessionMainQueueFreeze:
     async def test_cache_invalidates_when_day_changes(self, api_app_state):
         """A stale cache from a previous day must not leak into today's queue."""
         import json
-        from datetime import date, timedelta
+        from datetime import timedelta
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         # Pre-populate a cache from yesterday containing a stale card key.
         yesterday = today - timedelta(days=1)
@@ -2797,10 +2780,10 @@ class TestSessionMainQueueFreeze:
         pending_learning at the tail — while Anki, which rebuilt at restart,
         surfaces it at the head.
         """
-        from datetime import UTC, date, datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         now = datetime.now(UTC)
 
         # Stale cutoff from "earlier today" — before the learning card became due.
@@ -2854,10 +2837,9 @@ class TestSessionMainQueueFreeze:
         test_review_state_latecomer_is_dropped).
         """
         import json
-        from datetime import date
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         row_a = seed_direction(
             db,
@@ -2909,12 +2891,12 @@ class TestSessionMainQueueFreeze:
           - Start-of-day ratio:   (12+1)/(3+1) = 3.25 → news at position 2 or 3
         Asserting first_new >= 2 distinguishes start-of-day from current-counts.
         """
-        from datetime import UTC, date, datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         db.set_anki_state_cache("daily_new_cap", "10")
         graded_lr = anki_day_anchor(today).isoformat()
@@ -3017,10 +2999,9 @@ class TestSessionMainQueueFreeze:
         this test guards the parity behavior in the meantime.
         """
         import json
-        from datetime import date
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         row_a = seed_direction(
             db,
@@ -3073,12 +3054,11 @@ class TestSessionMainQueueFreeze:
         session_main_queue, so a fresh page-mount aligns TT's queue moment with
         Anki's.
         """
-        from datetime import date
 
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
 
         # Seed two reviews. First /review-queue call will freeze with these.
         for text, anki_id, stab in [("alpha", 1001, 10.0), ("beta", 1002, 5.0)]:
@@ -3189,13 +3169,13 @@ class TestLearningStepFeedback:
         same — pending-step learning cards sit *behind* due reviews, not in
         front of them. Past-due learning still gets priority.
         """
-        from datetime import UTC, date, datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         from app.models.srs_item import Direction, DirectionState, SRSState
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         now = datetime.now(UTC)
 
         # 1) past-due learning (priority — must come first)
@@ -3327,13 +3307,13 @@ class TestLearningStepFeedback:
         contains this collocation. The bury_review filter must NOT remove the
         learning card from the queue.
         """
-        from datetime import UTC, date, datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         from app.models.srs_item import Direction, DirectionState, SRSState
         from app.models.syntactic_unit import SyntacticUnit
 
         db = api_app_state
-        today = date.today()
+        today = anki_today()
         now = datetime.now(UTC)
 
         unit = SyntacticUnit(text="glasbilo_t", translation="instrument", word_count=1, difficulty=1, source="test")
