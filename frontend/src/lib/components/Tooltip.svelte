@@ -240,8 +240,7 @@
 	onclickcapture={suppressClickAfterLongPress}
 	onclick={handleWrapClick}
 >
-	{@render children()}
-	{#if hasContent}
+	{@render children()}{#if hasContent}
 		<span
 			class="tt"
 			role="tooltip"
