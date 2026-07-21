@@ -581,13 +581,12 @@
 				{/if}
 			</div>
 		{/if}
-	</section>
-
-	<section class="card listen-card">
-	{#if showCheckWorkLink}
-		<a class="check-work-link" href="/review?lesson={data.lesson.id}&c={data.curriculum.id}">Check your work — review {queueCount} {queueCount === 1 ? 'word' : 'words'}</a>
-	{/if}
-	{#if showFullyAcquiredBtn}
+		<!-- Listen/mastery actions fold into the bottom of the sticky player card
+		     but keep their own centered column so the title + player above stay
+		     full-width/left (the card itself must not center everything). -->
+		<div class="listen-actions">
+		<hr class="listen-divider" />
+		{#if showFullyAcquiredBtn}
 			<button class="listen-btn listened" disabled>
 				✓ Listened ({listenCount}×)
 			</button>
@@ -614,12 +613,16 @@
 				{/if}
 			</p>
 		{/if}
-	{#if mastery && masteryPct !== null}
-		<p class="mastery-line">
-			<span class="mastery-pct" style:color={masteryColor(masteryPct)}>{Math.round(masteryPct * 100)}%</span>
-			{#each masterySegments as seg, i (seg.key)}{#if i > 0}<span class="mastery-sep">·</span>{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}
-		</p>
-	{/if}
+		{#if mastery && masteryPct !== null}
+			<p class="mastery-line">
+				<span class="mastery-pct" style:color={masteryColor(masteryPct)}>{Math.round(masteryPct * 100)}%</span>
+				{#each masterySegments as seg, i (seg.key)}{#if i > 0}<span class="mastery-sep">·</span>{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}
+			</p>
+		{/if}
+		{#if showCheckWorkLink}
+			<a class="check-work-link" href="/review?lesson={data.lesson.id}&c={data.curriculum.id}">Check your work — review {queueCount} {queueCount === 1 ? 'word' : 'words'}</a>
+		{/if}
+		</div>
 	</section>
 
 	{#if mode === 'read'}
@@ -913,13 +916,26 @@
 		position: sticky;
 		/* Above transcript content + tooltips (z 10), below the global nav (z 50). */
 		z-index: 20;
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		padding: 1.25rem;
 	}
-	.listen-card {
+	/* The folded listen/mastery block centers its own column; the card above
+	   (title, mode toggle, player) stays full-width — hence NOT centering
+	   .player-card itself. */
+	.listen-actions {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 0.75rem;
-		padding: 1.5rem;
+	}
+	.listen-divider {
+		border: none;
+		border-top: 1px solid var(--color-border);
+		width: 100%;
+		margin: 0.25rem 0;
+		opacity: 0.5;
 	}
 	.listen-btn {
 		padding: 0.5rem 1.25rem;

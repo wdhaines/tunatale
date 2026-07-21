@@ -35,7 +35,7 @@
 	let batchSize = $state(5);
 	let error = $state('');
 	let confirmingReset = $state(false);
-	let chat: PlannerChat;
+	let chat: PlannerChat | undefined = $state();
 
 	// Manual mode state
 	let generationMode: 'auto' | 'manual' = $state(initial.generation_mode ?? 'auto');
@@ -281,7 +281,7 @@
 			proposed={batch}
 			{pending}
 			onCommit={() => handleCommit(batch)}
-			onRevise={() => isManual ? manualTextarea?.focus() : chat.focusInput()}
+			onRevise={() => isManual ? manualTextarea?.focus() : chat?.focusInput()}
 		/>
 	{/if}
 

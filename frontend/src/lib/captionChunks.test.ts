@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { splitCaption, activeChunkIndex, MAX_CAPTION_CHARS } from "./captionChunks";
+import { splitCaption, activeChunkIndex, chunkStartMs, MAX_CAPTION_CHARS } from "./captionChunks";
 
 describe("splitCaption", () => {
   it("returns [text] for empty string", () => {
@@ -31,6 +31,47 @@ describe("splitCaption", () => {
       expect(c.length).toBeLessThanOrEqual(MAX_CAPTION_CHARS);
     }
     expect(chunks.join(" ")).toBe(long);
+  });
+
+  it("splits at clause boundaries (comma) for sentences over MAX", () => {
+    const text = "En kvinne hadde forsvunnet, og Hansen visste at dette var en vanskelig sak.";
+    const chunks = splitCaption(text);
+    expect(chunks).toEqual([
+      "En kvinne hadde forsvunnet,",
+      "og Hansen visste at dette var en vanskelig sak.",
+    ]);
+    expect(chunks[0].length).toBeLessThanOrEqual(MAX_CAPTION_CHARS);
+    expect(chunks[1].length).toBeLessThanOrEqual(MAX_CAPTION_CHARS);
+  });
+
+  it("splits at semicolon for sentences over MAX", () => {
+    const text =
+      "Dette er en veldig lang setning som maa deles opp; den er for lang aa vise paa en gang.";
+    const chunks = splitCaption(text);
+    expect(chunks.length).toBeGreaterThanOrEqual(2);
+    for (const c of chunks) {
+      expect(c.length).toBeLessThanOrEqual(MAX_CAPTION_CHARS);
+    }
+  });
+
+  it("keeps punctuation on the left piece after clause split", () => {
+    const text = "First part, second part.";
+    const chunks = splitCaption(text);
+    expect(chunks[0]).toContain(",");
+  });
+
+  it("passes through short sentences unchanged", () => {
+    expect(splitCaption("Hello world.")).toEqual(["Hello world."]);
+    expect(splitCaption("Short.")).toEqual(["Short."]);
+  });
+
+  it("splits at dash for sentences over MAX", () => {
+    const text = "A very long sentence part — another very long sentence part that continues here.";
+    const chunks = splitCaption(text);
+    if (text.length > MAX_CAPTION_CHARS) {
+      expect(chunks.length).toBeGreaterThanOrEqual(2);
+      expect(chunks[0]).toContain("—");
+    }
   });
 
   it("never splits mid-word even if a single word exceeds the budget", () => {
@@ -93,5 +134,61 @@ describe("activeChunkIndex", () => {
   it("falls through to last index when elapsed equals cumulative boundary", () => {
     const chunks = ["A.", "B.", "C."];
     expect(activeChunkIndex(chunks, 0, 9999, 9999)).toBe(2);
+  });
+});
+
+describe("chunkStartMs", () => {
+  it("returns startMs when there is only one chunk", () => {
+    expect(chunkStartMs(["Hello."], 1000, 3000, 0)).toBe(1000);
+  });
+
+  it("returns startMs when endMs <= startMs", () => {
+    expect(chunkStartMs(["A.", "B."], 1000, 1000, 0)).toBe(1000);
+  });
+
+  it("returns startMs when total chars is 0", () => {
+    expect(chunkStartMs([], 0, 1000, 0)).toBe(0);
+    expect(chunkStartMs(["", ""], 0, 1000, 1)).toBe(0);
+  });
+
+  it("returns startMs for idx <= 0", () => {
+    expect(chunkStartMs(["A.", "B."], 1000, 3000, -1)).toBe(1000);
+    expect(chunkStartMs(["A.", "B."], 1000, 3000, 0)).toBe(1000);
+  });
+
+  it("clamps idx >= length to last chunk's start", () => {
+    const result = chunkStartMs(["A.", "B."], 1000, 3000, 99);
+    const totalLen = "A.".length + "B.".length;
+    const lastChunkStart = 1000 + (3000 - 1000) * ("A.".length / totalLen);
+    expect(result).toBeCloseTo(lastChunkStart, 0);
+  });
+
+  it("returns proportional start for each chunk", () => {
+    const chunks = ["Short.", "A longer sentence here."];
+    const s = 0;
+    const e = 10000;
+    const totalLen = "Short.".length + "A longer sentence here.".length;
+    const boundary = s + (e - s) * ("Short.".length / totalLen);
+    expect(chunkStartMs(chunks, s, e, 0)).toBe(s);
+    expect(chunkStartMs(chunks, s, e, 1)).toBeCloseTo(boundary, 0);
+  });
+
+  it("round-trip invariant: activeChunkIndex(chunkStartMs(...)) === idx", () => {
+    const chunks = splitCaption(
+      "En kvinne hadde forsvunnet, og Hansen visste at dette var en vanskelig sak.",
+    );
+    const s = 0;
+    const e = 10000;
+    for (let idx = 0; idx < chunks.length; idx++) {
+      const ms = chunkStartMs(chunks, s, e, idx);
+      expect(activeChunkIndex(chunks, s, e, ms)).toBe(idx);
+    }
+  });
+
+  it("single-chunk round-trip returns 0", () => {
+    const chunks = ["Hello world."];
+    const ms = chunkStartMs(chunks, 0, 5000, 0);
+    expect(ms).toBe(0);
+    expect(activeChunkIndex(chunks, 0, 5000, ms)).toBe(0);
   });
 });

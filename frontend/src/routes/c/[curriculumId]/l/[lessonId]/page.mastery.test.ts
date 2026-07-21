@@ -742,7 +742,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         listen_count: 1,
       });
 
-      const { getByText, findByText } = render(Page, {
+      const { getByText } = render(Page, {
         props: {
           data: {
             curriculum,
@@ -786,6 +786,30 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
 
       await waitFor(() => {
         expect(getByText(/65%/)).toBeTruthy();
+      });
+    });
+
+    it("mastery line is inside player-card, no separate listen-card section", async () => {
+      mockGetTranscript.mockResolvedValue(transcriptWithRecFields);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+
+      const { container } = render(Page, {
+        props: {
+          data: {
+            curriculum,
+            lesson: { ...lesson, day: 1 },
+            audio: null,
+            transcript: transcriptWithRecFields,
+          },
+        },
+      });
+
+      await waitFor(() => {
+        const playerCard = container.querySelector(".player-card");
+        expect(playerCard).toBeTruthy();
+        const masteryLine = playerCard!.querySelector(".mastery-line");
+        expect(masteryLine).toBeTruthy();
+        expect(container.querySelector(".listen-card")).toBeFalsy();
       });
     });
   });

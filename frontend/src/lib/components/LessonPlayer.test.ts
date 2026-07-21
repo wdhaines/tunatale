@@ -286,9 +286,9 @@ describe("LessonPlayer", () => {
       expect(container.querySelector(".current-line")).toBeFalsy();
     });
 
-    it("renders section info and current line when cues present", () => {
+    it("renders no section info but renders current line when cues present", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
-      expect(container.querySelector(".section-info")).toBeTruthy();
+      expect(container.querySelector(".section-info")).toBeFalsy();
       expect(container.querySelector(".current-line")).toBeTruthy();
     });
 
@@ -358,12 +358,26 @@ describe("LessonPlayer", () => {
       expect(container.querySelector(".sentence-row")).toBeFalsy();
     });
 
-    it("renders sentence skip toggle", () => {
+    it("renders sentence/section toggle showing current mode", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
       const toggle = container.querySelector(".sentence-skip-toggle");
       expect(toggle).toBeTruthy();
-      const checkbox = toggle!.querySelector("input[type=checkbox]");
-      expect(checkbox).toBeTruthy();
+      // Default is Section mode (sentenceSkip = false)
+      expect(toggle!.textContent).toContain("Section");
+    });
+
+    it("clicking the toggle switches between Sentence and Section modes", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
+      const toggle = container.querySelector<HTMLButtonElement>(".sentence-skip-toggle")!;
+      // Default: Section
+      expect(toggle.textContent).toContain("Section");
+      expect(toggle.textContent).not.toContain("Sentence");
+      fireEvent.click(toggle);
+      // Now: Sentence
+      expect(toggle.textContent).toContain("Sentence");
+      fireEvent.click(toggle);
+      // Back to Section
+      expect(toggle.textContent).toContain("Section");
     });
   });
 
@@ -626,6 +640,69 @@ describe("LessonPlayer", () => {
       fireEvent.click(btn);
       expect(btn.textContent).toContain("Natural");
     });
+
+    // Item G: disable in key_phrases phase
+    it("enunciation and english are disabled in key_phrases phase", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      // Switch to key_phrases
+      const kpBtn = container.querySelector<HTMLButtonElement>(".phase-btn:first-child")!;
+      fireEvent.click(kpBtn);
+      const enunBtn = container.querySelector<HTMLButtonElement>(".enunciation-btn")!;
+      const engBtn = container.querySelector<HTMLButtonElement>(".english-btn")!;
+      expect(enunBtn.disabled).toBe(true);
+      expect(engBtn.disabled).toBe(true);
+    });
+
+    it("enunciation and english are enabled in dialogue phase", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      // Default is dialogue
+      const enunBtn = container.querySelector<HTMLButtonElement>(".enunciation-btn")!;
+      const engBtn = container.querySelector<HTMLButtonElement>(".english-btn")!;
+      expect(enunBtn.disabled).toBe(false);
+      expect(engBtn.disabled).toBe(false);
+    });
+
+    it("clicking enunciation in key_phrases phase does not change state", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      const kpBtn = container.querySelector<HTMLButtonElement>(".phase-btn:first-child")!;
+      fireEvent.click(kpBtn);
+      const enunBtn = container.querySelector<HTMLButtonElement>(".enunciation-btn")!;
+      expect(enunBtn.textContent).toContain("Natural");
+      fireEvent.click(enunBtn);
+      // Still Natural — disabled, click is a no-op
+      expect(enunBtn.textContent).toContain("Natural");
+    });
+
+    it("clicking english in key_phrases phase does not change state", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      const kpBtn = container.querySelector<HTMLButtonElement>(".phase-btn:first-child")!;
+      fireEvent.click(kpBtn);
+      const engBtn = container.querySelector<HTMLButtonElement>(".english-btn")!;
+      expect(engBtn.textContent).toContain("Off");
+      fireEvent.click(engBtn);
+      // Still Off — disabled, click is a no-op
+      expect(engBtn.textContent).toContain("Off");
+    });
+  });
+
+  // Item D: section header removed
+  describe("section header (Item D)", () => {
+    it("does not render .section-info on trackMode+allSections lesson", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      expect(container.querySelector(".section-info")).toBeFalsy();
+    });
+
+    it("does not render .section-info on non-trackMode cue-bearing lesson", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
+      expect(container.querySelector(".section-info")).toBeFalsy();
+    });
+
+    it("does not render .section-info in compact mode", () => {
+      const { container } = render(LessonPlayer, {
+        props: { audio: audioWithAllSections, compact: true },
+      });
+      expect(container.querySelector(".section-info")).toBeFalsy();
+    });
   });
 
   describe("interactions", () => {
@@ -677,14 +754,12 @@ describe("LessonPlayer", () => {
       fireEvent.click(btn);
     });
 
-    it("toggles sentence skip checkbox", () => {
+    it("toggles sentence skip via the toggle button", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
-      const checkbox = container.querySelector<HTMLInputElement>(
-        '.sentence-skip-toggle input[type="checkbox"]',
-      )!;
-      expect(checkbox.checked).toBe(false);
-      fireEvent.click(checkbox);
-      expect(checkbox.checked).toBe(true);
+      const toggle = container.querySelector<HTMLButtonElement>(".sentence-skip-toggle")!;
+      expect(toggle.textContent).toContain("Section");
+      fireEvent.click(toggle);
+      expect(toggle.textContent).toContain("Sentence");
     });
 
     it("fires seek on scrubber input", () => {
@@ -836,6 +911,30 @@ describe("LessonPlayer", () => {
     ],
   };
 
+  // Multi-chunk cue for testing Repeat seeks to chunk start (Item B wiring)
+  const audioForRepeatChunk: LessonAudio = {
+    audio_id: "a1",
+    lesson_id: "l1",
+    sections: [
+      { audio_id: "s1", section_index: 0, section_type: "key_phrases", title: "Key Phrases" },
+      { audio_id: "s2", section_index: 1, section_type: "natural_speed", title: "Natural Speed" },
+    ],
+    cues: [
+      {
+        index: 0,
+        start_ms: 0,
+        end_ms: 30000,
+        section_index: 0,
+        section_type: "key_phrases",
+        phrase_index: 0,
+        role: "narrator",
+        language_code: "en",
+        text: longNarrationText,
+        ref: { kind: "key_phrase", target_index: 0 },
+      },
+    ],
+  };
+
   describe("caption blur", () => {
     it("setting enabled (default): caption has blur class and is a button; clicking reveals", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
@@ -924,6 +1023,78 @@ describe("LessonPlayer", () => {
       ctrl!.seekTo(19);
       await tick();
       expect(line.textContent).not.toBe(initialText);
+    });
+  });
+
+  // --- Item A: blur toggle grouped in controls-row ---
+
+  describe("blur toggle placement (Item A)", () => {
+    it("blur toggle is inside .controls-row as sibling of enunciation/english on trackMode", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      const controlsRow = container.querySelector(".controls-row")!;
+      const blurBtn = controlsRow.querySelector(".caption-blur-btn");
+      expect(blurBtn).toBeTruthy();
+      expect(controlsRow.querySelector(".enunciation-btn")).toBeTruthy();
+      expect(controlsRow.querySelector(".english-btn")).toBeTruthy();
+    });
+
+    it("blur toggle renders in .controls-row on NON-trackMode cue-bearing lesson", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioForBlurToggle } });
+      const controlsRow = container.querySelector(".controls-row")!;
+      expect(controlsRow.querySelector(".caption-blur-btn")).toBeTruthy();
+    });
+  });
+
+  // --- Item B wiring: Repeat seeks to chunk start ---
+
+  describe("repeat seeks to chunk start (Item B wiring)", () => {
+    it("clicking Repeat on a multi-chunk cue seeks to current chunk start, not whole cue start", async () => {
+      let ctrl: PlaybackController | null = null;
+      const { container } = render(PillSyncHarness, {
+        props: {
+          audio: audioForRepeatChunk,
+          onController: (c: PlaybackController) => {
+            ctrl = c;
+          },
+        },
+      });
+      await tick();
+      // Seek into the middle of the cue so we're on chunk 1 (second chunk)
+      ctrl!.seekTo(20);
+      await tick();
+      const beforeMs = ctrl!.currentTime * 1000;
+      // Click repeat — should seek to chunk 1's start (well after 0ms)
+      const repeatBtn = container.querySelector<HTMLButtonElement>(
+        'button[title="Repeat current"]',
+      )!;
+      fireEvent.click(repeatBtn);
+      await tick();
+      const afterMs = ctrl!.currentTime * 1000;
+      // The chunk start should be > 0 (not the whole cue start)
+      expect(afterMs).toBeGreaterThan(0);
+      // And it should be close to where we were (same chunk), not back to 0
+      expect(afterMs).toBeGreaterThan(beforeMs * 0.3);
+    });
+
+    it("single-chunk cue: Repeat seeks to cue start (same as before)", async () => {
+      let ctrl: PlaybackController | null = null;
+      const { container } = render(PillSyncHarness, {
+        props: {
+          audio: audioWithCues,
+          onController: (c: PlaybackController) => {
+            ctrl = c;
+          },
+        },
+      });
+      await tick();
+      ctrl!.seekTo(0.5);
+      await tick();
+      const repeatBtn = container.querySelector<HTMLButtonElement>(
+        'button[title="Repeat current"]',
+      )!;
+      fireEvent.click(repeatBtn);
+      await tick();
+      expect(ctrl!.currentTime).toBeLessThanOrEqual(0.1);
     });
   });
 });

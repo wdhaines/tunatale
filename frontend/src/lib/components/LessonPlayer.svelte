@@ -11,7 +11,7 @@
 	import { createPlaybackController } from '$lib/playback/playbackController.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { captionBlurPref } from '$lib/stores/captionBlurPref.svelte';
-	import { splitCaption, activeChunkIndex } from '$lib/captionChunks';
+	import { splitCaption, activeChunkIndex, chunkStartMs } from '$lib/captionChunks';
 
 	interface Props {
 		audio: LessonAudio;
@@ -26,8 +26,6 @@
 	// the player via {#key audio.audio_id} — so snapshot them once at init.
 	// untrack marks the initial-value reads as intentional (state_referenced_locally).
 	const init = untrack(() => ({ audio, lessonTitle }));
-
-	const totalSections = init.audio.sections.length;
 
 	const ctrl = createPlaybackController({
 		lessonId: init.audio.lesson_id,
@@ -155,12 +153,14 @@
 	}
 
 	function onEnunClick() {
+		if (phase === 'key_phrases') return;
 		cycleEnunciation();
 		applyTrack();
 		persistSelection();
 	}
 
 	function onEnglishClick() {
+		if (phase === 'key_phrases') return;
 		cycleEnglish();
 		applyTrack();
 		persistSelection();
@@ -268,14 +268,6 @@
 </script>
 
 <section class="player" class:compact>
-	{#if hasCues}
-		<div class="section-info">
-			<span class="section-title">{ctrl.currentSectionTitle || 'Audio'}</span>
-			<span class="section-count">
-				{ctrl.currentSectionIndex != null ? ctrl.currentSectionIndex + 1 : '-'}/{totalSections}
-			</span>
-		</div>
-	{/if}
 
 	{#if trackMode}
 		<div class="phase-row">
@@ -318,7 +310,12 @@
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="12,2 4,8 12,14" fill="currentColor"/></svg>
 				Sentence
 			</button>
-			<button class="ctrl-btn small" onclick={() => ctrl.repeatCue()} title="Repeat current">
+			<button class="ctrl-btn small" onclick={() => {
+				if (ctrl.currentCue && captionChunks.length > 0) {
+					const ms = chunkStartMs(captionChunks, ctrl.currentCue.start_ms, ctrl.currentCue.end_ms, captionIdx);
+					ctrl.seekTo(ms / 1000);
+				}
+			}} title="Repeat current">
 				Repeat
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><path d="M4 8a4 4 0 0 1 7.5-2L10 8h3V4l-1 1a5 5 0 0 0-9 3h1zm8 0a4 4 0 0 1-7.5 2L6 8H3v4l1-1a5 5 0 0 0 9-3h-1z" fill="currentColor"/></svg>
 			</button>
@@ -326,10 +323,14 @@
 				Sentence
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="4,2 12,8 4,14" fill="currentColor"/></svg>
 			</button>
-			<label class="sentence-skip-toggle">
-				<input type="checkbox" checked={ctrl.sentenceSkip} onchange={(e) => ctrl.setSentenceSkip((e.target as HTMLInputElement).checked)} />
-				Sentence skip
-			</label>
+			<button
+				class="sentence-skip-toggle"
+				aria-pressed={ctrl.sentenceSkip}
+				onclick={() => ctrl.setSentenceSkip(!ctrl.sentenceSkip)}
+			>
+				<svg viewBox="0 0 16 16" width="0.9em" height="0.9em" style="vertical-align:middle"><path d="M6 3.5A2.5 2.5 0 0 1 8.5 1a4 4 0 0 1 3.2 1.6l.5-.3A4.5 4.5 0 0 0 8 .5 4.5 4.5 0 0 0 3.8 2.3l.5.3A4 4 0 0 1 7.5 1 2.5 2.5 0 0 1 6 3.5zM10 6.5A2.5 2.5 0 0 1 7.5 9a4 4 0 0 1-3.2-1.6l-.5.3A4.5 4.5 0 0 0 8 10.5a4.5 4.5 0 0 0 4.2-1.8l-.5-.3A4 4 0 0 1 8.5 9 2.5 2.5 0 0 1 10 6.5z" fill="currentColor"/></svg>
+				{ctrl.sentenceSkip ? 'Sentence' : 'Section'}
+			</button>
 		</div>
 	{/if}
 
@@ -349,14 +350,25 @@
 		</div>
 	</div>
 
-	{#if trackMode && hasAllSections}
+	{#if (trackMode && hasAllSections) || (hasCues && !compact)}
 		<div class="controls-row">
-			<button class="enunciation-btn" onclick={onEnunClick}>
-				{ENUNCIATION_OPTIONS[enunIndex].label}
-			</button>
-			<button class="english-btn" onclick={onEnglishClick}>
-				{ENGLISH_LABELS[englishMode]}
-			</button>
+			{#if trackMode && hasAllSections}
+				<button class="enunciation-btn" onclick={onEnunClick} disabled={phase === 'key_phrases'}>
+					{ENUNCIATION_OPTIONS[enunIndex].label}
+				</button>
+				<button class="english-btn" onclick={onEnglishClick} disabled={phase === 'key_phrases'}>
+					{ENGLISH_LABELS[englishMode]}
+				</button>
+			{/if}
+			{#if !compact}
+				<button
+					class="caption-blur-btn"
+					aria-pressed={captionBlurPref.enabled}
+					onclick={() => captionBlurPref.set(!captionBlurPref.enabled)}
+				>
+					{captionBlurPref.enabled ? 'Blur On' : 'Blur Off'}
+				</button>
+			{/if}
 		</div>
 	{/if}
 
@@ -379,13 +391,6 @@
 				{captionChunks[captionIdx] ?? ''}
 			</div>
 		{/if}
-		<button
-			class="caption-blur-btn"
-			aria-pressed={captionBlurPref.enabled}
-			onclick={() => captionBlurPref.set(!captionBlurPref.enabled)}
-		>
-			{captionBlurPref.enabled ? 'Blur On' : 'Blur Off'}
-		</button>
 	{/if}
 
 </section>
@@ -398,19 +403,6 @@
 	}
 	.player.compact {
 		gap: 0.5rem;
-	}
-	.section-info {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		font-size: 0.85rem;
-		color: var(--color-muted);
-	}
-	.section-title {
-		font-weight: 600;
-	}
-	.section-count {
-		font-size: 0.8rem;
 	}
 	.current-line {
 		font-size: 1.3rem;
@@ -431,18 +423,6 @@
 	.current-line.revealed {
 		filter: none;
 		cursor: default;
-	}
-	.caption-blur-btn {
-		min-height: 32px;
-		padding: 0.25rem 0.6rem;
-		background: var(--color-surface-2);
-		color: var(--color-text);
-		border: 1px solid var(--color-border, #ddd);
-		border-radius: var(--radius-pill, 999px);
-		font-size: 0.75rem;
-		font-weight: 600;
-		cursor: pointer;
-		align-self: flex-start;
 	}
 	.transport-row {
 		display: flex;
@@ -487,15 +467,29 @@
 		flex-wrap: wrap;
 	}
 	.sentence-skip-toggle {
-		display: flex;
+		display: inline-flex;
 		align-items: center;
 		gap: 0.3rem;
+		min-height: 36px;
+		padding: 0.35rem 0.65rem;
+		background: var(--color-surface-2);
+		color: var(--color-text);
+		border: 1px solid var(--color-border, #ddd);
+		border-radius: var(--radius-pill, 999px);
 		font-size: 0.8rem;
-		color: var(--color-muted);
+		font-weight: 600;
 		cursor: pointer;
+		transition: background 0.15s ease;
 	}
-	.sentence-skip-toggle input {
-		cursor: pointer;
+	.sentence-skip-toggle:hover {
+		background: var(--color-primary);
+		color: var(--color-on-primary);
+		border-color: var(--color-primary);
+	}
+	.sentence-skip-toggle[aria-pressed="true"] {
+		background: var(--color-primary);
+		color: var(--color-on-primary);
+		border-color: var(--color-primary);
 	}
 	.scrubber-row {
 		display: flex;
@@ -542,27 +536,39 @@
 	.controls-row {
 		display: flex;
 		justify-content: center;
-		gap: 0.5rem;
+		gap: 0.35rem;
+		background: var(--color-surface-2);
+		border-radius: var(--radius-pill, 999px);
+		padding: 3px;
 	}
 	.enunciation-btn,
-	.english-btn {
-		min-width: 80px;
-		min-height: 40px;
-		padding: 0.35rem 0.8rem;
-		background: var(--color-surface-2);
-		color: var(--color-text);
-		border: 1px solid var(--color-border, #ddd);
+	.english-btn,
+	.caption-blur-btn {
+		flex: 1;
+		min-height: 36px;
+		padding: 0.3rem 0.65rem;
+		background: transparent;
+		color: var(--color-muted);
+		border: none;
 		border-radius: var(--radius-pill, 999px);
-		font-size: 0.85rem;
+		font-size: 0.8rem;
 		font-weight: 600;
 		cursor: pointer;
-		transition: background 0.15s ease;
+		transition: background 0.15s ease, color 0.15s ease;
 	}
-	.enunciation-btn:hover,
-	.english-btn:hover {
+	.enunciation-btn:hover:not(:disabled),
+	.english-btn:hover:not(:disabled),
+	.caption-blur-btn:hover {
+		color: var(--color-text);
+	}
+	.enunciation-btn:disabled,
+	.english-btn:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+	.caption-blur-btn[aria-pressed="true"] {
 		background: var(--color-primary);
 		color: var(--color-on-primary);
-		border-color: var(--color-primary);
 	}
 	/* Keep the transport pills on one tidy line down to small phones:
 	   never let a label wrap inside its pill, and tighten spacing instead. */
