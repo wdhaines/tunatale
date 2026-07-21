@@ -86,10 +86,12 @@
 		return natural ? 'en_translated' : 'slow_en_translated'; // en_first
 	}
 
+	// Value shown in the English setting chip; the chip's "English" field label
+	// supplies the noun, so these are just the mode.
 	const ENGLISH_LABELS: Record<EnglishMode, string> = {
-		off: 'English Off',
-		l2_first: 'English After',
-		en_first: 'English Before'
+		off: 'Off',
+		l2_first: 'After',
+		en_first: 'Before'
 	};
 
 	function resolveRate(enunLevel: string): number {
@@ -323,13 +325,20 @@
 				Sentence
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="4,2 12,8 4,14" fill="currentColor"/></svg>
 			</button>
+			<!-- Governs what the physical ⏮⏭ (headphone / car) keys skip — a
+			     different axis from the on-screen transport pills, hence the
+			     headphone marker + dashed treatment to set it apart. -->
 			<button
 				class="sentence-skip-toggle"
 				aria-pressed={ctrl.sentenceSkip}
+				title="What the ⏮ ⏭ headphone / car buttons skip"
 				onclick={() => ctrl.setSentenceSkip(!ctrl.sentenceSkip)}
 			>
-				<svg viewBox="0 0 16 16" width="0.9em" height="0.9em" style="vertical-align:middle"><path d="M6 3.5A2.5 2.5 0 0 1 8.5 1a4 4 0 0 1 3.2 1.6l.5-.3A4.5 4.5 0 0 0 8 .5 4.5 4.5 0 0 0 3.8 2.3l.5.3A4 4 0 0 1 7.5 1 2.5 2.5 0 0 1 6 3.5zM10 6.5A2.5 2.5 0 0 1 7.5 9a4 4 0 0 1-3.2-1.6l-.5.3A4.5 4.5 0 0 0 8 10.5a4.5 4.5 0 0 0 4.2-1.8l-.5-.3A4 4 0 0 1 8.5 9 2.5 2.5 0 0 1 10 6.5z" fill="currentColor"/></svg>
-				{ctrl.sentenceSkip ? 'Sentence' : 'Section'}
+				<span class="chip-label">
+					<svg viewBox="0 0 16 16" width="0.85em" height="0.85em" style="vertical-align:-1px"><path d="M8 1.5a5.5 5.5 0 0 0-5.5 5.5v3.5a1.5 1.5 0 0 0 1.5 1.5h1v-4h-2V7a5 5 0 0 1 10 0v2h-2v4h1a1.5 1.5 0 0 0 1.5-1.5V7A5.5 5.5 0 0 0 8 1.5z" fill="currentColor"/></svg>
+					Keys skip
+				</span>
+				<span class="chip-value">{ctrl.sentenceSkip ? 'Sentence' : 'Section'}</span>
 			</button>
 		</div>
 	{/if}
@@ -351,22 +360,39 @@
 	</div>
 
 	{#if (trackMode && hasAllSections) || (hasCues && !compact)}
+		<!-- Independent setting chips (field:value), NOT a segmented pick-one:
+		     the phase row above owns the segmented look. Each chip toggles on its
+		     own; the accent (.active) marks a non-default value. -->
 		<div class="controls-row">
 			{#if trackMode && hasAllSections}
-				<button class="enunciation-btn" onclick={onEnunClick} disabled={phase === 'key_phrases'}>
-					{ENUNCIATION_OPTIONS[enunIndex].label}
+				<button
+					class="setting-chip enunciation-btn"
+					class:active={enunLevel !== 'natural'}
+					onclick={onEnunClick}
+					disabled={phase === 'key_phrases'}
+				>
+					<span class="chip-label">Speed</span>
+					<span class="chip-value">{ENUNCIATION_OPTIONS[enunIndex].label}</span>
 				</button>
-				<button class="english-btn" onclick={onEnglishClick} disabled={phase === 'key_phrases'}>
-					{ENGLISH_LABELS[englishMode]}
+				<button
+					class="setting-chip english-btn"
+					class:active={englishMode !== 'off'}
+					onclick={onEnglishClick}
+					disabled={phase === 'key_phrases'}
+				>
+					<span class="chip-label">English</span>
+					<span class="chip-value">{ENGLISH_LABELS[englishMode]}</span>
 				</button>
 			{/if}
 			{#if !compact}
 				<button
-					class="caption-blur-btn"
+					class="setting-chip caption-blur-btn"
+					class:active={captionBlurPref.enabled}
 					aria-pressed={captionBlurPref.enabled}
 					onclick={() => captionBlurPref.set(!captionBlurPref.enabled)}
 				>
-					{captionBlurPref.enabled ? 'Blur On' : 'Blur Off'}
+					<span class="chip-label">Captions</span>
+					<span class="chip-value">{captionBlurPref.enabled ? 'Blurred' : 'Visible'}</span>
 				</button>
 			{/if}
 		</div>
@@ -466,30 +492,38 @@
 		gap: 0.5rem;
 		flex-wrap: wrap;
 	}
+	/* The hardware-key skip control: a dashed chip so it reads as "settings for
+	   the physical ⏮⏭ buttons", distinct from both the filled transport pills
+	   next to it and the solid-outline audio setting chips above. */
 	.sentence-skip-toggle {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.05rem;
+		min-height: 44px;
+		padding: 0.3rem 0.7rem;
+		background: transparent;
+		color: var(--color-text);
+		border: 1px dashed var(--color-border, #ddd);
+		border-radius: 10px;
+		cursor: pointer;
+		transition: border-color 0.15s ease, background 0.15s ease;
+	}
+	.sentence-skip-toggle .chip-label {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.3rem;
-		min-height: 36px;
-		padding: 0.35rem 0.65rem;
-		background: var(--color-surface-2);
-		color: var(--color-text);
-		border: 1px solid var(--color-border, #ddd);
-		border-radius: var(--radius-pill, 999px);
-		font-size: 0.8rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: background 0.15s ease;
+		gap: 0.25rem;
 	}
 	.sentence-skip-toggle:hover {
-		background: var(--color-primary);
-		color: var(--color-on-primary);
-		border-color: var(--color-primary);
+		border-color: var(--color-muted);
 	}
 	.sentence-skip-toggle[aria-pressed="true"] {
-		background: var(--color-primary);
-		color: var(--color-on-primary);
 		border-color: var(--color-primary);
+		border-style: solid;
+		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+	}
+	.sentence-skip-toggle[aria-pressed="true"] .chip-value {
+		color: var(--color-primary);
 	}
 	.scrubber-row {
 		display: flex;
@@ -533,42 +567,55 @@
 	.phase-btn:hover:not(.active) {
 		color: var(--color-text);
 	}
+	/* Independent setting chips — deliberately NOT the segmented-pill look of
+	   .phase-row (that's a pick-one). Each is its own outlined field:value tile
+	   so three unrelated settings don't read as one control. */
 	.controls-row {
 		display: flex;
 		justify-content: center;
-		gap: 0.35rem;
-		background: var(--color-surface-2);
-		border-radius: var(--radius-pill, 999px);
-		padding: 3px;
+		gap: 0.5rem;
 	}
-	.enunciation-btn,
-	.english-btn,
-	.caption-blur-btn {
+	.setting-chip {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.05rem;
 		flex: 1;
-		min-height: 36px;
-		padding: 0.3rem 0.65rem;
+		max-width: 9rem;
+		min-height: 44px;
+		padding: 0.3rem 0.7rem;
 		background: transparent;
-		color: var(--color-muted);
-		border: none;
-		border-radius: var(--radius-pill, 999px);
-		font-size: 0.8rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: background 0.15s ease, color 0.15s ease;
-	}
-	.enunciation-btn:hover:not(:disabled),
-	.english-btn:hover:not(:disabled),
-	.caption-blur-btn:hover {
 		color: var(--color-text);
+		border: 1px solid var(--color-border, #ddd);
+		border-radius: 10px;
+		cursor: pointer;
+		transition: border-color 0.15s ease, background 0.15s ease;
 	}
-	.enunciation-btn:disabled,
-	.english-btn:disabled {
+	.chip-label {
+		font-size: 0.6rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--color-muted);
+	}
+	.chip-value {
+		font-size: 0.85rem;
+		font-weight: 700;
+		line-height: 1.1;
+	}
+	.setting-chip:hover:not(:disabled) {
+		border-color: var(--color-muted);
+	}
+	.setting-chip.active {
+		border-color: var(--color-primary);
+		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+	}
+	.setting-chip.active .chip-value {
+		color: var(--color-primary);
+	}
+	.setting-chip:disabled {
 		opacity: 0.4;
 		cursor: default;
-	}
-	.caption-blur-btn[aria-pressed="true"] {
-		background: var(--color-primary);
-		color: var(--color-on-primary);
 	}
 	/* Keep the transport pills on one tidy line down to small phones:
 	   never let a label wrap inside its pill, and tighten spacing instead. */
