@@ -325,21 +325,6 @@
 				Sentence
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="4,2 12,8 4,14" fill="currentColor"/></svg>
 			</button>
-			<!-- Governs what the physical ⏮⏭ (headphone / car) keys skip — a
-			     different axis from the on-screen transport pills, hence the
-			     headphone marker + dashed treatment to set it apart. -->
-			<button
-				class="sentence-skip-toggle"
-				aria-pressed={ctrl.sentenceSkip}
-				title="What the ⏮ ⏭ headphone / car buttons skip"
-				onclick={() => ctrl.setSentenceSkip(!ctrl.sentenceSkip)}
-			>
-				<span class="chip-label">
-					<svg viewBox="0 0 16 16" width="0.85em" height="0.85em" style="vertical-align:-1px"><path d="M8 1.5a5.5 5.5 0 0 0-5.5 5.5v3.5a1.5 1.5 0 0 0 1.5 1.5h1v-4h-2V7a5 5 0 0 1 10 0v2h-2v4h1a1.5 1.5 0 0 0 1.5-1.5V7A5.5 5.5 0 0 0 8 1.5z" fill="currentColor"/></svg>
-					Keys skip
-				</span>
-				<span class="chip-value">{ctrl.sentenceSkip ? 'Sentence' : 'Section'}</span>
-			</button>
 		</div>
 	{/if}
 
@@ -387,12 +372,27 @@
 			{#if !compact}
 				<button
 					class="setting-chip caption-blur-btn"
-					class:active={captionBlurPref.enabled}
+					class:active={!captionBlurPref.enabled}
 					aria-pressed={captionBlurPref.enabled}
 					onclick={() => captionBlurPref.set(!captionBlurPref.enabled)}
 				>
 					<span class="chip-label">Captions</span>
 					<span class="chip-value">{captionBlurPref.enabled ? 'Blurred' : 'Visible'}</span>
+				</button>
+				<!-- Governs what the physical ⏮⏭ (headphone / car) keys skip — a
+				     different axis from the on-screen transport pills, hence the
+				     headphone marker + dashed treatment to set it apart. -->
+				<button
+					class="sentence-skip-toggle"
+					aria-pressed={ctrl.sentenceSkip}
+					title="What the ⏮ ⏭ headphone / car buttons skip"
+					onclick={() => ctrl.setSentenceSkip(!ctrl.sentenceSkip)}
+				>
+					<span class="chip-label">
+						<svg viewBox="0 0 16 16" width="0.85em" height="0.85em" style="vertical-align:-1px"><path d="M8 1.5a5.5 5.5 0 0 0-5.5 5.5v3.5a1.5 1.5 0 0 0 1.5 1.5h1v-4h-2V7a5 5 0 0 1 10 0v2h-2v4h1a1.5 1.5 0 0 0 1.5-1.5V7A5.5 5.5 0 0 0 8 1.5z" fill="currentColor"/></svg>
+						Keys skip
+					</span>
+					<span class="chip-value">{ctrl.sentenceSkip ? 'Sentence' : 'Section'}</span>
 				</button>
 			{/if}
 		</div>
@@ -427,9 +427,7 @@
 		flex-direction: column;
 		gap: 0.75rem;
 	}
-	.player.compact {
-		gap: 0.5rem;
-	}
+
 	.current-line {
 		font-size: 1.3rem;
 		font-weight: 700;
@@ -440,6 +438,9 @@
 		text-align: left;
 		width: 100%;
 		cursor: default;
+		/* Movie-caption line breaks: when a chunk needs two lines, split them
+		   evenly instead of filling line 1 and orphaning the last word. */
+		text-wrap: balance;
 	}
 	.current-line.blurred {
 		filter: blur(8px);
@@ -473,9 +474,12 @@
 		background: var(--color-primary);
 		color: var(--color-on-primary);
 	}
+	/* Play/pause is the primary control: let it grow to fill whatever the two
+	   fixed-width 10s buttons leave, so it's the biggest tap target in the row. */
 	.play-btn {
+		flex: 1;
 		min-width: 56px;
-		font-size: 1.1rem;
+		font-size: 1.2rem;
 		background: var(--color-primary);
 		color: var(--color-on-primary);
 	}
@@ -489,17 +493,20 @@
 		display: flex;
 		justify-content: center;
 		align-items: center;
-		gap: 0.5rem;
+		gap: 0.4rem;
 		flex-wrap: wrap;
 	}
 	/* The hardware-key skip control: a dashed chip so it reads as "settings for
 	   the physical ⏮⏭ buttons", distinct from both the filled transport pills
-	   next to it and the solid-outline audio setting chips above. */
+	   and the solid-outline audio setting chips beside it. Sized like the other
+	   setting chips it now sits among. */
 	.sentence-skip-toggle {
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
 		gap: 0.05rem;
+		flex: 1;
+		max-width: 9rem;
 		min-height: 44px;
 		padding: 0.3rem 0.7rem;
 		background: transparent;
@@ -573,6 +580,7 @@
 	.controls-row {
 		display: flex;
 		justify-content: center;
+		flex-wrap: wrap;
 		gap: 0.5rem;
 	}
 	.setting-chip {
@@ -626,6 +634,18 @@
 		.ctrl-btn {
 			padding: 0.5rem 0.6rem;
 			font-size: 0.8rem;
+		}
+		/* The sentence row's four buttons (Section / Sentence / Repeat /
+		   Sentence) must fit one line now that Keys-skip moved to the toggles;
+		   tighten padding + gap so the last "Sentence" no longer wraps. */
+		.sentence-row {
+			gap: 0.3rem;
+			flex-wrap: nowrap;
+		}
+		.sentence-row .small {
+			padding: 0.35rem 0.4rem;
+			font-size: 0.75rem;
+			white-space: nowrap;
 		}
 	}
 </style>

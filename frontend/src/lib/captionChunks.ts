@@ -1,7 +1,46 @@
-export const MAX_CAPTION_CHARS = 64;
+// Tuned so a chunk fits one line of the 1.3rem caption on a narrow phone;
+// longer text is split (at clause boundaries first) into several timed chunks
+// rather than wrapping to a second, orphaned line.
+export const MAX_CAPTION_CHARS = 32;
 
 const SENTENCE_RE = /[^.!?…]+[.!?…]+/g;
-const CLAUSE_RE = /([,;:\u2014\u2013])/;
+const CLAUSE_RE = /([,;:—–])/;
+
+// Greedily pack words onto lines of at most `max` chars, never splitting a
+// single word (an over-long word is emitted alone, exceeding `max`).
+function wordPack(text: string, max: number): string[] {
+  const out: string[] = [];
+  let line = "";
+  for (const word of text.split(/\s+/)) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (candidate.length > max && line.length > 0) {
+      out.push(line);
+      line = word;
+    } else {
+      line = candidate;
+    }
+  }
+  if (line) out.push(line);
+  return out;
+}
+
+// Break one sentence into clause pieces at comma/semicolon/colon/dash, keeping
+// each separator on its left piece. Returns [sentence] when there is no clause
+// boundary.
+function clauseSplit(sentence: string): string[] {
+  const parts = sentence.split(CLAUSE_RE);
+  if (parts.length <= 1) return [sentence];
+  const pieces: string[] = [];
+  for (const part of parts) {
+    if (CLAUSE_RE.test(part)) {
+      if (pieces.length > 0) pieces[pieces.length - 1] += part;
+    } else {
+      const t = part.trimStart();
+      if (t.length > 0) pieces.push(t);
+    }
+  }
+  return pieces;
+}
 
 export function splitCaption(text: string): string[] {
   const trimmed = text.trim();
@@ -25,49 +64,15 @@ export function splitCaption(text: string): string[] {
       chunks.push(sentence);
       continue;
     }
-
-    // Step 2b: split at clause boundaries (comma, semicolon, colon, dash)
-    // for sentences longer than MAX. Punctuation kept on the left piece.
-    const clauseParts = sentence.split(CLAUSE_RE);
-    if (clauseParts.length > 1) {
-      // Reassemble: attach each separator to its preceding piece
-      const assembled: string[] = [];
-      for (let i = 0; i < clauseParts.length; i++) {
-        if (clauseParts[i].match(CLAUSE_RE)) {
-          // Separator — attach to previous piece
-          if (assembled.length > 0) {
-            assembled[assembled.length - 1] += clauseParts[i];
-          }
-        } else {
-          const trimmed = clauseParts[i].trimStart();
-          if (trimmed.length > 0) {
-            assembled.push(trimmed);
-          }
-        }
-      }
-
-      // Check if any assembled piece is still over budget
-      const needsWordPack = assembled.some((p) => p.length > MAX_CAPTION_CHARS);
-      if (!needsWordPack) {
-        chunks.push(...assembled);
-        continue;
-      }
-      // Fall through to word-packing for the whole sentence
-    }
-
-    // Step 2c: word-packing (existing greedy logic)
-    const words = sentence.split(/\s+/);
-    let line = "";
-    for (const word of words) {
-      const candidate = line ? `${line} ${word}` : word;
-      if (candidate.length > MAX_CAPTION_CHARS && line.length > 0) {
-        chunks.push(line);
-        line = word;
+    // Prefer clause boundaries, then word-pack any clause that's still too
+    // long — so the comma split survives even when MAX is small.
+    for (const piece of clauseSplit(sentence)) {
+      if (piece.length <= MAX_CAPTION_CHARS) {
+        chunks.push(piece);
       } else {
-        line = candidate;
+        chunks.push(...wordPack(piece, MAX_CAPTION_CHARS));
       }
     }
-    if (line) chunks.push(line);
   }
 
   return chunks.filter((c) => c.length > 0);

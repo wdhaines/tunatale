@@ -33,15 +33,18 @@ describe("splitCaption", () => {
     expect(chunks.join(" ")).toBe(long);
   });
 
-  it("splits at clause boundaries (comma) for sentences over MAX", () => {
+  it("splits at the comma first, then word-packs the long clause, keeping every chunk in budget", () => {
     const text = "En kvinne hadde forsvunnet, og Hansen visste at dette var en vanskelig sak.";
     const chunks = splitCaption(text);
-    expect(chunks).toEqual([
-      "En kvinne hadde forsvunnet,",
-      "og Hansen visste at dette var en vanskelig sak.",
-    ]);
-    expect(chunks[0].length).toBeLessThanOrEqual(MAX_CAPTION_CHARS);
-    expect(chunks[1].length).toBeLessThanOrEqual(MAX_CAPTION_CHARS);
+    // The comma boundary survives even though the second clause is longer than
+    // MAX and must itself be word-packed into further chunks.
+    expect(chunks[0]).toBe("En kvinne hadde forsvunnet,");
+    expect(chunks.length).toBeGreaterThan(2);
+    for (const c of chunks) {
+      expect(c.length).toBeLessThanOrEqual(MAX_CAPTION_CHARS);
+    }
+    // No word is lost or split across chunks.
+    expect(chunks.join(" ")).toBe(text);
   });
 
   it("splits at semicolon for sentences over MAX", () => {
@@ -55,9 +58,11 @@ describe("splitCaption", () => {
   });
 
   it("keeps punctuation on the left piece after clause split", () => {
-    const text = "First part, second part.";
+    // Long enough (> MAX) to actually split at the comma.
+    const text = "The first clause runs here, and the second clause runs there.";
     const chunks = splitCaption(text);
-    expect(chunks[0]).toContain(",");
+    expect(text.length).toBeGreaterThan(MAX_CAPTION_CHARS);
+    expect(chunks[0].endsWith(",")).toBe(true);
   });
 
   it("passes through short sentences unchanged", () => {
