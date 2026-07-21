@@ -7,6 +7,7 @@ import LessonPlayer from "./LessonPlayer.svelte";
 import PillSyncHarness from "../../test/PillSyncHarness.svelte";
 import { tick } from "svelte";
 import { maybePrefetchLesson } from "$lib/sw/prefetch";
+import { captionBlurPref } from "$lib/stores/captionBlurPref.svelte";
 import type { Cue, LessonAudio } from "$lib/api";
 import type { PlaybackController } from "$lib/playback/playbackController.svelte";
 
@@ -22,6 +23,17 @@ beforeAll(() => {
       this.dispatchEvent(new Event("pause"));
     },
   );
+  // Define currentTime so setting it dispatches timeupdate (controllers rely on it).
+  Object.defineProperty(HTMLAudioElement.prototype, "currentTime", {
+    get() {
+      return (this as Record<string, unknown>).__tt_currentTime ?? 0;
+    },
+    set(v: number) {
+      (this as Record<string, unknown>).__tt_currentTime = v;
+      this.dispatchEvent(new Event("timeupdate"));
+    },
+    configurable: true,
+  });
 });
 
 // The player persists its phase/enunciation/English selection to localStorage;
@@ -29,6 +41,7 @@ beforeAll(() => {
 beforeEach(() => {
   localStorage.clear();
   vi.mocked(maybePrefetchLesson).mockClear();
+  captionBlurPref.set(true);
 });
 
 vi.mock("$lib/api", () => ({
@@ -734,6 +747,183 @@ describe("LessonPlayer", () => {
       expect(vi.mocked(maybePrefetchLesson)).toHaveBeenCalledTimes(1);
       const urls = vi.mocked(maybePrefetchLesson).mock.calls[0][0];
       expect(urls).toEqual(["/api/audio/a1"]);
+    });
+  });
+
+  // --- Caption blur (Item A) ---
+
+  const longNarrationText =
+    "The sun rose over the quiet village, casting a warm golden light across the cobblestone streets. Birds sang in the ancient oak trees that lined the path to the market square.";
+
+  const audioForBlurToggle: LessonAudio = {
+    audio_id: "a1",
+    lesson_id: "l1",
+    sections: [
+      { audio_id: "s1", section_index: 0, section_type: "key_phrases", title: "Key Phrases" },
+      { audio_id: "s2", section_index: 1, section_type: "natural_speed", title: "Natural Speed" },
+    ],
+    cues: [
+      {
+        index: 0,
+        start_ms: 0,
+        end_ms: 800,
+        section_index: 0,
+        section_type: "key_phrases",
+        phrase_index: 0,
+        role: "narrator",
+        language_code: "en",
+        text: "Hello world",
+        ref: { kind: "key_phrase", target_index: 0 },
+      },
+    ],
+  };
+
+  const audioForLongCue: LessonAudio = {
+    audio_id: "a1",
+    lesson_id: "l1",
+    sections: [
+      { audio_id: "s1", section_index: 0, section_type: "key_phrases", title: "Key Phrases" },
+      { audio_id: "s2", section_index: 1, section_type: "natural_speed", title: "Natural Speed" },
+    ],
+    cues: [
+      {
+        index: 0,
+        start_ms: 0,
+        end_ms: 20000,
+        section_index: 0,
+        section_type: "key_phrases",
+        phrase_index: 0,
+        role: "narrator",
+        language_code: "en",
+        text: longNarrationText,
+        ref: { kind: "key_phrase", target_index: 0 },
+      },
+    ],
+  };
+
+  const audioForMultiCue: LessonAudio = {
+    audio_id: "a1",
+    lesson_id: "l1",
+    sections: [
+      { audio_id: "s1", section_index: 0, section_type: "key_phrases", title: "Key Phrases" },
+      { audio_id: "s2", section_index: 1, section_type: "natural_speed", title: "Natural Speed" },
+    ],
+    cues: [
+      {
+        index: 0,
+        start_ms: 0,
+        end_ms: 800,
+        section_index: 0,
+        section_type: "key_phrases",
+        phrase_index: 0,
+        role: "narrator",
+        language_code: "en",
+        text: "Hello world",
+        ref: { kind: "key_phrase", target_index: 0 },
+      },
+      {
+        index: 1,
+        start_ms: 1000,
+        end_ms: 2000,
+        section_index: 1,
+        section_type: "natural_speed",
+        phrase_index: 1,
+        role: "speaker",
+        language_code: "en",
+        text: "Goodbye world",
+        ref: { kind: "line", target_index: 1 },
+      },
+    ],
+  };
+
+  describe("caption blur", () => {
+    it("setting enabled (default): caption has blur class and is a button; clicking reveals", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
+      const line = container.querySelector(".current-line")!;
+      expect(line.classList.contains("blurred")).toBe(true);
+      expect(line.tagName).toBe("BUTTON");
+      fireEvent.click(line);
+      expect(line.classList.contains("revealed")).toBe(true);
+    });
+
+    it("keyboard Enter/Space reveals the caption", async () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioForMultiCue } });
+      const line = container.querySelector(".current-line")!;
+      expect(line.classList.contains("blurred")).toBe(true);
+      await fireEvent.keyDown(line, { key: "Enter" });
+      expect(line.classList.contains("revealed")).toBe(true);
+      // Re-blur by advancing to next cue, then test Space
+      fireEvent.click(container.querySelector('button[title="Next sentence"]')!);
+      await tick();
+      await fireEvent.keyDown(line, { key: " " });
+      expect(line.classList.contains("revealed")).toBe(true);
+    });
+
+    it("re-blurs when advancing to a new cue", async () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioForMultiCue } });
+      const line = container.querySelector(".current-line")!;
+      expect(line.classList.contains("blurred")).toBe(true);
+      fireEvent.click(line);
+      expect(line.classList.contains("revealed")).toBe(true);
+      // Advance to next cue → new cue re-blurs
+      fireEvent.click(container.querySelector('button[title="Next sentence"]')!);
+      await tick();
+      expect(line.classList.contains("blurred")).toBe(true);
+      expect(line.classList.contains("revealed")).toBe(false);
+    });
+
+    it("setting disabled: no blur class, not a button, text visible", () => {
+      captionBlurPref.set(false);
+      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
+      const line = container.querySelector(".current-line")!;
+      expect(line.classList.contains("blurred")).toBe(false);
+      expect(line.tagName).not.toBe("BUTTON");
+    });
+
+    it("blur toggle renders on a cue-bearing NON-trackMode lesson and clicking flips the pref", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioForBlurToggle } });
+      const btn = container.querySelector(".caption-blur-btn");
+      expect(btn).toBeTruthy();
+      expect(btn!.getAttribute("aria-pressed")).toBe("true");
+      fireEvent.click(btn!);
+      expect(captionBlurPref.enabled).toBe(false);
+      expect(btn!.getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("caption blur toggle does not render in compact (Read) mode", () => {
+      const { container } = render(LessonPlayer, {
+        props: { audio: audioWithAllSections, compact: true },
+      });
+      expect(container.querySelector(".caption-blur-btn")).toBeFalsy();
+    });
+  });
+
+  // --- Chunked captions (Item B) ---
+
+  describe("chunked captions", () => {
+    it("short single-line cue renders full text unchanged", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
+      expect(container.querySelector(".current-line")!.textContent).toContain("Hello world");
+    });
+
+    it("long narration cue shows first chunk at start, later chunk after seek", async () => {
+      let ctrl: PlaybackController | null = null;
+      const { container } = render(PillSyncHarness, {
+        props: {
+          audio: audioForLongCue,
+          onController: (c: PlaybackController) => {
+            ctrl = c;
+          },
+        },
+      });
+      await tick();
+      const line = container.querySelector(".current-line")!;
+      const initialText = line.textContent!;
+      expect(initialText.length).toBeLessThan(longNarrationText.length);
+      // Seek to near the end → should show the last chunk
+      ctrl!.seekTo(19);
+      await tick();
+      expect(line.textContent).not.toBe(initialText);
     });
   });
 });

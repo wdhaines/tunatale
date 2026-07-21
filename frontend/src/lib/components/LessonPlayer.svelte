@@ -10,6 +10,8 @@
 	import type { EnglishMode } from '$lib/stores/lessonPlayerPref.svelte';
 	import { createPlaybackController } from '$lib/playback/playbackController.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
+	import { captionBlurPref } from '$lib/stores/captionBlurPref.svelte';
+	import { splitCaption, activeChunkIndex } from '$lib/captionChunks';
 
 	interface Props {
 		audio: LessonAudio;
@@ -101,6 +103,26 @@
 	let enunLevel: string = $state('natural');
 	let englishMode: EnglishMode = $state('off');
 
+	// --- Caption blur state ---
+	let revealedKey: string | null = $state(null);
+
+	// --- Chunked caption state ---
+	const captionChunks = $derived(ctrl.currentCue ? splitCaption(ctrl.currentCue.text) : []);
+	const captionIdx = $derived(
+		ctrl.currentCue
+			? activeChunkIndex(captionChunks, ctrl.currentCue.start_ms, ctrl.currentCue.end_ms, ctrl.currentTime * 1000)
+			: 0
+	);
+	const activeChunkKey = $derived(
+		ctrl.currentCue ? `${ctrl.currentCue.index}:${captionIdx}` : ''
+	);
+
+	// Re-blur when a new chunk or cue appears
+	$effect(() => {
+		const _key = activeChunkKey;
+		revealedKey = null;
+	});
+
 	let selectedSectionType = $derived(resolveSectionType(phase, enunLevel, englishMode));
 	let enunIndex = $derived(ENUNCIATION_OPTIONS.findIndex((o) => o.level === enunLevel));
 
@@ -142,6 +164,17 @@
 		cycleEnglish();
 		applyTrack();
 		persistSelection();
+	}
+
+	function revealCaption() {
+		revealedKey = activeChunkKey;
+	}
+
+	function onCaptionKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			revealCaption();
+		}
 	}
 
 	// Mirror the pills onto whatever track is actually playing. A transcript ▶ tap
@@ -193,6 +226,8 @@
 	}
 
 	onMount(() => {
+		captionBlurPref.init();
+
 		// Seed the persisted phase/enunciation/English selection and make it
 		// effective. Gated on trackMode: without per-section cues the phase
 		// model doesn't apply, so we leave the legacy full-lesson track in
@@ -329,9 +364,28 @@
 		<!-- Subtitle sits BELOW the controls: the player is a sticky header, so the
 		     line reads nearest the content. Compact (Read mode) omits it — the
 		     synced transcript is the subtitle there. -->
-		<div class="current-line" title={ctrl.currentCue?.text ?? ''}>
-			{ctrl.currentCue?.text ?? ''}
-		</div>
+		{#if captionBlurPref.enabled}
+			<button
+				class="current-line blurred"
+				class:revealed={revealedKey === activeChunkKey}
+				title={ctrl.currentCue?.text ?? ''}
+				onclick={revealCaption}
+				onkeydown={onCaptionKeydown}
+			>
+				{captionChunks[captionIdx] ?? ''}
+			</button>
+		{:else}
+			<div class="current-line" title={ctrl.currentCue?.text ?? ''}>
+				{captionChunks[captionIdx] ?? ''}
+			</div>
+		{/if}
+		<button
+			class="caption-blur-btn"
+			aria-pressed={captionBlurPref.enabled}
+			onclick={() => captionBlurPref.set(!captionBlurPref.enabled)}
+		>
+			{captionBlurPref.enabled ? 'Blur On' : 'Blur Off'}
+		</button>
 	{/if}
 
 </section>
@@ -363,8 +417,32 @@
 		font-weight: 700;
 		line-height: 1.4;
 		padding: 0.5rem 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		border: none;
+		background: none;
+		text-align: left;
+		width: 100%;
+		cursor: default;
+	}
+	.current-line.blurred {
+		filter: blur(8px);
+		cursor: pointer;
+		user-select: none;
+	}
+	.current-line.revealed {
+		filter: none;
+		cursor: default;
+	}
+	.caption-blur-btn {
+		min-height: 32px;
+		padding: 0.25rem 0.6rem;
+		background: var(--color-surface-2);
+		color: var(--color-text);
+		border: 1px solid var(--color-border, #ddd);
+		border-radius: var(--radius-pill, 999px);
+		font-size: 0.75rem;
+		font-weight: 600;
+		cursor: pointer;
+		align-self: flex-start;
 	}
 	.transport-row {
 		display: flex;
