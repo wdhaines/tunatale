@@ -292,6 +292,61 @@ class TestLessonReviewQueue:
         assert row["button_chosen"] == 1
         assert row["review_kind"] == 1
 
+    async def test_card_graded_since_listen_is_dropped_not_reserved(self):
+        """Regression (card 3005 'fra', reps=7): a touched-today REVIEW card graded
+        in the correction pass must leave the lesson queue. Before the fix,
+        `touched_today` kept re-including it, so grading Good re-served the same
+        card forever. The arming listen's own auto-Good stays (record_listen runs
+        after the grade loop, so last_review <= listen); a manual grade *after* the
+        listen exceeds it and drops the card. A fresh listen re-arms the pass."""
+        db = self._setup(self._lesson(["banka"]))
+        self._track(db, "banka")
+        self._set_dir(
+            db,
+            "banka",
+            "recognition",
+            "review",
+            due_at="2026-01-01T04:00:00+00:00",
+            last_review="2026-01-01T00:00:00+00:00",
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            listen = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert listen.json()["graded"] == 1
+
+        # Auto-Good'd by the listen, not yet manually reviewed → in the pass.
+        resp = await self._get_queue()
+        queue = resp.json()["queue"]
+        assert [i["text"] for i in queue] == ["banka"]
+        item_id = queue[0]["id"]
+
+        # Manually grade it in the correction pass.
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post(
+                f"/api/srs/items/{item_id}/direction/recognition/feedback",
+                json={"rating": "good"},
+            )
+
+        # Now it must be gone — not re-served (the infinite-loop fix).
+        resp2 = await self._get_queue()
+        assert [i["text"] for i in resp2.json()["queue"]] == []
+
+        # A fresh listen re-arms the correction pass.
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        resp3 = await self._get_queue()
+        assert [i["text"] for i in resp3.json()["queue"]] == ["banka"]
+
+    async def test_new_card_unaffected_by_graded_since_listen_filter(self):
+        """A NEW card (last_review is None) is never dropped by the graded-since-
+        listen filter, even with a listen recorded — it stays until introduced."""
+        db = self._setup(self._lesson(["banka"]))
+        self._track(db, "banka")  # stays NEW
+        db.record_listen("lesson-1")
+
+        resp = await self._get_queue()
+        assert [i["text"] for i in resp.json()["queue"]] == ["banka"]
+
     async def test_key_phrase_edge_cases_untracked_learning_duplicate(self):
         """Untracked key phrases are skipped, a learning key phrase lands in the
         learning bucket (not the NEW ranking), and a duplicate key phrase entry

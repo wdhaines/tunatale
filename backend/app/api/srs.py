@@ -903,6 +903,13 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     today_start, today_end = anki_day_bounds_utc_dt(today)
     now = datetime.datetime.now(datetime.UTC)
 
+    # One correction pass per listen: a card graded *after* the arming listen has
+    # been handled, so it drops out of the queue (see _classify). record_listen
+    # runs after the /listen auto-Good loop, so the listen's own grades have
+    # last_review <= this timestamp and stay in the pass.
+    latest_listen = db.latest_listen_at(lesson_id)
+    latest_listen_dt = datetime.datetime.fromisoformat(latest_listen) if latest_listen is not None else None
+
     seen: set[int] = set()
     learning: list[tuple[datetime.datetime, int, SRSItem, Direction]] = []
     review: list[tuple[datetime.datetime, int, SRSItem, Direction]] = []
@@ -915,6 +922,17 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
         direction = Direction.PRODUCTION if item.syntactic_unit.card_type == "cloze" else Direction.RECOGNITION
         ds = item.directions.get(direction)
         if ds is None:
+            return None
+        # Already handled in this correction pass — graded since the arming
+        # listen — so drop it. Without this a touched-today REVIEW card (or a
+        # just-advanced learning card) re-qualifies below and the queue re-serves
+        # the same card on every grade (the reps-climbing "same card over and
+        # over" loop). A fresh listen re-arms the pass.
+        if (
+            latest_listen_dt is not None
+            and ds.last_review is not None
+            and ds.last_review.astimezone(datetime.UTC) > latest_listen_dt
+        ):
             return None
         if ds.state in (SRSState.LEARNING, SRSState.RELEARNING):
             learning.append((ds.due_at, rid, item, direction))
@@ -965,7 +983,6 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     ordered.extend((rid, item, d) for _, rid, item, d in review)
 
     ambiguous = db.get_ambiguous_surfaces(lesson.language_code)
-    latest_listen = db.latest_listen_at(lesson_id)
     latest_review = db.latest_review_at(lesson_id)
     has_unreviewed_listen = _has_unreviewed_listen(latest_listen, latest_review)
     return {
