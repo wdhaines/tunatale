@@ -74,6 +74,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await seedListened("l1", 3);
       mockFetchLessonReviewQueue.mockResolvedValue({
         queue: [{ id: 1 } as never, { id: 2 } as never],
+        has_unreviewed_listen: true,
       });
 
       const { getByText } = render(Page, {
@@ -91,7 +92,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
 
     it("does not show check-your-work when N = 0", async () => {
       await seedListened("l1", 2);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
       const { queryByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
@@ -107,7 +108,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     // button, not a "review 0 words" link.
     it("C2: already-listened reload with empty queue shows 'Mark as Listened', not check-work link", async () => {
       await seedListened("l1", 1);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
       const { getByText, queryByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
@@ -126,7 +127,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
 
     it("fetches review queue on mount when already listened", async () => {
       await seedListened("l1", 1);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
       render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
@@ -147,7 +148,10 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         listen_count: 4,
       });
       mockGetTranscript.mockResolvedValue(transcript);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [{} as never] });
+      mockFetchLessonReviewQueue.mockResolvedValue({
+        queue: [{} as never],
+        has_unreviewed_listen: true,
+      });
 
       const { getByText, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
@@ -171,7 +175,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         listen_count: 5,
       });
       mockGetTranscript.mockResolvedValue(transcript);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
       const { getByText, queryByText, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
@@ -190,6 +194,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await seedListened("l1", 3);
       mockFetchLessonReviewQueue.mockResolvedValue({
         queue: [{} as never],
+        has_unreviewed_listen: true,
       });
 
       const { getByText } = render(Page, {
@@ -213,7 +218,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         listen_count: 3,
       });
       mockGetTranscript.mockResolvedValue(transcript);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
       const { getByText, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
@@ -230,6 +235,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await seedListened("l1", 1);
       mockFetchLessonReviewQueue.mockResolvedValue({
         queue: [{} as never],
+        has_unreviewed_listen: true,
       });
 
       const { getByText } = render(Page, {
@@ -325,7 +331,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         ],
       };
       mockGetTranscript.mockResolvedValue(transcriptWithWords);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
       const { getByText } = render(Page, {
         props: { data: { curriculum, lesson, audio: null, transcript: transcriptWithWords } },
@@ -383,7 +389,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         ],
       };
       mockGetTranscript.mockResolvedValue(transcriptAllStates);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
       const { getByText, container } = render(Page, {
         props: { data: { curriculum, lesson, audio: null, transcript: transcriptAllStates } },
@@ -473,7 +479,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         remaining_candidates: 0,
         listen_count: 1,
       });
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
       const { getByText, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript: beforeTranscript } },
@@ -536,7 +542,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         ],
       };
       mockGetTranscript.mockResolvedValue(tx);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
       const { container } = render(Page, {
         props: { data: { curriculum, lesson, audio: null, transcript: tx } },
@@ -559,7 +565,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         dialogue_lines: [{ role: "A", sentence: words.map((w) => w.surface).join(" "), words }],
       };
       mockGetTranscript.mockResolvedValue(tx);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
       const { container } = render(Page, {
         props: { data: { curriculum, lesson, audio: null, transcript: tx } },
@@ -587,7 +593,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         ],
       };
       mockGetTranscript.mockResolvedValue(tx);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
       const { container } = render(Page, {
         props: { data: { curriculum, lesson, audio: null, transcript: tx } },
@@ -619,7 +625,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         ],
       };
       mockGetTranscript.mockResolvedValue(tx);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
       const { container } = render(Page, {
         props: { data: { curriculum, lesson, audio: null, transcript: tx } },
@@ -711,7 +717,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
 
     it("mastery line renders in read mode", async () => {
       mockGetTranscript.mockResolvedValue(transcriptWithRecFields);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
       const { getByText } = render(Page, {
         props: {
@@ -732,7 +738,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
 
     it("'Mark as Listened' renders in read mode and fires on click", async () => {
       mockGetTranscript.mockResolvedValue(transcriptWithRecFields);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
       mockMarkAsListened.mockResolvedValue({
         status: "ok",
         registered: 1,
@@ -768,7 +774,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
 
     it("listen mode behavior unchanged — mastery line still renders", async () => {
       mockGetTranscript.mockResolvedValue(transcriptWithRecFields);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
       const { getByText } = render(Page, {
         props: {
@@ -791,7 +797,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
 
     it("mastery line is inside player-card, no separate listen-card section", async () => {
       mockGetTranscript.mockResolvedValue(transcriptWithRecFields);
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
       const { container } = render(Page, {
         props: {

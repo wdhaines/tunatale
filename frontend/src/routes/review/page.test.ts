@@ -41,6 +41,7 @@ vi.mock("$lib/api", () => ({
     fetchReviewQueue: vi.fn(),
     fetchLessonReviewQueue: vi.fn(),
     submitDrill: vi.fn(),
+    markLessonReviewed: vi.fn(),
   },
 }));
 
@@ -68,7 +69,7 @@ beforeEach(() => {
     fsrs_source: "default",
   });
   mockFetchReviewQueue.mockResolvedValue({ queue: [] });
-  mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+  mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
   mockSubmitDrill.mockResolvedValue({ new_due_at: "2026-04-25", new_state: "review" });
 });
 
@@ -726,7 +727,7 @@ describe("review/+page.svelte", () => {
         translation: "window",
         direction: "recognition",
       });
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
       render(ReviewPage);
       await screen.findByText("okno");
 
@@ -742,8 +743,8 @@ describe("review/+page.svelte", () => {
         direction: "recognition",
       });
       mockFetchLessonReviewQueue
-        .mockResolvedValueOnce({ queue: [item] })
-        .mockResolvedValueOnce({ queue: [] });
+        .mockResolvedValueOnce({ queue: [item], has_unreviewed_listen: true })
+        .mockResolvedValueOnce({ queue: [], has_unreviewed_listen: false });
       const { findByRole } = render(ReviewPage);
       await fireEvent.click(await findByRole("button", { name: "Show" }));
       await fireEvent.click(await findByRole("button", { name: "Good" }));
@@ -759,7 +760,7 @@ describe("review/+page.svelte", () => {
         translation: "water",
         direction: "recognition",
       });
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item] });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
       const { findByRole } = render(ReviewPage);
       await fireEvent.click(await findByRole("button", { name: "Show" }));
       await fireEvent.click(await findByRole("button", { name: "Good" }));
@@ -822,7 +823,10 @@ describe("review/+page.svelte", () => {
         state: "learning",
         direction: "recognition",
       });
-      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [newCard, newCard2, learnCard] });
+      mockFetchLessonReviewQueue.mockResolvedValue({
+        queue: [newCard, newCard2, learnCard],
+        has_unreviewed_listen: true,
+      });
 
       const { container } = render(ReviewPage);
       await screen.findByText("en");

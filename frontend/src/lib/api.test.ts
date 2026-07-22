@@ -1681,6 +1681,26 @@ describe("TunaTaleAPI", () => {
       );
     });
   });
+
+  describe("markLessonReviewed", () => {
+    it("POSTs /api/srs/lesson/{id}/reviewed and returns ok", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ ok: true })));
+
+      const result = await api.markLessonReviewed("lesson-1");
+
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/lesson/lesson-1/reviewed`, {
+        method: "POST",
+      });
+      expect(result).toEqual({ ok: true });
+    });
+
+    it("throws on non-ok response", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Not Found")));
+      await expect(api.markLessonReviewed("missing")).rejects.toThrow(
+        "POST /api/srs/lesson/missing/reviewed: Not Found",
+      );
+    });
+  });
 });
 
 describe("TunaTaleAPI language header", () => {

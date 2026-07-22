@@ -120,10 +120,10 @@ class TestMigrationV36ToV37:
         migrate_v36_to_v37(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 37
 
-    def test_current_version_is_38(self):
+    def test_current_version_is_39(self):
         from app.srs.migrations import CURRENT_VERSION
 
-        assert CURRENT_VERSION == 38
+        assert CURRENT_VERSION == 39
 
 
 # ---------------------------------------------------------------------------

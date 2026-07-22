@@ -58,3 +58,12 @@ class DbListensMixin:
             {"lesson_id": r["lesson_id"], "listen_count": r["listen_count"], "last_listened_at": r["last_listened_at"]}
             for r in rows
         ]
+
+    def latest_listen_at(self, lesson_id: str) -> str | None:
+        """Most recent listened_at ISO timestamp, or None if never listened."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT MAX(listened_at) AS latest FROM lesson_listens WHERE lesson_id = ?",
+                (lesson_id,),
+            ).fetchone()
+        return row["latest"]

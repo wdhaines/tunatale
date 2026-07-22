@@ -15,8 +15,10 @@ from app.srs.db_histogram import DbHistogramMixin
 from app.srs.db_ignored_lemmas import DbIgnoredLemmasMixin
 from app.srs.db_kv_cache import DbKvCacheMixin
 from app.srs.db_lemma_cache import DbLemmaCacheMixin
+from app.srs.db_listens import DbListensMixin
 from app.srs.db_media import DbMediaMixin
 from app.srs.db_queue import DbQueueMixin
+from app.srs.db_reviews import DbReviewsMixin
 from app.srs.db_revlog import DbRevlogMixin
 from app.srs.db_sync import DbSyncMixin
 from app.srs.db_sync_conflicts import DbSyncConflictsMixin
@@ -32,6 +34,8 @@ _EXPECTED_BASES = [
     DbKvCacheMixin,
     DbHistogramMixin,
     DbLemmaCacheMixin,
+    DbListensMixin,
+    DbReviewsMixin,
     DbIgnoredLemmasMixin,
     DbSyncConflictsMixin,
     SRSDatabaseBase,
@@ -52,5 +56,7 @@ def test_public_method_count_pinned() -> None:
     # +get_image_filenames (Step 6-tail: batched image lookup for /items)
     # +is_media_filename_referenced (fix #4: shared-file reference check for orphan cleanup)
     # +record_listen, has_listen, count_listens, get_listened_lessons (lesson_listens)
+    # +latest_listen_at (lesson_listens)
     # +count_new_created_today (staged-listen creation budget)
-    assert count == 112
+    # +record_review, latest_review_at (lesson_reviews)
+    assert count == 115

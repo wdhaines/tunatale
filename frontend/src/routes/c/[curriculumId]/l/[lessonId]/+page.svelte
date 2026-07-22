@@ -36,6 +36,7 @@
 	let listenLoading = $state(false);
 	let listenResult = $state<ListenResponse | null>(null);
 	let queueCount = $state(0);
+	let hasUnreviewedListen = $state(false);
 	let audioLoading = $state(false);
 	// Stays true from the Regenerate click until the pipeline lands the new lesson
 	// (navigate) or fails — NOT just for the brief regenerateDay request, so the
@@ -277,8 +278,11 @@
 	async function fetchQueue() {
 		const lessonId = data.lesson.id;
 		try {
-			const { queue } = await api.fetchLessonReviewQueue(lessonId);
-			if (data.lesson.id === lessonId) queueCount = queue.length;
+			const { queue, has_unreviewed_listen } = await api.fetchLessonReviewQueue(lessonId);
+			if (data.lesson.id === lessonId) {
+				queueCount = queue.length;
+				hasUnreviewedListen = has_unreviewed_listen;
+			}
 		} catch {
 			// 404 or network error — leave queueCount at its last value.
 		}
@@ -334,7 +338,7 @@
 	const fullyAcquired = $derived(listenResult !== null && listenResult.remaining_candidates === 0 && queueCount === 0);
 
 	// Derived booleans for template conditionals (avoid && phantom branches)
-	const showCheckWorkLink = $derived(isListened ? !fullyAcquired && queueCount > 0 : false);
+	const showCheckWorkLink = $derived(isListened ? !fullyAcquired && queueCount > 0 && hasUnreviewedListen : false);
 	const showFullyAcquiredBtn = $derived(isListened ? fullyAcquired : false);
 	const listenCount = $derived(listenedStore.count(data.lesson.id));
 

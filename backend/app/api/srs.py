@@ -854,6 +854,15 @@ async def import_listens(body: ImportListensRequest, request: Request):
     return {"imported": imported, "already_present": already_present, "unknown": unknown}
 
 
+def _has_unreviewed_listen(latest_listen: str | None, latest_review: str | None) -> bool:
+    """True when there is a listen strictly newer than the last completed review.
+
+    Gates the lesson page's "Check your work" link to one-shot-per-listen.
+    ISO-8601 UTC timestamps compare correctly as strings.
+    """
+    return latest_listen is not None and (latest_review is None or latest_listen > latest_review)
+
+
 @router.get("/lesson/{lesson_id}/review-queue", status_code=200)
 async def get_lesson_review_queue(lesson_id: str, request: Request, response: Response) -> dict:
     """Lesson-scoped "Check your work" queue (learning-modes slice 1, D6).
@@ -956,9 +965,30 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     ordered.extend((rid, item, d) for _, rid, item, d in review)
 
     ambiguous = db.get_ambiguous_surfaces(lesson.language_code)
+    latest_listen = db.latest_listen_at(lesson_id)
+    latest_review = db.latest_review_at(lesson_id)
+    has_unreviewed_listen = _has_unreviewed_listen(latest_listen, latest_review)
     return {
-        "queue": [_queue_item_to_dict(rid, item, lesson.language_code, d, db, ambiguous) for rid, item, d in ordered]
+        "queue": [_queue_item_to_dict(rid, item, lesson.language_code, d, db, ambiguous) for rid, item, d in ordered],
+        "has_unreviewed_listen": has_unreviewed_listen,
     }
+
+
+@router.post("/lesson/{lesson_id}/reviewed", status_code=200)
+async def mark_lesson_reviewed(lesson_id: str, request: Request) -> dict:
+    """Record completion of a lesson-scoped 'Check your work' review.
+
+    Gates the lesson page's "Check your work" link to one-shot-per-listen:
+    a completed review clears the link until the next listen re-arms it
+    (has_unreviewed_listen on the review-queue response). TT-only; touches
+    no parity/FSRS state.
+    """
+    store = request.state.content_store
+    if store.get_lesson(lesson_id) is None:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    db = request.state.srs_db
+    db.record_review(lesson_id)
+    return {"ok": True}
 
 
 @router.get("/lesson/{lesson_id}/transcript", status_code=200)

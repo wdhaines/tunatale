@@ -833,8 +833,14 @@ export class TunaTaleAPI {
     });
   }
 
-  async fetchLessonReviewQueue(lessonId: string): Promise<{ queue: ReviewQueueItem[] }> {
+  async fetchLessonReviewQueue(
+    lessonId: string,
+  ): Promise<{ queue: ReviewQueueItem[]; has_unreviewed_listen: boolean }> {
     return this.request(`/api/srs/lesson/${lessonId}/review-queue`);
+  }
+
+  async markLessonReviewed(lessonId: string): Promise<{ ok: boolean }> {
+    return this.request(`/api/srs/lesson/${lessonId}/reviewed`, { method: "POST" });
   }
 
   async getLessonTranscript(lessonId: string): Promise<TranscriptData> {

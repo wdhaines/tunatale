@@ -281,7 +281,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       listen_count: 3,
     });
     mockGetTranscript.mockResolvedValue(transcript);
-    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
     const { findByText, getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
@@ -306,7 +306,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       listen_count: 3,
     });
     mockGetTranscript.mockResolvedValue(transcript);
-    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
     mockQueueStatsRefresh.mockClear();
 
     const { getByText } = render(Page, {
@@ -323,7 +323,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
 
   it("shows listened state when the lesson was already listened to", async () => {
     await seedListened("l1", 1);
-    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
     const { getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
     });
@@ -580,7 +580,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       listen_count: 3,
     });
     mockGetTranscript.mockResolvedValue(transcript);
-    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
     const { findByText, getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
@@ -603,7 +603,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       listen_count: 2,
     });
     mockGetTranscript.mockResolvedValue(transcript);
-    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [] });
+    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
     const { findByText, getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },

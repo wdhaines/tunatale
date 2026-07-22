@@ -98,3 +98,25 @@ class TestGetListenedLessons:
         result = db.get_listened_lessons()
         assert result[0]["lesson_id"] == "new-lesson"
         assert result[1]["lesson_id"] == "old-lesson"
+
+
+class TestLatestListenAt:
+    def test_none_when_empty(self, db):
+        assert db.latest_listen_at("lesson-1") is None
+
+    def test_returns_max_when_multiple(self, db):
+        db.record_listen("lesson-1")
+        db.record_listen("lesson-1")
+        result = db.latest_listen_at("lesson-1")
+        assert result is not None
+        with db._get_conn() as conn:
+            all_listens = conn.execute("SELECT listened_at FROM lesson_listens WHERE lesson_id = 'lesson-1'").fetchall()
+        all_timestamps = [r["listened_at"] for r in all_listens]
+        assert result == max(all_timestamps)
+
+    def test_per_lesson_isolated(self, db):
+        db.record_listen("a")
+        db.record_listen("b")
+        assert db.latest_listen_at("a") is not None
+        assert db.latest_listen_at("b") is not None
+        assert db.latest_listen_at("c") is None

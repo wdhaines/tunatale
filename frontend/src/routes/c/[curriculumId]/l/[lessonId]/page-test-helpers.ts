@@ -43,6 +43,7 @@ export function createApiMock() {
     audioUrl: vi.fn((id: string) => `/api/audio/${id}`),
     audioZipUrl: vi.fn((lessonId: string) => `/api/audio/lesson/${lessonId}/zip`),
     fetchLessonReviewQueue: vi.fn(),
+    markLessonReviewed: vi.fn(),
     // Real listenedStore's boundary — the store itself is unmocked.
     getListens: vi.fn(),
     markAsListened: vi.fn(),

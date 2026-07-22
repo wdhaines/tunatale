@@ -85,7 +85,7 @@ class TestLessonReviewQueue:
         self._setup(self._lesson(["banka center"]))
         resp = await self._get_queue()
         assert resp.status_code == 200
-        assert resp.json() == {"queue": []}
+        assert resp.json()["queue"] == []
 
     async def test_learning_vocab_served_recognition_only(self):
         db = self._setup(self._lesson(["banka"]))
@@ -381,3 +381,46 @@ class TestReviewQueueTouchedTodayUsesAnkiRollover:
         old_today_end = old_today_start + timedelta(days=1)
         old_touched_today = old_today_start <= last_review.astimezone(UTC) < old_today_end
         assert old_touched_today is False
+
+
+class TestMarkLessonReviewed:
+    """POST /api/srs/lesson/{lesson_id}/reviewed — records a review row for
+    the one-shot-per-listen gate."""
+
+    def _lesson(self):
+        return Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="banka", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
+            key_phrases=[],
+        )
+
+    def _setup(self):
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, self._lesson())
+        app.state.srs_db = db
+        app.state.content_store = store
+        return db
+
+    async def test_404_unknown_lesson(self):
+        self._setup()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/srs/lesson/no-such-lesson/reviewed")
+            assert resp.status_code == 404
+
+    async def test_200_and_row_recorded(self):
+        db = self._setup()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/srs/lesson/lesson-1/reviewed")
+            assert resp.status_code == 200
+            assert resp.json() == {"ok": True}
+        assert db.latest_review_at("lesson-1") is not None

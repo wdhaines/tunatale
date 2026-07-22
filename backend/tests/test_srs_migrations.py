@@ -73,7 +73,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 38
+        assert CURRENT_VERSION == 39
 
     def test_migrates_v35_to_v36_reclassifies_variant_cards(self, tmp_path):
         """v36 resets word_count=1 for comma-separated spelling-variant fronts.
@@ -2210,7 +2210,7 @@ class TestMigrateV37ToV38:
     """Tests for v37→v38 (lesson_listens table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 38
+        assert CURRENT_VERSION == 39
 
     def test_v37_to_v38_creates_lesson_listens_table_and_index(self):
         from app.srs.migrations import migrate_v37_to_v38
@@ -2253,7 +2253,7 @@ class TestMigrateV37ToV38:
         try:
             tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "lesson_listens" in tables
-            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 38
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 39
         finally:
             db.close()
 
@@ -2274,3 +2274,70 @@ class TestMigrateV37ToV38:
             conn.execute(
                 "INSERT INTO lesson_listens (lesson_id, listened_at, source) VALUES ('x', '2026-01-01T00:00:00', 'garbage')"
             )
+
+
+class TestMigrateV38ToV39:
+    """Tests for v38→v39 (lesson_reviews table + index)."""
+
+    def test_current_version_bumped(self):
+        assert CURRENT_VERSION == 39
+
+    def test_v38_to_v39_creates_lesson_reviews_table_and_index(self):
+        from app.srs.migrations import migrate_v38_to_v39
+
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        migrate(conn)  # rolls up to v38
+        conn.execute("PRAGMA user_version = 38")
+        conn.commit()
+
+        migrate_v38_to_v39(conn)
+
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        assert "lesson_reviews" in tables
+        idx = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_lesson_reviews_lesson_id'"
+        ).fetchone()
+        assert idx is not None
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 39
+
+    def test_v38_to_v39_idempotent(self):
+        from app.srs.migrations import migrate_v38_to_v39
+
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        migrate(conn)
+        conn.execute("PRAGMA user_version = 38")
+        conn.commit()
+
+        migrate_v38_to_v39(conn)
+        migrate_v38_to_v39(conn)  # must not raise
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 39
+        count = conn.execute("SELECT COUNT(*) FROM lesson_reviews").fetchone()[0]
+        assert count == 0
+
+    def test_fresh_srs_database_has_lesson_reviews(self):
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(":memory:")
+        try:
+            tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            assert "lesson_reviews" in tables
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 39
+        finally:
+            db.close()
+
+    def test_v37_to_v39_migration_chain(self):
+        """Migrating from v37 → v39 creates both lesson_listens and lesson_reviews."""
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        migrate(conn)
+        conn.execute("PRAGMA user_version = 37")
+        conn.commit()
+
+        migrate(conn)
+
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        assert "lesson_listens" in tables
+        assert "lesson_reviews" in tables
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 39

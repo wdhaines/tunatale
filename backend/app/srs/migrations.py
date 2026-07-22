@@ -16,7 +16,7 @@ from app.srs.function_words import format_morphology_hint
 
 _logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 38
+CURRENT_VERSION = 39
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -1165,6 +1165,28 @@ def migrate_v37_to_v38(conn: sqlite3.Connection) -> None:
     _set_version(conn, 38)
 
 
+def migrate_v38_to_v39(conn: sqlite3.Connection) -> None:
+    """Create lesson_reviews table for per-lesson 'check your work reviewed' state.
+
+    TT-only: records when a lesson-scoped review session was completed
+    (drained). Gates the "Check your work" link to one-shot-per-listen — a
+    fresh listen re-arms it, a completed review clears it. Not involved in
+    sync, FSRS, or queue assembly.
+    """
+    if _table_exists(conn, "lesson_reviews"):
+        _set_version(conn, 39)
+        return
+    conn.execute("""
+        CREATE TABLE lesson_reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lesson_id TEXT NOT NULL,
+            reviewed_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_lesson_reviews_lesson_id ON lesson_reviews(lesson_id)")
+    _set_version(conn, 39)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -1204,6 +1226,7 @@ _MIGRATIONS = {
     35: migrate_v35_to_v36,
     36: migrate_v36_to_v37,
     37: migrate_v37_to_v38,
+    38: migrate_v38_to_v39,
 }
 
 
