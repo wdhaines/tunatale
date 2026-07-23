@@ -104,7 +104,14 @@
 	let englishMode: EnglishMode = $state('off');
 
 	// --- Caption blur state ---
-	let revealedKey: string | null = $state(null);
+	// The reveal is scoped to the whole LINE (cue), not the currently-showing
+	// chunk. Clicking unblurs every segment of the speaker's line and it stays
+	// unblurred as the audio moves through the line's chunks (and its trailing
+	// gap — currentCue holds the last-started cue until the next one begins).
+	// It re-blurs only when a genuinely new line starts, so you get a fresh
+	// listen-first attempt per line instead of the caption snapping back on
+	// every ~2s chunk boundary.
+	let revealedCueIndex: number | null = $state(null);
 
 	// --- Chunked caption state ---
 	const captionChunks = $derived(ctrl.currentCue ? splitCaption(ctrl.currentCue.text) : []);
@@ -113,15 +120,9 @@
 			? activeChunkIndex(captionChunks, ctrl.currentCue.start_ms, ctrl.currentCue.end_ms, ctrl.currentTime * 1000)
 			: 0
 	);
-	const activeChunkKey = $derived(
-		ctrl.currentCue ? `${ctrl.currentCue.index}:${captionIdx}` : ''
+	const captionRevealed = $derived(
+		ctrl.currentCue != null && revealedCueIndex === ctrl.currentCue.index
 	);
-
-	// Re-blur when a new chunk or cue appears
-	$effect(() => {
-		const _key = activeChunkKey;
-		revealedKey = null;
-	});
 
 	let selectedSectionType = $derived(resolveSectionType(phase, enunLevel, englishMode));
 	let enunIndex = $derived(ENUNCIATION_OPTIONS.findIndex((o) => o.level === enunLevel));
@@ -169,7 +170,7 @@
 	}
 
 	function revealCaption() {
-		revealedKey = activeChunkKey;
+		revealedCueIndex = ctrl.currentCue?.index ?? null;
 	}
 
 	function onCaptionKeydown(e: KeyboardEvent) {
@@ -405,7 +406,7 @@
 		{#if captionBlurPref.enabled}
 			<button
 				class="current-line blurred"
-				class:revealed={revealedKey === activeChunkKey}
+				class:revealed={captionRevealed}
 				title={ctrl.currentCue?.text ?? ''}
 				onclick={revealCaption}
 				onkeydown={onCaptionKeydown}

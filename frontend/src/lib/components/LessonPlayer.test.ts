@@ -958,6 +958,34 @@ describe("LessonPlayer", () => {
       expect(line.classList.contains("revealed")).toBe(true);
     });
 
+    it("keeps the whole line revealed across chunk changes within one cue", async () => {
+      // The reveal is scoped to the LINE (cue), not the currently-showing
+      // chunk: clicking unblurs every segment of the speaker's line, and it
+      // stays unblurred as the audio moves through the line's chunks. Re-blur
+      // happens only when a new line starts (covered by the next test).
+      let ctrl: PlaybackController | null = null;
+      const { container } = render(PillSyncHarness, {
+        props: {
+          audio: audioForLongCue,
+          onController: (c: PlaybackController) => {
+            ctrl = c;
+          },
+        },
+      });
+      await tick();
+      const line = container.querySelector(".current-line")!;
+      const firstChunk = line.textContent!;
+      fireEvent.click(line);
+      await tick();
+      expect(line.classList.contains("revealed")).toBe(true);
+      // Advance to a later chunk of the SAME cue: the chunk text changes but
+      // the line stays revealed (previously it re-blurred on every chunk).
+      ctrl!.seekTo(19);
+      await tick();
+      expect(line.textContent).not.toBe(firstChunk);
+      expect(line.classList.contains("revealed")).toBe(true);
+    });
+
     it("re-blurs when advancing to a new cue", async () => {
       const { container } = render(LessonPlayer, { props: { audio: audioForMultiCue } });
       const line = container.querySelector(".current-line")!;
