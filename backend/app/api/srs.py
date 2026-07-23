@@ -290,8 +290,21 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
         load_balancer=balancer,
     )
     db.update_direction_by_id(item_id, dir_enum, updated.directions[dir_enum])
+    # Lesson "Check your work" re-grade of a card the listen already reviewed
+    # today: keep the FSRS state change (an Again is a real same-day lapse) but
+    # don't re-charge the daily review budget — the card was counted once already.
+    # Guarded by has_counting_review_today so a genuine first review still counts.
+    budget_neutral = body.lesson_review and db.has_counting_review_today(item_id, dir_enum, anki_today())
     row = build_revlog_row(
-        item_id, dir_enum, prev_dir, updated.directions[dir_enum], rating, body.time_ms, now=now, col_crt=col_crt
+        item_id,
+        dir_enum,
+        prev_dir,
+        updated.directions[dir_enum],
+        rating,
+        body.time_ms,
+        now=now,
+        col_crt=col_crt,
+        budget_neutral=budget_neutral,
     )
     db.append_revlog(row)
     # Single-level undo: snapshot the verbatim pre-grade state so the popover's

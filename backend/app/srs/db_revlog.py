@@ -83,8 +83,9 @@ class DbRevlogMixin:
                 """
                 INSERT OR IGNORE INTO tt_revlog
                     (id, collocation_id, direction, button_chosen, interval,
-                     last_interval, factor, taken_millis, review_kind, anki_card_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     last_interval, factor, taken_millis, review_kind, anki_card_id,
+                     budget_neutral)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row.id,
@@ -97,6 +98,7 @@ class DbRevlogMixin:
                     row.taken_millis,
                     row.review_kind,
                     row.anki_card_id,
+                    int(row.budget_neutral),
                 ),
             )
             self._commit(conn)

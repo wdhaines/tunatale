@@ -219,6 +219,14 @@ class DbCountsMixin:
         today) and under-counted interday learning (``state='learning'`` excluded) —
         both invisible from current direction state, which holds the *post*-grade
         interval, not the pre-grade one.
+
+        ``budget_neutral = 0`` excludes the TT-only lesson "Check your work"
+        re-grade of a card the listen already reviewed today (see
+        ``has_counting_review_today`` and ``api.srs.drill_feedback``): the row
+        still replays through FSRS and syncs to Anki as an ordinary review, but it
+        must not charge the day's review budget twice for the same card. Anki
+        never emits a second same-day answer for one card, so this doesn't touch
+        the row-counting parity pinned by ``test_counts_rows_not_distinct_cards``.
         """
         start_iso, end_iso = _anki_day_bounds_utc(today)
         start_ms = int(datetime.fromisoformat(start_iso).timestamp() * 1000)
@@ -230,10 +238,39 @@ class DbCountsMixin:
                 WHERE id >= ? AND id < ?
                   AND review_kind IN (0, 1, 2)
                   AND last_interval >= 1
+                  AND budget_neutral = 0
                 """,
                 (start_ms, end_ms),
             ).fetchone()
             return row[0] if row else 0
+
+    def has_counting_review_today(self, collocation_id: int, direction: Direction, today: date) -> bool:
+        """True if (collocation_id, direction) already has a budget-charging review
+        row in today's 4am window — a row that ``count_reviews_completed_today``
+        counts (``review_kind IN (0,1,2) AND last_interval >= 1 AND budget_neutral=0``).
+
+        Guards the lesson "Check your work" re-grade: the re-grade is made
+        budget-neutral only when the day's review budget was already charged for
+        this card (e.g. the listen's auto-Good), so a genuine first review of the
+        day still counts.
+        """
+        start_iso, end_iso = _anki_day_bounds_utc(today)
+        start_ms = int(datetime.fromisoformat(start_iso).timestamp() * 1000)
+        end_ms = int(datetime.fromisoformat(end_iso).timestamp() * 1000)
+        with self._get_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM tt_revlog
+                WHERE collocation_id = ? AND direction = ?
+                  AND id >= ? AND id < ?
+                  AND review_kind IN (0, 1, 2)
+                  AND last_interval >= 1
+                  AND budget_neutral = 0
+                LIMIT 1
+                """,
+                (collocation_id, direction.value, start_ms, end_ms),
+            ).fetchone()
+            return row is not None
 
     def count_interday_learning_due(self, today: date) -> int:
         """Count interday (re)learning directions due today — Anki's queue=3.

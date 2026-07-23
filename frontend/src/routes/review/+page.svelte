@@ -97,7 +97,10 @@
 	async function rate(rating: 'again' | 'hard' | 'good' | 'easy', timeMs: number) {
 		const { item, direction } = current;
 		try {
-			await api.submitDrill(item.id, direction, rating, timeMs);
+			// In lesson "Check your work" mode, flag the grade so a re-grade of a
+			// card the listen already reviewed today updates FSRS state without
+			// re-charging the day's review budget (the nav badge stops phantom-dropping).
+			await api.submitDrill(item.id, direction, rating, timeMs, lessonMode);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			return;

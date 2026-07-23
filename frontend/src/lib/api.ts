@@ -720,11 +720,12 @@ export class TunaTaleAPI {
     direction: "recognition" | "production",
     rating: "again" | "hard" | "good" | "easy",
     timeMs?: number,
+    lessonReview = false,
   ): Promise<{ new_due_at: string; new_state: string; left?: number }> {
     return this.request(`/api/srs/items/${itemId}/direction/${direction}/feedback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rating, time_ms: timeMs }),
+      body: JSON.stringify({ rating, time_ms: timeMs, lesson_review: lessonReview }),
     });
   }
 

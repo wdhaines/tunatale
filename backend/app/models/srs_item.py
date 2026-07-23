@@ -117,6 +117,11 @@ class RevlogRow:
     taken_millis: int
     review_kind: int
     anki_card_id: int | None = None
+    # TT-only: a lesson "Check your work" re-grade of a card the listen already
+    # reviewed today. The row still replays through FSRS and syncs to Anki as an
+    # ordinary review, but count_reviews_completed_today excludes it so the day's
+    # review budget is not charged twice for the same card.
+    budget_neutral: bool = False
 
 
 class SRSItem:
