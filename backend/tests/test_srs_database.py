@@ -1844,6 +1844,133 @@ class TestCountReviewsCompletedToday:
         )
         assert srs_db.count_reviews_completed_today(today) == 2
 
+    def test_excludes_budget_neutral_row(self, srs_db):
+        """A row flagged ``budget_neutral`` (a lesson 'Check your work' re-grade of
+        a card the listen already reviewed today) updates FSRS state but must NOT
+        re-charge the daily review budget — so it is excluded even though it is an
+        otherwise-counting interday review (kind=1, lastIvl≥1)."""
+        from app.models.srs_item import RevlogRow
+
+        today = date.today()
+        srs_db.add_collocation(_unit("neutral", "x"), language_code="sl")
+        cid = _id_for_text(srs_db, "neutral")
+        base = int(anki_day_anchor(today).timestamp() * 1000)
+        # The listen's original counting grade.
+        srs_db.append_revlog(
+            RevlogRow(
+                id=base,
+                collocation_id=cid,
+                direction=Direction.RECOGNITION,
+                button_chosen=3,
+                interval=30,
+                last_interval=20,
+                factor=0,
+                taken_millis=1500,
+                review_kind=1,
+            )
+        )
+        # The Check-your-work re-grade: budget-neutral.
+        srs_db.append_revlog(
+            RevlogRow(
+                id=base + 1000,
+                collocation_id=cid,
+                direction=Direction.RECOGNITION,
+                button_chosen=1,
+                interval=1,
+                last_interval=30,
+                factor=0,
+                taken_millis=1500,
+                review_kind=2,
+                budget_neutral=True,
+            )
+        )
+        # Only the listen's grade charges the budget; the re-grade is neutral.
+        assert srs_db.count_reviews_completed_today(today) == 1
+
+
+class TestHasCountingReviewToday:
+    """``has_counting_review_today`` reports whether a (card, direction) already
+    has a budget-charging review row in today's 4am window — the guard that keeps
+    a Check-your-work re-grade neutral only when the day's budget was already
+    charged (so a genuine first review of the day still counts)."""
+
+    def _append(self, srs_db, cid, *, when, review_kind, last_interval, direction=Direction.RECOGNITION):
+        from app.models.srs_item import RevlogRow
+
+        srs_db.append_revlog(
+            RevlogRow(
+                id=int(when.timestamp() * 1000),
+                collocation_id=cid,
+                direction=direction,
+                button_chosen=3,
+                interval=30,
+                last_interval=last_interval,
+                factor=0,
+                taken_millis=1500,
+                review_kind=review_kind,
+            )
+        )
+
+    def test_true_when_counting_row_today(self, srs_db):
+        today = date.today()
+        srs_db.add_collocation(_unit("charged", "x"), language_code="sl")
+        cid = _id_for_text(srs_db, "charged")
+        self._append(srs_db, cid, when=anki_day_anchor(today), review_kind=1, last_interval=30)
+        assert srs_db.has_counting_review_today(cid, Direction.RECOGNITION, today) is True
+
+    def test_false_when_no_row(self, srs_db):
+        today = date.today()
+        srs_db.add_collocation(_unit("uncharged", "x"), language_code="sl")
+        cid = _id_for_text(srs_db, "uncharged")
+        assert srs_db.has_counting_review_today(cid, Direction.RECOGNITION, today) is False
+
+    def test_false_for_other_direction(self, srs_db):
+        today = date.today()
+        srs_db.add_collocation(_unit("dir", "x"), language_code="sl")
+        cid = _id_for_text(srs_db, "dir")
+        self._append(srs_db, cid, when=anki_day_anchor(today), review_kind=1, last_interval=30)
+        assert srs_db.has_counting_review_today(cid, Direction.PRODUCTION, today) is False
+
+    def test_false_for_intraday_relearning(self, srs_db):
+        """An intraday relearning step (lastIvl<1) never charged the budget, so it
+        must not make a re-grade neutral."""
+        today = date.today()
+        srs_db.add_collocation(_unit("intraday", "x"), language_code="sl")
+        cid = _id_for_text(srs_db, "intraday")
+        self._append(srs_db, cid, when=anki_day_anchor(today), review_kind=2, last_interval=-600)
+        assert srs_db.has_counting_review_today(cid, Direction.RECOGNITION, today) is False
+
+    def test_false_for_yesterday(self, srs_db):
+        today = date.today()
+        srs_db.add_collocation(_unit("stale", "x"), language_code="sl")
+        cid = _id_for_text(srs_db, "stale")
+        self._append(srs_db, cid, when=anki_prev_day_anchor(today), review_kind=1, last_interval=30)
+        assert srs_db.has_counting_review_today(cid, Direction.RECOGNITION, today) is False
+
+    def test_ignores_budget_neutral_rows(self, srs_db):
+        """A prior budget-neutral row didn't charge the budget, so it alone must not
+        make the next re-grade neutral too."""
+        from app.models.srs_item import RevlogRow
+
+        today = date.today()
+        srs_db.add_collocation(_unit("onlyneutral", "x"), language_code="sl")
+        cid = _id_for_text(srs_db, "onlyneutral")
+        srs_db.append_revlog(
+            RevlogRow(
+                id=int(anki_day_anchor(today).timestamp() * 1000),
+                collocation_id=cid,
+                direction=Direction.RECOGNITION,
+                button_chosen=3,
+                interval=30,
+                last_interval=20,
+                factor=0,
+                taken_millis=1500,
+                review_kind=1,
+                budget_neutral=True,
+            )
+        )
+        assert srs_db.has_counting_review_today(cid, Direction.RECOGNITION, today) is False
+
 
 class TestCountInterdayLearningDue:
     """Layer 79: interday learning cards (Anki queue=3, DayLearn) due today

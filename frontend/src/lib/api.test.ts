@@ -815,11 +815,35 @@ describe("TunaTaleAPI", () => {
         `${BASE}/api/srs/items/42/direction/recognition/feedback`,
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ rating: "good" }),
+          body: JSON.stringify({ rating: "good", lesson_review: false }),
         }),
       );
       expect(result.new_due_at).toBe("2026-04-25");
       expect(result.new_state).toBe("review");
+    });
+
+    it("submitDrill forwards lesson_review=true for Check-your-work re-grades", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            status: "ok",
+            direction: "recognition",
+            new_due_at: "2026-05-01",
+            new_state: "relearning",
+          }),
+        ),
+      );
+
+      await api.submitDrill(9, "recognition", "again", 1200, true);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/items/9/direction/recognition/feedback`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ rating: "again", time_ms: 1200, lesson_review: true }),
+        }),
+      );
     });
 
     it("undoGrade calls POST /api/srs/items/:id/direction/:dir/undo", async () => {
@@ -857,7 +881,10 @@ describe("TunaTaleAPI", () => {
 
       expect(fetch).toHaveBeenCalledWith(
         `${BASE}/api/srs/items/7/direction/production/feedback`,
-        expect.objectContaining({ method: "POST", body: JSON.stringify({ rating: "easy" }) }),
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ rating: "easy", lesson_review: false }),
+        }),
       );
       expect(result.new_due_at).toBe("2026-04-30");
     });

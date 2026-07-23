@@ -120,7 +120,13 @@ describe("review/+page.svelte", () => {
     const { findByRole } = render(ReviewPage);
     await fireEvent.click(await findByRole("button", { name: "Show" }));
     await fireEvent.click(await findByRole("button", { name: "Good" }));
-    expect(mockSubmitDrill).toHaveBeenCalledWith(5, "recognition", "good", expect.any(Number));
+    expect(mockSubmitDrill).toHaveBeenCalledWith(
+      5,
+      "recognition",
+      "good",
+      expect.any(Number),
+      false,
+    );
     const timeMs = mockSubmitDrill.mock.calls[0][3];
     expect(timeMs).toBeGreaterThanOrEqual(0);
     expect(timeMs).toBeLessThanOrEqual(60000);
@@ -138,7 +144,13 @@ describe("review/+page.svelte", () => {
     const { findByRole } = render(ReviewPage);
     await fireEvent.click(await findByRole("button", { name: "Show" }));
     await fireEvent.click(await findByRole("button", { name: "Good" }));
-    expect(mockSubmitDrill).toHaveBeenCalledWith(7, "production", "good", expect.any(Number));
+    expect(mockSubmitDrill).toHaveBeenCalledWith(
+      7,
+      "production",
+      "good",
+      expect.any(Number),
+      false,
+    );
   });
 
   it("advances to whatever the server returns next after rating", async () => {
@@ -765,7 +777,13 @@ describe("review/+page.svelte", () => {
       await fireEvent.click(await findByRole("button", { name: "Show" }));
       await fireEvent.click(await findByRole("button", { name: "Good" }));
 
-      expect(mockSubmitDrill).toHaveBeenCalledWith(5, "recognition", "good", expect.any(Number));
+      expect(mockSubmitDrill).toHaveBeenCalledWith(
+        5,
+        "recognition",
+        "good",
+        expect.any(Number),
+        true,
+      );
       // After grading, the lesson queue was refetched (before reviewed++ incremented the key)
       expect(mockFetchLessonReviewQueue.mock.calls.length).toBeGreaterThanOrEqual(2);
     });

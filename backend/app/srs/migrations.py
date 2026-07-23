@@ -16,7 +16,7 @@ from app.srs.function_words import format_morphology_hint
 
 _logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 39
+CURRENT_VERSION = 40
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -1187,6 +1187,21 @@ def migrate_v38_to_v39(conn: sqlite3.Connection) -> None:
     _set_version(conn, 39)
 
 
+def migrate_v39_to_v40(conn: sqlite3.Connection) -> None:
+    """Add tt_revlog.budget_neutral flag (default 0).
+
+    A lesson 'Check your work' re-grade of a card the listen already reviewed
+    today updates FSRS state (an Again is a real same-day lapse) but must NOT
+    re-charge the daily review budget — the card was counted once already. The
+    flag lets ``count_reviews_completed_today`` exclude the second row while the
+    row still replays through FSRS and syncs to Anki as an ordinary review.
+    TT-only: Anki has no such column; a pushed row is a normal revlog entry.
+    """
+    if not _column_exists(conn, "tt_revlog", "budget_neutral"):
+        conn.execute("ALTER TABLE tt_revlog ADD COLUMN budget_neutral INTEGER NOT NULL DEFAULT 0")
+    _set_version(conn, 40)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -1227,6 +1242,7 @@ _MIGRATIONS = {
     36: migrate_v36_to_v37,
     37: migrate_v37_to_v38,
     38: migrate_v38_to_v39,
+    39: migrate_v39_to_v40,
 }
 
 

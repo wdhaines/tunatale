@@ -2461,6 +2461,121 @@ class TestLearningStatePriority:
             "(Anki: CardQueue::Review → review_delta += 1 regardless of rating)"
         )
 
+    async def test_lesson_review_regrade_does_not_recharge_budget(self, api_app_state):
+        """A lesson 'Check your work' re-grade (``lesson_review=true``) of a card the
+        listen already reviewed today must update FSRS state but NOT re-charge the
+        daily review budget — the card was counted once already. Without this, each
+        self-check re-grade double-charges the day's review count (the reported bug).
+        """
+        from app.models.srs_item import RevlogRow
+
+        db = api_app_state
+        today = anki_today()
+        row_id = seed_direction(
+            db,
+            text="recheck_me",
+            state=SRSState.REVIEW,
+            due_date=today,
+            stability=5.0,
+            reps=3,
+        )
+        # Simulate the listen's earlier auto-Good: one counting revlog row today.
+        _, item, _ = db.get_collocation_by_id(row_id)
+        db.append_revlog(
+            RevlogRow(
+                id=int(anki_day_anchor(today).timestamp() * 1000),
+                collocation_id=row_id,
+                direction=Direction.RECOGNITION,
+                button_chosen=3,
+                interval=30,
+                last_interval=20,
+                factor=0,
+                taken_millis=1500,
+                review_kind=1,
+                anki_card_id=item.directions[Direction.RECOGNITION].anki_card_id,
+            )
+        )
+        assert db.count_reviews_completed_today(today) == 1
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                f"/api/srs/items/{row_id}/direction/recognition/feedback",
+                json={"rating": "again", "lesson_review": True},
+            )
+        assert resp.status_code == 200
+
+        # Budget unchanged: the re-grade did not re-charge the day.
+        assert db.count_reviews_completed_today(today) == 1, (
+            "a lesson_review re-grade of an already-reviewed-today card must be budget-neutral"
+        )
+        # State still updated (Again lapsed the review card to relearning).
+        assert resp.json()["new_state"] == "relearning"
+        # The re-grade wrote a budget_neutral revlog row.
+        with db._get_conn() as conn:
+            neutral = conn.execute("SELECT COUNT(*) FROM tt_revlog WHERE budget_neutral = 1").fetchone()[0]
+        assert neutral == 1
+
+    async def test_regrade_without_flag_double_charges(self, api_app_state):
+        """Guard the pinned parity behavior: absent ``lesson_review``, a second
+        counting grade of the same card today still charges the budget twice
+        (Anki increments per answer — ``test_counts_rows_not_distinct_cards``)."""
+        from app.models.srs_item import RevlogRow
+
+        db = api_app_state
+        today = anki_today()
+        row_id = seed_direction(db, text="normal_regrade", state=SRSState.REVIEW, due_date=today, stability=5.0, reps=3)
+        _, item, _ = db.get_collocation_by_id(row_id)
+        db.append_revlog(
+            RevlogRow(
+                id=int(anki_day_anchor(today).timestamp() * 1000),
+                collocation_id=row_id,
+                direction=Direction.RECOGNITION,
+                button_chosen=3,
+                interval=30,
+                last_interval=20,
+                factor=0,
+                taken_millis=1500,
+                review_kind=1,
+                anki_card_id=item.directions[Direction.RECOGNITION].anki_card_id,
+            )
+        )
+        assert db.count_reviews_completed_today(today) == 1
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(f"/api/srs/items/{row_id}/direction/recognition/feedback", json={"rating": "good"})
+        assert resp.status_code == 200
+        assert db.count_reviews_completed_today(today) == 2
+
+    async def test_lesson_review_flag_without_prior_review_still_charges(self, api_app_state):
+        """The guard: ``lesson_review=true`` on a card with no prior counting row
+        today (a genuine first review — e.g. a due card the listen didn't cover)
+        must still charge the budget. Budget-neutrality is scoped to re-grades."""
+        from datetime import UTC, datetime, timedelta
+
+        db = api_app_state
+        today = anki_today()
+        lr = datetime.now(UTC) - timedelta(days=5)
+        row_id = seed_direction(
+            db,
+            text="first_review_today",
+            state=SRSState.REVIEW,
+            due_at=datetime.now(UTC) - timedelta(hours=1),
+            stability=5.0,
+            reps=3,
+            last_review=lr,
+        )
+        assert db.count_reviews_completed_today(today) == 0
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                f"/api/srs/items/{row_id}/direction/recognition/feedback",
+                json={"rating": "good", "lesson_review": True},
+            )
+        assert resp.status_code == 200
+        assert db.count_reviews_completed_today(today) == 1, (
+            "a lesson_review grade with no prior review today is the first charge and must count"
+        )
+
 
 class TestJustGradedLearningCollapse:
     """Anki parity: when a learning card is graded and main is empty, the just-

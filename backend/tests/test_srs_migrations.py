@@ -73,7 +73,42 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 39
+        assert CURRENT_VERSION == 40
+
+    def test_migrates_v39_to_v40_adds_budget_neutral_column(self, tmp_path):
+        """v40 adds tt_revlog.budget_neutral (default 0) — the flag that lets a
+        lesson 'Check your work' re-grade update FSRS state without re-charging
+        the daily review budget for a card the listen already reviewed today."""
+        import sqlite3
+
+        from app.srs.migrations import _column_exists, _set_version, migrate_v39_to_v40
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        conn.execute(
+            "CREATE TABLE tt_revlog ("
+            "id INTEGER PRIMARY KEY, collocation_id INTEGER, direction TEXT, "
+            "button_chosen INTEGER, interval INTEGER, last_interval INTEGER, "
+            "factor INTEGER, taken_millis INTEGER, review_kind INTEGER, anki_card_id INTEGER)"
+        )
+        _set_version(conn, 39)
+        assert not _column_exists(conn, "tt_revlog", "budget_neutral")
+
+        migrate_v39_to_v40(conn)
+
+        assert _column_exists(conn, "tt_revlog", "budget_neutral")
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 40
+
+        # Existing rows default to 0 (budget-charging, the normal case).
+        conn.execute(
+            "INSERT INTO tt_revlog (id, collocation_id, direction, button_chosen, "
+            "interval, last_interval, factor, taken_millis, review_kind) "
+            "VALUES (1, 1, 'recognition', 3, 30, 20, 0, 1500, 1)"
+        )
+        assert conn.execute("SELECT budget_neutral FROM tt_revlog").fetchone()[0] == 0
+
+        # Idempotent.
+        migrate_v39_to_v40(conn)
+        assert _column_exists(conn, "tt_revlog", "budget_neutral")
 
     def test_migrates_v35_to_v36_reclassifies_variant_cards(self, tmp_path):
         """v36 resets word_count=1 for comma-separated spelling-variant fronts.
@@ -2210,7 +2245,7 @@ class TestMigrateV37ToV38:
     """Tests for v37→v38 (lesson_listens table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 39
+        assert CURRENT_VERSION == 40
 
     def test_v37_to_v38_creates_lesson_listens_table_and_index(self):
         from app.srs.migrations import migrate_v37_to_v38
@@ -2253,7 +2288,7 @@ class TestMigrateV37ToV38:
         try:
             tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "lesson_listens" in tables
-            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 39
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 40
         finally:
             db.close()
 
@@ -2280,7 +2315,7 @@ class TestMigrateV38ToV39:
     """Tests for v38→v39 (lesson_reviews table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 39
+        assert CURRENT_VERSION == 40
 
     def test_v38_to_v39_creates_lesson_reviews_table_and_index(self):
         from app.srs.migrations import migrate_v38_to_v39
@@ -2323,7 +2358,7 @@ class TestMigrateV38ToV39:
         try:
             tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "lesson_reviews" in tables
-            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 39
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 40
         finally:
             db.close()
 
@@ -2340,4 +2375,4 @@ class TestMigrateV38ToV39:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         assert "lesson_listens" in tables
         assert "lesson_reviews" in tables
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 39
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 40

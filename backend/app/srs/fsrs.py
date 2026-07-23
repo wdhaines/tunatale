@@ -1563,6 +1563,7 @@ def build_revlog_row(
     now: datetime | None = None,
     col_crt: int | None = None,
     review_kind: int | None = None,
+    budget_neutral: bool = False,
 ) -> RevlogRow:
     """Construct a RevlogRow from the outcome of a ``schedule()`` call.
 
@@ -1575,6 +1576,11 @@ def build_revlog_row(
     ``_compute_review_kind`` from the previous state — the standard path.
     Callers may override it (e.g. ``3`` for Anki's ``Filtered`` /
     review-ahead kind).
+
+    *budget_neutral* marks a lesson "Check your work" re-grade of a card the
+    listen already reviewed today: the row replays through FSRS and syncs
+    normally, but ``count_reviews_completed_today`` excludes it so the daily
+    review budget is not charged twice for the same card.
     """
     if now is None:
         now = datetime.now(tz=UTC)
@@ -1596,4 +1602,5 @@ def build_revlog_row(
         taken_millis=time_ms,
         review_kind=review_kind if review_kind is not None else _compute_review_kind(prev.state),
         anki_card_id=prev.anki_card_id,
+        budget_neutral=budget_neutral,
     )

@@ -59,4 +59,5 @@ def test_public_method_count_pinned() -> None:
     # +latest_listen_at (lesson_listens)
     # +count_new_created_today (staged-listen creation budget)
     # +record_review, latest_review_at (lesson_reviews)
-    assert count == 115
+    # +has_counting_review_today (budget-neutral Check-your-work re-grade)
+    assert count == 116

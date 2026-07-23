@@ -22,6 +22,10 @@ class DrillRequest(BaseModel):
     rating: str | None = None
     signal: str | None = None
     time_ms: int = 0
+    # Set by the lesson "Check your work" review flow. When true, a re-grade of a
+    # card already reviewed today (e.g. the listen's auto-Good) updates FSRS state
+    # but does not re-charge the daily review budget. See drill_feedback.
+    lesson_review: bool = False
 
 
 class TranslateRequest(BaseModel):
