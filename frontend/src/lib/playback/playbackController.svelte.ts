@@ -413,8 +413,15 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     const prevRef = seekRef ?? currentCue?.ref ?? null;
 
     // Guard: prevent the browser's pause/emptied events from clobbering resume.
+    // Capture the *intent* to resume from `playing`, not `!audioEl.paused`: a
+    // rapid second swap (quickly toggling setting chips) re-enters here after
+    // the first `src` assignment has already paused the element, so reading the
+    // element would see paused=true and lose the resume — stranding the player
+    // paused with `playing` stuck true and no way to recover but a refresh.
+    // `playing` holds the pre-swap state because the swapping guard swallows the
+    // intervening pause events.
     swapping = true;
-    wasPlayingBeforeSwap = !audioEl.paused;
+    wasPlayingBeforeSwap = playing;
 
     // Swap the audio source.
     audioEl.src = sectionUrlFn(section.audio_id);
@@ -552,10 +559,14 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       audioEl.pause();
     },
     togglePlay() {
-      if (playing) {
-        audioEl.pause();
-      } else {
+      // Branch on the element's real state, not the `playing` flag: if the two
+      // ever desync (e.g. a swallowed pause event during a track swap), acting
+      // on `playing` could call pause() on an already-paused element — no event
+      // fires, so the button stays stuck. Ground truth always recovers.
+      if (audioEl.paused) {
         audioEl.play();
+      } else {
+        audioEl.pause();
       }
     },
     seekBy(delta: number) {

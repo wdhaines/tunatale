@@ -655,12 +655,30 @@ describe("playbackController", () => {
 
     it("togglePlay plays when paused, pauses when playing", () => {
       const ctrl = createController();
+      // Element starts paused → toggle plays it.
       ctrl.togglePlay();
       expect(audioEl.play).toHaveBeenCalled();
-      // Simulate play event to update playing state
+      // Element is now playing → toggle pauses it.
+      Object.defineProperty(audioEl, "paused", { value: false, configurable: true });
       audioEl.dispatchEvent(new Event("play"));
       ctrl.togglePlay();
       expect(audioEl.pause).toHaveBeenCalled();
+    });
+
+    it("togglePlay acts on the element state, recovering from a stuck 'playing' flag", () => {
+      // Defensive against the swap-race deadlock: if `playing` ever desyncs
+      // true while the element is actually paused, a click must still start
+      // playback rather than call pause() on an already-paused element (which
+      // fires no event and strands the button — the "needs refresh" symptom).
+      const ctrl = createController();
+      Object.defineProperty(audioEl, "paused", { value: false, configurable: true });
+      audioEl.dispatchEvent(new Event("play")); // playing = true
+      Object.defineProperty(audioEl, "paused", { value: true, configurable: true }); // paused, no event
+      expect(ctrl.playing).toBe(true); // stale flag
+
+      ctrl.togglePlay();
+      expect(audioEl.play).toHaveBeenCalled();
+      expect(audioEl.pause).not.toHaveBeenCalled();
     });
 
     it("seekTo seeks to exact time and calls updatePositionState", () => {
@@ -1333,6 +1351,36 @@ describe("playbackController", () => {
       ctrl.selectTrack("translated");
       audioEl.dispatchEvent(new Event("loadedmetadata"));
       expect(audioEl.play).toHaveBeenCalled();
+    });
+
+    it("quick overlapping track swaps while playing resume instead of stranding paused", () => {
+      // Repro for the "pause button stuck, can't play without refreshing" race:
+      // toggling settings chips fast fires selectTrack again before the first
+      // swap's loadedmetadata resolves. Setting audioEl.src pauses the element,
+      // so the SECOND selectTrack read `!audioEl.paused` as false and lost the
+      // "was playing" intent — loadedmetadata then never re-played, while the
+      // pause events were swallowed by the swapping guard, leaving `playing`
+      // stuck true and the element paused.
+      const ctrl = createController({ audio: sectionsAudio });
+      Object.defineProperty(audioEl, "paused", { value: false, configurable: true });
+      audioEl.dispatchEvent(new Event("play"));
+      expect(ctrl.playing).toBe(true);
+
+      // First chip click → swap. The browser pauses the element to load the new
+      // source; that pause event is swallowed by the swapping guard.
+      ctrl.selectTrack("translated");
+      Object.defineProperty(audioEl, "paused", { value: true, configurable: true });
+      audioEl.dispatchEvent(new Event("pause"));
+
+      // Second chip click BEFORE the first swap's loadedmetadata resolves.
+      ctrl.selectTrack("key_phrases");
+
+      // Swap completes.
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+
+      // Playback must resume, keeping `playing` consistent with the element.
+      expect(audioEl.play).toHaveBeenCalled();
+      expect(ctrl.playing).toBe(true);
     });
 
     it("selectTrack does not overwrite tt-resume-${lessonId}", () => {
