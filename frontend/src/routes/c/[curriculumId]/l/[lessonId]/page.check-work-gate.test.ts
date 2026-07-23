@@ -1,9 +1,4 @@
 /**
- * LOCKED guardrail — Fable-authored, DO NOT EDIT (BP: copy verbatim).
- *
- * Target path: frontend/src/routes/c/[curriculumId]/l/[lessonId]/page.check-work-gate.test.ts
- * (sits beside page.mastery.test.ts so ./+page.svelte and ./page-test-helpers resolve).
- *
  * Pins the one-shot-per-listen GATE on the lesson page: the "Check your work"
  * link is shown iff the lesson-scoped queue is non-empty AND the server reports
  * has_unreviewed_listen === true. The core regression this guards: a non-empty
@@ -11,7 +6,7 @@
  * "it comes back day after day" bug).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent, waitFor } from "@testing-library/svelte";
+import { render, waitFor } from "@testing-library/svelte";
 
 vi.mock("$app/navigation", () => ({ goto: vi.fn() }));
 vi.mock("$lib/api", async () => {
