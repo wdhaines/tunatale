@@ -235,8 +235,8 @@ class TestListenClozeIntegration:
         assert item.directions[Direction.RECOGNITION].state == SRSState.NEW
         assert item.directions[Direction.RECOGNITION].reps == 0
 
-    async def test_listen_grades_recognition_when_learning(self):
-        """Pre-existing vocab with recognition state=LEARNING → grade recognition, production unchanged."""
+    async def test_listen_stages_recognition_when_learning(self):
+        """Pre-existing vocab with recognition state=LEARNING → stage, don't grade, production unchanged."""
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -250,24 +250,24 @@ class TestListenClozeIntegration:
         rec.reps = 1
         db.update_collocation(banka)
 
-        prod_before = banka.directions.get(Direction.PRODUCTION)
-        prod_reps_before = prod_before.reps if prod_before else 0
+        rec_before = rec.reps
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
+        data = response.json()
 
         banka = db.get_collocation_by_lemma("banka")
         rec = banka.directions[Direction.RECOGNITION]
-        assert rec.reps == 2  # graded
-        assert rec.state != SRSState.NEW
+        assert rec.reps == rec_before  # reps unchanged — staging does not grade
+        assert data["staged"] == 1
 
         prod = banka.directions.get(Direction.PRODUCTION)
         if prod:
-            assert prod.reps == prod_reps_before
+            assert prod.reps == 0  # production never staged
 
-    async def test_listen_grades_recognition_when_review_first_time_today(self):
-        """Pre-existing vocab with rec state=REVIEW, last_review 2 days ago → graded."""
+    async def test_listen_stages_recognition_when_review_first_time_today(self):
+        """Pre-existing vocab with rec state=REVIEW, last_review 2 days ago → stage, not grade."""
         from datetime import timedelta
 
         db = await self._setup_lesson()
@@ -291,9 +291,11 @@ class TestListenClozeIntegration:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
+        data = response.json()
 
         banka = db.get_collocation_by_lemma("banka")
-        assert banka.directions[Direction.RECOGNITION].reps == 6
+        assert banka.directions[Direction.RECOGNITION].reps == 5  # unchanged
+        assert data["staged"] == 1
 
     async def test_listen_skips_recognition_when_review_already_today(self):
         """Pre-existing vocab with rec state=REVIEW, last_review today → no grade."""
@@ -525,8 +527,8 @@ class TestListenClozeIntegration:
 
     # ── Key-phrase auto-grade tests ──────────────────────────────────────
 
-    async def test_listen_grades_key_phrase_when_recognition_learning(self):
-        """Pre-existing KP with rec state=LEARNING → reps incremented, production untouched."""
+    async def test_listen_stages_key_phrase_when_recognition_learning(self):
+        """Pre-existing KP with rec state=LEARNING → stage, production untouched."""
         from app.models.syntactic_unit import SyntacticUnit
         from app.storage.store import ContentStore
 
@@ -545,24 +547,18 @@ class TestListenClozeIntegration:
         rec.reps = 1
         db.update_collocation(item)
 
-        prod_before = item.directions.get(Direction.PRODUCTION)
-        prod_reps_before = prod_before.reps if prod_before else 0
-
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
+        data = response.json()
 
         item = db.get_collocation("dober dan")
         rec = item.directions[Direction.RECOGNITION]
-        assert rec.reps == 2  # graded
-        assert rec.state != SRSState.NEW
+        assert rec.reps == 1  # unchanged
+        assert data["staged"] == 1
 
-        prod = item.directions.get(Direction.PRODUCTION)
-        if prod:
-            assert prod.reps == prod_reps_before
-
-    async def test_listen_grades_key_phrase_when_review_first_time_today(self):
-        """Pre-existing KP with rec state=REVIEW, last_review 2 days ago → graded (reps+1)."""
+    async def test_listen_stages_key_phrase_when_review_first_time_today(self):
+        """Pre-existing KP with rec state=REVIEW, last_review 2 days ago → stage, not grade."""
         from datetime import timedelta
 
         from app.models.syntactic_unit import SyntacticUnit
@@ -586,8 +582,9 @@ class TestListenClozeIntegration:
         # Explicit due-today convention seed: add_collocation's DEFAULT due_at
         # uses date.today() (item-#11 site), which lands "tomorrow" in the UTC
         # [midnight, 4 AM) window — the kp would then classify "ahead", not
-        # "due", silently skipping the kp-arm budget decrement (srs.py:738
-        # went uncovered on the 02:17 UTC CI run, 2026-07-19).
+        # "due", so this test would silently stop covering the "due" kp arm
+        # (the pre-staging twin of this bug went uncovered on the 02:17 UTC CI
+        # run, 2026-07-19).
         rec.due_at = due_at_rollover_utc(anki_today())
         rec.reps = 5
         db.update_collocation(item)
@@ -595,9 +592,11 @@ class TestListenClozeIntegration:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
+        data = response.json()
 
         item = db.get_collocation("dober dan")
-        assert item.directions[Direction.RECOGNITION].reps == 6
+        assert item.directions[Direction.RECOGNITION].reps == 5  # unchanged
+        assert data["staged"] == 1
 
     async def test_listen_skips_key_phrase_when_review_already_today(self):
         """Pre-existing KP with rec state=REVIEW, last_review today → no grade."""
@@ -851,8 +850,8 @@ class TestListenClozeIntegration:
         banka = db.get_collocation_by_lemma("banka")
         assert banka.directions[Direction.RECOGNITION].reps == 3
 
-    async def test_listen_grades_review_with_no_last_review(self):
-        """REVIEW state with last_review=None → eligible for grade (line 233)."""
+    async def test_listen_stages_review_with_no_last_review(self):
+        """REVIEW-state card with last_review=None → treated as "not graded today" and staged."""
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -869,11 +868,13 @@ class TestListenClozeIntegration:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
+        data = response.json()
 
         banka = db.get_collocation_by_lemma("banka")
-        assert banka.directions[Direction.RECOGNITION].reps == 6
+        assert banka.directions[Direction.RECOGNITION].reps == 5  # unchanged
+        assert data["staged"] == 1
 
-    async def test_listen_grades_review_with_suspended_state(self):
+    async def test_listen_skips_review_with_suspended_state(self):
         """SUSPENDED state → skip (not eligible for grade), covers fallthrough at line 238."""
 
         db = await self._setup_lesson()

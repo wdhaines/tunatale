@@ -98,9 +98,11 @@ class TestVariantCardResolutionConservation:
             await _transcript_resolves_mot(client)
             resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert resp.status_code == 200
+        data = resp.json()
 
         rec = db.get_collocation("mot, imot").directions[Direction.RECOGNITION]
-        assert rec.reps == 6, "listen missed the variant card the transcript shows as due (resolution drift)"
+        assert rec.reps == 5, "staging does not change FSRS state"
+        assert data["staged"] == 1
 
     async def test_lesson_review_queue_serves_variant_card(self):
         db = _setup_no_lesson("Han gikk mot huset")

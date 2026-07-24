@@ -635,15 +635,14 @@ describe("TunaTaleAPI", () => {
       expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/new?direction=production&limit=5`);
     });
 
-    it("markAsListened calls POST /api/srs/listen with lesson_id and empty word_ratings by default", async () => {
+    it("markAsListened calls POST /api/srs/listen with lesson_id and empty ratings by default", async () => {
       vi.stubGlobal(
         "fetch",
         vi.fn().mockResolvedValue(
           mockOk({
             status: "ok",
-            registered: 3,
             created: 1,
-            graded: 2,
+            staged: 2,
             remaining_candidates: 5,
             listen_count: 4,
           }),
@@ -656,33 +655,35 @@ describe("TunaTaleAPI", () => {
         `${BASE}/api/srs/listen`,
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ lesson_id: "lesson-1", word_ratings: {} }),
+          body: JSON.stringify({ lesson_id: "lesson-1", word_ratings: {}, kp_ratings: {} }),
         }),
       );
       expect(result.status).toBe("ok");
-      expect(result.registered).toBe(3);
       expect(result.created).toBe(1);
-      expect(result.graded).toBe(2);
+      expect(result.staged).toBe(2);
       expect(result.remaining_candidates).toBe(5);
       expect(result.listen_count).toBe(4);
     });
 
-    it("markAsListened sends word_ratings when provided", async () => {
+    it("markAsListened sends word_ratings and kp_ratings when provided", async () => {
       vi.stubGlobal(
         "fetch",
         vi.fn().mockResolvedValue(
           mockOk({
             status: "ok",
-            registered: 5,
             created: 2,
-            graded: 3,
+            staged: 3,
             remaining_candidates: 0,
             listen_count: 6,
           }),
         ),
       );
 
-      await api.markAsListened("lesson-1", { banka: "hard", zdravo: "easy" });
+      await api.markAsListened(
+        "lesson-1",
+        { banka: "hard", zdravo: "easy" },
+        { "na zdravje": "skip" },
+      );
 
       expect(fetch).toHaveBeenCalledWith(
         `${BASE}/api/srs/listen`,
@@ -690,6 +691,7 @@ describe("TunaTaleAPI", () => {
           body: JSON.stringify({
             lesson_id: "lesson-1",
             word_ratings: { banka: "hard", zdravo: "easy" },
+            kp_ratings: { "na zdravje": "skip" },
           }),
         }),
       );

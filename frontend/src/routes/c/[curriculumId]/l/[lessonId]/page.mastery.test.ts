@@ -141,9 +141,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     it("refetches review queue after each listen", async () => {
       mockMarkAsListened.mockResolvedValue({
         status: "ok",
-        registered: 1,
         created: 0,
-        graded: 1,
+        staged: 1,
         remaining_candidates: 2,
         listen_count: 4,
       });
@@ -168,9 +167,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await seedListened("l1", 5);
       mockMarkAsListened.mockResolvedValue({
         status: "ok",
-        registered: 1,
         created: 0,
-        graded: 1,
+        staged: 1,
         remaining_candidates: 0,
         listen_count: 5,
       });
@@ -211,9 +209,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       // itself — no separate "post-listen" mock state to fake.
       mockMarkAsListened.mockResolvedValue({
         status: "ok",
-        registered: 1,
         created: 0,
-        graded: 1,
+        staged: 1,
         remaining_candidates: 0,
         listen_count: 3,
       });
@@ -473,9 +470,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       mockGetTranscript.mockResolvedValue(afterTranscript);
       mockMarkAsListened.mockResolvedValue({
         status: "ok",
-        registered: 1,
         created: 1,
-        graded: 0,
+        staged: 0,
         remaining_candidates: 0,
         listen_count: 1,
       });
@@ -741,9 +737,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
       mockMarkAsListened.mockResolvedValue({
         status: "ok",
-        registered: 1,
         created: 0,
-        graded: 1,
+        staged: 1,
         remaining_candidates: 0,
         listen_count: 1,
       });

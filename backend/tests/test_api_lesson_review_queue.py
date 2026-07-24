@@ -254,7 +254,7 @@ class TestLessonReviewQueue:
         assert [(i["id"], i["direction"]) for i in after.json()["queue"]] == order_before
 
     async def test_again_after_auto_good_is_normal_lapse(self):
-        """Listen auto-Goods a REVIEW card; grading it Again from the lesson queue
+        """Listen stages a REVIEW card; grading it Again from the lesson queue
         via the normal feedback endpoint is an ordinary same-day lapse: state →
         relearning, revlog logs button=1 from the pre-answer REVIEW state
         (review_kind=1), no revlog rewriting."""
@@ -271,7 +271,7 @@ class TestLessonReviewQueue:
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             listen = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-        assert listen.json()["graded"] == 1
+        assert listen.json()["staged"] == 1
 
         resp = await self._get_queue()
         queue = resp.json()["queue"]
@@ -296,9 +296,9 @@ class TestLessonReviewQueue:
         """Regression (card 3005 'fra', reps=7): a touched-today REVIEW card graded
         in the correction pass must leave the lesson queue. Before the fix,
         `touched_today` kept re-including it, so grading Good re-served the same
-        card forever. The arming listen's own auto-Good stays (record_listen runs
-        after the grade loop, so last_review <= listen); a manual grade *after* the
-        listen exceeds it and drops the card. A fresh listen re-arms the pass."""
+        card forever. The arming listen stages (not grades), so last_review is
+        untouched and the card is still served; a manual grade after the listen
+        exceeds the arming timestamp and drops the card. A fresh listen re-arms."""
         db = self._setup(self._lesson(["banka"]))
         self._track(db, "banka")
         self._set_dir(
@@ -312,9 +312,9 @@ class TestLessonReviewQueue:
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             listen = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-        assert listen.json()["graded"] == 1
+        assert listen.json()["staged"] == 1
 
-        # Auto-Good'd by the listen, not yet manually reviewed → in the pass.
+        # Staged by the listen (not graded — last_review unchanged), so still in the pass.
         resp = await self._get_queue()
         queue = resp.json()["queue"]
         assert [i["text"] for i in queue] == ["banka"]

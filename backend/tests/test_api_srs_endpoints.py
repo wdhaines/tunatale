@@ -188,7 +188,7 @@ class TestSRSEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
-        assert data["registered"] == 0
+        assert data["staged"] == 0
         assert db.count_collocations() == 0
 
     async def test_listen_creates_collocations_with_source_llm_and_no_anki_link(self):
@@ -308,7 +308,7 @@ class TestSRSEndpoints:
         data = response.json()
         assert data["status"] == "ok"
         # 2 cloze (kje, je) + 1 vocab (banka)
-        assert data["registered"] == 3
+        assert data["created"] == 3
         assert db.get_collocation_by_lemma("kje") is not None
         assert db.get_collocation_by_lemma("je") is not None
         banka = db.get_collocation_by_lemma("banka")
@@ -541,7 +541,7 @@ class TestSRSEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
-        assert data["registered"] == 0
+        assert data["staged"] == 0
 
 
 class TestResolveGlossTranslation:

@@ -274,9 +274,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
   it("calls listenedStore.markListened and refetches transcript", async () => {
     mockMarkAsListened.mockResolvedValue({
       status: "ok",
-      registered: 3,
       created: 1,
-      graded: 2,
+      staged: 2,
       remaining_candidates: 0,
       listen_count: 3,
     });
@@ -299,9 +298,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
   it("refreshes queueStatsStore after mark-as-listened", async () => {
     mockMarkAsListened.mockResolvedValue({
       status: "ok",
-      registered: 3,
       created: 1,
-      graded: 2,
+      staged: 2,
       remaining_candidates: 0,
       listen_count: 3,
     });
@@ -570,12 +568,11 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(await findByText("plain listen error")).toBeTruthy();
   });
 
-  it("shows listen confirmation with created/graded/remaining after markListened", async () => {
+  it("shows listen confirmation with created/staged/remaining after markListened", async () => {
     mockMarkAsListened.mockResolvedValue({
       status: "ok",
-      registered: 3,
       created: 2,
-      graded: 1,
+      staged: 1,
       remaining_candidates: 5,
       listen_count: 3,
     });
@@ -589,16 +586,15 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     await fireEvent.click(await findByText("Mark as Listened"));
 
     expect(await findByText(/2 new words added/)).toBeTruthy();
-    expect(await findByText(/1 reviewed/)).toBeTruthy();
+    expect(await findByText(/1 ready to check/)).toBeTruthy();
     expect(await findByText(/5 remaining/)).toBeTruthy();
   });
 
   it("shows 'listen again to add more' in the confirmation", async () => {
     mockMarkAsListened.mockResolvedValue({
       status: "ok",
-      registered: 1,
       created: 0,
-      graded: 1,
+      staged: 1,
       remaining_candidates: 3,
       listen_count: 2,
     });
@@ -617,9 +613,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
   it("hides listen confirmation when error is set after markListened", async () => {
     mockMarkAsListened.mockResolvedValue({
       status: "ok",
-      registered: 3,
       created: 1,
-      graded: 2,
+      staged: 2,
       remaining_candidates: 0,
       listen_count: 3,
     });

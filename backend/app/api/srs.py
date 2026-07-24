@@ -59,7 +59,6 @@ from app.srs.queue_stats import (
     advance_learning_cutoff,
     build_live_load_balancer,
     effective_review_budget,
-    live_review_budget,
     resolve_bury_new,
     resolve_col_crt,
     resolve_daily_new_cap,
@@ -91,6 +90,10 @@ _MEDIA_DIR = Path(__file__).parent.parent.parent / "media"
 # languages from one process, so a frozen import-time lemmatizer would analyze e.g.
 # Norwegian transcripts with the Slovene model. See get_lemmatizer(language_code).
 
+# Rating-word → Rating. /listen no longer consults this (it stores the raw word on
+# the pending row); it is the string→Rating seam for the pending-grade APPLY path.
+# Currently unreferenced — a module-level dict is invisible to both ruff and the
+# coverage gate, so this note is the only thing marking it as deliberate.
 _WORD_RATING_MAP: dict[str, Rating] = {
     "again": Rating.AGAIN,
     "hard": Rating.HARD,
@@ -439,14 +442,19 @@ def _listen_grade_class(
 
 
 def _bump_grade_clock(last_ms: int) -> tuple[datetime.datetime, int]:
-    """Monotonic per-grade timestamp for multi-grade listens.
+    """Monotonic per-grade timestamp for a request that applies many grades.
 
     ``tt_revlog.id`` is a millisecond-epoch primary key and ``append_revlog``
     is INSERT OR IGNORE (sync-replay idempotency), so two grades landing in
     the same millisecond would silently drop the second row — losing FSRS
     replay history and under-counting ``count_reviews_completed_today``.
-    Anki never faces this (one answer per user interaction); a listen grades
-    a whole lesson in one request, so bump into the next free millisecond.
+    Anki never faces this (one answer per user interaction).
+
+    /listen was the original caller; under the pending-bucket model it stages
+    rather than grades, so this has NO app-side caller right now — only its own
+    unit test, which is why the coverage gate can't flag it. It is retained for
+    the bulk pending-apply path ("Sync it"), which reinstates exactly the
+    many-grades-in-one-request shape it was written for.
     """
     now = datetime.datetime.now(datetime.UTC)
     ms = int(now.timestamp() * 1000)
@@ -563,13 +571,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         raise HTTPException(status_code=404, detail="Lesson not found")
 
     db = request.state.srs_db
-    col_crt = resolve_col_crt(db)
     llm = getattr(request.app.state, "llm", None)
     # One shared set across this request so two new words don't pick the same image.
     used_image_urls: set[str] = set()
-    # One session balancer for the whole request; each grade below feeds itself
-    # back via _balancer_add so later grades in this lesson see earlier ones.
-    balancer = build_live_load_balancer(db, now=datetime.datetime.now(datetime.UTC), col_crt=col_crt)
 
     # ── Word-level tracking from NATURAL_SPEED section ──────────────────
     from app.models.lesson import extract_sentence_translations_from_translated
@@ -606,12 +610,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     end_of_day_utc = datetime.datetime.combine(today, datetime.time.max).isoformat()
 
     created_count = 0
-    graded_count = 0
-
-    # ── Live review budget: due-today grades count against it, ahead/learning
-    # grades are unlimited (brief Step B) ──────────────────────────────────
-    review_budget = live_review_budget(db, today)
-    last_grade_ms = 0  # revlog-id monotonicity across this listen's grades
+    staged_count = 0
 
     # ── Per-listen creation budget (plan D1) ────────────────────────────
     # One listen queues at most one Anki-day's worth of new cards, net of
@@ -688,41 +687,21 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             grade_cls = _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc)
             if grade_cls is None:
                 continue
-            if grade_cls == "due" and review_budget <= 0:
+            rating_str = body.word_ratings.get(lemma, "good")
+            if rating_str == "skip":
                 continue
-            rating = _WORD_RATING_MAP.get(body.word_ratings.get(lemma, "good"), Rating.GOOD)
-            now, last_grade_ms = _bump_grade_clock(last_grade_ms)
-            prev_dir = existing.directions[Direction.RECOGNITION]
-            updated = schedule(
-                existing,
-                rating,
-                direction=Direction.RECOGNITION,
-                params=resolve_fsrs_params(db)[0],
-                now=now,
-                col_crt=col_crt,
-                load_balancer=balancer,
-            )
-            db.update_collocation(updated)
             listen_coll_id = db.get_collocation_id_by_guid(existing.guid)
             assert listen_coll_id is not None
-            row = build_revlog_row(
+            db.stage_pending_grade(
+                body.lesson_id,
                 listen_coll_id,
-                Direction.RECOGNITION,
-                prev_dir,
-                updated.directions[Direction.RECOGNITION],
-                rating,
-                0,
-                now=now,
-                col_crt=col_crt,
-                review_kind=3 if grade_cls == "ahead" else None,
+                Direction.RECOGNITION.value,
+                rating_str,
+                grade_cls,
             )
-            db.append_revlog(row)
-            _balancer_add(balancer, card_id=prev_dir.anki_card_id, note_id=existing.anki_note_id, interval=row.interval)
-            graded_count += 1
-            if grade_cls == "due":
-                review_budget -= 1
+            staged_count += 1
 
-    # ── Key phrase auto-grade (existing cards only; creation deferred) ────
+    # ── Key phrase staging (existing cards only; creation deferred) ─────
     for kp in lesson.key_phrases:
         existing = db.get_collocation(kp.phrase)
         if existing is None:
@@ -735,38 +714,19 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         grade_cls = _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc)
         if grade_cls is None:
             continue
-        if grade_cls == "due" and review_budget <= 0:
+        rating_str = body.kp_ratings.get(kp.phrase, "good")
+        if rating_str == "skip":
             continue
-        now, last_grade_ms = _bump_grade_clock(last_grade_ms)
-        prev_dir = existing.directions[Direction.RECOGNITION]
-        updated = schedule(
-            existing,
-            Rating.GOOD,
-            direction=Direction.RECOGNITION,
-            params=resolve_fsrs_params(db)[0],
-            now=now,
-            col_crt=col_crt,
-            load_balancer=balancer,
-        )
-        db.update_collocation(updated)
         kp_coll_id = db.get_collocation_id_by_guid(existing.guid)
         assert kp_coll_id is not None
-        row = build_revlog_row(
+        db.stage_pending_grade(
+            body.lesson_id,
             kp_coll_id,
-            Direction.RECOGNITION,
-            prev_dir,
-            updated.directions[Direction.RECOGNITION],
-            Rating.GOOD,
-            0,
-            now=now,
-            col_crt=col_crt,
-            review_kind=3 if grade_cls == "ahead" else None,
+            Direction.RECOGNITION.value,
+            rating_str,
+            grade_cls,
         )
-        db.append_revlog(row)
-        _balancer_add(balancer, card_id=prev_dir.anki_card_id, note_id=existing.anki_note_id, interval=row.interval)
-        graded_count += 1
-        if grade_cls == "due":
-            review_budget -= 1
+        staged_count += 1
 
     # ── Staged creation over ranked candidates, truncated to budget (D2/D3) ──
     # No persisted cursor: each listen recomputes lesson-word-set minus tracked
@@ -828,12 +788,10 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # Server-side listened state (TT-only, never syncs): one row per listen.
     db.record_listen(body.lesson_id)
 
-    registered = created_count + graded_count
     return {
         "status": "ok",
-        "registered": registered,
+        "staged": staged_count,
         "created": created_count,
-        "graded": graded_count,
         "remaining_candidates": remaining_candidates,
         "listen_count": db.count_listens(body.lesson_id),
     }

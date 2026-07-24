@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field, model_validator
 
 class ListenRequest(BaseModel):
     lesson_id: str
-    word_ratings: dict[str, str] = {}  # lemma → "hard"|"easy"|"again"
+    word_ratings: dict[str, str] = {}  # lemma → "again"|"hard"|"good"|"easy"|"skip"
+    kp_ratings: dict[str, str] = {}  # key-phrase text → same domain as word_ratings
 
 
 class ImportListensRequest(BaseModel):

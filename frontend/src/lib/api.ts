@@ -139,7 +139,9 @@ export interface DayProgress {
   lesson_id: string;
 }
 
-export type WordRating = "hard" | "easy" | "again";
+// Mirrors the backend's rating domain for /listen (app/api/models.py::ListenRequest).
+// "good" is the default a listen stages; "skip" means "stage nothing for this item".
+export type WordRating = "again" | "hard" | "good" | "easy" | "skip";
 
 export interface WordToken {
   surface: string;
@@ -206,9 +208,8 @@ export interface TranscriptData {
 
 export interface ListenResponse {
   status: string;
-  registered: number;
   created: number;
-  graded: number;
+  staged: number;
   remaining_candidates: number;
   listen_count: number;
 }
@@ -821,11 +822,16 @@ export class TunaTaleAPI {
   async markAsListened(
     lessonId: string,
     wordRatings: Record<string, WordRating> = {},
+    kpRatings: Record<string, WordRating> = {},
   ): Promise<ListenResponse> {
     return this.request("/api/srs/listen", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lesson_id: lessonId, word_ratings: wordRatings }),
+      body: JSON.stringify({
+        lesson_id: lessonId,
+        word_ratings: wordRatings,
+        kp_ratings: kpRatings,
+      }),
     });
   }
 

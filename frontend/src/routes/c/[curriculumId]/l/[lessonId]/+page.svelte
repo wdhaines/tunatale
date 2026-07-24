@@ -615,9 +615,9 @@
 				{#if listenResult.created > 0}
 					{listenResult.created} new {listenResult.created === 1 ? 'word' : 'words'} added
 				{/if}
-				{#if listenResult.created > 0 && listenResult.graded > 0} · {/if}
-				{#if listenResult.graded > 0}
-					{listenResult.graded} reviewed
+				{#if listenResult.created > 0 && listenResult.staged > 0} · {/if}
+				{#if listenResult.staged > 0}
+					{listenResult.staged} ready to check
 				{/if}
 				{#if listenResult.remaining_candidates > 0}
 					 · {listenResult.remaining_candidates} remaining — listen again to add more

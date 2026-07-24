@@ -241,9 +241,8 @@ describe("listenedStore", () => {
     it("returns full ListenResponse and updates state", async () => {
       const response = {
         status: "ok",
-        registered: 3,
         created: 1,
-        graded: 2,
+        staged: 2,
         remaining_candidates: 5,
         listen_count: 4,
       };
@@ -260,9 +259,8 @@ describe("listenedStore", () => {
     it("passes word_ratings to API", async () => {
       mockApi.markAsListened.mockResolvedValue({
         status: "ok",
-        registered: 1,
         created: 0,
-        graded: 1,
+        staged: 1,
         remaining_candidates: 0,
         listen_count: 1,
       });

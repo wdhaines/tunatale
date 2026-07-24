@@ -327,15 +327,13 @@ class TestListenToSyncRoundTrip:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
         assert response.status_code == 200
-        assert response.json()["graded"] == 2
+        data = response.json()
+        assert data["staged"] == 2
 
-        # TT wrote one kind-1 and one kind-3 row.
+        # Staging writes no tt_revlog rows — a listen leaves nothing dirty.
         with db._get_conn() as conn:
-            kinds = {
-                r["collocation_id"]: r["review_kind"]
-                for r in conn.execute("SELECT collocation_id, review_kind FROM tt_revlog").fetchall()
-            }
-        assert sorted(kinds.values()) == [1, 3]
+            count = conn.execute("SELECT COUNT(*) FROM tt_revlog").fetchone()[0]
+        assert count == 0
 
         # ── Full sync (the single canonical sequence — no phase subset) ────
         sync = AnkiSync(
@@ -368,20 +366,15 @@ class TestListenToSyncRoundTrip:
             sync_log_path=tmp_path / "sync.log",
         )
 
-        # Ahead grade landed verbatim: type=3, factor>0. Due grade: type=1,
-        # lastIvl>=1 (review footing).
+        # No listen grades were pushed to Anki — staging leaves nothing dirty.
         ahead_rows = anki_conn.execute("SELECT type, factor, lastIvl FROM revlog WHERE cid = 90020").fetchall()
-        assert len(ahead_rows) == 1
-        assert ahead_rows[0]["type"] == 3
-        assert ahead_rows[0]["factor"] > 0
+        assert len(ahead_rows) == 0
         due_rows = anki_conn.execute("SELECT type, factor, lastIvl FROM revlog WHERE cid = 90010").fetchall()
-        assert len(due_rows) == 1
-        assert due_rows[0]["type"] == 1
-        assert due_rows[0]["lastIvl"] >= 1
+        assert len(due_rows) == 0
 
-        # Anki's per-deck studied counter counts the due grade only.
+        # Anki's per-deck studied counter counts zero (no grade pushed).
         today_4am_ms = int(_local_today_4am().timestamp() * 1000)
-        assert OfflineWriter(anki_conn).count_reviews_today_for_deck(12345, today_4am_ms) == 1
+        assert OfflineWriter(anki_conn).count_reviews_today_for_deck(12345, today_4am_ms) == 0
 
 
 class TestImageEndpointToSyncSeam:

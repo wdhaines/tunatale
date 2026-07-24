@@ -88,11 +88,10 @@ class TestListenStagedCreation:
 
         data = await self._listen()
 
-        assert set(data) == {"status", "registered", "created", "graded", "remaining_candidates", "listen_count"}
+        assert set(data) == {"status", "staged", "created", "remaining_candidates", "listen_count"}
         assert data["status"] == "ok"
         assert data["created"] == 2
-        assert data["graded"] == 0
-        assert data["registered"] == data["created"] + data["graded"]
+        assert data["staged"] == 0
         assert data["remaining_candidates"] == 1
         assert data["listen_count"] == 1
         assert db.get_collocation_by_lemma("banka") is not None
@@ -129,8 +128,8 @@ class TestListenStagedCreation:
 
         assert data["remaining_candidates"] == 0
 
-    async def test_already_tracked_key_phrase_still_graded_when_budget_zero(self):
-        """An ALREADY-tracked key-phrase card is still auto-graded by a listen."""
+    async def test_already_tracked_key_phrase_still_staged_when_budget_zero(self):
+        """An ALREADY-tracked key-phrase card is still staged by a listen (no grade)."""
         from app.models.syntactic_unit import SyntacticUnit
 
         db = self._setup(
@@ -160,9 +159,10 @@ class TestListenStagedCreation:
         data = await self._listen()
 
         assert data["created"] == 0
+        assert data["staged"] == 1
         item = db.get_collocation("dober dan")
         rec = item.directions[Direction.RECOGNITION]
-        assert rec.reps == 2
+        assert rec.reps == 1  # staging does not grade
 
     async def test_same_day_relisten_creates_zero(self):
         db = self._setup(self._lesson(["banka center hotel kava mesto"]))
@@ -284,8 +284,7 @@ class TestListenStagedCreation:
 
 
 class TestListenReviewCap:
-    """Step B: /listen respects the daily review cap for due-today cards;
-    future-due cards are graded as review-ahead (revlog kind 3)."""
+    """Staging: /listen stages all eligible cards — no listen-time review budget cap."""
 
     def _lesson(self, phrases, key_phrases=None, language_code="sl"):
         return Lesson(
@@ -320,8 +319,8 @@ class TestListenReviewCap:
         assert resp.status_code == 200
         return resp.json()
 
-    async def test_budget_caps_due_today_grades(self):
-        """With daily_review_cap=2 and 4 due-today tracked review cards, exactly 2 are graded."""
+    async def test_stages_all_eligible_cards_no_budget_cap(self):
+        """With daily_review_cap=2 and 4 due-today tracked review cards, all 4 are staged."""
         from datetime import timedelta
 
         db = self._setup(self._lesson(["banka center hotel kava"]))
@@ -344,33 +343,22 @@ class TestListenReviewCap:
 
         data = await self._listen()
 
-        assert data["graded"] == 2
-
-        def _revlog_rows(text):
+        assert data["staged"] == 4
+        for text in ("banka", "center", "hotel", "kava"):
             item = db.get_collocation(text)
+            coll_id = db.get_collocation_id_by_guid(item.guid)
             with db._get_conn() as conn:
-                return conn.execute(
-                    "SELECT review_kind FROM tt_revlog WHERE collocation_id = ?",
-                    (db.get_collocation_id_by_guid(item.guid),),
+                rows = conn.execute(
+                    "SELECT COUNT(*) FROM tt_revlog WHERE collocation_id = ?",
+                    (coll_id,),
                 ).fetchall()
-
-        # The first two in iteration order (lemma first-appearance) get one
-        # kind-1 row each; the two beyond the budget are skipped entirely —
-        # no revlog row, state and due_at untouched, so they stay due for
-        # the lesson review queue ("Check your work").
-        for text in ("banka", "center"):
-            rows = _revlog_rows(text)
-            assert len(rows) == 1
-            assert rows[0]["review_kind"] == 1
-        for text in ("hotel", "kava"):
-            assert _revlog_rows(text) == []
-            rec = db.get_collocation(text).directions[Direction.RECOGNITION]
+            assert rows[0][0] == 0  # no revlog rows
+            rec = item.directions[Direction.RECOGNITION]
             assert rec.state == SRSState.REVIEW
-            assert rec.due_at < datetime.now(UTC)
-            assert rec.reps == 5
+            assert rec.reps == 5  # FSRS untouched
 
-    async def test_ahead_grades_unlimited_with_kind_3(self):
-        """Future-due review cards are graded even when budget is 0, with review_kind=3."""
+    async def test_ahead_cards_stage_with_grade_class_ahead(self):
+        """Future-due review cards are staged with grade_class='ahead'."""
         from datetime import timedelta
 
         db = self._setup(self._lesson(["banka center"]))
@@ -393,20 +381,16 @@ class TestListenReviewCap:
 
         data = await self._listen()
 
-        assert data["graded"] == 2
+        assert data["staged"] == 2
         for text in ("banka", "center"):
             item = db.get_collocation(text)
-            with db._get_conn() as conn:
-                rows = conn.execute(
-                    "SELECT review_kind, factor FROM tt_revlog WHERE collocation_id = ?",
-                    (db.get_collocation_id_by_guid(item.guid),),
-                ).fetchall()
-            assert len(rows) >= 1
-            assert rows[-1]["review_kind"] == 3
-            assert rows[-1]["factor"] > 0
+            coll_id = db.get_collocation_id_by_guid(item.guid)
+            pg = db.get_pending_grade(coll_id, Direction.RECOGNITION.value)
+            assert pg is not None
+            assert pg["grade_class"] == "ahead"
 
-    async def test_learning_card_graded_when_budget_zero(self):
-        """LEARNING-state cards are always graded, even when budget is 0."""
+    async def test_learning_card_stages_when_budget_zero(self):
+        """LEARNING-state cards are staged even when budget is 0."""
         db = self._setup(self._lesson(["banka"]))
         db.set_anki_state_cache("daily_new_cap", "0")
 
@@ -424,12 +408,12 @@ class TestListenReviewCap:
 
         data = await self._listen()
 
-        assert data["graded"] == 1
+        assert data["staged"] == 1
         item = db.get_collocation("banka")
-        assert item.directions[Direction.RECOGNITION].reps == 2
+        assert item.directions[Direction.RECOGNITION].reps == 1  # staging does not grade
 
-    async def test_same_day_relisten_grades_zero(self):
-        """Same-day re-listen grades nothing (once-per-day window)."""
+    async def test_same_day_relisten_upserts_provisional_grade(self):
+        """Same-day re-listen upserts the pending grade (still staged, not applied)."""
         from datetime import timedelta
 
         db = self._setup(self._lesson(["banka"]))
@@ -449,10 +433,13 @@ class TestListenReviewCap:
         db.set_anki_state_cache("daily_review_cap", "100")
 
         first = await self._listen()
-        assert first["graded"] == 1
+        assert first["staged"] == 1
 
         second = await self._listen()
-        assert second["graded"] == 0
+        assert second["staged"] == 1  # upsert, still staged
+
+        rows = db.get_pending_grades("lesson-1")
+        assert len(rows) == 1  # upserted, not duplicated
 
     async def _queue_stats(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -460,10 +447,8 @@ class TestListenReviewCap:
         assert resp.status_code == 200
         return resp.json()
 
-    async def test_ahead_grade_moves_due_out_and_charges_no_counter(self):
-        """An ahead grade reschedules the card further out but charges neither
-        TT's completed-today counter nor the queue-stats badges (kind-3 rows
-        are excluded from count_reviews_completed_today's kind IN (0,1,2))."""
+    async def test_ahead_card_staging_leaves_fsrs_and_badges_unchanged(self):
+        """Staging an ahead card does not move due_at or charge counters."""
         from datetime import timedelta
 
         from app.srs.anki_mirror.rollover import anki_today
@@ -490,20 +475,16 @@ class TestListenReviewCap:
 
         data = await self._listen()
 
-        assert data["graded"] == 1
+        assert data["staged"] == 1
         rec = db.get_collocation("banka").directions[Direction.RECOGNITION]
-        assert rec.due_at > due_before
+        assert rec.due_at == due_before  # FSRS untouched
         assert db.count_reviews_completed_today(anki_today()) == 0
         badges_after = await self._queue_stats()
         for key in ("new", "learning", "review"):
             assert badges_after[key] == badges_before[key]
 
-    async def test_field_regression_badge_never_below_budget_minus_graded(self):
-        """Field pin (observed 2026-07-17, all-zero badges): a listen may drive
-        the review badge down only by the due cards it actually graded — never
-        further. With due cards ≥ remaining budget the post-listen badge equals
-        previous_budget − graded_due (here 0: BY DESIGN), while the skipped due
-        cards stay due for Check your work. Ahead grades move nothing."""
+    async def test_staging_leaves_badge_and_due_count_unchanged(self):
+        """Staging all eligible cards leaves the review badge and due-count unchanged."""
         from datetime import timedelta
 
         from app.srs.anki_mirror.rollover import anki_today
@@ -533,21 +514,21 @@ class TestListenReviewCap:
         db.set_anki_state_cache("daily_review_cap", "2")
 
         previous_budget = (await self._queue_stats())["review"]
-        assert previous_budget == 2  # min(4 due, budget 2)
+        assert previous_budget == 2
 
         data = await self._listen()
-        assert data["graded"] == 3  # 2 due (budget) + 1 ahead
+        assert data["staged"] == 5  # all eligible (4 due + 1 ahead)
 
         graded_due = db.count_reviews_completed_today(anki_today())
-        assert graded_due == 2  # the ahead grade charged nothing
-        badge_after = (await self._queue_stats())["review"]
-        assert badge_after >= previous_budget - graded_due
-        assert badge_after == 0  # due (2 skipped) ≥ remaining budget (0) → all-zero is by design
-        assert db.count_review_due_collocations(anki_today()) == 2  # skipped cards still due
+        assert graded_due == 0  # nothing completed
+        assert db.count_review_due_collocations(anki_today()) == 4  # all still due
+        # The badge is unmoved by staging *at this stage*. Stage 3 hides PENDING
+        # cards from the due pool, which will legitimately drive this to 0 — when
+        # that lands, change this assertion deliberately, don't delete it.
+        assert (await self._queue_stats())["review"] == previous_budget
 
-    async def test_skipped_due_cards_surface_in_lesson_review_queue(self):
-        """Due cards skipped for budget stay due and appear in the lesson
-        review queue, so "Check your work" picks them up."""
+    async def test_all_staged_cards_surface_in_lesson_review_queue(self):
+        """All staged cards (no cap) remain due in FSRS and appear in Check your work."""
         from datetime import timedelta
 
         db = self._setup(self._lesson(["banka center hotel"]))
@@ -569,10 +550,10 @@ class TestListenReviewCap:
         db.set_anki_state_cache("daily_review_cap", "1")
 
         data = await self._listen()
-        assert data["graded"] == 1
+        assert data["staged"] == 3
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/lesson/lesson-1/review-queue")
         assert resp.status_code == 200
         texts = {q["text"] for q in resp.json()["queue"]}
-        assert {"center", "hotel"} <= texts
+        assert {"banka", "center", "hotel"} <= texts
