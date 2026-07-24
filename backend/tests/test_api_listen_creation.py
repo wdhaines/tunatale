@@ -483,8 +483,16 @@ class TestListenReviewCap:
         for key in ("new", "learning", "review"):
             assert badges_after[key] == badges_before[key]
 
-    async def test_staging_leaves_badge_and_due_count_unchanged(self):
-        """Staging all eligible cards leaves the review badge and due-count unchanged."""
+    async def test_staging_charges_nothing_but_hides_the_staged_cards(self):
+        """Staging completes no reviews, yet empties the review pool (stage 3).
+
+        Two separate facts, and the distinction is the whole model: FSRS is
+        untouched (``count_reviews_completed_today`` stays 0, no budget charged),
+        but the staged cards leave the due pool and the badge, because they are
+        now served by "Check your work" instead. Anki, which has no notion of a
+        pending grade, keeps counting all 4 — the documented divergence, which
+        resolves as each card is applied.
+        """
         from datetime import timedelta
 
         from app.srs.anki_mirror.rollover import anki_today
@@ -520,12 +528,15 @@ class TestListenReviewCap:
         assert data["staged"] == 5  # all eligible (4 due + 1 ahead)
 
         graded_due = db.count_reviews_completed_today(anki_today())
-        assert graded_due == 0  # nothing completed
-        assert db.count_review_due_collocations(anki_today()) == 4  # all still due
-        # The badge is unmoved by staging *at this stage*. Stage 3 hides PENDING
-        # cards from the due pool, which will legitimately drive this to 0 — when
-        # that lands, change this assertion deliberately, don't delete it.
-        assert (await self._queue_stats())["review"] == previous_budget
+        assert graded_due == 0  # nothing applied — no FSRS movement, no budget charged
+        # ...but all 4 due cards are now pending, so they leave the review pool.
+        assert db.count_review_due_collocations(anki_today()) == 0
+        assert (await self._queue_stats())["review"] == 0
+
+        # Releasing one puts it straight back in the pool the badge counts.
+        released = db.get_collocation_id_by_guid(db.get_collocation("banka").guid)
+        db.clear_pending_grade(released, Direction.RECOGNITION.value)
+        assert db.count_review_due_collocations(anki_today()) == 1
 
     async def test_all_staged_cards_surface_in_lesson_review_queue(self):
         """All staged cards (no cap) remain due in FSRS and appear in Check your work."""

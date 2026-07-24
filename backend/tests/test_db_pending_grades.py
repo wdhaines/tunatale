@@ -98,6 +98,45 @@ class TestClearPendingGrade:
     def test_does_not_raise_when_missing(self, db):
         db.clear_pending_grade(999, "recognition")  # should not raise
 
+    def test_clears_by_guid(self, db):
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db.add_collocation(
+            SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="test"),
+            language_code="sl",
+        )
+        item = db.get_collocation("banka")
+        cid = db.get_collocation_id_by_guid(item.guid)
+        db.stage_pending_grade("l1", cid, "recognition", "good", "due")
+
+        db.clear_pending_grade_by_guid(item.guid, "recognition")
+
+        assert db.get_pending_grade(cid, "recognition") is None
+
+    def test_clear_by_guid_ignores_an_unknown_guid(self, db):
+        db.stage_pending_grade("l1", 1, "recognition", "good", "due")
+
+        db.clear_pending_grade_by_guid("no-such-guid", "recognition")
+
+        assert db.get_pending_grade(1, "recognition") is not None
+
+    def test_clear_by_guid_is_direction_scoped(self, db):
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db.add_collocation(
+            SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="test"),
+            language_code="sl",
+        )
+        item = db.get_collocation("banka")
+        cid = db.get_collocation_id_by_guid(item.guid)
+        db.stage_pending_grade("l1", cid, "recognition", "good", "due")
+        db.stage_pending_grade("l1", cid, "production", "good", "due")
+
+        db.clear_pending_grade_by_guid(item.guid, "recognition")
+
+        assert db.get_pending_grade(cid, "recognition") is None
+        assert db.get_pending_grade(cid, "production") is not None
+
     def test_clears_only_one_direction(self, db):
         db.stage_pending_grade("l1", 1, "recognition", "good", "due")
         db.stage_pending_grade("l1", 1, "production", "good", "due")

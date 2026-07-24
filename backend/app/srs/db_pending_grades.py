@@ -76,6 +76,22 @@ class DbPendingGradesMixin:
             )
             self._commit(conn)
 
+    def clear_pending_grade_by_guid(self, guid: str, direction: str) -> None:
+        """Delete a pending grade row addressed by collocation guid.
+
+        The sync path holds guids, not row ids. Resolving the id there would
+        mean a ``get_collocation_id_by_guid`` call plus a None-guard that cannot
+        fire (the guid came from a matched note) — an untestable branch. Doing
+        the join in SQL makes an unmatched guid a no-op delete instead.
+        """
+        with self._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM pending_listen_grades WHERE direction = ? "
+                "AND collocation_id IN (SELECT id FROM collocations WHERE guid = ?)",
+                (direction, guid),
+            )
+            self._commit(conn)
+
     def count_pending_grades(self, lesson_id: str) -> int:
         """Return the number of pending grade rows for a lesson."""
         with self._get_conn() as conn:

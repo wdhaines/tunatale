@@ -262,6 +262,43 @@ def _make_cloze_collection_conn():
 
 
 class TestClozeNote:
+    def test_create_cloze_note_steps_past_a_taken_card_id(self):
+        """The card id starts at ``note_id + ord`` and must step over anything
+        already sitting there, or the INSERT hits a PK collision.
+
+        Deterministic on purpose. This loop DOES get exercised incidentally when
+        two notes are created inside the same millisecond, which made it a
+        timing-dependent coverage line: it was covered on an idle machine and
+        uncovered under parallel load (`pytest -n auto`), so unrelated work that
+        shifted timings could flip the 100% gate. Forcing the collision pins it.
+        """
+        anki_conn = _make_cloze_collection_conn()
+        writer = OfflineWriter(anki_conn)
+        # note_id = max(now_ms, MAX(notes.id) + 1) — seed a note far in the
+        # future so the next id is predictable, then squat on its card id.
+        taken = 9_000_000_000_000
+        anki_conn.execute(
+            "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+            "VALUES (?, 'squatter', 1000001, 0, -1, '', '', '', 0, 0, '')",
+            (taken,),
+        )
+        anki_conn.execute(
+            "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, "
+            "factor, reps, lapses, left, odue, odid, flags, data) "
+            "VALUES (?, ?, 1, 0, 0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+            (taken + 1, taken),
+        )
+
+        note_id = writer.create_cloze_note(
+            deck_name="0. Slovene",
+            cloze_text="knjiga, {{c1::ki}} je tam",
+            tags=["tunatale"],
+        )
+
+        assert note_id == taken + 1
+        card = anki_conn.execute("SELECT id FROM cards WHERE nid = ?", (note_id,)).fetchone()
+        assert card["id"] == taken + 2, "the taken id must be stepped over, not overwritten"
+
     def test_create_cloze_note_inserts_cloze_note_with_single_card(self):
         """create_cloze_note inserts note with correct notetype, usn=-1, single card."""
         anki_conn = _make_cloze_collection_conn()

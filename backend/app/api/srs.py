@@ -298,6 +298,13 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
     # don't re-charge the daily review budget — the card was counted once already.
     # Guarded by has_counting_review_today so a genuine first review still counts.
     budget_neutral = body.lesson_review and db.has_counting_review_today(item_id, dir_enum, anki_today())
+    # Releasing a staged listen grade: the provisional row was never a real grade,
+    # so this IS the card's first grade — nothing to overwrite. Anki's review-ahead
+    # kind is decided from the card's dueness NOW, not from the grade_class stored
+    # at stage time: a sync or a day rollover in between can have moved due_at, and
+    # a stale "due" would log a not-due grade as an ordinary review.
+    releasing = db.get_pending_grade(item_id, dir_enum.value) is not None
+    review_kind = _release_review_kind(prev_dir) if releasing else None
     row = build_revlog_row(
         item_id,
         dir_enum,
@@ -307,9 +314,14 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
         body.time_ms,
         now=now,
         col_crt=col_crt,
+        review_kind=review_kind,
         budget_neutral=budget_neutral,
     )
     db.append_revlog(row)
+    # Unconditional, not just on the lesson_review path: a real grade must never
+    # leave a pending row behind, or the card stays hidden from the main queue
+    # (count_review_due_collocations / _compute_live_main) indefinitely.
+    db.clear_pending_grade(item_id, dir_enum.value)
     # Single-level undo: snapshot the verbatim pre-grade state so the popover's
     # "Got it ✓" can cycle back via "Undo ↩" (see app.srs.grade_undo).
     record_grade_snapshot(db, item_id=item_id, direction=dir_enum, prior=prev_dir, revlog_id=row.id)
@@ -408,6 +420,25 @@ def _resolve_gloss_translation(
     return ""
 
 
+def _listen_day_window() -> tuple[datetime.datetime, datetime.datetime, str]:
+    """The (today_start, today_end, end_of_day_utc) triple ``_listen_grade_class`` needs.
+
+    Anki-day rollover, NOT local midnight (a card graded in [midnight, 4 AM) is
+    still "today" for Anki until rollover). ``end_of_day_utc`` is a naive
+    local-date cutoff string, correct ONLY because REVIEW-state ``due_at`` is
+    date-encoded at 04:00 UTC (``rollover.py::due_at_rollover_utc``) — the
+    lexicographic compare is a due-DATE <= today check in disguise, and it must
+    stay identical to ``count_review_due_collocations``'.
+
+    Factored out because both callers of ``_listen_grade_class`` need it: /listen
+    when it stages, and ``drill_feedback`` when it re-classifies at release time.
+    Two hand-rolled copies of this window is how the two sides drift apart.
+    """
+    today = anki_today()
+    today_start, today_end = anki_day_bounds_utc_dt(today)
+    return today_start, today_end, datetime.datetime.combine(today, datetime.time.max).isoformat()
+
+
 def _listen_grade_class(
     rec: DirectionState | None,
     today_start: datetime.datetime,
@@ -439,6 +470,18 @@ def _listen_grade_class(
         if due_str <= end_of_day_utc:
             return "due"
     return "ahead"
+
+
+def _release_review_kind(prev_dir: DirectionState) -> int | None:
+    """Anki's review-ahead kind (3) for a card being released from the pending bucket.
+
+    Decided from the card's dueness NOW, never from the ``grade_class`` stored on
+    the pending row: a sync or a day rollover between staging and release can have
+    moved ``due_at``, and a stale "due" would log a not-due grade as an ordinary
+    review. The stored class is a record of stage time, not an input here.
+    """
+    start, end, end_of_day_utc = _listen_day_window()
+    return 3 if _listen_grade_class(prev_dir, start, end, end_of_day_utc=end_of_day_utc) == "ahead" else None
 
 
 def _bump_grade_clock(last_ms: int) -> tuple[datetime.datetime, int]:
@@ -597,17 +640,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     lemma_to_first_surface = words.first_surface
     surface_to_upos = words.surface_upos
 
-    # ── Today window (Anki-day rollover, matches count_new_introduced_today's
-    # convention via the shared rollover helper — NOT local midnight; a card
-    # graded in [midnight, 4 AM) is still "today" for Anki until rollover) ────
+    # Today window (Anki-day rollover, not local midnight) — see _listen_day_window.
     today = anki_today()
-    today_start, today_end = anki_day_bounds_utc_dt(today)
-    # Naive local-date cutoff string. Correct ONLY because REVIEW-state due_at
-    # is date-encoded at 04:00 UTC (rollover.py::due_at_rollover_utc) — the
-    # lexicographic compare is a due-DATE <= today check in disguise. An
-    # instant-flavored due_at (e.g. now-1h) whose UTC date exceeds the local
-    # date would misclassify as "ahead" past 20:00 local (UTC-4).
-    end_of_day_utc = datetime.datetime.combine(today, datetime.time.max).isoformat()
+    today_start, today_end, end_of_day_utc = _listen_day_window()
 
     created_count = 0
     staged_count = 0
@@ -913,7 +948,12 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
         if ds.state == SRSState.REVIEW:
             lr = ds.last_review
             touched_today = lr is not None and today_start <= lr.astimezone(datetime.UTC) < today_end
-            if touched_today or ds.due_at <= now:
+            # A pending listen grade is itself a reason to serve the card, whatever
+            # its dueness. Staging no longer stamps last_review, so an *ahead* card
+            # a listen staged is neither due nor touched-today — without this it
+            # would be dropped here AND hidden from the main queue by the Stage-3
+            # exclusion, i.e. unreachable until the user hit "Sync it".
+            if touched_today or ds.due_at <= now or db.get_pending_grade(rid, direction.value) is not None:
                 review.append((ds.due_at, rid, item, direction))
                 return "review"
         return None
@@ -956,10 +996,16 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     ambiguous = db.get_ambiguous_surfaces(lesson.language_code)
     latest_review = db.latest_review_at(lesson_id)
     has_unreviewed_listen = _has_unreviewed_listen(latest_listen, latest_review)
-    return {
-        "queue": [_queue_item_to_dict(rid, item, lesson.language_code, d, db, ambiguous) for rid, item, d in ordered],
-        "has_unreviewed_listen": has_unreviewed_listen,
-    }
+    # Provisional rating per card, so the UI can pre-fill what the listen staged.
+    # Scoped to THIS lesson's bucket: a row staged by another lesson still makes
+    # the card servable (it is staged), but its rating is that lesson's to show.
+    staged = {(p["collocation_id"], p["direction"]): p["rating"] for p in db.get_pending_grades(lesson_id)}
+    queue = []
+    for rid, item, d in ordered:
+        entry = _queue_item_to_dict(rid, item, lesson.language_code, d, db, ambiguous)
+        entry["pending_rating"] = staged.get((rid, d.value))
+        queue.append(entry)
+    return {"queue": queue, "has_unreviewed_listen": has_unreviewed_listen}
 
 
 @router.post("/lesson/{lesson_id}/reviewed", status_code=200)
@@ -977,6 +1023,78 @@ async def mark_lesson_reviewed(lesson_id: str, request: Request) -> dict:
     db = request.state.srs_db
     db.record_review(lesson_id)
     return {"ok": True}
+
+
+@router.post("/lesson/{lesson_id}/commit-pending", status_code=200)
+async def commit_pending_grades(lesson_id: str, request: Request) -> dict:
+    """Bulk "Sync it": release every staged grade for a lesson without reviewing it.
+
+    Applies each pending row at its provisional rating through the SAME path a
+    per-card release takes (``schedule`` → revlog → ``dirty_fsrs``), then clears
+    it. Afterwards these are ordinary dirty grades and the next normal "Sync to
+    AnkiWeb" pushes them — this endpoint deliberately does NOT sync by itself.
+
+    One shared balancer and a monotonic grade clock across the batch, exactly as
+    the pre-staging /listen grade loop had: ``tt_revlog.id`` is a millisecond PK
+    and ``append_revlog`` is INSERT OR IGNORE, so two grades in the same
+    millisecond would silently drop one.
+    """
+    store = request.state.content_store
+    if store.get_lesson(lesson_id) is None:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    db = request.state.srs_db
+
+    fsrs_params, _ = resolve_fsrs_params(db)
+    col_crt = resolve_col_crt(db)
+    now = datetime.datetime.now(datetime.UTC)
+    balancer = build_live_load_balancer(db, now=now, col_crt=col_crt)
+    last_grade_ms = 0
+    applied = 0
+
+    for pending in db.get_pending_grades(lesson_id):
+        collocation_id = pending["collocation_id"]
+        dir_enum = Direction(pending["direction"])
+        result = db.get_collocation_by_id(collocation_id)
+        if result is None:
+            # Orphaned row (the card was deleted after staging). Nothing to
+            # apply, but the row must still go or it lingers forever.
+            db.clear_pending_grade(collocation_id, dir_enum.value)
+            continue
+        _, item, _ = result
+        prev_dir = item.directions[dir_enum]
+        rating = _WORD_RATING_MAP[pending["rating"]]
+        now, last_grade_ms = _bump_grade_clock(last_grade_ms)
+        updated = schedule(
+            item,
+            rating,
+            direction=dir_enum,
+            params=fsrs_params,
+            now=now,
+            col_crt=col_crt,
+            load_balancer=balancer,
+        )
+        db.update_direction_by_id(collocation_id, dir_enum, updated.directions[dir_enum])
+        row = build_revlog_row(
+            collocation_id,
+            dir_enum,
+            prev_dir,
+            updated.directions[dir_enum],
+            rating,
+            0,
+            now=now,
+            col_crt=col_crt,
+            review_kind=_release_review_kind(prev_dir),
+        )
+        db.append_revlog(row)
+        _balancer_add(balancer, card_id=prev_dir.anki_card_id, note_id=item.anki_note_id, interval=row.interval)
+        db.clear_pending_grade(collocation_id, dir_enum.value)
+        applied += 1
+
+    # Anki parity: grading advances the learning cutoff. A batch is still a grade
+    # event, so advance once at the end rather than per card.
+    if applied:
+        advance_learning_cutoff(db, now)
+    return {"status": "ok", "applied": applied}
 
 
 @router.get("/lesson/{lesson_id}/transcript", status_code=200)

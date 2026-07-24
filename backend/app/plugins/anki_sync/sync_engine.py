@@ -177,6 +177,22 @@ _STATE_VALUE_TO_ANKI_QUEUE: dict[str, int] = {
 }
 
 
+def _is_anki_grade(local: DirectionState, candidate: DirectionState) -> bool:
+    """True when the pulled state represents a review Anki did that TT hasn't seen.
+
+    Narrower than ``_direction_differs`` on purpose: that fires on bury flips,
+    ``mod`` bumps and due-date rewrites too, none of which are reviews. Two
+    independent signals, because neither alone covers every case — ``reps`` can
+    arrive equal after an undo-and-regrade in Anki, and ``last_review`` is NULL
+    on a card TT has never seen reviewed.
+    """
+    if candidate.reps > local.reps:
+        return True
+    if candidate.last_review is None:
+        return False
+    return local.last_review is None or candidate.last_review > local.last_review
+
+
 def _bury_kind_from_queue(queue: int) -> str | None:
     """Return the bury kind for an Anki queue value, or None when not buried.
 
@@ -943,6 +959,15 @@ class AnkiSync:
                 if differs:
                     if not dry_run:
                         self._db.update_direction(guid, direction, new_dir_state)
+                        # The card was graded in Anki instead of in TT's "Check
+                        # your work". That real grade supersedes any provisional
+                        # listen grade waiting in TT's pending bucket — leaving
+                        # it would re-grade the card on the next "Sync it" and
+                        # keep it hidden from TT's main queue on the strength of
+                        # a review that already happened. Grades only: a bury
+                        # flip or mod bump is not a review.
+                        if _is_anki_grade(local_dir, new_dir_state):
+                            self._db.clear_pending_grade_by_guid(guid, direction.value)
                     report.directions_updated += 1
 
         self._pull_advance_learning_cutoff(max_revlog_ms, dry_run)

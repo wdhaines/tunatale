@@ -64,4 +64,5 @@ def test_public_method_count_pinned() -> None:
     # +has_counting_review_today (budget-neutral Check-your-work re-grade)
     # +stage_pending_grade, get_pending_grades, pending_grade_ids, get_pending_grade,
     #  clear_pending_grade, count_pending_grades (pending-listen-grades mixin)
-    assert count == 122
+    # +clear_pending_grade_by_guid (sync_pull clears by guid, not row id)
+    assert count == 123

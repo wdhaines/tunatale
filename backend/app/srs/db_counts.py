@@ -111,8 +111,19 @@ class DbCountsMixin:
            sibling). Exclude collocations with any direction in
            learning/relearning regardless of when it was last graded.
 
-        Together these match Anki's deck-overview review count when both apps
-        share the same data.
+        A third, TT-only exclusion rides on the same subquery:
+
+        3. **A pending listen grade** — a listen stages a provisional grade
+           without applying it. The card is already provisionally handled and
+           is served in the lesson "Check your work" queue, so offering it in
+           the main flow too would have the user grade it twice. Anki has no
+           equivalent, so its review count sits ABOVE TT's by the pending count
+           until the user releases them — a deliberate divergence, documented as
+           a Layer in ``docs/anki-parity-layers.md``. It resolves as pending
+           rows are applied (which clears them).
+
+        Together the first two match Anki's deck-overview review count when both
+        apps share the same data.
         """
         start_iso, end_iso = _anki_day_bounds_utc(today)
         # Naive local-date cutoff string. Correct ONLY because REVIEW-state
@@ -133,6 +144,7 @@ class DbCountsMixin:
                        OR (length(last_review) = 10 AND last_review = ?)
                        OR state IN ('learning', 'relearning')
                   )
+                  AND cd.collocation_id NOT IN (SELECT collocation_id FROM pending_listen_grades)
                 """,
                 (end_of_day_utc, start_iso, end_iso, today.isoformat()),
             ).fetchone()[0]

@@ -113,6 +113,11 @@ class TestLessonReviewQueue:
         assert queue[0]["state"] == "relearning"
 
     async def test_item_shape_matches_main_review_queue(self):
+        """A lesson item must carry everything a main-queue item does, so both
+        render through the same component. It may carry MORE: `pending_rating`
+        is lesson-only (the main queue never serves a card with a pending listen
+        grade — Stage 3 excludes them). A *missing* key is the failure this
+        guards; an extra one is not."""
         db = self._setup(self._lesson(["banka"]))
         self._track(db, "banka")
         self._set_dir(db, "banka", "recognition", "learning")
@@ -123,7 +128,8 @@ class TestLessonReviewQueue:
 
         lesson_item = lesson_resp.json()["queue"][0]
         main_item = main_resp.json()["queue"][0]
-        assert set(lesson_item.keys()) == set(main_item.keys())
+        assert set(main_item.keys()) <= set(lesson_item.keys())
+        assert set(lesson_item.keys()) - set(main_item.keys()) == {"pending_rating"}
 
     async def test_new_cards_in_d2_rank_order(self):
         # banka appears twice, center once; key phrase outranks both.
