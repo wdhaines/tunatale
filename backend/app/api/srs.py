@@ -682,6 +682,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             # conjugation clozes created by click. Skip entirely.
             if is_func and is_clozes_only_verb(lemma, lesson.language_code):
                 continue
+            # "skip" on an untracked lemma suppresses card creation for it.
+            if body.word_ratings.get(lemma, "good") == "skip":
+                continue
             lemma_candidates.append(lemma)
         else:
             # ── Existing row — skip cloze, grade recognition for eligible vocab ──
@@ -1095,6 +1098,111 @@ async def commit_pending_grades(lesson_id: str, request: Request) -> dict:
     if applied:
         advance_learning_cutoff(db, now)
     return {"status": "ok", "applied": applied}
+
+
+@router.get("/lesson/{lesson_id}/listen-preview", status_code=200)
+async def get_listen_preview(lesson_id: str, request: Request):
+    """Read-only classification of what a listen would stage for a lesson.
+
+    Ordered creations-first then tracked by mastery ascending (least-known
+    first). Strictly read-only — no pending writes, no card creation, no side
+    effects beyond the ``_analyze_lesson_words`` lemma-cache warm-up. The
+    response informs the frontend preview modal without committing anything.
+    """
+    store = request.state.content_store
+    lesson = store.get_lesson(lesson_id)
+    if lesson is None:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    db = request.state.srs_db
+
+    words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
+
+    today_start, today_end, end_of_day_utc = _listen_day_window()
+
+    variant_index = _build_variant_index(db, lesson.language_code)
+
+    from app.srs.mastery import compute_mastery_progress
+
+    candidates: list[dict] = []
+
+    # ── Word-level candidates (tracked + untracked) ─────────────────────
+    for lemma in words.first_sentence:
+        is_func = is_function_word_for(
+            lemma, words.surfaces.get(lemma, set()), lesson.language_code, words.surface_upos
+        )
+        if is_func and is_clozes_only_verb(lemma, lesson.language_code):
+            continue
+
+        res = _resolve_card_for_lemma(db, lemma, words.surfaces.get(lemma, set()), variant_index)
+        if res is None:
+            # Untracked → creation candidate
+            candidates.append(
+                {
+                    "kind": "create",
+                    "text": lemma,
+                    "item_id": None,
+                    "grade_class": "create",
+                    "rating": "good",
+                    "translation": "",
+                    "progress": None,
+                }
+            )
+        else:
+            existing_id, existing = res
+            if existing.syntactic_unit.card_type == "cloze":
+                continue
+            rec = existing.directions.get(Direction.RECOGNITION)
+            if rec is None:
+                continue
+            grade_cls = _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc)
+            if grade_cls is None:
+                continue
+            progress = compute_mastery_progress(existing.directions.values())
+            candidates.append(
+                {
+                    "kind": "word",
+                    "text": lemma,
+                    "item_id": existing_id,
+                    "grade_class": grade_cls,
+                    "rating": "good",
+                    "translation": existing.syntactic_unit.translation or "",
+                    "progress": progress,
+                }
+            )
+
+    # ── Key phrase candidates (tracked only; creation deferred) ──────────
+    for kp in lesson.key_phrases:
+        item = db.get_collocation(kp.phrase)
+        if item is None:
+            continue
+        if item.syntactic_unit.card_type == "cloze":
+            continue
+        rec = item.directions.get(Direction.RECOGNITION)
+        if rec is None:
+            continue
+        grade_cls = _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc)
+        if grade_cls is None:
+            continue
+        kp_id = db.get_collocation_id_by_guid(item.guid)
+        progress = compute_mastery_progress(item.directions.values())
+        candidates.append(
+            {
+                "kind": "kp",
+                "text": kp.phrase,
+                "item_id": kp_id,
+                "grade_class": grade_cls,
+                "rating": "good",
+                "translation": item.syntactic_unit.translation or kp.translation or "",
+                "progress": progress,
+            }
+        )
+
+    # ── Ordering: creations first, then tracked by progress ascending ────
+    creates = [c for c in candidates if c["grade_class"] == "create"]
+    tracked = [c for c in candidates if c["grade_class"] != "create"]
+    tracked.sort(key=lambda c: c["progress"] if c["progress"] is not None else 0.0)
+
+    return {"candidates": creates + tracked}
 
 
 @router.get("/lesson/{lesson_id}/transcript", status_code=200)
