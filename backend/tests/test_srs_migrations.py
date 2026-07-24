@@ -73,7 +73,71 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 40
+        assert CURRENT_VERSION == 41
+
+    def test_migrates_v40_to_v41_creates_pending_listen_grades_table(self, tmp_path):
+        from app.srs.migrations import _set_version, migrate_v40_to_v41
+
+        conn = sqlite3.connect(str(tmp_path / "test.db"))
+        _set_version(conn, 40)
+        assert not any(
+            r[0] == "pending_listen_grades"
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        )
+
+        migrate_v40_to_v41(conn)
+
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        assert "pending_listen_grades" in tables
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 41
+
+        indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()}
+        assert "idx_pending_listen_grades_lesson_id" in indexes
+
+        # Verify column shape
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(pending_listen_grades)").fetchall()}
+        assert "id" in cols
+        assert "lesson_id" in cols
+        assert "collocation_id" in cols
+        assert "direction" in cols
+        assert "rating" in cols
+        assert "grade_class" in cols
+        assert "created_at" in cols
+
+    def test_migrates_v40_to_v41_idempotent(self, tmp_path):
+        from app.srs.migrations import _set_version, migrate_v40_to_v41
+
+        conn = sqlite3.connect(str(tmp_path / "test2.db"))
+        _set_version(conn, 40)
+
+        migrate_v40_to_v41(conn)
+        migrate_v40_to_v41(conn)  # second call must not raise
+
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 41
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        assert "pending_listen_grades" in tables
+
+    def test_migrates_v40_to_v41_unique_constraint(self, tmp_path):
+        from app.srs.migrations import _set_version, migrate_v40_to_v41
+
+        conn = sqlite3.connect(str(tmp_path / "test3.db"))
+        _set_version(conn, 40)
+        migrate_v40_to_v41(conn)
+
+        conn.execute(
+            "INSERT INTO pending_listen_grades (lesson_id, collocation_id, direction, rating, created_at) "
+            "VALUES ('l1', 1, 'recognition', 'good', '2026-07-23T00:00:00')"
+        )
+        conn.execute(
+            "INSERT INTO pending_listen_grades (lesson_id, collocation_id, direction, rating, created_at) "
+            "VALUES ('l1', 1, 'production', 'good', '2026-07-23T00:00:00')"
+        )
+        # Same (collocation_id, direction) violates UNIQUE
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO pending_listen_grades (lesson_id, collocation_id, direction, rating, created_at) "
+                "VALUES ('l2', 1, 'recognition', 'good', '2026-07-23T00:00:00')"
+            )
 
     def test_migrates_v39_to_v40_adds_budget_neutral_column(self, tmp_path):
         """v40 adds tt_revlog.budget_neutral (default 0) — the flag that lets a
@@ -2245,7 +2309,7 @@ class TestMigrateV37ToV38:
     """Tests for v37→v38 (lesson_listens table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 40
+        assert CURRENT_VERSION == 41
 
     def test_v37_to_v38_creates_lesson_listens_table_and_index(self):
         from app.srs.migrations import migrate_v37_to_v38
@@ -2288,7 +2352,7 @@ class TestMigrateV37ToV38:
         try:
             tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "lesson_listens" in tables
-            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 40
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 41
         finally:
             db.close()
 
@@ -2315,7 +2379,7 @@ class TestMigrateV38ToV39:
     """Tests for v38→v39 (lesson_reviews table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 40
+        assert CURRENT_VERSION == 41
 
     def test_v38_to_v39_creates_lesson_reviews_table_and_index(self):
         from app.srs.migrations import migrate_v38_to_v39
@@ -2358,7 +2422,7 @@ class TestMigrateV38ToV39:
         try:
             tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "lesson_reviews" in tables
-            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 40
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 41
         finally:
             db.close()
 
@@ -2375,4 +2439,4 @@ class TestMigrateV38ToV39:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         assert "lesson_listens" in tables
         assert "lesson_reviews" in tables
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 40
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 41

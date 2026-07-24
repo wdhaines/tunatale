@@ -17,6 +17,7 @@ from app.srs.db_kv_cache import DbKvCacheMixin
 from app.srs.db_lemma_cache import DbLemmaCacheMixin
 from app.srs.db_listens import DbListensMixin
 from app.srs.db_media import DbMediaMixin
+from app.srs.db_pending_grades import DbPendingGradesMixin
 from app.srs.db_queue import DbQueueMixin
 from app.srs.db_reviews import DbReviewsMixin
 from app.srs.db_revlog import DbRevlogMixin
@@ -35,6 +36,7 @@ _EXPECTED_BASES = [
     DbHistogramMixin,
     DbLemmaCacheMixin,
     DbListensMixin,
+    DbPendingGradesMixin,
     DbReviewsMixin,
     DbIgnoredLemmasMixin,
     DbSyncConflictsMixin,
@@ -60,4 +62,6 @@ def test_public_method_count_pinned() -> None:
     # +count_new_created_today (staged-listen creation budget)
     # +record_review, latest_review_at (lesson_reviews)
     # +has_counting_review_today (budget-neutral Check-your-work re-grade)
-    assert count == 116
+    # +stage_pending_grade, get_pending_grades, pending_grade_ids, get_pending_grade,
+    #  clear_pending_grade, count_pending_grades (pending-listen-grades mixin)
+    assert count == 122

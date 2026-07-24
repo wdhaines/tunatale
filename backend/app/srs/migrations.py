@@ -16,7 +16,7 @@ from app.srs.function_words import format_morphology_hint
 
 _logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 40
+CURRENT_VERSION = 41
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -1202,6 +1202,35 @@ def migrate_v39_to_v40(conn: sqlite3.Connection) -> None:
     _set_version(conn, 40)
 
 
+def migrate_v40_to_v41(conn: sqlite3.Connection) -> None:
+    """Create pending_listen_grades table for staged listen grades.
+
+    TT-only: provisional grades sit here until the user reviews each card
+    (apply) or bulk-commits via "Sync it". Not involved in sync, FSRS, or
+    queue assembly. A re-listen UPSERTs the existing row for each
+    (collocation_id, direction).
+    """
+    if _table_exists(conn, "pending_listen_grades"):
+        _set_version(conn, 41)
+        return
+    conn.execute("""
+        CREATE TABLE pending_listen_grades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lesson_id TEXT NOT NULL,
+            collocation_id INTEGER NOT NULL,
+            direction TEXT NOT NULL,
+            rating TEXT NOT NULL,
+            grade_class TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(collocation_id, direction)
+        )
+    """)
+    # (collocation_id, direction) lookups ride the UNIQUE index; the lesson-scoped
+    # reads (get_pending_grades / count_pending_grades) need their own.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pending_listen_grades_lesson_id ON pending_listen_grades(lesson_id)")
+    _set_version(conn, 41)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -1243,6 +1272,7 @@ _MIGRATIONS = {
     37: migrate_v37_to_v38,
     38: migrate_v38_to_v39,
     39: migrate_v39_to_v40,
+    40: migrate_v40_to_v41,
 }
 
 
