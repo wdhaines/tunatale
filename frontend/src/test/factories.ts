@@ -69,6 +69,7 @@ export function makeReviewQueueItem(overrides: Partial<ReviewQueueItem> = {}): R
       },
     },
     direction: "recognition",
+    pending_rating: null,
     ...overrides,
   };
 }

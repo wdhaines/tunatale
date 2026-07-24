@@ -22,6 +22,13 @@
 	let reviewed = $state(0);
 	let stats = $state<QueueStats | null>(null);
 	let reviewedPosted = $state(false);
+	let syncingPending = $state(false);
+
+	// Pending-rated cards: lesson-mode cards where the listen preview set a grade.
+	let pendingItems = $derived(
+		lessonMode ? queue.filter((q) => q.item.pending_rating) : [],
+	);
+	let pendingCount = $derived(pendingItems.length);
 
 	// The server is the source of truth: every grade refetches /review-queue and
 	// /queue-stats so the local view tracks the server's authoritative ordering
@@ -126,6 +133,19 @@
 			api.markLessonReviewed(lessonId!);
 		}
 	}
+
+	async function syncPending() {
+		syncingPending = true;
+		error = '';
+		try {
+			await api.commitPending(lessonId!);
+			await refreshFromServer();
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			syncingPending = false;
+		}
+	}
 </script>
 
 <main>
@@ -141,6 +161,15 @@
 				<span class="source"> · FSRS: defaults</span>
 			{/if}
 		</p>
+	{/if}
+
+	{#if !loading && pendingCount > 0}
+		<div class="sync-banner">
+			<span class="sync-label">{pendingCount} {pendingCount === 1 ? 'word' : 'words'} rated from listen</span>
+			<button class="sync-btn" onclick={syncPending} disabled={syncingPending}>
+				{syncingPending ? 'Syncing…' : 'Sync it'}
+			</button>
+		</div>
 	{/if}
 
 	{#if loading}
@@ -173,7 +202,12 @@
 		</div>
 		<section class="card-section">
 			{#key reviewed}
-				<DrillCard item={current.item} direction={current.direction} onRate={rate} />
+				<DrillCard
+					item={current.item}
+					direction={current.direction}
+					onRate={rate}
+					pendingRating={current.item.pending_rating === 'skip' ? null : current.item.pending_rating}
+				/>
 			{/key}
 		</section>
 	{/if}
@@ -245,6 +279,34 @@
 	.source {
 		color: var(--color-muted);
 		font-size: 0.8rem;
+	}
+	.sync-banner {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.6rem 0.8rem;
+		margin-bottom: 0.35rem;
+		border-radius: var(--radius-lg);
+		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-primary) 25%, transparent);
+	}
+	.sync-label {
+		font-size: 0.85rem;
+		color: var(--color-text);
+	}
+	.sync-btn {
+		padding: 0.4rem 0.8rem;
+		border-radius: var(--radius-sm);
+		background: var(--color-primary);
+		color: #fff;
+		border: none;
+		font-weight: 600;
+		font-size: 0.85rem;
+		cursor: pointer;
+	}
+	.sync-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 	/* State chips: tinted with the palette tokens so they cohere and adapt to
 	   light/dark (was a set of fixed pastels). */

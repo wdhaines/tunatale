@@ -6,11 +6,16 @@
 	let {
 		item,
 		direction,
-		onRate
+		onRate,
+		pendingRating = null
 	}: {
 		item: SRSItemDetail;
 		direction: 'recognition' | 'production';
 		onRate: (rating: Rating, timeMs: number) => Promise<void>;
+		// The listen preview's provisional grade for this card, if any. Only the
+		// four gradeable ratings are meaningful here — "skip" (or no suggestion)
+		// means nothing is highlighted.
+		pendingRating?: Rating | null;
 	} = $props();
 
 	// The L2 headword shown to the learner: gender article prefixed (e.g. "en
@@ -241,10 +246,10 @@
 			{/if}
 		</div>
 		<div class="ratings">
-			<button class="btn-again" onclick={() => rate('again')}>Again</button>
-			<button class="btn-hard" onclick={() => rate('hard')}>Hard</button>
-			<button class="btn-good" onclick={() => rate('good')}>Good</button>
-			<button class="btn-easy" onclick={() => rate('easy')}>Easy</button>
+			<button class="btn-again" class:suggested={pendingRating === 'again'} onclick={() => rate('again')}>Again</button>
+			<button class="btn-hard" class:suggested={pendingRating === 'hard'} onclick={() => rate('hard')}>Hard</button>
+			<button class="btn-good" class:suggested={pendingRating === 'good'} onclick={() => rate('good')}>Good</button>
+			<button class="btn-easy" class:suggested={pendingRating === 'easy'} onclick={() => rate('easy')}>Easy</button>
 		</div>
 	{:else}
 		<button onclick={show}>Show</button>
@@ -506,6 +511,13 @@
 	.btn-hard  { background: var(--color-warning); }
 	.btn-good  { background: var(--color-success); }
 	.btn-easy  { background: var(--color-primary); }
+
+	/* The listen preview's provisional grade — a subtle ring, not a color swap,
+	   so it reads as a suggestion rather than a state change. */
+	.ratings button.suggested {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
 
 	.key-hint {
 		margin: 0.75rem 0 0;

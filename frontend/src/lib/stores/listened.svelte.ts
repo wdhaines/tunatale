@@ -59,8 +59,9 @@ function createListenedStore() {
     async markListened(
       lessonId: string,
       wordRatings: Record<string, WordRating> = {},
+      kpRatings: Record<string, WordRating> = {},
     ): Promise<ListenResponse> {
-      const result = await api.markAsListened(lessonId, wordRatings);
+      const result = await api.markAsListened(lessonId, wordRatings, kpRatings);
       entries = {
         ...entries,
         [lessonId]: {

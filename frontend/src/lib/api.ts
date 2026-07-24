@@ -412,6 +412,23 @@ export interface LlmHealthStatus {
 
 export interface ReviewQueueItem extends SRSItemDetail {
   direction: "recognition" | "production";
+  pending_rating: WordRating | null;
+}
+
+// ── Listen preview ──────────────────────────────────────────────────────
+
+export interface ListenPreviewCandidate {
+  kind: "create" | "word" | "kp";
+  text: string;
+  item_id: number | null;
+  grade_class: string;
+  rating: WordRating;
+  translation: string;
+  progress: number | null;
+}
+
+export interface ListenPreview {
+  candidates: ListenPreviewCandidate[];
 }
 
 // ── Pipeline status ───────────────────────────────────────────────────
@@ -729,7 +746,7 @@ export class TunaTaleAPI {
   async submitDrill(
     itemId: number,
     direction: "recognition" | "production",
-    rating: "again" | "hard" | "good" | "easy",
+    rating: WordRating,
     timeMs?: number,
     lessonReview = false,
   ): Promise<{ new_due_at: string; new_state: string; left?: number }> {
@@ -858,6 +875,16 @@ export class TunaTaleAPI {
 
   async markLessonReviewed(lessonId: string): Promise<{ ok: boolean }> {
     return this.request(`/api/srs/lesson/${lessonId}/reviewed`, { method: "POST" });
+  }
+
+  async getListenPreview(lessonId: string): Promise<ListenPreview> {
+    return this.request(`/api/srs/lesson/${lessonId}/listen-preview`);
+  }
+
+  async commitPending(lessonId: string): Promise<{ status: string; applied: number }> {
+    return this.request(`/api/srs/lesson/${lessonId}/commit-pending`, {
+      method: "POST",
+    });
   }
 
   async getLessonTranscript(lessonId: string): Promise<TranscriptData> {

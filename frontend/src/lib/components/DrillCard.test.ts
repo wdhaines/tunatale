@@ -899,6 +899,102 @@ describe("DrillCard", () => {
     });
   });
 
+  describe("pendingRating pre-fill highlight", () => {
+    it("highlights only the Good button when pendingRating is 'good'", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+        pendingRating: "good",
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      expect(container.querySelector(".btn-good")?.classList.contains("suggested")).toBe(true);
+      expect(container.querySelector(".btn-again")?.classList.contains("suggested")).toBe(false);
+      expect(container.querySelector(".btn-hard")?.classList.contains("suggested")).toBe(false);
+      expect(container.querySelector(".btn-easy")?.classList.contains("suggested")).toBe(false);
+    });
+
+    it("highlights only the Again button when pendingRating is 'again'", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+        pendingRating: "again",
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      expect(container.querySelector(".btn-again")?.classList.contains("suggested")).toBe(true);
+    });
+
+    it("highlights only the Hard button when pendingRating is 'hard'", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+        pendingRating: "hard",
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      expect(container.querySelector(".btn-hard")?.classList.contains("suggested")).toBe(true);
+    });
+
+    it("highlights only the Easy button when pendingRating is 'easy'", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+        pendingRating: "easy",
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      expect(container.querySelector(".btn-easy")?.classList.contains("suggested")).toBe(true);
+    });
+
+    it("highlights nothing when pendingRating is null", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+        pendingRating: null,
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      expect(container.querySelectorAll(".suggested").length).toBe(0);
+    });
+
+    it("highlights nothing when pendingRating is omitted (default)", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole, container } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      expect(container.querySelectorAll(".suggested").length).toBe(0);
+    });
+
+    it("clicking a rating button still grades immediately even when it's pre-highlighted", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({});
+      const { findByRole } = render(DrillCard, {
+        item,
+        direction: "recognition",
+        onRate,
+        pendingRating: "good",
+      });
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+      await fireEvent.click(await findByRole("button", { name: "Good" }));
+      expect(onRate).toHaveBeenCalledWith("good", expect.any(Number));
+    });
+  });
+
   describe("rich back-of-card extras", () => {
     const withExtras = () =>
       makeSRSItemDetail({

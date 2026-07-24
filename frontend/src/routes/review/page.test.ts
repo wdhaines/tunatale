@@ -42,6 +42,7 @@ vi.mock("$lib/api", () => ({
     fetchLessonReviewQueue: vi.fn(),
     submitDrill: vi.fn(),
     markLessonReviewed: vi.fn(),
+    commitPending: vi.fn(),
   },
 }));
 
@@ -52,6 +53,7 @@ const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 const mockFetchReviewQueue = vi.mocked(api.fetchReviewQueue);
 const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
 const mockSubmitDrill = vi.mocked(api.submitDrill);
+const mockCommitPending = vi.mocked(api.commitPending);
 import { makeReviewQueueItem } from "../../test/factories";
 
 beforeEach(() => {
@@ -802,7 +804,121 @@ describe("review/+page.svelte", () => {
       const { findByText } = render(ReviewPage);
 
       const link = await findByText("← Home");
-      expect(link).toBeTruthy();
+      expect(link.getAttribute("href")).toBe("/");
+    });
+
+    it("pre-fills the card's suggested rating button from a gradeable pending_rating", async () => {
+      const item = makeReviewQueueItem({
+        id: 40,
+        text: "sonce",
+        direction: "recognition",
+        pending_rating: "easy",
+      });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
+
+      const { findByRole, container } = render(ReviewPage);
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+
+      expect(container.querySelector(".btn-easy")?.classList.contains("suggested")).toBe(true);
+      expect(container.querySelector(".btn-good")?.classList.contains("suggested")).toBe(false);
+    });
+
+    it("treats a 'skip' pending_rating as no suggestion on the card", async () => {
+      const item = makeReviewQueueItem({
+        id: 41,
+        text: "luna",
+        direction: "recognition",
+        pending_rating: "skip",
+      });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
+
+      const { findByRole, container } = render(ReviewPage);
+      await fireEvent.click(await findByRole("button", { name: "Show" }));
+
+      expect(container.querySelectorAll(".suggested").length).toBe(0);
+    });
+
+    it("Sync it button calls commitPending (atomic) and refreshes queue", async () => {
+      const itemA = makeReviewQueueItem({
+        id: 10,
+        text: "kava",
+        direction: "recognition",
+        pending_rating: "good",
+      });
+      const itemB = makeReviewQueueItem({
+        id: 11,
+        text: "mleko",
+        direction: "production",
+        pending_rating: "easy",
+      });
+      mockFetchLessonReviewQueue
+        .mockResolvedValueOnce({ queue: [itemA, itemB], has_unreviewed_listen: true })
+        .mockResolvedValueOnce({ queue: [], has_unreviewed_listen: false });
+      mockCommitPending.mockResolvedValue({ status: "ok", applied: 2 });
+
+      const { findByText } = render(ReviewPage);
+
+      const syncBtn = await findByText("Sync it");
+      expect(syncBtn).toBeTruthy();
+      expect(await findByText("2 words rated from listen")).toBeTruthy();
+
+      await fireEvent.click(syncBtn);
+
+      await vi.waitFor(() => {
+        expect(mockCommitPending).toHaveBeenCalledWith("lesson-abc");
+      });
+    });
+
+    it("Sync it button is hidden when no pending-rated items", async () => {
+      const item = makeReviewQueueItem({
+        id: 20,
+        text: "hvala",
+        direction: "recognition",
+        pending_rating: null,
+      });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
+
+      const { queryByText } = render(ReviewPage);
+
+      await vi.waitFor(() => {
+        expect(queryByText("Sync it")).toBeNull();
+      });
+    });
+
+    it("Sync it shows error when commitPending fails", async () => {
+      const item = makeReviewQueueItem({
+        id: 30,
+        text: "voda",
+        direction: "recognition",
+        pending_rating: "good",
+      });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
+      mockCommitPending.mockRejectedValue(new Error("sync boom"));
+
+      const { findByText } = render(ReviewPage);
+
+      const syncBtn = await findByText("Sync it");
+      await fireEvent.click(syncBtn);
+
+      expect(await findByText("sync boom")).toBeTruthy();
+    });
+
+    it("Sync it shows stringified non-Error when commitPending rejects", async () => {
+      const item = makeReviewQueueItem({
+        id: 31,
+        text: "kruh",
+        direction: "production",
+        pending_rating: "easy",
+      });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
+      mockCommitPending.mockRejectedValue("plain sync error");
+
+      const { findByText } = render(ReviewPage);
+
+      const syncBtn = await findByText("Sync it");
+      await fireEvent.click(syncBtn);
+
+      expect(await findByText("plain sync error")).toBeTruthy();
     });
 
     it("fetchLessonReviewQueue rejecting (e.g. 404) lands in the error state", async () => {

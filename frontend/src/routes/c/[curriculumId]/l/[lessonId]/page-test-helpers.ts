@@ -49,6 +49,8 @@ export function createApiMock() {
     markAsListened: vi.fn(),
     importListens: vi.fn(),
     getLanguages: vi.fn(),
+    getListenPreview: vi.fn(),
+    commitPending: vi.fn(),
   };
 }
 

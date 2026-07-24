@@ -32,6 +32,7 @@ import { curriculum, lesson, audio, transcript, stubViewport } from "./page-test
 
 const mockMarkAsListened = vi.mocked(api.markAsListened);
 const mockGetListens = vi.mocked(api.getListens);
+const mockGetListenPreview = vi.mocked(api.getListenPreview);
 
 /** Seed the real listenedStore as if `lessonId` had been listened to `count` times. */
 async function seedListened(lessonId: string, count: number) {
@@ -139,6 +140,19 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     });
 
     it("refetches review queue after each listen", async () => {
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [
+          {
+            kind: "create",
+            text: "kava",
+            item_id: null,
+            grade_class: "create",
+            rating: "good",
+            translation: "",
+            progress: null,
+          },
+        ],
+      });
       mockMarkAsListened.mockResolvedValue({
         status: "ok",
         created: 0,
@@ -158,6 +172,9 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       fireEvent.click(getByText("Listen"));
       await fireEvent.click(await findByText("Mark as Listened"));
 
+      const markBtn = await findByText(/Mark \d+ as listened/);
+      await fireEvent.click(markBtn);
+
       await waitFor(() => {
         expect(mockFetchLessonReviewQueue).toHaveBeenCalledWith("l1");
       });
@@ -165,6 +182,19 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
 
     it("shows '✓ Listened (n×)' when fully acquired (remaining=0 AND N=0)", async () => {
       await seedListened("l1", 5);
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [
+          {
+            kind: "create",
+            text: "kava",
+            item_id: null,
+            grade_class: "create",
+            rating: "good",
+            translation: "",
+            progress: null,
+          },
+        ],
+      });
       mockMarkAsListened.mockResolvedValue({
         status: "ok",
         created: 0,
@@ -181,6 +211,9 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       fireEvent.click(getByText("Listen"));
       // Need a listen to set listenResult — only then can fullyAcquired be true.
       await fireEvent.click(await findByText("Mark as Listened"));
+
+      const markBtn = await findByText(/Mark \d+ as listened/);
+      await fireEvent.click(markBtn);
 
       await waitFor(() => {
         expect(getByText(/✓ Listened \(5×\)/)).toBeTruthy();
@@ -204,9 +237,19 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     });
 
     it("updates to fully-acquired after listen with remaining=0 and N=0", async () => {
-      // Not seeded: real store starts "never listened" (has()=false) and the
-      // real markListened() call below drives the has()/count() transition
-      // itself — no separate "post-listen" mock state to fake.
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [
+          {
+            kind: "create",
+            text: "kava",
+            item_id: null,
+            grade_class: "create",
+            rating: "good",
+            translation: "",
+            progress: null,
+          },
+        ],
+      });
       mockMarkAsListened.mockResolvedValue({
         status: "ok",
         created: 0,
@@ -216,12 +259,19 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
       mockGetTranscript.mockResolvedValue(transcript);
       mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
+      // handlePreviewDone calls listenedStore.refresh() which re-fetches getListens
+      mockGetListens.mockResolvedValue({
+        lessons: [{ lesson_id: "l1", listen_count: 3, last_listened_at: "2026-01-01T00:00:00Z" }],
+      });
 
       const { getByText, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       fireEvent.click(getByText("Listen"));
       await fireEvent.click(await findByText("Mark as Listened"));
+
+      const markBtn = await findByText(/Mark \d+ as listened/);
+      await fireEvent.click(markBtn);
 
       await waitFor(() => {
         expect(getByText("✓ Listened (3×)")).toBeTruthy();
@@ -468,6 +518,19 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         ],
       };
       mockGetTranscript.mockResolvedValue(afterTranscript);
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [
+          {
+            kind: "create",
+            text: "kava",
+            item_id: null,
+            grade_class: "create",
+            rating: "good",
+            translation: "",
+            progress: null,
+          },
+        ],
+      });
       mockMarkAsListened.mockResolvedValue({
         status: "ok",
         created: 1,
@@ -486,6 +549,9 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       expect(getByText(/0%/)).toBeTruthy();
 
       await fireEvent.click(await findByText("Mark as Listened"));
+
+      const markBtn = await findByText(/Mark \d+ as listened/);
+      await fireEvent.click(markBtn);
 
       // After listen + refetch: 15% mastery (learning, progress 0.15)
       await waitFor(() => {
@@ -732,18 +798,24 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
     });
 
-    it("'Mark as Listened' renders in read mode and fires on click", async () => {
+    it("'Mark as Listened' renders in read mode and opens preview modal on click", async () => {
       mockGetTranscript.mockResolvedValue(transcriptWithRecFields);
       mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
-      mockMarkAsListened.mockResolvedValue({
-        status: "ok",
-        created: 0,
-        staged: 1,
-        remaining_candidates: 0,
-        listen_count: 1,
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [
+          {
+            kind: "create",
+            text: "kava",
+            item_id: null,
+            grade_class: "create",
+            rating: "good",
+            translation: "",
+            progress: null,
+          },
+        ],
       });
 
-      const { getByText } = render(Page, {
+      const { getByText, findByText } = render(Page, {
         props: {
           data: {
             curriculum,
@@ -759,11 +831,12 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       expect(btn).toBeTruthy();
       expect((btn as HTMLButtonElement).disabled).toBe(false);
 
-      // Click fires handleMarkListened
+      // Click opens preview modal
       await fireEvent.click(btn);
 
       await waitFor(() => {
-        expect(mockMarkAsListened).toHaveBeenCalled();
+        expect(mockGetListenPreview).toHaveBeenCalledWith("l1");
+        expect(findByText("Words in this lesson")).toBeTruthy();
       });
     });
 

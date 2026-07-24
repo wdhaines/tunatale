@@ -44,6 +44,7 @@ import { curriculum, lesson, audio, transcript, stubViewport } from "./page-test
 
 const mockMarkAsListened = vi.mocked(api.markAsListened);
 const mockGetListens = vi.mocked(api.getListens);
+const mockGetListenPreview = vi.mocked(api.getListenPreview);
 
 /** Seed the real listenedStore as if `lessonId` had been listened to `count` times. */
 async function seedListened(lessonId: string, count: number) {
@@ -271,7 +272,20 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(queryByText("Render Audio")).toBeFalsy();
   });
 
-  it("calls listenedStore.markListened and refetches transcript", async () => {
+  it("calls markAsListened and refetches transcript via preview modal", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        {
+          kind: "create",
+          text: "kava",
+          item_id: null,
+          grade_class: "create",
+          rating: "good",
+          translation: "",
+          progress: null,
+        },
+      ],
+    });
     mockMarkAsListened.mockResolvedValue({
       status: "ok",
       created: 1,
@@ -289,13 +303,30 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     const btn = await findByText("Mark as Listened");
     await fireEvent.click(btn);
 
+    // Modal opens and fetches preview
+    const markBtn = await findByText(/Mark \d+ as listened/);
+    await fireEvent.click(markBtn);
+
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {});
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { kava: "good" }, {});
       expect(mockGetTranscript).toHaveBeenCalledWith("l1");
     });
   });
 
-  it("refreshes queueStatsStore after mark-as-listened", async () => {
+  it("refreshes queueStatsStore after mark-as-listened via preview modal", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        {
+          kind: "create",
+          text: "kava",
+          item_id: null,
+          grade_class: "create",
+          rating: "good",
+          translation: "",
+          progress: null,
+        },
+      ],
+    });
     mockMarkAsListened.mockResolvedValue({
       status: "ok",
       created: 1,
@@ -307,12 +338,15 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
     mockQueueStatsRefresh.mockClear();
 
-    const { getByText } = render(Page, {
+    const { getByText, findByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
     });
     await fireEvent.click(getByText("Listen"));
     const btn = await getByText("Mark as Listened");
     await fireEvent.click(btn);
+
+    const markBtn = await findByText(/Mark \d+ as listened/);
+    await fireEvent.click(markBtn);
 
     await waitFor(() => {
       expect(mockQueueStatsRefresh).toHaveBeenCalled();
@@ -542,9 +576,21 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(await findByText("plain string error")).toBeTruthy();
   });
 
-  it("shows error when markListened fails", async () => {
-    mockMarkAsListened.mockRejectedValue(new Error("listen failed"));
-    mockGetTranscript.mockResolvedValue(transcript);
+  it("shows error when markAsListened fails in preview modal", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        {
+          kind: "create",
+          text: "kava",
+          item_id: null,
+          grade_class: "create",
+          rating: "good",
+          translation: "",
+          progress: null,
+        },
+      ],
+    });
+    mockMarkAsListened.mockRejectedValue(new Error("commit failed"));
 
     const { findByText, getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
@@ -552,12 +598,27 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     await fireEvent.click(getByText("Listen"));
     await fireEvent.click(await findByText("Mark as Listened"));
 
-    expect(await findByText("listen failed")).toBeTruthy();
+    const markBtn = await findByText(/Mark \d+ as listened/);
+    await fireEvent.click(markBtn);
+
+    expect(await findByText("commit failed")).toBeTruthy();
   });
 
-  it("shows stringified error when markListened throws a non-Error", async () => {
-    mockMarkAsListened.mockRejectedValue("plain listen error");
-    mockGetTranscript.mockResolvedValue(transcript);
+  it("shows stringified error when markAsListened throws a non-Error", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        {
+          kind: "create",
+          text: "kava",
+          item_id: null,
+          grade_class: "create",
+          rating: "good",
+          translation: "",
+          progress: null,
+        },
+      ],
+    });
+    mockMarkAsListened.mockRejectedValue("plain commit error");
 
     const { findByText, getByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
@@ -565,10 +626,35 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     await fireEvent.click(getByText("Listen"));
     await fireEvent.click(await findByText("Mark as Listened"));
 
-    expect(await findByText("plain listen error")).toBeTruthy();
+    const markBtn = await findByText(/Mark \d+ as listened/);
+    await fireEvent.click(markBtn);
+
+    expect(await findByText("plain commit error")).toBeTruthy();
   });
 
-  it("shows listen confirmation with created/staged/remaining after markListened", async () => {
+  it("shows listen confirmation with created/staged after commit via preview modal", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        {
+          kind: "create",
+          text: "kava",
+          item_id: null,
+          grade_class: "create",
+          rating: "good",
+          translation: "",
+          progress: null,
+        },
+        {
+          kind: "create",
+          text: "mleko",
+          item_id: null,
+          grade_class: "create",
+          rating: "good",
+          translation: "",
+          progress: null,
+        },
+      ],
+    });
     mockMarkAsListened.mockResolvedValue({
       status: "ok",
       created: 2,
@@ -585,12 +671,27 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     await fireEvent.click(getByText("Listen"));
     await fireEvent.click(await findByText("Mark as Listened"));
 
+    const markBtn = await findByText(/Mark \d+ as listened/);
+    await fireEvent.click(markBtn);
+
     expect(await findByText(/2 new words added/)).toBeTruthy();
     expect(await findByText(/1 ready to check/)).toBeTruthy();
-    expect(await findByText(/5 remaining/)).toBeTruthy();
   });
 
-  it("shows 'listen again to add more' in the confirmation", async () => {
+  it("shows 'listen again to add more' in the confirmation after commit", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        {
+          kind: "create",
+          text: "kava",
+          item_id: null,
+          grade_class: "create",
+          rating: "good",
+          translation: "",
+          progress: null,
+        },
+      ],
+    });
     mockMarkAsListened.mockResolvedValue({
       status: "ok",
       created: 0,
@@ -607,10 +708,26 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     await fireEvent.click(getByText("Listen"));
     await fireEvent.click(await findByText("Mark as Listened"));
 
+    const markBtn = await findByText(/Mark \d+ as listened/);
+    await fireEvent.click(markBtn);
+
     expect(await findByText(/listen again to add more/i)).toBeTruthy();
   });
 
-  it("hides listen confirmation when error is set after markListened", async () => {
+  it("hides listen confirmation when error is set after commit via preview modal", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        {
+          kind: "create",
+          text: "kava",
+          item_id: null,
+          grade_class: "create",
+          rating: "good",
+          translation: "",
+          progress: null,
+        },
+      ],
+    });
     mockMarkAsListened.mockResolvedValue({
       status: "ok",
       created: 1,
@@ -618,19 +735,53 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       remaining_candidates: 0,
       listen_count: 3,
     });
-    // The transcript refresh after markListened fails → error is set, which
-    // should suppress the confirmation that was set by the successful listen.
+    // The transcript refresh after commit fails → error is set, which
+    // should suppress the confirmation that was set by the successful commit.
     mockGetTranscript.mockRejectedValueOnce(new Error("refresh failed"));
 
-    const { queryByText, getByText } = render(Page, {
+    const { queryByText, getByText, findByText } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
     });
     await fireEvent.click(getByText("Listen"));
-    await fireEvent.click(getByText("Mark as Listened"));
+    await fireEvent.click(await findByText("Mark as Listened"));
+
+    const markBtn = await findByText(/Mark \d+ as listened/);
+    await fireEvent.click(markBtn);
 
     await vi.waitFor(() => {
       expect(queryByText(/new words added|reviewed|remaining/i)).toBeFalsy();
     });
+  });
+
+  it("cancelling the preview modal closes it without setting a listen result banner", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        {
+          kind: "create",
+          text: "kava",
+          item_id: null,
+          grade_class: "create",
+          rating: "good",
+          translation: "",
+          progress: null,
+        },
+      ],
+    });
+
+    const { findByText, getByText, queryByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    await fireEvent.click(getByText("Listen"));
+    await fireEvent.click(await findByText("Mark as Listened"));
+
+    await findByText("kava");
+    await fireEvent.click(getByText("Cancel"));
+
+    await waitFor(() => {
+      expect(queryByText("kava")).toBeFalsy(); // modal closed
+    });
+    expect(mockMarkAsListened).not.toHaveBeenCalled();
+    expect(queryByText(/new words? added|ready to check|remaining/i)).toBeFalsy();
   });
 
   it("does not render per-section phrase counts (header is title-only)", () => {

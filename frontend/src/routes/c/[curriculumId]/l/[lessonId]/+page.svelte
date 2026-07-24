@@ -15,8 +15,10 @@
 	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
 	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
 	import LessonSourcePanel from '$lib/components/LessonSourcePanel.svelte';
+	import ListenPreviewModal from './ListenPreviewModal.svelte';
 	import { lessonMastery, masteryColor } from '$lib/mastery';
 	import Tooltip from '$lib/components/Tooltip.svelte';
+	import type { WordRating } from '$lib/api';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -33,7 +35,6 @@
 	// Starts true when load didn't supply a transcript (production: we fetch it
 	// client-side below) so the section shows the spinner from first paint.
 	let transcriptLoading = $state(untrack(() => data.transcript === null));
-	let listenLoading = $state(false);
 	let listenResult = $state<ListenResponse | null>(null);
 	let queueCount = $state(0);
 	let hasUnreviewedListen = $state(false);
@@ -48,6 +49,7 @@
 	let deletingDay = $state(false);
 	let wordActionInFlight = $state(false);
 	let showRegenHelp = $state(false);
+	let showPreview = $state(false);
 
 	let playbackController = $state<PlaybackController | null>(null);
 
@@ -302,20 +304,28 @@
 	});
 
 	async function handleMarkListened() {
+		showPreview = true;
+	}
+
+	async function handlePreviewDone(result: { status: string; created: number; staged: number; remaining_candidates: number; listen_count: number }) {
 		const lessonId = data.lesson.id;
-		listenLoading = true;
-		error = '';
+		showPreview = false;
+		if (result.status === 'cancelled') return;
+		listenResult = {
+			status: result.status,
+			created: result.created,
+			staged: result.staged,
+			remaining_candidates: result.remaining_candidates,
+			listen_count: result.listen_count,
+		};
 		try {
-			const result = await listenedStore.markListened(lessonId);
-			listenResult = result;
+			await listenedStore.refresh();
 			const t = await api.getLessonTranscript(lessonId);
 			if (data.lesson.id === lessonId) transcript = t;
 			await fetchQueue();
 			queueStatsStore.refresh();
 		} catch (e) {
 			if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
-		} finally {
-			listenLoading = false;
 		}
 	}
 
@@ -602,12 +612,8 @@
 				✓ Listened ({listenCount}×)
 			</button>
 		{:else}
-			<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened} disabled={listenLoading}>
-				{#if listenLoading}
-					Registering…
-				{:else}
-					Mark as Listened
-				{/if}
+			<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened}>
+				Mark as Listened
 			</button>
 		{/if}
 		{#if listenResult && !error}
@@ -714,6 +720,13 @@
 		</div>
 	</details>
 </main>
+
+{#if showPreview}
+	<ListenPreviewModal
+		lessonId={data.lesson.id}
+		onDone={handlePreviewDone}
+	/>
+{/if}
 
 <style>
 	main {

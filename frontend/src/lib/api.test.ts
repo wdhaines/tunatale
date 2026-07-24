@@ -2030,4 +2030,53 @@ describe("image methods", () => {
     );
     expect(result.image_url).toBeNull();
   });
+
+  it("getListenPreview calls GET /api/srs/lesson/:id/listen-preview", async () => {
+    const preview = {
+      candidates: [
+        {
+          kind: "create",
+          text: "kava",
+          item_id: null,
+          grade_class: "create",
+          rating: "good",
+          translation: "",
+          progress: null,
+        },
+        {
+          kind: "word",
+          text: "prosim",
+          item_id: 5,
+          grade_class: "learning",
+          rating: "good",
+          translation: "please",
+          progress: 0.3,
+        },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(preview)));
+
+    const result = await api.getListenPreview("l1");
+
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/lesson/l1/listen-preview`);
+    expect(result.candidates).toHaveLength(2);
+    expect(result.candidates[0].kind).toBe("create");
+    expect(result.candidates[1].item_id).toBe(5);
+  });
+
+  it("commitPending calls POST /api/srs/lesson/:id/commit-pending with no body", async () => {
+    const resp = { status: "ok", applied: 3 };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(resp)));
+
+    const result = await api.commitPending("l1");
+
+    expect(fetch).toHaveBeenCalledWith(
+      `${BASE}/api/srs/lesson/l1/commit-pending`,
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.applied).toBe(3);
+  });
 });
