@@ -101,6 +101,24 @@
 		}
 	});
 
+	// One-shot "Check your work" completion: only once a lesson-scoped session
+	// has ACTUALLY drained (the post-action refetch returned an empty queue) do
+	// we record the review, disarming the lesson page's link until the next
+	// listen re-arms it. Keyed on the refetched queue, not a pre-action "last
+	// card" guess: grading the final card does not necessarily drain it — an
+	// Again re-queues it as relearning and a multi-step learning card stays —
+	// both of which `_classify` keeps in the lesson queue, so a pre-action proxy
+	// would fire prematurely and hide the link while a card is still due.
+	// Shared by both drain paths — grading through the last card (rate) and
+	// bulk-releasing everything at once (syncPending, which drops released
+	// cards out of the queue server-side just as effectively).
+	function markLessonReviewedIfDrained() {
+		if (lessonMode && queue.length === 0 && !reviewedPosted) {
+			reviewedPosted = true;
+			api.markLessonReviewed(lessonId!);
+		}
+	}
+
 	async function rate(rating: 'again' | 'hard' | 'good' | 'easy', timeMs: number) {
 		const { item, direction } = current;
 		try {
@@ -120,26 +138,19 @@
 		// is ready, then a single clean swap.
 		await refreshFromServer();
 		reviewed += 1;
-		// One-shot "Check your work" completion: only once a lesson-scoped session
-		// has ACTUALLY drained (the post-grade refetch returned an empty queue) do
-		// we record the review, disarming the lesson page's link until the next
-		// listen re-arms it. Keyed on the refetched queue, not a pre-grade "last
-		// card" guess: grading the final card does not necessarily drain it — an
-		// Again re-queues it as relearning and a multi-step learning card stays —
-		// both of which `_classify` keeps in the lesson queue, so a pre-grade proxy
-		// would fire prematurely and hide the link while a card is still due.
-		if (lessonMode && queue.length === 0 && !reviewedPosted) {
-			reviewedPosted = true;
-			api.markLessonReviewed(lessonId!);
-		}
+		markLessonReviewedIfDrained();
 	}
 
 	async function syncPending() {
+		if (!confirm(`Commit ${pendingCount} provisional grade${pendingCount === 1 ? '' : 's'}?`)) {
+			return;
+		}
 		syncingPending = true;
 		error = '';
 		try {
 			await api.commitPending(lessonId!);
 			await refreshFromServer();
+			markLessonReviewedIfDrained();
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {

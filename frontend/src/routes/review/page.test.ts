@@ -54,6 +54,7 @@ const mockFetchReviewQueue = vi.mocked(api.fetchReviewQueue);
 const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
 const mockSubmitDrill = vi.mocked(api.submitDrill);
 const mockCommitPending = vi.mocked(api.commitPending);
+const mockMarkLessonReviewed = vi.mocked(api.markLessonReviewed);
 import { makeReviewQueueItem } from "../../test/factories";
 
 beforeEach(() => {
@@ -839,6 +840,7 @@ describe("review/+page.svelte", () => {
     });
 
     it("Sync it button calls commitPending (atomic) and refreshes queue", async () => {
+      vi.stubGlobal("confirm", () => true);
       const itemA = makeReviewQueueItem({
         id: 10,
         text: "kava",
@@ -869,6 +871,136 @@ describe("review/+page.svelte", () => {
       });
     });
 
+    // F2: "Sync it" is the only irreversible action in the flow (writes FSRS
+    // state + revlog + dirty_fsrs for every pending card, no undo) — it must
+    // be gated behind a confirm(), same idiom as cards/+page.svelte's
+    // deleteItem/resetItem/bulkDelete.
+
+    it("Sync it does nothing when the user cancels the confirm dialog", async () => {
+      vi.stubGlobal("confirm", () => false);
+      const item = makeReviewQueueItem({
+        id: 12,
+        text: "hvala",
+        direction: "recognition",
+        pending_rating: "good",
+      });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
+
+      const { findByText } = render(ReviewPage);
+      const syncBtn = await findByText("Sync it");
+      await fireEvent.click(syncBtn);
+
+      // Give any accidental async work a chance to run before asserting absence.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(mockCommitPending).not.toHaveBeenCalled();
+    });
+
+    it("Sync it confirm message names the pending count", async () => {
+      const confirmSpy = vi.fn(() => false);
+      vi.stubGlobal("confirm", confirmSpy);
+      const itemA = makeReviewQueueItem({
+        id: 13,
+        text: "sonce",
+        direction: "recognition",
+        pending_rating: "good",
+      });
+      const itemB = makeReviewQueueItem({
+        id: 14,
+        text: "luna",
+        direction: "recognition",
+        pending_rating: "easy",
+      });
+      mockFetchLessonReviewQueue.mockResolvedValue({
+        queue: [itemA, itemB],
+        has_unreviewed_listen: true,
+      });
+
+      const { findByText } = render(ReviewPage);
+      const syncBtn = await findByText("Sync it");
+      await fireEvent.click(syncBtn);
+
+      expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("2"));
+    });
+
+    it("Sync it commits when the user confirms", async () => {
+      vi.stubGlobal("confirm", () => true);
+      const item = makeReviewQueueItem({
+        id: 15,
+        text: "voda",
+        direction: "recognition",
+        pending_rating: "good",
+      });
+      mockFetchLessonReviewQueue
+        .mockResolvedValueOnce({ queue: [item], has_unreviewed_listen: true })
+        .mockResolvedValueOnce({ queue: [], has_unreviewed_listen: false });
+      mockCommitPending.mockResolvedValue({ status: "ok", applied: 1 });
+
+      const { findByText } = render(ReviewPage);
+      const syncBtn = await findByText("Sync it");
+      await fireEvent.click(syncBtn);
+
+      await vi.waitFor(() => {
+        expect(mockCommitPending).toHaveBeenCalledWith("lesson-abc");
+      });
+    });
+
+    // F3: committing drains the queue too (released cards are graded-today
+    // and drop out server-side), so the one-shot "lesson reviewed" post must
+    // fire from syncPending as well as rate(), or has_unreviewed_listen
+    // stays true forever.
+
+    it("marks the lesson reviewed exactly once after Sync it drains the queue", async () => {
+      vi.stubGlobal("confirm", () => true);
+      const item = makeReviewQueueItem({
+        id: 16,
+        text: "kruh",
+        direction: "recognition",
+        pending_rating: "good",
+      });
+      mockFetchLessonReviewQueue
+        .mockResolvedValueOnce({ queue: [item], has_unreviewed_listen: true })
+        .mockResolvedValueOnce({ queue: [], has_unreviewed_listen: false });
+      mockCommitPending.mockResolvedValue({ status: "ok", applied: 1 });
+
+      const { findByText } = render(ReviewPage);
+      const syncBtn = await findByText("Sync it");
+      await fireEvent.click(syncBtn);
+
+      await vi.waitFor(() => {
+        expect(mockMarkLessonReviewed).toHaveBeenCalledTimes(1);
+        expect(mockMarkLessonReviewed).toHaveBeenCalledWith("lesson-abc");
+      });
+    });
+
+    it("does not mark the lesson reviewed when Sync it leaves cards in the queue", async () => {
+      vi.stubGlobal("confirm", () => true);
+      const itemA = makeReviewQueueItem({
+        id: 17,
+        text: "sir",
+        direction: "recognition",
+        pending_rating: "good",
+      });
+      const itemB = makeReviewQueueItem({
+        id: 18,
+        text: "jajce",
+        direction: "recognition",
+        pending_rating: null,
+      });
+      mockFetchLessonReviewQueue
+        .mockResolvedValueOnce({ queue: [itemA, itemB], has_unreviewed_listen: true })
+        .mockResolvedValueOnce({ queue: [itemB], has_unreviewed_listen: true });
+      mockCommitPending.mockResolvedValue({ status: "ok", applied: 1 });
+
+      const { findByText } = render(ReviewPage);
+      const syncBtn = await findByText("Sync it");
+      await fireEvent.click(syncBtn);
+
+      await vi.waitFor(() => {
+        expect(mockCommitPending).toHaveBeenCalled();
+      });
+      expect(mockMarkLessonReviewed).not.toHaveBeenCalled();
+    });
+
     it("Sync it button is hidden when no pending-rated items", async () => {
       const item = makeReviewQueueItem({
         id: 20,
@@ -886,6 +1018,7 @@ describe("review/+page.svelte", () => {
     });
 
     it("Sync it shows error when commitPending fails", async () => {
+      vi.stubGlobal("confirm", () => true);
       const item = makeReviewQueueItem({
         id: 30,
         text: "voda",
@@ -904,6 +1037,7 @@ describe("review/+page.svelte", () => {
     });
 
     it("Sync it shows stringified non-Error when commitPending rejects", async () => {
+      vi.stubGlobal("confirm", () => true);
       const item = makeReviewQueueItem({
         id: 31,
         text: "kruh",

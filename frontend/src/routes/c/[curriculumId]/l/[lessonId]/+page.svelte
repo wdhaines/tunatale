@@ -307,17 +307,14 @@
 		showPreview = true;
 	}
 
-	async function handlePreviewDone(result: { status: string; created: number; staged: number; remaining_candidates: number; listen_count: number }) {
+	async function handlePreviewDone(result: ListenResponse | { status: 'cancelled' }) {
 		const lessonId = data.lesson.id;
 		showPreview = false;
-		if (result.status === 'cancelled') return;
-		listenResult = {
-			status: result.status,
-			created: result.created,
-			staged: result.staged,
-			remaining_candidates: result.remaining_candidates,
-			listen_count: result.listen_count,
-		};
+		// `in` narrows the union properly; a plain `result.status === 'cancelled'`
+		// check does not, because ListenResponse.status is `string` (not a
+		// literal), so TS can't exclude that arm from the negative branch.
+		if (!('created' in result)) return;
+		listenResult = result;
 		try {
 			await listenedStore.refresh();
 			const t = await api.getLessonTranscript(lessonId);

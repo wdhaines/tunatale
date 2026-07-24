@@ -17,12 +17,14 @@ from fastapi.responses import FileResponse
 
 from app.api.models import (
     BulkDeleteRequest,
+    CommitPendingResponse,
     CreateBaseCardRequest,
     CreateItemRequest,
     DrillRequest,
     IgnoreLemmaRequest,
     ImportListensRequest,
     InflectionClozeRequest,
+    ListenPreviewResponse,
     ListenRequest,
     SetStateRequest,
     SuspendRequest,
@@ -1029,7 +1031,7 @@ async def mark_lesson_reviewed(lesson_id: str, request: Request) -> dict:
 
 
 @router.post("/lesson/{lesson_id}/commit-pending", status_code=200)
-async def commit_pending_grades(lesson_id: str, request: Request) -> dict:
+async def commit_pending_grades(lesson_id: str, request: Request) -> CommitPendingResponse:
     """Bulk "Sync it": release every staged grade for a lesson without reviewing it.
 
     Applies each pending row at its provisional rating through the SAME path a
@@ -1101,13 +1103,28 @@ async def commit_pending_grades(lesson_id: str, request: Request) -> dict:
 
 
 @router.get("/lesson/{lesson_id}/listen-preview", status_code=200)
-async def get_listen_preview(lesson_id: str, request: Request):
+async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewResponse:
     """Read-only classification of what a listen would stage for a lesson.
 
-    Ordered creations-first then tracked by mastery ascending (least-known
-    first). Strictly read-only — no pending writes, no card creation, no side
-    effects beyond the ``_analyze_lesson_words`` lemma-cache warm-up. The
-    response informs the frontend preview modal without committing anything.
+    The ``create`` rows are exactly what a listen against this same state
+    would create RIGHT NOW: untracked lemmas ranked by
+    ``_rank_listen_candidates`` and truncated to the same per-listen creation
+    budget ``mark_lesson_listened`` uses (``resolve_daily_new_cap`` minus
+    today's introductions and still-NEW same-day creations). Without this the
+    preview and the commit disagree — a same-day re-listen has ~0 budget left
+    and would create nothing even though the preview showed every untracked
+    lemma as checked.
+
+    Tracked word/kp candidates are unchanged: creations first, then tracked by
+    mastery ascending (least-known first). Strictly read-only — no pending
+    writes, no card creation, no side effects beyond the
+    ``_analyze_lesson_words`` lemma-cache warm-up. The response informs the
+    frontend preview modal without committing anything.
+
+    Residual divergence (documented, not fixed here): if the user unchecks a
+    shown create row before committing, the commit re-ranks over the
+    remaining untracked set and may create a DIFFERENT lemma the preview never
+    showed — the budget is spent by rank order, not by row identity.
     """
     store = request.state.content_store
     lesson = store.get_lesson(lesson_id)
@@ -1117,6 +1134,7 @@ async def get_listen_preview(lesson_id: str, request: Request):
 
     words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
 
+    today = anki_today()
     today_start, today_end, end_of_day_utc = _listen_day_window()
 
     variant_index = _build_variant_index(db, lesson.language_code)
@@ -1124,6 +1142,7 @@ async def get_listen_preview(lesson_id: str, request: Request):
     from app.srs.mastery import compute_mastery_progress
 
     candidates: list[dict] = []
+    lemma_candidates: list[str] = []
 
     # ── Word-level candidates (tracked + untracked) ─────────────────────
     for lemma in words.first_sentence:
@@ -1135,18 +1154,9 @@ async def get_listen_preview(lesson_id: str, request: Request):
 
         res = _resolve_card_for_lemma(db, lemma, words.surfaces.get(lemma, set()), variant_index)
         if res is None:
-            # Untracked → creation candidate
-            candidates.append(
-                {
-                    "kind": "create",
-                    "text": lemma,
-                    "item_id": None,
-                    "grade_class": "create",
-                    "rating": "good",
-                    "translation": "",
-                    "progress": None,
-                }
-            )
+            # Untracked → ranked/budget-truncated below, mirroring
+            # mark_lesson_listened exactly.
+            lemma_candidates.append(lemma)
         else:
             existing_id, existing = res
             if existing.syntactic_unit.card_type == "cloze":
@@ -1197,9 +1207,26 @@ async def get_listen_preview(lesson_id: str, request: Request):
             }
         )
 
+    # ── Ranked, budget-truncated creation candidates (mirrors
+    # mark_lesson_listened's staged-creation loop exactly, D2/D3) ──────────
+    new_cap, _ = resolve_daily_new_cap(db)
+    creation_budget = max(0, new_cap - db.count_new_introduced_today(today) - db.count_new_created_today(today))
+    ranked = _rank_listen_candidates([], lemma_candidates, words.occurrences)
+    creates = [
+        {
+            "kind": "create",
+            "text": lemma,
+            "item_id": None,
+            "grade_class": "create",
+            "rating": "good",
+            "translation": "",
+            "progress": None,
+        }
+        for _kind, lemma in ranked[:creation_budget]
+    ]
+
     # ── Ordering: creations first, then tracked by progress ascending ────
-    creates = [c for c in candidates if c["grade_class"] == "create"]
-    tracked = [c for c in candidates if c["grade_class"] != "create"]
+    tracked = candidates
     tracked.sort(key=lambda c: c["progress"] if c["progress"] is not None else 0.0)
 
     return {"candidates": creates + tracked}

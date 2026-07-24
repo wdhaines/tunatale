@@ -11,12 +11,37 @@ from pydantic import BaseModel, Field, model_validator
 
 class ListenRequest(BaseModel):
     lesson_id: str
-    word_ratings: dict[str, str] = {}  # lemma → "again"|"hard"|"good"|"easy"|"skip"
-    kp_ratings: dict[str, str] = {}  # key-phrase text → same domain as word_ratings
+    word_ratings: dict[str, Literal["again", "hard", "good", "easy", "skip"]] = {}  # lemma → rating
+    kp_ratings: dict[str, Literal["again", "hard", "good", "easy", "skip"]] = {}  # key-phrase text → same domain
 
 
 class ImportListensRequest(BaseModel):
     lesson_ids: list[str]
+
+
+class ListenPreviewCandidate(BaseModel):
+    """One row of GET /lesson/{id}/listen-preview's response."""
+
+    kind: Literal["create", "word", "kp"]
+    text: str
+    item_id: int | None
+    grade_class: str
+    rating: str
+    translation: str
+    progress: float | None
+
+
+class ListenPreviewResponse(BaseModel):
+    """Response of GET /lesson/{id}/listen-preview."""
+
+    candidates: list[ListenPreviewCandidate]
+
+
+class CommitPendingResponse(BaseModel):
+    """Response of POST /lesson/{id}/commit-pending."""
+
+    status: str
+    applied: int
 
 
 class DrillRequest(BaseModel):
