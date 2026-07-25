@@ -15,6 +15,7 @@ vi.mock("$lib/api", () => ({
 import { api } from "$lib/api";
 import { themeStore } from "$lib/stores/theme.svelte";
 import { prefetchPrefStore } from "$lib/stores/prefetchPref.svelte";
+import { listenCountdownPref } from "$lib/stores/listenCountdownPref.svelte";
 import { languageStore } from "$lib/stores/language.svelte";
 import Settings from "./+page.svelte";
 
@@ -82,5 +83,17 @@ describe("/settings", () => {
     const { getByRole } = render(Settings);
     expect(getByRole("heading", { name: "Language" })).toBeTruthy();
     expect(getByRole("combobox", { name: /active language/i })).toBeTruthy();
+  });
+
+  it("selecting a countdown option updates the store and pressed state", async () => {
+    listenCountdownPref.set("off");
+    const { getByRole } = render(Settings);
+    expect(getByRole("button", { name: "Off" }).getAttribute("aria-pressed")).toBe("true");
+    expect(getByRole("button", { name: "30s" }).getAttribute("aria-pressed")).toBe("false");
+
+    await fireEvent.click(getByRole("button", { name: "30s" }));
+    expect(listenCountdownPref.value).toBe("30");
+    expect(getByRole("button", { name: "30s" }).getAttribute("aria-pressed")).toBe("true");
+    expect(getByRole("button", { name: "Off" }).getAttribute("aria-pressed")).toBe("false");
   });
 });

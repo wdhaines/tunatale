@@ -10,6 +10,7 @@
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
 	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
+	import { listenCountdownPref } from '$lib/stores/listenCountdownPref.svelte';
 	import { llmHealthStore } from '$lib/stores/llmHealth.svelte';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import LlmHealthBanner from '$lib/components/LlmHealthBanner.svelte';
@@ -28,6 +29,7 @@
 	onMount(() => {
 		themeStore.init();
 		prefetchPrefStore.init();
+		listenCountdownPref.init();
 		languageStore.init();
 		queueStatsStore.refresh();
 		llmHealthStore.refresh();

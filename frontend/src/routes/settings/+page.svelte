@@ -2,6 +2,7 @@
 	import LanguageSelector from '$lib/components/LanguageSelector.svelte';
 	import { themeStore, type ThemePref } from '$lib/stores/theme.svelte';
 	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
+	import { listenCountdownPref, type CountdownValue } from '$lib/stores/listenCountdownPref.svelte';
 	import { languageStore } from '$lib/stores/language.svelte';
 
 	// The header used to carry these controls inline; they're set-and-forget
@@ -10,6 +11,13 @@
 		{ value: 'system', label: 'System', icon: '🖥️' },
 		{ value: 'light', label: 'Light', icon: '☀️' },
 		{ value: 'dark', label: 'Dark', icon: '🌙' }
+	];
+
+	const COUNTDOWN_OPTIONS: { value: CountdownValue; label: string }[] = [
+		{ value: 'off', label: 'Off' },
+		{ value: '10', label: '10s' },
+		{ value: '30', label: '30s' },
+		{ value: '60', label: '60s' },
 	];
 </script>
 
@@ -35,6 +43,26 @@
 					onclick={() => themeStore.set(option.value)}
 				>
 					<span aria-hidden="true">{option.icon}</span>
+					{option.label}
+				</button>
+			{/each}
+		</div>
+	</section>
+
+	<section class="card setting">
+		<div class="setting-head">
+			<h2>Listen preview</h2>
+			<p>Auto-mark countdown before committing the preview.</p>
+		</div>
+		<div class="segmented" role="group" aria-label="Auto-mark countdown">
+			{#each COUNTDOWN_OPTIONS as option (option.value)}
+				<button
+					type="button"
+					class="segment"
+					class:active={listenCountdownPref.value === option.value}
+					aria-pressed={listenCountdownPref.value === option.value}
+					onclick={() => listenCountdownPref.set(option.value)}
+				>
 					{option.label}
 				</button>
 			{/each}

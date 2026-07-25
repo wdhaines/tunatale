@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
+	import { SvelteDate } from 'svelte/reactivity';
 	import { api, type ListenPreviewCandidate, type ListenResponse, type WordRating } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
+	import { listenCountdownPref } from '$lib/stores/listenCountdownPref.svelte';
 
 	let {
 		lessonId,
@@ -101,25 +103,30 @@
 		try {
 			const preview = await api.getListenPreview(lessonId);
 			candidates = preview.candidates;
-			// Default: all checked, all "good"
+			// Default: all checked, all "good" — except well-known rows,
+			// which start unchecked and "skip" (collapsed disclosure).
 			const sel: Record<string, boolean> = {};
 			const rts: Record<string, WordRating> = {};
 			for (const c of candidates) {
 				const key = candidateKey(c);
-				sel[key] = true;
-				rts[key] = 'good';
+				sel[key] = !c.well_known;
+				rts[key] = c.well_known ? 'skip' : 'good';
 			}
 			selection = sel;
 			ratings = rts;
 
-			// Start 10-second countdown
-			countdownId = setInterval(() => {
-				countdown -= 1;
-				if (countdown <= 0) {
-					cancelCountdown();
-					void doCommit();
-				}
-			}, 1000);
+			// Start countdown only when the pref is not "off".
+			const prefValue = listenCountdownPref.value;
+			if (prefValue !== 'off') {
+				countdown = parseInt(prefValue, 10);
+				countdownId = setInterval(() => {
+					countdown -= 1;
+					if (countdown <= 0) {
+						cancelCountdown();
+						void doCommit();
+					}
+				}, 1000);
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -166,11 +173,30 @@
 		ratings = rts;
 	}
 
+	function formatDueAt(due_at: string | null): string | null {
+		if (!due_at) return null;
+		const dueDate = new SvelteDate(due_at);
+		if (isNaN(dueDate.getTime())) return null;
+		const today = new SvelteDate();
+		today.setUTCHours(0, 0, 0, 0);
+		const dueDay = new SvelteDate(dueDate);
+		dueDay.setUTCHours(0, 0, 0, 0);
+		const diffMs = dueDay.getTime() - today.getTime();
+		const diffDays = Math.round(diffMs / 86400000);
+		if (diffDays === 0) return 'today';
+		return diffDays > 0 ? `${diffDays}d` : `${diffDays}d`;
+	}
+
+	let mainCandidates = $derived(candidates.filter((c) => !c.well_known));
+	let wellKnownCandidates = $derived(candidates.filter((c) => c.well_known));
+
 	// Builds the commit payload purely from local reads — never assigns into
 	// the $state maps (that was the F5 bug: mutating `ratings[c.text] = 'skip'`
 	// during commit left a sticky "skip" behind a later re-check). Only
 	// non-default entries are sent: the backend defaults an absent entry to
-	// "good", so a checked+good row contributes nothing.
+	// "good", so a checked+good ordinary row contributes nothing. Well-known
+	// rows are an exception: the backend skips a well-known lemma absent from
+	// word_ratings, so a selected well-known row MUST emit its explicit rating.
 	function buildRatings(): {
 		wordRatings: Record<string, WordRating>;
 		kpRatings: Record<string, WordRating>;
@@ -182,7 +208,12 @@
 			const key = candidateKey(c);
 			const selected = selection[key];
 			const rating = ratings[key] ?? 'good';
-			const value: WordRating | null = !selected ? 'skip' : rating !== 'good' ? rating : null;
+			const isWellKnown = c.well_known === true;
+			const value: WordRating | null = !selected
+				? 'skip'
+				: (isWellKnown || rating !== 'good')
+					? rating
+					: null;
 			if (value === null) continue;
 			if (c.kind === 'kp') {
 				kpRatings[c.text] = value;
@@ -228,7 +259,7 @@
 			<!-- F4: the countdown must be visible whenever it's running, including
 			     the zero-candidates case — otherwise it silently auto-commits with
 			     no on-screen indication anything is about to happen. -->
-			{#if !countdownCancelled}
+			{#if !countdownCancelled && countdownId !== null}
 				<p class="countdown">Auto-marking in {countdown}s</p>
 			{/if}
 
@@ -240,51 +271,70 @@
 					<button onclick={skipAll} type="button">Skip All</button>
 				</div>
 
+				{#snippet candidateRow(c: ListenPreviewCandidate)}
+					<li>
+						<label class="candidate">
+							<input
+								type="checkbox"
+								data-candidate={candidateKey(c)}
+								checked={selection[candidateKey(c)]}
+								onchange={() => toggle(candidateKey(c))}
+							/>
+							<span class="text">{c.text}</span>
+							{#if c.translation}
+								<span class="translation">{c.translation}</span>
+							{/if}
+							{#if c.kind === 'kp'}
+								<span class="tag kp">key phrase</span>
+							{/if}
+							{#if c.grade_class && c.kind !== 'create'}
+								<span class="tag">{c.grade_class}</span>
+							{/if}
+							{#if c.kind !== 'create' && formatDueAt(c.due_at ?? null)}
+								<span class="tag due">{formatDueAt(c.due_at ?? null)}</span>
+							{/if}
+							<div class="rating-btns">
+								<button
+									class:active={ratings[candidateKey(c)] === 'again'}
+									onclick={() => setRating(candidateKey(c), 'again')}
+									type="button"
+								>Again</button>
+								<button
+									class:active={ratings[candidateKey(c)] === 'hard'}
+									onclick={() => setRating(candidateKey(c), 'hard')}
+									type="button"
+								>Hard</button>
+								<button
+									class:active={ratings[candidateKey(c)] === 'good'}
+									onclick={() => setRating(candidateKey(c), 'good')}
+									type="button"
+								>Good</button>
+								<button
+									class:active={ratings[candidateKey(c)] === 'easy'}
+									onclick={() => setRating(candidateKey(c), 'easy')}
+									type="button"
+								>Easy</button>
+							</div>
+						</label>
+					</li>
+				{/snippet}
+
 				<ul class="list">
-					{#each candidates as c (candidateKey(c))}
-						<li>
-							<label class="candidate">
-								<input
-									type="checkbox"
-									checked={selection[candidateKey(c)]}
-									onchange={() => toggle(candidateKey(c))}
-								/>
-								<span class="text">{c.text}</span>
-								{#if c.translation}
-									<span class="translation">{c.translation}</span>
-								{/if}
-								{#if c.kind === 'kp'}
-									<span class="tag kp">key phrase</span>
-								{/if}
-								{#if c.grade_class && c.kind !== 'create'}
-									<span class="tag">{c.grade_class}</span>
-								{/if}
-								<div class="rating-btns">
-									<button
-										class:active={ratings[candidateKey(c)] === 'again'}
-										onclick={() => setRating(candidateKey(c), 'again')}
-										type="button"
-									>Again</button>
-									<button
-										class:active={ratings[candidateKey(c)] === 'hard'}
-										onclick={() => setRating(candidateKey(c), 'hard')}
-										type="button"
-									>Hard</button>
-									<button
-										class:active={ratings[candidateKey(c)] === 'good'}
-										onclick={() => setRating(candidateKey(c), 'good')}
-										type="button"
-									>Good</button>
-									<button
-										class:active={ratings[candidateKey(c)] === 'easy'}
-										onclick={() => setRating(candidateKey(c), 'easy')}
-										type="button"
-									>Easy</button>
-								</div>
-							</label>
-						</li>
+					{#each mainCandidates as c (candidateKey(c))}
+						{@render candidateRow(c)}
 					{/each}
 				</ul>
+
+				{#if wellKnownCandidates.length > 0}
+					<details class="well-known-group">
+						<summary>{wellKnownCandidates.length} well-known word{wellKnownCandidates.length !== 1 ? 's' : ''}</summary>
+						<ul class="list">
+							{#each wellKnownCandidates as c (candidateKey(c))}
+								{@render candidateRow(c)}
+							{/each}
+						</ul>
+					</details>
+				{/if}
 			{/if}
 		{/if}
 
@@ -449,5 +499,20 @@
 		background: var(--color-surface-2);
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
+	}
+	.well-known-group {
+		border-top: 1px solid var(--color-border);
+		padding-top: 0.5rem;
+		margin-top: 0.25rem;
+	}
+	.well-known-group summary {
+		font-size: 0.8rem;
+		color: var(--color-muted);
+		cursor: pointer;
+		padding: 0.25rem 0;
+	}
+	.due {
+		background: color-mix(in srgb, var(--color-muted) 10%, transparent);
+		color: var(--color-muted);
 	}
 </style>

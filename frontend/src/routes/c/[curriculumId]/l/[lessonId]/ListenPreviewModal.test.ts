@@ -17,6 +17,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import ListenPreviewModal from "./ListenPreviewModal.svelte";
 import { api } from "$lib/api";
+import { listenCountdownPref } from "$lib/stores/listenCountdownPref.svelte";
 
 vi.mock("$lib/api", () => ({
   api: {
@@ -39,6 +40,9 @@ const mockMarkAsListened = vi.mocked(api.markAsListened);
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
+  // Existing countdown tests assume a 10s auto-commit; set the pref to "10"
+  // so every test that exercises countdown gets the old behavior by default.
+  listenCountdownPref.set("10");
 });
 
 // ── Fixtures matching real backend shapes ──────────────────────────────
@@ -1069,6 +1073,296 @@ describe("ListenPreviewModal", () => {
     await waitFor(() => {
       expect(onDone).toHaveBeenCalledWith(expect.objectContaining({ status: "cancelled" }));
       expect(mockMarkAsListened).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Well-known: disclosure, buildRatings fix, selectedCount ─────────
+
+  it("well-known rows render inside a collapsed disclosure, unchecked", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        wordCandidate("prosim", { grade_class: "due" }),
+        wordCandidate("hvala", {
+          grade_class: "ahead",
+          well_known: true,
+          due_at: "2126-01-01T04:00:00+00:00",
+        }),
+      ],
+    });
+
+    const { getByText, container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => getByText("prosim"));
+
+    // The well-known row is inside a <details> element
+    const details = container.querySelector("details");
+    expect(details).toBeTruthy();
+    expect(getByText("1 well-known word")).toBeTruthy();
+
+    // It is unchecked
+    const wk = container.querySelector(
+      "input[type='checkbox'][data-candidate='word:hvala']",
+    ) as HTMLInputElement;
+    expect(wk).toBeTruthy();
+    expect(wk.checked).toBe(false);
+
+    // The main row is checked
+    const main = container.querySelector(
+      "input[type='checkbox'][data-candidate='word:prosim']",
+    ) as HTMLInputElement;
+    expect(main.checked).toBe(true);
+  });
+
+  it("selectedCount excludes well-known rows until checked", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        wordCandidate("prosim", { grade_class: "due" }),
+        wordCandidate("hvala", {
+          grade_class: "ahead",
+          well_known: true,
+          due_at: "2126-01-01T04:00:00+00:00",
+        }),
+      ],
+    });
+
+    const { getByText, container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => {
+      expect(getByText("Mark 1 as listened")).toBeTruthy();
+    });
+
+    // Check the well-known row
+    const wk = container.querySelector(
+      "input[type='checkbox'][data-candidate='word:hvala']",
+    ) as HTMLInputElement;
+    await fireEvent.click(wk);
+
+    await waitFor(() => {
+      expect(getByText("Mark 2 as listened")).toBeTruthy();
+    });
+  });
+
+  it("well-known rows contribute nothing to payload when left alone", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        wordCandidate("prosim", { grade_class: "due" }),
+        wordCandidate("hvala", {
+          grade_class: "ahead",
+          well_known: true,
+          due_at: "2126-01-01T04:00:00+00:00",
+        }),
+      ],
+    });
+    mockMarkAsListened.mockResolvedValue({
+      status: "ok",
+      created: 0,
+      staged: 0,
+      remaining_candidates: 0,
+      listen_count: 1,
+    });
+
+    const { getByText } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => getByText("Mark 1 as listened"));
+    await fireEvent.click(getByText("Mark 1 as listened"));
+
+    await waitFor(() => {
+      // Only prosim is in wordRatings (checked+good → omitted as default);
+      // hvala (unchecked well-known) sends "skip" so the backend won't stage it.
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { hvala: "skip" }, {});
+    });
+  });
+
+  // ── Guardrail test (verbatim from brief §2) ────────────────────────
+
+  it("a checked well-known row sends an explicit 'good'; an ordinary one is still omitted", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        wordCandidate("prosim", { grade_class: "due" }),
+        wordCandidate("hvala", {
+          grade_class: "ahead",
+          well_known: true,
+          due_at: "2126-01-01T04:00:00+00:00",
+        }),
+      ],
+    });
+    mockMarkAsListened.mockResolvedValue({
+      status: "ok",
+      created: 0,
+      staged: 0,
+      remaining_candidates: 0,
+      listen_count: 1,
+    });
+
+    const { getByText, container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    // Only the ordinary row is selected on load — the well-known row is
+    // collapsed, unchecked, and out of the count.
+    await waitFor(() => {
+      expect(getByText("Mark 1 as listened")).toBeTruthy();
+    });
+
+    const wellKnown = container.querySelector(
+      "input[type='checkbox'][data-candidate='word:hvala']",
+    ) as HTMLInputElement;
+    expect(wellKnown).toBeTruthy();
+    expect(wellKnown.checked).toBe(false);
+
+    // Opt it in, leaving the rating at the default "good".
+    await fireEvent.click(wellKnown);
+    await fireEvent.click(getByText("Mark 2 as listened"));
+
+    await waitFor(() => {
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { hvala: "good" }, {});
+    });
+  });
+
+  // ── Dueness tag ────────────────────────────────────────────────────
+
+  it("shows a future dueness tag for a due card", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        wordCandidate("prosim", { grade_class: "due", due_at: "2026-07-28T04:00:00+00:00" }),
+      ],
+    });
+
+    const { getByText } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => {
+      expect(getByText("3d")).toBeTruthy();
+    });
+  });
+
+  it("shows 'today' tag for a card due today", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        wordCandidate("prosim", { grade_class: "due", due_at: "2026-07-25T04:00:00+00:00" }),
+      ],
+    });
+
+    const { getByText } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => {
+      expect(getByText("today")).toBeTruthy();
+    });
+  });
+
+  it("shows a negative dueness tag for an overdue card", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        wordCandidate("prosim", { grade_class: "due", due_at: "2026-07-23T04:00:00+00:00" }),
+      ],
+    });
+
+    const { getByText } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => {
+      expect(getByText("-2d")).toBeTruthy();
+    });
+  });
+
+  it("shows no dueness tag when due_at is null", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [wordCandidate("prosim", { grade_class: "due", due_at: null })],
+    });
+
+    const { container, getByText } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => getByText("prosim"));
+    expect(container.querySelector(".tag.due")).toBeNull();
+  });
+
+  it("shows no dueness tag for create rows", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [createCandidate("kava")],
+    });
+
+    const { container, getByText } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => getByText("kava"));
+    expect(container.querySelector(".tag.due")).toBeNull();
+  });
+
+  it("shows no dueness tag when due_at is an invalid date string", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [wordCandidate("prosim", { grade_class: "due", due_at: "not-a-date" })],
+    });
+
+    const { container, getByText } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => getByText("prosim"));
+    expect(container.querySelector(".tag.due")).toBeNull();
+  });
+
+  // ── Countdown pref ─────────────────────────────────────────────────
+
+  it("pref 'off' shows no countdown and never auto-commits", async () => {
+    listenCountdownPref.set("off");
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [wordCandidate("prosim", { grade_class: "due" })],
+    });
+
+    const { container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector(".countdown")).toBeNull();
+    });
+
+    // Advance well past any countdown — should never commit
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(mockMarkAsListened).not.toHaveBeenCalled();
+  });
+
+  it("pref '30' shows 30s countdown and auto-commits at 30s", async () => {
+    listenCountdownPref.set("30");
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [wordCandidate("prosim", { grade_class: "due" })],
+    });
+    mockMarkAsListened.mockResolvedValue({
+      status: "ok",
+      created: 0,
+      staged: 0,
+      remaining_candidates: 0,
+      listen_count: 1,
+    });
+
+    vi.useFakeTimers();
+    const { container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector(".countdown")?.textContent).toContain("30");
+    });
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await waitFor(() => {
+      expect(mockMarkAsListened).toHaveBeenCalled();
     });
   });
 });
