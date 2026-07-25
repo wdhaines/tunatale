@@ -16,13 +16,14 @@ row like any other real grade, so it can't double-apply.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import timedelta
 
 import pytest
 
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.anki_mirror.queue_stats import resolve_bury_new, resolve_bury_review
+from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
 from app.srs.database import SRSDatabase
 
 
@@ -38,13 +39,18 @@ def _seed(
     db.add_collocation(unit, language_code="sl")
     item = db.get_collocation(text)
     assert item is not None
-    due = date.today() + timedelta(days=due_offset_days)
+    due = anki_today() + timedelta(days=due_offset_days)
     for direction, state in [(Direction.RECOGNITION, rec_state), (Direction.PRODUCTION, prod_state)]:
-        # 04:00-UTC due_at convention — an instant-flavored due_at reads as
-        # not-due past 20:00 local (see count_review_due_collocations' docstring).
+        # 04:00-UTC due_at convention via due_at_rollover_utc — an
+        # instant-flavored due_at reads as not-due past 20:00 local (see
+        # count_review_due_collocations' docstring). Seed and assertions both
+        # use anki_today(), never date.today(): inside [midnight, 04:00) UTC
+        # the two disagree, and date.today() would seed the card into
+        # TOMORROW's Anki day, so it is legitimately not yet due. Reproduce
+        # with TZ=UTC — a dev box on EDT hides it, CI runs UTC.
         ds = DirectionState(
             direction=direction,
-            due_at=datetime.combine(due, time(4, 0), tzinfo=UTC),
+            due_at=due_at_rollover_utc(due),
             stability=1.0,
             difficulty=5.0,
             reps=0 if state == SRSState.NEW else 1,
@@ -69,29 +75,29 @@ def db() -> SRSDatabase:
 class TestReviewBadgeExcludesPending:
     def test_pending_collocation_drops_out_of_the_review_count(self, db):
         cid = _seed(db, "hvala")
-        assert db.count_review_due_collocations(date.today()) == 1
+        assert db.count_review_due_collocations(anki_today()) == 1
 
         db.stage_pending_grade("lesson-1", cid, Direction.RECOGNITION.value, "good", "due")
 
-        assert db.count_review_due_collocations(date.today()) == 0
+        assert db.count_review_due_collocations(anki_today()) == 0
 
     def test_it_comes_back_once_the_pending_row_is_cleared(self, db):
         cid = _seed(db, "hvala")
         db.stage_pending_grade("lesson-1", cid, Direction.RECOGNITION.value, "good", "due")
-        assert db.count_review_due_collocations(date.today()) == 0
+        assert db.count_review_due_collocations(anki_today()) == 0
 
         db.clear_pending_grade(cid, Direction.RECOGNITION.value)
 
-        assert db.count_review_due_collocations(date.today()) == 1
+        assert db.count_review_due_collocations(anki_today()) == 1
 
     def test_only_the_pending_collocation_drops(self, db):
         pending_cid = _seed(db, "hvala")
         _seed(db, "banka")
-        assert db.count_review_due_collocations(date.today()) == 2
+        assert db.count_review_due_collocations(anki_today()) == 2
 
         db.stage_pending_grade("lesson-1", pending_cid, Direction.RECOGNITION.value, "good", "due")
 
-        assert db.count_review_due_collocations(date.today()) == 1
+        assert db.count_review_due_collocations(anki_today()) == 1
 
     def test_a_pending_row_on_one_direction_hides_the_whole_collocation(self, db):
         """Collocation-level, like every other filter in this count.
@@ -104,7 +110,7 @@ class TestReviewBadgeExcludesPending:
         cid = _seed(db, "hvala")
         db.stage_pending_grade("lesson-1", cid, Direction.RECOGNITION.value, "good", "due")
 
-        assert db.count_review_due_collocations(date.today()) == 0
+        assert db.count_review_due_collocations(anki_today()) == 0
 
 
 class TestServedMainQueueExcludesPending:
@@ -155,11 +161,11 @@ class TestServedMainQueueExcludesPending:
         # bury_new / bury_review default to True; note the cache stores the
         # literal "True", so seeding "1" would silently turn bury OFF.
         assert resolve_bury_new(db)[0] and resolve_bury_review(db)[0]
-        assert db.count_new_available_collocations(date.today()) == 0
+        assert db.count_new_available_collocations(anki_today()) == 0
 
         db.stage_pending_grade("lesson-1", cid, Direction.RECOGNITION.value, "good", "due")
 
-        assert db.count_new_available_collocations(date.today()) == 0
+        assert db.count_new_available_collocations(anki_today()) == 0
         assert cid not in {t[0] for t in _compute_live_main(db)}
 
     def test_new_cards_are_unaffected(self, db):
@@ -170,9 +176,9 @@ class TestServedMainQueueExcludesPending:
 
         review_cid = _seed(db, "hvala")
         new_cid = _seed(db, "banka", rec_state=SRSState.NEW, prod_state=SRSState.NEW)
-        before_new = db.count_new_available_collocations(date.today())
+        before_new = db.count_new_available_collocations(anki_today())
 
         db.stage_pending_grade("lesson-1", review_cid, Direction.RECOGNITION.value, "good", "due")
 
-        assert db.count_new_available_collocations(date.today()) == before_new
+        assert db.count_new_available_collocations(anki_today()) == before_new
         assert new_cid in {t[0] for t in _compute_live_main(db)}
