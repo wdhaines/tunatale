@@ -186,12 +186,14 @@ class TestListenPreview:
         assert by_text["riba"]["grade_class"] == "due"
 
         # Ordering: every creation before every tracked candidate; tracked
-        # tail sorted by progress ascending (least-known first).
+        # tail sorted by group rank (learning < due < ahead) then due_at.
         kinds = [c["grade_class"] for c in cands]
         first_tracked = next(i for i, k in enumerate(kinds) if k != "create")
         assert all(k == "create" for k in kinds[:first_tracked])
-        tracked_progress = [c["progress"] for c in cands[first_tracked:]]
-        assert tracked_progress == sorted(tracked_progress)
+        tracked_grades = [c["grade_class"] for c in cands[first_tracked:]]
+        group_order = {"learning": 0, "due": 1, "ahead": 2}
+        tracked_ranks = [group_order[g] for g in tracked_grades]
+        assert tracked_ranks == sorted(tracked_ranks)
 
     async def test_preview_is_pure(self):
         """Preview performs NO SRS mutations — no revlog rows, no card

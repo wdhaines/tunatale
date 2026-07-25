@@ -150,6 +150,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             rating: "good",
             translation: "",
             progress: null,
+            well_known: false,
+            due_at: null,
           },
         ],
       });
@@ -192,6 +194,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             rating: "good",
             translation: "",
             progress: null,
+            well_known: false,
+            due_at: null,
           },
         ],
       });
@@ -247,6 +251,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             rating: "good",
             translation: "",
             progress: null,
+            well_known: false,
+            due_at: null,
           },
         ],
       });
@@ -528,6 +534,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             rating: "good",
             translation: "",
             progress: null,
+            well_known: false,
+            due_at: null,
           },
         ],
       });
@@ -811,6 +819,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             rating: "good",
             translation: "",
             progress: null,
+            well_known: false,
+            due_at: null,
           },
         ],
       });

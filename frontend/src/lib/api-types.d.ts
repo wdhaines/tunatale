@@ -1517,6 +1517,8 @@ export interface components {
      * @description One row of GET /lesson/{id}/listen-preview's response.
      */
     ListenPreviewCandidate: {
+      /** Due At */
+      due_at?: string | null;
       /**
        * Grade Class
        * @enum {string}
@@ -1540,6 +1542,11 @@ export interface components {
       text: string;
       /** Translation */
       translation: string;
+      /**
+       * Well Known
+       * @default false
+       */
+      well_known: boolean;
     };
     /**
      * ListenPreviewResponse

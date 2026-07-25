@@ -51,6 +51,8 @@ const createCandidate = (text: string) => ({
   rating: "good" as const,
   translation: "",
   progress: null,
+  well_known: false,
+  due_at: null,
 });
 
 const wordCandidate = (
@@ -59,6 +61,8 @@ const wordCandidate = (
     grade_class?: "create" | "learning" | "due" | "ahead";
     translation?: string;
     progress?: number;
+    well_known?: boolean;
+    due_at?: string | null;
   },
 ) => ({
   kind: "word" as const,
@@ -68,6 +72,8 @@ const wordCandidate = (
   rating: "good" as const,
   translation: opts?.translation ?? "",
   progress: opts?.progress ?? 0.3,
+  well_known: opts?.well_known ?? false,
+  due_at: opts?.due_at ?? null,
 });
 
 const kpCandidate = (text: string, opts?: { translation?: string; progress?: number }) => ({
@@ -78,6 +84,8 @@ const kpCandidate = (text: string, opts?: { translation?: string; progress?: num
   rating: "good" as const,
   translation: opts?.translation ?? "",
   progress: opts?.progress ?? 0.1,
+  well_known: false,
+  due_at: null,
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────

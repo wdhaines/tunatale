@@ -396,6 +396,17 @@
       "ListenPreviewCandidate": {
         "description": "One row of GET /lesson/{id}/listen-preview's response.",
         "properties": {
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
           "grade_class": {
             "enum": [
               "create",
@@ -455,6 +466,11 @@
           "translation": {
             "title": "Translation",
             "type": "string"
+          },
+          "well_known": {
+            "default": false,
+            "title": "Well Known",
+            "type": "boolean"
           }
         },
         "required": [

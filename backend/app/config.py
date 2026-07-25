@@ -112,6 +112,12 @@ class Settings(BaseSettings):
 
     pipeline_autostart: bool = True
 
+    # A listen only offers cards due within this many days; beyond it the word is
+    # known well enough that one listen shouldn't touch its schedule. Marked-known
+    # words (due ~36500d out) fall out of the list by this rule alone — the KNOWN
+    # state itself does not survive a sync.
+    listen_due_horizon_days: int = 365
+
 
 settings = Settings()
 

@@ -29,6 +29,8 @@ class ListenPreviewCandidate(BaseModel):
     rating: Literal["again", "hard", "good", "easy", "skip"]
     translation: str
     progress: float | None
+    well_known: bool = False
+    due_at: str | None = None
 
 
 class ListenPreviewResponse(BaseModel):

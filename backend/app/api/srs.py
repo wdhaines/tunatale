@@ -33,6 +33,7 @@ from app.api.models import (
 )
 from app.audio.cloze_tts import synthesize_cloze_audios
 from app.common.guid import compute_guid
+from app.config import settings
 from app.languages import get_tts_voice, known_language_codes
 from app.llm.translate import generate_word_gloss, translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
@@ -422,6 +423,26 @@ def _resolve_gloss_translation(
     return ""
 
 
+def _is_due_beyond_horizon(due_at: datetime.datetime | str, today: datetime.date, horizon: int) -> bool:
+    """True when a card's due date is more than *horizon* days past *today*.
+
+    Used to flag "well-known" words in the listen preview: marked-known
+    cards (due ~36500d out) and other far-future review cards fall out of
+    the list by this rule. ``due_at`` is datetime-or-string depending on
+    load path — the same idiom ``_listen_grade_class`` uses. ``today`` is
+    always ``anki_today()``, i.e. a ``date`` (the Anki day, not
+    ``date.today()``); an unparseable ``due_at`` is not beyond the horizon.
+    """
+    if isinstance(due_at, datetime.datetime):
+        due_date = due_at.date()
+    else:
+        try:
+            due_date = datetime.date.fromisoformat(str(due_at)[:10])
+        except ValueError:
+            return False
+    return (due_date - today).days > horizon
+
+
 def _listen_day_window() -> tuple[datetime.datetime, datetime.datetime, str]:
     """The (today_start, today_end, end_of_day_utc) triple ``_listen_grade_class`` needs.
 
@@ -642,6 +663,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     lemma_to_first_surface = words.first_surface
     surface_to_upos = words.surface_upos
 
+    # Card-less ignore list: lemmas the user explicitly opted out of.
+    # Fetched once per request; both-sides casefolded so a capitalized stored
+    # entry (ex. "Hansen") still matches the lowercase lemma the lemmatizer emits.
+    ignored = {lem.lower() for lem in db.get_ignored_lemmas(lesson.language_code)}
+
     # Today window (Anki-day rollover, not local midnight) — see _listen_day_window.
     today = anki_today()
     today_start, today_end, end_of_day_utc = _listen_day_window()
@@ -683,6 +709,10 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             # Clozes-only verbs (e.g. biti) get no base card — only per-form
             # conjugation clozes created by click. Skip entirely.
             if is_func and is_clozes_only_verb(lemma, lesson.language_code):
+                continue
+            # Explicitly ignored lemmas: card-less ignore list (see
+            # db.get_ignored_lemmas). Casefolded to match the lemmatizer output.
+            if lemma.lower() in ignored:
                 continue
             # "skip" on an untracked lemma suppresses card creation for it.
             if body.word_ratings.get(lemma, "good") == "skip":
@@ -727,6 +757,21 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             grade_cls = _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc)
             if grade_cls is None:
                 continue
+            # Well-known opt-in: if the row is well-known and the user
+            # didn't explicitly rate it, skip — don't stage silently.
+            _due_str = (
+                (rec.due_at.isoformat() if isinstance(rec.due_at, datetime.datetime) else str(rec.due_at))
+                if rec.due_at is not None
+                else None
+            )
+            if (
+                grade_cls == "ahead"
+                and _due_str is not None
+                and _due_str > end_of_day_utc
+                and _is_due_beyond_horizon(rec.due_at, today, settings.listen_due_horizon_days)
+                and lemma not in body.word_ratings
+            ):
+                continue
             rating_str = body.word_ratings.get(lemma, "good")
             if rating_str == "skip":
                 continue
@@ -743,6 +788,8 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
     # ── Key phrase staging (existing cards only; creation deferred) ─────
     for kp in lesson.key_phrases:
+        if kp.phrase.lower() in ignored:
+            continue
         existing = db.get_collocation(kp.phrase)
         if existing is None:
             continue
@@ -753,6 +800,20 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             continue
         grade_cls = _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc)
         if grade_cls is None:
+            continue
+        # Well-known opt-in — mirrors the word loop above.
+        _kp_due_str = (
+            (rec.due_at.isoformat() if isinstance(rec.due_at, datetime.datetime) else str(rec.due_at))
+            if rec.due_at is not None
+            else None
+        )
+        if (
+            grade_cls == "ahead"
+            and _kp_due_str is not None
+            and _kp_due_str > end_of_day_utc
+            and _is_due_beyond_horizon(rec.due_at, today, settings.listen_due_horizon_days)
+            and kp.phrase not in body.kp_ratings
+        ):
             continue
         rating_str = body.kp_ratings.get(kp.phrase, "good")
         if rating_str == "skip":
@@ -1134,12 +1195,18 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
 
     words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
 
+    # Card-less ignore list — mirrored from mark_lesson_listened.
+    ignored = {lem.lower() for lem in db.get_ignored_lemmas(lesson.language_code)}
+
     today = anki_today()
     today_start, today_end, end_of_day_utc = _listen_day_window()
 
     variant_index = _build_variant_index(db, lesson.language_code)
 
     from app.srs.mastery import compute_mastery_progress
+
+    _GROUP_RANK = {"learning": 0, "due": 1, "ahead": 2}
+    horizon = settings.listen_due_horizon_days
 
     candidates: list[dict] = []
     lemma_candidates: list[str] = []
@@ -1156,6 +1223,13 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
         if res is None:
             # Untracked → ranked/budget-truncated below, mirroring
             # mark_lesson_listened exactly.
+            # The card-less ignore list suppresses CREATION only, so the check
+            # belongs inside this branch — mark_lesson_listened applies it in
+            # the same place. Hoisting it above _resolve_card_for_lemma hides a
+            # carded ignored lemma from the preview while the commit still
+            # stages it: preview↔commit divergence, the 6a5c718 bug class.
+            if lemma.lower() in ignored:
+                continue
             lemma_candidates.append(lemma)
         else:
             existing_id, existing = res
@@ -1168,6 +1242,22 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
             if grade_cls is None:
                 continue
             progress = compute_mastery_progress(existing.directions.values())
+            due_at_str = (
+                (rec.due_at.isoformat() if isinstance(rec.due_at, datetime.datetime) else str(rec.due_at))
+                if rec.due_at is not None
+                else None
+            )
+            # Well-known: "ahead" and due beyond the horizon. "learning" and
+            # "due" rows are NEVER well-known — suppressing a due card would
+            # silently drop a review the user owes. NULL due_at is NOT
+            # well-known (leave it visible rather than hiding a card whose
+            # schedule is unknown).
+            is_well_known = (
+                grade_cls == "ahead"
+                and due_at_str is not None
+                and due_at_str > end_of_day_utc
+                and _is_due_beyond_horizon(rec.due_at, today, horizon)
+            )
             candidates.append(
                 {
                     "kind": "word",
@@ -1177,11 +1267,16 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
                     "rating": "good",
                     "translation": existing.syntactic_unit.translation or "",
                     "progress": progress,
+                    "well_known": is_well_known,
+                    "due_at": due_at_str,
+                    "_group_rank": _GROUP_RANK.get(grade_cls, 3),
                 }
             )
 
     # ── Key phrase candidates (tracked only; creation deferred) ──────────
     for kp in lesson.key_phrases:
+        if kp.phrase.lower() in ignored:
+            continue
         item = db.get_collocation(kp.phrase)
         if item is None:
             continue
@@ -1195,6 +1290,17 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
             continue
         kp_id = db.get_collocation_id_by_guid(item.guid)
         progress = compute_mastery_progress(item.directions.values())
+        due_at_str = (
+            (rec.due_at.isoformat() if isinstance(rec.due_at, datetime.datetime) else str(rec.due_at))
+            if rec.due_at is not None
+            else None
+        )
+        is_well_known = (
+            grade_cls == "ahead"
+            and due_at_str is not None
+            and due_at_str > end_of_day_utc
+            and _is_due_beyond_horizon(rec.due_at, today, horizon)
+        )
         candidates.append(
             {
                 "kind": "kp",
@@ -1204,6 +1310,9 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
                 "rating": "good",
                 "translation": item.syntactic_unit.translation or kp.translation or "",
                 "progress": progress,
+                "well_known": is_well_known,
+                "due_at": due_at_str,
+                "_group_rank": _GROUP_RANK.get(grade_cls, 3),
             }
         )
 
@@ -1221,13 +1330,20 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
             "rating": "good",
             "translation": "",
             "progress": None,
+            "well_known": False,
+            "due_at": None,
+            "_group_rank": -1,
         }
         for _kind, lemma in ranked[:creation_budget]
     ]
 
-    # ── Ordering: creations first, then tracked by progress ascending ────
+    # ── Ordering: creations first, then tracked by group (learning → due →
+    # ahead), due_at ascending within each group, stable sort. ─────────────
     tracked = candidates
-    tracked.sort(key=lambda c: c["progress"] if c["progress"] is not None else 0.0)
+    tracked.sort(key=lambda c: (c["_group_rank"], c["due_at"] or "\uffff"))
+    # Strip internal sort key before returning
+    for c in creates + tracked:
+        c.pop("_group_rank", None)
 
     return {"candidates": creates + tracked}
 
