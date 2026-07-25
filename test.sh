@@ -52,6 +52,9 @@ echo "Running backend + frontend suites in parallel..."
   echo "=== Plugin import check ==="
   uv run python scripts/check_plugin_imports.py
 
+  echo "=== OpenAPI snapshot check ==="
+  uv run python scripts/check_openapi_snapshot.py
+
   echo "=== Tests ==="
   # -n auto parallelizes across CPU cores; pytest-cov combines per-worker
   # coverage so the 100% gate still applies to the full run.
@@ -71,6 +74,9 @@ backend_pid=$!
 
   echo "=== Frontend lint ==="
   bun run lint
+
+  echo "=== OpenAPI type check ==="
+  bun run check:api
 
   echo "=== Svelte type check ==="
   bun run check

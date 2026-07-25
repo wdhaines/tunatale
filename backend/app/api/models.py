@@ -25,8 +25,8 @@ class ListenPreviewCandidate(BaseModel):
     kind: Literal["create", "word", "kp"]
     text: str
     item_id: int | None
-    grade_class: str
-    rating: str
+    grade_class: Literal["create", "learning", "due", "ahead"]
+    rating: Literal["again", "hard", "good", "easy", "skip"]
     translation: str
     progress: float | None
 

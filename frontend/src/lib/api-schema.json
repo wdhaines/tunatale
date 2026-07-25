@@ -1,0 +1,3734 @@
+{
+  "components": {
+    "schemas": {
+      "Body_put_image_upload_api_srs_items__item_id__image_upload_put": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_put_image_upload_api_srs_items__item_id__image_upload_put",
+        "type": "object"
+      },
+      "BulkDeleteRequest": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "title": "BulkDeleteRequest",
+        "type": "object"
+      },
+      "CommitPendingResponse": {
+        "description": "Response of POST /lesson/{id}/commit-pending.",
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "applied"
+        ],
+        "title": "CommitPendingResponse",
+        "type": "object"
+      },
+      "CreateBaseCardRequest": {
+        "properties": {
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "lemma": {
+            "title": "Lemma",
+            "type": "string"
+          },
+          "sentence": {
+            "title": "Sentence",
+            "type": "string"
+          },
+          "surface": {
+            "title": "Surface",
+            "type": "string"
+          },
+          "translation": {
+            "default": "",
+            "title": "Translation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "surface",
+          "lemma",
+          "sentence",
+          "language_code"
+        ],
+        "title": "CreateBaseCardRequest",
+        "type": "object"
+      },
+      "CreateItemRequest": {
+        "properties": {
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "source_lesson_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Lesson Id"
+          },
+          "source_line_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Line Index"
+          },
+          "source_sentence": {
+            "default": "",
+            "title": "Source Sentence",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "translation": {
+            "default": "",
+            "title": "Translation",
+            "type": "string"
+          },
+          "word_count": {
+            "title": "Word Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "text",
+          "language_code",
+          "word_count"
+        ],
+        "title": "CreateItemRequest",
+        "type": "object"
+      },
+      "DrillRequest": {
+        "properties": {
+          "lesson_review": {
+            "default": false,
+            "title": "Lesson Review",
+            "type": "boolean"
+          },
+          "rating": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating"
+          },
+          "signal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal"
+          },
+          "time_ms": {
+            "default": 0,
+            "title": "Time Ms",
+            "type": "integer"
+          }
+        },
+        "title": "DrillRequest",
+        "type": "object"
+      },
+      "GenerateStoryRequest": {
+        "properties": {
+          "curriculum_id": {
+            "title": "Curriculum Id",
+            "type": "string"
+          },
+          "day": {
+            "default": 1,
+            "title": "Day",
+            "type": "integer"
+          },
+          "strategy": {
+            "default": "WIDER",
+            "enum": [
+              "WIDER",
+              "DEEPER"
+            ],
+            "title": "Strategy",
+            "type": "string"
+          }
+        },
+        "required": [
+          "curriculum_id"
+        ],
+        "title": "GenerateStoryRequest",
+        "type": "object"
+      },
+      "GenerationModeRequest": {
+        "properties": {
+          "mode": {
+            "enum": [
+              "auto",
+              "manual"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "GenerationModeRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IgnoreLemmaRequest": {
+        "properties": {
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "lemma": {
+            "title": "Lemma",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lemma",
+          "language_code"
+        ],
+        "title": "IgnoreLemmaRequest",
+        "type": "object"
+      },
+      "ImportLessonRequest": {
+        "description": "Self-describing Story-JSON file (docs/lesson-authoring.md).\n\nProvide exactly one of ``story`` (pre-parsed dict) or ``raw`` (pasted text\ncontaining prose + fenced JSON, cleaned via ``parse_json_object``).",
+        "properties": {
+          "curriculum_id": {
+            "title": "Curriculum Id",
+            "type": "string"
+          },
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "raw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw"
+          },
+          "story": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Story"
+          }
+        },
+        "required": [
+          "curriculum_id",
+          "day"
+        ],
+        "title": "ImportLessonRequest",
+        "type": "object"
+      },
+      "ImportListensRequest": {
+        "properties": {
+          "lesson_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Lesson Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lesson_ids"
+        ],
+        "title": "ImportListensRequest",
+        "type": "object"
+      },
+      "ImportPlanRequest": {
+        "description": "Self-describing plan file for curriculum authoring.\n\n``days`` stays a free list \u2014 its schema is validated by\n``plan_io.validate_plan_days`` so errors carry field paths.",
+        "properties": {
+          "cefr_level": {
+            "title": "Cefr Level",
+            "type": "string"
+          },
+          "days": {
+            "items": {},
+            "title": "Days",
+            "type": "array"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "language_code",
+          "cefr_level",
+          "days"
+        ],
+        "title": "ImportPlanRequest",
+        "type": "object"
+      },
+      "InflectionClozeRequest": {
+        "properties": {
+          "feature": {
+            "title": "Feature",
+            "type": "string"
+          },
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "lemma": {
+            "title": "Lemma",
+            "type": "string"
+          },
+          "lesson_id": {
+            "default": "",
+            "title": "Lesson Id",
+            "type": "string"
+          },
+          "sentence": {
+            "title": "Sentence",
+            "type": "string"
+          },
+          "surface": {
+            "title": "Surface",
+            "type": "string"
+          },
+          "translation": {
+            "default": "",
+            "title": "Translation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "surface",
+          "lemma",
+          "feature",
+          "sentence",
+          "language_code"
+        ],
+        "title": "InflectionClozeRequest",
+        "type": "object"
+      },
+      "ListenPreviewCandidate": {
+        "description": "One row of GET /lesson/{id}/listen-preview's response.",
+        "properties": {
+          "grade_class": {
+            "enum": [
+              "create",
+              "learning",
+              "due",
+              "ahead"
+            ],
+            "title": "Grade Class",
+            "type": "string"
+          },
+          "item_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Id"
+          },
+          "kind": {
+            "enum": [
+              "create",
+              "word",
+              "kp"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress"
+          },
+          "rating": {
+            "enum": [
+              "again",
+              "hard",
+              "good",
+              "easy",
+              "skip"
+            ],
+            "title": "Rating",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "translation": {
+            "title": "Translation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "text",
+          "item_id",
+          "grade_class",
+          "rating",
+          "translation",
+          "progress"
+        ],
+        "title": "ListenPreviewCandidate",
+        "type": "object"
+      },
+      "ListenPreviewResponse": {
+        "description": "Response of GET /lesson/{id}/listen-preview.",
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ListenPreviewCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidates"
+        ],
+        "title": "ListenPreviewResponse",
+        "type": "object"
+      },
+      "ListenRequest": {
+        "properties": {
+          "kp_ratings": {
+            "additionalProperties": {
+              "enum": [
+                "again",
+                "hard",
+                "good",
+                "easy",
+                "skip"
+              ],
+              "type": "string"
+            },
+            "default": {},
+            "title": "Kp Ratings",
+            "type": "object"
+          },
+          "lesson_id": {
+            "title": "Lesson Id",
+            "type": "string"
+          },
+          "word_ratings": {
+            "additionalProperties": {
+              "enum": [
+                "again",
+                "hard",
+                "good",
+                "easy",
+                "skip"
+              ],
+              "type": "string"
+            },
+            "default": {},
+            "title": "Word Ratings",
+            "type": "object"
+          }
+        },
+        "required": [
+          "lesson_id"
+        ],
+        "title": "ListenRequest",
+        "type": "object"
+      },
+      "PipelineRegenerateRequest": {
+        "properties": {
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "strategy": {
+            "default": "WIDER",
+            "enum": [
+              "WIDER",
+              "DEEPER"
+            ],
+            "title": "Strategy",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day"
+        ],
+        "title": "PipelineRegenerateRequest",
+        "type": "object"
+      },
+      "PipelineRetryRequest": {
+        "properties": {
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day"
+        ],
+        "title": "PipelineRetryRequest",
+        "type": "object"
+      },
+      "PlanFeedbackRequest": {
+        "properties": {
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "note"
+        ],
+        "title": "PlanFeedbackRequest",
+        "type": "object"
+      },
+      "PlanTurnRequest": {
+        "properties": {
+          "batch_size": {
+            "default": 5,
+            "maximum": 14.0,
+            "minimum": 1.0,
+            "title": "Batch Size",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "pasted_response": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pasted Response"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "PlanTurnRequest",
+        "type": "object"
+      },
+      "RenderAudioRequest": {
+        "properties": {
+          "lesson_id": {
+            "title": "Lesson Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lesson_id"
+        ],
+        "title": "RenderAudioRequest",
+        "type": "object"
+      },
+      "SetStateRequest": {
+        "properties": {
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "SetStateRequest",
+        "type": "object"
+      },
+      "StartPlanRequest": {
+        "properties": {
+          "cefr_level": {
+            "default": "A2",
+            "title": "Cefr Level",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic"
+        ],
+        "title": "StartPlanRequest",
+        "type": "object"
+      },
+      "SuspendRequest": {
+        "properties": {
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction"
+          },
+          "suspended": {
+            "title": "Suspended",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "suspended"
+        ],
+        "title": "SuspendRequest",
+        "type": "object"
+      },
+      "TranslateRequest": {
+        "properties": {
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "language_code"
+        ],
+        "title": "TranslateRequest",
+        "type": "object"
+      },
+      "UpdateItemRequest": {
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "translation": {
+            "title": "Translation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "translation"
+        ],
+        "title": "UpdateItemRequest",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "_UrlBody": {
+        "properties": {
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "_UrlBody",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "TunaTale",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/admin/refresh-media": {
+      "post": {
+        "description": "Re-import media from Anki, updating changed files (SHA-aware).\n\nReturns counts: {updated, unchanged, new, errors}.",
+        "operationId": "refresh_media_api_admin_refresh_media_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Refresh Media Api Admin Refresh Media Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Refresh Media",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/anki/peer-sync": {
+      "post": {
+        "description": "Sync TT's own collection to AnkiWeb (or a self-host server) as a peer.\n\nTouches TT's own ``tt_collection`` and works with Anki open. Returns\n409 with a user-facing message if peer-sync isn't configured (e.g. no credential in\nthe macOS Keychain) or if the server demands a full sync.\n\nGenerates media (audio/images) for any TT-added cards via the media generator,\nso they reach AnkiWeb with media attached.",
+        "operationId": "trigger_peer_sync_api_anki_peer_sync_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Dry Run",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trigger Peer Sync",
+        "tags": [
+          "anki"
+        ]
+      }
+    },
+    "/api/audio/lesson/{lesson_id}": {
+      "get": {
+        "description": "Return the audio file list for a lesson (full + sections) without re-rendering.",
+        "operationId": "get_lesson_audio_api_audio_lesson__lesson_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lesson_id",
+            "required": true,
+            "schema": {
+              "title": "Lesson Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Lesson Audio",
+        "tags": [
+          "audio"
+        ]
+      }
+    },
+    "/api/audio/lesson/{lesson_id}/zip": {
+      "get": {
+        "description": "Return a ZIP of all section WAVs for a lesson with context-rich filenames.",
+        "operationId": "download_lesson_zip_api_audio_lesson__lesson_id__zip_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lesson_id",
+            "required": true,
+            "schema": {
+              "title": "Lesson Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Lesson Zip",
+        "tags": [
+          "audio"
+        ]
+      }
+    },
+    "/api/audio/render": {
+      "post": {
+        "operationId": "render_audio_api_audio_render_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenderAudioRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Render Audio",
+        "tags": [
+          "audio"
+        ]
+      }
+    },
+    "/api/audio/{audio_id}": {
+      "get": {
+        "operationId": "get_audio_api_audio__audio_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "audio_id",
+            "required": true,
+            "schema": {
+              "title": "Audio Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Audio",
+        "tags": [
+          "audio"
+        ]
+      }
+    },
+    "/api/curriculum": {
+      "get": {
+        "operationId": "list_curricula_api_curriculum_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Curricula",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/import": {
+      "post": {
+        "operationId": "import_curriculum_plan_api_curriculum_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportPlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Curriculum Plan",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/plan": {
+      "post": {
+        "description": "LLM-free: mint an id and save an empty curriculum with empty planner state.",
+        "operationId": "start_plan_api_curriculum_plan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartPlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Plan",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}": {
+      "delete": {
+        "operationId": "delete_curriculum_api_curriculum__curriculum_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Curriculum",
+        "tags": [
+          "curriculum"
+        ]
+      },
+      "get": {
+        "operationId": "get_curriculum_api_curriculum__curriculum_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Curriculum",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/days/{day}": {
+      "delete": {
+        "description": "Delete a committed day: its lessons/audio are removed, the day itself is\ndropped from ``curriculum.days`` (no renumbering of later days). Existing\nSRS/Anki cards from a deleted lesson are untouched.",
+        "operationId": "delete_day_api_curriculum__curriculum_id__days__day__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "day",
+            "required": true,
+            "schema": {
+              "title": "Day",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Day",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/days/{day}/lesson": {
+      "get": {
+        "operationId": "get_lesson_by_day_api_curriculum__curriculum_id__days__day__lesson_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "day",
+            "required": true,
+            "schema": {
+              "title": "Day",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Lesson By Day",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/generation-mode": {
+      "post": {
+        "description": "Set the generation mode for a curriculum: 'auto' (default, Groq pipeline) or 'manual' (copy/paste).",
+        "operationId": "set_generation_mode_api_curriculum__curriculum_id__generation_mode_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerationModeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Generation Mode",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/pipeline": {
+      "get": {
+        "operationId": "pipeline_status_api_curriculum__curriculum_id__pipeline_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pipeline Status",
+        "tags": [
+          "pipeline"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/pipeline/regenerate": {
+      "post": {
+        "operationId": "pipeline_regenerate_api_curriculum__curriculum_id__pipeline_regenerate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineRegenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pipeline Regenerate",
+        "tags": [
+          "pipeline"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/pipeline/retry": {
+      "post": {
+        "operationId": "pipeline_retry_api_curriculum__curriculum_id__pipeline_retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PipelineRetryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pipeline Retry",
+        "tags": [
+          "pipeline"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/plan/commit": {
+      "post": {
+        "description": "Append the proposed batch to the committed days and clear the proposal.",
+        "operationId": "plan_commit_api_curriculum__curriculum_id__plan_commit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Plan Commit",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/plan/feedback": {
+      "post": {
+        "description": "Record listening feedback for a committed day; it enters the next turn's prompt.",
+        "operationId": "plan_feedback_api_curriculum__curriculum_id__plan_feedback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Plan Feedback",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/plan/reset": {
+      "post": {
+        "description": "Clear the planner chat and proposed batch (keeps feedback and committed days).",
+        "operationId": "plan_reset_api_curriculum__curriculum_id__plan_reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Plan Reset",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/plan/turn": {
+      "post": {
+        "description": "One planner chat turn: snapshot \u2192 LLM / pasted response \u2192 append chat, set/replace proposed.",
+        "operationId": "plan_turn_api_curriculum__curriculum_id__plan_turn_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanTurnRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Plan Turn",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/plan/turn/prompt": {
+      "post": {
+        "description": "Export the exact prompts for a planner turn, without calling any LLM.\n\nThe system and user prompts returned are byte-identical to what the\nGroq path would send for the same inputs.  Persists nothing.",
+        "operationId": "plan_turn_prompt_api_curriculum__curriculum_id__plan_turn_prompt_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanTurnRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Plan Turn Prompt",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/progress": {
+      "get": {
+        "operationId": "get_curriculum_progress_api_curriculum__curriculum_id__progress_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Curriculum Progress",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/source": {
+      "get": {
+        "operationId": "get_curriculum_source_api_curriculum__curriculum_id__source_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Curriculum Source",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/health": {
+      "get": {
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/api/languages": {
+      "get": {
+        "description": "Configured languages (for the frontend selector) + the request's active one.\n\nLists every language with an open connection; single-language deployments\nreturn one entry. ``active`` is the language the X-TT-Language header resolved\nto for this request.",
+        "operationId": "languages_api_languages_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Languages"
+      }
+    },
+    "/api/llm/activity": {
+      "get": {
+        "operationId": "llm_activity_api_llm_activity_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Since",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Llm Activity Api Llm Activity Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Llm Activity",
+        "tags": [
+          "llm"
+        ]
+      }
+    },
+    "/api/llm/health": {
+      "get": {
+        "operationId": "llm_health_api_llm_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Llm Health Api Llm Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Llm Health",
+        "tags": [
+          "llm"
+        ]
+      }
+    },
+    "/api/llm/rate-limit": {
+      "get": {
+        "operationId": "rate_limit_status_api_llm_rate_limit_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rate Limit Status Api Llm Rate Limit Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Rate Limit Status",
+        "tags": [
+          "llm"
+        ]
+      }
+    },
+    "/api/llm/rate-limit/probe": {
+      "post": {
+        "operationId": "rate_limit_probe_api_llm_rate_limit_probe_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rate Limit Probe Api Llm Rate Limit Probe Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Rate Limit Probe",
+        "tags": [
+          "llm"
+        ]
+      }
+    },
+    "/api/srs/backfill-translations": {
+      "post": {
+        "description": "One-time repair: fill empty translations from all stored lesson glosses.",
+        "operationId": "backfill_translations_api_srs_backfill_translations_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Backfill Translations",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/due": {
+      "get": {
+        "operationId": "get_due_collocations_api_srs_due_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "default": "recognition",
+              "title": "Direction",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Due Collocations",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/ignored-lemmas": {
+      "delete": {
+        "operationId": "remove_ignored_lemma_api_srs_ignored_lemmas_delete",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "lemma",
+            "required": true,
+            "schema": {
+              "title": "Lemma",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "language_code",
+            "required": true,
+            "schema": {
+              "title": "Language Code",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Ignored Lemma",
+        "tags": [
+          "srs"
+        ]
+      },
+      "post": {
+        "operationId": "add_ignored_lemma_api_srs_ignored_lemmas_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IgnoreLemmaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Ignored Lemma",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/inflection-clozes": {
+      "post": {
+        "description": "Create one morphology cloze for an inflected surface (Phase 4a).\n\nGated on the lemma's base production being in REVIEW or KNOWN.\nIdempotent by guid. Follows the add_collocation contract\n(card_type=cloze, no Anki ids).",
+        "operationId": "create_inflection_cloze_api_srs_inflection_clozes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InflectionClozeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Inflection Cloze Api Srs Inflection Clozes Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Inflection Cloze",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/items": {
+      "get": {
+        "operationId": "list_items_api_srs_items_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "text",
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "asc",
+              "title": "Order",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Items",
+        "tags": [
+          "srs"
+        ]
+      },
+      "post": {
+        "operationId": "create_item_api_srs_items_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateItemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Item",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/items/base": {
+      "post": {
+        "description": "Create a base card for an unknown clicked word (Phase 5, Part C / decision 8, C-a).\n\nBranches by word type (the word-learning state machine):\n  - function word \u2192 production-only cloze (the *surface* blanked in the sentence)\n  - content word  \u2192 vocab (recognition + production)\nBoth created in NEW state. Idempotent by the base guid. Honors the\nadd_collocation card-adding contract (no Anki ids; sync_create_new mints +\nlinks). No LLM auto-translate here \u2014 the caller passes the transcript gloss.",
+        "operationId": "create_base_card_api_srs_items_base_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBaseCardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Base Card Api Srs Items Base Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Base Card",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/items/bulk-delete": {
+      "post": {
+        "operationId": "bulk_delete_items_api_srs_items_bulk_delete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bulk Delete Items",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/items/{item_id}": {
+      "delete": {
+        "operationId": "delete_item_api_srs_items__item_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Item",
+        "tags": [
+          "srs"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_item_api_srs_items__item_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateItemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Item",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/items/{item_id}/direction/{direction}/feedback": {
+      "post": {
+        "operationId": "drill_feedback_api_srs_items__item_id__direction__direction__feedback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "direction",
+            "required": true,
+            "schema": {
+              "title": "Direction",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DrillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Drill Feedback",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/items/{item_id}/direction/{direction}/undo": {
+      "post": {
+        "description": "Undo the most recent TT-native grade on (item, direction).\n\n409 when the grade was superseded by a newer one, already synced to Anki\n(dirty_fsrs cleared), or there is nothing to undo.",
+        "operationId": "undo_grade_api_srs_items__item_id__direction__direction__undo_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "direction",
+            "required": true,
+            "schema": {
+              "title": "Direction",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Undo Grade",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/items/{item_id}/image": {
+      "delete": {
+        "operationId": "delete_image_api_srs_items__item_id__image_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Image",
+        "tags": [
+          "srs-images"
+        ]
+      },
+      "put": {
+        "operationId": "put_image_from_url_api_srs_items__item_id__image_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_UrlBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Image From Url",
+        "tags": [
+          "srs-images"
+        ]
+      }
+    },
+    "/api/srs/items/{item_id}/image/candidates": {
+      "get": {
+        "operationId": "get_image_candidates_api_srs_items__item_id__image_candidates_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Image Candidates",
+        "tags": [
+          "srs-images"
+        ]
+      }
+    },
+    "/api/srs/items/{item_id}/image/upload": {
+      "put": {
+        "operationId": "put_image_upload_api_srs_items__item_id__image_upload_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_put_image_upload_api_srs_items__item_id__image_upload_put"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Image Upload",
+        "tags": [
+          "srs-images"
+        ]
+      }
+    },
+    "/api/srs/items/{item_id}/reset": {
+      "post": {
+        "operationId": "reset_item_api_srs_items__item_id__reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reset Item",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/items/{item_id}/restore-known": {
+      "post": {
+        "description": "Reverse a \"Mark known\" \u2014 restore the snapshotted pre-known schedule.\n\nDedicated rather than overloading set_item_state: the \"review\"/\"new\" state\nmappings there are label-only / full-reset and would be confusing here.\nNo-op (still 200) when the item has no known snapshot.",
+        "operationId": "restore_known_item_api_srs_items__item_id__restore_known_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore Known Item",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/items/{item_id}/state": {
+      "post": {
+        "operationId": "set_item_state_api_srs_items__item_id__state_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetStateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Item State",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/items/{item_id}/suspend": {
+      "post": {
+        "operationId": "suspend_item_api_srs_items__item_id__suspend_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuspendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Suspend Item",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/items/{item_id}/untrack": {
+      "post": {
+        "operationId": "untrack_item_api_srs_items__item_id__untrack_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Untrack Item",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/lesson/{lesson_id}/commit-pending": {
+      "post": {
+        "description": "Bulk \"Sync it\": release every staged grade for a lesson without reviewing it.\n\nApplies each pending row at its provisional rating through the SAME path a\nper-card release takes (``schedule`` \u2192 revlog \u2192 ``dirty_fsrs``), then clears\nit. Afterwards these are ordinary dirty grades and the next normal \"Sync to\nAnkiWeb\" pushes them \u2014 this endpoint deliberately does NOT sync by itself.\n\nOne shared balancer and a monotonic grade clock across the batch, exactly as\nthe pre-staging /listen grade loop had: ``tt_revlog.id`` is a millisecond PK\nand ``append_revlog`` is INSERT OR IGNORE, so two grades in the same\nmillisecond would silently drop one.",
+        "operationId": "commit_pending_grades_api_srs_lesson__lesson_id__commit_pending_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lesson_id",
+            "required": true,
+            "schema": {
+              "title": "Lesson Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommitPendingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Commit Pending Grades",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/lesson/{lesson_id}/listen-preview": {
+      "get": {
+        "description": "Read-only classification of what a listen would stage for a lesson.\n\nThe ``create`` rows are exactly what a listen against this same state\nwould create RIGHT NOW: untracked lemmas ranked by\n``_rank_listen_candidates`` and truncated to the same per-listen creation\nbudget ``mark_lesson_listened`` uses (``resolve_daily_new_cap`` minus\ntoday's introductions and still-NEW same-day creations). Without this the\npreview and the commit disagree \u2014 a same-day re-listen has ~0 budget left\nand would create nothing even though the preview showed every untracked\nlemma as checked.\n\nTracked word/kp candidates are unchanged: creations first, then tracked by\nmastery ascending (least-known first). Strictly read-only \u2014 no pending\nwrites, no card creation, no side effects beyond the\n``_analyze_lesson_words`` lemma-cache warm-up. The response informs the\nfrontend preview modal without committing anything.\n\nResidual divergence (documented, not fixed here): if the user unchecks a\nshown create row before committing, the commit re-ranks over the\nremaining untracked set and may create a DIFFERENT lemma the preview never\nshowed \u2014 the budget is spent by rank order, not by row identity.",
+        "operationId": "get_listen_preview_api_srs_lesson__lesson_id__listen_preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lesson_id",
+            "required": true,
+            "schema": {
+              "title": "Lesson Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListenPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Listen Preview",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/lesson/{lesson_id}/review-queue": {
+      "get": {
+        "description": "Lesson-scoped \"Check your work\" queue (learning-modes slice 1, D6).\n\nItems share ``_queue_item_to_dict``'s shape with /review-queue; grading a\nserved item goes through the normal per-item feedback endpoint (an Again\non an auto-Good'ed card is an ordinary same-day lapse). Strictly\nread-only w.r.t. parity state: no learning-cutoff advance, no\nsession_main_queue write, no unbury sweep, no queue-engine involvement \u2014\nthe frozen main-queue order must survive this endpoint unchanged (pinned\nby the parity-guard test). Off-main-queue grading already exists today\n(Read mode); the freeze reconciliation drops graded keys by design.\n\nInclusion: learning/relearning cards; tracked NEW cards in D2 rank order\n(grading one introduces it, same as Read mode's tap-to-introduce); REVIEW\ncards touched today (the /listen auto-Good correction set \u2014 same\nlocal-midnight window as ``_listen_grade_class``) or already due.\nEverything else (known/suspended/buried/untracked, future-due untouched\nREVIEW) is excluded. Vocab serves recognition only \u2014 never fighting\nLayer 65's production gate \u2014 and cloze serves production only.",
+        "operationId": "get_lesson_review_queue_api_srs_lesson__lesson_id__review_queue_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lesson_id",
+            "required": true,
+            "schema": {
+              "title": "Lesson Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Lesson Review Queue Api Srs Lesson  Lesson Id  Review Queue Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Lesson Review Queue",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/lesson/{lesson_id}/reviewed": {
+      "post": {
+        "description": "Record completion of a lesson-scoped 'Check your work' review.\n\nGates the lesson page's \"Check your work\" link to one-shot-per-listen:\na completed review clears the link until the next listen re-arms it\n(has_unreviewed_listen on the review-queue response). TT-only; touches\nno parity/FSRS state.",
+        "operationId": "mark_lesson_reviewed_api_srs_lesson__lesson_id__reviewed_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lesson_id",
+            "required": true,
+            "schema": {
+              "title": "Lesson Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Mark Lesson Reviewed Api Srs Lesson  Lesson Id  Reviewed Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark Lesson Reviewed",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/lesson/{lesson_id}/transcript": {
+      "get": {
+        "operationId": "get_lesson_transcript_api_srs_lesson__lesson_id__transcript_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lesson_id",
+            "required": true,
+            "schema": {
+              "title": "Lesson Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Lesson Transcript",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/listen": {
+      "post": {
+        "operationId": "mark_lesson_listened_api_srs_listen_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark Lesson Listened",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/listens": {
+      "get": {
+        "operationId": "get_listens_api_srs_listens_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Listens",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/listens/import": {
+      "post": {
+        "operationId": "import_listens_api_srs_listens_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportListensRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Listens",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/media/{filename}": {
+      "get": {
+        "operationId": "serve_media_api_srs_media__filename__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "title": "Filename",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Serve Media",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/new": {
+      "get": {
+        "operationId": "get_new_collocations_api_srs_new_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "default": "recognition",
+              "title": "Direction",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get New Collocations",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/queue-stats": {
+      "get": {
+        "operationId": "get_queue_stats_api_srs_queue_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Queue Stats",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/review-queue": {
+      "get": {
+        "description": "Return the entire ordered review queue in one shot.\n\nImplements Anki's queue construction: combined new-card cap across directions,\nsibling burying, and newSpread ordering.\n\n`session_start=1` is the deck-open analog: it advances `learning_cutoff` to\n`now` so any learning card whose timer has elapsed since the last grade jumps\ninto `ready_learning`. Frontend passes it on page mount (= deck open). Other\ncallers (per-grade refetch, polling) leave it false to preserve the frozen\ncutoff between grades. Mirrors Anki's `update_learning_cutoff_and_count`\nbeing called at queue build time (rslib scheduler/queue/builder/mod.rs:222).",
+        "operationId": "get_review_queue_api_srs_review_queue_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "session_start",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Session Start",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Review Queue Api Srs Review Queue Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Review Queue",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/stats": {
+      "get": {
+        "operationId": "get_stats_api_srs_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Stats",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/translate": {
+      "post": {
+        "operationId": "translate_api_srs_translate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TranslateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Translate",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/translate-missing": {
+      "post": {
+        "description": "Call the LLM to fill in translations for every card that has none.",
+        "operationId": "translate_missing_api_srs_translate_missing_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Translate Missing",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/story/generate": {
+      "post": {
+        "operationId": "generate_story_api_story_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateStoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Story",
+        "tags": [
+          "generation"
+        ]
+      }
+    },
+    "/api/story/import": {
+      "post": {
+        "description": "Rebuild a Lesson from an edited Story-JSON file (docs/lesson-authoring.md).\n\nSame shape as generate_story's response, plus `warnings` (e.g. a speaker\nmissing from the voice map, which would silently fall back to the narrator).",
+        "operationId": "import_story_api_story_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportLessonRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Story",
+        "tags": [
+          "generation"
+        ]
+      }
+    },
+    "/api/story/prompt": {
+      "get": {
+        "description": "Export the exact prompts that the generate path would send to the LLM.",
+        "operationId": "get_story_prompt_api_story_prompt_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "day",
+            "required": true,
+            "schema": {
+              "title": "Day",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "strategy",
+            "required": false,
+            "schema": {
+              "default": "WIDER",
+              "enum": [
+                "WIDER",
+                "DEEPER"
+              ],
+              "title": "Strategy",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Story Prompt",
+        "tags": [
+          "generation"
+        ]
+      }
+    },
+    "/api/story/{lesson_id}": {
+      "get": {
+        "operationId": "get_lesson_api_story__lesson_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lesson_id",
+            "required": true,
+            "schema": {
+              "title": "Lesson Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Lesson",
+        "tags": [
+          "generation"
+        ]
+      }
+    },
+    "/api/story/{lesson_id}/source": {
+      "get": {
+        "description": "Export a lesson as its editable, self-describing Story-JSON file.",
+        "operationId": "get_lesson_source_api_story__lesson_id__source_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lesson_id",
+            "required": true,
+            "schema": {
+              "title": "Lesson Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Lesson Source",
+        "tags": [
+          "generation"
+        ]
+      }
+    }
+  }
+}

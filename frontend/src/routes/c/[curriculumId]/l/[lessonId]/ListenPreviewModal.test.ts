@@ -47,7 +47,7 @@ const createCandidate = (text: string) => ({
   kind: "create" as const,
   text,
   item_id: null,
-  grade_class: "create",
+  grade_class: "create" as const,
   rating: "good" as const,
   translation: "",
   progress: null,
@@ -55,12 +55,16 @@ const createCandidate = (text: string) => ({
 
 const wordCandidate = (
   text: string,
-  opts?: { grade_class?: string; translation?: string; progress?: number },
+  opts?: {
+    grade_class?: "create" | "learning" | "due" | "ahead";
+    translation?: string;
+    progress?: number;
+  },
 ) => ({
   kind: "word" as const,
   text,
   item_id: 42,
-  grade_class: opts?.grade_class ?? "learning",
+  grade_class: opts?.grade_class ?? ("learning" as const),
   rating: "good" as const,
   translation: opts?.translation ?? "",
   progress: opts?.progress ?? 0.3,
@@ -70,7 +74,7 @@ const kpCandidate = (text: string, opts?: { translation?: string; progress?: num
   kind: "kp" as const,
   text,
   item_id: 99,
-  grade_class: "learning",
+  grade_class: "learning" as const,
   rating: "good" as const,
   translation: opts?.translation ?? "",
   progress: opts?.progress ?? 0.1,

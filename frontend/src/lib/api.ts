@@ -2,6 +2,16 @@
  * TunaTale API client — wraps backend endpoints.
  */
 
+import type { components } from "./api-types";
+
+// ── Schema-derived types (kept in sync via check:api / gen:api) ────────
+// Alias generated types so every consumer imports from this module.
+// Drift between backend and frontend is caught by svelte-check when the
+// generated shape changes and a consumer uses a vanished field.
+export type ListenPreviewCandidate = components["schemas"]["ListenPreviewCandidate"];
+export type ListenPreview = components["schemas"]["ListenPreviewResponse"];
+export type CommitPendingResponse = components["schemas"]["CommitPendingResponse"];
+
 // SSR fetches go straight to the backend (the browser uses the Vite proxy via
 // relative URLs). Protocol and port must mirror the proxy target in
 // vite.config.ts: HTTPS only when start-dev.sh sets VITE_SSL_ENABLED, port from
@@ -413,22 +423,6 @@ export interface LlmHealthStatus {
 export interface ReviewQueueItem extends SRSItemDetail {
   direction: "recognition" | "production";
   pending_rating: WordRating | null;
-}
-
-// ── Listen preview ──────────────────────────────────────────────────────
-
-export interface ListenPreviewCandidate {
-  kind: "create" | "word" | "kp";
-  text: string;
-  item_id: number | null;
-  grade_class: string;
-  rating: WordRating;
-  translation: string;
-  progress: number | null;
-}
-
-export interface ListenPreview {
-  candidates: ListenPreviewCandidate[];
 }
 
 // ── Pipeline status ───────────────────────────────────────────────────
@@ -881,7 +875,7 @@ export class TunaTaleAPI {
     return this.request(`/api/srs/lesson/${lessonId}/listen-preview`);
   }
 
-  async commitPending(lessonId: string): Promise<{ status: string; applied: number }> {
+  async commitPending(lessonId: string): Promise<CommitPendingResponse> {
     return this.request(`/api/srs/lesson/${lessonId}/commit-pending`, {
       method: "POST",
     });
