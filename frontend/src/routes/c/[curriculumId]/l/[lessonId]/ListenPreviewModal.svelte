@@ -25,6 +25,10 @@
 
 	let countdown = $state(10);
 	let countdownCancelled = $state(false);
+	// Deliberately NOT $state: this is a bare timer handle, never read from the
+	// template, and onDestroy(clearCountdownTimer) writes it after teardown —
+	// which is exactly why it must stay non-reactive (see onDestroy below).
+	// svelte-ignore non_reactive_update
 	let countdownId: ReturnType<typeof setTimeout> | null = null;
 
 	let overlayEl: HTMLDivElement | undefined;
