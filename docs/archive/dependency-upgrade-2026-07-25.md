@@ -21,9 +21,20 @@ churn here is small. The substantive content is the toolchain bumps, one hold
 | **Node** | v24.9.0 | unchanged | not pinned by the repo; nothing required it. |
 
 **GitHub Actions** (`.github/workflows/ci.yml`) were two majors behind:
-`actions/checkout` **v5 → v7**, `astral-sh/setup-uv` **v7 → v9**.
+`actions/checkout` **v5 → v7**, `astral-sh/setup-uv` **v7 → v9.0.0**.
 `oven-sh/setup-bun@v2` left as-is — `v2` is the floating major tag and already
 resolves to the current v2.2.0. These are only verifiable in CI, not locally.
+
+**Trap (cost one red CI run):** `astral-sh/setup-uv` **stopped publishing floating
+major tags after v7.** The repo has `v7`, `v7.6`, … but there is no `v8` or `v9`
+alias — only exact `v9.0.0`. Writing `@v9` by analogy with `@v7` is unresolvable
+and fails at the **"Set up job"** step, before a single line of the job runs. All
+three uv-using jobs died identically while the frontend job (same new
+`checkout@v7`, no uv) went green — that asymmetry is the diagnostic: a failure in
+"Set up job" is action *resolution*, not anything about your code, and the job that
+doesn't use the suspect action passing is what isolates it. `actions/checkout` does
+still publish a floating `v7`. Verify with
+`gh api repos/<owner>/<repo>/git/ref/tags/v9` before assuming a major alias exists.
 
 ## Upgraded (routine)
 
