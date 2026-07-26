@@ -47,6 +47,18 @@ beforeEach(() => {
 
 // ── Fixtures matching real backend shapes ──────────────────────────────
 
+// due_at seeds for the dueness-tag tests must be relative to the CURRENT UTC day.
+// Absolute literals are time-bombs: formatDueAt() buckets by UTC midnight, so a
+// seed written as "today" on a local calendar date goes red the moment UTC rolls
+// past it — 3 tests failed at 2026-07-26T00:00Z while it was still 2026-07-25 EDT.
+// 04:00 UTC mirrors the backend's due_at convention.
+const dueInDays = (days: number): string => {
+  const d = new Date();
+  d.setUTCHours(4, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString();
+};
+
 const createCandidate = (text: string) => ({
   kind: "create" as const,
   text,
@@ -1229,9 +1241,7 @@ describe("ListenPreviewModal", () => {
 
   it("shows a future dueness tag for a due card", async () => {
     mockGetListenPreview.mockResolvedValue({
-      candidates: [
-        wordCandidate("prosim", { grade_class: "due", due_at: "2026-07-28T04:00:00+00:00" }),
-      ],
+      candidates: [wordCandidate("prosim", { grade_class: "due", due_at: dueInDays(3) })],
     });
 
     const { getByText } = render(ListenPreviewModal, {
@@ -1245,9 +1255,7 @@ describe("ListenPreviewModal", () => {
 
   it("shows 'today' tag for a card due today", async () => {
     mockGetListenPreview.mockResolvedValue({
-      candidates: [
-        wordCandidate("prosim", { grade_class: "due", due_at: "2026-07-25T04:00:00+00:00" }),
-      ],
+      candidates: [wordCandidate("prosim", { grade_class: "due", due_at: dueInDays(0) })],
     });
 
     const { getByText } = render(ListenPreviewModal, {
@@ -1261,9 +1269,7 @@ describe("ListenPreviewModal", () => {
 
   it("shows a negative dueness tag for an overdue card", async () => {
     mockGetListenPreview.mockResolvedValue({
-      candidates: [
-        wordCandidate("prosim", { grade_class: "due", due_at: "2026-07-23T04:00:00+00:00" }),
-      ],
+      candidates: [wordCandidate("prosim", { grade_class: "due", due_at: dueInDays(-2) })],
     });
 
     const { getByText } = render(ListenPreviewModal, {
