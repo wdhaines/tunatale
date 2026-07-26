@@ -100,6 +100,30 @@ re-fetched. Models were re-downloaded and Norwegian re-verified:
 `~/Library/Caches/stanza/1.11.0` (239M) and `1.13.0` (680M) can be deleted.
 Expect this cost on every future stanza minor bump.
 
+## Cleanups (follow-up, same branch)
+
+**`pre-commit` removed from the dev group.** There is no `.pre-commit-config.yaml`
+anywhere in the tree and nothing invokes the framework — the repo's pre-commit gate
+is `./test.sh` via the Claude Code commit-gate hook. The package was pure dead
+weight; dropping it also removed **7 transitives** (cfgv, distlib, identify,
+nodeenv, python-discovery, virtualenv), taking the lock from 109 → **102 packages**.
+A comment in `pyproject.toml` records why, so it isn't reflexively re-added.
+
+**Stale stanza model caches deleted** (919M reclaimed): `~/Library/Caches/stanza/`
+`1.11.0` (239M) and `1.13.0` (680M), orphaned by the version-scoped cache layout
+described above. Only `1.14.0` (178M) remains, and Norwegian lemmatization was
+re-verified after the delete.
+
+Note the size asymmetry: the old 1.13.0 `nb` cache was 679M against 1.14.0's 177M,
+because `stanza.download('nb')` with no arguments pulls the **full default package**
+(depparse, NER, charlm pretrains). TunaTale only ever requests
+`processors="tokenize,pos,lemma"` (`app/srs/lemmatizer.py::StanzaLemmatizer._ensure_pipeline`),
+so re-downloading just that subset is sufficient — and ~4× smaller. Use
+`stanza.download('nb', processors='tokenize,pos,lemma')` on the next bump.
+
+(Incidental find: the deleted 1.11.0 cache held Latin (`la`) models, which no
+TunaTale language plugin uses — leftover from unrelated work.)
+
 ## Holds
 
 ### 1. TypeScript — still `^6.0.0`, TS 7 still blocked (re-verified empirically)

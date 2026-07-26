@@ -33,7 +33,11 @@ packages = ["app"]
 
 [dependency-groups]
 dev = [
-    "pre-commit>=4.6.1",
+    # NOTE: no `pre-commit` here on purpose. The pre-commit gate in this repo is
+    # `./test.sh` (invoked by the Claude Code commit-gate hook), not the
+    # pre-commit framework — there is no .pre-commit-config.yaml anywhere in the
+    # tree, so the package was an unused dependency and was dropped 2026-07-25.
+    # Don't re-add it without also adding a config that something actually runs.
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
