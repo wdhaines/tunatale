@@ -7,7 +7,7 @@ name = "tunatale-backend"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "fastapi>=0.139.0",
+    "fastapi>=0.140.0",
     "uvicorn>=0.51.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
@@ -33,13 +33,13 @@ packages = ["app"]
 
 [dependency-groups]
 dev = [
-    "pre-commit>=4.6.0",
+    "pre-commit>=4.6.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0",
     "respx>=0.23.1",
-    "ruff>=0.15.21",
+    "ruff>=0.16.0",
     "anyio>=4.14.2",
     # Dev-server reload backend. We depend on plain `uvicorn` (not
     # `uvicorn[standard]`, which would also drag in httptools/uvloop/websockets we
@@ -99,7 +99,19 @@ default-groups = ["dev", "slovene", "norwegian"]
 #             supported" at import. classla tolerates it (imports protobuf lazily);
 #             `import stanza` does NOT (it eagerly pulls google.protobuf via its
 #             CoreNLP server bindings), so stanza needs a 3.14-capable protobuf.
-override-dependencies = ["torch==2.13.0", "protobuf>=5.29"]
+#   requests: classla 2.2.1 also hard-pins requests==2.28.0 (2022), which strands
+#             urllib3 at 1.26.20 and charset-normalizer at 2.0.12 across the whole
+#             lock. Nothing in app/ imports requests; classla touches it in exactly
+#             two places — `requests.get(url, stream=True)` for model downloads
+#             (resources/common.py) and the CoreNLP server client we never use
+#             (server/client.py). That API surface is unchanged from 2.28 to 2.34,
+#             so the pin is staleness, not a compatibility constraint. Carries the
+#             [socks] extra: an override REPLACES the requirement it matches, so a
+#             bare `requests>=…` would silently drop the PySocks that anki's own
+#             `requests[socks]` asks for (the isolated `uv run --with anki` driver
+#             subprocess resolves separately and is unaffected either way, but the
+#             lock should still say what anki actually declares).
+override-dependencies = ["torch==2.13.0", "protobuf>=5.29", "requests[socks]>=2.34.2"]
 
 [tool.ruff]
 target-version = "py314"

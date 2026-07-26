@@ -21,3 +21,5 @@ Contents:
 | `bp-brief-segmenter-homographs-overlap.md` | Task spec for the Norwegian segmenter homograph/overlap fixes; landed. |
 | `image-feature-handoff.md` | Adversarial-review handoff for the image-selection feature; review complete, all findings fixed or consciously accepted (2026-07-14). |
 | `image-review-delegation-brief.md` | Delegation brief for the review fixes #2/#4/#5 (Big Pickle); landed. |
+| `dependency-upgrade-2026-07.md` | First full backend+frontend dependency sweep; five documented holds (classla/stanza ceilings, anki desktop pin, fsrs-rs-python precision oracle, TypeScript 7). |
+| `dependency-upgrade-2026-07-25.md` | Second sweep — toolchain too (uv 0.11, ruff 0.16, GH Actions). Resolved classla's hidden `requests==2.28.0` pin; re-probed the TS 7 hold; recorded the stanza version-scoped model-cache gotcha. |
