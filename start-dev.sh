@@ -100,7 +100,31 @@ trap cleanup INT TERM
 # Start backend in background
 echo "Starting backend API on https://localhost:8000..."
 cd backend
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 \
+# --reload-dir app: scope the file watcher to source only.
+#
+# History (2026-07-26): this dev server idled at ~60% of a core, one instance
+# having burned 213 CPU-minutes. Cause was NOT the app — it was the reloader.
+# We depend on plain `uvicorn`, and without `watchfiles` installed uvicorn
+# silently falls back to StatReload, which os.stat()s every watched file every
+# 0.25s instead of using FSEvents. Bare --reload watches the whole cwd, so that
+# poll loop was stat-ing backend/media (331M, ~7.5k files) and backend/output
+# (105M) four times a second, forever.
+#
+# Fixed on two axes, both measured as 60s CPU-time deltas at idle:
+#   bare --reload,       StatReload  →  ~59%  of a core
+#   --reload-dir app,    StatReload  →  ~2.7%
+#   --reload-dir app,    watchfiles  →  ~0.0%  (0.03s CPU over 60s)
+# watchfiles is now a dev dep (see backend/pyproject.toml), so the scoping below
+# is belt-and-braces: it keeps the fallback cheap if watchfiles ever goes missing.
+#
+# Diagnostic signature if this regresses: the reload log line reads "StatReload
+# detected changes" rather than "WatchFiles detected changes" — that means the
+# dev group didn't install and you're back on the 0.25s polling path.
+#
+# Nothing is lost by scoping: uvicorn's default --reload-include is *.py, so only
+# Python files ever triggered a reload anyway. tests/ and scripts/ edits no
+# longer bounce the server, which is also what you want.
+uv run uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0 --port 8000 \
     --ssl-keyfile ../certs/localhost-key.pem \
     --ssl-certfile ../certs/localhost.pem \
     --log-level warning &
