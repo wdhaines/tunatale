@@ -349,12 +349,17 @@
 	}
 
 	// Fully acquired: no remaining candidates AND no words in the review queue
-	const fullyAcquired = $derived(listenResult !== null && listenResult.remaining_candidates === 0 && queueCount === 0);
+	// No "fully acquired" terminal state any more (dropped 2026-07-27). It was
+	// `remaining_candidates === 0 && queueCount === 0` and swapped the listen
+	// button for a DISABLED "✓ Listened (n×)". Once queueCount came to mean
+	// "pending autogrades" rather than "the lesson's study queue", it hit 0
+	// whenever a listen staged nothing — skipping every row, say — so the page
+	// declared the lesson finished and locked the one control that re-listening
+	// needs. The mastery line below already reports how well the lesson is
+	// known; that is the honest signal, and the button stays a button.
 
 	// Derived booleans for template conditionals (avoid && phantom branches)
-	const showCheckWorkLink = $derived(isListened ? !fullyAcquired && queueCount > 0 && hasUnreviewedListen : false);
-	const showFullyAcquiredBtn = $derived(isListened ? fullyAcquired : false);
-	const listenCount = $derived(listenedStore.count(data.lesson.id));
+	const showCheckWorkLink = $derived(isListened ? queueCount > 0 && hasUnreviewedListen : false);
 
 	// Single-level undo cycle: the last drill grade (word or phrase) stays
 	// reversible from its popover ("Undo ↩") until something else is graded,
@@ -604,15 +609,9 @@
 		     full-width/left (the card itself must not center everything). -->
 		<div class="listen-actions">
 		<hr class="listen-divider" />
-		{#if showFullyAcquiredBtn}
-			<button class="listen-btn listened" disabled>
-				✓ Listened ({listenCount}×)
-			</button>
-		{:else}
-			<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened}>
-				Mark as Listened
-			</button>
-		{/if}
+		<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened}>
+			Mark as Listened
+		</button>
 		{#if listenResult && !error}
 			<p class="listen-confirmation">
 				{#if listenResult.created > 0}

@@ -183,7 +183,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
     });
 
-    it("shows '✓ Listened (n×)' when fully acquired (remaining=0 AND N=0)", async () => {
+    it("keeps the listen button actionable when nothing is left pending", async () => {
       await seedListened("l1", 5);
       mockGetListenPreview.mockResolvedValue({
         candidates: [
@@ -221,10 +221,17 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       const markBtn = await findByText(/Mark \d+ as listened/);
       await fireEvent.click(markBtn);
 
+      // Dropped 2026-07-27: this used to swap in a DISABLED "✓ Listened (n×)".
+      // queueCount now means "pending autogrades", so it hits 0 whenever a
+      // listen stages nothing — e.g. skipping every row — and the page would
+      // lock the very button that re-listening needs. Mastery metrics below
+      // already say how well the lesson is known; the button stays a button.
       await waitFor(() => {
-        expect(getByText(/✓ Listened \(5×\)/)).toBeTruthy();
-        expect(queryByText(/Mark as Listened/)).toBeNull();
+        expect(queryByText(/✓ Listened/)).toBeNull();
       });
+      const btn = getByText("Mark as Listened");
+      expect(btn).toBeTruthy();
+      expect((btn as HTMLButtonElement).disabled).toBe(false);
     });
 
     it("shows 'Mark as Listened' when listened but remaining > 0", async () => {
@@ -242,7 +249,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       expect(getByText("Mark as Listened")).toBeTruthy();
     });
 
-    it("updates to fully-acquired after listen with remaining=0 and N=0", async () => {
+    it("hides the check-your-work link when nothing is pending, without disabling listen", async () => {
       mockGetListenPreview.mockResolvedValue({
         candidates: [
           {
@@ -273,7 +280,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         lessons: [{ lesson_id: "l1", listen_count: 3, last_listened_at: "2026-01-01T00:00:00Z" }],
       });
 
-      const { getByText, findByText } = render(Page, {
+      const { getByText, queryByText, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       fireEvent.click(getByText("Listen"));
@@ -283,8 +290,9 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await fireEvent.click(markBtn);
 
       await waitFor(() => {
-        expect(getByText("✓ Listened (3×)")).toBeTruthy();
+        expect(queryByText(/Check your work/)).toBeNull();
       });
+      expect((getByText("Mark as Listened") as HTMLButtonElement).disabled).toBe(false);
     });
 
     it("singular '1 word' in check-your-work link when N=1", async () => {
