@@ -23,6 +23,10 @@
 	let stats = $state<QueueStats | null>(null);
 	let reviewedPosted = $state(false);
 	let syncingPending = $state(false);
+	// Lesson title for the "Check your work" header. Best-effort: the header
+	// renders with or without it, so a failed fetch degrades to the label alone
+	// rather than blocking the page.
+	let lessonTitle = $state('');
 
 	// Pending-rated cards: lesson-mode cards where the listen preview set a grade.
 	let pendingItems = $derived(
@@ -36,19 +40,6 @@
 	// always sees queue[0]; we never mutate the queue locally between fetches.
 	let current = $derived(queue[0]);
 	let done = $derived(!loading && !error && queue.length === 0);
-
-	// In lesson mode, derive scoped counts from the lesson queue so the header
-	// widget underlines match the cards the user is actually studying.
-	let displayStats = $derived(
-		lessonMode && queue.length > 0 && stats
-			? {
-				...stats,
-				new: queue.filter((q) => q.item.state === 'new').length,
-				learning: queue.filter((q) => q.item.state === 'learning' || q.item.state === 'relearning').length,
-				review: queue.filter((q) => q.item.state === 'review').length,
-			}
-			: stats
-	);
 
 	async function refreshFromServer(sessionStart = false) {
 		try {
@@ -73,6 +64,13 @@
 		// ready bucket. Per-grade refetches keep the cutoff frozen.
 		await refreshFromServer(true);
 		loading = false;
+		if (lessonId !== null) {
+			try {
+				lessonTitle = (await api.getLesson(lessonId)).title;
+			} catch {
+				// Header renders without it — the label and the link still work.
+			}
+		}
 	});
 
 	$effect(() => {
@@ -160,25 +158,45 @@
 </script>
 
 <main>
-	<h1>Review</h1>
+	{#if lessonMode}
+		<!--
+			Lesson mode names its own scope. The nav already renders
+			QueueStatsWidget for the WHOLE collection; rendering the same widget
+			here for a different scope meant identical glyphs stood for two
+			different things, with the page one unlabelled. So: a titled header
+			that links back to the lesson, and no counts widget — since the queue
+			is now exactly the pending set, the count lives in the banner below
+			and there is no second number to reconcile.
+		-->
+		<header class="lesson-head">
+			<h1>Check your work</h1>
+			{#if lessonTitle}
+				<a class="lesson-link" href="/c/{curriculumId}/l/{lessonId}">{lessonTitle}</a>
+			{/if}
+		</header>
+	{:else}
+		<h1>Review</h1>
 
-	{#if stats && displayStats}
-		<p class="stats">
-			<QueueStatsWidget stats={displayStats} currentState={current?.item?.state} />
-			{#if stats.cap_source !== 'cache'}
-				<span class="source"> ({stats.cap_source})</span>
-			{/if}
-			{#if stats.fsrs_source !== 'cache'}
-				<span class="source"> · FSRS: defaults</span>
-			{/if}
-		</p>
+		{#if stats}
+			<p class="stats">
+				<QueueStatsWidget {stats} currentState={current?.item?.state} />
+				{#if stats.cap_source !== 'cache'}
+					<span class="source"> ({stats.cap_source})</span>
+				{/if}
+				{#if stats.fsrs_source !== 'cache'}
+					<span class="source"> · FSRS: defaults</span>
+				{/if}
+			</p>
+		{/if}
 	{/if}
 
 	{#if !loading && pendingCount > 0}
 		<div class="sync-banner">
-			<span class="sync-label">{pendingCount} {pendingCount === 1 ? 'word' : 'words'} rated from listen</span>
+			<span class="sync-label"
+				>{pendingCount} {pendingCount === 1 ? 'word' : 'words'} pre-graded by your listen</span
+			>
 			<button class="sync-btn" onclick={syncPending} disabled={syncingPending}>
-				{syncingPending ? 'Syncing…' : 'Sync it'}
+				{syncingPending ? 'Accepting…' : 'Accept all'}
 			</button>
 		</div>
 	{/if}
@@ -286,6 +304,25 @@
 		color: var(--color-muted);
 		font-size: 0.9rem;
 		margin-bottom: 0.35rem;
+	}
+	.lesson-head {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+		margin-bottom: 0.6rem;
+	}
+	.lesson-head h1 {
+		margin: 0;
+	}
+	.lesson-link {
+		color: var(--color-primary);
+		font-weight: 600;
+		text-decoration: none;
+		text-underline-offset: 3px;
+		width: fit-content;
+	}
+	.lesson-link:hover {
+		text-decoration: underline;
 	}
 	.source {
 		color: var(--color-muted);

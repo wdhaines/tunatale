@@ -43,11 +43,12 @@ vi.mock("$lib/api", () => ({
     submitDrill: vi.fn(),
     markLessonReviewed: vi.fn(),
     commitPending: vi.fn(),
+    getLesson: vi.fn(),
   },
 }));
 
 import { api } from "$lib/api";
-import type { ReviewQueueItem } from "$lib/api";
+import type { LessonDetail, ReviewQueueItem } from "$lib/api";
 import { syncStore } from "$lib/stores/sync.svelte";
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 const mockFetchReviewQueue = vi.mocked(api.fetchReviewQueue);
@@ -55,6 +56,17 @@ const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
 const mockSubmitDrill = vi.mocked(api.submitDrill);
 const mockCommitPending = vi.mocked(api.commitPending);
 const mockMarkLessonReviewed = vi.mocked(api.markLessonReviewed);
+const mockGetLesson = vi.mocked(api.getLesson);
+
+// The header only reads `title`; the rest satisfies LessonDetail's shape.
+const lessonDetail = (title: string): LessonDetail => ({
+  id: "lesson-abc",
+  day: 4,
+  title,
+  language_code: "no",
+  sections: [],
+  key_phrases: [],
+});
 import { makeReviewQueueItem } from "../../test/factories";
 
 beforeEach(() => {
@@ -735,6 +747,59 @@ describe("review/+page.svelte", () => {
       urlParams.set("lesson", "lesson-abc");
     });
 
+    // ── Header identity (2026-07-27) ──────────────────────────────────
+    // The nav already renders QueueStatsWidget for the WHOLE collection. Lesson
+    // mode used to render the same widget for a different scope, so identical
+    // glyphs meant two different things and the page one carried no label at
+    // all. Lesson mode now names itself and links back to the lesson instead.
+
+    it("lesson mode heads the page 'Check your work', not 'Review'", async () => {
+      mockGetLesson.mockResolvedValue(lessonDetail("Day 4: Interview with a Neighbor"));
+      const item = makeReviewQueueItem({ id: 1, text: "okno", direction: "recognition" });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
+
+      const { findByText, queryByText } = render(ReviewPage);
+      await findByText("okno");
+
+      expect(await findByText("Check your work")).toBeTruthy();
+      expect(queryByText("Review")).toBeNull();
+    });
+
+    it("lesson mode links its title back to the lesson page", async () => {
+      mockGetLesson.mockResolvedValue(lessonDetail("Day 4: Interview with a Neighbor"));
+      urlParams.set("c", "curriculum-xyz");
+      const item = makeReviewQueueItem({ id: 1, text: "okno", direction: "recognition" });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
+
+      const { findByText } = render(ReviewPage);
+      const link = await findByText("Day 4: Interview with a Neighbor");
+
+      expect(link.getAttribute("href")).toBe("/c/curriculum-xyz/l/lesson-abc");
+    });
+
+    it("lesson mode does not render the queue-stats widget", async () => {
+      // The whole point of the split: no "0 + 0 + 105" competing with the nav.
+      mockGetLesson.mockResolvedValue(lessonDetail("Day 4: Interview with a Neighbor"));
+      const item = makeReviewQueueItem({ id: 1, text: "okno", direction: "recognition" });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
+
+      const { container, findByText } = render(ReviewPage);
+      await findByText("okno");
+
+      expect(container.querySelector(".queue-stats")).toBeNull();
+    });
+
+    it("a failed lesson-title fetch still renders the header", async () => {
+      mockGetLesson.mockRejectedValue(new Error("boom"));
+      const item = makeReviewQueueItem({ id: 1, text: "okno", direction: "recognition" });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
+
+      const { findByText } = render(ReviewPage);
+      await findByText("okno");
+
+      expect(await findByText("Check your work")).toBeTruthy();
+    });
+
     it("mount with ?lesson=X never calls fetchReviewQueue", async () => {
       const item = makeReviewQueueItem({
         id: 1,
@@ -860,9 +925,9 @@ describe("review/+page.svelte", () => {
 
       const { findByText } = render(ReviewPage);
 
-      const syncBtn = await findByText("Sync it");
+      const syncBtn = await findByText("Accept all");
       expect(syncBtn).toBeTruthy();
-      expect(await findByText("2 words rated from listen")).toBeTruthy();
+      expect(await findByText("2 words pre-graded by your listen")).toBeTruthy();
 
       await fireEvent.click(syncBtn);
 
@@ -887,7 +952,7 @@ describe("review/+page.svelte", () => {
       mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
 
       const { findByText } = render(ReviewPage);
-      const syncBtn = await findByText("Sync it");
+      const syncBtn = await findByText("Accept all");
       await fireEvent.click(syncBtn);
 
       // Give any accidental async work a chance to run before asserting absence.
@@ -916,7 +981,7 @@ describe("review/+page.svelte", () => {
       });
 
       const { findByText } = render(ReviewPage);
-      const syncBtn = await findByText("Sync it");
+      const syncBtn = await findByText("Accept all");
       await fireEvent.click(syncBtn);
 
       expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("2"));
@@ -936,7 +1001,7 @@ describe("review/+page.svelte", () => {
       mockCommitPending.mockResolvedValue({ status: "ok", applied: 1 });
 
       const { findByText } = render(ReviewPage);
-      const syncBtn = await findByText("Sync it");
+      const syncBtn = await findByText("Accept all");
       await fireEvent.click(syncBtn);
 
       await vi.waitFor(() => {
@@ -963,7 +1028,7 @@ describe("review/+page.svelte", () => {
       mockCommitPending.mockResolvedValue({ status: "ok", applied: 1 });
 
       const { findByText } = render(ReviewPage);
-      const syncBtn = await findByText("Sync it");
+      const syncBtn = await findByText("Accept all");
       await fireEvent.click(syncBtn);
 
       await vi.waitFor(() => {
@@ -992,7 +1057,7 @@ describe("review/+page.svelte", () => {
       mockCommitPending.mockResolvedValue({ status: "ok", applied: 1 });
 
       const { findByText } = render(ReviewPage);
-      const syncBtn = await findByText("Sync it");
+      const syncBtn = await findByText("Accept all");
       await fireEvent.click(syncBtn);
 
       await vi.waitFor(() => {
@@ -1030,7 +1095,7 @@ describe("review/+page.svelte", () => {
 
       const { findByText } = render(ReviewPage);
 
-      const syncBtn = await findByText("Sync it");
+      const syncBtn = await findByText("Accept all");
       await fireEvent.click(syncBtn);
 
       expect(await findByText("sync boom")).toBeTruthy();
@@ -1049,7 +1114,7 @@ describe("review/+page.svelte", () => {
 
       const { findByText } = render(ReviewPage);
 
-      const syncBtn = await findByText("Sync it");
+      const syncBtn = await findByText("Accept all");
       await fireEvent.click(syncBtn);
 
       expect(await findByText("plain sync error")).toBeTruthy();
@@ -1062,49 +1127,13 @@ describe("review/+page.svelte", () => {
       expect(await findByText("Lesson not found")).toBeTruthy();
     });
 
-    it("scoped review shows scoped counts in the header widget, not global counts", async () => {
-      // Global stats say 0 new, 0 learning, 5 review — but the lesson queue
-      // has 2 new and 1 learning.  The widget must show 2+1+0, not 0+0+5.
-      mockFetchQueueStats.mockResolvedValue({
-        new: 0,
-        learning: 0,
-        review: 5,
-        daily_new_cap: 20,
-        cap_source: "default",
-        fsrs_source: "default",
-      });
-      const newCard = makeReviewQueueItem({
-        id: 1,
-        text: "en",
-        state: "new",
-        direction: "recognition",
-      });
-      const newCard2 = makeReviewQueueItem({
-        id: 2,
-        text: "to",
-        state: "new",
-        direction: "recognition",
-      });
-      const learnCard = makeReviewQueueItem({
-        id: 3,
-        text: "tre",
-        state: "learning",
-        direction: "recognition",
-      });
-      mockFetchLessonReviewQueue.mockResolvedValue({
-        queue: [newCard, newCard2, learnCard],
-        has_unreviewed_listen: true,
-      });
-
-      const { container } = render(ReviewPage);
-      await screen.findByText("en");
-
-      const widget = container.querySelector(".queue-stats");
-      expect(widget).not.toBeNull();
-      expect(widget!.querySelector(".new")!.textContent).toBe("2");
-      expect(widget!.querySelector(".learning")!.textContent).toBe("1");
-      expect(widget!.querySelector(".review")!.textContent).toBe("0");
-    });
+    // Retired 2026-07-27: "scoped review shows scoped counts in the header
+    // widget, not global counts" pinned a lesson-scoped QueueStatsWidget that
+    // no longer renders. Lesson mode shows a titled "Check your work" header
+    // instead — the widget duplicated the nav badge's exact glyphs for a
+    // different scope, and with the queue now equal to the pending set there is
+    // no second count to display. Covered by "lesson mode does not render the
+    // queue-stats widget" above.
   });
 
   it("unscoped review shows global counts in the header widget", async () => {
