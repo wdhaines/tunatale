@@ -105,11 +105,23 @@ class TestVariantCardResolutionConservation:
         assert data["staged"] == 1
 
     async def test_lesson_review_queue_serves_variant_card(self):
+        """The chain runs through staging now, not around it.
+
+        The review-queue stopped resolving lemmas itself on 2026-07-27 — it
+        serves this lesson's pending rows verbatim — so asserting resolution
+        against a bare GET would be vacuous. Driving a real /listen first keeps
+        the conservation meaningful *and* strengthens it: transcript resolves →
+        /listen stages that same card → the queue serves it.
+        """
         db = _setup_no_lesson("Han gikk mot huset")
         _seed_variant_card_review_due(db)
+        db.set_anki_state_cache("daily_new_cap", "0")
+        db.set_anki_state_cache("daily_review_cap", "10")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await _transcript_resolves_mot(client)
+            listen = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            assert listen.json()["staged"] == 1, "listen missed the variant card (resolution drift)"
             resp = await client.get("/api/srs/lesson/lesson-1/review-queue")
         assert resp.status_code == 200
         texts = [i["text"] for i in resp.json().get("queue", [])]

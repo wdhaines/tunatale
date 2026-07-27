@@ -989,7 +989,7 @@ def _has_unreviewed_listen(latest_listen: str | None, latest_review: str | None)
 
 @router.get("/lesson/{lesson_id}/review-queue", status_code=200)
 async def get_lesson_review_queue(lesson_id: str, request: Request, response: Response) -> dict:
-    """Lesson-scoped "Check your work" queue (learning-modes slice 1, D6).
+    """Lesson-scoped "Check your work" queue: exactly the listen's autograded cards.
 
     Items share ``_queue_item_to_dict``'s shape with /review-queue; grading a
     served item goes through the normal per-item feedback endpoint (an Again
@@ -997,16 +997,28 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     read-only w.r.t. parity state: no learning-cutoff advance, no
     session_main_queue write, no unbury sweep, no queue-engine involvement —
     the frozen main-queue order must survive this endpoint unchanged (pinned
-    by the parity-guard test). Off-main-queue grading already exists today
-    (Read mode); the freeze reconciliation drops graded keys by design.
+    by the parity-guard test).
 
-    Inclusion: learning/relearning cards; tracked NEW cards in D2 rank order
-    (grading one introduces it, same as Read mode's tap-to-introduce); REVIEW
-    cards touched today (the /listen auto-Good correction set — same
-    local-midnight window as ``_listen_grade_class``) or already due.
-    Everything else (known/suspended/buried/untracked, future-due untouched
-    REVIEW) is excluded. Vocab serves recognition only — never fighting
-    Layer 65's production gate — and cloze serves production only.
+    Inclusion is now exactly this lesson's ``pending_listen_grades`` rows, so
+    the served queue and what "Sync it" (``commit-pending``) would release are
+    the same set by construction — they are read from the same query. Scoping
+    narrowed here 2026-07-27; the endpoint used to be a lesson-scoped *study*
+    queue (D6 buckets: learning, tracked NEW in D2 rank order, REVIEW
+    touched-today or due). After the confirmed/staged split that produced two
+    visible wrongs: cards the user had just confirmed in the preview came back
+    (applied immediately, so no pending row, but re-admitted by "touched
+    today" — the double-question the split existed to remove), and due *cloze*
+    cards appeared that a listen can never autograde, since staging is
+    RECOGNITION-only and cloze is production-only. Everything dropped stays
+    reachable from the main queue: with no pending row, the Layer 81 exclusion
+    does not hold it back.
+
+    Consequences worth knowing: a NEW card can never appear (``_listen_grade_class``
+    returns None for NEW, so nothing stages it), and neither can a cloze. Release
+    by any path — per-card grade, ``commit-pending``, or an Anki-side grade
+    arriving via ``sync_pull`` — clears the row, which is what drops the card
+    from this queue; no separate "graded since the arming listen" filter is
+    needed.
     """
     response.headers["Cache-Control"] = "no-store"
     store = request.state.content_store
@@ -1015,120 +1027,37 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
         raise HTTPException(status_code=404, detail="Lesson not found")
     db = request.state.srs_db
 
-    words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
-
-    # Build variant index once — mirrors the transcript's _build_variant_index
-    # so the lesson queue resolves the same cards the transcript shows as tracked.
-    variant_index = _build_variant_index(db, lesson.language_code)
-
-    # Anki-day rollover window (NOT local midnight) — same convention as
-    # mark_lesson_listened's _listen_grade_class window, via the shared helper.
-    today = anki_today()
-    today_start, today_end = anki_day_bounds_utc_dt(today)
-    now = datetime.datetime.now(datetime.UTC)
-
-    # One correction pass per listen: a card graded *after* the arming listen has
-    # been handled, so it drops out of the queue (see _classify). record_listen
-    # runs after the /listen auto-Good loop, so the listen's own grades have
-    # last_review <= this timestamp and stay in the pass.
-    latest_listen = db.latest_listen_at(lesson_id)
-    latest_listen_dt = datetime.datetime.fromisoformat(latest_listen) if latest_listen is not None else None
-
-    # THIS lesson's pending bucket, keyed (collocation_id, direction) — the single
-    # source for both queue admission (below) and the provisional rating the UI
-    # pre-fills. It must be lesson-scoped in both roles: `pending_listen_grades` is
-    # UNIQUE(collocation_id, direction) *globally*, so asking "is this card staged
-    # by anybody" admitted rows another lesson owns. Two lessons sharing vocabulary
-    # then leaked 33 of one's 102 staged words into the other's "Check your work" —
-    # and `commit-pending` is lesson-scoped, so "Sync it" could not release them
-    # (2026-07-27). Ownership is the write path's call: `stage_pending_grade`
-    # UPSERTs `lesson_id`, so the most recent listen to auto-grade a card owns it.
-    staged = {(p["collocation_id"], p["direction"]): p["rating"] for p in db.get_pending_grades(lesson_id)}
-
-    seen: set[int] = set()
-    learning: list[tuple[datetime.datetime, int, SRSItem, Direction]] = []
-    review: list[tuple[datetime.datetime, int, SRSItem, Direction]] = []
-    new_kp: list[tuple[int, SRSItem, Direction]] = []
-    new_lemma_order: list[str] = []
-    new_by_lemma: dict[str, tuple[int, SRSItem, Direction]] = {}
-
-    def _classify(rid: int, item: SRSItem) -> str | None:
-        """Return the D6 bucket for a tracked card, or None if excluded."""
-        direction = Direction.PRODUCTION if item.syntactic_unit.card_type == "cloze" else Direction.RECOGNITION
+    # Learning/relearning first, then by dueness — the surviving half of the old
+    # bucket order (the NEW bucket is unreachable now, see the docstring).
+    learning: list[tuple[datetime.datetime, int, SRSItem, Direction, str]] = []
+    review: list[tuple[datetime.datetime, int, SRSItem, Direction, str]] = []
+    for pending in db.get_pending_grades(lesson_id):
+        rid = pending["collocation_id"]
+        got = db.get_collocation_by_id(rid)
+        if got is None:
+            # Orphaned row (card deleted after staging). commit-pending clears
+            # these as it goes; the queue just skips them rather than 500ing.
+            continue
+        _, item, _ = got
+        direction = Direction(pending["direction"])
         ds = item.directions.get(direction)
         if ds is None:
-            return None
-        # Already handled in this correction pass — graded since the arming
-        # listen — so drop it. Without this a touched-today REVIEW card (or a
-        # just-advanced learning card) re-qualifies below and the queue re-serves
-        # the same card on every grade (the reps-climbing "same card over and
-        # over" loop). A fresh listen re-arms the pass.
-        if (
-            latest_listen_dt is not None
-            and ds.last_review is not None
-            and ds.last_review.astimezone(datetime.UTC) > latest_listen_dt
-        ):
-            return None
-        if ds.state in (SRSState.LEARNING, SRSState.RELEARNING):
-            learning.append((ds.due_at, rid, item, direction))
-            return "learning"
-        if ds.state == SRSState.NEW:
-            return "new"
-        if ds.state == SRSState.REVIEW:
-            lr = ds.last_review
-            touched_today = lr is not None and today_start <= lr.astimezone(datetime.UTC) < today_end
-            # A pending listen grade is itself a reason to serve the card, whatever
-            # its dueness. Staging no longer stamps last_review, so an *ahead* card
-            # a listen staged is neither due nor touched-today — without this it
-            # would be dropped here AND hidden from the main queue by the Stage-3
-            # exclusion, i.e. unreachable until the user hit "Sync it".
-            if touched_today or ds.due_at <= now or (rid, direction.value) in staged:
-                review.append((ds.due_at, rid, item, direction))
-                return "review"
-        return None
+            # Single-template row (no recognition direction after v15→v16).
+            # Nothing to serve — skip rather than 500 the whole page.
+            continue
+        bucket = learning if ds.state in (SRSState.LEARNING, SRSState.RELEARNING) else review
+        bucket.append((ds.due_at, rid, item, direction, pending["rating"]))
 
-    for kp in lesson.key_phrases:
-        item = db.get_collocation(kp.phrase)
-        if item is None:
-            continue
-        rid = db.get_collocation_id_by_guid(item.guid)
-        if rid is None or rid in seen:
-            continue
-        seen.add(rid)
-        if _classify(rid, item) == "new":
-            direction = Direction.PRODUCTION if item.syntactic_unit.card_type == "cloze" else Direction.RECOGNITION
-            new_kp.append((rid, item, direction))
-
-    for lemma in words.first_sentence:
-        res = _resolve_card_for_lemma(db, lemma, words.surfaces.get(lemma, set()), variant_index)
-        if res is None:
-            continue
-        rid, item = res
-        if rid in seen:
-            continue
-        seen.add(rid)
-        if _classify(rid, item) == "new":
-            direction = Direction.PRODUCTION if item.syntactic_unit.card_type == "cloze" else Direction.RECOGNITION
-            new_lemma_order.append(lemma)
-            new_by_lemma[lemma] = (rid, item, direction)
-
-    # Bucket order (1)(2)(3) per D6; within learning/review due_at then row id,
-    # NEW re-uses the exact /listen creation ranking so "what you'd study next"
-    # and "what a listen would create next" never disagree.
     learning.sort(key=lambda t: (t[0], t[1]))
     review.sort(key=lambda t: (t[0], t[1]))
-    ordered: list[tuple[int, SRSItem, Direction]] = [(rid, item, d) for _, rid, item, d in learning]
-    for kind, entry in _rank_listen_candidates(new_kp, new_lemma_order, words.occurrences):
-        ordered.append(entry if kind == "kp" else new_by_lemma[entry])
-    ordered.extend((rid, item, d) for _, rid, item, d in review)
 
     ambiguous = db.get_ambiguous_surfaces(lesson.language_code)
-    latest_review = db.latest_review_at(lesson_id)
-    has_unreviewed_listen = _has_unreviewed_listen(latest_listen, latest_review)
+    has_unreviewed_listen = _has_unreviewed_listen(db.latest_listen_at(lesson_id), db.latest_review_at(lesson_id))
     queue = []
-    for rid, item, d in ordered:
+    for _, rid, item, d, rating in learning + review:
         entry = _queue_item_to_dict(rid, item, lesson.language_code, d, db, ambiguous)
-        entry["pending_rating"] = staged.get((rid, d.value))
+        # Provisional rating per card, so the UI can pre-fill what the listen staged.
+        entry["pending_rating"] = rating
         queue.append(entry)
     return {"queue": queue, "has_unreviewed_listen": has_unreviewed_listen}
 

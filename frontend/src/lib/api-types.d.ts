@@ -977,7 +977,7 @@ export interface paths {
     };
     /**
      * Get Lesson Review Queue
-     * @description Lesson-scoped "Check your work" queue (learning-modes slice 1, D6).
+     * @description Lesson-scoped "Check your work" queue: exactly the listen's autograded cards.
      *
      *     Items share ``_queue_item_to_dict``'s shape with /review-queue; grading a
      *     served item goes through the normal per-item feedback endpoint (an Again
@@ -985,16 +985,28 @@ export interface paths {
      *     read-only w.r.t. parity state: no learning-cutoff advance, no
      *     session_main_queue write, no unbury sweep, no queue-engine involvement —
      *     the frozen main-queue order must survive this endpoint unchanged (pinned
-     *     by the parity-guard test). Off-main-queue grading already exists today
-     *     (Read mode); the freeze reconciliation drops graded keys by design.
+     *     by the parity-guard test).
      *
-     *     Inclusion: learning/relearning cards; tracked NEW cards in D2 rank order
-     *     (grading one introduces it, same as Read mode's tap-to-introduce); REVIEW
-     *     cards touched today (the /listen auto-Good correction set — same
-     *     local-midnight window as ``_listen_grade_class``) or already due.
-     *     Everything else (known/suspended/buried/untracked, future-due untouched
-     *     REVIEW) is excluded. Vocab serves recognition only — never fighting
-     *     Layer 65's production gate — and cloze serves production only.
+     *     Inclusion is now exactly this lesson's ``pending_listen_grades`` rows, so
+     *     the served queue and what "Sync it" (``commit-pending``) would release are
+     *     the same set by construction — they are read from the same query. Scoping
+     *     narrowed here 2026-07-27; the endpoint used to be a lesson-scoped *study*
+     *     queue (D6 buckets: learning, tracked NEW in D2 rank order, REVIEW
+     *     touched-today or due). After the confirmed/staged split that produced two
+     *     visible wrongs: cards the user had just confirmed in the preview came back
+     *     (applied immediately, so no pending row, but re-admitted by "touched
+     *     today" — the double-question the split existed to remove), and due *cloze*
+     *     cards appeared that a listen can never autograde, since staging is
+     *     RECOGNITION-only and cloze is production-only. Everything dropped stays
+     *     reachable from the main queue: with no pending row, the Layer 81 exclusion
+     *     does not hold it back.
+     *
+     *     Consequences worth knowing: a NEW card can never appear (``_listen_grade_class``
+     *     returns None for NEW, so nothing stages it), and neither can a cloze. Release
+     *     by any path — per-card grade, ``commit-pending``, or an Anki-side grade
+     *     arriving via ``sync_pull`` — clears the row, which is what drops the card
+     *     from this queue; no separate "graded since the arming listen" filter is
+     *     needed.
      */
     get: operations["get_lesson_review_queue_api_srs_lesson__lesson_id__review_queue_get"];
     put?: never;

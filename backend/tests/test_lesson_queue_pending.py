@@ -9,6 +9,19 @@ reason to serve the card.
 
 Each served item carries its provisional rating so the UI can pre-fill the grade
 the listen staged, which is what makes correcting one a single tap.
+
+As of 2026-07-27 a pending row is the ONLY reason to serve a card — see
+``TestOnlyAutogradedCardsAreServed`` for the scope narrowing and why. Two tests
+here were retired by it, both of which seeded a card with no pending row for
+this lesson and asserted it was served anyway:
+``test_non_pending_items_report_no_provisional_rating`` (a due card, null
+rating) and ``test_a_due_card_staged_by_another_lesson_reports_no_rating`` (a
+due card owned by another lesson). Neither premise exists now — such cards are
+not served at all, which
+``TestOnlyAutogradedCardsAreServed.test_a_due_vocab_card_without_a_pending_row_is_not_served``
+and ``TestPendingRowsAreLessonScoped.test_a_card_staged_by_another_lesson_is_not_served``
+assert directly. The "rating is this lesson's to show" property they guarded is
+now structural: the rating comes from the same row that admits the card.
 """
 
 from __future__ import annotations
@@ -101,48 +114,6 @@ class TestPendingCardsAreServed:
 
         assert item["pending_rating"] == "again"
 
-    async def test_non_pending_items_report_no_provisional_rating(self):
-        db = _setup(["banka"])
-        db.add_collocation(
-            SyntacticUnit(text="banka", translation="x", word_count=1, difficulty=1, source="llm"),
-            language_code="sl",
-        )
-        item = db.get_collocation("banka")
-        rec = item.directions[Direction.RECOGNITION]
-        rec.state = SRSState.REVIEW
-        rec.due_at = datetime.now(UTC) - timedelta(days=1)
-        db.update_direction(item.guid, Direction.RECOGNITION, rec)
-
-        served = (await _queue())["queue"]
-
-        assert [i["text"] for i in served] == ["banka"]
-        assert served[0]["pending_rating"] is None
-
-    async def test_a_due_card_staged_by_another_lesson_reports_no_rating(self):
-        """A card this lesson would serve anyway (genuinely due) still shows no
-        provisional rating when the pending row belongs elsewhere — that rating
-        is the other lesson's bucket to display.
-
-        Supersedes ``test_only_this_lessons_pending_rows_surface_a_rating``,
-        which seeded an *ahead* card and asserted it was served regardless of
-        owner. That inclusion was the cross-lesson leak; see
-        ``TestPendingRowsAreLessonScoped``. The rating half of the old
-        assertion is preserved here on a card whose servability is independent
-        of the pending row.
-        """
-        db = _setup(["banka"])
-        cid = _track_ahead(db, "banka")
-        item = db.get_collocation("banka")
-        rec = item.directions[Direction.RECOGNITION]
-        rec.due_at = datetime.now(UTC) - timedelta(days=1)
-        db.update_direction(item.guid, Direction.RECOGNITION, rec)
-        db.stage_pending_grade("lesson-2", cid, Direction.RECOGNITION.value, "hard", "ahead")
-
-        served = (await _queue())["queue"]
-
-        assert [i["text"] for i in served] == ["banka"]
-        assert served[0]["pending_rating"] is None
-
     async def test_grading_a_pending_card_drops_it_from_the_queue(self):
         """Release clears the pending row and stamps last_review past the arming
         listen, so the correction pass does not re-serve it forever."""
@@ -199,6 +170,17 @@ class TestPendingRowsAreLessonScoped:
         assert [i["text"] for i in served] == ["banka"]
         assert served[0]["pending_rating"] == "hard"
 
+    async def test_queue_is_exactly_this_lessons_pending_set(self):
+        """The whole contract in one assertion: served keys == pending keys."""
+        db = _setup(["banka"])
+        cid = _track_ahead(db, "banka")
+        db.stage_pending_grade(LESSON_ID, cid, Direction.RECOGNITION.value, "good", "ahead")
+
+        served = {(i["id"], i["direction"]) for i in (await _queue())["queue"]}
+        expected = {(p["collocation_id"], p["direction"]) for p in db.get_pending_grades(LESSON_ID)}
+
+        assert served == expected
+
     async def test_sync_it_releases_exactly_what_the_queue_serves(self):
         """The invariant the leak broke. ``commit-pending`` iterates
         ``get_pending_grades(lesson_id)`` — lesson-scoped — while queue
@@ -234,3 +216,109 @@ class TestPendingRowsAreLessonScoped:
 
         assert db.get_pending_grade(cid, Direction.RECOGNITION.value) is None
         assert [i["text"] for i in (await _queue())["queue"]] == []
+
+
+class TestOnlyAutogradedCardsAreServed:
+    """ "Check your work" is exactly the autograde-verification pass — nothing else.
+
+    Decided 2026-07-27. The endpoint used to be a lesson-scoped *study* queue
+    (D6 buckets: learning, tracked NEW in D2 rank order, REVIEW touched-today or
+    due). After the confirmed/staged split that scope produced two visible
+    wrongs on day-4: the two words the user confirmed in the preview came back
+    (applied immediately, so no pending row, but admitted by "touched today" —
+    the exact double-question the split set out to remove), and two due *cloze*
+    cards appeared that a listen can never autograde, because staging is
+    RECOGNITION-only and clozes are production-only.
+
+    Everything dropped here is still reachable from the main review queue: with
+    no pending row, the Layer 81 exclusion does not hold it back.
+    """
+
+    def _track(self, db, text: str, *, card_type: str = "vocab") -> int:
+        db.add_collocation(
+            SyntacticUnit(text=text, translation="x", word_count=1, difficulty=1, source="llm", card_type=card_type),
+            language_code="sl",
+        )
+        item = db.get_collocation(text)
+        cid = db.get_collocation_id_by_guid(item.guid)
+        assert cid is not None
+        return cid
+
+    def _set(self, db, text: str, direction: Direction, state: SRSState, *, due_at=None, last_review=None) -> None:
+        item = db.get_collocation(text)
+        ds = item.directions[direction]
+        ds.state = state
+        if due_at is not None:
+            ds.due_at = due_at
+        if last_review is not None:
+            ds.last_review = last_review
+        db.update_direction(item.guid, direction, ds)
+
+    async def test_a_review_card_graded_at_listen_time_is_not_re_served(self):
+        """The om/vite case: confirmed in the preview, applied immediately, so it
+        holds no pending row. "Touched today" used to re-admit it."""
+        db = _setup(["banka"])
+        self._track(db, "banka")
+        db.record_listen(LESSON_ID)
+        self._set(
+            db,
+            "banka",
+            Direction.RECOGNITION,
+            SRSState.REVIEW,
+            due_at=datetime.now(UTC) + timedelta(days=3),
+            last_review=datetime.now(UTC),
+        )
+
+        assert [i["text"] for i in (await _queue())["queue"]] == []
+
+    async def test_a_due_cloze_is_not_served(self):
+        """The noe/fra case. A listen stages RECOGNITION only and skips cloze
+        rows outright, so a due cloze can never carry a pending grade — serving
+        it here asked for production work the listen never assessed."""
+        db = _setup(["banka"])
+        self._track(db, "banka", card_type="cloze")
+        self._set(db, "banka", Direction.PRODUCTION, SRSState.REVIEW, due_at=datetime.now(UTC) - timedelta(days=1))
+
+        assert [i["text"] for i in (await _queue())["queue"]] == []
+
+    async def test_a_due_vocab_card_without_a_pending_row_is_not_served(self):
+        db = _setup(["banka"])
+        self._track(db, "banka")
+        self._set(db, "banka", Direction.RECOGNITION, SRSState.REVIEW, due_at=datetime.now(UTC) - timedelta(days=1))
+
+        assert [i["text"] for i in (await _queue())["queue"]] == []
+
+    async def test_a_learning_card_without_a_pending_row_is_not_served(self):
+        db = _setup(["banka"])
+        self._track(db, "banka")
+        self._set(db, "banka", Direction.RECOGNITION, SRSState.LEARNING, due_at=datetime.now(UTC))
+
+        assert [i["text"] for i in (await _queue())["queue"]] == []
+
+    async def test_a_new_card_is_not_served(self):
+        """NEW cards can never be staged (_listen_grade_class returns None for
+        them), so under pending-only scope the D2 tap-to-introduce bucket goes."""
+        db = _setup(["banka"])
+        self._track(db, "banka")
+
+        assert [i["text"] for i in (await _queue())["queue"]] == []
+
+    async def test_a_pending_learning_card_sorts_before_a_pending_review_card(self):
+        db = _setup(["banka", "hisa"])
+        learning_id = self._track(db, "banka")
+        review_id = self._track(db, "hisa")
+        self._set(db, "banka", Direction.RECOGNITION, SRSState.LEARNING, due_at=datetime.now(UTC))
+        self._set(db, "hisa", Direction.RECOGNITION, SRSState.REVIEW, due_at=datetime.now(UTC) - timedelta(days=1))
+        db.stage_pending_grade(LESSON_ID, learning_id, Direction.RECOGNITION.value, "again", "learning")
+        db.stage_pending_grade(LESSON_ID, review_id, Direction.RECOGNITION.value, "good", "due")
+
+        assert [i["text"] for i in (await _queue())["queue"]] == ["banka", "hisa"]
+
+    async def test_a_pending_row_for_a_deleted_card_is_skipped(self):
+        """commit-pending tolerates orphans; the queue must not 500 on them."""
+        db = _setup(["banka"])
+        cid = self._track(db, "banka")
+        db.stage_pending_grade(LESSON_ID, cid, Direction.RECOGNITION.value, "good", "due")
+        db.delete_collocation(cid)
+
+        assert (await _queue())["queue"] == []
