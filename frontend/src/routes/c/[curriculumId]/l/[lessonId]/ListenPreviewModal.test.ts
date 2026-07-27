@@ -1595,4 +1595,158 @@ describe("ListenPreviewModal", () => {
       expect(tags.map((t) => t.textContent?.trim())).toEqual(["-2d", "today", "5d"]);
     });
   });
+
+  // ── Bulk actions preserve per-row grades ────────────────────────────
+
+  describe("Skip All / Grade All round trip", () => {
+    const mixed = () => ({
+      candidates: [
+        wordCandidate("a", { grade_class: "due" }),
+        wordCandidate("b", { grade_class: "due" }),
+        wordCandidate("c", { grade_class: "due" }),
+        wordCandidate("d", { grade_class: "due" }),
+      ],
+    });
+
+    /** Set one distinct grade per row so a reset-to-good is unmistakable. */
+    async function gradeEachDifferently(container: HTMLElement) {
+      await fireEvent.click(gradeBtn(container, "word:a", "again"));
+      await fireEvent.click(gradeBtn(container, "word:b", "hard"));
+      await fireEvent.click(gradeBtn(container, "word:d", "easy"));
+      // "c" is left on the default "good".
+    }
+
+    const activeGrades = (container: HTMLElement) =>
+      ["a", "b", "c", "d"].map(
+        (w) =>
+          (
+            container.querySelector(
+              `button[data-candidate='word:${w}'].active`,
+            ) as HTMLButtonElement
+          )?.dataset.grade,
+      );
+
+    it("Grade All on its own leaves already-graded rows alone", async () => {
+      mockGetListenPreview.mockResolvedValue(mixed());
+
+      const { getByText, container } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("a"));
+      await gradeEachDifferently(container);
+
+      await fireEvent.click(getByText("Grade All"));
+
+      expect(activeGrades(container)).toEqual(["again", "hard", "good", "easy"]);
+    });
+
+    it("Skip All then Grade All restores each row's own grade, not Good for all", async () => {
+      mockGetListenPreview.mockResolvedValue(mixed());
+
+      const { getByText, container } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("a"));
+      await gradeEachDifferently(container);
+
+      await fireEvent.click(getByText("Skip All"));
+      expect(activeGrades(container)).toEqual(["skip", "skip", "skip", "skip"]);
+
+      await fireEvent.click(getByText("Grade All"));
+      expect(activeGrades(container)).toEqual(["again", "hard", "good", "easy"]);
+    });
+
+    it("toggling Skip All / Grade All repeatedly is stable", async () => {
+      mockGetListenPreview.mockResolvedValue(mixed());
+
+      const { getByText, container } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("a"));
+      await gradeEachDifferently(container);
+
+      for (let i = 0; i < 3; i++) {
+        await fireEvent.click(getByText("Skip All"));
+        await fireEvent.click(getByText("Grade All"));
+      }
+
+      expect(activeGrades(container)).toEqual(["again", "hard", "good", "easy"]);
+    });
+
+    it("a row skipped on its own is restored by Grade All", async () => {
+      mockGetListenPreview.mockResolvedValue(mixed());
+
+      const { getByText, container } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("a"));
+      await fireEvent.click(gradeBtn(container, "word:a", "hard"));
+      await fireEvent.click(gradeBtn(container, "word:a", "skip"));
+
+      await fireEvent.click(getByText("Grade All"));
+
+      expect(activeGrades(container)[0]).toBe("hard");
+    });
+
+    it("a row that was never graded still comes back as Good", async () => {
+      // Well-known rows start on "skip" with no prior grade to remember.
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [
+          wordCandidate("prosim", { grade_class: "due" }),
+          wordCandidate("hvala", {
+            grade_class: "ahead",
+            well_known: true,
+            due_at: "2126-01-01T04:00:00+00:00",
+          }),
+        ],
+      });
+
+      const { getByText, container } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("prosim"));
+      await fireEvent.click(getByText("Grade All"));
+
+      expect(isActive(gradeBtn(container, "word:hvala", "good"))).toBe(true);
+    });
+
+    it("the restored grade is what actually gets committed", async () => {
+      // The round trip must survive into the payload, not just the button state.
+      mockGetListenPreview.mockResolvedValue(mixed());
+      mockMarkAsListened.mockResolvedValue({
+        status: "ok",
+        created: 0,
+        staged: 4,
+        remaining_candidates: 0,
+        listen_count: 1,
+      });
+
+      const { getByText, container } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("a"));
+      await gradeEachDifferently(container);
+      await fireEvent.click(getByText("Skip All"));
+      await fireEvent.click(getByText("Grade All"));
+      await fireEvent.click(getByText("Mark 4 as listened"));
+
+      await waitFor(() => {
+        // "c" is back on the default good → omitted from the ratings map, as
+        // always. Confirmation survives the round trip too: a, b and d were
+        // graded by hand, so they are applied rather than staged. "c" was
+        // never touched, so it stays auto and keeps its safety net.
+        expect(mockMarkAsListened).toHaveBeenCalledWith(
+          "l1",
+          { a: "again", b: "hard", d: "easy" },
+          {},
+        );
+      });
+    });
+  });
 });

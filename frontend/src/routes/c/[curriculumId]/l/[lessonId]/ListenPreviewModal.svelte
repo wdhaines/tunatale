@@ -148,8 +148,24 @@
 		}
 	});
 
+	// The grade a row carried at the moment it was skipped. Skip All is a bulk
+	// action, not a decision about any individual row, so it must not destroy
+	// the grades the user set one at a time — Skip All → Grade All is a round
+	// trip, and repeating it is stable. Deliberately NOT $state: it is only
+	// ever read inside handlers, never from the template, so it needs no
+	// reactivity (and a mutated const object raises no non_reactive_update
+	// warning the way a reassigned let would).
+	const rememberedGrade: Record<string, WordRating> = {};
+
+	/** Stash a row's current grade before "skip" overwrites it. */
+	function rememberGrade(key: string) {
+		const current = ratings[key];
+		if (current !== undefined && current !== 'skip') rememberedGrade[key] = current;
+	}
+
 	function setRating(key: string, rating: WordRating) {
 		handleInteraction();
+		if (rating === 'skip') rememberGrade(key);
 		ratings = { ...ratings, [key]: rating };
 	}
 
@@ -158,12 +174,15 @@
 		revealed.add(key);
 	}
 
+	// Restores each skipped row to the grade it last held, falling back to
+	// "good" for a row that never carried one (a well-known row, which starts
+	// skipped). Rows already on a real grade are untouched.
 	function gradeAll() {
 		handleInteraction();
 		const rts: Record<string, WordRating> = { ...ratings };
 		for (const c of candidates) {
 			const key = candidateKey(c);
-			if (rts[key] === 'skip') rts[key] = 'good';
+			if (rts[key] === 'skip') rts[key] = rememberedGrade[key] ?? 'good';
 		}
 		ratings = rts;
 	}
@@ -171,7 +190,11 @@
 	function skipAll() {
 		handleInteraction();
 		const rts: Record<string, WordRating> = { ...ratings };
-		for (const c of candidates) rts[candidateKey(c)] = 'skip';
+		for (const c of candidates) {
+			const key = candidateKey(c);
+			rememberGrade(key);
+			rts[key] = 'skip';
+		}
 		ratings = rts;
 	}
 
