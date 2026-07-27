@@ -13,6 +13,15 @@ class ListenRequest(BaseModel):
     lesson_id: str
     word_ratings: dict[str, Literal["again", "hard", "good", "easy", "skip"]] = {}  # lemma → rating
     kp_ratings: dict[str, Literal["again", "hard", "good", "easy", "skip"]] = {}  # key-phrase text → same domain
+    # Items the user actually graded in the preview, as opposed to ones the
+    # listen auto-rated. A confirmed grade is a review the user performed, so it
+    # is APPLIED immediately; everything else is staged into the pending bucket
+    # for "Check your work". Kept separate from the ratings maps because
+    # presence there is already overloaded — a well-known row must be listed for
+    # the backend to consider it at all, so "present" cannot also mean
+    # "reviewed".
+    confirmed_words: list[str] = []  # lemmas the user graded by hand
+    confirmed_kps: list[str] = []  # key-phrase texts the user graded by hand
 
 
 class ImportListensRequest(BaseModel):

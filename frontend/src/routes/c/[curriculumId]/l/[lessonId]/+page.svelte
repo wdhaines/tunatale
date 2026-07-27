@@ -618,7 +618,11 @@
 				{#if listenResult.created > 0}
 					{listenResult.created} new {listenResult.created === 1 ? 'word' : 'words'} added
 				{/if}
-				{#if listenResult.created > 0 && listenResult.staged > 0} · {/if}
+				{#if listenResult.created > 0 && (listenResult.applied > 0 || listenResult.staged > 0)} · {/if}
+				{#if listenResult.applied > 0}
+					{listenResult.applied} graded
+				{/if}
+				{#if listenResult.applied > 0 && listenResult.staged > 0} · {/if}
 				{#if listenResult.staged > 0}
 					{listenResult.staged} ready to check
 				{/if}

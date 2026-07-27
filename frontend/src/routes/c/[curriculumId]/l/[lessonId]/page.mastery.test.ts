@@ -159,6 +159,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         status: "ok",
         created: 0,
         staged: 1,
+        applied: 0,
         remaining_candidates: 2,
         listen_count: 4,
       });
@@ -203,6 +204,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         status: "ok",
         created: 0,
         staged: 1,
+        applied: 0,
         remaining_candidates: 0,
         listen_count: 5,
       });
@@ -260,6 +262,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         status: "ok",
         created: 0,
         staged: 1,
+        applied: 0,
         remaining_candidates: 0,
         listen_count: 3,
       });
@@ -543,6 +546,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         status: "ok",
         created: 1,
         staged: 0,
+        applied: 0,
         remaining_candidates: 0,
         listen_count: 1,
       });

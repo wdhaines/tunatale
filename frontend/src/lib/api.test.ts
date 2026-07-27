@@ -643,6 +643,7 @@ describe("TunaTaleAPI", () => {
             status: "ok",
             created: 1,
             staged: 2,
+            applied: 0,
             remaining_candidates: 5,
             listen_count: 4,
           }),
@@ -655,7 +656,13 @@ describe("TunaTaleAPI", () => {
         `${BASE}/api/srs/listen`,
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ lesson_id: "lesson-1", word_ratings: {}, kp_ratings: {} }),
+          body: JSON.stringify({
+            lesson_id: "lesson-1",
+            word_ratings: {},
+            kp_ratings: {},
+            confirmed_words: [],
+            confirmed_kps: [],
+          }),
         }),
       );
       expect(result.status).toBe("ok");
@@ -673,6 +680,7 @@ describe("TunaTaleAPI", () => {
             status: "ok",
             created: 2,
             staged: 3,
+            applied: 0,
             remaining_candidates: 0,
             listen_count: 6,
           }),
@@ -683,6 +691,8 @@ describe("TunaTaleAPI", () => {
         "lesson-1",
         { banka: "hard", zdravo: "easy" },
         { "na zdravje": "skip" },
+        ["banka", "zdravo"],
+        [],
       );
 
       expect(fetch).toHaveBeenCalledWith(
@@ -692,6 +702,10 @@ describe("TunaTaleAPI", () => {
             lesson_id: "lesson-1",
             word_ratings: { banka: "hard", zdravo: "easy" },
             kp_ratings: { "na zdravje": "skip" },
+            // The grades the user picked by hand: applied on commit rather
+            // than staged for "Check your work".
+            confirmed_words: ["banka", "zdravo"],
+            confirmed_kps: [],
           }),
         }),
       );

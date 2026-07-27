@@ -33,6 +33,16 @@
 	// Glosses are blurred until tapped; a revealed gloss stays revealed for the
 	// life of the modal (per row, not globally).
 	let revealed = new SvelteSet<string>();
+	// Rows the user graded by hand. A confirmed grade is a review they
+	// performed, so the backend APPLIES it instead of staging it into the
+	// "Check your work" bucket — asking again would be asking twice. Everything
+	// else is the listen's own assumption and keeps the safety net.
+	//
+	// Only a direct per-row grade click confirms. Grade All deliberately does
+	// NOT: it is a bulk skip↔grade toggle, and letting one click commit reviews
+	// for 136 rows — including well-known ones behind a collapsed disclosure —
+	// would defeat the pending bucket entirely.
+	let confirmed = new SvelteSet<string>();
 
 	let countdown = $state(10);
 	let countdownCancelled = $state(false);
@@ -166,7 +176,13 @@
 	function setRating(key: string, rating: WordRating) {
 		handleInteraction();
 		if (rating === 'skip') rememberGrade(key);
+		else confirmed.add(key);
 		ratings = { ...ratings, [key]: rating };
+	}
+
+	/** True when a row still carries the grade the listen assumed for it. */
+	function isAuto(key: string): boolean {
+		return ratings[key] !== 'skip' && !confirmed.has(key);
 	}
 
 	function revealGloss(key: string) {
@@ -256,12 +272,25 @@
 	function buildRatings(): {
 		wordRatings: Record<string, WordRating>;
 		kpRatings: Record<string, WordRating>;
+		confirmedWords: string[];
+		confirmedKps: string[];
 	} {
 		const wordRatings: Record<string, WordRating> = {};
 		const kpRatings: Record<string, WordRating> = {};
+		const confirmedWords: string[] = [];
+		const confirmedKps: string[] = [];
 
 		for (const c of candidates) {
-			const rating = ratings[candidateKey(c)] ?? 'good';
+			const key = candidateKey(c);
+			const rating = ratings[key] ?? 'good';
+			// Confirmation rides its own list rather than being inferred from
+			// presence in the ratings map: a well-known row has to appear there
+			// for the backend to consider it at all, so "present" cannot also
+			// mean "reviewed". A skipped row is graded by nobody, so it is never
+			// confirmed.
+			if (rating !== 'skip' && confirmed.has(key)) {
+				(c.kind === 'kp' ? confirmedKps : confirmedWords).push(c.text);
+			}
 			const isWellKnown = c.well_known === true;
 			const value: WordRating | null =
 				rating === 'skip' ? 'skip' : isWellKnown || rating !== 'good' ? rating : null;
@@ -273,17 +302,23 @@
 			}
 		}
 
-		return { wordRatings, kpRatings };
+		return { wordRatings, kpRatings, confirmedWords, confirmedKps };
 	}
 
 	async function doCommit() {
 		committing = true;
 		error = '';
 
-		const { wordRatings, kpRatings } = buildRatings();
+		const { wordRatings, kpRatings, confirmedWords, confirmedKps } = buildRatings();
 
 		try {
-			const result = await listenedStore.markListened(lessonId, wordRatings, kpRatings);
+			const result = await listenedStore.markListened(
+				lessonId,
+				wordRatings,
+				kpRatings,
+				confirmedWords,
+				confirmedKps,
+			);
 			onDone(result);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -365,15 +400,21 @@
 							>Skip</button>
 							<div class="grades">
 								{#each GRADES as g (g)}
+									{@const label = g[0].toUpperCase() + g.slice(1)}
+									{@const auto = ratings[key] === g && isAuto(key)}
 									<button
 										class={g}
 										class:active={ratings[key] === g}
+										class:auto
 										data-candidate={key}
 										data-grade={g}
 										aria-pressed={ratings[key] === g}
+										aria-label={auto
+											? `${label} for ${c.text} — auto-graded, tap to confirm`
+											: `${label} for ${c.text}`}
 										onclick={() => setRating(key, g)}
 										type="button"
-									>{g[0].toUpperCase() + g.slice(1)}</button>
+									>{label}</button>
 								{/each}
 							</div>
 						</div>
@@ -660,6 +701,30 @@
 	}
 	.grades button.easy.active {
 		background: var(--color-primary);
+	}
+	/* An auto-graded row is the listen's assumption, not the user's review, and
+	   it goes to the pending bucket rather than being applied. It reads as
+	   provisional by reusing the idiom Skip already established in this
+	   control: dashed outline = "not your choice". There is no room for the
+	   words "auto good" at this track width, and none is needed — the column
+	   header says "Proposed grade", so dashed is proposed and solid is
+	   confirmed. Tapping it makes it solid, and commits it. */
+	.grades button.active.auto {
+		background: color-mix(in srgb, var(--color-success) 30%, transparent);
+		color: var(--color-text);
+		border: 1px dashed color-mix(in srgb, var(--color-success) 70%, transparent);
+	}
+	.grades button.again.active.auto {
+		background: color-mix(in srgb, var(--color-danger) 30%, transparent);
+		border-color: color-mix(in srgb, var(--color-danger) 70%, transparent);
+	}
+	.grades button.hard.active.auto {
+		background: color-mix(in srgb, var(--color-warning) 30%, transparent);
+		border-color: color-mix(in srgb, var(--color-warning) 70%, transparent);
+	}
+	.grades button.easy.active.auto {
+		background: color-mix(in srgb, var(--color-primary) 30%, transparent);
+		border-color: color-mix(in srgb, var(--color-primary) 70%, transparent);
 	}
 	.grade button.skip {
 		flex: 0 0 auto;

@@ -504,6 +504,22 @@
       },
       "ListenRequest": {
         "properties": {
+          "confirmed_kps": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Confirmed Kps",
+            "type": "array"
+          },
+          "confirmed_words": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Confirmed Words",
+            "type": "array"
+          },
           "kp_ratings": {
             "additionalProperties": {
               "enum": [

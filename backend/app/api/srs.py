@@ -683,6 +683,38 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     created_count = 0
     staged_count = 0
 
+    # ── Confirmed grades: applied here, not staged ──────────────────────
+    # A grade the user picked in the preview is a review they performed, so
+    # making them answer it again in "Check your work" asks the same question
+    # twice. Only the auto-rated remainder goes to the pending bucket.
+    confirmed_words = set(body.confirmed_words)
+    confirmed_kps = set(body.confirmed_kps)
+    # Built on first use: most listens confirm nothing, and the load-balancer
+    # histogram is not free. The shared balancer + monotonic grade clock across
+    # the batch mirror commit-pending exactly.
+    grade_ctx: dict = {"applied": 0, "now": None, "last_ms": 0, "params": None, "col_crt": None, "balancer": None}
+
+    def _apply_confirmed(collocation_id: int, rating_str: str) -> None:
+        if grade_ctx["params"] is None:
+            grade_ctx["params"], _ = resolve_fsrs_params(db)
+            grade_ctx["col_crt"] = resolve_col_crt(db)
+            grade_ctx["balancer"] = build_live_load_balancer(
+                db, now=datetime.datetime.now(datetime.UTC), col_crt=grade_ctx["col_crt"]
+            )
+        now, last_ms = _apply_grade_now(
+            db,
+            collocation_id,
+            Direction.RECOGNITION,
+            rating_str,
+            fsrs_params=grade_ctx["params"],
+            col_crt=grade_ctx["col_crt"],
+            balancer=grade_ctx["balancer"],
+            last_grade_ms=grade_ctx["last_ms"],
+        )
+        grade_ctx["now"] = now
+        grade_ctx["last_ms"] = last_ms
+        grade_ctx["applied"] += 1
+
     # ── Per-listen creation budget (plan D1) ────────────────────────────
     # One listen queues at most one Anki-day's worth of new cards, net of
     # today's introductions and of still-NEW cards created earlier today
@@ -785,14 +817,17 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 continue
             listen_coll_id = db.get_collocation_id_by_guid(existing.guid)
             assert listen_coll_id is not None
-            db.stage_pending_grade(
-                body.lesson_id,
-                listen_coll_id,
-                Direction.RECOGNITION.value,
-                rating_str,
-                grade_cls,
-            )
-            staged_count += 1
+            if lemma in confirmed_words:
+                _apply_confirmed(listen_coll_id, rating_str)
+            else:
+                db.stage_pending_grade(
+                    body.lesson_id,
+                    listen_coll_id,
+                    Direction.RECOGNITION.value,
+                    rating_str,
+                    grade_cls,
+                )
+                staged_count += 1
 
     # ── Key phrase staging (existing cards only; creation deferred) ─────
     for kp in lesson.key_phrases:
@@ -828,14 +863,17 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             continue
         kp_coll_id = db.get_collocation_id_by_guid(existing.guid)
         assert kp_coll_id is not None
-        db.stage_pending_grade(
-            body.lesson_id,
-            kp_coll_id,
-            Direction.RECOGNITION.value,
-            rating_str,
-            grade_cls,
-        )
-        staged_count += 1
+        if kp.phrase in confirmed_kps:
+            _apply_confirmed(kp_coll_id, rating_str)
+        else:
+            db.stage_pending_grade(
+                body.lesson_id,
+                kp_coll_id,
+                Direction.RECOGNITION.value,
+                rating_str,
+                grade_cls,
+            )
+            staged_count += 1
 
     # ── Staged creation over ranked candidates, truncated to budget (D2/D3) ──
     # No persisted cursor: each listen recomputes lesson-word-set minus tracked
@@ -897,9 +935,15 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # Server-side listened state (TT-only, never syncs): one row per listen.
     db.record_listen(body.lesson_id)
 
+    # Anki parity: grading advances the learning cutoff. A batch of confirmed
+    # grades is still one grade event, so advance once at the end.
+    if grade_ctx["applied"]:
+        advance_learning_cutoff(db, grade_ctx["now"])
+
     return {
         "status": "ok",
         "staged": staged_count,
+        "applied": grade_ctx["applied"],
         "created": created_count,
         "remaining_candidates": remaining_candidates,
         "listen_count": db.count_listens(body.lesson_id),
@@ -1099,6 +1143,59 @@ async def mark_lesson_reviewed(lesson_id: str, request: Request) -> dict:
     return {"ok": True}
 
 
+def _apply_grade_now(
+    db,
+    collocation_id: int,
+    dir_enum: Direction,
+    rating_str: str,
+    *,
+    fsrs_params,
+    col_crt,
+    balancer,
+    last_grade_ms: int,
+) -> tuple[datetime.datetime, int]:
+    """Apply one grade for real: ``schedule`` → revlog → ``dirty_fsrs``.
+
+    The single place a listen-originated grade is actually applied, shared by
+    the pending-release paths (``commit-pending``, per-card review) and by the
+    listen's own confirmed grades. Sharing it is the point: a grade the user
+    picked in the preview must land byte-identically to the same grade released
+    later, or the two routes drift (the b0a4b8a inline-a-phase-subset class).
+
+    Returns ``(now, last_grade_ms)`` so a batch can keep the monotonic grade
+    clock: ``tt_revlog.id`` is a millisecond PK and ``append_revlog`` is INSERT
+    OR IGNORE, so two grades landing in the same millisecond silently drop one.
+    """
+    _, item, _ = db.get_collocation_by_id(collocation_id)
+    prev_dir = item.directions[dir_enum]
+    rating = _WORD_RATING_MAP[rating_str]
+    now, last_grade_ms = _bump_grade_clock(last_grade_ms)
+    updated = schedule(
+        item,
+        rating,
+        direction=dir_enum,
+        params=fsrs_params,
+        now=now,
+        col_crt=col_crt,
+        load_balancer=balancer,
+    )
+    db.update_direction_by_id(collocation_id, dir_enum, updated.directions[dir_enum])
+    row = build_revlog_row(
+        collocation_id,
+        dir_enum,
+        prev_dir,
+        updated.directions[dir_enum],
+        rating,
+        0,
+        now=now,
+        col_crt=col_crt,
+        review_kind=_release_review_kind(prev_dir),
+    )
+    db.append_revlog(row)
+    _balancer_add(balancer, card_id=prev_dir.anki_card_id, note_id=item.anki_note_id, interval=row.interval)
+    return now, last_grade_ms
+
+
 @router.post("/lesson/{lesson_id}/commit-pending", status_code=200)
 async def commit_pending_grades(lesson_id: str, request: Request) -> CommitPendingResponse:
     """Bulk "Sync it": release every staged grade for a lesson without reviewing it.
@@ -1128,39 +1225,21 @@ async def commit_pending_grades(lesson_id: str, request: Request) -> CommitPendi
     for pending in db.get_pending_grades(lesson_id):
         collocation_id = pending["collocation_id"]
         dir_enum = Direction(pending["direction"])
-        result = db.get_collocation_by_id(collocation_id)
-        if result is None:
+        if db.get_collocation_by_id(collocation_id) is None:
             # Orphaned row (the card was deleted after staging). Nothing to
             # apply, but the row must still go or it lingers forever.
             db.clear_pending_grade(collocation_id, dir_enum.value)
             continue
-        _, item, _ = result
-        prev_dir = item.directions[dir_enum]
-        rating = _WORD_RATING_MAP[pending["rating"]]
-        now, last_grade_ms = _bump_grade_clock(last_grade_ms)
-        updated = schedule(
-            item,
-            rating,
-            direction=dir_enum,
-            params=fsrs_params,
-            now=now,
-            col_crt=col_crt,
-            load_balancer=balancer,
-        )
-        db.update_direction_by_id(collocation_id, dir_enum, updated.directions[dir_enum])
-        row = build_revlog_row(
+        now, last_grade_ms = _apply_grade_now(
+            db,
             collocation_id,
             dir_enum,
-            prev_dir,
-            updated.directions[dir_enum],
-            rating,
-            0,
-            now=now,
+            pending["rating"],
+            fsrs_params=fsrs_params,
             col_crt=col_crt,
-            review_kind=_release_review_kind(prev_dir),
+            balancer=balancer,
+            last_grade_ms=last_grade_ms,
         )
-        db.append_revlog(row)
-        _balancer_add(balancer, card_id=prev_dir.anki_card_id, note_id=item.anki_note_id, interval=row.interval)
         db.clear_pending_grade(collocation_id, dir_enum.value)
         applied += 1
 

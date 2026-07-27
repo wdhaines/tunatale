@@ -299,6 +299,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 0,
       staged: 0,
+      applied: 0,
       remaining_candidates: 2,
       listen_count: 1,
     });
@@ -315,7 +316,13 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { kava: "skip", prosim: "skip" }, {});
+      expect(mockMarkAsListened).toHaveBeenCalledWith(
+        "l1",
+        { kava: "skip", prosim: "skip" },
+        {},
+        [],
+        [],
+      );
     });
   });
 
@@ -406,6 +413,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 2,
       staged: 1,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 3,
     });
@@ -419,11 +427,12 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(btn);
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {});
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], []);
       expect(onDone).toHaveBeenCalledWith({
         status: "ok",
         created: 2,
         staged: 1,
+        applied: 0,
         remaining_candidates: 0,
         listen_count: 3,
       });
@@ -438,6 +447,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 0,
       staged: 0,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -455,7 +465,7 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { kava: "skip" }, {});
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { kava: "skip" }, {}, [], []);
     });
   });
 
@@ -501,6 +511,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 0,
       staged: 1,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -522,7 +533,7 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {});
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], []);
     });
   });
 
@@ -562,6 +573,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 0,
       staged: 0,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -589,7 +601,13 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText(/Mark 1 as listened/));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { voda: "skip" }, { voda: "easy" });
+      expect(mockMarkAsListened).toHaveBeenCalledWith(
+        "l1",
+        { voda: "skip" },
+        { voda: "easy" },
+        [],
+        ["voda"],
+      );
     });
   });
 
@@ -601,6 +619,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 0,
       staged: 1,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -617,7 +636,7 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {});
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], []);
     });
   });
 
@@ -629,6 +648,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 0,
       staged: 0,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -645,7 +665,13 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { prosim: "again" }, {});
+      expect(mockMarkAsListened).toHaveBeenCalledWith(
+        "l1",
+        { prosim: "again" },
+        {},
+        ["prosim"],
+        [],
+      );
     });
   });
 
@@ -657,6 +683,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 1,
       staged: 0,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -673,7 +700,7 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { kava: "hard" }, {});
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { kava: "hard" }, {}, ["kava"], []);
     });
   });
 
@@ -685,6 +712,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 0,
       staged: 0,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -701,7 +729,13 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, { "na zdravje": "again" });
+      expect(mockMarkAsListened).toHaveBeenCalledWith(
+        "l1",
+        {},
+        { "na zdravje": "again" },
+        [],
+        ["na zdravje"],
+      );
     });
   });
 
@@ -716,6 +750,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 0,
       staged: 0,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -744,7 +779,7 @@ describe("ListenPreviewModal", () => {
 
     await waitFor(() => {
       // Restored to the default (good) → omitted from the payload.
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {});
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], []);
     });
   });
 
@@ -756,6 +791,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 0,
       staged: 1,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -772,7 +808,7 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { prosim: "easy" }, {});
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { prosim: "easy" }, {}, ["prosim"], []);
     });
   });
 
@@ -805,6 +841,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 0,
       staged: 0,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -821,7 +858,7 @@ describe("ListenPreviewModal", () => {
 
     await waitFor(() => {
       expect(mockMarkAsListened).toHaveBeenCalledTimes(1);
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {});
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], []);
       expect(onDone).toHaveBeenCalledTimes(1);
     });
   });
@@ -858,6 +895,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 1,
       staged: 0,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -877,7 +915,7 @@ describe("ListenPreviewModal", () => {
 
     await waitFor(() => {
       expect(mockMarkAsListened).toHaveBeenCalledTimes(1);
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {});
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], []);
       expect(onDone).toHaveBeenCalledTimes(1);
     });
   });
@@ -891,6 +929,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 1,
       staged: 0,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -924,6 +963,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 1,
       staged: 0,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -953,6 +993,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 1,
       staged: 0,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -981,6 +1022,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 1,
       staged: 0,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -1179,6 +1221,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 0,
       staged: 0,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -1193,7 +1236,7 @@ describe("ListenPreviewModal", () => {
     await waitFor(() => {
       // Only prosim is in wordRatings (checked+good → omitted as default);
       // hvala (unchecked well-known) sends "skip" so the backend won't stage it.
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { hvala: "skip" }, {});
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { hvala: "skip" }, {}, [], []);
     });
   });
 
@@ -1214,6 +1257,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 0,
       staged: 0,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -1237,7 +1281,7 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 2 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { hvala: "good" }, {});
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { hvala: "good" }, {}, ["hvala"], []);
     });
   });
 
@@ -1376,6 +1420,7 @@ describe("ListenPreviewModal", () => {
       status: "ok",
       created: 0,
       staged: 0,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 1,
     });
@@ -1722,6 +1767,7 @@ describe("ListenPreviewModal", () => {
         status: "ok",
         created: 0,
         staged: 4,
+        applied: 0,
         remaining_candidates: 0,
         listen_count: 1,
       });
@@ -1745,8 +1791,186 @@ describe("ListenPreviewModal", () => {
           "l1",
           { a: "again", b: "hard", d: "easy" },
           {},
+          ["a", "b", "d"],
+          [],
         );
       });
+    });
+  });
+
+  // ── Auto-graded vs confirmed ────────────────────────────────────────
+
+  describe("auto-grade indicator and confirmation", () => {
+    it("an untouched row's Good reads as auto: provisional, not confirmed", async () => {
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [wordCandidate("prosim", { grade_class: "due" })],
+      });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("prosim"));
+      const good = gradeBtn(container, "word:prosim", "good");
+      expect(good.classList.contains("active")).toBe(true);
+      expect(good.classList.contains("auto")).toBe(true);
+      expect(good.getAttribute("aria-label")).toBe("Good for prosim — auto-graded, tap to confirm");
+    });
+
+    it("tapping Good on an auto row confirms it and drops the auto styling", async () => {
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [wordCandidate("prosim", { grade_class: "due" })],
+      });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("prosim"));
+      const good = gradeBtn(container, "word:prosim", "good");
+      await fireEvent.click(good);
+
+      expect(good.classList.contains("active")).toBe(true);
+      expect(good.classList.contains("auto")).toBe(false);
+      expect(good.getAttribute("aria-label")).toBe("Good for prosim");
+    });
+
+    it("a confirmed row is sent in confirmed_words even at the default grade", async () => {
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [
+          wordCandidate("prosim", { grade_class: "due" }),
+          wordCandidate("hvala", { grade_class: "due" }),
+        ],
+      });
+      mockMarkAsListened.mockResolvedValue({
+        status: "ok",
+        created: 0,
+        staged: 1,
+        applied: 1,
+        remaining_candidates: 0,
+        listen_count: 1,
+      });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("prosim"));
+      await fireEvent.click(gradeBtn(container, "word:prosim", "good"));
+      await fireEvent.click(getByText("Mark 2 as listened"));
+
+      await waitFor(() => {
+        // "prosim" keeps the default rating (so it is still omitted from the
+        // ratings map) but must appear in confirmed_words — that split is the
+        // whole contract.
+        expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], []);
+      });
+    });
+
+    it("a changed grade is both rated and confirmed", async () => {
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [wordCandidate("prosim", { grade_class: "due" }), kpCandidate("dober dan")],
+      });
+      mockMarkAsListened.mockResolvedValue({
+        status: "ok",
+        created: 0,
+        staged: 0,
+        applied: 2,
+        remaining_candidates: 0,
+        listen_count: 1,
+      });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("prosim"));
+      await fireEvent.click(gradeBtn(container, "word:prosim", "hard"));
+      await fireEvent.click(gradeBtn(container, "kp:dober dan", "easy"));
+      await fireEvent.click(getByText("Mark 2 as listened"));
+
+      await waitFor(() => {
+        expect(mockMarkAsListened).toHaveBeenCalledWith(
+          "l1",
+          { prosim: "hard" },
+          { "dober dan": "easy" },
+          ["prosim"],
+          ["dober dan"],
+        );
+      });
+    });
+
+    it("Grade All does NOT confirm rows — it is about skip, not review", async () => {
+      // One click must not commit reviews for every row, least of all the
+      // well-known ones sitting behind a collapsed disclosure.
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [
+          wordCandidate("prosim", { grade_class: "due" }),
+          wordCandidate("hvala", {
+            grade_class: "ahead",
+            well_known: true,
+            due_at: "2126-01-01T04:00:00+00:00",
+          }),
+        ],
+      });
+      mockMarkAsListened.mockResolvedValue({
+        status: "ok",
+        created: 0,
+        staged: 2,
+        applied: 0,
+        remaining_candidates: 0,
+        listen_count: 1,
+      });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("prosim"));
+      await fireEvent.click(getByText("Grade All"));
+      await fireEvent.click(getByText("Mark 2 as listened"));
+
+      await waitFor(() => {
+        const call = mockMarkAsListened.mock.calls.at(-1)!;
+        expect(call[3]).toEqual([]); // confirmed_words
+        expect(call[4]).toEqual([]); // confirmed_kps
+      });
+      // The auto styling survives Grade All, because nothing was reviewed.
+      expect(gradeBtn(container, "word:prosim", "good").classList.contains("auto")).toBe(true);
+    });
+
+    it("confirmation survives a Skip All / Grade All round trip", async () => {
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [wordCandidate("prosim", { grade_class: "due" })],
+      });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("prosim"));
+      await fireEvent.click(gradeBtn(container, "word:prosim", "hard"));
+
+      await fireEvent.click(getByText("Skip All"));
+      await fireEvent.click(getByText("Grade All"));
+
+      const hard = gradeBtn(container, "word:prosim", "hard");
+      expect(hard.classList.contains("active")).toBe(true);
+      expect(hard.classList.contains("auto")).toBe(false);
+    });
+
+    it("Skip is never marked auto — it is not a grade", async () => {
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [wordCandidate("prosim", { grade_class: "due" })],
+      });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("prosim"));
+      await fireEvent.click(gradeBtn(container, "word:prosim", "skip"));
+      expect(gradeBtn(container, "word:prosim", "skip").classList.contains("auto")).toBe(false);
     });
   });
 });

@@ -12,6 +12,14 @@ The contract under test:
   and the ``_listen_grade_class`` value at stage time;
 * NOTHING is applied — no ``tt_revlog`` row, no FSRS state change, no
   ``dirty_fsrs`` flip, no ``last_review`` stamp. A listen is invisible to sync;
+
+  SCOPE NOTE (2026-07-27): this holds for every grade the listen AUTO-rates,
+  which is what this file exercises — none of its requests send
+  ``confirmed_words``/``confirmed_kps``. A grade the user explicitly picked in
+  the preview is now applied immediately instead (see
+  ``test_api_listen_explicit_grades.py``); it is a review they performed, so
+  re-asking it in "Check your work" would ask the same question twice. The
+  assertions below are unchanged and still hold for the unconfirmed path;
 * there is NO listen-time review-budget cap any more: a due-today card stages
   even when the day's review budget is exhausted (the budget is charged later,
   when the pending grade is APPLIED — Stage 3);
@@ -359,9 +367,18 @@ class TestListenResponseShape:
 
         data = await _listen()
 
-        assert set(data) == {"status", "staged", "created", "remaining_candidates", "listen_count"}
+        assert set(data) == {
+            "status",
+            "staged",
+            "applied",
+            "created",
+            "remaining_candidates",
+            "listen_count",
+        }
         assert data["status"] == "ok"
         assert data["staged"] == 2
+        # This request confirms nothing, so the staging contract is total here.
+        assert data["applied"] == 0
         assert data["created"] == 0
         assert data["listen_count"] == 1
         assert db.count_pending_grades(LESSON_ID) == 2

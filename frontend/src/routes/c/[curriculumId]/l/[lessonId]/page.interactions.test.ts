@@ -292,6 +292,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       status: "ok",
       created: 1,
       staged: 2,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 3,
     });
@@ -312,7 +313,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     await waitFor(() => {
       // F7: a row left checked + "good" (the default) contributes nothing —
       // the backend defaults an absent entry to "good".
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {});
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], []);
       expect(mockGetTranscript).toHaveBeenCalledWith("l1");
     });
   });
@@ -337,6 +338,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       status: "ok",
       created: 1,
       staged: 2,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 3,
     });
@@ -673,6 +675,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       status: "ok",
       created: 2,
       staged: 1,
+      applied: 0,
       remaining_candidates: 5,
       listen_count: 3,
     });
@@ -690,6 +693,86 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
 
     expect(await findByText(/2 new words added/)).toBeTruthy();
     expect(await findByText(/1 ready to check/)).toBeTruthy();
+  });
+
+  it("reports graded and ready-to-check separately in the confirmation", async () => {
+    // A listen now splits two ways: grades the user confirmed in the preview
+    // are applied on the spot, and only the auto-graded remainder waits in
+    // "Check your work". Reporting just the staged count would look like the
+    // confirmed ones vanished.
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        {
+          kind: "word",
+          text: "prosim",
+          item_id: 42,
+          grade_class: "due",
+          rating: "good",
+          translation: "please",
+          progress: 0.3,
+          well_known: false,
+          due_at: null,
+        },
+      ],
+    });
+    mockMarkAsListened.mockResolvedValue({
+      status: "ok",
+      created: 0,
+      staged: 2,
+      applied: 3,
+      remaining_candidates: 0,
+      listen_count: 1,
+    });
+    mockGetTranscript.mockResolvedValue(transcript);
+    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
+
+    const { findByText, getByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    await fireEvent.click(getByText("Listen"));
+    await fireEvent.click(await findByText("Mark as Listened"));
+    await fireEvent.click(await findByText(/Mark \d+ as listened/));
+
+    expect(await findByText(/3 graded/)).toBeTruthy();
+    expect(await findByText(/2 ready to check/)).toBeTruthy();
+  });
+
+  it("omits the graded clause when every grade was auto", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        {
+          kind: "word",
+          text: "prosim",
+          item_id: 42,
+          grade_class: "due",
+          rating: "good",
+          translation: "please",
+          progress: 0.3,
+          well_known: false,
+          due_at: null,
+        },
+      ],
+    });
+    mockMarkAsListened.mockResolvedValue({
+      status: "ok",
+      created: 0,
+      staged: 1,
+      applied: 0,
+      remaining_candidates: 0,
+      listen_count: 1,
+    });
+    mockGetTranscript.mockResolvedValue(transcript);
+    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
+
+    const { findByText, getByText, queryByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    await fireEvent.click(getByText("Listen"));
+    await fireEvent.click(await findByText("Mark as Listened"));
+    await fireEvent.click(await findByText(/Mark \d+ as listened/));
+
+    expect(await findByText(/1 ready to check/)).toBeTruthy();
+    expect(queryByText(/graded/)).toBeFalsy();
   });
 
   it("shows 'listen again to add more' in the confirmation after commit", async () => {
@@ -712,6 +795,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       status: "ok",
       created: 0,
       staged: 1,
+      applied: 0,
       remaining_candidates: 3,
       listen_count: 2,
     });
@@ -750,6 +834,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       status: "ok",
       created: 1,
       staged: 2,
+      applied: 0,
       remaining_candidates: 0,
       listen_count: 3,
     });

@@ -60,8 +60,16 @@ function createListenedStore() {
       lessonId: string,
       wordRatings: Record<string, WordRating> = {},
       kpRatings: Record<string, WordRating> = {},
+      confirmedWords: string[] = [],
+      confirmedKps: string[] = [],
     ): Promise<ListenResponse> {
-      const result = await api.markAsListened(lessonId, wordRatings, kpRatings);
+      const result = await api.markAsListened(
+        lessonId,
+        wordRatings,
+        kpRatings,
+        confirmedWords,
+        confirmedKps,
+      );
       entries = {
         ...entries,
         [lessonId]: {

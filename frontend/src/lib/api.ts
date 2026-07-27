@@ -219,7 +219,10 @@ export interface TranscriptData {
 export interface ListenResponse {
   status: string;
   created: number;
+  /** Auto-graded rows parked in the pending bucket for "Check your work". */
   staged: number;
+  /** Rows the user graded in the preview, applied immediately. */
+  applied: number;
   remaining_candidates: number;
   listen_count: number;
 }
@@ -834,6 +837,12 @@ export class TunaTaleAPI {
     lessonId: string,
     wordRatings: Record<string, WordRating> = {},
     kpRatings: Record<string, WordRating> = {},
+    // Items the user graded by hand in the preview. These are applied
+    // immediately; everything else is staged for "Check your work". Separate
+    // from the ratings maps because presence there is already overloaded — a
+    // well-known row must be listed for the backend to consider it at all.
+    confirmedWords: string[] = [],
+    confirmedKps: string[] = [],
   ): Promise<ListenResponse> {
     return this.request("/api/srs/listen", {
       method: "POST",
@@ -842,6 +851,8 @@ export class TunaTaleAPI {
         lesson_id: lessonId,
         word_ratings: wordRatings,
         kp_ratings: kpRatings,
+        confirmed_words: confirmedWords,
+        confirmed_kps: confirmedKps,
       }),
     });
   }

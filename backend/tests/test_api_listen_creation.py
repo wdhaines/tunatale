@@ -88,7 +88,14 @@ class TestListenStagedCreation:
 
         data = await self._listen()
 
-        assert set(data) == {"status", "staged", "created", "remaining_candidates", "listen_count"}
+        assert set(data) == {
+            "status",
+            "staged",
+            "applied",
+            "created",
+            "remaining_candidates",
+            "listen_count",
+        }
         assert data["status"] == "ok"
         assert data["created"] == 2
         assert data["staged"] == 0

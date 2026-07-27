@@ -243,6 +243,7 @@ describe("listenedStore", () => {
         status: "ok",
         created: 1,
         staged: 2,
+        applied: 0,
         remaining_candidates: 5,
         listen_count: 4,
       };
@@ -250,7 +251,7 @@ describe("listenedStore", () => {
 
       const result = await listenedStore.markListened("l1");
 
-      expect(mockApi.markAsListened).toHaveBeenCalledWith("l1", {}, {});
+      expect(mockApi.markAsListened).toHaveBeenCalledWith("l1", {}, {}, [], []);
       expect(result).toEqual(response);
       expect(listenedStore.has("l1")).toBe(true);
       expect(listenedStore.count("l1")).toBe(4);
@@ -261,13 +262,14 @@ describe("listenedStore", () => {
         status: "ok",
         created: 0,
         staged: 1,
+        applied: 0,
         remaining_candidates: 0,
         listen_count: 1,
       });
 
       await listenedStore.markListened("l1", { banka: "hard" });
 
-      expect(mockApi.markAsListened).toHaveBeenCalledWith("l1", { banka: "hard" }, {});
+      expect(mockApi.markAsListened).toHaveBeenCalledWith("l1", { banka: "hard" }, {}, [], []);
     });
 
     it("does not update state on API error", async () => {

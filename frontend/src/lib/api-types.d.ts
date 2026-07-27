@@ -1559,6 +1559,16 @@ export interface components {
     /** ListenRequest */
     ListenRequest: {
       /**
+       * Confirmed Kps
+       * @default []
+       */
+      confirmed_kps: string[];
+      /**
+       * Confirmed Words
+       * @default []
+       */
+      confirmed_words: string[];
+      /**
        * Kp Ratings
        * @default {}
        */
