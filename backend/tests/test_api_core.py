@@ -66,6 +66,7 @@ class TestCurriculumEndpoints:
         assert data["days"] == [
             {
                 "day": 1,
+                "position": 1,
                 "title": "Day 1",
                 "focus": "greetings",
                 "collocations": ["zdravo"],
@@ -73,6 +74,95 @@ class TestCurriculumEndpoints:
                 "story_guidance": "café",
             }
         ]
+
+    async def test_get_curriculum_positions_close_gaps_from_deleted_days(self):
+        """``day`` keeps its gaps (it keys lessons/pipeline jobs); ``position`` is contiguous."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        curriculum = Curriculum(
+            id="test-c",
+            topic="coffee",
+            language_code="sl",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(day=d, title=f"t{d}", focus="f", learning_objective="o", collocations=[])
+                for d in (1, 2, 4, 7)
+            ],
+        )
+        store.save_curriculum("coffee-abc", curriculum)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/curriculum/coffee-abc")
+
+        data = response.json()
+        assert [(d["day"], d["position"]) for d in data["days"]] == [(1, 1), (2, 2), (4, 3), (7, 4)]
+
+    async def test_get_curriculum_proposed_positions_continue_after_committed(self):
+        """An uncommitted batch numbered against gappy days still shows contiguous positions."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        curriculum = Curriculum(
+            id="test-c",
+            topic="coffee",
+            language_code="sl",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(day=d, title=f"t{d}", focus="f", learning_objective="o", collocations=[])
+                for d in (1, 2, 4)
+            ],
+            metadata={
+                "planner": {
+                    "chat": [],
+                    "feedback": [],
+                    "proposed": {
+                        "start_day": 5,
+                        "days": [
+                            {
+                                "day": 5,
+                                "title": "t5",
+                                "focus": "f",
+                                "collocations": [],
+                                "learning_objective": "o",
+                                "story_guidance": "",
+                            },
+                            {
+                                "day": 6,
+                                "title": "t6",
+                                "focus": "f",
+                                "collocations": [],
+                                "learning_objective": "o",
+                                "story_guidance": "",
+                            },
+                        ],
+                    },
+                }
+            },
+        )
+        store.save_curriculum("coffee-abc", curriculum)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/curriculum/coffee-abc")
+
+        data = response.json()
+        assert [(d["day"], d["position"]) for d in data["proposed"]["days"]] == [(5, 4), (6, 5)]
+
+    async def test_get_curriculum_proposed_absent_needs_no_positions(self):
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        store.save_curriculum(
+            "coffee-abc", Curriculum(id="test-c", topic="coffee", language_code="sl", cefr_level="A2")
+        )
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/curriculum/coffee-abc")
+
+        assert response.json()["proposed"] is None
 
     async def test_get_curriculum_days_sorted_and_proposed_exposed(self):
         """days come back sorted by day number; a pending proposal is included."""
@@ -111,7 +201,8 @@ class TestCurriculumEndpoints:
 
         data = response.json()
         assert [d["day"] for d in data["days"]] == [1, 2]
-        assert data["proposed"] == proposed
+        assert data["proposed"]["start_day"] == 3
+        assert [d["title"] for d in data["proposed"]["days"]] == ["Day 3"]
 
     async def test_list_curricula_returns_200(self):
         from app.storage.store import ContentStore
@@ -155,7 +246,7 @@ class TestCurriculumEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == "lesson-day1"
-        assert data["title"] == "Day 1: Coffee"
+        assert data["title"] == "Coffee"
         assert data["language_code"] == "sl"
         assert len(data["sections"]) == 1
         assert data["sections"][0]["phrases"][0]["text"] == "kavo prosim"
@@ -210,6 +301,48 @@ class TestCurriculumEndpoints:
         assert len(data) == 1
         assert data[0]["day"] == 1
         assert data[0]["lesson_id"] == "l1"
+        assert data[0]["position"] == 1
+
+    async def test_get_curriculum_progress_positions_close_gaps(self):
+        """The home card's "Continue → Day N" reads position, so it must skip the gap too."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        store.save_curriculum(
+            "c1",
+            Curriculum(
+                id="c1",
+                topic="coffee",
+                language_code="sl",
+                cefr_level="A2",
+                days=[
+                    CurriculumDay(day=d, title=f"t{d}", focus="f", learning_objective="o", collocations=[])
+                    for d in (1, 3)
+                ],
+            ),
+        )
+        store.save_lesson("l1", "c1", 1, Lesson(title="One", language_code="sl"))
+        store.save_lesson("l3", "c1", 3, Lesson(title="Three", language_code="sl"))
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/curriculum/c1/progress")
+
+        assert [(d["day"], d["position"]) for d in response.json()] == [(1, 1), (3, 2)]
+
+    async def test_get_curriculum_progress_orphan_lesson_falls_back_to_its_day(self):
+        """A lesson whose day is gone from the plan still gets a stable label."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        store.save_curriculum("c1", Curriculum(id="c1", topic="coffee", language_code="sl", cefr_level="A2", days=[]))
+        store.save_lesson("l9", "c1", 9, Lesson(title="Orphan", language_code="sl"))
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/curriculum/c1/progress")
+
+        assert [(d["day"], d["position"]) for d in response.json()] == [(9, 9)]
 
     async def test_get_curriculum_progress_404_when_missing(self):
         from app.storage.store import ContentStore

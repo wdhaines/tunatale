@@ -36,7 +36,13 @@ export interface LanguagesResponse {
 }
 
 export interface DayPlan {
+  /**
+   * Stable key — addresses the day in URLs and API calls. Deleting a day leaves
+   * a permanent gap here (1, 2, 3, 4, 6), so never show it to the learner.
+   */
   day: number;
+  /** 1-based place in the ordered plan. Contiguous whatever has been deleted; this is what the UI labels. */
+  position: number;
   title: string;
   focus: string;
   collocations: string[];
@@ -128,6 +134,8 @@ export interface LessonDetail {
 
 export interface DayProgress {
   day: number;
+  /** @see DayPlan.position */
+  position: number;
   lesson_id: string;
 }
 
@@ -409,6 +417,8 @@ export interface ReviewQueueItem extends SRSItemDetail {
 
 export interface PipelineDayState {
   day: number;
+  /** @see DayPlan.position */
+  position: number;
   state: "queued" | "generating" | "rendering" | "ready" | "failed";
   lesson_id: string | null;
   has_audio: boolean;

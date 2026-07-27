@@ -61,8 +61,9 @@ const mockRetryPipelineDay = vi.mocked(api.retryPipelineDay);
 const mockPipelineStoreStart = vi.mocked(pipelineStore.start);
 const mockPipelineStoreStop = vi.mocked(pipelineStore.stop);
 
-const day = (n: number) => ({
+const day = (n: number, position = n) => ({
   day: n,
+  position,
   title: `Title ${n}`,
   focus: `focus ${n}`,
   collocations: ["kava"],
@@ -133,6 +134,7 @@ describe("/c/[curriculumId] page", () => {
         days: [
           {
             day: 1,
+            position: 1,
             state: "ready",
             lesson_id: "l1",
             has_audio: true,
@@ -160,6 +162,7 @@ describe("/c/[curriculumId] page", () => {
         days: [
           {
             day: 2,
+            position: 2,
             state: "failed",
             lesson_id: null,
             has_audio: false,
@@ -192,6 +195,7 @@ describe("/c/[curriculumId] page", () => {
         days: [
           {
             day: 3,
+            position: 3,
             state: "generating",
             lesson_id: null,
             has_audio: false,
@@ -222,6 +226,7 @@ describe("/c/[curriculumId] page", () => {
         days: [
           {
             day: 2,
+            position: 2,
             state: "queued",
             lesson_id: null,
             has_audio: false,
@@ -286,6 +291,7 @@ describe("/c/[curriculumId] page", () => {
         days: [
           {
             day: 1,
+            position: 1,
             state: "failed",
             lesson_id: null,
             has_audio: false,
@@ -306,7 +312,9 @@ describe("/c/[curriculumId] page", () => {
 
   it("loads and maps getCurriculumProgress into progress state", async () => {
     const { api: mockApi } = await import("$lib/api");
-    vi.mocked(mockApi.getCurriculumProgress).mockResolvedValueOnce([{ day: 1, lesson_id: "l1" }]);
+    vi.mocked(mockApi.getCurriculumProgress).mockResolvedValueOnce([
+      { day: 1, position: 1, lesson_id: "l1" },
+    ]);
 
     render(Page, { props: { data: { curriculum } } });
     await waitFor(() => {
@@ -332,6 +340,7 @@ describe("/c/[curriculumId] page", () => {
           timestamp: 1,
           curriculum_id: "cid-1",
           day: 1,
+          position: 1,
           state: "ready",
           message: "done",
         },

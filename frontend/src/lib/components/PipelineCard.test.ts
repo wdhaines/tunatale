@@ -16,6 +16,7 @@ const DAYS_PARTIAL: PipelineStatus = {
   days: [
     {
       day: 1,
+      position: 1,
       state: "generating",
       lesson_id: null,
       has_audio: false,
@@ -25,6 +26,7 @@ const DAYS_PARTIAL: PipelineStatus = {
     },
     {
       day: 2,
+      position: 2,
       state: "queued",
       lesson_id: null,
       has_audio: false,
@@ -34,6 +36,7 @@ const DAYS_PARTIAL: PipelineStatus = {
     },
     {
       day: 3,
+      position: 3,
       state: "failed",
       lesson_id: "l3",
       has_audio: false,
@@ -43,6 +46,7 @@ const DAYS_PARTIAL: PipelineStatus = {
     },
     {
       day: 4,
+      position: 4,
       state: "ready",
       lesson_id: "l4",
       has_audio: true,
@@ -71,6 +75,18 @@ describe("PipelineCard", () => {
     expect(getByText("Day 2")).toBeTruthy();
     expect(getByText("Day 3")).toBeTruthy();
     expect(getByText("Day 4")).toBeTruthy();
+  });
+
+  it("labels rows by position, matching the day picker after a deletion", () => {
+    const gappy: PipelineStatus = {
+      active: true,
+      days: [{ ...DAYS_PARTIAL.days[0], day: 7, position: 2 }],
+    };
+    const { getByText, queryByText } = render(PipelineCard, {
+      props: { status: gappy, curriculumId: "cid-1" },
+    });
+    expect(getByText("Day 2")).toBeTruthy();
+    expect(queryByText("Day 7")).toBeNull();
   });
 
   it("shows state badge for each day", () => {

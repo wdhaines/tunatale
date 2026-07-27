@@ -67,6 +67,13 @@
 
 	let isListened = $derived(listenedStore.has(data.lesson.id));
 
+	// `lesson.day` is the stable key and goes gappy as days are deleted; the plan's
+	// position is what the day picker shows, so label with that. Falls back to the
+	// key for a lesson whose day is no longer in the plan (deleted in another tab).
+	let dayPosition = $derived(
+		data.curriculum.days.find((d) => d.day === data.lesson.day)?.position ?? data.lesson.day
+	);
+
 	// SvelteKit reuses this component on same-route param changes (e.g. the
 	// Regenerate button's goto, or lesson→lesson nav). The untracked local
 	// copies above must follow `data` instead of staying frozen on the prior
@@ -126,7 +133,7 @@
 
 	async function handleRegenerate() {
 		const confirmed = window.confirm(
-			`Regenerate Day ${data.lesson.day}? This creates a new version of the dialogue using the ` +
+			`Regenerate Day ${dayPosition}? This creates a new version of the dialogue using the ` +
 				`current generation prompt. Your existing cards are kept; new vocabulary and ` +
 				`morphology drills are added on the next listen + sync.`
 		);
@@ -665,7 +672,7 @@
 		{/if}
 		<div class="regen-row">
 			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
-				{regenerating ? 'Regenerating…' : `Regenerate Day ${data.lesson.day}`}
+				{regenerating ? 'Regenerating…' : `Regenerate Day ${dayPosition}`}
 			</button>
 			<!-- Regeneration hits the LLM, so surface the quota chip here to track usage. -->
 			<RateLimitWidget />
@@ -702,7 +709,7 @@
 				onblur={handleDeleteDayBlur}
 				disabled={deletingDay}
 			>
-				{confirmingDeleteDay ? 'Confirm delete' : `Delete day ${data.lesson.day}`}
+				{confirmingDeleteDay ? 'Confirm delete' : `Delete day ${dayPosition}`}
 			</button>
 		</div>
 	</details>

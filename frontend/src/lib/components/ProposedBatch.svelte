@@ -25,7 +25,7 @@
 		{#each proposed.days as d (d.day)}
 			<article class="day-card">
 				<header>
-					<span class="day-num">Day {d.day}</span>
+					<span class="day-num">Day {d.position}</span>
 					<span class="title">{d.title}</span>
 				</header>
 				<p class="focus">{d.focus}</p>

@@ -10,8 +10,9 @@ vi.mock("$lib/stores/listened.svelte", () => ({
   listenedStore: { has: vi.fn().mockReturnValue(false) },
 }));
 
-const day = (n: number) => ({
+const day = (n: number, position = n) => ({
   day: n,
+  position,
   title: `Title ${n}`,
   focus: `focus ${n}`,
   collocations: ["kava"],
@@ -37,6 +38,30 @@ describe("DayPicker", () => {
     expect(buttons).toHaveLength(3);
     expect(buttons[0].textContent).toContain("Day 1");
     expect(buttons[2].textContent).toContain("Day 3");
+  });
+
+  it("numbers buttons by position, so a deleted day leaves no gap", () => {
+    // day 3 was deleted: the keys are 1, 2, 4 but the learner sees Day 1-3.
+    const gappy: CurriculumSummary = {
+      ...curriculum,
+      days: [day(1, 1), day(2, 2), day(4, 3)],
+    };
+    const { getAllByRole } = render(DayPicker, {
+      props: { curriculum: gappy, onSelectDay: vi.fn() },
+    });
+    const labels = getAllByRole("button").map((b) => b.textContent?.trim());
+    expect(labels).toEqual(["Day 1 · Title 1", "Day 2 · Title 2", "Day 3 · Title 4"]);
+  });
+
+  it("still selects by the day key, not the displayed position", async () => {
+    const onSelectDay = vi.fn().mockResolvedValue(undefined);
+    const gappy: CurriculumSummary = {
+      ...curriculum,
+      days: [day(1, 1), day(2, 2), day(4, 3)],
+    };
+    const { getByText } = render(DayPicker, { props: { curriculum: gappy, onSelectDay } });
+    await fireEvent.click(getByText(/Day 3 ·/));
+    expect(onSelectDay).toHaveBeenCalledWith(4);
   });
 
   it("shows each day's title on its button", () => {

@@ -212,6 +212,63 @@ class TestCurriculum:
         with pytest.raises(ValueError):
             CurriculumDay(day=0, title="x", focus="x", collocations=[], learning_objective="x")
 
+    def test_day_title_drops_stale_day_prefix(self):
+        """The LLM's embedded number drifts out of step with the day key — drop it."""
+        day = CurriculumDay(day=6, title="Day 5: The Trail Ends", focus="x", collocations=[], learning_objective="x")
+        assert day.title == "The Trail Ends"
+
+    def test_stored_day_title_prefix_is_dropped_on_load(self):
+        """Already-persisted titles self-heal on read — no migration needed."""
+        raw = json.dumps(
+            {
+                "id": "c1",
+                "topic": "t",
+                "language_code": "sl",
+                "cefr_level": "A2",
+                "days": [
+                    {
+                        "day": 6,
+                        "title": "Day 5: The Trail Ends",
+                        "focus": "x",
+                        "collocations": [],
+                        "learning_objective": "x",
+                        "story_guidance": "",
+                    }
+                ],
+                "metadata": {},
+            }
+        )
+        assert Curriculum.from_json(raw).days[0].title == "The Trail Ends"
+
+    def test_day_positions_close_gaps_left_by_deleted_days(self):
+        """``day`` is a stable key and is never renumbered; ``position`` is what the UI shows."""
+        curriculum = Curriculum(
+            id="c1",
+            topic="t",
+            language_code="sl",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(day=d, title=f"t{d}", focus="x", collocations=[], learning_objective="x")
+                for d in (1, 2, 3, 4, 6)
+            ],
+        )
+        assert curriculum.day_positions() == {1: 1, 2: 2, 3: 3, 4: 4, 6: 5}
+
+    def test_day_positions_follow_day_order_not_list_order(self):
+        curriculum = Curriculum(
+            id="c1",
+            topic="t",
+            language_code="sl",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(day=d, title=f"t{d}", focus="x", collocations=[], learning_objective="x") for d in (7, 2)
+            ],
+        )
+        assert curriculum.day_positions() == {2: 1, 7: 2}
+
+    def test_day_positions_empty_curriculum(self):
+        assert Curriculum(id="c1", topic="t", language_code="sl", cefr_level="A2").day_positions() == {}
+
 
 class TestLesson:
     """Tests for Lesson/Section structure and JSON serialization."""
@@ -236,6 +293,15 @@ class TestLesson:
     def test_roundtrip_json(self):
         original = _make_lesson()
         assert_json_roundtrip(original)
+
+    def test_title_drops_stale_day_prefix(self):
+        """The story LLM's own day number is not authoritative — the UI supplies it."""
+        lesson = Lesson(title="Day 5: The Trail Ends", language_code="sl")
+        assert lesson.title == "The Trail Ends"
+
+    def test_stored_title_prefix_is_dropped_on_load(self):
+        raw = json.dumps({"title": "Day 5: The Trail Ends", "language_code": "sl"})
+        assert Lesson.from_json(raw).title == "The Trail Ends"
 
     def test_lesson_with_key_phrases_roundtrip(self):
         lesson = _make_lesson()

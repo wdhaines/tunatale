@@ -175,7 +175,10 @@ async def plan_commit(curriculum_id: str, request: Request):
 
     days = [CurriculumDay(**d) for d in proposed["days"]]
     curriculum.days.extend(days)
-    first, last = days[0].day, days[-1].day
+    # Chat events read in positions, like every other learner-facing "Day N" —
+    # the keys can be 4-5 for what the picker shows as days 3-4.
+    positions = curriculum.day_positions()
+    first, last = positions[days[0].day], positions[days[-1].day]
     label = f"day {first}" if first == last else f"days {first}-{last}"
     state["chat"].append({"role": "event", "content": f"Committed {label}."})
     state["proposed"] = None
@@ -241,13 +244,27 @@ async def get_curriculum(curriculum_id: str, request: Request):
     curriculum = store.get_curriculum(curriculum_id)
     if curriculum is None:
         raise HTTPException(status_code=404, detail="Curriculum not found")
+    positions = curriculum.day_positions()
+    days = sorted((asdict(d) for d in curriculum.days), key=lambda d: d["day"])
+    for entry in days:
+        entry["position"] = positions[entry["day"]]
+
+    # An uncommitted batch is numbered off the highest committed day key, so its
+    # positions continue the committed sequence rather than matching those keys.
+    proposed = get_planner_state(curriculum)["proposed"]
+    if proposed is not None:
+        proposed = {
+            **proposed,
+            "days": [{**d, "position": len(days) + i} for i, d in enumerate(proposed["days"], start=1)],
+        }
+
     return {
         "id": curriculum_id,
         "topic": curriculum.topic,
         "language_code": curriculum.language_code,
         "cefr_level": curriculum.cefr_level,
-        "days": sorted((asdict(d) for d in curriculum.days), key=lambda d: d["day"]),
-        "proposed": get_planner_state(curriculum)["proposed"],
+        "days": days,
+        "proposed": proposed,
         "generation_mode": curriculum.metadata.get("generation_mode", "auto"),
     }
 
@@ -255,9 +272,16 @@ async def get_curriculum(curriculum_id: str, request: Request):
 @router.get("/{curriculum_id}/progress")
 async def get_curriculum_progress(curriculum_id: str, request: Request):
     store = request.state.content_store
-    if store.get_curriculum(curriculum_id) is None:
+    curriculum = store.get_curriculum(curriculum_id)
+    if curriculum is None:
         raise HTTPException(status_code=404, detail="Curriculum not found")
-    return store.get_lesson_days(curriculum_id)
+    # Fall back to the day key for a lesson whose day is no longer in the plan —
+    # it has no position, but a stale label beats a missing one.
+    positions = curriculum.day_positions()
+    return [
+        {**entry, "position": positions.get(entry["day"], entry["day"])}
+        for entry in store.get_lesson_days(curriculum_id)
+    ]
 
 
 @router.get("/{curriculum_id}/source", status_code=200)
@@ -287,11 +311,14 @@ async def delete_day(curriculum_id: str, day: int, request: Request):
     if day not in {d.day for d in curriculum.days}:
         raise HTTPException(status_code=404, detail=f"Unknown day {day}")
 
+    # Read the position before dropping the day — afterwards it has none, and the
+    # event should name the day the way the UI did when the user deleted it.
+    position = curriculum.day_positions()[day]
     curriculum.days = [d for d in curriculum.days if d.day != day]
     store.delete_lessons_for_day(curriculum_id, day)
 
     state = get_planner_state(curriculum)
-    state["chat"].append({"role": "event", "content": f"Deleted day {day}."})
+    state["chat"].append({"role": "event", "content": f"Deleted day {position}."})
     curriculum.metadata["planner"] = state
     store.save_curriculum(curriculum_id, curriculum)
 

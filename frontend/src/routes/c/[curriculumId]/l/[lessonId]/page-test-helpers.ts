@@ -76,6 +76,7 @@ export const curriculum = {
   days: [
     {
       day: 1,
+      position: 1,
       title: "Title 1",
       focus: "f",
       collocations: ["kava"],

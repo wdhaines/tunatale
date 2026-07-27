@@ -7,6 +7,7 @@ import type { APIRequestContext, Page } from '@playwright/test';
 
 const CANNED_DAY = {
 	day: 1,
+	position: 1,
 	title: 'First Sip',
 	focus: 'Ordering at the counter',
 	collocations: ['Ena kava prosim'],
@@ -56,6 +57,7 @@ function dayPayload(state: string) {
 		days: [
 			{
 				day: 1,
+				position: 1,
 				state,
 				lesson_id: ready ? 'lesson-e2e-1' : null,
 				has_audio: ready,

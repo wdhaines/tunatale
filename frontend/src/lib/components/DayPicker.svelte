@@ -49,7 +49,11 @@
 			onclick={() => handleClick(d.day)}
 			disabled={loadingDay !== null}
 		>
-			{loadingDay === d.day ? '…' : state === 'listened' ? `✓ Day ${d.day} · ${d.title}` : `Day ${d.day} · ${d.title}`}
+			{loadingDay === d.day
+				? '…'
+				: state === 'listened'
+					? `✓ Day ${d.position} · ${d.title}`
+					: `Day ${d.position} · ${d.title}`}
 		</button>
 	{/each}
 </div>

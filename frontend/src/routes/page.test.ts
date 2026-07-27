@@ -95,13 +95,13 @@ describe("Per-curriculum progress", () => {
       { id: "slug-abc123", topic: "Ordering Coffee", created_at: "2026-04-10 12:00:00" },
     ]);
     mockGetCurriculumProgress.mockResolvedValue([
-      { day: 1, lesson_id: "lesson-1" },
-      { day: 2, lesson_id: "lesson-2" },
-      { day: 3, lesson_id: "lesson-3" },
-      { day: 4, lesson_id: "lesson-4" },
-      { day: 5, lesson_id: "lesson-5" },
-      { day: 6, lesson_id: "lesson-6" },
-      { day: 7, lesson_id: "lesson-7" },
+      { day: 1, position: 1, lesson_id: "lesson-1" },
+      { day: 2, position: 2, lesson_id: "lesson-2" },
+      { day: 3, position: 3, lesson_id: "lesson-3" },
+      { day: 4, position: 4, lesson_id: "lesson-4" },
+      { day: 5, position: 5, lesson_id: "lesson-5" },
+      { day: 6, position: 6, lesson_id: "lesson-6" },
+      { day: 7, position: 7, lesson_id: "lesson-7" },
     ]);
     mockListenedHas.mockImplementation((id: string) =>
       ["lesson-1", "lesson-2", "lesson-3"].includes(id),
@@ -116,14 +116,33 @@ describe("Per-curriculum progress", () => {
     expect(continueLink.getAttribute("href")).toBe("/c/slug-abc123/l/lesson-4");
   });
 
+  it("labels the Continue link by position, so a deleted day doesn't skip a number", async () => {
+    mockListCurricula.mockResolvedValue([
+      { id: "slug-abc123", topic: "Ordering Coffee", created_at: "2026-04-10 12:00:00" },
+    ]);
+    // Day 2 was deleted: the third lesson is keyed day 4 but is the plan's day 3.
+    mockGetCurriculumProgress.mockResolvedValue([
+      { day: 1, position: 1, lesson_id: "lesson-1" },
+      { day: 3, position: 2, lesson_id: "lesson-3" },
+      { day: 4, position: 3, lesson_id: "lesson-4" },
+    ]);
+    mockListenedHas.mockImplementation((id: string) => id === "lesson-1");
+
+    const { findByRole } = render(Page);
+
+    const continueLink = (await findByRole("link", { name: /Continue/ })) as HTMLAnchorElement;
+    expect(continueLink.textContent).toContain("Day 2");
+    expect(continueLink.getAttribute("href")).toBe("/c/slug-abc123/l/lesson-3");
+  });
+
   it("shows 'All N days listened ✓' and a Revisit link to the last day when fully listened", async () => {
     mockListCurricula.mockResolvedValue([
       { id: "slug-abc123", topic: "Ordering Coffee", created_at: "2026-04-10 12:00:00" },
     ]);
     mockGetCurriculumProgress.mockResolvedValue([
-      { day: 1, lesson_id: "lesson-1" },
-      { day: 2, lesson_id: "lesson-2" },
-      { day: 3, lesson_id: "lesson-3" },
+      { day: 1, position: 1, lesson_id: "lesson-1" },
+      { day: 2, position: 2, lesson_id: "lesson-2" },
+      { day: 3, position: 3, lesson_id: "lesson-3" },
     ]);
     mockListenedHas.mockReturnValue(true);
 
@@ -172,15 +191,15 @@ describe("Per-curriculum progress", () => {
     mockGetCurriculumProgress.mockImplementation(async (id: string) => {
       if (id === "curric-a") {
         return [
-          { day: 1, lesson_id: "a-lesson-1" },
-          { day: 2, lesson_id: "a-lesson-2" },
+          { day: 1, position: 1, lesson_id: "a-lesson-1" },
+          { day: 2, position: 2, lesson_id: "a-lesson-2" },
         ];
       }
       return [
-        { day: 1, lesson_id: "b-lesson-1" },
-        { day: 2, lesson_id: "b-lesson-2" },
-        { day: 3, lesson_id: "b-lesson-3" },
-        { day: 4, lesson_id: "b-lesson-4" },
+        { day: 1, position: 1, lesson_id: "b-lesson-1" },
+        { day: 2, position: 2, lesson_id: "b-lesson-2" },
+        { day: 3, position: 3, lesson_id: "b-lesson-3" },
+        { day: 4, position: 4, lesson_id: "b-lesson-4" },
       ];
     });
     mockListenedHas.mockImplementation((id: string) => id === "a-lesson-1" || id === "b-lesson-1");
@@ -199,9 +218,9 @@ describe("Per-curriculum progress", () => {
       { id: "curric-a", topic: "Ordering Coffee", created_at: "2026-04-10 12:00:00" },
     ]);
     mockGetCurriculumProgress.mockResolvedValue([
-      { day: 1, lesson_id: "lesson-1" },
-      { day: 2, lesson_id: "lesson-2" },
-      { day: 3, lesson_id: "lesson-3" },
+      { day: 1, position: 1, lesson_id: "lesson-1" },
+      { day: 2, position: 2, lesson_id: "lesson-2" },
+      { day: 3, position: 3, lesson_id: "lesson-3" },
     ]);
     mockListenedHas.mockImplementation((id: string) => listenedIds.has(id));
 

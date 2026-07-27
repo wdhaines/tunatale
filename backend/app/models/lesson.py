@@ -9,6 +9,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 
+from app.common.titles import strip_day_prefix
 from app.models.language import NARRATOR_VOICE
 
 
@@ -72,6 +73,11 @@ class Lesson:
     narrator_voice: str = NARRATOR_VOICE
     key_phrases: list[KeyPhraseInfo] = field(default_factory=list)
     generation_metadata: dict = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # The story LLM writes its own (unreliable) day number into the title;
+        # the UI numbers days from their position instead. See app/common/titles.py.
+        self.title = strip_day_prefix(self.title)
 
     def to_json(self) -> str:
         data = {

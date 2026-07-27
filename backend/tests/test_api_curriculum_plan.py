@@ -343,6 +343,21 @@ class TestPlanCommit:
         chat = store.get_curriculum("trip").metadata["planner"]["chat"]
         assert chat == [{"role": "event", "content": "Committed day 1."}]
 
+    async def test_commit_event_labels_days_by_position(self):
+        """Chat events use the same numbering the day picker shows, not the day keys."""
+        # Day 2 was deleted earlier, so the batch is keyed 4-5 but reads as days 3-4.
+        proposed = {"start_day": 4, "days": [asdict(_day(4)), asdict(_day(5))]}
+        curriculum = _planned_curriculum(proposed=proposed)
+        curriculum.days.extend([_day(1), _day(3)])
+        store = _setup(curriculum)
+
+        async with _client() as client:
+            response = await client.post("/api/curriculum/trip/plan/commit", json={})
+
+        assert response.status_code == 200
+        chat = store.get_curriculum("trip").metadata["planner"]["chat"]
+        assert chat == [{"role": "event", "content": "Committed days 3-4."}]
+
 
 class TestPlanReset:
     async def test_reset_unknown_curriculum_404(self):
@@ -518,6 +533,18 @@ class TestDeleteDay:
         assert len(saved["chat"]) == 1
         assert saved["chat"][0]["role"] == "event"
         assert "day 1" in saved["chat"][0]["content"].lower()
+
+    async def test_delete_day_event_labels_the_day_by_its_position(self):
+        """The event names the day the way the picker did — its position, not its key."""
+        curriculum = _planned_curriculum()
+        curriculum.days.extend([_day(1), _day(4), _day(5)])
+        store = _setup(curriculum)
+
+        async with _client() as client:
+            await client.delete("/api/curriculum/trip/days/4")
+
+        chat = store.get_curriculum("trip").metadata["planner"]["chat"]
+        assert chat == [{"role": "event", "content": "Deleted day 2."}]
 
     async def test_delete_day_unknown_curriculum_404(self):
         _setup()

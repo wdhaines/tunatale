@@ -29,7 +29,8 @@
 
 	// C3: raw day-lists fetched once per curriculum; progress is derived from
 	// listenedStore so it reacts to late hydration / in-session markListened.
-	let daysById: Record<string, Array<{ day: number; lesson_id: string }>> = $state({});
+	let daysById: Record<string, Array<{ day: number; position: number; lesson_id: string }>> =
+		$state({});
 	let progressById: Record<string, CardProgress> = $derived.by(() => {
 		const next: Record<string, CardProgress> = {};
 		for (const [id, days] of Object.entries(daysById)) {
@@ -81,7 +82,7 @@
 				}
 			})
 		);
-		const next: Record<string, Array<{ day: number; lesson_id: string }>> = {};
+		const next: Record<string, Array<{ day: number; position: number; lesson_id: string }>> = {};
 		for (const [id, days] of entries) {
 			if (days) next[id] = days;
 		}
@@ -90,7 +91,7 @@
 
 	function computeProgress(
 		curriculumId: string,
-		days: Array<{ day: number; lesson_id: string }>
+		days: Array<{ day: number; position: number; lesson_id: string }>
 	): CardProgress | null {
 		if (days.length === 0) return null;
 
@@ -102,8 +103,8 @@
 		const allListened = !firstUnlistened;
 		const target = firstUnlistened ?? sorted[sorted.length - 1];
 		const continueLabel = allListened
-			? `Revisit Day ${target.day}`
-			: `Continue → Day ${target.day}`;
+			? `Revisit Day ${target.position}`
+			: `Continue → Day ${target.position}`;
 		const continueHref = `/c/${curriculumId}/l/${target.lesson_id}`;
 
 		return { listenedCount, totalDays, percent, allListened, continueLabel, continueHref };

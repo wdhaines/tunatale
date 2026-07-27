@@ -24,6 +24,7 @@ const ACTIVE_STATUS = {
   days: [
     {
       day: 1,
+      position: 1,
       state: "generating" as const,
       lesson_id: null,
       has_audio: false,
@@ -33,6 +34,7 @@ const ACTIVE_STATUS = {
     },
     {
       day: 2,
+      position: 2,
       state: "queued" as const,
       lesson_id: null,
       has_audio: false,
@@ -48,6 +50,7 @@ const IDLE_STATUS = {
   days: [
     {
       day: 1,
+      position: 1,
       state: "ready" as const,
       lesson_id: "l1",
       has_audio: true,

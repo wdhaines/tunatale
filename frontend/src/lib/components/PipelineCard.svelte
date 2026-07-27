@@ -30,7 +30,7 @@
 		<h3 class="pipeline-heading">Pipeline</h3>
 		{#each status.days as d (d.day)}
 			<div class="pipeline-row">
-				<span class="day-label">Day {d.day}</span>
+				<span class="day-label">Day {d.position}</span>
 				<span class="state-badge state-{d.state}">{d.state}</span>
 				<span class="detail-line">{d.detail ?? ''}</span>
 				<span class="actions">

@@ -11,6 +11,7 @@ const proposed: Batch = {
   days: [
     {
       day: 3,
+      position: 3,
       title: "At the market",
       focus: "buying produce",
       collocations: ["koliko stane", "eno kavo"],
@@ -19,6 +20,7 @@ const proposed: Batch = {
     },
     {
       day: 4,
+      position: 4,
       title: "Ordering lunch",
       focus: "restaurant phrases",
       collocations: ["jedilni list"],
@@ -41,6 +43,16 @@ describe("ProposedBatch", () => {
   it("renders the day range header", () => {
     const { getByText } = setup();
     expect(getByText(/proposed: days 3–4/i)).toBeTruthy();
+  });
+
+  it("numbers proposed days by position, not by their day keys", () => {
+    const afterDeletion: Batch = {
+      start_day: 8,
+      days: [{ ...proposed.days[0], day: 8, position: 6 }],
+    };
+    const { getByText, queryByText } = setup({ proposed: afterDeletion });
+    expect(getByText(/proposed: day 6/i)).toBeTruthy();
+    expect(queryByText("Day 8")).toBeNull();
   });
 
   it("singular header for a one-day batch", () => {

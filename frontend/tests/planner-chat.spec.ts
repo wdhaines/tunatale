@@ -4,6 +4,7 @@ const CANNED_TURN_REPLY = "Here are two ideas for your coffee curriculum!";
 const CANNED_DAYS = [
 	{
 		day: 1,
+		position: 1,
 		title: "First Sip",
 		focus: "Ordering at the counter",
 		collocations: ["Ena kava prosim", "Kavo z mlekom", "Koliko stane"],
@@ -12,6 +13,7 @@ const CANNED_DAYS = [
 	},
 	{
 		day: 2,
+		position: 2,
 		title: "Pastry Pairing",
 		focus: "Ordering food alongside coffee",
 		collocations: ["Ena kava in rogljiček", "Kaj priporočate", "Račun prosim"],

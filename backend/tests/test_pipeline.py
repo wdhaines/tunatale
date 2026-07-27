@@ -887,6 +887,36 @@ class TestStatusFor:
         assert len(result["days"]) == 1
         assert result["days"][0]["day"] == 1
 
+    async def test_status_for_positions_come_from_the_curriculum_not_the_row_order(self, pipeline):
+        """Rows are skipped when a day has no work, so position must not be the row index."""
+        store = sl_store(pipeline)
+        cid = "cur-1"
+        store.save_curriculum(
+            cid,
+            Curriculum(
+                id=cid,
+                topic="t",
+                language_code="sl",
+                cefr_level="A2",
+                days=[
+                    CurriculumDay(day=d, title=f"D{d}", focus="f", collocations=["c"], learning_objective="lo")
+                    for d in (1, 2, 5)
+                ],
+            ),
+        )
+        # Day 2 has no record and no lesson → skipped; days 1 and 5 are positions 1 and 3.
+        for day in (1, 5):
+            pipeline._jobs[("sl", cid, day)] = {
+                "state": "ready",
+                "kind": "generate",
+                "force": False,
+                "lesson_id": None,
+                "attempts": 0,
+                "updated_at": 0,
+            }
+        result = pipeline.status_for("sl", cid)
+        assert [(d["day"], d["position"]) for d in result["days"]] == [(1, 1), (5, 3)]
+
 
 class TestRetryEdgeCases:
     async def test_retry_ready_day_with_job_record(self, pipeline):

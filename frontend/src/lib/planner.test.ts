@@ -2,10 +2,11 @@ import { describe, it, expect } from "vitest";
 import type { ProposedBatch } from "./api";
 import { appendTurn, batchRange, clampBatchSize, commitEvent } from "./planner";
 
-const batch = (start: number, count: number): ProposedBatch => ({
+const batch = (start: number, count: number, firstPosition = start): ProposedBatch => ({
   start_day: start,
   days: Array.from({ length: count }, (_, i) => ({
     day: start + i,
+    position: firstPosition + i,
     title: `Day ${start + i}`,
     focus: "f",
     collocations: ["a"],
@@ -35,6 +36,10 @@ describe("commitEvent", () => {
   it("single-day batch → singular message", () => {
     expect(commitEvent(batch(1, 1))).toEqual({ role: "event", content: "Committed day 1." });
   });
+
+  it("numbers by position so the mirror matches the server's persisted event", () => {
+    expect(commitEvent(batch(8, 2, 6))).toEqual({ role: "event", content: "Committed days 6-7." });
+  });
 });
 
 describe("batchRange", () => {
@@ -44,6 +49,11 @@ describe("batchRange", () => {
 
   it("single day → start equals end", () => {
     expect(batchRange(batch(9, 1))).toEqual({ start: 9, end: 9 });
+  });
+
+  it("reads positions, not day keys — a batch after a deletion reads lower", () => {
+    // Keyed 8-9 (the plan's highest key is 7) but only the 6th and 7th days.
+    expect(batchRange(batch(8, 2, 6))).toEqual({ start: 6, end: 7 });
   });
 });
 

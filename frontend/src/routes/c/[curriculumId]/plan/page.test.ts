@@ -56,8 +56,9 @@ const mockCommitPlan = vi.mocked(api.commitPlan);
 const mockResetPlanChat = vi.mocked(api.resetPlanChat);
 const mockPipelineStoreStart = vi.mocked(pipelineStore.start);
 
-const day = (n: number): DayPlan => ({
+const day = (n: number, position = n): DayPlan => ({
   day: n,
+  position,
   title: `Day ${n} title`,
   focus: `focus ${n}`,
   collocations: ["kava"],

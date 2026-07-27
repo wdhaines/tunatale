@@ -135,6 +135,9 @@ class LessonPipeline:
         days_list: list[dict] = []
         active = False
         if curriculum:
+            # Rows are skipped for days with no work, so position can't be the row
+            # index — it has to come from the curriculum's own day ordering.
+            positions = curriculum.day_positions()
             for curriculum_day in sorted(curriculum.days, key=lambda d: d.day):
                 day = curriculum_day.day
                 key = (language_code, curriculum_id, day)
@@ -150,6 +153,7 @@ class LessonPipeline:
                     days_list.append(
                         {
                             "day": day,
+                            "position": positions[day],
                             "state": record["state"],
                             "lesson_id": lesson_id,
                             "has_audio": has_audio,
@@ -166,6 +170,7 @@ class LessonPipeline:
                         days_list.append(
                             {
                                 "day": day,
+                                "position": positions[day],
                                 "state": "ready",
                                 "lesson_id": lesson_id,
                                 "has_audio": bool(audio_rows),

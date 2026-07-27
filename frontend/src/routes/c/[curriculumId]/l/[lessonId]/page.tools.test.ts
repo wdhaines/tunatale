@@ -337,6 +337,37 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       expect(getByText("Delete day 1")).toBeTruthy();
     });
 
+    it("labels the buttons by plan position, not by the lesson's day key", async () => {
+      // Day 1 was deleted: this lesson is keyed day 3 but is the plan's day 2.
+      const gappy = {
+        curriculum: {
+          ...curriculum,
+          days: [
+            { ...curriculum.days[0], day: 2, position: 1 },
+            { ...curriculum.days[0], day: 3, position: 2 },
+          ],
+        },
+        lesson: { ...lesson, day: 3 },
+        audio,
+        transcript,
+      };
+      const { getByText, queryByText } = render(Page, { props: { data: gappy } });
+      expect(getByText("Delete day 2")).toBeTruthy();
+      expect(getByText("Regenerate Day 2")).toBeTruthy();
+      expect(queryByText("Delete day 3")).toBeNull();
+    });
+
+    it("falls back to the day key when the day is no longer in the plan", async () => {
+      const orphaned = {
+        curriculum: { ...curriculum, days: [] },
+        lesson: { ...lesson, day: 9 },
+        audio,
+        transcript,
+      };
+      const { getByText } = render(Page, { props: { data: orphaned } });
+      expect(getByText("Delete day 9")).toBeTruthy();
+    });
+
     it("requires a second click to confirm before deleting", async () => {
       const { getByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },

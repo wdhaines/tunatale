@@ -21,10 +21,15 @@ export function appendTurn(
   return [...messages, { role: "user", content: userMessage }, { role: "planner", content: reply }];
 }
 
+/**
+ * The batch's span in learner-facing positions, not day keys — a batch proposed
+ * after a deletion is keyed off the highest day (e.g. 7, 8) while it reads as
+ * the 6th and 7th days of the plan.
+ */
 export function batchRange(proposed: ProposedBatch): { start: number; end: number } {
   return {
-    start: proposed.days[0].day,
-    end: proposed.days[proposed.days.length - 1].day,
+    start: proposed.days[0].position,
+    end: proposed.days[proposed.days.length - 1].position,
   };
 }
 
