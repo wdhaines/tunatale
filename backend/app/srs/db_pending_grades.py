@@ -92,6 +92,19 @@ class DbPendingGradesMixin:
             )
             self._commit(conn)
 
+    def clear_pending_grades_for_lesson(self, lesson_id: str) -> None:
+        """Drop every pending row this lesson owns.
+
+        Called at the top of a listen so the listen's own staging pass is the
+        lesson's current assessment rather than an addition to the last one —
+        a row the user just skipped must not survive from the previous listen.
+        Lesson-scoped on purpose: another lesson's rows are not this listen's to
+        discard.
+        """
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM pending_listen_grades WHERE lesson_id = ?", (lesson_id,))
+            self._commit(conn)
+
     def count_pending_grades(self, lesson_id: str) -> int:
         """Return the number of pending grade rows for a lesson."""
         with self._get_conn() as conn:

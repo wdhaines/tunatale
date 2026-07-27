@@ -680,6 +680,14 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     today = anki_today()
     today_start, today_end, end_of_day_utc = _listen_day_window()
 
+    # This listen IS the lesson's current assessment, not an addition to the
+    # last one. Reset the bucket first, then stage fresh below: without this
+    # "skip" (a bare `continue`) left the previous listen's autograde queued,
+    # so re-listening and skipping everything still offered the old rows in
+    # "Check your work". Lesson-scoped — another lesson's rows are not this
+    # listen's to discard.
+    db.clear_pending_grades_for_lesson(body.lesson_id)
+
     created_count = 0
     staged_count = 0
 
@@ -714,6 +722,12 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         grade_ctx["now"] = now
         grade_ctx["last_ms"] = last_ms
         grade_ctx["applied"] += 1
+        # The card has just been graded for real, so any pending row for it is
+        # stale — releasing it later would grade the same assessment a SECOND
+        # time (another schedule() off the advanced state, another revlog row).
+        # Not lesson-scoped: a row another lesson staged is equally stale now.
+        # Mirrors drill_feedback's release, which has always cleared here.
+        db.clear_pending_grade(collocation_id, Direction.RECOGNITION.value)
 
     # ── Per-listen creation budget (plan D1) ────────────────────────────
     # One listen queues at most one Anki-day's worth of new cards, net of

@@ -65,4 +65,5 @@ def test_public_method_count_pinned() -> None:
     # +stage_pending_grade, get_pending_grades, pending_grade_ids, get_pending_grade,
     #  clear_pending_grade, count_pending_grades (pending-listen-grades mixin)
     # +clear_pending_grade_by_guid (sync_pull clears by guid, not row id)
-    assert count == 123
+    # +clear_pending_grades_for_lesson (a listen resets its own bucket, then stages fresh)
+    assert count == 124

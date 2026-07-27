@@ -265,3 +265,62 @@ class TestConfirmationIsNotInferredFromPresence:
         assert _pending(db, "banka") is not None, "unconfirmed must stage, whatever the rating map says"
         assert _reps(db, "banka") == 5
         assert result["applied"] == 0
+
+
+class TestConfirmedGradesClearAnyPendingRow:
+    """Applying a confirmed grade must retire the card's pending row.
+
+    Regression 2026-07-27 (går, lue). ``_apply_grade_now`` schedules, revlogs and
+    flips dirty_fsrs but never cleared ``pending_listen_grades``, so a card
+    confirmed in the preview kept a stale row from an earlier listen. "Accept
+    all" would then grade it a SECOND time — another schedule() off the
+    already-advanced state plus another revlog row, i.e. two grades in the
+    user's Anki-mirrored schedule for one assessment. The per-card release path
+    (``drill_feedback``) has always cleared; the listen's confirm path did not —
+    the same "two routes handle it, one cleans up" asymmetry as the cross-lesson
+    leak.
+    """
+
+    def _stage(self, db, text: str, lesson_id: str = "lesson-1", rating: str = "good") -> int:
+        item = db.get_collocation(text)
+        cid = db.get_collocation_id_by_guid(item.guid)
+        assert cid is not None
+        db.stage_pending_grade(lesson_id, cid, "recognition", rating, "due")
+        return cid
+
+    async def test_a_confirmed_grade_clears_a_row_owned_by_another_lesson(self):
+        """Discriminating case: the per-listen bucket reset is lesson-scoped, so
+        only the confirm path itself can retire a row another lesson owns."""
+        db = _setup_lesson("Banka riba")
+        _seed_review_due(db, "banka")
+        self._stage(db, "banka", lesson_id="lesson-2")
+
+        await _listen({"lesson_id": "lesson-1", "word_ratings": {"banka": "easy"}, "confirmed_words": ["banka"]})
+
+        assert _pending(db, "banka") is None, "a just-graded card must not keep a pending row"
+
+    async def test_accept_all_does_not_re_grade_a_confirmed_card(self):
+        """The consequence the stale row had: a second grade on release.
+
+        Same-lesson, which is how går and lue actually hit it — the day-4 listen
+        confirmed a card its own earlier listen had staged.
+        """
+        db = _setup_lesson("Banka riba")
+        _seed_review_due(db, "banka")
+        self._stage(db, "banka")
+
+        await _listen({"lesson_id": "lesson-1", "word_ratings": {"banka": "easy"}, "confirmed_words": ["banka"]})
+        reps_after_confirm = _reps(db, "banka")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            commit = await client.post("/api/srs/lesson/lesson-1/commit-pending")
+        assert commit.status_code == 200, commit.text
+        assert commit.json()["applied"] == 0, "nothing left to release"
+
+        assert _reps(db, "banka") == reps_after_confirm, "the card was graded twice"
+        with db._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT COUNT(*) c FROM tt_revlog WHERE collocation_id ="
+                " (SELECT id FROM collocations WHERE text='banka')"
+            ).fetchone()
+        assert rows["c"] == 1, "one assessment must write exactly one revlog row"
