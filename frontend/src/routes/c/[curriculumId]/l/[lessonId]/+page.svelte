@@ -2,7 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
-	import type { LessonAudio, TranscriptData, ListenResponse } from '$lib/api';
+	import type { LessonAudio, TranscriptData, ListenResponse, PeerSyncResult } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import LessonPlayer from '$lib/components/LessonPlayer.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
@@ -198,8 +198,19 @@
 		}
 	}
 
+	// syncStore.lastResult is a session-lifetime singleton, so its PRESENCE is not
+	// an event — it stays set for the rest of the session after one sync. Treating
+	// it as an event meant every lesson opened afterwards re-announced "Synced
+	// with AnkiWeb" under its title and fired a redundant transcript refetch.
+	// Seed from the current value so a result that predates this mount counts as
+	// already handled; plain `let`, not $state, or writing it would re-run us.
+	let handledSyncResult: PeerSyncResult | null = syncStore.lastResult;
 	$effect(() => {
-		if (syncStore.lastResult) handleSyncResult();
+		const result = syncStore.lastResult;
+		if (result !== null && result !== handledSyncResult) {
+			handledSyncResult = result;
+			handleSyncResult();
+		}
 	});
 
 	// Pipeline lifecycle: poll render status while on this page; stop on destroy.

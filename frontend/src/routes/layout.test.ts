@@ -110,15 +110,15 @@ describe("root +layout.svelte", () => {
     expect(mark.getAttribute("alt")).toBe("");
   });
 
-  it("renders the Sync to AnkiWeb button in the global nav", () => {
+  it("renders the Sync with AnkiWeb button in the global nav", () => {
     const { getByText } = renderLayout();
-    expect(getByText("Sync to AnkiWeb")).toBeTruthy();
+    expect(getByText("Sync with AnkiWeb")).toBeTruthy();
   });
 
   it("sync button calls peerSync on click", async () => {
     mockPeerSync.mockResolvedValue(RESULT);
     const { getByText } = renderLayout();
-    await fireEvent.click(getByText("Sync to AnkiWeb"));
+    await fireEvent.click(getByText("Sync with AnkiWeb"));
     await waitFor(() => expect(mockPeerSync).toHaveBeenCalledWith(false));
   });
 
@@ -288,7 +288,7 @@ describe("root +layout.svelte", () => {
       fsrs_source: "cache",
     });
     const { queryByText, container } = renderLayout();
-    await waitFor(() => expect(queryByText("Sync to AnkiWeb")).toBeNull());
+    await waitFor(() => expect(queryByText("Sync with AnkiWeb")).toBeNull());
     expect(container.querySelector(".review-badge")).toBeNull();
   });
 
@@ -303,7 +303,7 @@ describe("root +layout.svelte", () => {
       fsrs_source: "cache",
     });
     const { findByText } = renderLayout();
-    await findByText("Sync to AnkiWeb");
+    await findByText("Sync with AnkiWeb");
     expect(await findByText("5")).toBeTruthy();
   });
 });

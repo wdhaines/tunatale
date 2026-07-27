@@ -122,6 +122,27 @@ describe("load function for /c/[curriculumId]/l/[lessonId]", () => {
       expect(await findByText("Synced with AnkiWeb")).toBeTruthy();
     });
 
+    it("does not re-announce a sync that happened before this lesson mounted", async () => {
+      // syncStore.lastResult is a session-lifetime singleton, so its PRESENCE is
+      // not an event. The effect treated it as one, so every lesson opened after
+      // a single sync re-showed "Synced with AnkiWeb" under the title and fired
+      // a redundant transcript refetch.
+      syncStore.notify(PEER_RESULT);
+      const preloaded = {
+        lesson_id: "l1",
+        key_phrases: [{ phrase: "kavo prosim", translation: "BEFORE sync" }],
+        dialogue_lines: [],
+      };
+
+      const { queryByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: preloaded } },
+      });
+      await waitFor(() => expect(queryByText("BEFORE sync")).toBeTruthy());
+
+      expect(queryByText("Synced with AnkiWeb")).toBeNull();
+      expect(mockGetTranscript).not.toHaveBeenCalled();
+    });
+
     it("shows an error if the post-sync transcript refresh fails (Error)", async () => {
       const before = {
         lesson_id: "l1",

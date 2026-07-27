@@ -52,7 +52,7 @@
 			disabled={syncLoading}
 			title="Sync TunaTale with AnkiWeb (Anki can stay open; changes reach AnkiDroid)."
 		>
-			{syncLoading ? 'Syncing…' : 'Sync to AnkiWeb'}
+			{syncLoading ? 'Syncing…' : 'Sync with AnkiWeb'}
 		</button>
 
 		{#if error}

@@ -31,14 +31,14 @@ describe("SyncButton", () => {
 
   it("renders the sync button", () => {
     const { getByText, queryByText } = render(SyncButton);
-    expect(getByText("Sync to AnkiWeb")).toBeTruthy();
+    expect(getByText("Sync with AnkiWeb")).toBeTruthy();
     expect(queryByText("Synced with AnkiWeb")).toBeNull();
   });
 
   it("calls peerSync on click", async () => {
     mockPeerSync.mockResolvedValue(RESULT);
     const { getByText } = render(SyncButton);
-    await fireEvent.click(getByText("Sync to AnkiWeb"));
+    await fireEvent.click(getByText("Sync with AnkiWeb"));
     await waitFor(() => expect(mockPeerSync).toHaveBeenCalledWith(false));
   });
 
@@ -46,7 +46,7 @@ describe("SyncButton", () => {
     let resolveSync: ((value: any) => void) | undefined;
     mockPeerSync.mockReturnValue(new Promise((r) => (resolveSync = r)));
     const { getByText } = render(SyncButton);
-    await fireEvent.click(getByText("Sync to AnkiWeb"));
+    await fireEvent.click(getByText("Sync with AnkiWeb"));
     expect(getByText("Syncing…")).toBeTruthy();
     resolveSync!(RESULT);
   });
@@ -55,7 +55,7 @@ describe("SyncButton", () => {
     const onSyncResult = vi.fn();
     mockPeerSync.mockResolvedValue(RESULT);
     const { getByText } = render(SyncButton, { props: { onSyncResult } });
-    await fireEvent.click(getByText("Sync to AnkiWeb"));
+    await fireEvent.click(getByText("Sync with AnkiWeb"));
     await waitFor(() =>
       expect(onSyncResult).toHaveBeenCalledWith(expect.objectContaining({ auth_success: true })),
     );
@@ -64,7 +64,7 @@ describe("SyncButton", () => {
   it("shows summary when sync succeeds (no onSyncResult)", async () => {
     mockPeerSync.mockResolvedValue(RESULT);
     const { getByText, findByText } = render(SyncButton);
-    await fireEvent.click(getByText("Sync to AnkiWeb"));
+    await fireEvent.click(getByText("Sync with AnkiWeb"));
     await findByText("Synced with AnkiWeb");
   });
 
@@ -73,7 +73,7 @@ describe("SyncButton", () => {
     try {
       mockPeerSync.mockResolvedValue(RESULT);
       const { getByText, queryByText } = render(SyncButton);
-      await fireEvent.click(getByText("Sync to AnkiWeb"));
+      await fireEvent.click(getByText("Sync with AnkiWeb"));
       await vi.advanceTimersByTimeAsync(0);
       await tick();
       expect(queryByText("Synced with AnkiWeb")).not.toBeNull();
@@ -89,14 +89,14 @@ describe("SyncButton", () => {
   it("sets error when peerSync fails with Error instance", async () => {
     mockPeerSync.mockRejectedValue(new Error("No AnkiWeb password found."));
     const { getByText, findByText } = render(SyncButton);
-    await fireEvent.click(getByText("Sync to AnkiWeb"));
+    await fireEvent.click(getByText("Sync with AnkiWeb"));
     expect(await findByText("No AnkiWeb password found.")).toBeTruthy();
   });
 
   it("sets error when peerSync fails with non-Error value", async () => {
     mockPeerSync.mockRejectedValue("string error");
     const { getByText, findByText } = render(SyncButton);
-    await fireEvent.click(getByText("Sync to AnkiWeb"));
+    await fireEvent.click(getByText("Sync with AnkiWeb"));
     expect(await findByText("string error")).toBeTruthy();
   });
 
@@ -104,12 +104,12 @@ describe("SyncButton", () => {
 
   it("renders nothing when syncAvailable is false", () => {
     const { container, queryByText } = render(SyncButton, { props: { syncAvailable: false } });
-    expect(queryByText("Sync to AnkiWeb")).toBeNull();
+    expect(queryByText("Sync with AnkiWeb")).toBeNull();
     expect(container.querySelector(".sync-button")).toBeNull();
   });
 
   it("renders the button when syncAvailable is true", () => {
     const { getByText } = render(SyncButton, { props: { syncAvailable: true } });
-    expect(getByText("Sync to AnkiWeb")).toBeTruthy();
+    expect(getByText("Sync with AnkiWeb")).toBeTruthy();
   });
 });
