@@ -397,6 +397,7 @@ def _resolve_gloss_translation(
     first_surface: str,
     *,
     language_code: str,
+    warn_on_missing: bool = True,
 ) -> str:
     """Resolve a token's English translation from the lesson's gloss map.
 
@@ -409,11 +410,18 @@ def _resolve_gloss_translation(
     silent-empty-translation class (the ``går`` bug: lemma and surface are both
     ``går``, but the LLM only glossed ``gå`` + the multiword ``i går``) is
     visible instead of shipping a blank card.
+
+    ``warn_on_missing=False`` for read-only callers. The listen preview resolves
+    the same glosses to display them, but it creates nothing and re-runs every
+    time the modal opens — warning there would repeat indefinitely and claim a
+    card was created when none was.
     """
     for key in [lemma, first_surface.lower(), *sorted(s.lower() for s in surfaces)]:
         gloss = token_glosses.get(key)
         if gloss:
             return gloss
+    if not warn_on_missing:
+        return ""
     _logger.warning(
         "No gloss for lemma %r (surfaces=%s) in %s lesson; card created with empty translation",
         lemma,
@@ -1321,6 +1329,12 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
     new_cap, _ = resolve_daily_new_cap(db)
     creation_budget = max(0, new_cap - db.count_new_introduced_today(today) - db.count_new_created_today(today))
     ranked = _rank_listen_candidates([], lemma_candidates, words.occurrences)
+    # A create row has no card yet, so there is no stored translation to read —
+    # the gloss comes from the lesson's own map, resolved through the SAME
+    # helper mark_lesson_listened uses when it creates the card. Reusing it (as
+    # opposed to a second lookup here) is what makes the previewed gloss and the
+    # stored gloss identical by construction rather than by coincidence.
+    token_glosses: dict[str, str] = (lesson.generation_metadata or {}).get("token_glosses", {})
     creates = [
         {
             "kind": "create",
@@ -1328,7 +1342,14 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
             "item_id": None,
             "grade_class": "create",
             "rating": "good",
-            "translation": "",
+            "translation": _resolve_gloss_translation(
+                lemma,
+                token_glosses,
+                words.surfaces.get(lemma, set()),
+                words.first_surface.get(lemma, lemma),
+                language_code=lesson.language_code,
+                warn_on_missing=False,
+            ),
             "progress": None,
             "well_known": False,
             "due_at": None,
