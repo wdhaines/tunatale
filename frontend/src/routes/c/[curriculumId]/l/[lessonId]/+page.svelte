@@ -583,21 +583,36 @@
 	     lesson title, Read/Listen toggle, and (once rendered) the player. It
 	     sticks below the global nav so nothing the user needs scrolls away. -->
 	<section class="card player-card" style="top: {navHeight}px">
-		<div class="player-title-area">
-			<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
-			<h1>{data.lesson.title}</h1>
-			{#if syncStatus}
-				<p class="sync-status">{syncStatus}</p>
-			{/if}
-			{#if error}
-				<p class="error">{error}</p>
-			{/if}
-		</div>
-		<div class="mode-row">
-			<div class="toggle-pill">
-				<button class:active={mode === 'read'} onclick={() => lessonModePref.set('read')}>Read</button>
-				<button class:active={mode === 'listen'} onclick={() => lessonModePref.set('listen')}>Listen</button>
+		<!-- Two-column grid, not a flex row: the title and toggle share row 1, but
+		     the stats line below spans BOTH columns. As a flex child of the title
+		     column it inherited that column's width and wrapped to two lines on a
+		     phone — and the toggle is only two lines tall, so nothing below it
+		     needs to keep clearing it. -->
+		<div class="player-header">
+			<div class="player-title-area">
+				<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
+				<h1>{data.lesson.title}</h1>
+				{#if syncStatus}
+					<p class="sync-status">{syncStatus}</p>
+				{/if}
+				{#if error}
+					<p class="error">{error}</p>
+				{/if}
 			</div>
+			<div class="mode-row">
+				<div class="toggle-pill">
+					<button class:active={mode === 'read'} onclick={() => lessonModePref.set('read')}>Read</button>
+					<button class:active={mode === 'listen'} onclick={() => lessonModePref.set('listen')}>Listen</button>
+				</div>
+			</div>
+			<!-- Stats read as lesson metadata under the title rather than a third
+			     stacked line in the action row — same information, no extra row. -->
+			{#if mastery && masteryPct !== null}
+				<p class="mastery-line">
+					<span class="mastery-pct" style:color={masteryColor(masteryPct)}>{Math.round(masteryPct * 100)}%</span>
+					{#each masterySegments as seg, i (seg.key)}{#if i > 0}<span class="mastery-sep">·</span>{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}
+				</p>
+			{/if}
 		</div>
 		{#if audio}
 			{#key audio.audio_id}
@@ -615,41 +630,34 @@
 				{/if}
 			</div>
 		{/if}
-		<!-- Listen/mastery actions fold into the bottom of the sticky player card
-		     but keep their own centered column so the title + player above stay
-		     full-width/left (the card itself must not center everything). -->
+		<!-- One action row at the foot of the sticky card: the listen button and
+		     whatever it produced (confirmation, check-work link) sit beside it
+		     instead of stacking into three centered lines. -->
 		<div class="listen-actions">
-		<hr class="listen-divider" />
-		<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened}>
-			Mark as Listened
-		</button>
-		{#if listenResult && !error}
-			<p class="listen-confirmation">
-				{#if listenResult.created > 0}
-					{listenResult.created} new {listenResult.created === 1 ? 'word' : 'words'} added
-				{/if}
-				{#if listenResult.created > 0 && (listenResult.applied > 0 || listenResult.staged > 0)} · {/if}
-				{#if listenResult.applied > 0}
-					{listenResult.applied} graded
-				{/if}
-				{#if listenResult.applied > 0 && listenResult.staged > 0} · {/if}
-				{#if listenResult.staged > 0}
-					{listenResult.staged} ready to check
-				{/if}
-				{#if listenResult.remaining_candidates > 0}
-					 · {listenResult.remaining_candidates} remaining — listen again to add more
-				{/if}
-			</p>
-		{/if}
-		{#if mastery && masteryPct !== null}
-			<p class="mastery-line">
-				<span class="mastery-pct" style:color={masteryColor(masteryPct)}>{Math.round(masteryPct * 100)}%</span>
-				{#each masterySegments as seg, i (seg.key)}{#if i > 0}<span class="mastery-sep">·</span>{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}
-			</p>
-		{/if}
-		{#if showCheckWorkLink}
-			<a class="check-work-link" href="/review?lesson={data.lesson.id}&c={data.curriculum.id}">Check your work — review {queueCount} {queueCount === 1 ? 'word' : 'words'}</a>
-		{/if}
+			<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened}>
+				Mark as Listened
+			</button>
+			{#if listenResult && !error}
+				<p class="listen-confirmation">
+					{#if listenResult.created > 0}
+						{listenResult.created} new {listenResult.created === 1 ? 'word' : 'words'} added
+					{/if}
+					{#if listenResult.created > 0 && (listenResult.applied > 0 || listenResult.staged > 0)} · {/if}
+					{#if listenResult.applied > 0}
+						{listenResult.applied} graded
+					{/if}
+					{#if listenResult.applied > 0 && listenResult.staged > 0} · {/if}
+					{#if listenResult.staged > 0}
+						{listenResult.staged} ready to check
+					{/if}
+					{#if listenResult.remaining_candidates > 0}
+						 · {listenResult.remaining_candidates} remaining — listen again to add more
+					{/if}
+				</p>
+			{/if}
+			{#if showCheckWorkLink}
+				<a class="check-work-link" href="/review?lesson={data.lesson.id}&c={data.curriculum.id}">Check your work — review {queueCount} {queueCount === 1 ? 'word' : 'words'}</a>
+			{/if}
 		</div>
 	</section>
 
@@ -749,11 +757,23 @@
 		flex-direction: column;
 		gap: 1.25rem;
 	}
+	/* Title column left, mode toggle top-right — one row instead of two — with
+	   the stats line spanning both columns underneath. */
+	.player-header {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: start;
+		column-gap: 1rem;
+		row-gap: 0.2rem;
+	}
+	.player-header > .mastery-line {
+		grid-column: 1 / -1;
+	}
 	.player-title-area {
 		display: flex;
 		flex-direction: column;
-		gap: 0.35rem;
-		margin-bottom: 0.5rem;
+		gap: 0.2rem;
+		min-width: 0;
 	}
 	.breadcrumb {
 		display: inline-block;
@@ -881,8 +901,8 @@
 	}
 	.mode-row {
 		display: flex;
-		justify-content: center;
-		margin-bottom: 0.75rem;
+		justify-content: flex-end;
+		flex-shrink: 0;
 	}
 	.render-row {
 		display: flex;
@@ -954,26 +974,23 @@
 		z-index: 20;
 		display: flex;
 		flex-direction: column;
-		gap: 0.75rem;
-		padding: 1.25rem;
+		gap: 0.6rem;
+		padding: 0.9rem 1.1rem;
 	}
-	/* The folded listen/mastery block centers its own column; the card above
-	   (title, mode toggle, player) stays full-width — hence NOT centering
-	   .player-card itself. */
+	/* Single centered action row: the button keeps the card's centre line it has
+	   always had, with whatever the last listen produced beside it. Wraps on
+	   narrow viewports rather than squeezing the link. */
 	.listen-actions {
 		display: flex;
-		flex-direction: column;
+		flex-wrap: wrap;
 		align-items: center;
-		gap: 0.75rem;
-	}
-	.listen-divider {
-		border: none;
-		border-top: 1px solid var(--color-border);
-		width: 100%;
-		margin: 0.25rem 0;
-		opacity: 0.5;
+		justify-content: center;
+		gap: 0.5rem 0.9rem;
 	}
 	.listen-btn {
+		/* The component-wide `button` rule adds a 0.75rem top margin, which in a
+		   flex row just offsets the button from its neighbours. */
+		margin-top: 0;
 		padding: 0.5rem 1.25rem;
 		background: var(--color-primary);
 		color: var(--color-on-primary);
@@ -1000,7 +1017,6 @@
 		font-weight: 600;
 		font-size: 0.9rem;
 		text-decoration: none;
-		margin-bottom: 0.5rem;
 	}
 	.check-work-link:hover {
 		text-decoration: underline;

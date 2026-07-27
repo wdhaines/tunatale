@@ -908,5 +908,29 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         expect(container.querySelector(".listen-card")).toBeFalsy();
       });
     });
+
+    it("mastery stats sit in the header title column, not the listen action row", async () => {
+      // Compacting the sticky card (2026-07-27): the stats line is lesson
+      // metadata, so it reads under the title instead of costing a third
+      // stacked line in the actions block below the player.
+      mockGetTranscript.mockResolvedValue(transcriptWithRecFields);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
+
+      const { container } = render(Page, {
+        props: {
+          data: {
+            curriculum,
+            lesson: { ...lesson, day: 1 },
+            audio: null,
+            transcript: transcriptWithRecFields,
+          },
+        },
+      });
+
+      await waitFor(() => {
+        expect(container.querySelector(".player-header .mastery-line")).toBeTruthy();
+      });
+      expect(container.querySelector(".listen-actions .mastery-line")).toBeFalsy();
+    });
   });
 });

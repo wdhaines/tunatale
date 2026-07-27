@@ -87,4 +87,28 @@ describe("check-your-work link — one-shot-per-listen gate", () => {
       expect(getByText(/Check your work/).textContent).toContain("2 words");
     });
   });
+
+  it("shows the link on the same action row as the listen button", async () => {
+    // Compacting the sticky card (2026-07-27): listen button and check-work
+    // link are one row of siblings, not two stacked centered lines.
+    await seedListened("l1", 3);
+    mockFetchLessonReviewQueue.mockResolvedValue({
+      queue: [{ id: 1 } as never, { id: 2 } as never],
+      has_unreviewed_listen: true,
+    });
+
+    const { container } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+
+    await waitFor(() => {
+      const row = container.querySelector(".listen-actions");
+      expect(row).toBeTruthy();
+      const children = Array.from(row!.children);
+      expect(children.some((el) => el.classList.contains("listen-btn"))).toBe(true);
+      expect(children.some((el) => el.classList.contains("check-work-link"))).toBe(true);
+      // The divider that used to separate them is gone with the row layout.
+      expect(row!.querySelector(".listen-divider")).toBeFalsy();
+    });
+  });
 });

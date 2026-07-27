@@ -218,6 +218,24 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(container.querySelectorAll(".toggle-pill").length).toBe(1);
   });
 
+  it("puts the toggle in the header row beside the title, not on a row of its own", () => {
+    // Compacting the sticky card (2026-07-27): the mode toggle shares the
+    // header row with the breadcrumb/title column instead of costing a full
+    // row below it. Structural, not visual — jsdom applies no component CSS,
+    // so "upper right" is expressed as "second child of the header row".
+    const { container } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    const header = container.querySelector(".card.player-card .player-header");
+    expect(header).toBeTruthy();
+    // Row 1 of the header grid: title column, then the toggle column. Anything
+    // after those two (the stats line) is a full-width row below them.
+    const columns = Array.from(header!.children);
+    expect(columns[0].classList.contains("player-title-area")).toBe(true);
+    expect(columns[1].querySelector(".toggle-pill")).toBeTruthy();
+    expect(columns[0].querySelector(".toggle-pill")).toBeFalsy();
+  });
+
   it("renders the sticky card with toggle and Render Audio when audio is missing", () => {
     const { container } = render(Page, {
       props: { data: { curriculum, lesson, audio: null, transcript: null } },
