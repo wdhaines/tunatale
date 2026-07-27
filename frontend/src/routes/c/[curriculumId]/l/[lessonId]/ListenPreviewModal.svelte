@@ -1,15 +1,18 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { SvelteDate } from 'svelte/reactivity';
+	import { SvelteDate, SvelteSet } from 'svelte/reactivity';
 	import { api, type ListenPreviewCandidate, type ListenResponse, type WordRating } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import { listenCountdownPref } from '$lib/stores/listenCountdownPref.svelte';
+	import { masteryBackgroundColor, masteryColor } from '$lib/mastery';
 
 	let {
 		lessonId,
+		languageCode,
 		onDone,
 	}: {
 		lessonId: string;
+		languageCode?: string;
 		onDone: (result: ListenResponse | { status: 'cancelled' }) => void;
 	} = $props();
 
@@ -19,9 +22,17 @@
 	let committing = $state(false);
 	// Keyed by candidateKey(c) (`${kind}:${text}`), NOT c.text — a key phrase
 	// can share literal text with a lemma, and c.text alone would collide two
-	// unrelated rows onto one checkbox (F6).
-	let selection = $state<Record<string, boolean>>({});
+	// unrelated rows onto one row of state (F6).
+	//
+	// This is now the ONLY per-row state. There used to be a parallel
+	// `selection` map kept in lockstep with it, but the checkbox and the grade
+	// buttons were two controls for one fact: a row is skipped iff its rating
+	// is "skip". Deriving selection removes the class of bug where the two
+	// could disagree.
 	let ratings = $state<Record<string, WordRating>>({});
+	// Glosses are blurred until tapped; a revealed gloss stays revealed for the
+	// life of the modal (per row, not globally).
+	let revealed = new SvelteSet<string>();
 
 	let countdown = $state(10);
 	let countdownCancelled = $state(false);
@@ -39,6 +50,15 @@
 	// created moments later permanently uncancelable (cancelCountdown's
 	// countdownCancelled guard short-circuits before reaching clearInterval).
 	let suppressInitialFocus = false;
+
+	// The four real grades, in DrillCard.svelte's order. "skip" is deliberately
+	// NOT in this list: it is the absence of a grade, and the UI sets it apart.
+	const GRADES = ['again', 'hard', 'good', 'easy'] as const satisfies readonly WordRating[];
+
+	// WordSpan.svelte renders an untracked word in this indigo. A `create` row
+	// IS an untracked word, so its dueness pill uses the same colour rather
+	// than a position on the mastery ramp it has not joined yet.
+	const UNKNOWN_COLOR = '#818cf8';
 
 	function candidateKey(c: ListenPreviewCandidate): string {
 		return `${c.kind}:${c.text}`;
@@ -85,14 +105,8 @@
 		handleInteraction();
 	}
 
-	// A row's selection state and its rating are kept in lockstep by the
-	// handlers below (never by mutating during commit — see doCommit): a
-	// checked row carries one of the four real grades (again/hard/good/easy —
-	// matching DrillCard.svelte's vocabulary); an unchecked row is always
-	// "skip". The checkbox is the only UI for "skip" — there is no per-row
-	// Skip button.
 	let selectedCount = $derived(
-		candidates.filter((c) => selection[candidateKey(c)]).length,
+		candidates.filter((c) => ratings[candidateKey(c)] !== 'skip').length,
 	);
 
 	onMount(async () => {
@@ -107,16 +121,12 @@
 		try {
 			const preview = await api.getListenPreview(lessonId);
 			candidates = preview.candidates;
-			// Default: all checked, all "good" — except well-known rows,
-			// which start unchecked and "skip" (collapsed disclosure).
-			const sel: Record<string, boolean> = {};
+			// Default: everything "good" — except well-known rows, which start
+			// "skip" (and collapsed inside the disclosure).
 			const rts: Record<string, WordRating> = {};
 			for (const c of candidates) {
-				const key = candidateKey(c);
-				sel[key] = !c.well_known;
-				rts[key] = c.well_known ? 'skip' : 'good';
+				rts[candidateKey(c)] = c.well_known ? 'skip' : 'good';
 			}
-			selection = sel;
 			ratings = rts;
 
 			// Start countdown only when the pref is not "off".
@@ -138,46 +148,35 @@
 		}
 	});
 
-	function toggle(key: string) {
-		handleInteraction();
-		const nextSelected = !selection[key];
-		selection = { ...selection, [key]: nextSelected };
-		ratings = { ...ratings, [key]: nextSelected ? 'good' : 'skip' };
-	}
-
 	function setRating(key: string, rating: WordRating) {
 		handleInteraction();
 		ratings = { ...ratings, [key]: rating };
-		selection = { ...selection, [key]: rating !== 'skip' };
 	}
 
-	function selectAll() {
+	function revealGloss(key: string) {
 		handleInteraction();
-		const sel: Record<string, boolean> = {};
+		revealed.add(key);
+	}
+
+	function gradeAll() {
+		handleInteraction();
 		const rts: Record<string, WordRating> = { ...ratings };
 		for (const c of candidates) {
 			const key = candidateKey(c);
-			sel[key] = true;
 			if (rts[key] === 'skip') rts[key] = 'good';
 		}
-		selection = sel;
 		ratings = rts;
 	}
 
 	function skipAll() {
 		handleInteraction();
-		const sel: Record<string, boolean> = {};
 		const rts: Record<string, WordRating> = { ...ratings };
-		for (const c of candidates) {
-			const key = candidateKey(c);
-			sel[key] = false;
-			rts[key] = 'skip';
-		}
-		selection = sel;
+		for (const c of candidates) rts[candidateKey(c)] = 'skip';
 		ratings = rts;
 	}
 
-	function formatDueAt(due_at: string | null): string | null {
+	/** Whole days from today (UTC) until the card is due; null if unknown. */
+	function dueDays(due_at: string | null): number | null {
 		if (!due_at) return null;
 		const dueDate = new SvelteDate(due_at);
 		if (isNaN(dueDate.getTime())) return null;
@@ -185,22 +184,52 @@
 		today.setUTCHours(0, 0, 0, 0);
 		const dueDay = new SvelteDate(dueDate);
 		dueDay.setUTCHours(0, 0, 0, 0);
-		const diffMs = dueDay.getTime() - today.getTime();
-		const diffDays = Math.round(diffMs / 86400000);
-		if (diffDays === 0) return 'today';
-		return diffDays > 0 ? `${diffDays}d` : `${diffDays}d`;
+		return Math.round((dueDay.getTime() - today.getTime()) / 86400000);
+	}
+
+	function formatDueAt(due_at: string | null): string | null {
+		const days = dueDays(due_at);
+		if (days === null) return null;
+		return days === 0 ? 'today' : `${days}d`;
+	}
+
+	// One cell for the whole dueness story. "due"/"ahead" used to be rendered
+	// as a word beside the day count, but under a "Due" header the sign already
+	// says overdue, so the word carried nothing. The two states that are not a
+	// day count keep a word of their own.
+	function dueLabel(c: ListenPreviewCandidate): string {
+		if (c.kind === 'create') return 'new';
+		if (c.grade_class === 'learning') return 'learn';
+		return formatDueAt(c.due_at ?? null) ?? c.grade_class ?? '';
+	}
+
+	function isOverdue(c: ListenPreviewCandidate): boolean {
+		if (c.kind === 'create') return false;
+		const days = dueDays(c.due_at ?? null);
+		return days !== null && days <= 0;
+	}
+
+	// The dialogue's own colour language, via mastery.ts's own functions —
+	// red→yellow→green by progress, so a word looks the same here as it does in
+	// the transcript. Dueness is weight, not hue (WordSpan's `.word-due`).
+	function dueStyle(c: ListenPreviewCandidate): string {
+		if (c.kind === 'create') {
+			return `color: ${UNKNOWN_COLOR}; background: color-mix(in srgb, ${UNKNOWN_COLOR} 18%, transparent);`;
+		}
+		const p = c.progress ?? 0;
+		return `color: ${masteryColor(p)}; background: ${masteryBackgroundColor(p)};`;
 	}
 
 	let mainCandidates = $derived(candidates.filter((c) => !c.well_known));
 	let wellKnownCandidates = $derived(candidates.filter((c) => c.well_known));
 
 	// Builds the commit payload purely from local reads — never assigns into
-	// the $state maps (that was the F5 bug: mutating `ratings[c.text] = 'skip'`
-	// during commit left a sticky "skip" behind a later re-check). Only
+	// the $state map (that was the F5 bug: mutating `ratings[c.text] = 'skip'`
+	// during commit left a sticky "skip" behind a later re-grade). Only
 	// non-default entries are sent: the backend defaults an absent entry to
-	// "good", so a checked+good ordinary row contributes nothing. Well-known
-	// rows are an exception: the backend skips a well-known lemma absent from
-	// word_ratings, so a selected well-known row MUST emit its explicit rating.
+	// "good", so an ordinary good row contributes nothing. Well-known rows are
+	// an exception: the backend skips a well-known lemma absent from
+	// word_ratings, so a graded well-known row MUST emit its explicit rating.
 	function buildRatings(): {
 		wordRatings: Record<string, WordRating>;
 		kpRatings: Record<string, WordRating>;
@@ -209,15 +238,10 @@
 		const kpRatings: Record<string, WordRating> = {};
 
 		for (const c of candidates) {
-			const key = candidateKey(c);
-			const selected = selection[key];
-			const rating = ratings[key] ?? 'good';
+			const rating = ratings[candidateKey(c)] ?? 'good';
 			const isWellKnown = c.well_known === true;
-			const value: WordRating | null = !selected
-				? 'skip'
-				: (isWellKnown || rating !== 'good')
-					? rating
-					: null;
+			const value: WordRating | null =
+				rating === 'skip' ? 'skip' : isWellKnown || rating !== 'good' ? rating : null;
 			if (value === null) continue;
 			if (c.kind === 'kp') {
 				kpRatings[c.text] = value;
@@ -271,57 +295,71 @@
 				<p class="status">No new words to add.</p>
 			{:else}
 				<div class="actions">
-					<button onclick={selectAll} type="button">Select All</button>
+					<button onclick={gradeAll} type="button">Grade All</button>
 					<button onclick={skipAll} type="button">Skip All</button>
 				</div>
 
 				{#snippet candidateRow(c: ListenPreviewCandidate)}
-					<li>
-						<label class="candidate">
-							<input
-								type="checkbox"
-								data-candidate={candidateKey(c)}
-								checked={selection[candidateKey(c)]}
-								onchange={() => toggle(candidateKey(c))}
-							/>
-							<span class="text">{c.text}</span>
-							{#if c.translation}
-								<span class="translation">{c.translation}</span>
-							{/if}
+					{@const key = candidateKey(c)}
+					<li class="candidate">
+						<!-- lang drives `hyphens: auto`, so a long compound breaks at a
+						     real dictionary point (etterforsknings-team) instead of
+						     mid-morpheme. -->
+						<span class="text" lang={languageCode}>{c.text}</span>
+
+						<div class="sub" class:revealed={revealed.has(key)}>
 							{#if c.kind === 'kp'}
 								<span class="tag kp">key phrase</span>
 							{/if}
-							{#if c.grade_class && c.kind !== 'create'}
-								<span class="tag">{c.grade_class}</span>
+							{#if c.translation}
+								<button
+									type="button"
+									class="gloss"
+									class:blurred={!revealed.has(key)}
+									aria-label={revealed.has(key) ? c.translation : `Reveal gloss for ${c.text}`}
+									onclick={() => revealGloss(key)}
+								>{c.translation}</button>
+							{:else}
+								<span class="gloss empty" aria-label="No gloss available">&mdash;</span>
 							{/if}
-							{#if c.kind !== 'create' && formatDueAt(c.due_at ?? null)}
-								<span class="tag due">{formatDueAt(c.due_at ?? null)}</span>
-							{/if}
-							<div class="rating-btns">
-								<button
-									class:active={ratings[candidateKey(c)] === 'again'}
-									onclick={() => setRating(candidateKey(c), 'again')}
-									type="button"
-								>Again</button>
-								<button
-									class:active={ratings[candidateKey(c)] === 'hard'}
-									onclick={() => setRating(candidateKey(c), 'hard')}
-									type="button"
-								>Hard</button>
-								<button
-									class:active={ratings[candidateKey(c)] === 'good'}
-									onclick={() => setRating(candidateKey(c), 'good')}
-									type="button"
-								>Good</button>
-								<button
-									class:active={ratings[candidateKey(c)] === 'easy'}
-									onclick={() => setRating(candidateKey(c), 'easy')}
-									type="button"
-								>Easy</button>
+						</div>
+
+						<span class="tag day" class:overdue={isOverdue(c)} style={dueStyle(c)}>
+							{dueLabel(c)}
+						</span>
+
+						<div class="grade" role="group" aria-label={`Proposed grade for ${c.text}`}>
+							<!-- Skip is the opposite of grading, not a fifth grade, so it
+							     sits outside the welded segmented control. -->
+							<button
+								class="skip"
+								class:active={ratings[key] === 'skip'}
+								data-candidate={key}
+								data-grade="skip"
+								aria-pressed={ratings[key] === 'skip'}
+								onclick={() => setRating(key, 'skip')}
+								type="button"
+							>Skip</button>
+							<div class="grades">
+								{#each GRADES as g (g)}
+									<button
+										class={g}
+										class:active={ratings[key] === g}
+										data-candidate={key}
+										data-grade={g}
+										aria-pressed={ratings[key] === g}
+										onclick={() => setRating(key, g)}
+										type="button"
+									>{g[0].toUpperCase() + g.slice(1)}</button>
+								{/each}
 							</div>
-						</label>
+						</div>
 					</li>
 				{/snippet}
+
+				<div class="list-head" aria-hidden="true">
+					<span>Word</span><span>Due</span><span>Proposed grade</span>
+				</div>
 
 				<ul class="list">
 					{#each mainCandidates as c (candidateKey(c))}
@@ -367,7 +405,7 @@
 		border-radius: var(--radius-lg);
 		box-shadow: var(--shadow-md);
 		padding: 1.5rem;
-		max-width: 400px;
+		max-width: 420px;
 		width: 90%;
 		max-height: 80vh;
 		display: flex;
@@ -413,72 +451,208 @@
 		list-style: none;
 		margin: 0;
 		padding: 0;
+		min-width: 0;
 		overflow-y: auto;
+		overflow-x: hidden;
 		max-height: 50vh;
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
 	}
+
+	/* The header and every row are SEPARATE grid containers, so the tracks must
+	   be deterministic for the columns to line up — an `auto` track resolves
+	   against its own container's content, which made a row with a narrow "new"
+	   pill compute different columns than one with "today". The two trailing
+	   tracks are fixed and the grade control fills its track rather than sizing
+	   it. Verified by measuring every row's cell offsets against the header's:
+	   max deviation must be 0. */
+	.list-head,
 	.candidate {
-		display: flex;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 3rem 11rem;
+		gap: 0.1rem 0.35rem;
+		padding: 0.35rem 0.15rem;
+	}
+	.list-head {
 		align-items: center;
-		gap: 0.4rem;
-		padding: 0.3rem 0.4rem;
-		border-radius: var(--radius-sm);
-		font-size: 0.85rem;
+		font-size: 0.6rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--color-muted);
+		border-bottom: 1px solid var(--color-border);
+		padding-bottom: 0.35rem;
+	}
+	.list-head span {
+		text-align: left;
+	}
+	.candidate + .candidate {
+		border-top: 1px solid color-mix(in srgb, var(--color-border) 45%, transparent);
 	}
 	.candidate:hover {
 		background: var(--color-surface-2);
 	}
+
+	/* The word is the item being graded, so it is never truncated. Measured
+	   against the real NO+SL card corpus (3611 single-word lemmas): ellipsising
+	   it beside the gloss cut 630 of them (17.4%) — every Norwegian compound
+	   past ~9 chars. Stacked, with dictionary hyphenation, 2 wrap and none goes
+	   past two lines. overflow-wrap is only the backstop for a word the
+	   hyphenation dictionary has no break point for. */
 	.text {
-		flex: 1;
+		grid-column: 1;
+		grid-row: 1;
+		font-size: 0.85rem;
+		line-height: 1.25;
+		hyphens: auto;
+		overflow-wrap: break-word;
 		min-width: 0;
+	}
+
+	.sub {
+		grid-column: 1;
+		grid-row: 2;
+		display: flex;
+		align-items: baseline;
+		gap: 0.25rem;
+		min-width: 0;
+	}
+	/* Revealed, the gloss borrows the Due column too — the extra ~50px is the
+	   difference between a readable gloss and a wrapped stack of fragments. */
+	.sub.revealed {
+		grid-column: 1 / 3;
+	}
+	.gloss {
+		font-size: 0.72rem;
+		line-height: 1.25;
+		color: var(--color-muted);
+		min-width: 0;
+		background: none;
+		border: none;
+		padding: 0;
+		margin: 0;
+		font-family: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+	/* Glosses are hidden by default so the lesson is a listening exercise
+	   first. Blur rather than omission keeps the row's shape stable and shows
+	   there IS something to reveal. */
+	.gloss.blurred {
+		filter: blur(4.5px);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+		display: block;
+		width: 100%;
+		-webkit-user-select: none;
+		user-select: none;
 	}
-	.translation {
-		font-size: 0.75rem;
-		color: var(--color-muted);
-		white-space: nowrap;
+	.gloss:not(.blurred) {
+		white-space: normal;
+		color: var(--color-text);
 	}
+	.gloss.empty {
+		color: var(--color-border);
+		cursor: default;
+	}
+
 	.tag {
-		font-size: 0.7rem;
-		padding: 0.1rem 0.3rem;
-		border-radius: 3px;
-		background: color-mix(in srgb, var(--color-info) 14%, transparent);
-		color: var(--color-muted);
+		font-size: 0.66rem;
+		padding: 0.12rem 0.34rem;
+		border-radius: 4px;
 		white-space: nowrap;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-muted);
+	}
+	.tag.day {
+		grid-column: 2;
+		grid-row: 1 / 3;
+		align-self: center;
+		justify-self: start;
+	}
+	/* Mirrors WordSpan's `.word-due { font-weight: bold }` — in the dialogue
+	   dueness is weight, not hue, so the mastery ramp stays the only colour
+	   axis. */
+	.tag.overdue {
+		font-weight: 700;
 	}
 	.tag.kp {
-		background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+		background: color-mix(in srgb, var(--color-warning) 18%, transparent);
 		color: var(--color-warning);
-	}
-	.rating-btns {
-		display: flex;
-		/* Four buttons (Again/Hard/Good/Easy) instead of three — tightened gap
-		   and button padding below to keep the row inside the 400px modal on a
-		   narrow phone; flex-shrink:0 keeps them from being squeezed unreadable
-		   (`.text` has flex:1 + min-width:0 + ellipsis, so it absorbs the
-		   pressure instead). */
-		gap: 0.2rem;
 		flex-shrink: 0;
 	}
-	.rating-btns button {
-		padding: 0.15rem 0.3rem;
-		font-size: 0.68rem;
+
+	.grade {
+		grid-column: 3;
+		grid-row: 1 / 3;
+		align-self: stretch;
+		display: flex;
+		gap: 0.3rem;
+		align-items: stretch;
+		width: 100%;
+		/* Floors the tap targets: centring the due pill across both rows
+		   shortened the row, which would otherwise have quietly shrunk them. */
+		min-height: 2.15rem;
+	}
+	.grades {
+		display: flex;
+		flex: 1 1 auto;
+		min-width: 0;
 		border: 1px solid var(--color-border);
-		border-radius: 3px;
+		border-radius: 6px;
+		overflow: hidden;
+	}
+	.grade button {
+		flex: 1 1 0;
+		min-width: 0;
+		/* 0.66rem is the smallest size at which "Again" stops clipping its
+		   segment at this track width — measured, not chosen. */
+		font-size: 0.66rem;
+		padding: 0.1rem;
+		font-family: inherit;
+		border: none;
 		background: var(--color-surface-2);
 		color: var(--color-muted);
 		cursor: pointer;
-		flex-shrink: 0;
+		white-space: nowrap;
 	}
-	.rating-btns button.active {
-		background: var(--color-primary);
+	.grades button {
+		border-right: 1px solid var(--color-border);
+	}
+	.grades button:last-child {
+		border-right: none;
+	}
+	/* An active grade wears DrillCard.svelte's colour for that rating, so a
+	   grade means the same thing in both places. Inactive stays muted — four
+	   saturated buttons on every row would be a wall. */
+	.grades button.active {
 		color: #fff;
-		border-color: var(--color-primary);
 	}
+	.grades button.again.active {
+		background: var(--color-danger);
+	}
+	.grades button.hard.active {
+		background: var(--color-warning);
+	}
+	.grades button.good.active {
+		background: var(--color-success);
+	}
+	.grades button.easy.active {
+		background: var(--color-primary);
+	}
+	.grade button.skip {
+		flex: 0 0 auto;
+		background: transparent;
+		border: 1px dashed var(--color-border);
+		border-radius: 6px;
+		font-style: italic;
+	}
+	.grade button.skip.active {
+		background: color-mix(in srgb, var(--color-muted) 22%, transparent);
+		border-style: solid;
+		border-color: var(--color-muted);
+		color: var(--color-text);
+		font-style: normal;
+	}
+
 	.footer {
 		display: flex;
 		justify-content: flex-end;
@@ -514,9 +688,5 @@
 		color: var(--color-muted);
 		cursor: pointer;
 		padding: 0.25rem 0;
-	}
-	.due {
-		background: color-mix(in srgb, var(--color-muted) 10%, transparent);
-		color: var(--color-muted);
 	}
 </style>

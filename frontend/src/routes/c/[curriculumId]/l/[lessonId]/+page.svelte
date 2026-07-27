@@ -721,6 +721,7 @@
 {#if showPreview}
 	<ListenPreviewModal
 		lessonId={data.lesson.id}
+		languageCode={data.lesson.language_code}
 		onDone={handlePreviewDone}
 	/>
 {/if}

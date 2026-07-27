@@ -9,15 +9,20 @@
  * on commit — NOT api.commitPending.
  *
  * Payload contract (brief §Stage 5 / REDO): only NON-DEFAULT entries are sent.
- * A row left checked + "good" contributes nothing to either map (the backend
- * defaults an absent entry to "good"); an unchecked row sends "skip"; a
- * changed grade sends that grade.
+ * A row left on "good" contributes nothing to either map (the backend defaults
+ * an absent entry to "good"); a row set to Skip sends "skip"; a changed grade
+ * sends that grade.
+ *
+ * There is no checkbox: a row is skipped iff its rating is "skip", expressed by
+ * the Skip segment of the per-row grade control. Tests address a specific row's
+ * control via [data-candidate="<kind>:<text>"][data-grade="<rating>"].
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import ListenPreviewModal from "./ListenPreviewModal.svelte";
 import { api } from "$lib/api";
 import { listenCountdownPref } from "$lib/stores/listenCountdownPref.svelte";
+import { masteryBackgroundColor, masteryColor } from "$lib/mastery";
 
 vi.mock("$lib/api", () => ({
   api: {
@@ -104,6 +109,28 @@ const kpCandidate = (text: string, opts?: { translation?: string; progress?: num
   due_at: null,
 });
 
+const gradeBtn = (container: HTMLElement, key: string, grade: string) =>
+  container.querySelector(
+    `button[data-candidate='${key}'][data-grade='${grade}']`,
+  ) as HTMLButtonElement;
+
+const isActive = (b: HTMLButtonElement) => b.classList.contains("active");
+
+// jsdom rewrites inline colours into rgb()/rgba() form, so a raw hsl() or hex
+// string never appears in the serialized style attribute. Normalize the
+// expected value the same way rather than hardcoding the converted output —
+// that keeps the assertion tied to mastery.ts, not to a colour literal.
+const asInlineColor = (css: string) => {
+  const el = document.createElement("span");
+  el.style.color = css;
+  return el.style.color;
+};
+const asInlineBackground = (css: string) => {
+  const el = document.createElement("span");
+  el.style.background = css;
+  return el.style.background;
+};
+
 // ── Tests ─────────────────────────────────────────────────────────────
 
 describe("ListenPreviewModal", () => {
@@ -155,7 +182,7 @@ describe("ListenPreviewModal", () => {
     expect(await waitFor(() => getByText("No new words to add."))).toBeTruthy();
   });
 
-  it("default selection: ALL checked (creates and tracked alike)", async () => {
+  it("default selection: every row starts on Good (creates and tracked alike)", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [
         createCandidate("kava"),
@@ -170,17 +197,13 @@ describe("ListenPreviewModal", () => {
     });
 
     await waitFor(() => {
-      const checkboxes = container.querySelectorAll("input[type='checkbox']");
-      expect(checkboxes.length).toBe(4);
+      expect(container.querySelectorAll(".candidate").length).toBe(4);
     });
 
-    const checkboxes = container.querySelectorAll(
-      "input[type='checkbox']",
-    ) as NodeListOf<HTMLInputElement>;
-    expect(checkboxes[0].checked).toBe(true); // kava (create)
-    expect(checkboxes[1].checked).toBe(true); // mleko (create)
-    expect(checkboxes[2].checked).toBe(true); // prosim (word)
-    expect(checkboxes[3].checked).toBe(true); // hvala (kp)
+    for (const key of ["create:kava", "create:mleko", "word:prosim", "kp:hvala"]) {
+      expect(isActive(gradeBtn(container, key, "good"))).toBe(true);
+      expect(isActive(gradeBtn(container, key, "skip"))).toBe(false);
+    }
   });
 
   it("Mark button shows correct count based on selection", async () => {
@@ -197,7 +220,7 @@ describe("ListenPreviewModal", () => {
     });
   });
 
-  it("toggle checkbox updates selection and Mark count", async () => {
+  it("Skip then Good on a row updates the Mark count both ways", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [createCandidate("kava"), createCandidate("mleko"), wordCandidate("prosim")],
     });
@@ -210,17 +233,14 @@ describe("ListenPreviewModal", () => {
       expect(getByText("Mark 3 as listened")).toBeTruthy();
     });
 
-    const checkboxes = container.querySelectorAll(
-      "input[type='checkbox']",
-    ) as NodeListOf<HTMLInputElement>;
-    await fireEvent.click(checkboxes[0]);
+    await fireEvent.click(gradeBtn(container, "create:kava", "skip"));
     expect(getByText("Mark 2 as listened")).toBeTruthy();
 
-    await fireEvent.click(checkboxes[0]);
+    await fireEvent.click(gradeBtn(container, "create:kava", "good"));
     expect(getByText("Mark 3 as listened")).toBeTruthy();
   });
 
-  it("Select All checks all candidates", async () => {
+  it("Grade All returns every skipped row to a real grade", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [createCandidate("kava"), wordCandidate("prosim"), kpCandidate("hvala")],
     });
@@ -233,24 +253,19 @@ describe("ListenPreviewModal", () => {
       expect(getByText("Mark 3 as listened")).toBeTruthy();
     });
 
-    // Uncheck one, then Select All
-    const checkboxes = container.querySelectorAll(
-      "input[type='checkbox']",
-    ) as NodeListOf<HTMLInputElement>;
-    await fireEvent.click(checkboxes[0]);
+    // Skip one, then Grade All
+    await fireEvent.click(gradeBtn(container, "create:kava", "skip"));
 
-    await fireEvent.click(getByText("Select All"));
+    await fireEvent.click(getByText("Grade All"));
 
-    const cbs = container.querySelectorAll(
-      "input[type='checkbox']",
-    ) as NodeListOf<HTMLInputElement>;
-    for (const cb of cbs) {
-      expect(cb.checked).toBe(true);
+    for (const key of ["create:kava", "word:prosim", "kp:hvala"]) {
+      expect(isActive(gradeBtn(container, key, "good"))).toBe(true);
+      expect(isActive(gradeBtn(container, key, "skip"))).toBe(false);
     }
     expect(getByText("Mark 3 as listened")).toBeTruthy();
   });
 
-  it("Skip All unchecks all candidates and leaves the commit button enabled", async () => {
+  it("Skip All sets every row to Skip and leaves the commit button enabled", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [createCandidate("kava"), wordCandidate("prosim")],
     });
@@ -265,11 +280,9 @@ describe("ListenPreviewModal", () => {
 
     await fireEvent.click(getByText("Skip All"));
 
-    const checkboxes = container.querySelectorAll(
-      "input[type='checkbox']",
-    ) as NodeListOf<HTMLInputElement>;
-    for (const cb of checkboxes) {
-      expect(cb.checked).toBe(false);
+    for (const key of ["create:kava", "word:prosim"]) {
+      expect(isActive(gradeBtn(container, key, "skip"))).toBe(true);
+      expect(isActive(gradeBtn(container, key, "good"))).toBe(false);
     }
     // F4: a listen that stages nothing is still a legitimate listen — the
     // commit button is only disabled by loading/committing/error, never by
@@ -334,7 +347,7 @@ describe("ListenPreviewModal", () => {
   // (Again, Hard, Good, Easy). The checkbox is the only way to express
   // "skip"; there is no per-row Skip button.
 
-  it("renders the four real grades in Again, Hard, Good, Easy order with no per-row Skip button", async () => {
+  it("renders Skip apart from the four welded grades, in Again/Hard/Good/Easy order", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [createCandidate("kava")],
     });
@@ -345,10 +358,16 @@ describe("ListenPreviewModal", () => {
 
     await waitFor(() => getByText("kava"));
 
-    const ratingBtns = container.querySelector(".rating-btns");
-    expect(ratingBtns).toBeTruthy();
-    const labels = Array.from(ratingBtns!.querySelectorAll("button")).map((b) => b.textContent);
+    // The four real grades live in their own welded group; Skip is a sibling
+    // of that group, not a member of it — that separation is the whole point.
+    const grades = container.querySelector(".grades");
+    expect(grades).toBeTruthy();
+    const labels = Array.from(grades!.querySelectorAll("button")).map((b) => b.textContent);
     expect(labels).toEqual(["Again", "Hard", "Good", "Easy"]);
+
+    const skip = gradeBtn(container, "create:kava", "skip");
+    expect(skip).toBeTruthy();
+    expect(grades!.contains(skip)).toBe(false);
   });
 
   it("clicking Again or Hard marks it active and clears the previously active grade", async () => {
@@ -411,7 +430,7 @@ describe("ListenPreviewModal", () => {
     });
   });
 
-  it("unchecked candidates get skip in their respective map; default siblings are omitted", async () => {
+  it("skipped candidates get skip in their respective map; default siblings are omitted", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [createCandidate("kava"), kpCandidate("na zdravje")],
     });
@@ -431,9 +450,7 @@ describe("ListenPreviewModal", () => {
       expect(getByText("Mark 2 as listened")).toBeTruthy();
     });
 
-    // Uncheck kava (first checkbox)
-    const checkbox = container.querySelector("input[type='checkbox']") as HTMLInputElement;
-    await fireEvent.click(checkbox);
+    await fireEvent.click(gradeBtn(container, "create:kava", "skip"));
 
     await fireEvent.click(getByText("Mark 1 as listened"));
 
@@ -476,7 +493,7 @@ describe("ListenPreviewModal", () => {
 
   // F5 regression: commit must never mutate the $state rating map. After a
   // failed commit, re-checking a row must NOT still send "skip" for it.
-  it("re-checking a row after unchecking it does not leave it stuck as skip", async () => {
+  it("re-grading a row after skipping it does not leave it stuck as skip", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [wordCandidate("prosim", { grade_class: "due" })],
     });
@@ -494,11 +511,13 @@ describe("ListenPreviewModal", () => {
 
     await waitFor(() => getByText("prosim"));
 
-    const checkbox = container.querySelector("input[type='checkbox']") as HTMLInputElement;
-    await fireEvent.click(checkbox); // uncheck → skip
-    expect(checkbox.checked).toBe(false);
-    await fireEvent.click(checkbox); // re-check → restores good (default, omitted)
-    expect(checkbox.checked).toBe(true);
+    const skip = gradeBtn(container, "word:prosim", "skip");
+    const good = gradeBtn(container, "word:prosim", "good");
+    await fireEvent.click(skip);
+    expect(isActive(skip)).toBe(true);
+    await fireEvent.click(good); // back to good → default, omitted
+    expect(isActive(good)).toBe(true);
+    expect(isActive(skip)).toBe(false);
 
     await fireEvent.click(getByText("Mark 1 as listened"));
 
@@ -519,7 +538,7 @@ describe("ListenPreviewModal", () => {
     expect(await waitFor(() => getByText("key phrase"))).toBeTruthy();
   });
 
-  it("shows grade_class tag for tracked word candidates", async () => {
+  it("a tracked word with no due_at falls back to its grade_class in the Due cell", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [wordCandidate("prosim", { grade_class: "due", translation: "please" })],
     });
@@ -529,6 +548,7 @@ describe("ListenPreviewModal", () => {
     });
 
     expect(await waitFor(() => getByText("due"))).toBeTruthy();
+    // The gloss is present in the DOM even while blurred — blur is visual only.
     expect(getByText("please")).toBeTruthy();
   });
 
@@ -551,16 +571,14 @@ describe("ListenPreviewModal", () => {
     });
 
     await waitFor(() => {
-      expect(container.querySelectorAll("input[type='checkbox']").length).toBe(2);
+      expect(container.querySelectorAll(".candidate").length).toBe(2);
     });
 
-    const checkboxes = container.querySelectorAll(
-      "input[type='checkbox']",
-    ) as NodeListOf<HTMLInputElement>;
-    // Uncheck only the word row.
-    await fireEvent.click(checkboxes[0]);
-    expect(checkboxes[0].checked).toBe(false);
-    expect(checkboxes[1].checked).toBe(true); // kp row unaffected
+    // Skip only the word row. The two rows share the literal text "voda", so
+    // addressing them by kind-qualified key is exactly what F6 is about.
+    await fireEvent.click(gradeBtn(container, "word:voda", "skip"));
+    expect(isActive(gradeBtn(container, "word:voda", "skip"))).toBe(true);
+    expect(isActive(gradeBtn(container, "kp:voda", "skip"))).toBe(false); // kp row unaffected
 
     // Give the kp row a non-default rating so it shows up in the payload,
     // proving it routes independently of the (skipped) word row.
@@ -690,7 +708,7 @@ describe("ListenPreviewModal", () => {
   // F5: unchecking always sends "skip" regardless of the prior grade;
   // re-checking always restores the DEFAULT "good" — not the grade that was
   // active before the row was unchecked.
-  it("unchecking a row after picking 'again' sends skip; re-checking restores good, not again", async () => {
+  it("skipping a row after picking 'again' sends skip; re-grading gives good, not again", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [wordCandidate("prosim", { grade_class: "due" })],
     });
@@ -711,17 +729,16 @@ describe("ListenPreviewModal", () => {
     const againBtns = await findAllByText("Again");
     await fireEvent.click(againBtns[0]);
 
-    const checkbox = container.querySelector("input[type='checkbox']") as HTMLInputElement;
-    expect(checkbox.checked).toBe(true);
+    const skip = gradeBtn(container, "word:prosim", "skip");
+    await fireEvent.click(skip); // → skip, regardless of "again"
+    expect(isActive(skip)).toBe(true);
+    expect(againBtns[0].classList.contains("active")).toBe(false);
 
-    await fireEvent.click(checkbox); // uncheck → skip, regardless of "again"
-    expect(checkbox.checked).toBe(false);
-
-    await fireEvent.click(checkbox); // re-check → restores default "good", not "again"
-    expect(checkbox.checked).toBe(true);
     const goodBtns = await findAllByText("Good");
+    await fireEvent.click(goodBtns[0]); // back to the default grade, not "again"
     expect(goodBtns[0].classList.contains("active")).toBe(true);
     expect(againBtns[0].classList.contains("active")).toBe(false);
+    expect(isActive(skip)).toBe(false);
 
     await fireEvent.click(getByText("Mark 1 as listened"));
 
@@ -865,7 +882,7 @@ describe("ListenPreviewModal", () => {
     });
   });
 
-  it("a checkbox click cancels the countdown permanently", async () => {
+  it("a grade click cancels the countdown permanently", async () => {
     vi.useFakeTimers();
     mockGetListenPreview.mockResolvedValue({
       candidates: [createCandidate("kava")],
@@ -886,8 +903,7 @@ describe("ListenPreviewModal", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     await vi.advanceTimersByTimeAsync(5_000);
-    const checkbox = container.querySelector("input[type='checkbox']") as HTMLInputElement;
-    await fireEvent.click(checkbox);
+    await fireEvent.click(gradeBtn(container, "create:kava", "hard"));
 
     await vi.advanceTimersByTimeAsync(15_000);
 
@@ -948,8 +964,7 @@ describe("ListenPreviewModal", () => {
 
     await vi.advanceTimersByTimeAsync(0);
 
-    const checkbox = container.querySelector("input[type='checkbox']") as HTMLInputElement;
-    await fireEvent.focusIn(checkbox);
+    await fireEvent.focusIn(gradeBtn(container, "create:kava", "good"));
 
     await vi.advanceTimersByTimeAsync(10_000);
 
@@ -1090,7 +1105,7 @@ describe("ListenPreviewModal", () => {
 
   // ── Well-known: disclosure, buildRatings fix, selectedCount ─────────
 
-  it("well-known rows render inside a collapsed disclosure, unchecked", async () => {
+  it("well-known rows render inside a collapsed disclosure, pre-set to Skip", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [
         wordCandidate("prosim", { grade_class: "due" }),
@@ -1113,21 +1128,15 @@ describe("ListenPreviewModal", () => {
     expect(details).toBeTruthy();
     expect(getByText("1 well-known word")).toBeTruthy();
 
-    // It is unchecked
-    const wk = container.querySelector(
-      "input[type='checkbox'][data-candidate='word:hvala']",
-    ) as HTMLInputElement;
-    expect(wk).toBeTruthy();
-    expect(wk.checked).toBe(false);
+    // It starts on Skip
+    expect(isActive(gradeBtn(container, "word:hvala", "skip"))).toBe(true);
+    expect(isActive(gradeBtn(container, "word:hvala", "good"))).toBe(false);
 
-    // The main row is checked
-    const main = container.querySelector(
-      "input[type='checkbox'][data-candidate='word:prosim']",
-    ) as HTMLInputElement;
-    expect(main.checked).toBe(true);
+    // The main row starts on Good
+    expect(isActive(gradeBtn(container, "word:prosim", "good"))).toBe(true);
   });
 
-  it("selectedCount excludes well-known rows until checked", async () => {
+  it("selectedCount excludes well-known rows until they are graded", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [
         wordCandidate("prosim", { grade_class: "due" }),
@@ -1147,11 +1156,8 @@ describe("ListenPreviewModal", () => {
       expect(getByText("Mark 1 as listened")).toBeTruthy();
     });
 
-    // Check the well-known row
-    const wk = container.querySelector(
-      "input[type='checkbox'][data-candidate='word:hvala']",
-    ) as HTMLInputElement;
-    await fireEvent.click(wk);
+    // Grade the well-known row
+    await fireEvent.click(gradeBtn(container, "word:hvala", "good"));
 
     await waitFor(() => {
       expect(getByText("Mark 2 as listened")).toBeTruthy();
@@ -1193,7 +1199,7 @@ describe("ListenPreviewModal", () => {
 
   // ── Guardrail test (verbatim from brief §2) ────────────────────────
 
-  it("a checked well-known row sends an explicit 'good'; an ordinary one is still omitted", async () => {
+  it("a graded well-known row sends an explicit 'good'; an ordinary one is still omitted", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [
         wordCandidate("prosim", { grade_class: "due" }),
@@ -1222,11 +1228,9 @@ describe("ListenPreviewModal", () => {
       expect(getByText("Mark 1 as listened")).toBeTruthy();
     });
 
-    const wellKnown = container.querySelector(
-      "input[type='checkbox'][data-candidate='word:hvala']",
-    ) as HTMLInputElement;
+    const wellKnown = gradeBtn(container, "word:hvala", "good");
     expect(wellKnown).toBeTruthy();
-    expect(wellKnown.checked).toBe(false);
+    expect(isActive(wellKnown)).toBe(false);
 
     // Opt it in, leaving the rating at the default "good".
     await fireEvent.click(wellKnown);
@@ -1281,9 +1285,16 @@ describe("ListenPreviewModal", () => {
     });
   });
 
-  it("shows no dueness tag when due_at is null", async () => {
+  // The Due cell always renders exactly one thing. These three cases have no
+  // day count to show, so they must fall back to a word rather than go blank —
+  // asserting on the cell's text, not on the absence of a selector that no
+  // longer exists (which would pass vacuously).
+  const dueCellText = (container: HTMLElement) =>
+    container.querySelector(".candidate .tag.day")?.textContent?.trim();
+
+  it("falls back to the grade_class word when due_at is null", async () => {
     mockGetListenPreview.mockResolvedValue({
-      candidates: [wordCandidate("prosim", { grade_class: "due", due_at: null })],
+      candidates: [wordCandidate("prosim", { grade_class: "ahead", due_at: null })],
     });
 
     const { container, getByText } = render(ListenPreviewModal, {
@@ -1291,10 +1302,10 @@ describe("ListenPreviewModal", () => {
     });
 
     await waitFor(() => getByText("prosim"));
-    expect(container.querySelector(".tag.due")).toBeNull();
+    expect(dueCellText(container)).toBe("ahead");
   });
 
-  it("shows no dueness tag for create rows", async () => {
+  it("shows 'new' for create rows, never a day count", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [createCandidate("kava")],
     });
@@ -1304,10 +1315,23 @@ describe("ListenPreviewModal", () => {
     });
 
     await waitFor(() => getByText("kava"));
-    expect(container.querySelector(".tag.due")).toBeNull();
+    expect(dueCellText(container)).toBe("new");
   });
 
-  it("shows no dueness tag when due_at is an invalid date string", async () => {
+  it("shows 'learn' for a learning row", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [wordCandidate("prosim", { grade_class: "learning", due_at: dueInDays(2) })],
+    });
+
+    const { container, getByText } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => getByText("prosim"));
+    expect(dueCellText(container)).toBe("learn");
+  });
+
+  it("falls back to the grade_class word when due_at is an invalid date string", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [wordCandidate("prosim", { grade_class: "due", due_at: "not-a-date" })],
     });
@@ -1317,7 +1341,7 @@ describe("ListenPreviewModal", () => {
     });
 
     await waitFor(() => getByText("prosim"));
-    expect(container.querySelector(".tag.due")).toBeNull();
+    expect(dueCellText(container)).toBe("due");
   });
 
   // ── Countdown pref ─────────────────────────────────────────────────
@@ -1369,6 +1393,206 @@ describe("ListenPreviewModal", () => {
 
     await waitFor(() => {
       expect(mockMarkAsListened).toHaveBeenCalled();
+    });
+  });
+
+  // ── Row layout: columns, gloss blur, dueness colour ─────────────────
+
+  describe("row layout", () => {
+    it("renders the three column headers", async () => {
+      mockGetListenPreview.mockResolvedValue({ candidates: [createCandidate("kava")] });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("kava"));
+      const head = container.querySelector(".list-head");
+      expect(head).toBeTruthy();
+      expect(Array.from(head!.children).map((c) => c.textContent)).toEqual([
+        "Word",
+        "Due",
+        "Proposed grade",
+      ]);
+    });
+
+    it("the header and every row share one grid template, so the columns line up", async () => {
+      // The bug this pins: header and rows are separate grid containers, so an
+      // `auto` track resolves per-container and a narrow "new" pill gives that
+      // row different columns than a "today" one. jsdom does no layout, so the
+      // offsets can't be measured here — the declared template is the thing
+      // that must match, and it must contain no `auto` track.
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [
+          createCandidate("kava"),
+          wordCandidate("prosim", { grade_class: "due", due_at: dueInDays(-5) }),
+        ],
+      });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("kava"));
+
+      const templates = [...container.querySelectorAll(".list-head, .candidate")].map(
+        (el) => getComputedStyle(el).gridTemplateColumns,
+      );
+      expect(templates.length).toBe(3); // header + 2 rows
+      expect(new Set(templates).size).toBe(1);
+      expect(templates[0]).not.toContain("auto");
+    });
+
+    it("carries the lesson language on the word so hyphenation uses the right dictionary", async () => {
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [createCandidate("etterforskningsteam")],
+      });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", languageCode: "no", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("etterforskningsteam"));
+      expect(container.querySelector(".text")?.getAttribute("lang")).toBe("no");
+    });
+  });
+
+  describe("gloss blur", () => {
+    it("a gloss starts blurred and reveals on click", async () => {
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [wordCandidate("prosim", { translation: "please" })],
+      });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("prosim"));
+      const gloss = container.querySelector(".gloss") as HTMLButtonElement;
+      expect(gloss.classList.contains("blurred")).toBe(true);
+      expect(gloss.getAttribute("aria-label")).toBe("Reveal gloss for prosim");
+
+      await fireEvent.click(gloss);
+      expect(gloss.classList.contains("blurred")).toBe(false);
+      expect(gloss.getAttribute("aria-label")).toBe("please");
+    });
+
+    it("revealing one row's gloss does not reveal another's", async () => {
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [
+          wordCandidate("prosim", { translation: "please" }),
+          wordCandidate("hvala", { translation: "thanks" }),
+        ],
+      });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("prosim"));
+      const glosses = container.querySelectorAll(".gloss") as NodeListOf<HTMLButtonElement>;
+      await fireEvent.click(glosses[0]);
+
+      expect(glosses[0].classList.contains("blurred")).toBe(false);
+      expect(glosses[1].classList.contains("blurred")).toBe(true);
+    });
+
+    it("a revealed gloss widens into the Due column", async () => {
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [wordCandidate("prosim", { translation: "just (before, after)" })],
+      });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("prosim"));
+      const sub = container.querySelector(".sub") as HTMLElement;
+      expect(sub.classList.contains("revealed")).toBe(false);
+
+      await fireEvent.click(container.querySelector(".gloss") as HTMLButtonElement);
+      expect(sub.classList.contains("revealed")).toBe(true);
+    });
+
+    it("a candidate with no gloss renders a visible placeholder, not an empty cell", async () => {
+      // A create row from a lesson generated before token_glosses existed. An
+      // absent gloss must look absent rather than look like a layout bug.
+      mockGetListenPreview.mockResolvedValue({ candidates: [createCandidate("kava")] });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("kava"));
+      const gloss = container.querySelector(".gloss") as HTMLElement;
+      expect(gloss.classList.contains("empty")).toBe(true);
+      expect(gloss.textContent).toBe("\u2014");
+      expect(gloss.tagName).toBe("SPAN"); // not a button — nothing to reveal
+    });
+
+    it("a create row shows the gloss the backend resolved from the lesson", async () => {
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [{ ...createCandidate("brygge"), translation: "wharf, quay" }],
+      });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("brygge"));
+      const gloss = container.querySelector(".gloss") as HTMLButtonElement;
+      expect(gloss.textContent).toBe("wharf, quay");
+      expect(gloss.classList.contains("empty")).toBe(false);
+    });
+  });
+
+  describe("dueness colour follows the dialogue", () => {
+    it("an untracked create row uses WordSpan's unknown indigo", async () => {
+      mockGetListenPreview.mockResolvedValue({ candidates: [createCandidate("kava")] });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("kava"));
+      const style = (container.querySelector(".tag.day") as HTMLElement).getAttribute("style")!;
+      expect(style).toContain(asInlineColor("#818cf8"));
+    });
+
+    it("a tracked row uses mastery.ts's ramp for its own progress", async () => {
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [wordCandidate("prosim", { grade_class: "due", progress: 0.5 })],
+      });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("prosim"));
+      const style = (container.querySelector(".tag.day") as HTMLElement).getAttribute("style")!;
+      // Compared against the shared helper, not a hardcoded hsl() string — if
+      // the ramp is retuned, this test follows it instead of going red.
+      expect(style).toContain(asInlineColor(masteryColor(0.5)));
+      expect(style).toContain(asInlineBackground(masteryBackgroundColor(0.5)));
+    });
+
+    it("dueness is weight, not hue: overdue and due-today are bold, future is not", async () => {
+      mockGetListenPreview.mockResolvedValue({
+        candidates: [
+          wordCandidate("a", { grade_class: "due", due_at: dueInDays(-2) }),
+          wordCandidate("b", { grade_class: "due", due_at: dueInDays(0) }),
+          wordCandidate("c", { grade_class: "ahead", due_at: dueInDays(5) }),
+        ],
+      });
+
+      const { container, getByText } = render(ListenPreviewModal, {
+        props: { lessonId: "l1", onDone: vi.fn() },
+      });
+
+      await waitFor(() => getByText("a"));
+      const tags = [...container.querySelectorAll(".candidate .tag.day")];
+      expect(tags.map((t) => t.classList.contains("overdue"))).toEqual([true, true, false]);
+      expect(tags.map((t) => t.textContent?.trim())).toEqual(["-2d", "today", "5d"]);
     });
   });
 });
