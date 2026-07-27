@@ -1034,6 +1034,17 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     latest_listen = db.latest_listen_at(lesson_id)
     latest_listen_dt = datetime.datetime.fromisoformat(latest_listen) if latest_listen is not None else None
 
+    # THIS lesson's pending bucket, keyed (collocation_id, direction) — the single
+    # source for both queue admission (below) and the provisional rating the UI
+    # pre-fills. It must be lesson-scoped in both roles: `pending_listen_grades` is
+    # UNIQUE(collocation_id, direction) *globally*, so asking "is this card staged
+    # by anybody" admitted rows another lesson owns. Two lessons sharing vocabulary
+    # then leaked 33 of one's 102 staged words into the other's "Check your work" —
+    # and `commit-pending` is lesson-scoped, so "Sync it" could not release them
+    # (2026-07-27). Ownership is the write path's call: `stage_pending_grade`
+    # UPSERTs `lesson_id`, so the most recent listen to auto-grade a card owns it.
+    staged = {(p["collocation_id"], p["direction"]): p["rating"] for p in db.get_pending_grades(lesson_id)}
+
     seen: set[int] = set()
     learning: list[tuple[datetime.datetime, int, SRSItem, Direction]] = []
     review: list[tuple[datetime.datetime, int, SRSItem, Direction]] = []
@@ -1071,7 +1082,7 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
             # a listen staged is neither due nor touched-today — without this it
             # would be dropped here AND hidden from the main queue by the Stage-3
             # exclusion, i.e. unreachable until the user hit "Sync it".
-            if touched_today or ds.due_at <= now or db.get_pending_grade(rid, direction.value) is not None:
+            if touched_today or ds.due_at <= now or (rid, direction.value) in staged:
                 review.append((ds.due_at, rid, item, direction))
                 return "review"
         return None
@@ -1114,10 +1125,6 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     ambiguous = db.get_ambiguous_surfaces(lesson.language_code)
     latest_review = db.latest_review_at(lesson_id)
     has_unreviewed_listen = _has_unreviewed_listen(latest_listen, latest_review)
-    # Provisional rating per card, so the UI can pre-fill what the listen staged.
-    # Scoped to THIS lesson's bucket: a row staged by another lesson still makes
-    # the card servable (it is staged), but its rating is that lesson's to show.
-    staged = {(p["collocation_id"], p["direction"]): p["rating"] for p in db.get_pending_grades(lesson_id)}
     queue = []
     for rid, item, d in ordered:
         entry = _queue_item_to_dict(rid, item, lesson.language_code, d, db, ambiguous)
