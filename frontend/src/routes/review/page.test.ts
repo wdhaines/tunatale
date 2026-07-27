@@ -772,9 +772,11 @@ describe("review/+page.svelte", () => {
       mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
 
       const { findByText } = render(ReviewPage);
-      const link = await findByText("Day 4: Interview with a Neighbor");
+      // Breadcrumb form, same as the lesson page's "← {curriculum topic}".
+      const link = await findByText("← Day 4: Interview with a Neighbor");
 
       expect(link.getAttribute("href")).toBe("/c/curriculum-xyz/l/lesson-abc");
+      expect(link.className).toContain("breadcrumb");
     });
 
     it("lesson mode does not render the queue-stats widget", async () => {

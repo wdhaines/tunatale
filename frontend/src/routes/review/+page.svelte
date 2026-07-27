@@ -168,12 +168,24 @@
 			is now exactly the pending set, the count lives in the banner below
 			and there is no second number to reconcile.
 		-->
-		<header class="lesson-head">
-			<h1>Check your work</h1>
-			{#if lessonTitle}
-				<a class="lesson-link" href="/c/{curriculumId}/l/{lessonId}">{lessonTitle}</a>
+		<section class="card lesson-head">
+			<div class="lesson-title-area">
+				{#if lessonTitle}
+					<a class="breadcrumb" href="/c/{curriculumId}/l/{lessonId}">← {lessonTitle}</a>
+				{/if}
+				<h1>Check your work</h1>
+			</div>
+			{#if !loading && pendingCount > 0}
+				<div class="sync-row">
+					<span class="sync-label"
+						>{pendingCount} {pendingCount === 1 ? 'word' : 'words'} pre-graded by your listen</span
+					>
+					<button class="sync-btn" onclick={syncPending} disabled={syncingPending}>
+						{syncingPending ? 'Accepting…' : 'Accept all'}
+					</button>
+				</div>
 			{/if}
-		</header>
+		</section>
 	{:else}
 		<h1>Review</h1>
 
@@ -190,16 +202,6 @@
 		{/if}
 	{/if}
 
-	{#if !loading && pendingCount > 0}
-		<div class="sync-banner">
-			<span class="sync-label"
-				>{pendingCount} {pendingCount === 1 ? 'word' : 'words'} pre-graded by your listen</span
-			>
-			<button class="sync-btn" onclick={syncPending} disabled={syncingPending}>
-				{syncingPending ? 'Accepting…' : 'Accept all'}
-			</button>
-		</div>
-	{/if}
 
 	{#if loading}
 		<p>Loading…</p>
@@ -305,24 +307,43 @@
 		font-size: 0.9rem;
 		margin-bottom: 0.35rem;
 	}
+	/* Mirrors the lesson page's player-card header: an up-link to where you
+	   came from, then the page's own title, then the one action. Same card
+	   surface and the same breadcrumb → h1 → actions order, so moving between
+	   the two pages doesn't feel like moving between two apps. */
 	.lesson-head {
 		display: flex;
 		flex-direction: column;
-		gap: 0.1rem;
-		margin-bottom: 0.6rem;
+		gap: 0.9rem;
+		margin-bottom: 1rem;
+	}
+	.lesson-title-area {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+	}
+	.breadcrumb {
+		display: inline-block;
+		color: var(--color-muted);
+		font-size: 0.9rem;
+		font-weight: 600;
+		text-decoration: none;
+	}
+	.breadcrumb:hover {
+		color: var(--color-primary);
 	}
 	.lesson-head h1 {
 		margin: 0;
+		font-size: 1.4rem;
 	}
-	.lesson-link {
-		color: var(--color-primary);
-		font-weight: 600;
-		text-decoration: none;
-		text-underline-offset: 3px;
-		width: fit-content;
-	}
-	.lesson-link:hover {
-		text-decoration: underline;
+	.sync-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		flex-wrap: wrap;
+		padding-top: 0.9rem;
+		border-top: 1px solid var(--color-border);
 	}
 	.source {
 		color: var(--color-muted);
