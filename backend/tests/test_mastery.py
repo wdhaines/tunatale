@@ -9,10 +9,10 @@ as a word is learned, which is what the transcript color ramp should track.
 from __future__ import annotations
 
 import math
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from app.models.srs_item import Direction, DirectionState, SRSState
-from app.srs.mastery import MASTERY_STABILITY_CEILING_DAYS
+from app.srs.mastery import MASTERY_STABILITY_CEILING_DAYS, is_well_known
 
 
 def _ds(
@@ -171,3 +171,40 @@ class TestComputeMasteryProgress:
         val_just_review = compute_mastery_progress([review_ds])
         val_with_new = compute_mastery_progress([review_ds, _ds(state=SRSState.NEW)])
         assert val_with_new < val_just_review
+
+
+class TestIsWellKnown:
+    """The shared past-the-horizon cutoff.
+
+    One definition feeds two consumers: the listen preview (stop asking about
+    the word) and the transcript (render it as known). Cases the DB layer can't
+    reach are pinned here — ``update_direction`` cannot persist a REVIEW row
+    with a NULL ``due_at``, so that carve-out is only testable on the helper.
+    """
+
+    TODAY = date(2026, 6, 1)
+
+    def _rec(self, state: SRSState, due_at: datetime | None) -> DirectionState:
+        return DirectionState(direction=Direction.RECOGNITION, state=state, due_at=due_at)
+
+    def test_review_beyond_horizon(self):
+        assert is_well_known(self._rec(SRSState.REVIEW, datetime(2029, 1, 1, tzinfo=UTC)), self.TODAY, 365) is True
+
+    def test_review_inside_horizon(self):
+        assert is_well_known(self._rec(SRSState.REVIEW, datetime(2026, 9, 1, tzinfo=UTC)), self.TODAY, 365) is False
+
+    def test_null_due_is_not_well_known(self):
+        # A card whose schedule is unknown stays visible rather than being
+        # silently promoted to "known".
+        assert is_well_known(self._rec(SRSState.REVIEW, None), self.TODAY, 365) is False
+
+    def test_learning_is_not_well_known(self):
+        assert is_well_known(self._rec(SRSState.LEARNING, datetime(2029, 1, 1, tzinfo=UTC)), self.TODAY, 365) is False
+
+    def test_missing_direction_is_not_well_known(self):
+        assert is_well_known(None, self.TODAY, 365) is False
+
+    def test_horizon_boundary_is_exclusive(self):
+        # Exactly `horizon` days out is NOT beyond it — the preview still asks.
+        assert is_well_known(self._rec(SRSState.REVIEW, datetime(2027, 6, 1, tzinfo=UTC)), self.TODAY, 365) is False
+        assert is_well_known(self._rec(SRSState.REVIEW, datetime(2027, 6, 2, tzinfo=UTC)), self.TODAY, 365) is True

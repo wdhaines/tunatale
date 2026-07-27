@@ -460,4 +460,59 @@ describe("lessonMastery", () => {
       expect(result.counts.known).toBe(0);
     });
   });
+
+  describe("well-known words count as known", () => {
+    // A card scheduled past the listen horizon is one the preview has stopped
+    // asking about. Counting it as "review" made the metrics disagree with what
+    // the listen flow actually treats as finished — and since SRSState.KNOWN
+    // does not survive a sync, the known bucket read 0 forever.
+    it("buckets a well-known review word as known, not review", () => {
+      const t = makeTranscript([
+        {
+          lemma: "a",
+          active_state: "review",
+          progress: 0.9,
+          recognition_state: "review",
+          recognition_is_due: false,
+          well_known: true,
+        },
+      ]);
+      const result = lessonMastery(t)!;
+      expect(result.counts.known).toBe(1);
+      expect(result.counts.review).toBe(0);
+      expect(result.lemmas?.known).toEqual(["a"]);
+    });
+
+    it("leaves the percentage alone — bucketing changes, scoring does not", () => {
+      const t = makeTranscript([
+        {
+          lemma: "a",
+          active_state: "review",
+          progress: 0.6,
+          recognition_state: "review",
+          recognition_is_due: false,
+          well_known: true,
+        },
+      ]);
+      // Still 0.6 (its progress), NOT the flat 1.0 an active_state="known" word
+      // scores. Deliberate: the display label moved, the mastery math did not.
+      expect(lessonMastery(t)!.pct).toBeCloseTo(0.6);
+    });
+
+    it("a due word is never well-known, so dueness still wins", () => {
+      const t = makeTranscript([
+        {
+          lemma: "a",
+          active_state: "review",
+          progress: 0.9,
+          recognition_state: "review",
+          recognition_is_due: true,
+          well_known: false,
+        },
+      ]);
+      const result = lessonMastery(t)!;
+      expect(result.counts.due).toBe(1);
+      expect(result.counts.known).toBe(0);
+    });
+  });
 });

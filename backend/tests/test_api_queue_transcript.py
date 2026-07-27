@@ -327,6 +327,51 @@ class TestTranscriptEndpoint:
         assert word["recognition_state"] == "review"
         assert word["recognition_is_due"] is True
 
+    async def test_transcript_includes_well_known(self):
+        """Payload must carry well_known, or the dialogue and the mastery line
+        cannot show a past-the-horizon word as known — the flag would stay
+        trapped in the listen-preview response where it started."""
+        from datetime import UTC, datetime
+
+        from app.models.srs_item import Direction, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="banka", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
+            key_phrases=[],
+        )
+
+        db = SRSDatabase(":memory:")
+        unit = SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka")
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation("banka")
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.REVIEW
+        # Years out — the shape a marked-known card comes back from a sync with.
+        rec.due_at = datetime(2099, 1, 1, 4, 0, tzinfo=UTC)
+        db.update_direction(item.guid, Direction.RECOGNITION, rec)
+
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/lesson/lesson-1/transcript")
+
+        data = response.json()
+        word = data["dialogue_lines"][0]["words"][0]
+        assert word["well_known"] is True
+
     async def test_transcript_unknown_word_recognition_fields(self):
         """Untracked word: recognition_state None, recognition_is_due False."""
         from app.srs.database import SRSDatabase

@@ -10,6 +10,7 @@ what the transcript color ramp should track.
 
 from __future__ import annotations
 
+import datetime
 import math
 from collections.abc import Iterable
 
@@ -56,3 +57,44 @@ def compute_mastery_progress(directions: Iterable[DirectionState]) -> float | No
     """
     ms = [component_mastery(d) for d in directions if d.state != SRSState.SUSPENDED]
     return sum(ms) / len(ms) if ms else None
+
+
+def is_due_beyond_horizon(due_at: datetime.datetime | str, today: datetime.date, horizon: int) -> bool:
+    """True when a card's due date is more than *horizon* days past *today*.
+
+    ``due_at`` is datetime-or-string depending on load path — the same idiom
+    ``_listen_grade_class`` uses. ``today`` is always ``anki_today()``, i.e. a
+    ``date`` (the Anki day, not ``date.today()``); an unparseable ``due_at`` is
+    not beyond the horizon.
+
+    Lives here rather than in ``api/srs.py`` (where it started) so the listen
+    preview and the transcript can share ONE definition of the cutoff — the
+    display saying "review" while the preview says "well known" is exactly the
+    divergence this move exists to make impossible.
+    """
+    if isinstance(due_at, datetime.datetime):
+        due_date = due_at.date()
+    else:
+        try:
+            due_date = datetime.date.fromisoformat(str(due_at)[:10])
+        except ValueError:
+            return False
+    return (due_date - today).days > horizon
+
+
+def is_well_known(rec: DirectionState | None, today: datetime.date, horizon: int) -> bool:
+    """True when a recognition direction is scheduled past the horizon.
+
+    "Well known" = REVIEW state with a real due date more than *horizon* days
+    out. LEARNING/RELEARNING are never well-known however far the due date
+    drifts (suppressing a card being acquired would hide work the user owes),
+    and a NULL ``due_at`` is not well-known either — a card whose schedule is
+    unknown stays visible.
+
+    Marked-known cards land here after a sync returns them as REVIEW due
+    ~2126, which is how the far-future rule covers them without depending on
+    ``SRSState.KNOWN`` surviving the round trip.
+    """
+    if rec is None or rec.state != SRSState.REVIEW or rec.due_at is None:
+        return False
+    return is_due_beyond_horizon(rec.due_at, today, horizon)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
+from app.config import settings
 from app.languages import card_surface_variants, get_variant_separator
 from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
@@ -13,7 +14,7 @@ from app.srs.collocation_matcher import match_spans
 from app.srs.database import SRSDatabase
 from app.srs.function_words import is_a1_morphology_feature, is_clozes_only_verb, ud_feats_to_tt_feature
 from app.srs.lemmatizer import Lemmatizer, analyze_sentence_cached, lemmatize_surfaces_in_context, model_version_for
-from app.srs.mastery import compute_mastery_progress
+from app.srs.mastery import compute_mastery_progress, is_well_known
 from app.srs.tokenizer import tokenize
 
 
@@ -54,6 +55,11 @@ class WordToken:
     # None when the word has no recognition direction (untracked, production-only cloze).
     recognition_state: str | None = None
     recognition_is_due: bool = False
+    # Recognition scheduled past the listen horizon — the same cutoff the listen
+    # preview uses to stop asking about a word. Rendered as "known" by the
+    # dialogue and counted in the known bucket of the mastery line, which is
+    # where a card that came back from a sync as REVIEW-due-2126 belongs.
+    well_known: bool = False
 
 
 @dataclass
@@ -261,6 +267,11 @@ def extract_transcript(
         # is_due bolding divergence).
         today = anki_today()
 
+    # Read live, not passed in: the transcript's "known" rendering and the
+    # listen preview's suppression must key off the SAME configured cutoff, and
+    # a parameter would let a caller (or a stale default) set a second one.
+    horizon_days = settings.listen_due_horizon_days
+
     natural_speed = next(
         (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
         None,
@@ -382,6 +393,7 @@ def extract_transcript(
                 recognition_reviewable_flag: bool = False
                 recognition_state_val: str | None = None
                 recognition_is_due_flag: bool = False
+                well_known_flag: bool = False
 
                 # Step 3b: Check card-less ignore list (inside the Step-3 unknown branch only)
                 if resolved_item is None and lemma.lower() in ignored_lemmas:
@@ -406,6 +418,7 @@ def extract_transcript(
                     recognition_reviewable_flag = rec_ds is not None and _is_read_reviewable(rec_ds)
                     recognition_state_val = rec_ds.state.value if rec_ds is not None else None
                     recognition_is_due_flag = _is_due(rec_ds, today) if rec_ds is not None else False
+                    well_known_flag = is_well_known(rec_ds, today, horizon_days)
                     valid_components = [c for c in components if c is not None]
                     progress_val = compute_mastery_progress(valid_components)
 
@@ -458,6 +471,7 @@ def extract_transcript(
                         recognition_reviewable=recognition_reviewable_flag,
                         recognition_state=recognition_state_val,
                         recognition_is_due=recognition_is_due_flag,
+                        well_known=well_known_flag,
                     )
                 )
 

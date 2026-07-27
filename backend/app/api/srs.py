@@ -51,6 +51,7 @@ from app.srs.function_words import (
 )
 from app.srs.grade_undo import UndoNotAvailable, record_grade_snapshot, undo_last_grade
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, lemmatize_surfaces_in_context, model_version_for
+from app.srs.mastery import is_due_beyond_horizon, is_well_known
 from app.srs.queue_engine import _compute_live_main as _compute_live_main
 from app.srs.queue_engine import _fnv1a_64_i64 as _fnv1a_64_i64
 from app.srs.queue_engine import _merge_by_retrievability_ascending as _merge_by_retrievability_ascending
@@ -431,24 +432,11 @@ def _resolve_gloss_translation(
     return ""
 
 
-def _is_due_beyond_horizon(due_at: datetime.datetime | str, today: datetime.date, horizon: int) -> bool:
-    """True when a card's due date is more than *horizon* days past *today*.
-
-    Used to flag "well-known" words in the listen preview: marked-known
-    cards (due ~36500d out) and other far-future review cards fall out of
-    the list by this rule. ``due_at`` is datetime-or-string depending on
-    load path — the same idiom ``_listen_grade_class`` uses. ``today`` is
-    always ``anki_today()``, i.e. a ``date`` (the Anki day, not
-    ``date.today()``); an unparseable ``due_at`` is not beyond the horizon.
-    """
-    if isinstance(due_at, datetime.datetime):
-        due_date = due_at.date()
-    else:
-        try:
-            due_date = datetime.date.fromisoformat(str(due_at)[:10])
-        except ValueError:
-            return False
-    return (due_date - today).days > horizon
+# Definition lives in app.srs.mastery so the transcript (which renders a
+# past-the-horizon word as "known") and the listen preview (which stops asking
+# about it) cannot drift apart. Re-exported under the old private name because
+# the listen call sites and their tests reference it.
+_is_due_beyond_horizon = is_due_beyond_horizon
 
 
 def _listen_day_window() -> tuple[datetime.datetime, datetime.datetime, str]:
@@ -1284,17 +1272,11 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
                 if rec.due_at is not None
                 else None
             )
-            # Well-known: "ahead" and due beyond the horizon. "learning" and
-            # "due" rows are NEVER well-known — suppressing a due card would
-            # silently drop a review the user owes. NULL due_at is NOT
-            # well-known (leave it visible rather than hiding a card whose
-            # schedule is unknown).
-            is_well_known = (
-                grade_cls == "ahead"
-                and due_at_str is not None
-                and due_at_str > end_of_day_utc
-                and _is_due_beyond_horizon(rec.due_at, today, horizon)
-            )
+            # Well-known: "ahead" and due beyond the horizon. The state/NULL
+            # -due carve-outs live in is_well_known (shared with the transcript,
+            # which renders the same words as "known"); "ahead" adds the
+            # not-graded-today gate this list also needs.
+            well_known_flag = grade_cls == "ahead" and is_well_known(rec, today, horizon)
             candidates.append(
                 {
                     "kind": "word",
@@ -1304,7 +1286,7 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
                     "rating": "good",
                     "translation": existing.syntactic_unit.translation or "",
                     "progress": progress,
-                    "well_known": is_well_known,
+                    "well_known": well_known_flag,
                     "due_at": due_at_str,
                     "_group_rank": _GROUP_RANK.get(grade_cls, 3),
                 }
@@ -1332,12 +1314,7 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
             if rec.due_at is not None
             else None
         )
-        is_well_known = (
-            grade_cls == "ahead"
-            and due_at_str is not None
-            and due_at_str > end_of_day_utc
-            and _is_due_beyond_horizon(rec.due_at, today, horizon)
-        )
+        well_known_flag = grade_cls == "ahead" and is_well_known(rec, today, horizon)
         candidates.append(
             {
                 "kind": "kp",
@@ -1347,7 +1324,7 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
                 "rating": "good",
                 "translation": item.syntactic_unit.translation or kp.translation or "",
                 "progress": progress,
-                "well_known": is_well_known,
+                "well_known": well_known_flag,
                 "due_at": due_at_str,
                 "_group_rank": _GROUP_RANK.get(grade_cls, 3),
             }
@@ -1450,6 +1427,7 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
                         "recognition_reviewable": w.recognition_reviewable,
                         "recognition_state": w.recognition_state,
                         "recognition_is_due": w.recognition_is_due,
+                        "well_known": w.well_known,
                     }
                     for w in line.words
                 ],

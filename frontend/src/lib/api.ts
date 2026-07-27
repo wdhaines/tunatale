@@ -190,6 +190,10 @@ export interface WordToken {
   // None when the word has no recognition direction (untracked, production-only cloze).
   recognition_state?: string | null;
   recognition_is_due?: boolean;
+  // Recognition scheduled past the listen horizon — the cutoff that already
+  // stops the listen preview asking about this word. Rendered as "known" and
+  // counted in the known bucket. Optional, same rationale as the siblings.
+  well_known?: boolean;
 }
 
 export interface CreateSRSItemRequest {

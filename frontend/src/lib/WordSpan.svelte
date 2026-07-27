@@ -75,6 +75,10 @@
 		if (word.active_state === 'unknown') return 'not tracked';
 		if (word.active_state === 'known') return 'known';
 		if (word.active_state === 'ignored') return 'ignored';
+		// Scheduled past the listen horizon — the listen preview has already
+		// stopped asking about it, so reporting a work-in-progress percentage
+		// here would contradict that. Same word as an explicitly known card.
+		if (word.well_known) return 'known';
 		if (word.progress != null) return `${Math.round(word.progress * 100)}%`;
 		// suspended, etc. — no mastery line
 		return null;

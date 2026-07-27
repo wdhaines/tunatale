@@ -1863,3 +1863,61 @@ class TestExtractTranscriptCaching:
         # First call: version mismatch → 1 lemmatizer invocation
         extract_transcript(lesson, self.db, lem, today=today)
         assert self.call_count == 1
+
+
+class TestWellKnown:
+    """well_known: a recognition card scheduled past the listen horizon.
+
+    Same rule the listen preview uses to suppress a word from the grading list
+    (``mastery.is_well_known``), surfaced on the transcript so the dialogue and
+    the mastery line can call it "known" too. Before this the flag existed only
+    inside the preview response, so a word the preview had stopped asking about
+    still rendered as an ordinary REVIEW word and counted in the review bucket.
+    Marked-known cards land here as well: a sync returns them as REVIEW due
+    ~2126, which is far beyond the horizon (the documented KNOWN-doesn't-survive
+    -sync case).
+    """
+
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.lemmatizer = LowercaseLemmatizer()
+
+    def _add(self, text: str, state: SRSState, due: datetime | None) -> None:
+        unit = SyntacticUnit(text=text, translation="x", word_count=1, difficulty=1, source="llm", lemma=text)
+        self.db.add_collocation(unit, language_code="sl")
+        item = self.db.get_collocation(text)
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = state
+        rec.due_at = due
+        self.db.update_direction(item.guid, Direction.RECOGNITION, rec)
+
+    def _word(self, text: str) -> object:
+        lesson = _make_lesson([("female-1", text)])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=date(2026, 6, 1))
+        return result.dialogue_lines[0].words[0]
+
+    def test_review_due_beyond_horizon_is_well_known(self):
+        self._add("banka", SRSState.REVIEW, datetime(2029, 1, 1, 4, 0, tzinfo=UTC))
+        assert self._word("banka").well_known is True
+
+    def test_review_due_inside_horizon_is_not_well_known(self):
+        # 30 days out — the preview still asks about this one.
+        self._add("banka", SRSState.REVIEW, datetime(2026, 7, 1, 4, 0, tzinfo=UTC))
+        assert self._word("banka").well_known is False
+
+    def test_due_review_is_not_well_known(self):
+        self._add("banka", SRSState.REVIEW, datetime(2026, 5, 1, 4, 0, tzinfo=UTC))
+        word = self._word("banka")
+        # Recognition-side dueness, not word.is_due: once recognition graduates
+        # to REVIEW the ACTIVE direction is production (NEW, not due).
+        assert word.recognition_is_due is True
+        assert word.well_known is False
+
+    def test_learning_is_never_well_known(self):
+        # Guards the suppression rule: a card being acquired must never read as
+        # known however far out its due date drifts.
+        self._add("banka", SRSState.LEARNING, datetime(2029, 1, 1, 4, 0, tzinfo=UTC))
+        assert self._word("banka").well_known is False
+
+    def test_untracked_word_is_not_well_known(self):
+        assert self._word("banka").well_known is False

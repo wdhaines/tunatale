@@ -49,6 +49,7 @@ export function lessonMastery(transcript: {
       progress: number | null;
       recognition_state?: string | null;
       recognition_is_due?: boolean;
+      well_known?: boolean;
     }>;
   }>;
 }): MasteryResult | null {
@@ -59,6 +60,7 @@ export function lessonMastery(transcript: {
     progress: number | null;
     recognition_state: string | null | undefined;
     recognition_is_due: boolean | undefined;
+    well_known: boolean | undefined;
   }> = [];
 
   for (const line of transcript.dialogue_lines) {
@@ -71,6 +73,7 @@ export function lessonMastery(transcript: {
         progress: word.progress,
         recognition_state: word.recognition_state,
         recognition_is_due: word.recognition_is_due,
+        well_known: word.well_known,
       });
     }
   }
@@ -105,12 +108,20 @@ export function lessonMastery(transcript: {
     counted++;
 
     // Recognition-based bucketing (excludes tracked clozes with null recognition_state)
+    // well_known is checked before the review arms and folds into `known`: a
+    // card scheduled past the listen horizon is one the listen flow has already
+    // stopped asking about, so counting it as review overstated the work left.
+    // It also covers marked-known cards, which come back from a sync as REVIEW
+    // due ~2126 and would otherwise leave this bucket permanently at 0.
     if (e.state === "unknown" || e.recognition_state === "new") {
       counts.new++;
       lemmas.new.push(e.lemma);
     } else if (e.recognition_state === "learning" || e.recognition_state === "relearning") {
       counts.learning++;
       lemmas.learning.push(e.lemma);
+    } else if (e.well_known) {
+      counts.known++;
+      lemmas.known.push(e.lemma);
     } else if (e.recognition_state === "review" && e.recognition_is_due) {
       counts.due++;
       lemmas.due.push(e.lemma);
