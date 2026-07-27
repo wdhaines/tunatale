@@ -779,6 +779,29 @@ describe("review/+page.svelte", () => {
       expect(link.className).toContain("breadcrumb");
     });
 
+    it("Accept all sits after the drill card, not in the header", async () => {
+      // Position is the point: working the queue one card at a time is the
+      // intended path and "Accept all" is the bypass, so the shortcut must not
+      // sit above the work it skips. Assert DOM order, not mere presence.
+      mockGetLesson.mockResolvedValue(lessonDetail("Day 4: Interview with a Neighbor"));
+      const item = makeReviewQueueItem({
+        id: 1,
+        text: "okno",
+        direction: "recognition",
+        pending_rating: "good",
+      });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
+
+      const { container, findByText } = render(ReviewPage);
+      await findByText("okno");
+
+      const acceptAll = await findByText("Accept all");
+      const drill = container.querySelector(".card-section");
+      expect(drill).not.toBeNull();
+      // Node.DOCUMENT_POSITION_FOLLOWING === 4: acceptAll comes after the card.
+      expect(drill!.compareDocumentPosition(acceptAll) & 4).toBe(4);
+    });
+
     it("lesson mode does not render the queue-stats widget", async () => {
       // The whole point of the split: no "0 + 0 + 105" competing with the nav.
       mockGetLesson.mockResolvedValue(lessonDetail("Day 4: Interview with a Neighbor"));

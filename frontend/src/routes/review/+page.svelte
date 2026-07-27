@@ -175,16 +175,6 @@
 				{/if}
 				<h1>Check your work</h1>
 			</div>
-			{#if !loading && pendingCount > 0}
-				<div class="sync-row">
-					<span class="sync-label"
-						>{pendingCount} {pendingCount === 1 ? 'word' : 'words'} pre-graded by your listen</span
-					>
-					<button class="sync-btn" onclick={syncPending} disabled={syncingPending}>
-						{syncingPending ? 'Accepting…' : 'Accept all'}
-					</button>
-				</div>
-			{/if}
 		</section>
 	{:else}
 		<h1>Review</h1>
@@ -240,6 +230,23 @@
 					pendingRating={current.item.pending_rating === 'skip' ? null : current.item.pending_rating}
 				/>
 			{/key}
+		</section>
+	{/if}
+
+	<!--
+		Bulk accept sits at the FOOT of the page, after the card. Working through
+		the queue one card at a time is the intended path; "Accept all" is the
+		bypass. Putting it under the header made the shortcut the first thing you
+		reached, above the work it skips.
+	-->
+	{#if !loading && pendingCount > 0}
+		<section class="card sync-row">
+			<span class="sync-label"
+				>{pendingCount} {pendingCount === 1 ? 'word' : 'words'} pre-graded by your listen</span
+			>
+			<button class="sync-btn" onclick={syncPending} disabled={syncingPending}>
+				{syncingPending ? 'Accepting…' : 'Accept all'}
+			</button>
 		</section>
 	{/if}
 </main>
@@ -342,8 +349,7 @@
 		justify-content: space-between;
 		gap: 1rem;
 		flex-wrap: wrap;
-		padding-top: 0.9rem;
-		border-top: 1px solid var(--color-border);
+		margin-top: 1.25rem;
 	}
 	.source {
 		color: var(--color-muted);
