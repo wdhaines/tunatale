@@ -11,7 +11,7 @@ when any non-equivalent mutant survives or any equivalent mutant is killed.
 Each mutant is a ``(label, old_source, new_source)`` triple — no AST or random
 mutation.  The module is restored byte-for-byte on every exit path.
 
-The 18 mutants (16 non‑equivalent + 2 equivalent) encode every behaviour the
+The 21 mutants (19 non‑equivalent + 2 equivalent) encode every behaviour the
 Fable audit found an unguarded 9d7fae4:e7fd16a.
 """
 
@@ -118,6 +118,21 @@ MUTANTS: list[tuple[str, str, str]] = [
         "    tempo = max(_MIN_ATEMPO, dur_ms / target_ms)",
         "    tempo = dur_ms / target_ms",
     ),
+    (
+        "time_stretch: remove no-op-above-target",
+        "    if dur_ms <= 0 or dur_ms >= target_ms:",
+        "    if dur_ms <= 0:",
+    ),
+    (
+        "polish: skip DC removal",
+        "    out = chunk - float(chunk.mean()) if len(chunk) else chunk",
+        "    out = chunk",
+    ),
+    (
+        "polish: skip the final fade",
+        "    return _fade(out, rate)",
+        "    return out",
+    ),
 ]
 
 EQUIVALENT: list[tuple[str, str, str]] = [
@@ -184,9 +199,11 @@ def main() -> None:
     survived: list[str] = []
 
     for label, old, new in MUTANTS:
-        _SLICING.write_text(_mutate(source, old, new))
-        ok = _pytest()
-        _restore(source)
+        try:
+            _SLICING.write_text(_mutate(source, old, new))
+            ok = _pytest()
+        finally:
+            _restore(source)
 
         if ok:
             survived.append(label)
@@ -199,9 +216,11 @@ def main() -> None:
     eq_broken: list[str] = []
 
     for label, old, new in EQUIVALENT:
-        _SLICING.write_text(_mutate(source, old, new))
-        ok = _pytest()
-        _restore(source)
+        try:
+            _SLICING.write_text(_mutate(source, old, new))
+            ok = _pytest()
+        finally:
+            _restore(source)
 
         if ok:
             eq_ok += 1
