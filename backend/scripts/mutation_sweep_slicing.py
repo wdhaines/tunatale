@@ -65,12 +65,12 @@ MUTANTS: list[tuple[str, str, str]] = [
     ),
     (
         "raw_span: drop headroom cap (100ms)",
-        '        headroom = min(max(0, limit - end), int(_MAX_HEADROOM_MS / 1000.0 * sw.rate))',
+        "        headroom = min(max(0, limit - end), int(_MAX_HEADROOM_MS / 1000.0 * sw.rate))",
         "        headroom = max(0, limit - end)",
     ),
     (
         "raw_span: drop tail ceiling (220ms)",
-        '        tail = int(np.clip(headroom, tail_pad, _MAX_TAIL_MS / 1000.0 * sw.rate))',
+        "        tail = int(np.clip(headroom, tail_pad, _MAX_TAIL_MS / 1000.0 * sw.rate))",
         "        tail = int(max(headroom, tail_pad))",
     ),
     (
@@ -85,30 +85,18 @@ MUTANTS: list[tuple[str, str, str]] = [
     ),
     (
         "_edge_fade_ms: always 12ms (return _FADE_MS)",
-        '    return float(np.clip(_FADE_MS + (ratio_db + 18.0) / 18.0 * (_MAX_FADE_MS - _FADE_MS), _FADE_MS, _MAX_FADE_MS))',
+        "    return float(np.clip(_FADE_MS + (ratio_db + 18.0) / 18.0 * (_MAX_FADE_MS - _FADE_MS), _FADE_MS, _MAX_FADE_MS))",
         "    return _FADE_MS",
     ),
     (
         "_fade: skip head fade only",
-        "        if head:\n"
-        "            out[:n] *= ramp\n"
-        "        else:\n"
-        "            out[-n:] *= ramp[::-1]",
-        "        if head:\n"
-        "            pass\n"
-        "        else:\n"
-        "            out[-n:] *= ramp[::-1]",
+        "        if head:\n            out[:n] *= ramp\n        else:\n            out[-n:] *= ramp[::-1]",
+        "        if head:\n            pass\n        else:\n            out[-n:] *= ramp[::-1]",
     ),
     (
         "_fade: skip tail fade only",
-        "        if head:\n"
-        "            out[:n] *= ramp\n"
-        "        else:\n"
-        "            out[-n:] *= ramp[::-1]",
-        "        if head:\n"
-        "            out[:n] *= ramp\n"
-        "        else:\n"
-        "            pass",
+        "        if head:\n            out[:n] *= ramp\n        else:\n            out[-n:] *= ramp[::-1]",
+        "        if head:\n            out[:n] *= ramp\n        else:\n            pass",
     ),
     (
         "normalize_rms: remove +12dB gain cap",
@@ -117,17 +105,13 @@ MUTANTS: list[tuple[str, str, str]] = [
     ),
     (
         "normalize_rms: remove peak limiter",
-        "    if peak > 0.99:\n"
-        "        out = out * (0.99 / peak)",
-        "    if False:\n"
-        "        out = out * (0.99 / peak)",
+        "    if peak > 0.99:\n        out = out * (0.99 / peak)",
+        "    if False:\n        out = out * (0.99 / peak)",
     ),
     (
         "normalize_rms: remove silence guard",
-        "    if rms <= 1e-6 or target_rms <= 0:\n"
-        "        return chunk",
-        "    if False:\n"
-        "        return chunk",
+        "    if rms <= 1e-6 or target_rms <= 0:\n        return chunk",
+        "    if False:\n        return chunk",
     ),
     (
         "time_stretch: remove _MIN_ATEMPO floor",
@@ -146,8 +130,8 @@ EQUIVALENT: list[tuple[str, str, str]] = [
         "fade: skip the -18dB early return (equivalent — clip's lower bound erases)",
         "    if ratio_db <= -18.0:\n"
         "        return _FADE_MS\n"
-        '    return float(np.clip(_FADE_MS + (ratio_db + 18.0) / 18.0 * (_MAX_FADE_MS - _FADE_MS), _FADE_MS, _MAX_FADE_MS))',
-        '    return float(np.clip(_FADE_MS + (ratio_db + 18.0) / 18.0 * (_MAX_FADE_MS - _FADE_MS), _FADE_MS, _MAX_FADE_MS))',
+        "    return float(np.clip(_FADE_MS + (ratio_db + 18.0) / 18.0 * (_MAX_FADE_MS - _FADE_MS), _FADE_MS, _MAX_FADE_MS))",
+        "    return float(np.clip(_FADE_MS + (ratio_db + 18.0) / 18.0 * (_MAX_FADE_MS - _FADE_MS), _FADE_MS, _MAX_FADE_MS))",
     ),
 ]
 
@@ -167,15 +151,12 @@ def _check_old_strings(source: str, mutants: list[tuple[str, str, str]], tag: st
     """Assert every old string is found in *source*."""
     for label, old, _new in mutants:
         if old not in source:
-            _fail(
-                f"[{tag}] old_string not found: {label!r}\n"
-                f"  The module may have changed underneath this tool."
-            )
+            _fail(f"[{tag}] old_string not found: {label!r}\n  The module may have changed underneath this tool.")
 
 
 def _mutate(source: str, old: str, new: str) -> str:
     """Replace *old* with *new* in *source*."""
-    assert old in source, f"old_string not found in module source"
+    assert old in source, "old_string not found in module source"
     return source.replace(old, new, 1)
 
 
