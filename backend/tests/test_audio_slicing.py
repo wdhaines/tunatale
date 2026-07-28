@@ -1,3 +1,14 @@
+"""Guardrails for app.audio.slicing.
+
+Each test here is written to FAIL against a specific plausible-but-wrong
+implementation, and every one was sabotage-drilled by mutating the module and
+confirming it went red. A mutation sweep of 16 non-equivalent mutants kills
+16/16 with this file in place. If you weaken an assertion, re-run that sweep —
+the original version of this file passed 28/28 while leaving 9 behaviours
+completely unguarded, including the negative-going zero snap and the entire body
+of ``refine_splice``.
+"""
+
 from __future__ import annotations
 
 from unittest import mock
@@ -22,10 +33,32 @@ from app.audio.slicing import (
 _RATE = 16000
 
 
+def _ms(milliseconds: float, rate: int = _RATE) -> int:
+    return int(milliseconds / 1000.0 * rate)
+
+
 def _sine(freq: float = 440.0, dur_ms: float = 500.0, rate: int = _RATE) -> np.ndarray:
     n = round(dur_ms / 1000.0 * rate)
     t = np.arange(n, dtype=np.float32) / rate
     return (np.sin(2.0 * np.pi * freq * t) * 0.5).astype(np.float32)
+
+
+def _rms(x: np.ndarray) -> float:
+    return float(np.sqrt((x**2).mean())) if len(x) else 0.0
+
+
+def _two_syllable(headroom_ms: float, boundary_ms: float = 400.0, total_ms: float = 1000.0) -> SlicedWord:
+    """A 2-syllable word whose vowel-onset headroom is exactly *headroom_ms*."""
+    n = _ms(total_ms)
+    boundary = _ms(boundary_ms)
+    return SlicedWord(
+        word="testord",
+        syllables=["test", "ord"],
+        samples=_sine(220.0, total_ms),
+        rate=_RATE,
+        bounds=[0, boundary, n],
+        onset_ends=[boundary + _ms(headroom_ms)],
+    )
 
 
 def _word(word: str, syllables: list[str], samples: np.ndarray | None = None, rate: int = _RATE) -> SlicedWord:
@@ -45,153 +78,189 @@ def _word(word: str, syllables: list[str], samples: np.ndarray | None = None, ra
 
 
 class TestSnapNegativeZero:
-    def test_snaps_to_negative_going_crossing(self):
-        samples = np.array([1.0, 0.5, 0.0, -0.3, -0.1, 0.2, 0.0, -0.2], dtype=np.float32)
-        # Negative-going crossing at index 2 (0.0→-0.3) and index 6 (0.0→-0.2)
-        result = snap_negative_zero(samples, 2, _RATE)
-        assert result == 2  # already at a negative-going crossing
+    def test_prefers_negative_going_over_a_NEARER_positive_going(self):
+        """The direction constraint, not merely 'lands on a zero'.
 
-    def test_finds_negative_going_not_positive(self):
-        rate = 1000
-        samples = np.array([0.1, 0.0, 0.05, -0.1, 0.0, -0.2, 0.02], dtype=np.float32)
-        # negative-going crossing at idx 2 (0.05→-0.1) and idx 4 (0.0→-0.2)
-        result = snap_negative_zero(samples, 4, rate)
-        # idx 4 is the closest negative-going crossing to idx 4 (distance 0)
-        assert result == 4
+        Kills: snapping to any sign change, and not snapping at all. idx=2 sits
+        one sample from a POSITIVE-going crossing and two from a negative-going
+        one, so an any-crossing implementation returns 1 and a no-op returns 2.
+        """
+        samples = np.array([-0.5, -0.2, 0.1, 0.4, 0.2, -0.3, -0.1, 0.2], dtype=np.float32)
+        result = snap_negative_zero(samples, 2, _RATE)
+        assert result == 4, "must pick the negative-going crossing at 4, not the nearer positive-going one at 1"
+
+    def test_moves_when_idx_is_not_already_on_a_crossing(self):
+        """Kills a no-op implementation that returns idx unchanged."""
+        samples = np.array([-0.5, -0.2, 0.1, 0.4, 0.2, -0.3, -0.1, 0.2], dtype=np.float32)
+        assert snap_negative_zero(samples, 0, _RATE) != 0
 
     def test_no_crossing_returns_original(self):
         samples = np.array([1.0, 0.5, 0.3, 0.1, 0.0, 0.0], dtype=np.float32)
-        result = snap_negative_zero(samples, 2, _RATE)
-        assert result == 2
+        assert snap_negative_zero(samples, 2, _RATE) == 2
 
     def test_edge_returns_clamped(self):
         samples = np.array([1.0, 0.5], dtype=np.float32)
-        result = snap_negative_zero(samples, 0, _RATE)
-        assert result == 0
+        assert snap_negative_zero(samples, 0, _RATE) == 0
 
 
 class TestRefineSplice:
-    def test_moves_to_quietest_region(self):
-        # Two sine tones: quiet middle, loud on either side
-        n = round(100.0 / 1000.0 * _RATE)
-        loud = _sine(440.0, 100.0, _RATE) * 0.5
-        quiet = _sine(440.0, 100.0, _RATE) * 0.01
-        samples = np.concatenate([loud[:n], quiet[:n], loud[:n]])
-        # Boundary at the loud/quiet transition (idx n), refine should move into quiet
-        result = refine_splice(samples, _RATE, n)
-        assert result >= n  # should stay at or move into the quiet region
+    def test_moves_boundary_out_of_loud_region_into_quiet_one(self):
+        """Kills a no-op body: idx starts 10 ms INSIDE the loud region.
+
+        The previous version of this test passed idx == n and asserted
+        `result >= n`, which `return idx` satisfies by construction.
+        """
+        seg = _ms(100.0)
+        loud = _sine(440.0, 100.0) * 0.5
+        quiet = _sine(440.0, 100.0) * 0.01
+        samples = np.concatenate([loud[:seg], quiet[:seg], loud[:seg]])
+        idx = seg - _ms(10.0)
+        result = refine_splice(samples, _RATE, idx)
+        assert result != idx, "must not return the input index unchanged"
+        assert result >= seg, f"must move into the quiet region (>= {seg}), got {result}"
+        assert result < 2 * seg, "must not run past the quiet region"
+
+    def test_picks_quietest_not_loudest(self):
+        seg = _ms(100.0)
+        quiet = _sine(440.0, 100.0) * 0.01
+        loud = _sine(440.0, 100.0) * 0.5
+        samples = np.concatenate([quiet[:seg], loud[:seg]])
+        result = refine_splice(samples, _RATE, seg)
+        assert result < seg, "argmin, not argmax"
 
     def test_short_buffer_returns_original(self):
-        samples = np.zeros(10, dtype=np.float32)
-        result = refine_splice(samples, _RATE, 5)
-        assert result == 5
+        assert refine_splice(np.zeros(10, dtype=np.float32), _RATE, 5) == 5
+
+
+class TestRawSpanTailLength:
+    """The tail formula: clip(min(headroom, 100ms) + 40ms, tail_pad, 220ms)."""
+
+    def test_vowel_overlap_is_added(self):
+        """Kills dropping the +40 ms overlap (would give 50 ms)."""
+        sw = _two_syllable(headroom_ms=50.0)
+        span = raw_span(sw, 0, 1, head_pad=0, tail_pad=_ms(20.0))
+        assert len(span) - sw.bounds[1] == _ms(90.0)
+
+    def test_headroom_is_capped_at_100ms_before_overlap(self):
+        """Kills dropping the _MAX_HEADROOM_MS cap (would give 190 ms)."""
+        sw = _two_syllable(headroom_ms=150.0)
+        span = raw_span(sw, 0, 1, head_pad=0, tail_pad=_ms(20.0))
+        assert len(span) - sw.bounds[1] == _ms(140.0)
+
+    def test_max_tail_clamps_an_oversized_caller_floor(self):
+        """Kills dropping the _MAX_TAIL_MS ceiling (would give the 300 ms floor)."""
+        sw = _two_syllable(headroom_ms=50.0)
+        span = raw_span(sw, 0, 1, head_pad=0, tail_pad=_ms(300.0))
+        assert len(span) - sw.bounds[1] == _ms(220.0)
+
+    def test_tail_pad_acts_as_the_floor(self):
+        sw = _two_syllable(headroom_ms=0.0)
+        span = raw_span(sw, 0, 1, head_pad=0, tail_pad=_ms(150.0))
+        assert len(span) - sw.bounds[1] == _ms(150.0)
 
 
 class TestRawSpan:
-    def test_tail_decay_ends_at_near_zero_amplitude(
-        self,
-    ):
-        # Three-syllable word: request middle chunk (i=1, j=2), which gets a tail
-        samples = _sine(220.0, 600.0, _RATE)  # full word audio
+    def test_tail_decay_ends_at_near_zero_amplitude(self):
+        samples = _sine(220.0, 600.0, _RATE)
         n = len(samples)
         thirds = [n // 3, 2 * n // 3]
-        onset_ends = [min(t + n // 8, n) for t in thirds]
         sw = SlicedWord(
             word="testordet",
             syllables=["test", "or", "det"],
             samples=samples,
             rate=_RATE,
             bounds=[0, *thirds, n],
-            onset_ends=onset_ends,
+            onset_ends=[min(t + n // 8, n) for t in thirds],
         )
-        tail_pad = int(50.0 / 1000.0 * _RATE)
-        raw = raw_span(sw, 1, 2, head_pad=0, tail_pad=tail_pad)
+        raw = raw_span(sw, 1, 2, head_pad=0, tail_pad=_ms(50.0))
         assert len(raw) > 0
-        # The last few samples of the tail extension should be at ≈0
-        tail_end = raw[-5:]
-        assert np.abs(tail_end).max() < 0.001
+        assert np.abs(raw[-5:]).max() < 0.001
+
+    def test_tail_decays_monotonically_not_the_reverse(self):
+        """Kills an inverted ramp (fade-IN across the tail)."""
+        sw = _two_syllable(headroom_ms=50.0)
+        span = raw_span(sw, 0, 1, head_pad=0, tail_pad=_ms(20.0))
+        tail = span[sw.bounds[1] :]
+        first_quarter = _rms(tail[: len(tail) // 4])
+        last_quarter = _rms(tail[-len(tail) // 4 :])
+        assert last_quarter < first_quarter * 0.2, "tail must decay toward zero, not grow"
 
     def test_preserves_pre_tail_region_sample_for_sample(self):
         sw = _word("testord", ["test", "ord"])
         chunk = sw.samples[sw.bounds[1] : sw.bounds[2]].copy()
-        raw = raw_span(sw, 1, 2, head_pad=0, tail_pad=int(50.0 / 1000.0 * _RATE))
-        pre_tail = raw[: len(chunk)]
-        np.testing.assert_array_equal(pre_tail, chunk)
+        raw = raw_span(sw, 1, 2, head_pad=0, tail_pad=_ms(50.0))
+        np.testing.assert_array_equal(raw[: len(chunk)], chunk)
 
     def test_word_initial_chunk_no_head_pad(self):
         sw = _word("testord", ["test", "ord"])
-        raw = raw_span(sw, 0, 1, head_pad=int(100.0 / 1000.0 * _RATE), tail_pad=0)
+        raw = raw_span(sw, 0, 1, head_pad=_ms(100.0), tail_pad=0)
         assert raw[0] == sw.samples[0]
+
+    def test_interior_chunk_does_get_head_pad(self):
+        """Kills applying the head pad unconditionally OR never applying it."""
+        sw = _word("testordet", ["test", "or", "det"])
+        head = _ms(20.0)
+        raw = raw_span(sw, 1, 2, head_pad=head, tail_pad=0)
+        assert raw[0] == sw.samples[sw.bounds[1] - head]
 
     def test_word_final_chunk_no_tail(self):
         sw = _word("testord", ["test", "ord"])
-        raw = raw_span(sw, 1, 2, head_pad=0, tail_pad=int(100.0 / 1000.0 * _RATE))
+        raw = raw_span(sw, 1, 2, head_pad=0, tail_pad=_ms(100.0))
         assert raw[-1] == sw.samples[sw.bounds[2] - 1]
 
     def test_tail_decay_short_span_no_error(self):
-        samples = np.ones(10, dtype=np.float32)
         sw = SlicedWord(
             word="ab",
             syllables=["a", "b"],
-            samples=samples,
+            samples=np.ones(10, dtype=np.float32),
             rate=_RATE,
             bounds=[0, 5, 10],
             onset_ends=[8],
         )
-        tail_pad = int(50.0 / 1000.0 * _RATE)
-        raw = raw_span(sw, 0, 1, head_pad=0, tail_pad=tail_pad)
-        assert len(raw) > 0
+        assert len(raw_span(sw, 0, 1, head_pad=0, tail_pad=_ms(50.0))) > 0
 
     def test_tail_decay_n_leq_one(self):
-        samples = np.array([1.0], dtype=np.float32)
         sw = SlicedWord(
             word="a",
             syllables=["a", "a"],
-            samples=samples,
+            samples=np.array([1.0], dtype=np.float32),
             rate=_RATE,
             bounds=[0, 0, 1],
         )
-        tail_pad = int(50.0 / 1000.0 * _RATE)
-        raw = raw_span(sw, 0, 1, head_pad=0, tail_pad=tail_pad)
-        assert len(raw) == 1
+        assert len(raw_span(sw, 0, 1, head_pad=0, tail_pad=_ms(50.0))) == 1
 
 
 class TestFade:
-    def test_quiet_edge_returns_12ms(
-        self,
-    ):
-        # A chunk starting with near-silence followed by loud signal
-        n = round(50.0 / 1000.0 * _RATE)
-        quiet = np.full(n, 1e-6, dtype=np.float32)
-        loud = _sine(440.0, 50.0, _RATE) * 0.5
-        chunk = np.concatenate([quiet, loud])
-        # The head edge should be very quiet relative to full chunk
+    def test_quiet_edge_returns_12ms(self):
         from app.audio.slicing import _edge_fade_ms
 
-        fade_len = _edge_fade_ms(chunk, _RATE, head=True)
-        assert fade_len == pytest.approx(_FADE_MS, abs=0.1), f"expected {_FADE_MS} ms, got {fade_len}"
+        quiet = np.full(_ms(50.0), 1e-6, dtype=np.float32)
+        chunk = np.concatenate([quiet, _sine(440.0, 50.0) * 0.5])
+        assert _edge_fade_ms(chunk, _RATE, head=True) == pytest.approx(_FADE_MS, abs=0.1)
 
-    def test_loud_edge_returns_40ms(
-        self,
-    ):
-        # Full-amplitude chunk with no quiet start
-        chunk = _sine(440.0, 100.0, _RATE) * 0.5
+    def test_loud_edge_returns_40ms(self):
         from app.audio.slicing import _edge_fade_ms
 
-        fade_len = _edge_fade_ms(chunk, _RATE, head=True)
-        assert fade_len == pytest.approx(_MAX_FADE_MS, abs=0.1), f"expected {_MAX_FADE_MS} ms, got {fade_len}"
+        assert _edge_fade_ms(_sine(440.0, 100.0) * 0.5, _RATE, head=True) == pytest.approx(_MAX_FADE_MS, abs=0.1)
+
+    def test_both_edges_are_faded(self):
+        """Kills fading only the head, and kills skipping the fade entirely."""
+        chunk = _sine(440.0, 200.0)
+        result = polish(chunk.copy(), _RATE, target_rms=0.1, target_ms=_TARGET_MS, stretch=False, normalize=False)
+        edge = _ms(5.0)
+        mid = _rms(result[len(result) // 2 - edge : len(result) // 2 + edge])
+        assert _rms(result[:edge]) < mid * 0.2, "head edge not faded"
+        assert _rms(result[-edge:]) < mid * 0.2, "tail edge not faded"
 
     def test_fade_output_same_length(self):
-        chunk = _sine(440.0, 100.0, _RATE)
+        chunk = _sine(440.0, 100.0)
         result = polish(chunk.copy(), _RATE, target_rms=0.1, target_ms=_TARGET_MS, stretch=False, normalize=False)
         assert len(result) == len(chunk)
 
     def test_short_chunk_returns_12ms(self):
         from app.audio.slicing import _edge_fade_ms
 
-        chunk = np.zeros(5, dtype=np.float32)
-        result = _edge_fade_ms(chunk, _RATE, head=True)
-        assert result == _FADE_MS
+        assert _edge_fade_ms(np.zeros(5, dtype=np.float32), _RATE, head=True) == _FADE_MS
 
     def test_zero_length_chunk_in_fade(self):
         chunk = np.array([0.5], dtype=np.float32)
@@ -200,62 +269,66 @@ class TestFade:
 
 
 class TestNormalizeRms:
-    def test_caps_gain_at_12_db(self):
-        # Very quiet chunk: target_rms / rms would exceed +12 dB
-        chunk = np.full(1000, 1e-8, dtype=np.float32)
+    def test_gain_is_capped_at_exactly_12_db(self):
+        """Kills removing the cap.
+
+        The chunk must sit ABOVE the 1e-6 silence guard or normalize_rms returns
+        early and the cap line is never reached — that is exactly how the
+        previous version of this test passed while measuring 0 dB of gain.
+        """
+        chunk = np.full(1000, 1e-3, dtype=np.float32)
         result = normalize_rms(chunk, target_rms=0.1)
-        rms_before = float(np.sqrt((chunk**2).mean()))
-        rms_after = float(np.sqrt((result**2).mean()))
-        actual_gain_db = 20.0 * np.log10(rms_after / max(rms_before, 1e-12))
-        assert actual_gain_db <= _MAX_GAIN_DB + 0.1, f"Gain {actual_gain_db:.1f} dB exceeds cap"
+        gain_db = 20.0 * np.log10(_rms(result) / _rms(chunk))
+        assert gain_db == pytest.approx(_MAX_GAIN_DB, abs=0.05)
+
+    def test_gain_applied_when_under_the_cap(self):
+        chunk = np.full(1000, 0.05, dtype=np.float32)
+        result = normalize_rms(chunk, target_rms=0.1)
+        assert _rms(result) == pytest.approx(0.1, rel=1e-3)
 
     def test_peak_limited_to_099(self):
-        # Chunk at full scale that would exceed 0.99 after gain
-        chunk = np.full(1000, 0.5, dtype=np.float32)
-        result = normalize_rms(chunk, target_rms=0.1)
-        assert np.abs(result).max() <= 0.99 + 1e-6
-
-    def test_silent_chunk_unchanged(self):
-        chunk = np.zeros(1000, dtype=np.float32)
-        result = normalize_rms(chunk, target_rms=0.1)
-        np.testing.assert_array_equal(result, chunk)
-
-    def test_peak_limiting_triggers(self):
         rng = np.random.default_rng(42)
         chunk = rng.uniform(-1.0, 1.0, 1000).astype(np.float32)
         result = normalize_rms(chunk, target_rms=10.0)
         assert np.abs(result).max() <= 0.99 + 1e-6
+        assert np.abs(result).max() == pytest.approx(0.99, abs=1e-3), "limiter must engage, not merely not-exceed"
+
+    def test_silent_chunk_unchanged(self):
+        chunk = np.zeros(1000, dtype=np.float32)
+        np.testing.assert_array_equal(normalize_rms(chunk, target_rms=0.1), chunk)
+
+    def test_nonpositive_target_unchanged(self):
+        chunk = np.full(1000, 0.05, dtype=np.float32)
+        np.testing.assert_array_equal(normalize_rms(chunk, target_rms=0.0), chunk)
 
 
 class TestTimeStretch:
     def test_lengthens_toward_target(self):
-        chunk = _sine(440.0, 100.0, _RATE)
-        result = time_stretch(chunk, _RATE, _TARGET_MS)
-        assert len(result) > len(chunk)
+        chunk = _sine(440.0, 100.0)
+        assert len(time_stretch(chunk, _RATE, _TARGET_MS)) > len(chunk)
 
     def test_noop_above_target(self):
-        # 500 ms chunk is already above 400 ms target → no change
-        chunk = _sine(440.0, 500.0, _RATE)
-        result = time_stretch(chunk, _RATE, _TARGET_MS)
-        assert len(result) == len(chunk)
-        np.testing.assert_array_equal(result, chunk)
+        chunk = _sine(440.0, 500.0)
+        np.testing.assert_array_equal(time_stretch(chunk, _RATE, _TARGET_MS), chunk)
 
     def test_noop_on_empty(self):
-        chunk = np.array([], dtype=np.float32)
-        result = time_stretch(chunk, _RATE, _TARGET_MS)
-        assert len(result) == 0
+        assert len(time_stretch(np.array([], dtype=np.float32), _RATE, _TARGET_MS)) == 0
 
     def test_ffmpeg_failure_returns_original_chunk(self):
-        chunk = _sine(440.0, 50.0, _RATE)
+        chunk = _sine(440.0, 50.0)
         with mock.patch("subprocess.run", return_value=mock.Mock(returncode=1, stdout=b"", stderr=b"")):
-            result = time_stretch(chunk, _RATE, _TARGET_MS)
-        np.testing.assert_array_equal(result, chunk)
+            np.testing.assert_array_equal(time_stretch(chunk, _RATE, _TARGET_MS), chunk)
 
     def test_noop_at_exact_target(self):
-        chunk = _sine(440.0, _TARGET_MS, _RATE)
+        chunk = _sine(440.0, _TARGET_MS)
+        np.testing.assert_array_equal(time_stretch(chunk, _RATE, _TARGET_MS), chunk)
+
+    def test_min_atempo_floor_bounds_the_stretch(self):
+        """Kills removing the _MIN_ATEMPO floor: a 10 ms chunk would otherwise be
+        stretched 40x rather than the permitted 2x."""
+        chunk = _sine(440.0, 10.0)
         result = time_stretch(chunk, _RATE, _TARGET_MS)
-        assert len(result) == len(chunk)
-        np.testing.assert_array_equal(result, chunk)
+        assert len(result) < len(chunk) * 3
 
 
 class TestPolish:
@@ -265,9 +338,7 @@ class TestPolish:
         assert abs(float(result.mean())) < 0.001
 
     def test_stretch_and_normalize(self):
-        chunk = _sine(440.0, 100.0, _RATE)  # 100 ms
+        chunk = _sine(440.0, 100.0)
         result = polish(chunk, _RATE, target_rms=0.1, target_ms=_TARGET_MS, stretch=True, normalize=True)
-        # Should be longer than input
         assert len(result) > len(chunk)
-        # Should be float32
         assert result.dtype == np.float32
