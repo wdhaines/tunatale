@@ -27,6 +27,14 @@ dependencies = [
 # runtime version is pinned via the `anki_pkg_version` setting (empty → latest), not
 # here, so this stays a valid specifier regardless of which desktop Anki the user runs.
 anki = ["anki"]
+# Forced-alignment models for syllable slicing (app/plugins/languages/no/alignment.py).
+# An EXTRA, not a dependency group, matching the `anki` precedent: neither a plain
+# `uv sync` nor `--all-groups` pulls it, and CI runs torch-free on purpose
+# (`--no-group slovene --no-group norwegian`), where every alignment test skips
+# rather than errors. Install with `uv sync --extra alignment`; torch arrives via
+# the `norwegian`/`slovene` groups. Gated at runtime by `audio_slicing_enabled`
+# AND `find_spec("transformers")` — see app.audio.slicer.slicing_available.
+alignment = ["transformers>=4.57"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
@@ -176,6 +184,13 @@ omit = [
     # CLI audio-preview glue: pure TTS-process + filesystem I/O. Testable logic
     # lives in norwegian_breakdown / breakdown_preview (both fully covered).
     "app/plugins/languages/no/breakdown_audio.py",
+    # Thin transformers/torch adapter for forced alignment — the same situation
+    # as sync_driver.py above: it can only execute with an optional dependency
+    # that CI deliberately does not install (`--no-group slovene --no-group
+    # norwegian`, no `--extra alignment`). It holds no decisions; the Viterbi,
+    # the frame->sample mapping and every fallback live in app/audio/alignment.py
+    # and app/audio/slicer.py, both covered by model-free tests.
+    "app/plugins/languages/no/alignment.py",
 ]
 
 [tool.coverage.report]

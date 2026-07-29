@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import os
 
+from app.models.breakdown import BreakdownChunk
 from app.plugins.languages.no.syllabify import syllabify_norwegian_word
 
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -699,6 +700,139 @@ def build_norwegian_breakdown(phrase: str) -> list[str]:
             breakdown.append(text)
 
     breakdown.append(text)
+    return breakdown
+
+
+def flat_syllables(word: str) -> list[str] | None:
+    word_lower = word.lower().strip()
+    if not word_lower:
+        return []
+
+    morphemes = segment_compound(word_lower)
+    if len(morphemes) >= 2:
+        units = _compound_buildup_units(morphemes)
+        pieces: list[str] = []
+        for _, part_pieces in units:
+            pieces.extend(part_pieces)
+    else:
+        pieces = syllabify_morpheme(word_lower)
+
+    if "".join(pieces) != word_lower:
+        return None
+    return pieces
+
+
+def _build_syllable_inner_spans(syllables: list[str], word: str) -> list[BreakdownChunk]:
+    seq: list[BreakdownChunk] = []
+    n = len(syllables)
+    for i in range(n - 1, -1, -1):
+        seq.append(BreakdownChunk(_spoken_syllable(syllables, i), word, (i, i + 1)))
+        if i < n - 1:
+            seq.append(BreakdownChunk("".join(syllables[i:]), word, (i, n)))
+    return seq
+
+
+def _build_syllable_sequence_spans(word: str, syllables: list[str]) -> list[BreakdownChunk]:
+    return [
+        BreakdownChunk(word, word, None),
+        *_build_syllable_inner_spans(syllables, word),
+        BreakdownChunk(word, word, None),
+    ]
+
+
+def _build_compound_sequence_spans(word: str, morphemes: list[str]) -> list[BreakdownChunk]:
+    """Compound buildup carrying provenance into the WHOLE word's syllables.
+
+    Spans index :func:`flat_syllables` of ``word`` — the entire compound — not
+    of the part a chunk came from. The consumer renders ``source_word`` once and
+    cuts every chunk out of that one render, so a part-local index would send it
+    to an isolated render of a bare morpheme (``forsknings``), which is exactly
+    the word-level-G2P misreading the whole-word render exists to avoid; and for
+    a compound of monosyllables (``snø``+``mann``) every chunk would degenerate
+    to a whole-word span and nothing would be cut at all.
+
+    ``flat_syllables`` re-derives the same units from the same
+    :func:`segment_compound` output, so when it returns a list that list *is*
+    the concatenation of ``units``' pieces and ``offsets`` indexes straight into
+    it. When it returns ``None`` the pieces do not rejoin the surface form and
+    nothing here is sliceable.
+
+    ``_spoken_syllable`` still looks ahead within the part, not across the whole
+    word, so the emitted text stays byte-identical to
+    :func:`build_norwegian_breakdown`.
+    """
+    units = _compound_buildup_units(morphemes)
+    parts_list = [part for part, _ in units]
+
+    offsets: list[int] = []
+    total = 0
+    for _, pieces in units:
+        offsets.append(total)
+        total += len(pieces)
+
+    sliceable = flat_syllables(word) is not None
+    source = word if sliceable else None
+
+    def span(start: int, stop: int) -> tuple[int, int] | None:
+        return (start, stop) if sliceable else None
+
+    seq: list[BreakdownChunk] = [BreakdownChunk(word, None, None)]
+    for i in range(len(units) - 1, -1, -1):
+        part, pieces = units[i]
+        base = offsets[i]
+        seq.append(BreakdownChunk(_spoken_part(parts_list, i), source, span(base, base + len(pieces))))
+        if len(pieces) > 1:
+            for j in range(len(pieces) - 1, -1, -1):
+                seq.append(BreakdownChunk(_spoken_syllable(pieces, j), source, span(base + j, base + j + 1)))
+                if j < len(pieces) - 1:
+                    seq.append(BreakdownChunk("".join(pieces[j:]), source, span(base + j, base + len(pieces))))
+        partial = "".join(p for p, _ in units[i:])
+        if partial != part:
+            seq.append(BreakdownChunk(partial, source, span(base, total)))
+    return seq
+
+
+def build_norwegian_breakdown_spans(phrase: str) -> list[BreakdownChunk]:
+    text = " ".join(phrase.strip().split())
+    words = text.split()
+    if not words:
+        return []
+
+    if len(words) == 1:
+        word = words[0]
+        morphemes = segment_compound(word)
+        if len(morphemes) >= 2:
+            return _build_compound_sequence_spans(text, morphemes)
+        syllables = syllabify_morpheme(word)
+        if len(syllables) <= 1:
+            return [BreakdownChunk(text, word, None), BreakdownChunk(text, word, None)]
+        return _build_syllable_sequence_spans(text, syllables)
+
+    breakdown: list[BreakdownChunk] = [BreakdownChunk(text, None, None)]
+    for word_index in range(len(words) - 1, -1, -1):
+        word = words[word_index]
+        morphemes = segment_compound(word)
+        if len(morphemes) >= 2:
+            word_seq = _build_compound_sequence_spans(word, morphemes)
+            word_seq.pop(0)
+            word_seq.pop()
+            breakdown.extend(word_seq)
+        else:
+            syllables = syllabify_morpheme(word)
+            if len(syllables) > 1:
+                breakdown.extend(_build_syllable_inner_spans(syllables, word))
+            else:
+                breakdown.append(BreakdownChunk(word, word, None))
+
+        if word_index < len(words) - 1:
+            partial = " ".join(words[word_index:])
+            if partial != text:
+                breakdown.append(BreakdownChunk(partial, None, None))
+
+        if word_index == 0:
+            breakdown.append(BreakdownChunk(text, None, None))
+
+    breakdown.append(BreakdownChunk(text, None, None))
     return breakdown
 
 

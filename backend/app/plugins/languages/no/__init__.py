@@ -3,10 +3,13 @@
 from pathlib import Path
 
 from app.cards.vocab_notetype import NORWEGIAN_VOCAB
-from app.languages import LanguageConfig, register
+from app.languages import AlignmentConfig, LanguageConfig, register
 from app.models.language import NARRATOR_VOICE, Language
+from app.plugins.languages.no.alignment import MODEL_ID, NORWEGIAN_VOWELS, create_aligner
 from app.plugins.languages.no.norwegian_breakdown import (
     build_norwegian_breakdown,
+    build_norwegian_breakdown_spans,
+    flat_syllables,
     slow_norwegian_word,
 )
 from app.plugins.languages.no.preprocessor import NorwegianPreprocessor
@@ -42,5 +45,12 @@ register(
         syllabifier_fn=syllabify_norwegian_word,
         style_notes=_style_notes,
         function_words_path=Path(__file__).parent / "data" / "function_words.json",
+        breakdown_spans_fn=build_norwegian_breakdown_spans,
+        alignment=AlignmentConfig(
+            model_id=MODEL_ID,
+            vowels=NORWEGIAN_VOWELS,
+            aligner_factory=create_aligner,
+            syllabify_fn=flat_syllables,
+        ),
     ),
 )

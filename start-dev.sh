@@ -6,13 +6,23 @@
 # Prod mode is required for the offline-audio service worker to activate — HMR and
 # service workers conflict, so the SW only registers against a production build.
 # Use it when testing offline playback on the phone:  ./start-dev.sh --prod
+#
+# --certs-only refreshes the TLS certs and exits without starting anything. Use
+# it after Tailscale comes up late, or to mint a cert for a specific name:
+#   TS_HOST=my-mac.tailXXXX.ts.net ./start-dev.sh --certs-only
 FRONTEND_MODE="dev"
-if [ "$1" = "--prod" ]; then
-    FRONTEND_MODE="prod"
-fi
+CERTS_ONLY=0
+for arg in "$@"; do
+    case "$arg" in
+        --prod) FRONTEND_MODE="prod" ;;
+        --certs-only) CERTS_ONLY=1 ;;
+    esac
+done
 
-echo "Starting TunaTale (frontend: $FRONTEND_MODE)..."
-echo ""
+if [ "$CERTS_ONLY" = "0" ]; then
+    echo "Starting TunaTale (frontend: $FRONTEND_MODE)..."
+    echo ""
+fi
 
 # Check if uv is installed
 if ! command -v uv &> /dev/null; then
@@ -31,33 +41,84 @@ BACKEND_PID=""
 FRONTEND_PID=""
 
 # ── Detect Tailscale hostname ──────────────────────────────────────────────
+# Export TS_HOST yourself to skip detection entirely (manual override, or to
+# force the "no tailnet" path in testing). Set-but-empty means "act as if
+# Tailscale is unavailable".
 TS_BIN="$(command -v tailscale 2>/dev/null)"
 [ -z "$TS_BIN" ] && [ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ] \
     && TS_BIN="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-TS_HOST=""
-if [ -n "$TS_BIN" ]; then
-    TS_HOST="$("$TS_BIN" status --json 2>/dev/null \
-        | python3 -c "import sys,json; print(json.load(sys.stdin).get('Self',{}).get('DNSName','').rstrip('.'))" 2>/dev/null)"
-    [ -z "$TS_HOST" ] && TS_HOST="$("$TS_BIN" ip -4 2>/dev/null | head -1)"
+
+if [ -z "${TS_HOST+set}" ]; then
+    TS_HOST=""
+    if [ -n "$TS_BIN" ]; then
+        # Tailscale's backend is often not up yet just after boot/login, and it
+        # answers `status --json` with no DNSName until it is. That empty answer
+        # used to sail straight through into cert generation, so retry briefly
+        # rather than baking a cert with no tailnet name.
+        for _ in 1 2 3 4 5 6; do
+            TS_HOST="$("$TS_BIN" status --json 2>/dev/null \
+                | python3 -c "import sys,json; print(json.load(sys.stdin).get('Self',{}).get('DNSName','').rstrip('.'))" 2>/dev/null)"
+            [ -n "$TS_HOST" ] && break
+            sleep 0.5
+        done
+        [ -z "$TS_HOST" ] && TS_HOST="$("$TS_BIN" ip -4 2>/dev/null | head -1)"
+    fi
 fi
 
 # ── Generate / validate TLS certs ──────────────────────────────────────────
-# (Re-)generate certs if the Tailscale hostname isn't already listed as a SAN.
-# The keyfile is mode 600; this is fast (< 1 s) and ensures the cert always
-# covers localhost + the current Tailscale MagicDNS name so phones on the
-# tailnet can connect without a hostname mismatch.
-CERT_SAN_HASH_FILE="certs/.generated_sans"
-NEED_REGEN=1
-if [ -f "$CERT_SAN_HASH_FILE" ] && [ -f certs/localhost.pem ]; then
-    PREV="$(cat "$CERT_SAN_HASH_FILE")"
-    [ "$PREV" = "$TS_HOST" ] && NEED_REGEN=0
+# The CERT ITSELF is the source of truth for what it covers. This used to be
+# tracked in a `certs/.generated_sans` sidecar, which desynced (2026-07-28): it
+# recorded an empty hostname, matched the equally-empty detection result on the
+# next run, and so declared a cert that covered no tailnet name up to date.
+# Reading the SANs back cannot desync.
+CERT_FILE="certs/localhost.pem"
+CERT_KEY="certs/localhost-key.pem"
+
+cert_sans() {
+    [ -f "$CERT_FILE" ] || return 1
+    openssl x509 -in "$CERT_FILE" -noout -ext subjectAltName 2>/dev/null \
+        | tr ',' '\n' | sed 's/^[[:space:]]*//'
+}
+
+cert_covers() { cert_sans 2>/dev/null | grep -qx "DNS:$1"; }
+
+# A REAL MagicDNS name (host.tailnet.ts.net), not the `*.ts.net` wildcard older
+# certs carried. That wildcard was always dead weight: a wildcard matches one
+# label, so it can never match a two-label MagicDNS name.
+cert_has_magicdns() { cert_sans 2>/dev/null | grep -qE '^DNS:[A-Za-z0-9-]+\.[A-Za-z0-9.-]+\.ts\.net$'; }
+
+regen_cert() {
+    mkcert -key-file "$CERT_KEY" -cert-file "$CERT_FILE" \
+        localhost 127.0.0.1 ::1 ${TS_HOST:+"$TS_HOST"} 2>/dev/null
+    echo "✓ TLS cert regenerated for: localhost, 127.0.0.1, ::1${TS_HOST:+, $TS_HOST}"
+}
+
+if ! command -v mkcert &>/dev/null; then
+    echo "ℹ mkcert not installed — leaving certs/ alone (brew install mkcert)"
+elif [ -n "$TS_HOST" ]; then
+    if cert_covers "$TS_HOST"; then
+        echo "✓ TLS cert already covers $TS_HOST"
+    else
+        regen_cert
+    fi
+elif cert_has_magicdns; then
+    # Refusing to regenerate is the whole point: overwriting a good cert with a
+    # localhost-only one breaks the phone and NOTHING on this machine, so it
+    # fails silently right up until you pick up the phone.
+    echo "⚠ Tailscale hostname not detected — KEEPING the existing cert, which already covers a tailnet name."
+    echo "  (Regenerating now would drop that name and break phone access.)"
+elif [ -f "$CERT_FILE" ]; then
+    echo "⚠ Tailscale hostname not detected, and the existing cert covers no tailnet name."
+    echo "  Phones will show a certificate warning. Start Tailscale and re-run, or:"
+    echo "    TS_HOST=<host>.<tailnet>.ts.net ./start-dev.sh --certs-only"
+else
+    regen_cert
+    echo "  ⚠ No Tailscale hostname available, so this cert is localhost-only."
 fi
-if [ "$NEED_REGEN" = "1" ] && command -v mkcert &>/dev/null; then
-    mkcert -key-file certs/localhost-key.pem -cert-file certs/localhost.pem \
-        localhost 127.0.0.1 ::1 '*.ts.net' ${TS_HOST:+$TS_HOST} \
-        2>/dev/null
-    printf '%s' "$TS_HOST" > "$CERT_SAN_HASH_FILE"
-    echo "✓ TLS cert regenerated for: localhost, *.ts.net${TS_HOST:+, $TS_HOST}"
+
+if [ "$CERTS_ONLY" = "1" ]; then
+    cert_sans | sed 's/^/  /'
+    exit 0
 fi
 
 # Attempt to install the mkcert CA into the system trust store.
@@ -172,12 +233,14 @@ if [ -n "$TS_HOST" ]; then
     CA_DIR="$(mkcert -CAROOT 2>/dev/null)"
     if [ -n "$CA_DIR" ] && [ -f "$CA_DIR/rootCA.pem" ]; then
         echo ""
-        echo "  To trust certs on Android:"
-        echo "    Copy $CA_DIR/rootCA.pem to your phone, then:"
-        echo "    Settings → Security → Install certificate → CA certificate"
-        echo "    To serve the CA for download:"
-        echo "    python3 -m http.server 8080 -d \"$CA_DIR\""
-        echo "    Then visit http://${TS_HOST}:8080/rootCA.pem on your phone"
+        echo "  First time on a phone? Install the mkcert CA there:"
+        echo "    Serve it:  python3 -m http.server 8080 -d \"$CA_DIR\""
+        echo "    On phone:  http://${TS_HOST}:8080/rootCA.pem"
+        echo "    Android:   Settings → Security → Install certificate → CA certificate"
+        echo "    iOS:       install the profile, THEN Settings → General → About →"
+        echo "               Certificate Trust Settings → enable full trust for it."
+        echo "               (iOS installs the profile but leaves it untrusted until"
+        echo "                that toggle — skipping it looks identical to a bad cert.)"
     fi
 fi
 echo ""

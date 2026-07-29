@@ -23,8 +23,31 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from app.audio.alignment import CharAligner
     from app.cards.vocab_notetype import VocabNotetype
     from app.config import Settings
+    from app.models.breakdown import BreakdownChunk
+
+
+@dataclass(frozen=True)
+class AlignmentConfig:
+    """Everything core needs to cut syllables out of a whole-word render.
+
+    The model id is a language literal, and the model itself is an optional
+    dependency, so both stay behind the plugin: core receives an id plus a
+    factory it calls at most once per process, never an import.
+
+    ``vowels`` is the language's vowel inventory, used to find where a syllable's
+    vowel begins (the only trustworthy ceiling a peaky CTC alignment offers).
+    ``syllabify_fn`` must be the SAME function whose output ``BreakdownChunk.span``
+    indexes — it returns ``None`` for a word whose pieces do not rejoin its
+    surface form, which means "do not slice this".
+    """
+
+    model_id: str
+    vowels: frozenset[str]
+    aligner_factory: Callable[[str], CharAligner]
+    syllabify_fn: Callable[[str], list[str] | None]
 
 
 @dataclass
@@ -85,6 +108,14 @@ class LanguageConfig:
     # Path to the per-language function-word JSON config, or ``None`` when the
     # language has no curated function-word policy.
     function_words_path: Path | None = None
+    # Breakdown variant that also reports which syllables of which word each
+    # chunk is, so the renderer can cut it out of one whole-word render instead
+    # of synthesizing the fragment alone. ``None`` (every language but Norwegian)
+    # means the chunks carry no provenance and every one falls back to TTS.
+    breakdown_spans_fn: Callable[[str], list[BreakdownChunk]] | None = None
+    # Forced-alignment wiring for that slicing. ``None`` when the language has no
+    # aligner, which is also a complete off-switch for the feature.
+    alignment: AlignmentConfig | None = None
 
 
 _CONFIGS: dict[str, LanguageConfig] = {}
@@ -259,6 +290,30 @@ def get_breakdown(code: str) -> Callable[..., list[str]] | None:
     discover()
     config = _CONFIGS.get(code)
     return config.breakdown_fn if config else None
+
+
+def get_breakdown_spans(code: str) -> Callable[[str], list[BreakdownChunk]] | None:
+    """Return *code*'s provenance-carrying breakdown function, or ``None``.
+
+    ``None`` means the language has no syllable-slicing wiring, so callers use
+    the plain :func:`get_breakdown` output and every chunk is synthesized on its
+    own. Unknown codes → ``None``.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    return config.breakdown_spans_fn if config else None
+
+
+def get_alignment(code: str) -> AlignmentConfig | None:
+    """Return *code*'s forced-alignment wiring, or ``None`` when it has none.
+
+    ``None`` is the language-level off-switch for syllable slicing; the
+    process-level one is ``settings.audio_slicing_enabled`` plus the optional
+    ``alignment`` extra (``app.audio.slicer.slicing_available``).
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    return config.alignment if config else None
 
 
 def get_slow_word(code: str) -> Callable[[str], str] | None:
