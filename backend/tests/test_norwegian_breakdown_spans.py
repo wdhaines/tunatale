@@ -12,22 +12,24 @@ Asserts:
 
 from __future__ import annotations
 
+import ast
 import json
+from pathlib import Path
 
 import pytest
 
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.plugins.languages.no.norwegian_breakdown import (
+    _SPOKEN_CHUNK_OVERRIDES,
     build_norwegian_breakdown,
     build_norwegian_breakdown_spans,
     flat_syllables,
 )
 
 # ---- Every phrase that build_norwegian_breakdown is called with in the
-#      existing test corpus.  This list must stay in sync with
-#      test_norwegian_breakdown.py and test_norwegian_breakdown_plugin.py.
-#      Adding a new call to build_norwegian_breakdown in those files without
-#      adding the phrase here breaks the oracle — that is by design.
+#      existing test corpus. Kept in sync mechanically, not by good intentions:
+#      test_corpus_covers_every_phrase_in_the_oracle_file parses
+#      test_norwegian_breakdown.py and fails naming any phrase missing here.
 
 _CORPUS_PHRASES: list[str] = [
     "etterforskningsteamet",
@@ -110,6 +112,33 @@ class TestFlatSyllables:
 
 
 class TestBreakdownSpansTextEquality:
+    def test_corpus_covers_every_phrase_in_the_oracle_file(self):
+        """``_CORPUS_PHRASES`` must be the WHOLE oracle corpus, not a sample.
+
+        The equality oracle below is only as strong as this list. A comment
+        asking the next author to keep it in sync is not a mechanism, so read
+        the literals back out of ``test_norwegian_breakdown.py`` and compare.
+        Adding a ``build_norwegian_breakdown("…")`` call there without adding
+        the phrase here fails HERE, naming the missing phrase.
+        """
+        oracle_file = Path(__file__).with_name("test_norwegian_breakdown.py")
+        tree = ast.parse(oracle_file.read_text(encoding="utf-8"))
+        called: set[str] = {
+            node.args[0].value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "build_norwegian_breakdown"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        }
+        assert called, f"no build_norwegian_breakdown string literals found in {oracle_file}"
+        assert called - set(_CORPUS_PHRASES) == set(), (
+            "phrases exercised in test_norwegian_breakdown.py but missing from "
+            f"_CORPUS_PHRASES: {sorted(called - set(_CORPUS_PHRASES))}"
+        )
+
     @pytest.mark.parametrize("phrase", _CORPUS_PHRASES)
     def test_oracle(self, phrase):
         texts = [c.text for c in build_norwegian_breakdown_spans(phrase)]
@@ -126,30 +155,97 @@ class TestBreakdownSpansTextEquality:
 
 
 class TestBreakdownSpansCorrectness:
-    def _raw_text_for_span(self, word: str, span: tuple[int, int]) -> str:
-        """Reconstruct the raw text for a syllable span."""
-        pieces = flat_syllables(word)
-        assert pieces is not None, f"flat_syllables({word!r}) returned None"
-        return "".join(pieces[span[0] : span[1]])
+    @pytest.mark.parametrize("phrase", [p for p in _CORPUS_PHRASES if p])
+    def test_span_reproduces_chunk_text_from_source_word(self, phrase):
+        """``flat_syllables(source_word)[a:b]`` must rejoin to the chunk's text.
 
-    @pytest.mark.parametrize(
-        "phrase",
-        [p for p in _CORPUS_PHRASES if p and " " not in p],
-    )
-    def test_span_points_to_raw_text(self, phrase):
-        """For every single-word phrase, each non-None span indexes raw
-        syllables whose join matches the chunk's source text."""
-        if phrase == "":
-            return
-        chunks = build_norwegian_breakdown_spans(phrase)
-        for chunk in chunks:
+        This is the whole contract Stage 3 consumes: it renders ``source_word``
+        once and cuts ``[a:b]`` out of that render. The join may differ from
+        ``chunk.text`` only by the two documented isolated-chunk respellings —
+        the geminate/overlap doubling of :func:`_spoken_syllable` and
+        :func:`_spoken_part` (``et``->``ett``, ``bus``->``buss``) and the
+        :data:`_SPOKEN_CHUNK_OVERRIDES` table (``de``->``deh``). Anything else
+        means the span points somewhere the text did not come from.
+        """
+        for chunk in build_norwegian_breakdown_spans(phrase):
             if chunk.span is None:
                 continue
-            # The chunk text is the *spoken* form, not the raw rejoin.
-            # We verify the span indexes the raw syllables correctly
-            # without asserting equality to chunk.text.
             assert chunk.source_word is not None
-            assert chunk.span[1] > chunk.span[0]
+            flat = flat_syllables(chunk.source_word)
+            assert flat is not None, f"span {chunk.span} on unsliceable source_word {chunk.source_word!r}"
+            a, b = chunk.span
+            assert 0 <= a < b <= len(flat), (
+                f"span {chunk.span} out of range for "
+                f"flat_syllables({chunk.source_word!r}) = {flat} "
+                f"(chunk text {chunk.text!r})"
+            )
+            raw = "".join(flat[a:b])
+            doubled = raw + raw[-1:]
+            assert raw == chunk.text or chunk.text in (doubled, _SPOKEN_CHUNK_OVERRIDES.get(raw)), (
+                f"span {chunk.span} of flat_syllables({chunk.source_word!r}) = {flat} "
+                f"rejoins to {raw!r}, which is not {chunk.text!r} nor a documented "
+                f"respelling of it"
+            )
+
+    @pytest.mark.parametrize("phrase", [p for p in _CORPUS_PHRASES if p])
+    def test_source_word_is_a_word_of_the_phrase(self, phrase):
+        """``source_word`` must be a word the caller can actually render.
+
+        Regression: compound chunks used to carry the compound *part*
+        (``forsknings``, ``teamet``, ``plassen``) with part-local indices.
+        Stage 3 renders ``source_word`` and slices it, so a bare morpheme
+        there means synthesizing an isolated fragment — reintroducing the
+        word-level-G2P bug this workstream exists to fix — and it costs one
+        TTS call per part instead of one per word.
+        """
+        words = phrase.split()
+        for chunk in build_norwegian_breakdown_spans(phrase):
+            if chunk.span is None:
+                continue
+            assert chunk.source_word in words, (
+                f"chunk {chunk.text!r} of {phrase!r} names source_word "
+                f"{chunk.source_word!r}, which is not one of {words}"
+            )
+
+    def test_compound_chunks_index_the_whole_word(self):
+        """A compound's syllables are spans of the whole compound's render."""
+        chunks = build_norwegian_breakdown_spans("etterforskningsteamet")
+        assert flat_syllables("etterforskningsteamet") == [
+            "et",
+            "ter",
+            "forsk",
+            "nings",
+            "team",
+            "et",
+        ]
+        by_text = {(c.text, c.span) for c in chunks if c.span is not None}
+        assert ("team", (4, 5)) in by_text
+        assert ("nings", (3, 4)) in by_text
+        assert ("ter", (1, 2)) in by_text
+        assert {c.source_word for c in chunks if c.span is not None} == {"etterforskningsteamet"}
+
+    def test_compound_of_monosyllables_is_still_sliceable(self):
+        """``snø``/``mann`` are cut from one ``snømann`` render, not resynthesized.
+
+        Each part is monosyllabic, so part-local provenance made both chunks
+        whole-word spans of a bare morpheme — which Stage 3 skips, leaving the
+        compound entirely unsliced.
+        """
+        chunks = build_norwegian_breakdown_spans("snømann")
+        spans = {(c.text, c.source_word, c.span) for c in chunks if c.span is not None}
+        assert ("snø", "snømann", (0, 1)) in spans
+        assert ("mann", "snømann", (1, 2)) in spans
+
+    def test_compound_inside_multi_word_phrase_indexes_its_word(self):
+        chunks = build_norwegian_breakdown_spans("på flyplassen")
+        # Inside the compound the inflection is its own piece (``plass|en``),
+        # unlike the standalone word (``plas|sen``) — the whole-word flatten is
+        # what the spans index, so that is what Stage 3 must render and cut.
+        assert flat_syllables("flyplassen") == ["fly", "plass", "en"]
+        spans = {(c.text, c.source_word, c.span) for c in chunks if c.span is not None}
+        assert ("fly", "flyplassen", (0, 1)) in spans
+        assert ("plassen", "flyplassen", (1, 3)) in spans
+        assert ("en", "flyplassen", (2, 3)) in spans
 
     def test_source_word_for_non_compound_stem(self):
         """Single-stem word: all non-bookend chunks carry source_word."""

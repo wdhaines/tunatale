@@ -331,6 +331,50 @@ class TestClozeNote:
         with pytest.raises(DuplicateNoteError):
             writer.create_cloze_note(deck_name="0. Slovene", cloze_text=cloze_text)
 
+    def test_create_cloze_note_steps_past_a_taken_card_id(self):
+        """The card-id allocator skips an id already in use.
+
+        ``card_id = note_id + ord`` collides whenever a card already sits on
+        that id, and the writer bumps until it finds a free one. That loop used
+        to be reached only by accident — two cloze notes created inside the same
+        wall-clock millisecond — so under load it went uncovered and the 100%
+        gate flipped red with nothing having changed. Force the collision from
+        the fixture instead: pin a note id above ``int(time.time() * 1000)`` so
+        ``max(ts_ms, MAX(id) + 1)`` is deterministic, then park a card on the id
+        the writer is about to pick.
+        """
+        anki_conn = _make_cloze_collection_conn()
+        pinned_note_id = 9_999_999_999_999  # ~2286-11-20 in ms; above any test-run clock
+        anki_conn.execute(
+            "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+            "VALUES (?, 'pinnedguid000001', 1000001, 0, 0, '', 'pinned', 'pinned', 0, 0, '')",
+            (pinned_note_id,),
+        )
+        # The writer will pick note_id = pinned_note_id + 1, hence card id the
+        # same (ord 0). Occupy exactly that id.
+        taken_card_id = pinned_note_id + 1
+        anki_conn.execute(
+            "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, "
+            "reps, lapses, left, odue, odid, flags, data) "
+            "VALUES (?, ?, 12345, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+            (taken_card_id, pinned_note_id),
+        )
+        anki_conn.commit()
+
+        writer = OfflineWriter(anki_conn)
+        note_id = writer.create_cloze_note(
+            deck_name="0. Slovene",
+            cloze_text="knjiga, {{c1::ki}} je tam",
+        )
+
+        assert note_id == pinned_note_id + 1
+        cards = anki_conn.execute("SELECT id FROM cards WHERE nid = ?", (note_id,)).fetchall()
+        assert len(cards) == 1
+        # Stepped past the taken id exactly once, and did not overwrite it.
+        assert cards[0]["id"] == taken_card_id + 1
+        still_there = anki_conn.execute("SELECT nid FROM cards WHERE id = ?", (taken_card_id,)).fetchone()
+        assert still_there["nid"] == pinned_note_id
+
     def test_create_cloze_note_creates_card_with_max_due_plus_one(self):
         """Cloze card gets MAX(due)+1 allocator same as create_note."""
         anki_conn = _make_cloze_collection_conn()

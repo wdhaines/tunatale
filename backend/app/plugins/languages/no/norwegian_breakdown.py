@@ -747,23 +747,55 @@ def _build_syllable_sequence_spans(word: str, syllables: list[str]) -> list[Brea
     ]
 
 
-def _build_compound_sequence_spans(phrase: str, morphemes: list[str]) -> list[BreakdownChunk]:
+def _build_compound_sequence_spans(word: str, morphemes: list[str]) -> list[BreakdownChunk]:
+    """Compound buildup carrying provenance into the WHOLE word's syllables.
+
+    Spans index :func:`flat_syllables` of ``word`` — the entire compound — not
+    of the part a chunk came from. The consumer renders ``source_word`` once and
+    cuts every chunk out of that one render, so a part-local index would send it
+    to an isolated render of a bare morpheme (``forsknings``), which is exactly
+    the word-level-G2P misreading the whole-word render exists to avoid; and for
+    a compound of monosyllables (``snø``+``mann``) every chunk would degenerate
+    to a whole-word span and nothing would be cut at all.
+
+    ``flat_syllables`` re-derives the same units from the same
+    :func:`segment_compound` output, so when it returns a list that list *is*
+    the concatenation of ``units``' pieces and ``offsets`` indexes straight into
+    it. When it returns ``None`` the pieces do not rejoin the surface form and
+    nothing here is sliceable.
+
+    ``_spoken_syllable`` still looks ahead within the part, not across the whole
+    word, so the emitted text stays byte-identical to
+    :func:`build_norwegian_breakdown`.
+    """
     units = _compound_buildup_units(morphemes)
     parts_list = [part for part, _ in units]
-    seq: list[BreakdownChunk] = [BreakdownChunk(phrase, None, None)]
+
+    offsets: list[int] = []
+    total = 0
+    for _, pieces in units:
+        offsets.append(total)
+        total += len(pieces)
+
+    sliceable = flat_syllables(word) is not None
+    source = word if sliceable else None
+
+    def span(start: int, stop: int) -> tuple[int, int] | None:
+        return (start, stop) if sliceable else None
+
+    seq: list[BreakdownChunk] = [BreakdownChunk(word, None, None)]
     for i in range(len(units) - 1, -1, -1):
         part, pieces = units[i]
-        has_valid_span = "".join(pieces) == part.lower()
-        part_span = (0, len(pieces)) if has_valid_span else None
-        seq.append(BreakdownChunk(_spoken_part(parts_list, i), part, part_span))
+        base = offsets[i]
+        seq.append(BreakdownChunk(_spoken_part(parts_list, i), source, span(base, base + len(pieces))))
         if len(pieces) > 1:
             for j in range(len(pieces) - 1, -1, -1):
-                seq.append(BreakdownChunk(_spoken_syllable(pieces, j), part, (j, j + 1) if has_valid_span else None))
+                seq.append(BreakdownChunk(_spoken_syllable(pieces, j), source, span(base + j, base + j + 1)))
                 if j < len(pieces) - 1:
-                    seq.append(BreakdownChunk("".join(pieces[j:]), part, (j, len(pieces)) if has_valid_span else None))
+                    seq.append(BreakdownChunk("".join(pieces[j:]), source, span(base + j, base + len(pieces))))
         partial = "".join(p for p, _ in units[i:])
         if partial != part:
-            seq.append(BreakdownChunk(partial, None, None))
+            seq.append(BreakdownChunk(partial, source, span(base, total)))
     return seq
 
 
