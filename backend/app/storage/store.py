@@ -304,6 +304,29 @@ class ContentStore:
             conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (lesson_id,))
             conn.commit()
 
+    def delete_lesson(self, lesson_id: str) -> list[str]:
+        """Delete ONE lesson version and its audio rows; return the orphaned paths.
+
+        Distinct from :meth:`delete_lessons_for_day`, which removes every
+        version for a day — right for "regenerate this day", useless for "drop
+        the superseded copy". A day can hold several rows and
+        :meth:`get_lesson_days` surfaces only ``MAX(rowid)``, so the older ones
+        are invisible in the UI while still holding audio on disk; without this
+        there is no way to remove one without taking the live lesson, and its
+        review and listen history, along with it.
+
+        Files are not unlinked here. The storage layer owns rows and the caller
+        owns the filesystem — the same split ``render_service.render_lesson_audio``
+        uses when it replaces a lesson's audio.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT file_path FROM audio_files WHERE lesson_id = ?", (lesson_id,)).fetchall()
+            paths = [row["file_path"] for row in rows]
+            conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (lesson_id,))
+            conn.execute("DELETE FROM lessons WHERE id = ?", (lesson_id,))
+            conn.commit()
+        return paths
+
     def delete_lessons_for_day(self, curriculum_id: str, day: int) -> None:
         """Delete all lesson rows (and their audio) for a given curriculum day.
 
