@@ -494,25 +494,32 @@ def test_spoken_syllable_last_untouched():
     assert _spoken_syllable(["team"], 0) == "team"
 
 
-def test_spoken_syllable_de_ending_respelled_for_tts():
-    """The weak-past '-de' fragment (had|de, bøy|de) is read by the nb-NO voice
-    as the pronoun 'de' /diː/ when isolated. Respell the ISOLATED chunk to 'deh'
-    so the voice renders the schwa; reconstruction/partials keep raw 'de'."""
-    assert _spoken_syllable(["had", "de"], 1) == "deh"
-    assert _spoken_syllable(["bøy", "de"], 1) == "deh"
+def test_spoken_syllable_de_ending_keeps_real_spelling():
+    """The weak-past '-de' fragment is emitted as written.
+
+    It used to be respelled 'deh', because the nb-NO voice reads an ISOLATED
+    'de' as the pronoun /diː/ rather than the schwa. Slicing removed the reason:
+    the chunk is now cut out of a whole-word render of 'hadde', so nothing
+    synthesises the fragment and the invented spelling only ever reached the
+    learner's eye — `cues.py` feeds `Phrase.text` straight to the caption.
+
+    Geminate lengthening (et -> ett) is deliberately NOT covered by this: a
+    doubled consonant is ambisyllabic and 'ett' is a real Norwegian spelling,
+    so it shows the learner something true.
+    """
+    assert _spoken_syllable(["had", "de"], 1) == "de"
+    assert _spoken_syllable(["bøy", "de"], 1) == "de"
 
 
-def test_de_respelling_only_isolated_not_reconstruction():
+def test_de_fragment_matches_the_word_it_came_from():
     seq = build_norwegian_breakdown("hadde")
-    assert "deh" in seq  # isolated chunk uses the respelling
+    assert "de" in seq
+    assert "deh" not in seq
     assert seq[0] == "hadde"  # full word intact
     assert seq[-1] == "hadde"
-    assert "de" not in seq  # raw isolated 'de' is never emitted
 
 
-def test_de_standalone_word_not_respelled():
-    """As a whole word (the pronoun 'de'), it must NOT be respelled — only the
-    weak-ending syllable fragment is."""
+def test_de_standalone_word_unaffected():
     seq = build_norwegian_breakdown("de lyver")
     assert "de" in seq
     assert "deh" not in seq

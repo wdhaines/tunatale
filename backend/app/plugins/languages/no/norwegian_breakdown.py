@@ -447,22 +447,21 @@ def segment_compound(word: str) -> list[str]:
 
 _NORWEGIAN_VOWELS: frozenset[str] = frozenset("aeiouyæøå")
 
-# Isolated-chunk TTS pronunciation overrides. A short syllable *fragment* sent to
-# the nb-NO voice alone is read as the identically-spelled *word* rather than as
-# the unstressed fragment it represents — e.g. the weak-past ending ``-de``
-# (``bøy|DE``, ``had|DE``) is voiced as the pronoun ``de`` /diː/ instead of the
-# schwa /də/. Respelling steers the voice back. Applied ONLY to the isolated
-# chunk in :func:`_spoken_syllable`; reconstruction and running partials always
-# use the raw syllables, so joins stay exact and the pronoun ``de`` as a *whole
-# word* (which never routes through here) is untouched. edge-tts XML-escapes its
-# input and exposes no ``<phoneme>`` SSML, so orthographic respelling — the same
-# mechanism as the geminate lengthening below — is the only available lever.
-# Ear-confirmed against nb-NO-PernilleNeural.
-_SPOKEN_CHUNK_OVERRIDES: dict[str, str] = {
-    "de": "deh",
-}
 
-
+# NO invented respellings live here any more. There used to be one: a short
+# fragment sent to the nb-NO voice ALONE is read as the identically-spelled
+# *word*, so the weak-past ending ``-de`` (``had|DE``, ``bøy|DE``) came out as
+# the pronoun ``de`` /diː/ instead of the schwa /də/, and was respelled ``deh``
+# to steer the voice (edge-tts XML-escapes its input and exposes no
+# ``<phoneme>`` SSML, so orthography was the only lever).
+#
+# Syllable slicing removed the premise: the chunk is cut out of a whole-word
+# render of ``hadde``, so no voice ever sees the fragment. What remained was
+# pure cost — ``cues.py`` feeds ``Phrase.text`` to the caption, so the learner
+# was shown a spelling that is not Norwegian.
+#
+# The geminate lengthening in :func:`_spoken_syllable` is NOT this and stays:
+# a doubled consonant really is ambisyllabic, and ``ett`` is a real spelling.
 def _spoken_syllable(syllables: list[str], i: int) -> str:
     """Spoken form of syllable *i*, lengthening a geminate when spoken alone.
 
@@ -475,16 +474,23 @@ def _spoken_syllable(syllables: list[str], i: int) -> str:
     Reconstruction still uses the raw syllables, so joins remain exact
     (``et`` + ``ter`` = ``etter``, never ``ettter``).
 
-    A word-fragment that the voice would misread as a homographic *word*
-    (``de`` -> the pronoun) is respelled via :data:`_SPOKEN_CHUNK_OVERRIDES` —
-    also isolated-chunk only, so reconstruction is unaffected.
+    Nothing else is respelled. ``de`` used to become ``deh`` here, because the
+    nb-NO voice reads an isolated ``de`` as the pronoun /diː/ instead of the
+    schwa — a workaround for synthesising a fragment on its own, which slicing
+    made unnecessary: the chunk is cut out of a whole-word render, so no voice
+    ever sees the fragment. The invented spelling still reached the learner,
+    since ``cues.py`` feeds ``Phrase.text`` straight to the caption.
+
+    The geminate lengthening above stays, and is a different thing: a doubled
+    consonant genuinely is ambisyllabic, and ``ett`` is a real Norwegian
+    spelling rather than a phonetic hint.
     """
     s = syllables[i]
     if i + 1 < len(syllables):
         nxt = syllables[i + 1]
         if s and nxt and s[-1] == nxt[0] and s[-1] not in _NORWEGIAN_VOWELS:
             return s + s[-1]
-    return _SPOKEN_CHUNK_OVERRIDES.get(s, s)
+    return s
 
 
 def _spoken_part(parts: list[str], i: int) -> str:

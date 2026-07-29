@@ -20,7 +20,6 @@ import pytest
 
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.plugins.languages.no.norwegian_breakdown import (
-    _SPOKEN_CHUNK_OVERRIDES,
     build_norwegian_breakdown,
     build_norwegian_breakdown_spans,
     flat_syllables,
@@ -168,11 +167,14 @@ class TestBreakdownSpansCorrectness:
 
         This is the whole contract Stage 3 consumes: it renders ``source_word``
         once and cuts ``[a:b]`` out of that render. The join may differ from
-        ``chunk.text`` only by the two documented isolated-chunk respellings —
-        the geminate/overlap doubling of :func:`_spoken_syllable` and
-        :func:`_spoken_part` (``et``->``ett``, ``bus``->``buss``) and the
-        :data:`_SPOKEN_CHUNK_OVERRIDES` table (``de``->``deh``). Anything else
-        means the span points somewhere the text did not come from.
+        ``chunk.text`` only by the geminate/overlap doubling of
+        :func:`_spoken_syllable` / :func:`_spoken_part` (``et``->``ett``,
+        ``bus``->``buss``) — a real orthographic doubling, not a phonetic hint.
+        Anything else means the span points somewhere the text did not come from.
+
+        This used to also permit an invented ``de``->``deh`` respelling. Slicing
+        removed the need for it and it was the one divergence a learner could
+        actually see, since the caption is ``Phrase.text``.
         """
         for chunk in build_norwegian_breakdown_spans(phrase):
             if chunk.span is None:
@@ -188,10 +190,9 @@ class TestBreakdownSpansCorrectness:
             )
             raw = "".join(flat[a:b])
             doubled = raw + raw[-1:]
-            assert raw == chunk.text or chunk.text in (doubled, _SPOKEN_CHUNK_OVERRIDES.get(raw)), (
+            assert chunk.text in (raw, doubled), (
                 f"span {chunk.span} of flat_syllables({chunk.source_word!r}) = {flat} "
-                f"rejoins to {raw!r}, which is not {chunk.text!r} nor a documented "
-                f"respelling of it"
+                f"rejoins to {raw!r}, which is not {chunk.text!r} nor its geminate doubling"
             )
 
     @pytest.mark.parametrize("phrase", [p for p in _CORPUS_PHRASES if p])
