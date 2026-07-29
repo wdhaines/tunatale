@@ -13,6 +13,15 @@ from app.common.titles import strip_day_prefix
 from app.models.language import NARRATOR_VOICE
 
 
+def _phrase_from_dict(d: dict) -> Phrase:
+    """Build a Phrase from a JSON dict, normalizing syllable_span back to tuple."""
+    d = dict(d)
+    span = d.get("syllable_span")
+    if isinstance(span, list):
+        d["syllable_span"] = tuple(span)
+    return Phrase(**d)
+
+
 @dataclass
 class KeyPhraseInfo:
     """A key phrase with its L1 translation, stored on the Lesson for deferred SRS registration."""
@@ -49,6 +58,8 @@ class Phrase:
     pitch: str = "+0Hz"
     volume: str = "+0%"
     role: str = ""
+    source_word: str | None = None
+    syllable_span: tuple[int, int] | None = None
 
 
 @dataclass
@@ -97,6 +108,8 @@ class Lesson:
                             "pitch": p.pitch,
                             "volume": p.volume,
                             "role": p.role,
+                            "source_word": p.source_word,
+                            "syllable_span": list(p.syllable_span) if p.syllable_span is not None else None,
                         }
                         for p in s.phrases
                     ],
@@ -113,7 +126,7 @@ class Lesson:
         sections = [
             Section(
                 section_type=SectionType(s["section_type"]),
-                phrases=[Phrase(**p) for p in s["phrases"]],
+                phrases=[_phrase_from_dict(p) for p in s["phrases"]],
             )
             for s in data.get("sections", [])
         ]
