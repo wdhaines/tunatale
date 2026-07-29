@@ -520,6 +520,59 @@ class TestDeleteDay:
         assert store.get_lesson("less_1") is None
         assert store.get_audio_file_row("aud_1") is None
 
+    async def test_delete_day_unlinks_the_audio_from_disk(self, tmp_path):
+        """Deleting a day must not leave its audio behind.
+
+        Regression: the endpoint dropped the rows and left the files, so every
+        deleted day leaked its renders. Found by auditing a real store —
+        33 unreferenced .opus files, 19 MB, reachable by nothing.
+        """
+        curriculum = _planned_curriculum()
+        curriculum.days.extend([_day(1), _day(2), _day(3)])
+        store = _setup(curriculum)
+        from app.models.lesson import Lesson
+
+        lesson = Lesson(
+            title="L1",
+            language_code="sl",
+            generation_metadata={"source_prompt": "x", "model": "y"},
+        )
+        audio = tmp_path / "lesson.opus"
+        audio.write_bytes(b"audio")
+        survivor = tmp_path / "other.opus"
+        survivor.write_bytes(b"audio")
+        store.save_lesson("less_1", "trip", 2, lesson)
+        store.save_audio_file("aud_1", "less_1", str(audio))
+        store.save_lesson("less_2", "trip", 3, lesson)
+        store.save_audio_file("aud_2", "less_2", str(survivor))
+
+        async with _client() as client:
+            response = await client.delete("/api/curriculum/trip/days/2")
+
+        assert response.status_code == 200
+        assert not audio.exists(), "deleted day left its audio file on disk"
+        assert survivor.exists(), "another day's audio must survive"
+
+    async def test_delete_day_tolerates_an_already_missing_audio_file(self, tmp_path):
+        """A row whose file is already gone must not 500 the request."""
+        curriculum = _planned_curriculum()
+        curriculum.days.extend([_day(1), _day(2)])
+        store = _setup(curriculum)
+        from app.models.lesson import Lesson
+
+        lesson = Lesson(
+            title="L1",
+            language_code="sl",
+            generation_metadata={"source_prompt": "x", "model": "y"},
+        )
+        store.save_lesson("less_1", "trip", 2, lesson)
+        store.save_audio_file("aud_1", "less_1", str(tmp_path / "never_written.opus"))
+
+        async with _client() as client:
+            response = await client.delete("/api/curriculum/trip/days/2")
+
+        assert response.status_code == 200
+
     async def test_delete_day_appends_event_to_chat(self):
         """Day deletion appends a planner chat event."""
         curriculum = _planned_curriculum()

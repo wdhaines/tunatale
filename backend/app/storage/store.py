@@ -327,10 +327,16 @@ class ContentStore:
             conn.commit()
         return paths
 
-    def delete_lessons_for_day(self, curriculum_id: str, day: int) -> None:
-        """Delete all lesson rows (and their audio) for a given curriculum day.
+    def delete_lessons_for_day(self, curriculum_id: str, day: int) -> list[str]:
+        """Delete every lesson row for a day; return the orphaned audio paths.
 
         There can be multiple lesson versions per day; every one is removed.
+
+        Returns the paths for the same reason :meth:`delete_lesson` does — the
+        storage layer owns rows, the caller owns the filesystem. It used to
+        return ``None``, so the one caller had nothing to unlink and every
+        deleted day left its renders on disk forever. Audited on a real store:
+        33 unreferenced files, 19 MB, reachable by nothing.
         """
         with self._get_conn() as conn:
             rows = conn.execute(
@@ -338,7 +344,13 @@ class ContentStore:
                 (curriculum_id, day),
             ).fetchall()
             lesson_ids = [row["id"] for row in rows]
+            paths: list[str] = []
             for lesson_id in lesson_ids:
+                paths += [
+                    r["file_path"]
+                    for r in conn.execute("SELECT file_path FROM audio_files WHERE lesson_id = ?", (lesson_id,))
+                ]
                 conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (lesson_id,))
             conn.execute("DELETE FROM lessons WHERE curriculum_id = ? AND day = ?", (curriculum_id, day))
             conn.commit()
+        return paths

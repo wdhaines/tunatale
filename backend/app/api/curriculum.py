@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -315,7 +316,11 @@ async def delete_day(curriculum_id: str, day: int, request: Request):
     # event should name the day the way the UI did when the user deleted it.
     position = curriculum.day_positions()[day]
     curriculum.days = [d for d in curriculum.days if d.day != day]
-    store.delete_lessons_for_day(curriculum_id, day)
+    # Unlink as well as delete the rows: a row-only delete leaves the renders on
+    # disk with nothing able to reach them. missing_ok because a file already
+    # gone is the outcome we want, not an error worth 500-ing the request over.
+    for file_path in store.delete_lessons_for_day(curriculum_id, day):
+        Path(file_path).unlink(missing_ok=True)
 
     state = get_planner_state(curriculum)
     state["chat"].append({"role": "event", "content": f"Deleted day {position}."})

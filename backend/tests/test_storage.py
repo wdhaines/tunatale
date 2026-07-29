@@ -244,13 +244,20 @@ class TestSectionAudioStorage:
         store.save_audio_file("a2", "l2", "/a2.wav")
         store.save_audio_file("a3", "l3", "/a3.wav")  # different day — should survive
 
-        store.delete_lessons_for_day("c1", 2)
+        paths = store.delete_lessons_for_day("c1", 2)
         assert store.get_lesson("l1") is None
         assert store.get_lesson("l2") is None
         assert store.get_lesson("l3") is not None
         assert store.get_audio_file_row("a1") is None
         assert store.get_audio_file_row("a2") is None
         assert store.get_audio_file_row("a3") is not None
+        assert sorted(paths) == ["/a1.wav", "/a2.wav"], (
+            "the caller cannot unlink what it is not told about — this return is "
+            "the whole reason deleted days used to leak their audio onto disk"
+        )
+
+    def test_delete_lessons_for_day_returns_empty_for_an_unknown_day(self, store):
+        assert store.delete_lessons_for_day("c1", 99) == []
 
     def test_schema_migration_adds_missing_columns(self, tmp_path):
         """ContentStore adds section_index/section_type columns when opening an old-schema DB."""
