@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import functools
 import os
-from dataclasses import dataclass
 
+from app.models.breakdown import BreakdownChunk
 from app.plugins.languages.no.syllabify import syllabify_norwegian_word
 
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -701,13 +701,6 @@ def build_norwegian_breakdown(phrase: str) -> list[str]:
 
     breakdown.append(text)
     return breakdown
-
-
-@dataclass(frozen=True)
-class BreakdownChunk:
-    text: str
-    source_word: str | None = None
-    span: tuple[int, int] | None = None
 
 
 def flat_syllables(word: str) -> list[str] | None:

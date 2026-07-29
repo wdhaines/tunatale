@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from app.audio.edge_tts import EdgeTTSService  # noqa: E402
 from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
 from app.audio.renderer import LessonRenderer  # noqa: E402
+from app.audio.slicer import build_slicers  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.generation.pipeline import LessonPipeline  # noqa: E402
 from app.generation.planner import CurriculumPlanner  # noqa: E402
@@ -158,12 +159,21 @@ async def lifespan(app: FastAPI):
     app.state.curriculum_planner = CurriculumPlanner(llm)
     app.state.story_generator = StoryGenerator(llm)
     preprocessors = {code: get_preprocessor(code) for code in db_map}
+    tts = EdgeTTSService()
+    # Empty unless audio_slicing_enabled AND the `alignment` extra is installed,
+    # in which case breakdown chunks are cut from one whole-word render instead
+    # of synthesized fragment-by-fragment. Building a slicer does not load the
+    # model; the first chunk that needs it does, once per process.
+    slicers = build_slicers(preprocessors, tts, settings)
+    if slicers:
+        logger.info("Syllable slicing enabled for: %s", ", ".join(sorted(slicers)))
     app.state.renderer = LessonRenderer(
-        tts=EdgeTTSService(),
+        tts=tts,
         preprocessors=preprocessors,
         pause_calculator=NaturalPauseCalculator(),
         delivery_codec=settings.audio_delivery_codec,
         delivery_bitrate=settings.audio_delivery_bitrate,
+        slicers=slicers,
     )
     app.state.audio_dir = _BACKEND_DIR / "output/audio"
 

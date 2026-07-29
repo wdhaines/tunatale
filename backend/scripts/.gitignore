@@ -13,5 +13,6 @@
 !check_language_literals.py
 !check_plugin_imports.py
 !mutation_sweep_slicing.py
+!render_slicing_ab.py
 !__init__.py
 !.gitignore

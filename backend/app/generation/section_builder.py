@@ -9,7 +9,8 @@ from __future__ import annotations
 import logging
 
 from app.generation.syllabify import syllabify_word
-from app.languages import get_breakdown, get_slow_word, uses_compound_word_breakdown
+from app.languages import get_breakdown, get_breakdown_spans, get_slow_word, uses_compound_word_breakdown
+from app.models.breakdown import BreakdownChunk
 from app.models.lesson import Phrase, Section, SectionType
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,27 @@ def build_word_breakdown(phrase_text: str, language_code: str = "sl") -> list[st
     return breakdown
 
 
+def build_word_breakdown_spans(phrase_text: str, language_code: str) -> list[BreakdownChunk]:
+    """:func:`build_word_breakdown` plus per-chunk slicing provenance.
+
+    The **text sequence is identical** to ``build_word_breakdown``'s — that is
+    the invariant this function exists under, because ``app.audio.cues`` builds
+    the key-phrases timing manifest from the plain version and any divergence
+    would desynchronise every cue.
+
+    Languages with no ``breakdown_spans_fn`` get the plain chunks wrapped with
+    empty provenance, which the renderer reads as "synthesize each one", i.e.
+    exactly today's behaviour.
+
+    ``language_code`` is required rather than defaulted: this is a new call site,
+    and the registry is the only thing that should decide per-language behaviour.
+    """
+    fn = get_breakdown_spans(language_code)
+    if fn is None:
+        return [BreakdownChunk(text=text) for text in build_word_breakdown(phrase_text, language_code)]
+    return fn(" ".join(phrase_text.strip().split()))
+
+
 def build_key_phrases_section(
     key_phrases: list[KeyPhrase],
     l2_voice_map: dict[str, str],
@@ -133,8 +155,16 @@ def build_key_phrases_section(
 
         phrases.append(Phrase(text=phrase_text, voice_id=female_1_voice, language_code=l2_code))
         phrases.append(Phrase(text=translation, voice_id=narrator_voice, language_code="en", role="narrator"))
-        for step in build_word_breakdown(phrase_text, l2_code):
-            phrases.append(Phrase(text=step, voice_id=female_1_voice, language_code=l2_code))
+        for chunk in build_word_breakdown_spans(phrase_text, l2_code):
+            phrases.append(
+                Phrase(
+                    text=chunk.text,
+                    voice_id=female_1_voice,
+                    language_code=l2_code,
+                    source_word=chunk.source_word,
+                    syllable_span=chunk.span,
+                )
+            )
 
     return Section(section_type=SectionType.KEY_PHRASES, phrases=phrases)
 

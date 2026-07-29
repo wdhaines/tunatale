@@ -16,6 +16,7 @@ from app.audio.cues import Cue, CueTiming, build_cue_manifest
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.ports import TTSService
 from app.audio.preprocessing.base import TextPreprocessor
+from app.audio.slicer import ChunkSlicer, SliceSpec
 from app.audio.transcode import encode_audio
 from app.models.lesson import Lesson, Section
 
@@ -100,12 +101,20 @@ class LessonRenderer:
         pause_calculator: NaturalPauseCalculator,
         delivery_codec: str = "wav",
         delivery_bitrate: str = "28k",
+        slicers: dict[str, ChunkSlicer] | None = None,
     ) -> None:
         self._tts = tts
         self._preprocessors = preprocessors
         self._calc = pause_calculator
         self._delivery_codec = delivery_codec
         self._delivery_bitrate = delivery_bitrate
+        # Optional, and keyed by language exactly like ``preprocessors``: a
+        # slicer owns one language's aligner and syllabifier, and multi-language
+        # mode renders both languages from this one renderer — a single slicer
+        # would leave the non-default language silently unsliced. Empty (the
+        # default, and whenever the capability gate is closed) leaves every code
+        # path below unchanged.
+        self._slicers = slicers or {}
 
     def _write_audio(self, path: Path, audio: _Audio) -> None:
         """Write *audio* to *path* in the configured delivery codec.
@@ -124,11 +133,16 @@ class LessonRenderer:
         section: Section,
         phrase_files: list[Path],
         calc: NaturalPauseCalculator,
+        pace_files: list[Path] | None = None,
     ) -> tuple[_Audio, list[tuple[int, int, int]]]:
         """Synchronous assembly of a section's audio from pre-synthesised phrase files.
 
         Extracted so the caller can offload it with ``asyncio.to_thread`` and
         keep the event loop responsive during file I/O and numpy operations.
+
+        ``pace_files`` supplies, per phrase, the file whose duration decides the
+        following pause; it defaults to the file being played. The two differ
+        only for a sliced chunk — see the note at the ``pause_ms`` call below.
         """
         parts: list[_Audio] = []
         section_cues: list[tuple[int, int, int]] = []
@@ -140,8 +154,16 @@ class LessonRenderer:
             section_cues.append((i, start_frame, end_frame))
             parts.append(phrase_audio)
             current_frame = end_frame
+            # A KEY_PHRASES L2 pause equals the chunk's own duration, so a
+            # shorter sliced chunk would shorten the gap the learner repeats
+            # into and silently rewrite the section's rhythm (measured on a real
+            # lesson: 6.5 -> 5.1 min). Pace from the fallback render so slicing
+            # changes how a chunk SOUNDS and nothing else.
+            pace_audio = phrase_audio
+            if pace_files is not None and pace_files[i] != phrase_files[i]:
+                pace_audio = _read_audio(pace_files[i])
             pause_ms = calc.get_phrase_pause(
-                audio_duration_s=phrase_audio.duration_ms / 1000.0,
+                audio_duration_s=pace_audio.duration_ms / 1000.0,
                 word_count=len(phrase.text.split()),
                 section_type=section.section_type,
                 language_code=phrase.language_code,
@@ -220,13 +242,46 @@ class LessonRenderer:
         # Offsets are accumulated in frames (not ms) to avoid cumulative drift.
         # Offload the sync assembly (file I/O + numpy) so the event loop stays
         # responsive.
+        play_files = await self._apply_slicing(section, phrase_files, tmp, section_idx, language_code)
+
         assembled = await asyncio.to_thread(
             self._assemble_section_audio,
             section,
-            phrase_files,
+            play_files,
             self._calc,
+            phrase_files,
         )
         return assembled
+
+    async def _apply_slicing(
+        self,
+        section: Section,
+        phrase_files: list[Path],
+        tmp: Path,
+        section_idx: int,
+        language_code: str,
+    ) -> list[Path]:
+        """Replace provenance-carrying chunks with audio cut from their own word.
+
+        Returns the files to PLAY. ``phrase_files`` (the isolated TTS renders)
+        stay both the fallback and the pacing reference, so a phrase the slicer
+        declines — or every phrase, when there is no slicer — comes back as the
+        very same object and the render is byte-identical to today.
+        """
+        slicer = self._slicers.get(language_code)
+        if slicer is None:
+            return phrase_files
+
+        play_files = list(phrase_files)
+        for i, phrase in enumerate(section.phrases):
+            if phrase.source_word is None or phrase.syllable_span is None:
+                continue
+            start, stop = phrase.syllable_span
+            sliced = tmp / f"s{section_idx}_p{i}_sliced.wav"
+            spec = SliceSpec(word=phrase.source_word, start=start, stop=stop, voice_id=phrase.voice_id)
+            if await slicer.slice_to_file(spec, sliced):
+                play_files[i] = sliced
+        return play_files
 
     async def render(
         self,

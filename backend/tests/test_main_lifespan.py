@@ -255,3 +255,45 @@ async def test_warm_lemmatizer_skips_cheap_lemmatizer():
     finally:
         srs_db.close()
         store.close()
+
+
+async def test_lifespan_wires_slicers_when_the_capability_gate_is_open(tmp_path, monkeypatch):
+    """The renderer must actually receive slicers, or the feature is inert.
+
+    Every unit below this is green with the renderer holding an empty dict, so
+    this is the one place that proves startup connects them. Exercised through
+    the real import machinery (``find_spec``) rather than by patching app code.
+    """
+    import importlib.util
+
+    from app.config import settings
+    from app.main import lifespan
+
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setattr(settings, "llm_mode", "mock")
+    monkeypatch.setattr(settings, "audio_slicing_enabled", True)
+    real_find_spec = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda name, *a, **k: object() if name == "transformers" else real_find_spec(name, *a, **k),
+    )
+
+    test_app = FastAPI()
+    async with lifespan(test_app):
+        slicers = test_app.state.renderer._slicers
+        assert slicers, "slicing was enabled but the renderer got no slicers"
+        assert set(slicers) <= set(test_app.state.renderer._preprocessors)
+
+
+async def test_lifespan_leaves_slicers_empty_by_default(tmp_path, monkeypatch):
+    """Default install renders exactly as it did before this feature existed."""
+    from app.config import settings
+    from app.main import lifespan
+
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setattr(settings, "llm_mode", "mock")
+
+    test_app = FastAPI()
+    async with lifespan(test_app):
+        assert test_app.state.renderer._slicers == {}

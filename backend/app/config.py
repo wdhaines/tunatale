@@ -110,6 +110,18 @@ class Settings(BaseSettings):
     audio_delivery_codec: str = "opus"  # opus | aac | mp3 | wav
     audio_delivery_bitrate: str = "28k"
 
+    # Cut Pimsleur breakdown chunks out of ONE whole-word render (forced
+    # alignment) instead of synthesizing each syllable in isolation, which makes
+    # the voice run word-level G2P on a fragment (`gen` in `hagen` read as
+    # "gene"). **Default False — opt-in.** It additionally requires the optional
+    # `alignment` extra (`uv sync --extra alignment`); with the extra absent the
+    # renderer falls back to today's per-chunk TTS byte-for-byte. See
+    # app.audio.slicer.slicing_available.
+    audio_slicing_enabled: bool = False
+    # Where aligned syllable boundaries are cached between renders, so a re-render
+    # never re-runs the model. Boundaries are keyed by (word, voice, rate, model).
+    audio_alignment_cache_dir: Path = Path("~/.tunatale/alignment-cache").expanduser()
+
     pipeline_autostart: bool = True
 
 
