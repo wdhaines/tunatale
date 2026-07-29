@@ -582,22 +582,6 @@ def syllabify_morpheme(part: str) -> list[str]:
     return stem_syllables + suffix_groups
 
 
-def _build_syllable_inner(syllables: list[str]) -> list[str]:
-    """Per-syllable backward buildup: spoken chunks and rebuilds (no bookends)."""
-    seq: list[str] = []
-    n = len(syllables)
-    for i in range(n - 1, -1, -1):
-        seq.append(_spoken_syllable(syllables, i))
-        if i < n - 1:
-            seq.append("".join(syllables[i:]))
-    return seq
-
-
-def _build_syllable_sequence(word: str, syllables: list[str]) -> list[str]:
-    """Classic per-syllable backward buildup for a single word."""
-    return [word, *_build_syllable_inner(syllables), word]
-
-
 def _compound_buildup_units(morphemes: list[str]) -> list[tuple[str, list[str]]]:
     """Group compound morphemes into (surface, pieces) buildup units.
 
@@ -623,84 +607,13 @@ def _compound_buildup_units(morphemes: list[str]) -> list[tuple[str, list[str]]]
     return units
 
 
-def _build_compound_sequence(phrase: str, morphemes: list[str]) -> list[str]:
-    """Morpheme-first backward buildup for compounds.
-
-    Tail-first, each part is spoken whole, broken into its pieces (backward),
-    rebuilt, then the running partial toward the full phrase is added.
-    Overlap-truncated parts (s-overlap compounds) are voiced with their
-    doubled final consonant; partials/rebuilds always use raw surfaces.
-    """
-    units = _compound_buildup_units(morphemes)
-    parts_list = [part for part, _ in units]
-    seq: list[str] = [phrase]
-
-    for i in range(len(units) - 1, -1, -1):
-        part, pieces = units[i]
-        seq.append(_spoken_part(parts_list, i))
-        if len(pieces) > 1:
-            for j in range(len(pieces) - 1, -1, -1):
-                seq.append(_spoken_syllable(pieces, j))
-                if j < len(pieces) - 1:
-                    seq.append("".join(pieces[j:]))
-        partial = "".join(p for p, _ in units[i:])
-        if partial != part:
-            seq.append(partial)
-
-    return seq
-
-
 def build_norwegian_breakdown(phrase: str) -> list[str]:
     """Build a Pimsleur-style breakdown for Norwegian.
 
-    For compounds (>=2 morphemes): morpheme-first backward buildup.
-    For single-stem words: per-syllable backward buildup with morpheme-aware
-    syllabification.
-    Multi-word phrases: right-to-left per-word processing (current algorithm)
-    with Norwegian-specific syllabification per word.
+    Delegates to :func:`build_norwegian_breakdown_spans` and discards
+    provenance — the spans variant is the single authoritative implementation.
     """
-    text = " ".join(phrase.strip().split())
-    words = text.split()
-    if not words:
-        return []
-
-    if len(words) == 1:
-        word = words[0]
-        morphemes = segment_compound(word)
-        if len(morphemes) >= 2:
-            return _build_compound_sequence(text, morphemes)
-        syllables = syllabify_morpheme(word)
-        if len(syllables) <= 1:
-            return [text, text]
-        return _build_syllable_sequence(text, syllables)
-
-    # Multi-word phrase: right-to-left, Norwegian syllabification per word
-    breakdown: list[str] = [text]
-    for word_index in range(len(words) - 1, -1, -1):
-        word = words[word_index]
-        morphemes = segment_compound(word)
-        if len(morphemes) >= 2:
-            word_seq = _build_compound_sequence(word, morphemes)
-            word_seq.pop(0)
-            word_seq.pop()
-            breakdown.extend(word_seq)
-        else:
-            syllables = syllabify_morpheme(word)
-            if len(syllables) > 1:
-                breakdown.extend(_build_syllable_inner(syllables))
-            else:
-                breakdown.append(word)
-
-        if word_index < len(words) - 1:
-            partial = " ".join(words[word_index:])
-            if partial != text:
-                breakdown.append(partial)
-
-        if word_index == 0:
-            breakdown.append(text)
-
-    breakdown.append(text)
-    return breakdown
+    return [c.text for c in build_norwegian_breakdown_spans(phrase)]
 
 
 def flat_syllables(word: str) -> list[str] | None:
@@ -734,9 +647,9 @@ def _build_syllable_inner_spans(syllables: list[str], word: str) -> list[Breakdo
 
 def _build_syllable_sequence_spans(word: str, syllables: list[str]) -> list[BreakdownChunk]:
     return [
-        BreakdownChunk(word, word, None),
+        BreakdownChunk(word, None, None),
         *_build_syllable_inner_spans(syllables, word),
-        BreakdownChunk(word, word, None),
+        BreakdownChunk(word, None, None),
     ]
 
 
@@ -805,7 +718,7 @@ def build_norwegian_breakdown_spans(phrase: str) -> list[BreakdownChunk]:
             return _build_compound_sequence_spans(text, morphemes)
         syllables = syllabify_morpheme(word)
         if len(syllables) <= 1:
-            return [BreakdownChunk(text, word, None), BreakdownChunk(text, word, None)]
+            return [BreakdownChunk(text, None, None), BreakdownChunk(text, None, None)]
         return _build_syllable_sequence_spans(text, syllables)
 
     breakdown: list[BreakdownChunk] = [BreakdownChunk(text, None, None)]
@@ -822,7 +735,7 @@ def build_norwegian_breakdown_spans(phrase: str) -> list[BreakdownChunk]:
             if len(syllables) > 1:
                 breakdown.extend(_build_syllable_inner_spans(syllables, word))
             else:
-                breakdown.append(BreakdownChunk(word, word, None))
+                breakdown.append(BreakdownChunk(word, None, None))
 
         if word_index < len(words) - 1:
             partial = " ".join(words[word_index:])

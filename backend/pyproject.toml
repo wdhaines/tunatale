@@ -27,14 +27,6 @@ dependencies = [
 # runtime version is pinned via the `anki_pkg_version` setting (empty → latest), not
 # here, so this stays a valid specifier regardless of which desktop Anki the user runs.
 anki = ["anki"]
-# Forced-alignment models for syllable slicing (app/plugins/languages/no/alignment.py).
-# An EXTRA, not a dependency group, matching the `anki` precedent: neither a plain
-# `uv sync` nor `--all-groups` pulls it, and CI runs torch-free on purpose
-# (`--no-group slovene --no-group norwegian`), where every alignment test skips
-# rather than errors. Install with `uv sync --extra alignment`; torch arrives via
-# the `norwegian`/`slovene` groups. Gated at runtime by `audio_slicing_enabled`
-# AND `find_spec("transformers")` — see app.audio.slicer.slicing_available.
-alignment = ["transformers>=4.57"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
@@ -90,17 +82,27 @@ slovene = [
 norwegian = [
     "stanza",
 ]
+# Forced-alignment models for syllable slicing (app/plugins/languages/no/alignment.py).
+# A DEFAULT dependency group (see `[tool.uv] default-groups` below), so a plain
+# `uv sync` produces a slicing-capable environment with no flags to remember.
+# CI opts out with `--no-group alignment` to skip the transformers package
+# (torch is avoided via --no-group slovene --no-group norwegian).
+# Gated at runtime by `app.audio.slicer.alignment_installed()`.
+# Separate from norwegian/stanza because morphology and forced alignment are
+# different capabilities that happen to share torch today, and CI's opt-out list
+# stays readable as a list of capabilities it declines.
+alignment = ["transformers>=4.57"]
 
 [tool.uv]
-# The slovene/norwegian groups (classla/stanza) are DEFAULT groups, so a bare
+# The slovene/norwegian/alignment groups are DEFAULT groups, so a bare
 # `uv sync`, `uv sync --all-groups`, and the implicit sync inside `uv run` all
-# install and keep them — a working Slovene/Norwegian dev env is the default,
-# with no flags to remember. CI stays PyTorch-free by opting out explicitly:
-# `uv sync --all-groups --no-group slovene --no-group norwegian`
+# install them — a working dev env is the default, with no flags to remember.
+# CI stays PyTorch-free by opting out explicitly:
+# `uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment`
 # (.github/workflows/ci.yml). The `anki` extra is separate (not a group) —
 # pulled only by the `uv run --with anki` driver subprocess, never by these
 # syncs.
-default-groups = ["dev", "slovene", "norwegian"]
+default-groups = ["dev", "slovene", "norwegian", "alignment"]
 # Two 3.14 pin-overrides for the slovene/norwegian groups. Inert unless
 # torch/protobuf are actually pulled — CI's `--no-group slovene --no-group
 # norwegian` run never resolves them.
@@ -184,12 +186,12 @@ omit = [
     # CLI audio-preview glue: pure TTS-process + filesystem I/O. Testable logic
     # lives in norwegian_breakdown / breakdown_preview (both fully covered).
     "app/plugins/languages/no/breakdown_audio.py",
-    # Thin transformers/torch adapter for forced alignment — the same situation
-    # as sync_driver.py above: it can only execute with an optional dependency
-    # that CI deliberately does not install (`--no-group slovene --no-group
-    # norwegian`, no `--extra alignment`). It holds no decisions; the Viterbi,
-    # the frame->sample mapping and every fallback live in app/audio/alignment.py
-    # and app/audio/slicer.py, both covered by model-free tests.
+    # Thin transformers/torch adapter for forced alignment. No test may download
+    # a ~1.2 GB model (CI runs torch-free via --no-group alignment --no-group
+    # slovene --no-group norwegian), so this module's body cannot execute under
+    # test in any environment. It holds no decisions; the Viterbi, the frame->sample
+    # mapping and every fallback live in app/audio/alignment.py and app/audio/slicer.py,
+    # both covered by model-free tests.
     "app/plugins/languages/no/alignment.py",
 ]
 

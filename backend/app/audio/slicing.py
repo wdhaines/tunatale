@@ -58,8 +58,6 @@ _MAX_HEADROOM_MS = 100.0
 _MAX_TAIL_MS = 220.0
 # Ceiling on make-up gain, so a near-silent chunk is not amplified into hiss.
 _MAX_GAIN_DB = 12.0
-# Duration a short chunk is stretched toward.
-_TARGET_MS = 400.0
 # Slowest WSOLA rate accepted; below this, atempo artifacts become obvious.
 _MIN_ATEMPO = 0.5
 

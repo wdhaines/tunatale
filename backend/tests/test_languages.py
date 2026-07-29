@@ -17,7 +17,6 @@ from app.languages import (
     get_vocab_notetype,
     known_language_codes,
     resolve_language_context,
-    uses_compound_word_breakdown,
 )
 from app.models.language import Language
 from app.plugins.languages.no.preprocessor import NorwegianPreprocessor
@@ -26,15 +25,6 @@ from app.plugins.languages.sl.preprocessor import SlovenePreprocessor
 
 class TestBreakdownAndMorphologyFlags:
     """Per-language dispatch flags that replaced hardcoded `== "no"` / `{"sl": ...}`."""
-
-    def test_norwegian_uses_compound_word_breakdown(self):
-        assert uses_compound_word_breakdown("no") is True
-
-    def test_slovene_uses_generic_breakdown(self):
-        assert uses_compound_word_breakdown("sl") is False
-
-    def test_unknown_code_uses_generic_breakdown(self):
-        assert uses_compound_word_breakdown("zz") is False
 
     def test_slovene_has_slavic_morphology_profile(self):
         assert get_morphology_profile("sl") == "slavic"

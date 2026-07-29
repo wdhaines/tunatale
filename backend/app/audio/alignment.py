@@ -144,6 +144,8 @@ def derive_syllable_bounds(
     """
     if n_frames < 2:
         return None
+    if sum(len(s) for s in syllables) != len(char_spans):
+        return None
     vowel_set = frozenset(vowels)
 
     # Frames map linearly back onto the original-rate samples; deriving the ratio

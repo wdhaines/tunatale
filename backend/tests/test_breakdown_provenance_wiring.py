@@ -25,17 +25,26 @@ _NARRATOR = "en-US-JennyNeural"
 
 class TestBuildWordBreakdownSpans:
     @pytest.mark.parametrize(
-        "phrase",
-        ["etterforskningsteamet", "på flyplassen", "snømann", "jeg er her", "hadde", "busstasjon"],
+        "phrase,code",
+        [
+            ("etterforskningsteamet", "no"),
+            ("på flyplassen", "no"),
+            ("snømann", "no"),
+            ("jeg er her", "no"),
+            ("hadde", "no"),
+            ("busstasjon", "no"),
+            ("prosim", "sl"),
+            ("dober dan", "sl"),
+        ],
     )
-    def test_text_sequence_matches_the_plain_breakdown(self, phrase):
+    def test_text_sequence_matches_the_plain_breakdown(self, phrase, code):
         """The spans path must not change a single spoken chunk.
 
         ``app.audio.cues`` builds its timing manifest from the plain
         ``build_word_breakdown``, so any divergence here silently desynchronises
         every cue in the key-phrases section.
         """
-        assert [c.text for c in build_word_breakdown_spans(phrase, "no")] == build_word_breakdown(phrase, "no")
+        assert [c.text for c in build_word_breakdown_spans(phrase, code)] == build_word_breakdown(phrase, code)
 
     def test_norwegian_chunks_carry_provenance(self):
         chunks = build_word_breakdown_spans("etterforskningsteamet", "no")
@@ -43,11 +52,12 @@ class TestBuildWordBreakdownSpans:
         assert sliceable, "a six-syllable compound must offer something to slice"
         assert {c.source_word for c in sliceable} == {"etterforskningsteamet"}
 
-    def test_language_without_a_spans_function_yields_bare_chunks(self):
-        """Slovene has no spans wiring, so every chunk falls back to TTS."""
+    def test_slovene_chunks_carry_provenance(self):
+        """The generic path now emits provenance, not bare chunks."""
         chunks = build_word_breakdown_spans("prosim", "sl")
-        assert [c.text for c in chunks] == build_word_breakdown("prosim", "sl")
-        assert all(c.source_word is None and c.span is None for c in chunks)
+        sliceable = [c for c in chunks if c.span is not None]
+        assert sliceable, "a two-syllable word must offer something to slice"
+        assert all(c.source_word == "prosim" for c in sliceable if c.span is not None)
 
     def test_empty_phrase(self):
         assert build_word_breakdown_spans("", "no") == []
@@ -145,14 +155,16 @@ class TestKeyPhrasesSectionCarriesProvenance:
         assert texts == expected
         assert section.section_type == SectionType.KEY_PHRASES
 
-    def test_slovene_section_has_no_provenance(self):
+    def test_slovene_section_carries_provenance(self):
         section = build_key_phrases_section(
             [{"phrase": "prosim", "translation": "please"}],
             {"female-1": "sl-SI-PetraNeural"},
             _NARRATOR,
             "sl",
         )
-        assert all(p.syllable_span is None and p.source_word is None for p in section.phrases)
+        provenanced = [p for p in section.phrases if p.syllable_span is not None]
+        assert provenanced, "no breakdown Phrase carried a span — the generic path should emit provenance"
+        assert all(p.source_word == "prosim" for p in provenanced)
 
 
 class TestBreakdownChunkDefaults:

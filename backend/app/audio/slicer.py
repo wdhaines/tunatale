@@ -75,16 +75,22 @@ class SliceSpec:
     voice_id: str
 
 
-def slicing_available(settings: Settings) -> bool:
-    """Whether syllable slicing may run: opted in AND the extra is installed.
+def alignment_installed() -> bool:
+    """Whether the forced-alignment packages (transformers + torch) are importable.
 
     ``find_spec`` is the right probe here even though it is forbidden for the
     Anki capability gate. There the driver runs in an isolated ``uv run --with
     anki`` subprocess, so the main venv never has ``anki`` and a ``find_spec``
-    check would always say no; here ``transformers`` is imported in-process, so
-    its presence in this interpreter is exactly the question being asked.
+    check would always say no; here ``transformers`` (and ``torch``, which
+    ``transformers`` does not hard-dep on) are imported in-process, so their
+    presence in this interpreter is exactly the question being asked.
+
+    Probe both: ``transformers`` can be installed without ``torch``, but
+    ``Wav2Vec2CharAligner.__init__`` requires it. A transformers-only check
+    would pass the gate and then die noisily inside the first align — safely
+    (caught in ``ChunkSlicer._align``), but wastefully.
     """
-    return settings.audio_slicing_enabled and importlib.util.find_spec("transformers") is not None
+    return importlib.util.find_spec("transformers") is not None and importlib.util.find_spec("torch") is not None
 
 
 def build_slicers(language_codes: Iterable[str], tts: TTSService, settings: Settings) -> dict[str, ChunkSlicer]:
@@ -96,7 +102,7 @@ def build_slicers(language_codes: Iterable[str], tts: TTSService, settings: Sett
     """
     from app.languages import get_alignment
 
-    if not slicing_available(settings):
+    if not alignment_installed():
         return {}
 
     slicers: dict[str, ChunkSlicer] = {}
@@ -247,10 +253,10 @@ class ChunkSlicer:
             if not aligner.supports(word):
                 return None
             char_spans, n_frames = aligner.char_spans(resample_to_model_rate(samples, rate), word)
+            return derive_syllable_bounds(char_spans, n_frames, len(samples), syllables, self._vowels)
         except Exception:
             logger.warning("Alignment failed for %r; falling back to TTS", word, exc_info=True)
             return None
-        return derive_syllable_bounds(char_spans, n_frames, len(samples), syllables, self._vowels)
 
     async def slice_to_file(self, spec: SliceSpec, out_path: Path) -> bool:
         """Write ``spec``'s audio to *out_path*; ``False` means "use TTS instead".

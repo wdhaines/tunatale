@@ -160,10 +160,10 @@ async def lifespan(app: FastAPI):
     app.state.story_generator = StoryGenerator(llm)
     preprocessors = {code: get_preprocessor(code) for code in db_map}
     tts = EdgeTTSService()
-    # Empty unless audio_slicing_enabled AND the `alignment` extra is installed,
-    # in which case breakdown chunks are cut from one whole-word render instead
-    # of synthesized fragment-by-fragment. Building a slicer does not load the
-    # model; the first chunk that needs it does, once per process.
+    # Empty unless ``alignment_installed()`` says the forced-alignment packages
+    # are present, in which case breakdown chunks are cut from one whole-word
+    # render instead of synthesized fragment-by-fragment. Building a slicer does
+    # not load the model; the first chunk that needs it does, once per process.
     slicers = build_slicers(preprocessors, tts, settings)
     if slicers:
         logger.info("Syllable slicing enabled for: %s", ", ".join(sorted(slicers)))

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 
 from app.generation.syllabify import syllabify_word
-from app.languages import get_breakdown, get_breakdown_spans, get_slow_word, uses_compound_word_breakdown
+from app.languages import get_breakdown_spans, get_slow_word
 from app.models.breakdown import BreakdownChunk
 from app.models.lesson import Phrase, Section, SectionType
 
@@ -39,66 +39,66 @@ def _resolve_voice(speaker: str, l2_voice_map: dict[str, str], narrator_voice: s
 def build_word_breakdown(phrase_text: str, language_code: str = "sl") -> list[str]:
     """Build a Pimsleur-style syllable-level backward buildup sequence.
 
-    Processes words right-to-left. For each multi-syllable word the syllables
-    are presented backward then progressively rebuilt before moving to the
-    preceding word. Single-syllable words are presented as-is.
-
-    The sequence always starts with the full phrase and ends with the full
-    phrase repeated twice. Syllabification uses the rules for *language_code*
-    (defaults to Slovene for back-compat).
-
-    Examples:
-        "dan"     → ["dan", "dan"]
-        "prosim"  → ["prosim", "sim", "pro", "prosim", "prosim"]
-        "dober dan" → ["dober dan", "dan", "ber", "do", "dober",
-                        "dober dan", "dober dan"]
+    Delegates to :func:`build_word_breakdown_spans` and discards provenance.
     """
-    phrase = " ".join(phrase_text.strip().split())
-    words = phrase.split()
-    if not words:
-        return []
+    return [c.text for c in build_word_breakdown_spans(phrase_text, language_code)]
 
-    # Compound/morpheme-aware breakdown (Norwegian) vs. generic syllable buildup.
-    if uses_compound_word_breakdown(language_code):
-        fn = get_breakdown(language_code)
-        return fn(phrase)
 
-    breakdown: list[str] = [phrase]
+def _generic_breakdown_spans(phrase: str, words: list[str], language_code: str) -> list[BreakdownChunk]:
+    """Generic breakdown with spans for languages without a registered spans function.
+
+    Follows the same right-to-left per-word buildup as the old inline
+    ``build_word_breakdown``, but each word's chunks carry provenance so the
+    renderer can slice them from a single whole-word render. Single-syllable
+    words and multi-word partials get ``None`` provenance; multi-syllable
+    words get per-syllable spans guarded by a losslessness check.
+    """
+
+    def _syls(word: str) -> tuple[list[str], bool]:
+        syls = syllabify_word(word, language_code)
+        return syls, False if not syls else "".join(syls) == word.lower()
+
+    chunks: list[BreakdownChunk] = [BreakdownChunk(phrase, None, None)]
 
     if len(words) == 1:
-        syllables = syllabify_word(words[0], language_code)
-        if len(syllables) <= 1:
-            breakdown.append(phrase)
-            return breakdown
-        for i in range(len(syllables) - 1, -1, -1):
-            breakdown.append(syllables[i])
-            if i < len(syllables) - 1:
-                breakdown.append("".join(syllables[i:]))
-        breakdown.append(phrase)
-        return breakdown
+        word = words[0]
+        syls, lossless = _syls(word)
+        if len(syls) <= 1:
+            chunks.append(BreakdownChunk(phrase, None, None))
+            return chunks
+        source = word if lossless else None
+        n = len(syls)
+        for i in range(n - 1, -1, -1):
+            chunks.append(BreakdownChunk(syls[i], source, (i, i + 1) if lossless else None))
+            if i < n - 1:
+                chunks.append(BreakdownChunk("".join(syls[i:]), source, (i, n) if lossless else None))
+        chunks.append(BreakdownChunk(phrase, None, None))
+        return chunks
 
     for word_index in range(len(words) - 1, -1, -1):
         word = words[word_index]
-        syllables = syllabify_word(word, language_code)
+        syls, lossless = _syls(word)
+        source = word if lossless else None
+        n = len(syls)
 
-        if len(syllables) > 1:
-            for i in range(len(syllables) - 1, -1, -1):
-                breakdown.append(syllables[i])
-                if i < len(syllables) - 1:
-                    breakdown.append("".join(syllables[i:]))
+        if n > 1:
+            for i in range(n - 1, -1, -1):
+                chunks.append(BreakdownChunk(syls[i], source, (i, i + 1) if lossless else None))
+                if i < n - 1:
+                    chunks.append(BreakdownChunk("".join(syls[i:]), source, (i, n) if lossless else None))
         else:
-            breakdown.append(word)
+            chunks.append(BreakdownChunk(word, None, None))
 
         if word_index < len(words) - 1:
             partial = " ".join(words[word_index:])
             if partial != phrase:
-                breakdown.append(partial)
+                chunks.append(BreakdownChunk(partial, None, None))
 
         if word_index == 0:
-            breakdown.append(phrase)
+            chunks.append(BreakdownChunk(phrase, None, None))
 
-    breakdown.append(phrase)
-    return breakdown
+    chunks.append(BreakdownChunk(phrase, None, None))
+    return chunks
 
 
 def build_word_breakdown_spans(phrase_text: str, language_code: str) -> list[BreakdownChunk]:
@@ -109,17 +109,18 @@ def build_word_breakdown_spans(phrase_text: str, language_code: str) -> list[Bre
     the key-phrases timing manifest from the plain version and any divergence
     would desynchronise every cue.
 
-    Languages with no ``breakdown_spans_fn`` get the plain chunks wrapped with
-    empty provenance, which the renderer reads as "synthesize each one", i.e.
-    exactly today's behaviour.
-
-    ``language_code`` is required rather than defaulted: this is a new call site,
-    and the registry is the only thing that should decide per-language behaviour.
+    Languages with a registered ``breakdown_spans_fn`` call it directly.
+    All others use :func:`_generic_breakdown_spans` which generates provenance
+    from :func:`syllabify_word` guarded by a losslessness check.
     """
     fn = get_breakdown_spans(language_code)
-    if fn is None:
-        return [BreakdownChunk(text=text) for text in build_word_breakdown(phrase_text, language_code)]
-    return fn(" ".join(phrase_text.strip().split()))
+    if fn is not None:
+        return fn(" ".join(phrase_text.strip().split()))
+    phrase = " ".join(phrase_text.strip().split())
+    words = phrase.split()
+    if not words:
+        return []
+    return _generic_breakdown_spans(phrase, words, language_code)
 
 
 def build_key_phrases_section(
@@ -238,11 +239,8 @@ def build_slow_speed_section(
                 logger.warning("Skipping dialogue line with missing speaker or text: %r", line)
                 continue
             voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
-            if uses_compound_word_breakdown(l2_code):
-                slow_fn = get_slow_word(l2_code)
-                slowed = " ... ".join(slow_fn(w) for w in text.split())
-            else:
-                slowed = " ... ".join(text.split())
+            slow_fn = get_slow_word(l2_code)
+            slowed = " ... ".join((slow_fn(w) if slow_fn else w) for w in text.split())
             phrases.append(Phrase(text=slowed, voice_id=voice_id, language_code=l2_code, role=speaker))
 
     return Section(section_type=SectionType.SLOW_SPEED, phrases=phrases)
@@ -285,11 +283,8 @@ def _build_translated_phrases(
                 continue
             voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
             if slow:
-                if uses_compound_word_breakdown(l2_code):
-                    slow_fn = get_slow_word(l2_code)
-                    l2_text = " ... ".join(slow_fn(w) for w in text.split())
-                else:
-                    l2_text = " ... ".join(text.split())
+                slow_fn = get_slow_word(l2_code)
+                l2_text = " ... ".join((slow_fn(w) if slow_fn else w) for w in text.split())
             else:
                 l2_text = text
             narrator_phrase = Phrase(text=translation, voice_id=narrator_voice, language_code="en", role="narrator")

@@ -16,11 +16,11 @@ from unittest import mock
 import numpy as np
 import pytest
 
+from app.audio.slicer import _TARGET_MS as _SLICER_TARGET_MS
 from app.audio.slicing import (
     _FADE_MS,
     _MAX_FADE_MS,
     _MAX_GAIN_DB,
-    _TARGET_MS,
     SlicedWord,
     normalize_rms,
     polish,
@@ -31,6 +31,7 @@ from app.audio.slicing import (
 )
 
 _RATE = 16000
+_TARGET_MS = _SLICER_TARGET_MS
 
 
 def _ms(milliseconds: float, rate: int = _RATE) -> int:

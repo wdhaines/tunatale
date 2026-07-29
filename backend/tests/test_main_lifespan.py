@@ -279,12 +279,11 @@ async def test_lifespan_wires_slicers_when_the_capability_gate_is_open(tmp_path,
     monkeypatch.setattr(settings, "target_language", "no")
     monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.setattr(settings, "llm_mode", "mock")
-    monkeypatch.setattr(settings, "audio_slicing_enabled", True)
     real_find_spec = importlib.util.find_spec
     monkeypatch.setattr(
         importlib.util,
         "find_spec",
-        lambda name, *a, **k: object() if name == "transformers" else real_find_spec(name, *a, **k),
+        lambda name, *a, **k: object() if name in ("transformers", "torch") else real_find_spec(name, *a, **k),
     )
 
     test_app = FastAPI()
@@ -294,12 +293,15 @@ async def test_lifespan_wires_slicers_when_the_capability_gate_is_open(tmp_path,
         assert set(slicers) <= set(test_app.state.renderer._preprocessors)
 
 
-async def test_lifespan_leaves_slicers_empty_by_default(tmp_path, monkeypatch):
-    """Default install renders exactly as it did before this feature existed.
+async def test_lifespan_leaves_slicers_empty_when_not_installed(tmp_path, monkeypatch):
+    """Default (no alignment packages) renders exactly as it did before.
 
     Pinned to Norwegian for the same reason as above: a language that COULD be
     sliced, so the empty dict is the gate's doing and not the language's.
+    Exercised through the real import machinery, not by patching app code.
     """
+    import importlib.util
+
     from app.config import settings
     from app.main import lifespan
 
@@ -307,6 +309,12 @@ async def test_lifespan_leaves_slicers_empty_by_default(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "target_language", "no")
     monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.setattr(settings, "llm_mode", "mock")
+    real_find_spec = importlib.util.find_spec
+    monkeypatch.setattr(
+        importlib.util,
+        "find_spec",
+        lambda name, *a, **k: None if name in ("transformers", "torch") else real_find_spec(name, *a, **k),
+    )
 
     test_app = FastAPI()
     async with lifespan(test_app):

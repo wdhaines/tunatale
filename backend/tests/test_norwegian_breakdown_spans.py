@@ -141,6 +141,13 @@ class TestBreakdownSpansTextEquality:
 
     @pytest.mark.parametrize("phrase", _CORPUS_PHRASES)
     def test_oracle(self, phrase):
+        """Text identity guard — must not diverge from the plain breakdown.
+
+        After the inversion, ``build_norwegian_breakdown`` delegates to the
+        spans variant by construction, so this property is tautological — and
+        that is exactly the point: anyone who re-implements the plain path
+        independently will break here.
+        """
         texts = [c.text for c in build_norwegian_breakdown_spans(phrase)]
         expected = build_norwegian_breakdown(phrase)
         assert texts == expected, (
@@ -248,10 +255,11 @@ class TestBreakdownSpansCorrectness:
         assert ("en", "flyplassen", (2, 3)) in spans
 
     def test_source_word_for_non_compound_stem(self):
-        """Single-stem word: all non-bookend chunks carry source_word."""
+        """Single-stem word: non-bookend chunks carry source_word."""
         chunks = build_norwegian_breakdown_spans("forskning")
         for c in chunks:
-            assert c.source_word == "forskning"
+            if c.span is not None:
+                assert c.source_word == "forskning"
 
     def test_multi_word_partials_have_no_source(self):
         """Multi-word chunks (partials) have source_word=None, span=None."""

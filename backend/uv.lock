@@ -1686,14 +1686,14 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-alignment = [
-    { name = "transformers" },
-]
 anki = [
     { name = "anki" },
 ]
 
 [package.dev-dependencies]
+alignment = [
+    { name = "transformers" },
+]
 dev = [
     { name = "anyio" },
     { name = "fsrs-rs-python" },
@@ -1725,12 +1725,12 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "soundfile", specifier = ">=0.14.0" },
-    { name = "transformers", marker = "extra == 'alignment'", specifier = ">=4.57" },
     { name = "uvicorn", specifier = ">=0.51.0" },
 ]
-provides-extras = ["anki", "alignment"]
+provides-extras = ["anki"]
 
 [package.metadata.requires-dev]
+alignment = [{ name = "transformers", specifier = ">=4.57" }]
 dev = [
     { name = "anyio", specifier = ">=4.14.2" },
     { name = "fsrs-rs-python", specifier = ">=0.8.2,<0.9" },

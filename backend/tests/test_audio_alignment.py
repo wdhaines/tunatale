@@ -124,6 +124,22 @@ class TestDeriveSyllableBounds:
             is None
         )
 
+    def test_returns_none_when_syllables_overrun_char_spans(self):
+        """Non-lossless syllabification must not raise IndexError."""
+        char_spans = [(0, 1), (1, 2), (2, 3)]
+        result = derive_syllable_bounds(
+            char_spans, n_frames=3, n_samples=300, syllables=["ab", "cd"], vowels=frozenset("ae")
+        )
+        assert result is None
+
+    def test_returns_none_when_syllables_undershoot_char_spans(self):
+        """Silent wrong-audio is worse than a crash; undershoot must also None."""
+        char_spans = [(0, 1), (1, 2), (2, 3)]
+        result = derive_syllable_bounds(
+            char_spans, n_frames=3, n_samples=300, syllables=["a", "b"], vowels=frozenset("ae")
+        )
+        assert result is None
+
     def test_returns_none_when_cuts_collapse(self):
         """Two boundaries landing on the same sample cannot both be honoured."""
         char_spans = [(0, 1), (1, 1), (1, 1), (1, 2)]

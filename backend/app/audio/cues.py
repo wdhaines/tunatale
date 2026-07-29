@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from app.generation.section_builder import build_word_breakdown
+from app.generation.section_builder import build_word_breakdown_spans
 from app.models.lesson import Lesson, SectionType
 
 
@@ -124,7 +124,7 @@ def _build_key_phrases_refs(lesson: Lesson, timing: list[CueTiming], section_idx
         phrase_idx += 1
 
     for kp_idx, kp in enumerate(lesson.key_phrases):
-        breakdown = build_word_breakdown(kp.phrase, l2_code)
+        breakdown = build_word_breakdown_spans(kp.phrase, l2_code)
         expected = 2 + len(breakdown)
 
         remaining = len(timing) - phrase_idx

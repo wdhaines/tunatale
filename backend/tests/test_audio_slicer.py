@@ -15,7 +15,7 @@ import pytest
 import soundfile as sf
 
 from app.audio import slicer as slicer_module
-from app.audio.slicer import PARENT_RATE, ChunkSlicer, SliceSpec, build_slicers, slicing_available
+from app.audio.slicer import PARENT_RATE, ChunkSlicer, SliceSpec, alignment_installed, build_slicers
 from app.config import Settings
 
 _RATE = 24_000
@@ -118,7 +118,7 @@ def _slicer(tmp_path, tts=None, aligner=None, factory_calls=None, **kw):
         tts=tts or FakeTTS(),
         aligner_factory=factory,
         model_id=kw.pop("model_id", "fake/model"),
-        syllabify_fn=_syllabify,
+        syllabify_fn=kw.pop("syllabify_fn", _syllabify),
         vowels=frozenset("aeiouyæøå"),
         cache_dir=kw.pop("cache_dir", tmp_path / "cache"),
         **kw,
@@ -212,6 +212,18 @@ class TestSlicerDeclinesToSlice:
         slicer = _slicer(tmp_path, aligner=FakeAligner(n_frames_per_char=0))
         out = tmp_path / "c.wav"
         assert await slicer.slice_to_file(SliceSpec("politiet", 1, 2, "v"), out) is False
+        assert not out.exists()
+
+    async def test_non_lossless_syllabify_returns_false_not_exception(self, tmp_path):
+        """syllabify_fn whose pieces overrun the word's characters must degrade
+        to False, never propagate an IndexError."""
+
+        def bad_syllabify(word: str) -> list[str] | None:
+            return ["ha", "denn"]  # 6 chars vs "haden" = 5 — non-lossless
+
+        slicer = _slicer(tmp_path, syllabify_fn=bad_syllabify)
+        out = tmp_path / "c.wav"
+        assert await slicer.slice_to_file(SliceSpec("haden", 0, 1, "v"), out) is False
         assert not out.exists()
 
 
@@ -335,78 +347,79 @@ class TestBoundaryCache:
         assert await slicer.slice_to_file(SliceSpec("haden", 0, 1, "v"), out) is True
 
 
-class TestSlicingAvailable:
-    def test_off_by_default(self):
-        """``audio_slicing_enabled`` is opt-in — a default install renders as today."""
-        assert Settings().audio_slicing_enabled is False
-        assert slicing_available(Settings()) is False
+class TestAlignmentInstalled:
+    """``alignment_installed()`` probes the interpreter for both required packages.
 
-    def test_requires_transformers_even_when_enabled(self, monkeypatch):
-        """Exercised through the real import machinery, not by patching app code."""
-        real_find_spec = importlib.util.find_spec
+    ``find_spec`` is the right probe here even though it is forbidden for the
+    Anki capability gate (see ``slicer.py`` docstring); exercised through the
+    real import machinery, not by patching app code.
+    """
+
+    def test_returns_false_without_transformers(self, monkeypatch):
+        """transformers absent → probe is False even if torch is present."""
+        real = importlib.util.find_spec
         monkeypatch.setattr(
             importlib.util,
             "find_spec",
-            lambda name, *a, **k: None if name == "transformers" else real_find_spec(name, *a, **k),
+            lambda name, *a, **k: None if name == "transformers" else real(name, *a, **k),
         )
-        assert slicing_available(Settings(audio_slicing_enabled=True)) is False
+        assert alignment_installed() is False
 
-    def test_enabled_with_transformers_present(self, monkeypatch):
-        real_find_spec = importlib.util.find_spec
+    def test_returns_false_without_torch(self, monkeypatch):
+        """torch absent → probe is False even if transformers is present."""
+        real = importlib.util.find_spec
         monkeypatch.setattr(
             importlib.util,
             "find_spec",
-            lambda name, *a, **k: object() if name == "transformers" else real_find_spec(name, *a, **k),
+            lambda name, *a, **k: None if name == "torch" else real(name, *a, **k),
         )
-        assert slicing_available(Settings(audio_slicing_enabled=True)) is True
+        assert alignment_installed() is False
 
-    def test_disabled_setting_beats_a_present_transformers(self, monkeypatch):
-        real_find_spec = importlib.util.find_spec
+    def test_returns_true_when_both_are_present(self, monkeypatch):
+        real = importlib.util.find_spec
         monkeypatch.setattr(
             importlib.util,
             "find_spec",
-            lambda name, *a, **k: object() if name == "transformers" else real_find_spec(name, *a, **k),
+            lambda name, *a, **k: object() if name in ("transformers", "torch") else real(name, *a, **k),
         )
-        assert slicing_available(Settings(audio_slicing_enabled=False)) is False
+        assert alignment_installed() is True
 
 
 class TestBuildSlicers:
     @pytest.fixture
-    def _transformers_present(self, monkeypatch):
+    def _alignment_installed(self, monkeypatch):
         real_find_spec = importlib.util.find_spec
         monkeypatch.setattr(
             importlib.util,
             "find_spec",
-            lambda name, *a, **k: object() if name == "transformers" else real_find_spec(name, *a, **k),
+            lambda name, *a, **k: object() if name in ("transformers", "torch") else real_find_spec(name, *a, **k),
         )
 
-    def test_empty_when_the_gate_is_closed(self, _transformers_present):
-        assert build_slicers(["no", "sl"], FakeTTS(), Settings(audio_slicing_enabled=False)) == {}
-
-    def test_empty_without_transformers_even_when_enabled(self, monkeypatch):
-        real_find_spec = importlib.util.find_spec
+    def test_empty_when_not_installed(self, monkeypatch):
+        """No transformers or torch → no slicers."""
+        real = importlib.util.find_spec
         monkeypatch.setattr(
             importlib.util,
             "find_spec",
-            lambda name, *a, **k: None if name == "transformers" else real_find_spec(name, *a, **k),
+            lambda name, *a, **k: None if name in ("transformers", "torch") else real(name, *a, **k),
         )
-        assert build_slicers(["no"], FakeTTS(), Settings(audio_slicing_enabled=True)) == {}
+        assert build_slicers(["no", "sl"], FakeTTS(), Settings()) == {}
 
-    def test_builds_one_per_language_with_alignment_wiring(self, _transformers_present):
-        slicers = build_slicers(["no", "sl", "en"], FakeTTS(), Settings(audio_slicing_enabled=True))
+    def test_builds_one_per_language_with_alignment_wiring(self, _alignment_installed):
+        slicers = build_slicers(["no", "sl", "en"], FakeTTS(), Settings())
         assert set(slicers) == {"no"}, "only Norwegian has an aligner registered"
         assert isinstance(slicers["no"], ChunkSlicer)
 
-    def test_the_slicer_carries_the_registered_model(self, _transformers_present):
+    def test_the_slicer_carries_the_registered_model(self, _alignment_installed):
         from app.languages import get_alignment
 
-        slicers = build_slicers(["no"], FakeTTS(), Settings(audio_slicing_enabled=True))
+        slicers = build_slicers(["no"], FakeTTS(), Settings())
         assert slicers["no"]._model_id == get_alignment("no").model_id
 
-    def test_building_does_not_load_the_model(self, _transformers_present):
+    def test_building_does_not_load_the_model(self, _alignment_installed):
         """Constructing a slicer must not import transformers or download 1.2 GB —
         the aligner is created lazily, on the first word that needs it."""
-        build_slicers(["no"], FakeTTS(), Settings(audio_slicing_enabled=True))
+        build_slicers(["no"], FakeTTS(), Settings())
         assert slicer_module._ALIGNERS == {}
 
 

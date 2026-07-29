@@ -1,35 +1,36 @@
 """Guardrail tests for the Norwegian-breakdown plugin relocation.
 
 Verifies that:
-- ``get_breakdown`` routes to the plugin-registered callable (``no``) and
-  returns ``None`` for languages without one (``sl``, ``en``).
+- ``get_breakdown_spans`` routes to the plugin-registered callable (``no``) and
+  returns ``None`` for languages without one (``sl``, ``en``), which is what
+  sends them to the generic buildup.
 - The end-to-end wiring through ``build_word_breakdown`` produces the expected
   compound breakdown — proof that the registry accessor works, not just that
   the function object exists.
 - ``section_builder.py`` has no module-level import of any ``norwegian_breakdown``
-  path — it must resolve the function through ``get_breakdown()`` at call time.
+  path — it must resolve the function through the registry at call time.
 """
 
 import ast
 from pathlib import Path
 
 from app.generation.section_builder import build_word_breakdown
-from app.languages import get_breakdown, get_slow_word
+from app.languages import get_breakdown_spans, get_slow_word
 
 # -- Registry accessor -------------------------------------------------------
 
 
-def test_get_breakdown_no_returns_callable():
-    fn = get_breakdown("no")
+def test_get_breakdown_spans_no_returns_callable():
+    fn = get_breakdown_spans("no")
     assert callable(fn)
 
 
-def test_get_breakdown_sl_returns_none():
-    assert get_breakdown("sl") is None
+def test_get_breakdown_spans_sl_returns_none():
+    assert get_breakdown_spans("sl") is None
 
 
-def test_get_breakdown_en_returns_none():
-    assert get_breakdown("en") is None
+def test_get_breakdown_spans_en_returns_none():
+    assert get_breakdown_spans("en") is None
 
 
 def test_get_slow_word_no_returns_callable():
@@ -64,7 +65,8 @@ def test_section_builder_has_no_module_level_norwegian_breakdown_import():
     """section_builder.py must not import norwegian_breakdown at module level.
 
     The breakdown function must be resolved through the registry accessor
-    (``get_breakdown``) so core stays free of Norwegian-specific dependencies.
+    (``get_breakdown_spans``) so core stays free of Norwegian-specific
+    dependencies.
     """
     src = Path(__file__).resolve().parent.parent / "app" / "generation" / "section_builder.py"
     tree = ast.parse(src.read_text())
@@ -73,6 +75,6 @@ def test_section_builder_has_no_module_level_norwegian_breakdown_import():
             msg = (
                 f"section_builder.py has a module-level import from {node.module} "
                 f"(line {node.lineno}); the breakdown function must be resolved "
-                "through get_breakdown() at call time."
+                "through get_breakdown_spans() at call time."
             )
             raise AssertionError(msg)

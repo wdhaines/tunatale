@@ -31,7 +31,7 @@ from pathlib import Path
 from app.audio.edge_tts import EdgeTTSService
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.renderer import LessonRenderer
-from app.audio.slicer import build_slicers, slicing_available
+from app.audio.slicer import alignment_installed, build_slicers
 from app.audio.transcode import CODEC_EXT
 from app.config import settings
 from app.generation.section_builder import build_key_phrases_section
@@ -86,11 +86,8 @@ async def run(db_path: Path, lesson_id: str, out_dir: Path, codec: str) -> int:
         raise SystemExit("refusing to render an A/B whose two sides are not the same words")
 
     sliceable = [p for p in section.phrases if p.syllable_span is not None]
-    if not slicing_available(settings):
-        raise SystemExit(
-            "slicing is not available: set audio_slicing_enabled=true and install "
-            "the extra (uv sync --all-groups --extra alignment)"
-        )
+    if not alignment_installed():
+        raise SystemExit("slicing is not available: install the alignment packages (uv sync --all-groups)")
 
     tts = EdgeTTSService(cache_dir=out_dir / ".tts_cache")
     preprocessors = {_LANGUAGE_CODE: get_preprocessor(_LANGUAGE_CODE)}

@@ -666,3 +666,49 @@ def test_slow_en_translated_skips_malformed_input():
     assert "Bad" in texts
     l2_texts = [p.text for p in section.phrases if p.language_code == L2_CODE]
     assert len(l2_texts) == 2
+
+
+# ── slow-word resolution ──────────────────────────────────────────────────
+
+
+def _register_slow_word_only(monkeypatch, slow_fn):
+    """Register a throwaway language whose ONLY wiring is a slow-word function.
+
+    The seam under test: a language is slowed because it registers
+    ``slow_word_fn``, not because it happens to also register a compound
+    breakdown. Norwegian sets both, so only a language with one of them can
+    tell the two rules apart.
+    """
+    from app.languages import _CONFIGS as configs
+    from app.languages import LanguageConfig, discover
+    from app.models.language import Language
+
+    discover()
+    monkeypatch.setitem(
+        configs,
+        "zz",
+        LanguageConfig(
+            language=Language(code="zz", name="Test", native_name="Test", script="latin"),
+            slow_word_fn=slow_fn,
+        ),
+    )
+
+
+def test_slow_speed_uses_slow_word_fn_without_a_compound_breakdown(monkeypatch):
+    _register_slow_word_only(monkeypatch, lambda w: f"<{w}>")
+    scenes = [{"label": "S", "lines": [{"speaker": "female-1", "text": "en to"}]}]
+
+    section = build_slow_speed_section(scenes, {"female-1": "v"}, "narr", "zz")
+
+    l2 = [p.text for p in section.phrases if p.language_code == "zz"]
+    assert l2 == ["<en> ... <to>"]
+
+
+def test_slow_translated_uses_slow_word_fn_without_a_compound_breakdown(monkeypatch):
+    _register_slow_word_only(monkeypatch, lambda w: f"<{w}>")
+    scenes = [{"label": "S", "lines": [{"speaker": "female-1", "text": "en to", "translation": "one two"}]}]
+
+    section = build_slow_translated_section(scenes, {"female-1": "v"}, "narr", "zz")
+
+    l2 = [p.text for p in section.phrases if p.language_code == "zz"]
+    assert l2 == ["<en> ... <to>"]

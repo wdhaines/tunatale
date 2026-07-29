@@ -2318,7 +2318,7 @@ Errors raise `StoryGenerationError` with the bad JSON snippet for debugging.
 
 The `section_builder` module is the bridge between LLM creative output and the deterministic `Section`/`Phrase` structure the audio renderer expects. The LLM hands back a parsed dict of `key_phrases` (each with `phrase`/`translation`) and `scenes` (each with a `label` and a list of `lines`, where each line has a `speaker`/`text`/`translation`). The four builders below mechanically expand this into Pimsleur-shaped `Section`s.
 
-*(2026-07 note: this dump predates the language-plugin completion — `section_builder.py` now resolves per-language breakdown behavior through the registry (`get_breakdown`/`get_slow_word` from `app.languages`) instead of importing `app.generation.norwegian_breakdown`, which moved to `app/plugins/languages/no/norwegian_breakdown.py`. See PART 30.1; the section-building logic below is otherwise unchanged.)*
+*(2026-07 note: this dump predates the language-plugin completion — `section_builder.py` now resolves per-language breakdown behavior through the registry instead of importing `app.generation.norwegian_breakdown`, which moved to `app/plugins/languages/no/norwegian_breakdown.py`. See PART 30.1; the section-building logic below is otherwise unchanged. 2026-07-29: the accessors named below have since changed — breakdown dispatch is `get_breakdown_spans`, and the `uses_compound_word_breakdown` guard around slow-word resolution is gone in favour of asking `get_slow_word` directly. See PART 31.7.)*
 
 ```bash
 cat -n backend/app/generation/section_builder.py
@@ -7639,6 +7639,8 @@ Norwegian became the second wired language, and the wiring itself was hardened i
 
 Here is the whole Norwegian registration — note `breakdown_fn`/`slow_word_fn`/`syllabifier_fn` are actual function references supplied by the plugin (they replaced the old `compound_word_breakdown=True` bool and `syllabifier="norwegian"` string), and the function-word list ships as plugin data:
 
+*(2026-07-29 note: `breakdown_fn` and its accessors `get_breakdown` / `uses_compound_word_breakdown` no longer exist. Once `build_word_breakdown` was inverted to derive its text from `build_word_breakdown_spans` (PART 31.7), nothing called the plain function through the registry, and `uses_compound_word_breakdown` survived only as a proxy for "has a slow-word function" — which `get_slow_word` answers directly. The dump below is otherwise current; today's registration carries `breakdown_spans_fn` and `alignment` in its place.)*
+
 ```bash
 sed -n '17,46p' backend/app/plugins/languages/no/__init__.py
 ```
@@ -7826,3 +7828,85 @@ Six commits (`879d377` → `976222c`) turned "mark listened" from a localStorage
 - **Path-scoped instruction files + commit gate** (`da6e634`; matcher fix `572f9a2`) — most `.claude/rules/*.md` now carry `paths:` frontmatter and lazy-load only when files they cover are read (~84% leaner agent-session startup); `git commit` is hook-gated on a `./test.sh` pass recorded against the exact current tree fingerprint.
 - **`.env.example` moved to `backend/`** (`d3d950c`) alongside a dead-config purge.
 - **READMEs rewritten** (`514f2d9`, `b2d21b0`) — the root README now matches the 2026-07 system; the frontend README is no longer SvelteKit boilerplate.
+
+---
+
+## PART 31: Syllable Slicing — Forced Alignment
+
+*Added 2026-07-29.* Covers the forced-alignment syllable-slicing feature: isolating a breakdown chunk by cutting it out of a slowed whole-word render instead of synthesising it alone.
+
+### 31.1 The Problem
+
+Every Pimsleur breakdown chunk was once its own EdgeTTS utterance (`LessonRenderer._render_section` → `_synth`, one call per `Phrase`). The voice therefore ran word-level G2P on a *syllable fragment*, and a fragment that happened to spell a real word was read as that word — `gen` (from `hagen`, `ingen`) sounded like /ɡeːn/ ("gene") instead of /ɡən/, `ret` (from `sporet`) like /reːt/ instead of /rət/. These are the `-en`/`-et` definite-article endings — the most common syllable shape in Bokmål, not a tail case.
+
+The fix: synthesise the **whole word once** at a slowed rate and cut the syllables out of it. Every breakdown chunk is a contiguous syllable span of the word (syllables, running rebuilds, compound parts), so all of them come from that one render. Measured on the day-5 Norwegian lesson: ~76 TTS calls to ~14.
+
+### 31.2 The Provenance Pair
+
+When `norwegian_breakdown.py::build_norwegian_breakdown_spans` produces a breakdown with provenance, each chunk (`app/models/breakdown.py::BreakdownChunk`) carries:
+
+- **`source_word`** — the whole word to render and cut from (never a piece of one)
+- **`syllable_span`** — `(start, stop)` into the word's syllable list
+
+These are stored on `Phrase` (`lesson.py::Phrase.source_word`, `lesson.py::Phrase.syllable_span`) and default to `None` — so every previously generated lesson deserialises unchanged and renders exactly as before (every chunk synthesised in isolation).
+
+`section_builder.py::build_word_breakdown_spans` is the registry-resolved function that returns `list[BreakdownChunk]`; for languages with no `breakdown_spans_fn` (Slovene, English) it wraps the plain `build_word_breakdown` output with empty provenance. `cues.py::_build_key_phrases_refs` consumes it instead of the plain version; the invariant that text sequences are byte-identical is held up by `tests/test_breakdown_provenance_wiring.py`.
+
+### 31.3 The Processing Pipeline
+
+1. **Synthesis** — the parent word is rendered at `-40%` (`slicer.py::PARENT_RATE`), slower than natural speech, so the model sees real articulation rather than connected-speech blur.
+2. **Alignment** — `app/plugins/languages/no/alignment.py::Wav2Vec2CharAligner` runs a CTC forced-alignment pass (blank-interleaved Viterbi; the model is `NbAiLab/nb-wav2vec2-300m-bokmaal` loaded with `Wav2Vec2Processor`, NOT AutoProcessor). Boundaries are character-level sample offsets.
+3. **Syllable derivation** — `alignment.py::derive_syllable_bounds` maps character spans to the word's orthographic syllables. The syllabifier that produced the breakdown (`segment_compound` → `flat_syllables`) is not literally the same function that the aligner queries, but they agree by construction: the plugin ensures `"".join(syllables) == word.lower()` (losslessness), which is the precondition that keeps the character-index walk in `derive_syllable_bounds` in range. Core validates this precondition at the start of `derive_syllable_bounds`: if `sum(len(s) for s in syllables) != len(char_spans)` it returns `None` immediately, which propagates to `slice_to_file` returning `False`. A non-lossless split falls back to TTS rather than producing wrong audio.
+4. **Refinement** — each cut point is moved to the quietest nearby sample within ±30 ms, then snapped to a negative-going zero crossing within ±8 ms.
+5. **Polish** — asymmetric padding (25 ms head, anchored tail), adaptive per-edge fade (12–40 ms by edge energy), DC removal, WSOLA time-stretch toward 400 ms, RMS normalised to the parent's level (+12 dB cap, 0.99 peak limit).
+6. **Cache** — aligned boundaries are stored on disk keyed by `(word, voice, rate, model)` (`slicer.py::ChunkSlicer._cache_path`). A lesson render never re-runs the model for a word it has already aligned; the process-global `_ALIGNERS` dict (`slicer.py::_ALIGNERS`) ensures the model loads at most once per process.
+
+### 31.4 The Fallback Contract
+
+Failure is always *fallback*, never an exception (`slicer.py` module docstring). A word the syllabifier cannot split losslessly, a character outside the model's vocab, a degenerate alignment, or a model that raises — each propagates to `False` from `slicer.py::ChunkSlicer.slice_to_file` and the caller keeps today's isolated-TTS audio.
+
+Branches that return `False` directly:
+- `slice_to_file`: `_parent` returns `None`
+- `slice_to_file`: span outside the syllable count
+
+Branches that return `None` (the caller treats as `False`):
+- `_build_parent`: `syllabify(word)` returns `None` or fewer than 2 syllables
+- `_align`: `aligner.supports(word)` is `False`
+- `_align`: any exception in `aligner.char_spans` → caught, logged, returns `None`
+- `_align`: `derive_syllable_bounds` returns `None` (degenerate alignment or non-lossless split)
+
+Slicing improves a chunk; it must never be able to break a lesson render.
+
+### 31.5 Architecture — Three Layers
+
+The slicing system is split across three modules joined by the `AlignmentConfig` seam (`languages.py::AlignmentConfig`), so each layer owns a single concern:
+
+1. **`slicing.py`** (`app/audio/slicing.py`) — pure DSP with no orthography knowledge. Given sample offsets for syllable boundaries, it cuts, fades, stretches, and normalises audio. Every ear-tuned constant lives here (splice search radius, fade lengths, tail-ramp parameters, gain cap, atempo floor).
+2. **`alignment.py`** (`app/audio/alignment.py`) — model-agnostic forced alignment. Owns the blank-interleaved Viterbi (`alignment.py::ctc_align`), the frame→sample mapping, silence trimming, and resampling. Vowels are injected as parameters (the language pillar that determines where a tail ceiling sits), and the model stride is derived from array shapes rather than hardcoded.
+3. **Plugin `alignment.py`** (`app/plugins/languages/no/alignment.py`) — the only place `transformers` / `torch` is imported. Owns the model id, vocabulary, and `Wav2Vec2CharAligner`; core never imports these packages.
+
+The `AlignmentConfig` dataclass (`languages.py::AlignmentConfig`) bundles the factory, model id, vowel inventory, and syllabifier function so core receives a single seam rather than four ad‑hoc parameters.
+
+### 31.6 Capability Gate
+
+A single probe, `slicer.py::alignment_installed()`, checks `find_spec("transformers")` and `find_spec("torch")` — both must be present for the aligner to build. When the probe says no, `build_slicers` returns an empty dict, and every chunk is synthesised the old way.
+
+`build_slicers` still takes `settings` (it needs `audio_alignment_cache_dir`) but the gate is the probe alone; the `audio_slicing_enabled` setting was removed (formerly the second gate).
+
+### 31.7 Dependency Status
+
+The `alignment` group (`transformers>=4.57`) is a **default `[dependency-groups]` group** — a plain `uv sync` installs it. CI opts out with `--no-group alignment` to skip the `transformers` package (and its transitive dependencies); torch is avoided separately via `--no-group slovene --no-group norwegian`. Norwegian is currently the only language with alignment wiring (`app/plugins/languages/no/`); the core (`backend/app/**`) contains no model names or language literals. No test constructs a real aligner, so the ~1.2 GB model download never occurs in CI regardless of the flag set.
+
+### 31.7 One Sequence Generator (and the registry surface it retired)
+
+The breakdown sequence used to be generated four times over: plain text and with-provenance variants, each in a generic and a Norwegian flavour. The text sequences had to agree byte-for-byte — `cues.py::_build_key_phrases_refs` derives a phrase count from one of them, and any divergence silently desynchronises every cue in the section — and that agreement was upheld by tests rather than by structure.
+
+Both pairs are now inverted: the spans function is the single implementation and the plain function is `[c.text for c in spans_fn(phrase)]`. `section_builder.py::build_word_breakdown` delegates to `build_word_breakdown_spans`; `norwegian_breakdown.py::build_norwegian_breakdown` delegates to `build_norwegian_breakdown_spans`. Three parallel traversals (`_build_syllable_inner`, `_build_syllable_sequence`, `_build_compound_sequence`) went with them.
+
+The generic path also stopped discarding provenance it already had. `section_builder.py::_generic_breakdown_spans` builds every chunk from `syllabify_word`, so it knows `syllables[i]` is span `(i, i+1)` and `"".join(syllables[i:])` is `(i, n)`; it now emits those, guarded by the same losslessness check the Norwegian side uses (`"".join(syls) == word.lower()` — the syllabifier lowercases, so a capitalised key phrase still gets provenance rather than silently losing it). A language that registers an aligner tomorrow gets slicing without touching core.
+
+The text-equality oracles are deliberately kept even though the property is now tautological: they are what fails the day someone re-implements a plain path independently.
+
+**Retired registry surface.** With `build_word_breakdown` no longer dispatching on it, `LanguageConfig.breakdown_fn` had no caller — `get_breakdown()` was uncalled in `app/`, and `uses_compound_word_breakdown()` survived only as a proxy for "does this language have a slow-word function?", a question `get_slow_word()` answers directly. Both call sites (slow-speed and slow-translated section building) now resolve `get_slow_word(code)` and fall back to plain whitespace splitting when it returns `None`. The field and both accessors are deleted.
+
+That coupling was the kind the plugin architecture exists to prevent: it worked only because Norwegian happened to register both facets, so a language with a slow-word function and no compound breakdown would have been silently un-slowed. `tests/test_section_builder.py::test_slow_speed_uses_slow_word_fn_without_a_compound_breakdown` registers exactly that language and pins the new rule.

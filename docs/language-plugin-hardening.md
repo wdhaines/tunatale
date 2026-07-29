@@ -240,6 +240,7 @@ all 26 entries. Committed `97bc0db` = the weakness-#4 base (ledger 26).
 **Batch A — dispatch/config routing (registry scalar flags, behavior-preserving):**
 - `api/srs.py` `_VALID_LANGUAGE_CODES` → `known_language_codes()` (= `frozenset(_CONFIGS)`).
 - `section_builder.py` two `if …=="no"` branches → `uses_compound_word_breakdown(code)`
+  *(superseded 2026-07-29: both branches now resolve `get_slow_word(code)` directly and `uses_compound_word_breakdown` was deleted — see walkthrough PART 31.7)*
   (new `LanguageConfig.compound_word_breakdown` bool, `True` for `no`). Used SCALAR
   flags, NOT callables, to keep `languages.py` free of a `generation` import / cycle.
 - `prompts.py` `_MORPHOLOGY_SECTIONS={"sl": …}` → `get_morphology_profile(code)=="slavic"`

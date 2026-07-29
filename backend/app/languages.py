@@ -89,10 +89,6 @@ class LanguageConfig:
     # Morphology-drill profile injected into the story prompt (``"slavic"`` = the
     # case/dual tagging block); ``None`` omits the block.
     morphology_profile: str | None = None
-    # Compound word breakdown function — the Pimsleur-style morpheme-aware
-    # segmentation.  ``None`` for languages that use the generic per-syllable
-    # backward buildup (the fallback in ``section_builder.build_word_breakdown``).
-    breakdown_fn: Callable[..., list[str]] | None = None
     # Slowed-word function for the slow-speed section (Norwegian morpheme pauses).
     # ``None`` when the language has no slow-word specialisation.
     slow_word_fn: Callable[[str], str] | None = None
@@ -268,36 +264,12 @@ def get_vocab_notetype(code: str) -> VocabNotetype | None:
     return config.vocab_notetype if config else None
 
 
-def uses_compound_word_breakdown(code: str) -> bool:
-    """Whether *code*'s Pimsleur word breakdown uses compound/morpheme-aware
-    segmentation rather than the generic per-syllable backward buildup.
-
-    Derived from whether ``breakdown_fn`` is set. Unknown codes → ``False``
-    (the generic path).
-    """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.breakdown_fn is not None if config else False
-
-
-def get_breakdown(code: str) -> Callable[..., list[str]] | None:
-    """Return the compound-word breakdown function for *code*, or ``None``.
-
-    Languages without a compound breakdown (everything except Norwegian) return
-    ``None`` — callers fall back to the generic per-syllable buildup in
-    ``section_builder.build_word_breakdown``.
-    """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.breakdown_fn if config else None
-
-
 def get_breakdown_spans(code: str) -> Callable[[str], list[BreakdownChunk]] | None:
     """Return *code*'s provenance-carrying breakdown function, or ``None``.
 
-    ``None`` means the language has no syllable-slicing wiring, so callers use
-    the plain :func:`get_breakdown` output and every chunk is synthesized on its
-    own. Unknown codes → ``None``.
+    ``None`` means the language has no language-specific breakdown, so callers
+    fall back to the generic per-syllable buildup in
+    ``section_builder._generic_breakdown_spans``. Unknown codes → ``None``.
     """
     discover()
     config = _CONFIGS.get(code)
@@ -308,8 +280,7 @@ def get_alignment(code: str) -> AlignmentConfig | None:
     """Return *code*'s forced-alignment wiring, or ``None`` when it has none.
 
     ``None`` is the language-level off-switch for syllable slicing; the
-    process-level one is ``settings.audio_slicing_enabled`` plus the optional
-    ``alignment`` extra (``app.audio.slicer.slicing_available``).
+    process-level gate is ``app.audio.slicer.alignment_installed``.
     """
     discover()
     config = _CONFIGS.get(code)

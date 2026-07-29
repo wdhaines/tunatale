@@ -26,7 +26,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups --no-group slovene --no-group norwegian
+        run: uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment
 
       - name: Lint
         run: uv run ruff check app tests scripts
@@ -98,7 +98,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups --no-group slovene --no-group norwegian
+        run: uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment
 
       - name: Warm anki subprocess env
         run: uv run --isolated --no-project --python 3.14 --with anki==26.5 python -c "import anki"
@@ -125,7 +125,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups --no-group slovene --no-group norwegian
+        run: uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment
 
       - name: Warm anki subprocess env
         run: uv run --isolated --no-project --python 3.14 --with anki==26.5 python -c "import anki"
