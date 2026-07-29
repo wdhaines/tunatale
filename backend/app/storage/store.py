@@ -163,6 +163,25 @@ class ContentStore:
             if self._in_memory:
                 conn.commit()
 
+    def update_lesson_data(self, lesson_id: str, lesson: Lesson) -> bool:
+        """Rewrite an existing lesson's blob in place; ``False`` if it is absent.
+
+        Distinct from :meth:`save_lesson` on purpose. That one is
+        ``INSERT OR REPLACE``, so it assigns a NEW rowid and resets
+        ``created_at`` to now — correct for "here is a newer lesson for this
+        day", wrong for "fix the blob of this row". :meth:`get_lesson_days`
+        picks a day's lesson by ``MAX(rowid)``, so a blanket re-save can change
+        which lesson the UI shows on a day that has more than one version.
+        """
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "UPDATE lessons SET data_json = ? WHERE id = ?",
+                (lesson.to_json(), lesson_id),
+            )
+            if self._in_memory:
+                conn.commit()
+            return cursor.rowcount > 0
+
     def get_lesson(self, lesson_id: str) -> Lesson | None:
         with self._get_conn() as conn:
             row = conn.execute("SELECT data_json FROM lessons WHERE id = ?", (lesson_id,)).fetchone()
