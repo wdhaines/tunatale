@@ -24,9 +24,24 @@ fi
 
 backend_log="$(mktemp)"
 frontend_log="$(mktemp)"
-trap 'rm -f "$backend_log" "$frontend_log"' EXIT
+# Warn LAST (an EXIT trap outlives both the pass and fail paths, so the notice
+# survives even a `| tail -1`) when stdout is a pipe: the caller's `$?` is then
+# the pager's status, not this script's, and a red run reads as green. A file
+# redirect is not a pipe, so `> log 2>&1` stays quiet — that is the good form.
+# Claude Code refuses piped invocations outright (.claude/hooks/gate_pipe_guard.py);
+# this covers a human shell, which no hook sees.
+trap 'rm -f "$backend_log" "$frontend_log"
+      if [ -p /dev/stdout ]; then
+        printf "\n!! stdout is a PIPE: your \$? is the LAST command in that pipeline, NOT this gate.\n"
+        printf "!! Read the verdict above, or use: ./test.sh > /tmp/gate.txt 2>&1; echo EXIT=\$?\n"
+      fi' EXIT
 
-echo "Running backend + frontend suites in parallel..."
+# The full run is ALSO written here, whatever the caller does with stdout. A
+# truncating pipe (`| tail -40`) throws away the one part of a failed run you
+# needed; this file always has all of it. Inside .git on purpose: never
+# committed, and — unlike an untracked file in the tree — it cannot perturb the
+# commit gate's tree fingerprint.
+full_log="$ROOT/.git/tt-test-last.log"
 
 (
   set -e
@@ -92,13 +107,20 @@ frontend_pid=$!
 wait "$backend_pid"; backend_rc=$?
 wait "$frontend_pid"; frontend_rc=$?
 
-echo "===================== BACKEND (exit $backend_rc) ====================="
-cat "$backend_log"
-echo "==================== FRONTEND (exit $frontend_rc) ===================="
-cat "$frontend_log"
+{
+  echo "===================== BACKEND (exit $backend_rc) ====================="
+  cat "$backend_log"
+  echo "==================== FRONTEND (exit $frontend_rc) ===================="
+  cat "$frontend_log"
+} | tee "$full_log"
 
 if [ "$backend_rc" -ne 0 ] || [ "$frontend_rc" -ne 0 ]; then
+  # A stale pass sentinel must never outlive a failing run: the commit gate
+  # compares fingerprints, and a flaky green followed by a red on the SAME tree
+  # would otherwise still let a commit through unchallenged.
+  rm -f "$ROOT/.git/tt-test-pass"
   echo "=== FAILED (backend=$backend_rc frontend=$frontend_rc) ==="
+  echo "Full log (never truncated): $full_log"
   exit 1
 fi
 
