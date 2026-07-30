@@ -192,6 +192,18 @@ class TestGrandfather:
     def test_format_grandfather_line(self):
         assert format_grandfather_line("test_foo.py", "app.bar", 3) == "test_foo.py\tapp.bar\t3"
 
+    def test_entry_with_reason_parses_identically(self, tmp_path):
+        gf = tmp_path / "gf.txt"
+        gf.write_text("test_foo.py\tapp.bar\t3  # reason: DEFER\n")
+        d = load_grandfather(gf)
+        assert d == {("test_foo.py", "app.bar"): 3}
+
+    def test_hash_in_target_untouched(self, tmp_path):
+        gf = tmp_path / "gf.txt"
+        gf.write_text("test_foo.py\tapp.#.bar\t1\n")
+        d = load_grandfather(gf)
+        assert d == {("test_foo.py", "app.#.bar"): 1}
+
 
 # ── Integration-style ─────────────────────────────────────────────────────────
 

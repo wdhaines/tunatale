@@ -86,11 +86,17 @@ def _load_grandfather(path: Path | None = None) -> set[str]:
     path = path or GRANDFATHER_PATH
     if not path.exists():
         return set()
-    return {
-        line.strip()
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    }
+    result: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        comment_pos = stripped.find(" #")
+        if comment_pos != -1:
+            stripped = stripped[:comment_pos].rstrip()
+        if stripped:
+            result.add(stripped)
+    return result
 
 
 def _check_staleness(current: dict[str, object]) -> int:

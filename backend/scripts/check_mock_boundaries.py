@@ -211,6 +211,9 @@ def load_grandfather(path: Path = GRANDFATHER_PATH) -> dict[tuple[str, str], int
         parts = stripped.split("\t")
         if len(parts) == 3:
             fname, target, count_str = parts
+            comment_pos = count_str.find(" #")
+            if comment_pos != -1:
+                count_str = count_str[:comment_pos].rstrip()
             try:
                 result[(fname, target)] = int(count_str)
             except ValueError:

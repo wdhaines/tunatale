@@ -135,3 +135,8 @@ class TestLoadGrandfather:
         f = tmp_path / "gf.txt"
         f.write_text("\n# comment\na\n\nb\n", encoding="utf-8")
         assert _load_grandfather(f) == {"a", "b"}
+
+    def test_strips_trailing_reason(self, tmp_path: Path):
+        f = tmp_path / "gf.txt"
+        f.write_text("some_op  # reason: untyped handler\nanother_op\n", encoding="utf-8")
+        assert _load_grandfather(f) == {"some_op", "another_op"}

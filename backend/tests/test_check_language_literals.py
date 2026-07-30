@@ -216,6 +216,19 @@ class TestGrandfather:
         assert "\n" not in line
         assert line.count("\t") == 2  # only the two field-separator tabs
 
+    def test_entry_with_reason_parses_identically(self, tmp_path):
+        gf = tmp_path / "gf.txt"
+        gf.write_text("app/foo.py\tsl\t3  # reason: DEFER\n")
+        d = load_grandfather(gf)
+        assert d == {("app/foo.py", "sl"): 3}
+
+    def test_literal_with_hash_round_trips(self, tmp_path):
+        literal = 'class="slovene"[^>]*>\\s*([^<]+?)\\s*<  # with comment'
+        gf = tmp_path / "gf.txt"
+        gf.write_text(f"app/foo.py\t{literal}\t1\n")
+        d = load_grandfather(gf)
+        assert d == {("app/foo.py", literal): 1}
+
 
 # ── _preview ──────────────────────────────────────────────────────────────────
 
