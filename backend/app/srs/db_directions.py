@@ -6,10 +6,10 @@ mark/restore, promote-to-learning, suspend. Anki-parity danger zone —
 see .claude/rules/anki-queue-parity.md before changing anything here.
 """
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
-from app.srs.anki_mirror.rollover import due_at_rollover_utc
+from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
 from app.srs.db_base import _NEW_RESET_SET
 
 
@@ -122,7 +122,7 @@ class DbDirectionsMixin:
         next pull silently clobbered (2026-06-04). Mirrors
         ``set_state_by_id(NEW)``, which already marks dirty.
         """
-        today_due_at = due_at_rollover_utc(date.today()).isoformat()
+        today_due_at = due_at_rollover_utc(anki_today()).isoformat()
         if direction is None:
             sql = f"UPDATE collocation_directions SET {_NEW_RESET_SET}, dirty_fsrs = 1 WHERE collocation_id = ?"
             params = (today_due_at, row_id)
@@ -170,7 +170,7 @@ class DbDirectionsMixin:
         """
         dirty_clause = ", dirty_fsrs = 1" if mark_dirty else ""
         if state == SRSState.NEW:
-            today_due_at = due_at_rollover_utc(date.today()).isoformat()
+            today_due_at = due_at_rollover_utc(anki_today()).isoformat()
             set_clause = f"{_NEW_RESET_SET}{dirty_clause}, introduced_at = NULL, prior_state = NULL"
             params_head: tuple[object, ...] = (today_due_at,)
         elif state in (SRSState.LEARNING, SRSState.RELEARNING, SRSState.REVIEW, SRSState.KNOWN):
@@ -328,7 +328,7 @@ class DbDirectionsMixin:
         This matches the "no FSRS grade" intent but creates a silent asymmetry
         between TT and Anki views.
         """
-        today_due_at = due_at_rollover_utc(date.today()).isoformat()
+        today_due_at = due_at_rollover_utc(anki_today()).isoformat()
         now = datetime.now(UTC)
         now_ms = int(now.timestamp() * 1000)
         now_iso = now.isoformat()

@@ -8,11 +8,11 @@ before changing anything here.
 """
 
 import time as _time
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 
 from app.models.srs_item import Direction, DirectionState, RevlogRow, SRSItem
 from app.models.syntactic_unit import SyntacticUnit
-from app.srs.anki_mirror.rollover import due_at_rollover_utc
+from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
 
 
 class DbRevlogMixin:
@@ -173,7 +173,7 @@ class DbRevlogMixin:
                 return starting_state
             return DirectionState(
                 direction=direction,
-                due_at=due_at_rollover_utc(date.today()),
+                due_at=due_at_rollover_utc(anki_today()),
             )
 
         guid = coll["guid"] if coll else None
@@ -181,7 +181,7 @@ class DbRevlogMixin:
         card_type = coll["card_type"] or "vocab" if coll else "vocab"
 
         other_dir = Direction.PRODUCTION if direction == Direction.RECOGNITION else Direction.RECOGNITION
-        now_4am = due_at_rollover_utc(date.today())
+        now_4am = due_at_rollover_utc(anki_today())
         # Incremental: forward-step from the stored state. Otherwise: from NEW.
         start_state = (
             starting_state
