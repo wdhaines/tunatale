@@ -20,6 +20,7 @@ from app.srs.anki_mirror.protobuf_wire import (
     pb_remove_field,
     pb_replace_or_insert_varint,
 )
+from app.srs.anki_mirror.rollover import anki_today
 
 
 class OfflineWriter:
@@ -129,9 +130,23 @@ class OfflineWriter:
         days_int = int(days)
         col_row = self._conn.execute("SELECT crt FROM col LIMIT 1").fetchone()
         col_crt = int(col_row[0] if isinstance(col_row, (tuple, list)) else col_row["crt"] or 0)
+        # THE set_due_date midnight-4am BUG (fixed 2026-07-29). This was
+        #     days_since_crt = (date.today() - date.fromtimestamp(col_crt)).days
+        # `date.today()` ignores the 04:00 rollover, so a push between midnight and
+        # 04:00 computed a day one AHEAD and wrote pushed due dates a day late.
+        # `anki_today()` is the rollover-aware "which Anki day is it?" answer.
+        #
+        # MEASURED, do not "improve" this to compute_anki_day_index(col_crt): with a
+        # 04:00-anchored crt that helper returns the SAME index at 01:00, 03:00 and
+        # 12:00 (940/940/940) — identical to date.today() — so it does NOT fix this
+        # bug, while anki_today() correctly yields 939 before rollover. Whether the
+        # helper is right for a differently-anchored crt is an open question about
+        # the real collection's crt convention; it is not resolvable without reading
+        # production data, so the minimal fix keeps the original arithmetic and only
+        # makes its day input rollover-aware.
         from datetime import date as _date
 
-        days_since_crt = (_date.today() - _date.fromtimestamp(col_crt)).days
+        days_since_crt = (anki_today() - _date.fromtimestamp(col_crt)).days
         new_due = days_since_crt + days_int
         new_ivl = max(1, days_int)
         ts = int(_time.time())
