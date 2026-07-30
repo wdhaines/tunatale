@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from httpx import ASGITransport, AsyncClient
 
-from app.api.models import HealthResponse
+from app.api.models import HealthResponse, ImportCurriculumPlanResponse
 from app.main import app
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
@@ -405,6 +405,34 @@ class TestCurriculumPlanIOEndpoints:
 
         assert response.status_code == 404
         assert response.json()["detail"] == "Curriculum not found"
+
+    async def test_import_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        app.state.content_store = store
+
+        body = {
+            "topic": "ordering coffee",
+            "language_code": "sl",
+            "cefr_level": "A2",
+            "days": [
+                {
+                    "day": 1,
+                    "title": "Day 1",
+                    "focus": "greetings",
+                    "collocations": ["dober dan"],
+                    "learning_objective": "say hello",
+                    "story_guidance": "",
+                },
+            ],
+        }
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/curriculum/import", json=body)
+
+        assert set(response.json().keys()) == set(ImportCurriculumPlanResponse.model_fields)
 
     async def test_import_returns_201(self):
         from app.storage.store import ContentStore

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import GetLessonAudioResponse
 from app.main import app
 from app.models.curriculum import Curriculum
 from app.models.lesson import Lesson, Phrase, Section, SectionType
@@ -300,6 +301,28 @@ class TestAudioEndpoints:
         full_row = store.get_audio_file_row(data["audio_id"])
         assert full_row is not None
         assert full_row["cues_json"] is not None
+
+    async def test_get_lesson_audio_keys_match_model(self, tmp_path):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        from app.storage.store import ContentStore
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        lesson_id = "lesson-keys-test"
+        store.save_lesson(lesson_id, "some-curriculum-id", 1, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+            response = await client.get(f"/api/audio/lesson/{lesson_id}")
+
+        assert set(response.json().keys()) == set(GetLessonAudioResponse.model_fields)
 
     async def test_get_lesson_audio_endpoint(self, tmp_path):
         """GET /api/audio/lesson/{lesson_id} returns existing audio files list."""

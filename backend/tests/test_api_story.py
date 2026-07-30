@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import GenerateStoryResponse, GetStoryPromptResponse
 from app.languages import get_language
 from app.main import app
 from app.models.curriculum import Curriculum, CurriculumDay
@@ -255,6 +256,72 @@ class TestStoryEndpoints:
         assert response.status_code == 502
         assert "429" in response.json()["detail"]
 
+    async def test_generate_story_response_keys_match_model_exactly(self, monkeypatch):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        from app.generation.pipeline import LessonPipeline
+        from app.llm.activity import ActivityLog
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        mock_lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.KEY_PHRASES,
+                    phrases=[Phrase(text="dober dan", voice_id="sl-SI-PetraNeural", language_code="sl")],
+                )
+            ],
+        )
+
+        mock_generator = AsyncMock()
+        mock_generator.generate = AsyncMock(return_value=mock_lesson)
+
+        mock_curriculum = Curriculum(
+            id="test-id",
+            topic="test",
+            language_code="sl",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(
+                    day=1,
+                    title="Day 1",
+                    focus="greetings",
+                    learning_objective="greet",
+                    story_guidance="greet each other",
+                    collocations=["dober dan"],
+                )
+            ],
+        )
+        app.state.story_generator = mock_generator
+        app.state.language = get_language("sl")
+        app.state.srs_db = SRSDatabase(":memory:")
+
+        store = ContentStore(":memory:")
+        store.save_curriculum("test-curriculum-id", mock_curriculum)
+        app.state.content_store = store
+
+        pipeline = LessonPipeline(
+            story_generator=None,
+            renderer=None,
+            audio_dir=None,
+            content_stores={"sl": store},
+            languages={"sl": get_language("sl")},
+            srs_dbs={},
+            activity_log=ActivityLog(maxlen=100),
+            llm_client=None,
+        )
+        app.state.pipeline = pipeline
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/story/generate",
+                json={"curriculum_id": "test-curriculum-id", "day": 1, "strategy": "WIDER"},
+            )
+
+        assert set(response.json().keys()) == set(GenerateStoryResponse.model_fields)
+        app.state.srs_db.close()
+
     async def test_generate_story_returns_201(self, monkeypatch):
         from app.generation.pipeline import LessonPipeline
         from app.llm.activity import ActivityLog
@@ -481,6 +548,39 @@ class TestStoryEndpoints:
             await _prewarm_lesson(lesson, srs_db)  # should not raise
         finally:
             srs_db.close()
+
+    async def test_story_prompt_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        mock_curriculum = Curriculum(
+            id="test-id",
+            topic="test",
+            language_code="sl",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(
+                    day=1,
+                    title="Day 1",
+                    focus="greetings",
+                    learning_objective="greet",
+                    story_guidance="greet each other",
+                    collocations=["dober dan"],
+                )
+            ],
+        )
+        store.save_curriculum("test-curriculum-id", mock_curriculum)
+        app.state.content_store = store
+        app.state.language = get_language("sl")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/api/story/prompt",
+                params={"curriculum_id": "test-curriculum-id", "day": 1, "strategy": "WIDER"},
+            )
+
+        assert set(response.json().keys()) == set(GetStoryPromptResponse.model_fields)
 
     async def test_prewarm_swallows_exception(self, monkeypatch):
         """_prewarm_lesson logs and swallows exceptions from get_lemmatizer (lines 52-53)."""

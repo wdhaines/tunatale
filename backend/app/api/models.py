@@ -263,3 +263,66 @@ class PlanTurnPromptResponse(BaseModel):
 
     system_prompt: str
     user_prompt: str
+
+
+class GetLessonAudioResponse(BaseModel):
+    """Response of GET /api/audio/lesson/{lesson_id}."""
+
+    audio_id: str
+    lesson_id: str
+    sections: list
+    cues: list | None = None
+
+
+class ImportCurriculumPlanResponse(BaseModel):
+    """Response of POST /api/curriculum/import."""
+
+    id: str
+    topic: str
+    language_code: str
+    days: int
+
+
+class StartPlanResponse(BaseModel):
+    """Response of POST /api/curriculum/plan."""
+
+    id: str
+    topic: str
+    language_code: str
+    cefr_level: str
+    days: int
+
+
+class PlanTurnResponse(BaseModel):
+    """Response of POST /api/curriculum/{curriculum_id}/plan/turn."""
+
+    reply: str
+    proposed: dict | None = None
+
+
+class PlanCommitResponse(BaseModel):
+    """Response of POST /api/curriculum/{curriculum_id}/plan/commit."""
+
+    id: str
+    days: int
+
+
+class PlanFeedbackResponse(BaseModel):
+    """Response of POST /api/curriculum/{curriculum_id}/plan/feedback."""
+
+    feedback: list
+
+
+class GenerateStoryResponse(BaseModel):
+    """Response of POST /api/story/generate."""
+
+    id: str
+    title: str
+    sections: list
+
+
+class GetStoryPromptResponse(BaseModel):
+    """Response of GET /api/story/prompt."""
+
+    system_prompt: str
+    user_prompt: str

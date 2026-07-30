@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
-from app.api.models import RenderAudioRequest
+from app.api.models import GetLessonAudioResponse, RenderAudioRequest
 from app.audio.render_service import render_lesson_audio
 from app.audio.transcode import EXT_MEDIA_TYPE
 from app.generation.section_builder import SECTION_TITLES
@@ -76,7 +76,7 @@ async def render_audio(body: RenderAudioRequest, request: Request):
     )
 
 
-@router.get("/lesson/{lesson_id}", status_code=200)
+@router.get("/lesson/{lesson_id}", status_code=200, response_model=GetLessonAudioResponse)
 async def get_lesson_audio(lesson_id: str, request: Request):
     """Return the audio file list for a lesson (full + sections) without re-rendering."""
     store = request.state.content_store

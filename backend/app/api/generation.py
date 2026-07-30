@@ -10,7 +10,7 @@ import anyio
 from fastapi import APIRouter, HTTPException, Request
 
 from app.api._serializers import serialize_lesson
-from app.api.models import GenerateStoryRequest, ImportLessonRequest
+from app.api.models import GenerateStoryRequest, GenerateStoryResponse, GetStoryPromptResponse, ImportLessonRequest
 from app.generation.ids import mint_id
 from app.generation.json_parsing import parse_json_object
 from app.generation.story import StoryGenerationError, build_story_prompts
@@ -67,7 +67,7 @@ def _prewarm_phrases(
         analyze_sentence_cached(srs_db, lemmatizer, text, language_code, model_version)
 
 
-@router.post("/generate", status_code=201)
+@router.post("/generate", status_code=201, response_model=GenerateStoryResponse)
 async def generate_story(body: GenerateStoryRequest, request: Request):
     store = request.state.content_store
     curriculum = store.get_curriculum(body.curriculum_id)
@@ -169,7 +169,7 @@ async def import_story(body: ImportLessonRequest, request: Request):
     }
 
 
-@router.get("/prompt", status_code=200)
+@router.get("/prompt", status_code=200, response_model=GetStoryPromptResponse)
 async def get_story_prompt(
     request: Request,
     curriculum_id: str,

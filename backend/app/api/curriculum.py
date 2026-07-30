@@ -12,13 +12,18 @@ from app.api.models import (
     DeleteCurriculumResponse,
     DeleteDayResponse,
     GenerationModeRequest,
+    ImportCurriculumPlanResponse,
     ImportPlanRequest,
+    PlanCommitResponse,
     PlanFeedbackRequest,
+    PlanFeedbackResponse,
     PlanResetResponse,
     PlanTurnPromptResponse,
     PlanTurnRequest,
+    PlanTurnResponse,
     SetGenerationModeResponse,
     StartPlanRequest,
+    StartPlanResponse,
 )
 from app.generation.planner import CurriculumPlanner, PlannerError, build_turn_prompt, parse_turn
 from app.llm.client import LLMError
@@ -46,7 +51,7 @@ def _turn_inputs(curriculum_id: str, request: Request) -> tuple:
     return store, curriculum, planner, snapshot, language
 
 
-@router.post("/import", status_code=201)
+@router.post("/import", status_code=201, response_model=ImportCurriculumPlanResponse)
 async def import_curriculum_plan(body: ImportPlanRequest, request: Request):
     store = request.state.content_store
     try:
@@ -70,7 +75,7 @@ def _get_curriculum_or_404(store, curriculum_id: str) -> Curriculum:
     return curriculum
 
 
-@router.post("/plan", status_code=201)
+@router.post("/plan", status_code=201, response_model=StartPlanResponse)
 async def start_plan(body: StartPlanRequest, request: Request):
     """LLM-free: mint an id and save an empty curriculum with empty planner state."""
     store = request.state.content_store
@@ -92,7 +97,7 @@ async def start_plan(body: StartPlanRequest, request: Request):
     }
 
 
-@router.post("/{curriculum_id}/plan/turn", status_code=200)
+@router.post("/{curriculum_id}/plan/turn", status_code=200, response_model=PlanTurnResponse)
 async def plan_turn(curriculum_id: str, body: PlanTurnRequest, request: Request):
     """One planner chat turn: snapshot → LLM / pasted response → append chat, set/replace proposed."""
     store, curriculum, planner, snapshot, language = _turn_inputs(curriculum_id, request)
@@ -159,7 +164,7 @@ async def plan_turn_prompt(curriculum_id: str, body: PlanTurnRequest, request: R
     return {"system_prompt": system_prompt, "user_prompt": user_prompt}
 
 
-@router.post("/{curriculum_id}/plan/commit", status_code=200)
+@router.post("/{curriculum_id}/plan/commit", status_code=200, response_model=PlanCommitResponse)
 async def plan_commit(curriculum_id: str, request: Request):
     """Append the proposed batch to the committed days and clear the proposal."""
     store = request.state.content_store
@@ -214,7 +219,7 @@ async def plan_reset(curriculum_id: str, request: Request):
     return {"reply_count_cleared": reply_count}
 
 
-@router.post("/{curriculum_id}/plan/feedback", status_code=200)
+@router.post("/{curriculum_id}/plan/feedback", status_code=200, response_model=PlanFeedbackResponse)
 async def plan_feedback(curriculum_id: str, body: PlanFeedbackRequest, request: Request):
     """Record listening feedback for a committed day; it enters the next turn's prompt."""
     store = request.state.content_store

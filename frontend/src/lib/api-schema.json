@@ -236,6 +236,31 @@
         "title": "GenerateStoryRequest",
         "type": "object"
       },
+      "GenerateStoryResponse": {
+        "description": "Response of POST /api/story/generate.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "sections": {
+            "items": {},
+            "title": "Sections",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "sections"
+        ],
+        "title": "GenerateStoryResponse",
+        "type": "object"
+      },
       "GenerationModeRequest": {
         "properties": {
           "mode": {
@@ -251,6 +276,62 @@
           "mode"
         ],
         "title": "GenerationModeRequest",
+        "type": "object"
+      },
+      "GetLessonAudioResponse": {
+        "description": "Response of GET /api/audio/lesson/{lesson_id}.",
+        "properties": {
+          "audio_id": {
+            "title": "Audio Id",
+            "type": "string"
+          },
+          "cues": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cues"
+          },
+          "lesson_id": {
+            "title": "Lesson Id",
+            "type": "string"
+          },
+          "sections": {
+            "items": {},
+            "title": "Sections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "audio_id",
+          "lesson_id",
+          "sections"
+        ],
+        "title": "GetLessonAudioResponse",
+        "type": "object"
+      },
+      "GetStoryPromptResponse": {
+        "description": "Response of GET /api/story/prompt.",
+        "properties": {
+          "system_prompt": {
+            "title": "System Prompt",
+            "type": "string"
+          },
+          "user_prompt": {
+            "title": "User Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "system_prompt",
+          "user_prompt"
+        ],
+        "title": "GetStoryPromptResponse",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -296,6 +377,35 @@
           "language_code"
         ],
         "title": "IgnoreLemmaRequest",
+        "type": "object"
+      },
+      "ImportCurriculumPlanResponse": {
+        "description": "Response of POST /api/curriculum/import.",
+        "properties": {
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "topic",
+          "language_code",
+          "days"
+        ],
+        "title": "ImportCurriculumPlanResponse",
         "type": "object"
       },
       "ImportLessonRequest": {
@@ -657,6 +767,25 @@
         "title": "PipelineRetryRequest",
         "type": "object"
       },
+      "PlanCommitResponse": {
+        "description": "Response of POST /api/curriculum/{curriculum_id}/plan/commit.",
+        "properties": {
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "days"
+        ],
+        "title": "PlanCommitResponse",
+        "type": "object"
+      },
       "PlanFeedbackRequest": {
         "properties": {
           "day": {
@@ -673,6 +802,21 @@
           "note"
         ],
         "title": "PlanFeedbackRequest",
+        "type": "object"
+      },
+      "PlanFeedbackResponse": {
+        "description": "Response of POST /api/curriculum/{curriculum_id}/plan/feedback.",
+        "properties": {
+          "feedback": {
+            "items": {},
+            "title": "Feedback",
+            "type": "array"
+          }
+        },
+        "required": [
+          "feedback"
+        ],
+        "title": "PlanFeedbackResponse",
         "type": "object"
       },
       "PlanResetResponse": {
@@ -739,6 +883,32 @@
         "title": "PlanTurnRequest",
         "type": "object"
       },
+      "PlanTurnResponse": {
+        "description": "Response of POST /api/curriculum/{curriculum_id}/plan/turn.",
+        "properties": {
+          "proposed": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposed"
+          },
+          "reply": {
+            "title": "Reply",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reply"
+        ],
+        "title": "PlanTurnResponse",
+        "type": "object"
+      },
       "RenderAudioRequest": {
         "properties": {
           "lesson_id": {
@@ -795,6 +965,40 @@
           "topic"
         ],
         "title": "StartPlanRequest",
+        "type": "object"
+      },
+      "StartPlanResponse": {
+        "description": "Response of POST /api/curriculum/plan.",
+        "properties": {
+          "cefr_level": {
+            "title": "Cefr Level",
+            "type": "string"
+          },
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "topic",
+          "language_code",
+          "cefr_level",
+          "days"
+        ],
+        "title": "StartPlanResponse",
         "type": "object"
       },
       "StatusResponse": {
@@ -1017,7 +1221,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GetLessonAudioResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -1195,7 +1401,9 @@
           "201": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ImportCurriculumPlanResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -1235,7 +1443,9 @@
           "201": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/StartPlanResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -1650,7 +1860,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PlanCommitResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -1701,7 +1913,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PlanFeedbackResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -1795,7 +2009,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PlanTurnResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3693,7 +3909,9 @@
           "201": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GenerateStoryResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3797,7 +4015,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GetStoryPromptResponse"
+                }
               }
             },
             "description": "Successful Response"

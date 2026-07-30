@@ -8,9 +8,13 @@ from httpx import ASGITransport, AsyncClient
 from app.api.models import (
     DeleteCurriculumResponse,
     DeleteDayResponse,
+    PlanCommitResponse,
+    PlanFeedbackResponse,
     PlanResetResponse,
     PlanTurnPromptResponse,
+    PlanTurnResponse,
     SetGenerationModeResponse,
+    StartPlanResponse,
 )
 from app.generation.planner import (
     CurriculumPlanner,
@@ -114,6 +118,14 @@ def _planned_curriculum(**planner_state) -> Curriculum:
 
 
 class TestStartPlan:
+    async def test_start_plan_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        _setup()
+        async with _client() as client:
+            response = await client.post("/api/curriculum/plan", json={"topic": "Visiting Ljubljana"})
+
+        assert set(response.json().keys()) == set(StartPlanResponse.model_fields)
+
     async def test_start_plan_creates_empty_curriculum(self):
         store = _setup()
         async with _client() as client:
@@ -145,6 +157,16 @@ class TestStartPlan:
 
 
 class TestPlanTurn:
+    async def test_turn_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        stub = StubPlanner(result=PlannerTurn(reply="Sounds good!", proposed_days=None))
+        _setup(curriculum=_planned_curriculum(), planner=stub)
+
+        async with _client() as client:
+            response = await client.post("/api/curriculum/trip/plan/turn", json={"message": "thoughts?"})
+
+        assert set(response.json().keys()) == set(PlanTurnResponse.model_fields)
+
     @pytest.mark.parametrize("bad_size", [0, -1, 15])
     async def test_turn_batch_size_out_of_bounds_422(self, bad_size):
         """batch_size mirrors the frontend clamp (1..14); the API must reject
@@ -278,6 +300,17 @@ class TestPlanTurn:
 
 
 class TestPlanCommit:
+    async def test_commit_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        curriculum = _planned_curriculum(proposed={"start_day": 2, "days": [asdict(_day(2))]})
+        curriculum.days.append(_day(1))
+        _setup(curriculum)
+
+        async with _client() as client:
+            response = await client.post("/api/curriculum/trip/plan/commit", json={})
+
+        assert set(response.json().keys()) == set(PlanCommitResponse.model_fields)
+
     async def test_commit_unknown_curriculum_404(self):
         _setup()
         async with _client() as client:
@@ -460,6 +493,17 @@ class TestPlanFeedback:
             response = await client.post("/api/curriculum/trip/plan/feedback", json={"day": 2, "note": "x"})
         assert response.status_code == 404
         assert "day" in response.json()["detail"].lower()
+
+    async def test_feedback_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        curriculum = _planned_curriculum()
+        curriculum.days.extend([_day(1)])
+        _setup(curriculum)
+
+        async with _client() as client:
+            response = await client.post("/api/curriculum/trip/plan/feedback", json={"day": 1, "note": "too fast"})
+
+        assert set(response.json().keys()) == set(PlanFeedbackResponse.model_fields)
 
     async def test_feedback_appended_and_persisted(self):
         curriculum = _planned_curriculum(feedback=[{"day": 1, "note": "old note"}])

@@ -1456,6 +1456,18 @@ export interface components {
        */
       strategy: "WIDER" | "DEEPER";
     };
+    /**
+     * GenerateStoryResponse
+     * @description Response of POST /api/story/generate.
+     */
+    GenerateStoryResponse: {
+      /** Id */
+      id: string;
+      /** Sections */
+      sections: unknown[];
+      /** Title */
+      title: string;
+    };
     /** GenerationModeRequest */
     GenerationModeRequest: {
       /**
@@ -1463,6 +1475,30 @@ export interface components {
        * @enum {string}
        */
       mode: "auto" | "manual";
+    };
+    /**
+     * GetLessonAudioResponse
+     * @description Response of GET /api/audio/lesson/{lesson_id}.
+     */
+    GetLessonAudioResponse: {
+      /** Audio Id */
+      audio_id: string;
+      /** Cues */
+      cues?: unknown[] | null;
+      /** Lesson Id */
+      lesson_id: string;
+      /** Sections */
+      sections: unknown[];
+    };
+    /**
+     * GetStoryPromptResponse
+     * @description Response of GET /api/story/prompt.
+     */
+    GetStoryPromptResponse: {
+      /** System Prompt */
+      system_prompt: string;
+      /** User Prompt */
+      user_prompt: string;
     };
     /** HTTPValidationError */
     HTTPValidationError: {
@@ -1483,6 +1519,20 @@ export interface components {
       language_code: string;
       /** Lemma */
       lemma: string;
+    };
+    /**
+     * ImportCurriculumPlanResponse
+     * @description Response of POST /api/curriculum/import.
+     */
+    ImportCurriculumPlanResponse: {
+      /** Days */
+      days: number;
+      /** Id */
+      id: string;
+      /** Language Code */
+      language_code: string;
+      /** Topic */
+      topic: string;
     };
     /**
      * ImportLessonRequest
@@ -1647,12 +1697,30 @@ export interface components {
       /** Day */
       day: number;
     };
+    /**
+     * PlanCommitResponse
+     * @description Response of POST /api/curriculum/{curriculum_id}/plan/commit.
+     */
+    PlanCommitResponse: {
+      /** Days */
+      days: number;
+      /** Id */
+      id: string;
+    };
     /** PlanFeedbackRequest */
     PlanFeedbackRequest: {
       /** Day */
       day: number;
       /** Note */
       note: string;
+    };
+    /**
+     * PlanFeedbackResponse
+     * @description Response of POST /api/curriculum/{curriculum_id}/plan/feedback.
+     */
+    PlanFeedbackResponse: {
+      /** Feedback */
+      feedback: unknown[];
     };
     /**
      * PlanResetResponse
@@ -1684,6 +1752,18 @@ export interface components {
       /** Pasted Response */
       pasted_response?: string | null;
     };
+    /**
+     * PlanTurnResponse
+     * @description Response of POST /api/curriculum/{curriculum_id}/plan/turn.
+     */
+    PlanTurnResponse: {
+      /** Proposed */
+      proposed?: {
+        [key: string]: unknown;
+      } | null;
+      /** Reply */
+      reply: string;
+    };
     /** RenderAudioRequest */
     RenderAudioRequest: {
       /** Lesson Id */
@@ -1709,6 +1789,22 @@ export interface components {
        * @default A2
        */
       cefr_level: string;
+      /** Topic */
+      topic: string;
+    };
+    /**
+     * StartPlanResponse
+     * @description Response of POST /api/curriculum/plan.
+     */
+    StartPlanResponse: {
+      /** Cefr Level */
+      cefr_level: string;
+      /** Days */
+      days: number;
+      /** Id */
+      id: string;
+      /** Language Code */
+      language_code: string;
       /** Topic */
       topic: string;
     };
@@ -1840,7 +1936,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["GetLessonAudioResponse"];
         };
       };
       /** @description Validation Error */
@@ -1988,7 +2084,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["ImportCurriculumPlanResponse"];
         };
       };
       /** @description Validation Error */
@@ -2021,7 +2117,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["StartPlanResponse"];
         };
       };
       /** @description Validation Error */
@@ -2314,7 +2410,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["PlanCommitResponse"];
         };
       };
       /** @description Validation Error */
@@ -2349,7 +2445,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["PlanFeedbackResponse"];
         };
       };
       /** @description Validation Error */
@@ -2415,7 +2511,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["PlanTurnResponse"];
         };
       };
       /** @description Validation Error */
@@ -3835,7 +3931,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["GenerateStoryResponse"];
         };
       };
       /** @description Validation Error */
@@ -3901,7 +3997,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["GetStoryPromptResponse"];
         };
       };
       /** @description Validation Error */
