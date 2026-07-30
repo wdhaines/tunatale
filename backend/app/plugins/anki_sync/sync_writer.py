@@ -482,7 +482,7 @@ class OfflineWriter:
             raise ValueError(f"Notetype {model_name!r} has no fields")
         return row["name"]
 
-    def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list, language_code: str = "sl") -> int:
+    def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list, *, language_code: str) -> int:
         """Insert a new note + cards into the collection.
 
         The note's field layout is read from the collection's ``fields`` table
@@ -558,7 +558,8 @@ class OfflineWriter:
         cloze_text: str,
         back_extra: str = "",
         tags: list[str] | None = None,
-        language_code: str = "sl",
+        *,
+        language_code: str,
     ) -> int:
         """Insert a new Cloze note + cards into the collection.
 

@@ -12,6 +12,5 @@
 # NOTE: pixabay.py "no" is the English word "no" (dictionary key for image
 # queries), NOT the Norwegian language code — a checker false positive.
 app/cards/media/pixabay.py	no	1  # reason: PERMANENT — English word "no" (dict key for image search terms), not the Norwegian code; checker false positive, not drainable
-app/plugins/anki_sync/sqlite_reader.py	class="slovene"[^>]*>\\s*([^<]+?)\\s*<	2  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
 app/plugins/anki_sync/sync.py	sl	1  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
-app/plugins/anki_sync/sync_writer.py	sl	2  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
+app/plugins/anki_sync/sqlite_reader.py	class="slovene"[^>]*>\\s*([^<]+?)\\s*<	2  # reason: DEFER — inside Anki safety envelope, orchestrator-owned

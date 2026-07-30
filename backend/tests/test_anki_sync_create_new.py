@@ -293,6 +293,7 @@ class TestClozeNote:
             deck_name="0. Slovene",
             cloze_text="knjiga, {{c1::ki}} je tam",
             tags=["tunatale"],
+            language_code="sl",
         )
 
         assert note_id == taken + 1
@@ -309,6 +310,7 @@ class TestClozeNote:
             deck_name="0. Slovene",
             cloze_text=cloze_text,
             tags=["tunatale", "cloze"],
+            language_code="sl",
         )
 
         note = anki_conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
@@ -349,14 +351,14 @@ class TestClozeNote:
 
         writer = OfflineWriter(conn)
         with pytest.raises(ValueError, match="Cloze notetype not found"):
-            writer.create_cloze_note(deck_name="0. Slovene", cloze_text="test")
+            writer.create_cloze_note(deck_name="0. Slovene", cloze_text="test", language_code="sl")
 
     def test_create_cloze_note_raises_if_deck_missing(self):
         """Missing deck name raises ValueError."""
         anki_conn = _make_cloze_collection_conn()
         writer = OfflineWriter(anki_conn)
         with pytest.raises(ValueError, match="not found"):
-            writer.create_cloze_note(deck_name="Nonexistent Deck", cloze_text="test")
+            writer.create_cloze_note(deck_name="Nonexistent Deck", cloze_text="test", language_code="sl")
 
     def test_create_cloze_note_duplicate_guid_raises(self):
         """Same cloze_text called twice raises DuplicateNoteError."""
@@ -364,9 +366,9 @@ class TestClozeNote:
         writer = OfflineWriter(anki_conn)
         cloze_text = "knjiga, {{c1::ki}} je tam"
 
-        writer.create_cloze_note(deck_name="0. Slovene", cloze_text=cloze_text)
+        writer.create_cloze_note(deck_name="0. Slovene", cloze_text=cloze_text, language_code="sl")
         with pytest.raises(DuplicateNoteError):
-            writer.create_cloze_note(deck_name="0. Slovene", cloze_text=cloze_text)
+            writer.create_cloze_note(deck_name="0. Slovene", cloze_text=cloze_text, language_code="sl")
 
     def test_create_cloze_note_creates_card_with_max_due_plus_one(self):
         """Cloze card gets MAX(due)+1 allocator same as create_note."""
@@ -390,6 +392,7 @@ class TestClozeNote:
         note_id = writer.create_cloze_note(
             deck_name="0. Slovene",
             cloze_text="knjiga, {{c1::je}} tam",
+            language_code="sl",
         )
         due = anki_conn.execute("SELECT due FROM cards WHERE nid = ?", (note_id,)).fetchone()
         assert due is not None
