@@ -255,12 +255,23 @@ def collect_all_hits(tests_dir: Path = TESTS_DIR) -> dict[str, Counter]:
 def do_check(
     tests_dir: Path = TESTS_DIR,
     show_location: bool = True,
+    grandfather_path: Path | None = None,
 ) -> int:
-    """Check all test files against allowlist + grandfather.  Returns exit code."""
+    """Check all test files against allowlist + grandfather.  Returns exit code.
+
+    Reports **both** directions, never short-circuited:
+    - mocks present but not allowlisted/grandfathered, or off their count;
+    - **stale** ledger entries whose mock is gone (the ratchet).
+
+    Note a target that became *allowlisted* also goes stale: the allowlist
+    ``continue`` below fires before the ledger lookup, so its entry can never be
+    reached again and is pure dead weight.
+    """
     allowlist_patterns = load_allowlist()
-    grandfather = load_grandfather()
+    grandfather = load_grandfather(grandfather_path or GRANDFATHER_PATH)
     by_file = collect_all_hits(tests_dir)
     exit_code = 0
+    observed: set[tuple[str, str]] = set()
 
     for rel_path, counter in sorted(by_file.items()):
         for target, count in sorted(counter.items()):
@@ -269,6 +280,7 @@ def do_check(
                 continue
             # Grandfathered?
             gf_key = (rel_path, target)
+            observed.add(gf_key)
             if gf_key in grandfather:
                 gf_count = grandfather[gf_key]
                 if count == gf_count:
@@ -292,6 +304,17 @@ def do_check(
                     f"FAIL: {rel_path}:{count}x `{target}` not in allowlist or grandfather",
                 )
                 exit_code = 1
+
+    stale = sorted(set(grandfather) - observed)
+    if stale:
+        print(
+            f"FAIL: {len(stale)} stale ledger entry(ies) — "
+            "the mock is gone (or now allowlisted), so the line is dead weight "
+            "inflating the debt count:\n"
+            + "\n".join(f"  - {fname}\t`{target}`" for fname, target in stale)
+            + f"\n  Fix: delete the line(s) from {grandfather_path or GRANDFATHER_PATH}",
+        )
+        exit_code = 1
 
     return exit_code
 

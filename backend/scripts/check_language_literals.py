@@ -305,15 +305,23 @@ def collect_all_hits(
 def do_check(
     app_dir: Path = APP_DIR,
     show_location: bool = True,
+    grandfather_path: Path | None = None,
 ) -> int:
-    """Check all app files against allowlist + grandfather. Returns exit code."""
-    grandfather = load_grandfather()
+    """Check all app files against allowlist + grandfather. Returns exit code.
+
+    Reports **both** directions, never short-circuited:
+    - literals present but not allowlisted/grandfathered, or off their count;
+    - **stale** ledger entries whose literal is gone (the ratchet).
+    """
+    grandfather = load_grandfather(grandfather_path or GRANDFATHER_PATH)
     by_file = collect_all_hits(app_dir)
     exit_code = 0
+    observed: set[tuple[str, str]] = set()
 
     for rel_path, counter in sorted(by_file.items()):
         for literal, count in sorted(counter.items()):
             gf_key = (rel_path, literal)
+            observed.add(gf_key)
             preview = _preview(literal)
             if gf_key in grandfather:
                 gf_count = grandfather[gf_key]
@@ -338,6 +346,16 @@ def do_check(
                     f"FAIL: {rel_path}:{count}x `{preview}` not in allowlist or grandfather",
                 )
                 exit_code = 1
+
+    stale = sorted(set(grandfather) - observed)
+    if stale:
+        print(
+            f"FAIL: {len(stale)} stale ledger entry(ies) — "
+            "the literal is gone, so the line is dead weight inflating the debt count:\n"
+            + "\n".join(f"  - {fname}\t`{_preview(literal)}`" for fname, literal in stale)
+            + f"\n  Fix: delete the line(s) from {grandfather_path or GRANDFATHER_PATH}",
+        )
+        exit_code = 1
 
     return exit_code
 

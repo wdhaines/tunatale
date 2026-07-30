@@ -306,3 +306,73 @@ class TestGrandfatherOutput:
             sys.stdout = old_stdout
 
         assert captured.getvalue() == ""
+
+
+# ── The stale-entry ratchet ──────────────────────────────────────────────────
+
+
+class TestStaleLedgerEntries:
+    """A ledger entry whose violation is gone must FAIL, not sit there forever.
+
+    ``do_check`` only ever iterated over *current* hits and looked each one up in
+    the ledger, so an entry with no remaining hit was never examined. Found
+    2026-07-30 draining the prompts.py literal (`1b7d09b`): the literal was gone,
+    the entry stayed, and both this checker and the touch-rule exited 0. It was
+    removed by hand — nothing would have caught it. `check_openapi_snapshot.py`
+    has had this ratchet all along.
+    """
+
+    def test_entry_with_no_remaining_violation_is_reported(self, tmp_path: Path):
+        from check_language_literals import do_check
+
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        gf = tmp_path / "gf.txt"
+        gf.write_text("app/gone.py\tsl\t1\n", encoding="utf-8")
+
+        rc = do_check(app_dir=app_dir, grandfather_path=gf)
+        assert rc == 1
+
+    def test_stale_report_names_the_entry_and_how_to_fix_it(self, tmp_path: Path, capsys):
+        from check_language_literals import do_check
+
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        gf = tmp_path / "gf.txt"
+        gf.write_text("app/gone.py\tsl\t1\n", encoding="utf-8")
+
+        do_check(app_dir=app_dir, grandfather_path=gf)
+        out = capsys.readouterr().out
+        assert "stale" in out.lower()
+        assert "app/gone.py" in out
+
+    def test_a_live_entry_is_not_reported_stale(self, tmp_path: Path):
+        from check_language_literals import _relative_path, do_check, format_grandfather_line
+
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        sample = app_dir / "live.py"
+        sample.write_text('CODE = "sl"\n', encoding="utf-8")
+        gf = tmp_path / "gf.txt"
+        gf.write_text(format_grandfather_line(_relative_path(sample), "sl", 1) + "\n", encoding="utf-8")
+
+        assert do_check(app_dir=app_dir, grandfather_path=gf) == 0
+
+    def test_a_PERMANENT_reason_does_not_exempt_an_entry_from_the_ratchet(self, tmp_path: Path):
+        """PERMANENT means 'no correct action can drain this', NOT 'never verify it'.
+
+        If the violation genuinely disappears, the entry is dead weight like any
+        other. Exempting PERMANENT from the ratchet is how an exemption class
+        becomes a dumping ground.
+        """
+        from check_language_literals import do_check
+
+        app_dir = tmp_path / "app"
+        app_dir.mkdir()
+        gf = tmp_path / "gf.txt"
+        gf.write_text(
+            "app/gone.py\tno\t1  # reason: PERMANENT — English word, not the language code\n",
+            encoding="utf-8",
+        )
+
+        assert do_check(app_dir=app_dir, grandfather_path=gf) == 1

@@ -247,3 +247,59 @@ class TestGrandfatherOutput:
         assert "app.config.settings.database_url" not in output, (
             "allowlisted target should NOT appear in grandfather output"
         )
+
+
+# ── The stale-entry ratchet ──────────────────────────────────────────────────
+
+
+class TestStaleLedgerEntries:
+    """Same gap as the literal checker: an entry with no hit was never examined.
+
+    ``do_check`` iterates current hits and looks each up in the ledger, so a
+    ledgered mock that has since been deleted — or that became allowlisted, which
+    ``continue``s before the ledger lookup ever happens — leaves a dead line no
+    gate complains about. See `check_openapi_snapshot.py::_check_untyped`, which
+    reports both directions and calls the second one the ratchet.
+    """
+
+    def test_entry_with_no_remaining_mock_is_reported(self, tmp_path: Path):
+        from check_mock_boundaries import do_check
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        gf = tmp_path / "gf.txt"
+        gf.write_text("tests/test_gone.py\tapp.srs.db.SRSDatabase\t1\n", encoding="utf-8")
+
+        rc = do_check(tests_dir=tests_dir, grandfather_path=gf)
+        assert rc == 1
+
+    def test_stale_report_names_the_entry(self, tmp_path: Path, capsys):
+        from check_mock_boundaries import do_check
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        gf = tmp_path / "gf.txt"
+        gf.write_text("tests/test_gone.py\tapp.srs.db.SRSDatabase\t1\n", encoding="utf-8")
+
+        do_check(tests_dir=tests_dir, grandfather_path=gf)
+        out = capsys.readouterr().out
+        assert "stale" in out.lower()
+        assert "app.srs.db.SRSDatabase" in out
+
+    def test_a_live_entry_is_not_reported_stale(self, tmp_path: Path):
+        from check_mock_boundaries import _relative_path, do_check, format_grandfather_line
+
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        sample = tests_dir / "test_live.py"
+        sample.write_text(
+            "from unittest.mock import patch\n\n\ndef test_x():\n    with patch('app.srs.db.SRSDatabase'):\n        pass\n",
+            encoding="utf-8",
+        )
+        gf = tmp_path / "gf.txt"
+        gf.write_text(
+            format_grandfather_line(_relative_path(sample), "app.srs.db.SRSDatabase", 1) + "\n",
+            encoding="utf-8",
+        )
+
+        assert do_check(tests_dir=tests_dir, grandfather_path=gf) == 0
