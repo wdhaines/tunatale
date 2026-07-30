@@ -90,7 +90,26 @@ Most `.claude/rules/*.md` carry `paths:` frontmatter — Claude Code auto-loads 
 ## Hooks (`.claude/settings.json`)
 
 - **Commit gate** (PreToolUse): `git commit` asks for confirmation unless `./test.sh` has passed on the exact current tree — `test.sh` records a tree fingerprint via `.claude/hooks/commit_gate.py --record` on success. A *failing* run deletes the fingerprint, so a flaky green cannot outlive a red on the same tree.
-- **Pipe guard** (PreToolUse): `.claude/hooks/gate_pipe_guard.py` **denies** any command that pipes `./test.sh` (`| tail`, `| tee`, `| grep`). A pipeline's `$?` is the last command's, so a failed gate reads as 0, and `tail -n` throws away the failure detail you piped in order to see. Use `./test.sh > /tmp/gate.txt 2>&1; echo EXIT=$?` and read the file. Searching for the string (`grep test.sh …`, `cat test.sh | head`) is unaffected. test.sh also tees every run to `.git/tt-test-last.log` and names it in the FAILED banner.
+- **Pipe guard** (PreToolUse): `.claude/hooks/gate_pipe_guard.py` **denies** any command that pipes `./test.sh` (`| tail`, `| tee`, `| grep`). A pipeline's `$?` is the last command's, so a failed gate reads as 0, and `tail -n` throws away the failure detail you piped in order to see. Searching for the string (`grep test.sh …`, `cat test.sh | head`) is unaffected. test.sh also tees every run to `.git/tt-test-last.log` and names it in the FAILED banner.
+- ⚠️ **Canonical gate invocation — absolute path, and the LOG is the evidence:**
+  ```bash
+  /Users/wdhaines/CascadeProjects/tunatale/test.sh > /tmp/gate.txt 2>&1
+  echo "REAL_GATE_EXIT=$?"      # its own statement, so this IS the gate's status
+  ```
+  Then read `/tmp/gate.txt` and confirm `=== All checks passed ===` plus 100.00%
+  backend coverage. **A "phantom gate" produced a fictional green on 2026-07-29:**
+  `./test.sh > log 2>&1; echo "EXIT=$?"` printed `EXIT=0` while the log contained
+  `no such file or directory: ./test.sh`. Two causes compounded — an earlier `cd`
+  persisted across tool calls so the relative path missed, and in `cmd; echo $?`
+  the reported status is the **echo's**, not the gate's. It was caught only by
+  reading the log tail, one command before a commit.
+  **Rules, for every agent and every gate run:** absolute path always; never `cd`
+  away from the repo in a session that will run the gate; keep `echo $?` in its own
+  statement or omit it; and treat the log tail as the sole evidence — an exit code
+  from a compound statement proves nothing. Same failure class the pipe guard was
+  built for, reached from a different direction. The commit gate is the backstop
+  (it prompts when no fingerprint matches the tree) — do not click past that
+  prompt.
 - **Coverage-artifact cleanup** (SessionEnd): deletes `backend/**/*.py,cover` and `backend/coverage.json` (pytest `--cov` leftovers; also gitignored).
 
 ## Critical Rules
