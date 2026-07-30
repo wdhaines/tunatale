@@ -68,6 +68,20 @@ def _settings_overrides(monkeypatch, tmp_path):
     # snapshots into the real ~/.tunatale/db-backups.
     monkeypatch.setattr(settings, "db_backup_dir", tmp_path / "db-backups")
     monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'tunatale.db'}")
+    # The PLURAL map, pinned for the same reason as the singular one above and then
+    # some. `resolve_language_context(code, settings)` prefers `database_urls[code]`
+    # whenever `code` is not None — and the peer-sync endpoint always supplies a
+    # concrete code (the X-TT-Language middleware defaults it). A developer's .env
+    # sets database_urls to the REAL ./tunatale_sl.db / ./tunatale_no.db, so any
+    # test that drives peer_sync through the API layer reconciles the user's real
+    # collection data. Found 2026-07-30 while draining the mock ledger: the three
+    # endpoint tests had peer_sync itself mocked, which is the only reason this
+    # never fired. CI has no such .env, so it would have been local-only.
+    monkeypatch.setattr(
+        settings,
+        "database_urls",
+        {code: f"sqlite:///{tmp_path / f'tunatale_{code}.db'}" for code in settings.database_urls},
+    )
     # Pin the active language + deck to deterministic test values so neither the
     # production defaults (config.py) nor a developer's real .env (which may point
     # at Norwegian) leak in. Synthetic collections use the "0. Slovene" deck and
@@ -881,3 +895,65 @@ async def cassette_llm(request: pytest.FixtureRequest, llm_mode: str):
     client = CassetteLLMClient(mode=llm_mode, cassette_path=cassette_path, real_client=real_client)
     yield client
     client.save()
+
+
+# ── Sociable peer-sync fixtures ───────────────────────────────────────────────
+#
+# Shared by test_anki_sync_orchestrator.py (TestSociableSync) and
+# test_api_anki.py (the peer-sync endpoint). Both drive the REAL peer_sync
+# against a real on-disk collection with only the driver subprocess faked —
+# `_run_driver` is the designated process boundary in mock_allowlist.txt.
+# They live here rather than in one test module so the endpoint tests can reach
+# them without importing across test files.
+
+SOCIABLE_CLOZE_NOTETYPE_MID = 1704067201
+SOCIABLE_AUTH_RESPONSE = {"hkey": "test-hkey", "endpoint": "http://localhost:8080/"}
+SOCIABLE_NORMAL_SYNC = {"required": 1, "server_message": "OK"}
+
+
+@pytest.fixture
+def sociable_tt_collection(monkeypatch):
+    """Create a real on-disk Anki collection at settings.tt_collection_path.
+
+    Deck is set to ``settings.anki_deck_name`` (``0. Slovene``) with the ``Cloze``
+    notetype. Pins ``anki_model_name`` so model discovery doesn't need notes in
+    the collection.
+    """
+    from app.config import settings
+    from tests.anki_oracle.synthetic_collection import SyntheticCollection
+
+    coll = SyntheticCollection(settings.tt_collection_path)
+    coll.set_deck(settings.anki_deck_name, 1)
+    coll.add_notetype(SOCIABLE_CLOZE_NOTETYPE_MID, "Cloze", ("Text", "Back Extra"), template_count=1)
+    coll.save()
+
+    monkeypatch.setattr(settings, "anki_model_name", "Cloze")
+    return coll
+
+
+@pytest.fixture
+def fake_driver(monkeypatch):
+    """Replace ``_run_driver`` with canned responses so auth/sync legs complete.
+
+    Mirrors :func:`_run_driver`'s real signature exactly
+    ``(command: dict, timeout: int = 120) -> dict``.
+
+    Yields the op log (a list of commands received) for assertion use.
+    """
+    import app.plugins.anki_sync.sync_orchestrator as so
+
+    op_log: list[dict] = []
+
+    def _fake(command: dict, timeout: int = 120) -> dict:
+        op_log.append(command)
+        op = command.get("op", "")
+        if op == "login":
+            return SOCIABLE_AUTH_RESPONSE
+        if op == "sync":
+            return SOCIABLE_NORMAL_SYNC
+        if op == "media_pending":
+            return {"pending": 0}
+        return {"error": f"unknown op: {op}"}
+
+    monkeypatch.setattr(so, "_run_driver", _fake)
+    return op_log

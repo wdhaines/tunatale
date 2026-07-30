@@ -408,35 +408,78 @@ def _run_driver_wrapper(command: dict) -> dict:
 
 
 class TestCli:
-    def test_bootstrap_flag(self):
-        """CLI --bootstrap calls bootstrap_collection."""
-        with (
-            patch("app.plugins.anki_sync.sync_orchestrator.bootstrap_collection") as mock_bootstrap,
-            patch("sys.argv", ["prog", "--bootstrap"]),
-        ):
-            main_cli()
+    """``main_cli`` argparse routing, driven against the REAL functions.
 
-        mock_bootstrap.assert_called_once()
+    The three flags used to be checked by mocking ``bootstrap_collection`` /
+    ``peer_sync``, which proved only that argparse called *something*. Each now
+    runs the real code path with only ``_run_driver`` faked, so the driver op log
+    is the evidence: bootstrap and sync issue observably different op sequences,
+    and --dry-run drops the push leg.
+    """
 
-    def test_dry_run_flag(self):
-        """CLI --dry-run calls peer_sync(dry_run=True)."""
-        with (
-            patch("app.plugins.anki_sync.sync_orchestrator.peer_sync", return_value=_make_report()) as mock_sync,
-            patch("sys.argv", ["prog", "--dry-run"]),
-        ):
-            main_cli()
+    def test_bootstrap_flag(self, tmp_path, monkeypatch):
+        """CLI --bootstrap runs the real bootstrap: login → create → full_download."""
+        import app.plugins.anki_sync.sync_orchestrator as so
 
-        mock_sync.assert_called_once_with(dry_run=True)
+        collection_path = tmp_path / "tt_collection.anki2"
+        monkeypatch.setattr(settings, "tt_collection_path", collection_path)
 
-    def test_default_routing(self):
-        """CLI with no flags calls peer_sync(dry_run=False)."""
-        with (
-            patch("app.plugins.anki_sync.sync_orchestrator.peer_sync", return_value=_make_report()) as mock_sync,
-            patch("sys.argv", ["prog"]),
-        ):
-            main_cli()
+        op_log: list[dict] = []
+        responses = iter([AUTH_RESPONSE, {"ok": True}, {"ok": True}])
 
-        mock_sync.assert_called_once_with(dry_run=False)
+        def _fake_driver(command: dict, timeout: int = 120) -> dict:
+            op_log.append(command)
+            return next(responses)
+
+        monkeypatch.setattr(so, "_run_driver", _fake_driver)
+        monkeypatch.setattr("sys.argv", ["prog", "--bootstrap"])
+        main_cli()
+
+        assert [c["op"] for c in op_log] == ["login", "create_collection", "full_download"]
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_dry_run_flag(self, fake_driver, monkeypatch):
+        """CLI --dry-run runs the real peer_sync with the push leg suppressed."""
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(settings.database_url)
+        db.add_collocation(_pending_cloze_unit("Dober dan"), language_code="sl")
+
+        monkeypatch.setattr("sys.argv", ["prog", "--dry-run"])
+        main_cli()
+
+        ops = [c["op"] for c in fake_driver]
+        assert ops.count("sync") == 1, f"dry run must not push; got {ops}"
+        # The pending collocation is still unlinked — a dry run writes nothing.
+        assert db.get_collocation("Dober dan").anki_note_id is None
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    def test_default_routing(self, fake_driver, monkeypatch):
+        """CLI with no flags runs the real peer_sync, push leg included."""
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(settings.database_url)
+        db.add_collocation(_pending_cloze_unit("Dobro jutro"), language_code="sl")
+
+        monkeypatch.setattr("sys.argv", ["prog"])
+        main_cli()
+
+        assert [c["op"] for c in fake_driver] == ["login", "sync", "media_pending", "sync"]
+        # Not a dry run, so the pending collocation actually got linked.
+        assert db.get_collocation("Dobro jutro").anki_note_id is not None
+
+
+def _pending_cloze_unit(text: str) -> SyntacticUnit:
+    """An unlinked cloze collocation — the pending change that triggers a push leg."""
+    return SyntacticUnit(
+        text=text,
+        translation="Good day",
+        word_count=2,
+        difficulty=1,
+        source="test",
+        source_sentence=f"{text}, kako ste?",
+        card_type="cloze",
+    )
 
 
 def _make_report(**overrides):
@@ -577,55 +620,6 @@ class TestSyncPassword:
 # the synthetic schema and the reader have drifted.
 
 CLOZE_NOTETYPE_MID = 1704067201
-
-
-@pytest.fixture
-def sociable_tt_collection(monkeypatch):
-    """Create a real on-disk Anki collection at settings.tt_collection_path.
-
-    Deck is set to ``settings.anki_deck_name`` (``0. Slovene``) with both
-    ``Basic`` and ``Cloze`` notetypes. Pins ``anki_model_name`` so model
-    discovery doesn't need notes in the collection.
-    """
-    from tests.anki_oracle.synthetic_collection import SyntheticCollection
-
-    coll = SyntheticCollection(settings.tt_collection_path)
-    coll.set_deck(settings.anki_deck_name, 1)
-    coll.add_notetype(CLOZE_NOTETYPE_MID, "Cloze", ("Text", "Back Extra"), template_count=1)
-    coll.save()
-
-    monkeypatch.setattr(settings, "anki_model_name", "Cloze")
-    return coll
-
-
-@pytest.fixture
-def fake_driver(monkeypatch):
-    """Replace ``_run_driver`` with canned responses so auth/sync legs complete.
-
-    Mirrors :func:`_run_driver`'s real signature exactly
-    ``(command: dict, timeout: int = 120) -> dict`` and reuses the file's
-    existing response constants (``AUTH_RESPONSE``, ``NORMAL_SYNC``) so the
-    fake stays honest if those shapes change.
-
-    Yields the op log (a list of commands received) for assertion use.
-    """
-    import app.plugins.anki_sync.sync_orchestrator as so
-
-    op_log: list[dict] = []
-
-    def _fake(command: dict, timeout: int = 120) -> dict:
-        op_log.append(command)
-        op = command.get("op", "")
-        if op == "login":
-            return AUTH_RESPONSE
-        if op == "sync":
-            return NORMAL_SYNC
-        if op == "media_pending":
-            return {"pending": 0}
-        return {"error": f"unknown op: {op}"}
-
-    monkeypatch.setattr(so, "_run_driver", _fake)
-    return op_log
 
 
 class TestSociableSync:

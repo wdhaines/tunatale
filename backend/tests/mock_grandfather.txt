@@ -1,5 +1,0 @@
-tests/test_anki_sync_orchestrator.py	app.plugins.anki_sync.sync_orchestrator.bootstrap_collection	1  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
-tests/test_anki_sync_orchestrator.py	app.plugins.anki_sync.sync_orchestrator.peer_sync	2  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
-tests/test_api_admin.py	app.plugins.anki_sync.import_seed.import_seed	3  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
-tests/test_api_anki.py	app.plugins.anki_sync.sync_orchestrator.peer_sync	3  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
-
