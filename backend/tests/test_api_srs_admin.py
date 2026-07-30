@@ -438,7 +438,6 @@ class TestSetState:
         assert data["state"] == "suspended"
 
     async def test_set_state_to_learning(self):
-        from datetime import date
 
         db = _db()
         db.add_collocation(_unit("banka", "bank"), language_code="sl")
@@ -455,7 +454,7 @@ class TestSetState:
         assert item.directions[Direction.RECOGNITION].state == SRSState.LEARNING
         assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
         assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
-        assert item.directions[Direction.RECOGNITION].due_at.date() == date.today()
+        assert item.directions[Direction.RECOGNITION].due_at.date() == anki_today()
 
     async def test_set_state_to_new(self):
         db = _db()

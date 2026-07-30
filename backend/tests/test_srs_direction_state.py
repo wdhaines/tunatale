@@ -5,6 +5,7 @@ from datetime import date
 
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
+from app.srs.anki_mirror.rollover import anki_today
 
 
 def _unit(text: str = "banka", translation: str = "bank") -> SyntacticUnit:
@@ -107,7 +108,7 @@ class TestDirectionState:
         srs_db.add_collocation(_unit(), language_code="sl")
         item = srs_db.get_collocation("banka")
         prod_due = item.directions[Direction.PRODUCTION].due_at.date()
-        today = date.today()
+        today = anki_today()
         assert today <= prod_due <= today + timedelta(days=30)
 
     def test_last_review_shim_setter_updates_recognition(self, srs_db):

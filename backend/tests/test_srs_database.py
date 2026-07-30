@@ -6,6 +6,7 @@ import pytest
 
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
+from app.srs.anki_mirror.rollover import anki_today
 from app.srs.database import SRSDatabase
 from tests.conftest import anki_day_anchor, anki_prev_day_anchor
 
@@ -903,7 +904,7 @@ class TestDueQueries:
         srs_db.set_state_by_id(row_id, SRSState.NEW)
 
         item = srs_db.get_collocation("banka")
-        today_due = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        today_due = datetime.combine(anki_today(), time(4, 0), tzinfo=UTC)
         for d in (Direction.RECOGNITION, Direction.PRODUCTION):
             ds = item.directions[d]
             assert ds.state == SRSState.NEW
@@ -2515,7 +2516,6 @@ class TestPromoteToLearning:
         assert revlogs[0][1] == 4
 
     def test_promote_both_directions(self, srs_db):
-        from datetime import date
 
         srs_db.add_collocation(_unit("banka", "bank"), language_code="sl")
         rows, _ = srs_db.list_collocations()
@@ -2526,7 +2526,7 @@ class TestPromoteToLearning:
         assert item.directions[Direction.PRODUCTION].state == SRSState.LEARNING
         assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
         assert item.directions[Direction.PRODUCTION].dirty_fsrs is True
-        assert item.directions[Direction.RECOGNITION].due_at.date() == date.today()
+        assert item.directions[Direction.RECOGNITION].due_at.date() == anki_today()
         assert item.directions[Direction.RECOGNITION].last_review is not None
 
     def test_promote_single_direction(self, srs_db):
