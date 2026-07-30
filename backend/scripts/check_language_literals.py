@@ -14,14 +14,11 @@ Allowlist (``tests/language_literals_allowlist.txt``)
   language literals legitimately live (``app/languages.py``, the audio
   preprocessing plugins, the vocab notetype modules, the lemmatizer, and
   ``app/config.py``). An allowlisted FILE is fully exempt — every hit in it
-  is skipped, and it never enters the grandfather ledger.
+  is skipped. It is the ONLY escape hatch, and deliberately coarse, so adding
+  one needs sign-off.
 
-Grandfather (``tests/language_literals_grandfather.txt``)
-  Tab-separated ``file<TAB>literal<TAB>count`` lines for pre-existing
-  seams flagged by the checker's initial run. The grandfather can only
-  shrink: unknown (file, literal) -> FAIL; count above recorded -> FAIL
-  ("new violation of grandfathered seam"); count below -> FAIL
-  ("edit the line to match").
+ZERO TOLERANCE. The shrink-only grandfather ledger drained to empty on
+2026-07-30 (13 entries -> 0) and was removed with its ratchet.
 
 Docstrings are excluded — only literals used as real values (assignments,
 comparisons, dict keys, function arguments, etc.) count as hits.
@@ -33,20 +30,15 @@ Known limitations
   this but is likely overkill: the case-variant bypass (``"No"`` → ``"no"``) was
   fixed 2026-07-10, and concatenation to form language codes is not observed in
   the codebase today. If a violation of this shape appears, it must be caught by
-  code review or added to the grandfather ledger.
+  code review.
 
 Usage::
 
-    # Check against allowlist + grandfather (exit 0 = clean)
+    # exit 0 = clean
     uv run python scripts/check_language_literals.py
-
-    # Generate grandfather output to stdout
-    uv run python scripts/check_language_literals.py --write-grandfather
 
 CLI flags:
   --no-location       Omit file:line from violation output (for CI).
-  --write-grandfather Scan all files, output grandfather-format lines.
-  --check             Default mode: check against allowlist + grandfather.
 """
 
 from __future__ import annotations
@@ -59,7 +51,6 @@ from collections import Counter
 from pathlib import Path
 
 ALLOWLIST_PATH = Path("tests/language_literals_allowlist.txt")
-GRANDFATHER_PATH = Path("tests/language_literals_grandfather.txt")
 APP_DIR = Path("app")
 
 _BARE_CODES = {"sl", "no", "nb"}
@@ -205,69 +196,12 @@ def matches_allowlist(rel_path: str, patterns: list[str]) -> bool:
 # ── Grandfather ──────────────────────────────────────────────────────────────
 
 
-def _escape_literal(value: str) -> str:
-    """Escape backslash/tab/newline/carriage-return in *value*.
-
-    Some flagged literals (e.g. multi-line LLM prompt templates) contain
-    raw tabs or newlines, which would otherwise split a single grandfather
-    record across multiple physical lines and corrupt the file's
-    one-record-per-line format. Escaping keeps the round trip intact.
-    """
-    return value.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
-
-
-def _unescape_literal(value: str) -> str:
-    """Inverse of :func:`_escape_literal`."""
-    mapping = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\"}
-    result: list[str] = []
-    i = 0
-    while i < len(value):
-        ch = value[i]
-        if ch == "\\" and i + 1 < len(value) and value[i + 1] in mapping:
-            result.append(mapping[value[i + 1]])
-            i += 2
-            continue
-        result.append(ch)
-        i += 1
-    return "".join(result)
-
-
 def _preview(value: str, limit: int = 60) -> str:
     """Single-line, length-capped preview of *value* for terminal output."""
     collapsed = " ".join(value.split())
     if len(collapsed) > limit:
         return collapsed[: limit - 1] + "…"
     return collapsed
-
-
-def load_grandfather(path: Path = GRANDFATHER_PATH) -> dict[tuple[str, str], int]:
-    """Parse the grandfather file into ``{(file, literal): count}``."""
-    result: dict[tuple[str, str], int] = {}
-    if not path.exists():
-        return result
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        parts = stripped.split("\t")
-        if len(parts) == 3:
-            fname, literal, count_str = parts
-            comment_pos = count_str.find(" #")
-            if comment_pos != -1:
-                count_str = count_str[:comment_pos].rstrip()
-            try:
-                result[(fname, _unescape_literal(literal))] = int(count_str)
-            except ValueError:
-                print(f"  [WARN] Bad grandfather line: {line}", file=sys.stderr)
-    return result
-
-
-def format_grandfather_line(filepath: str, literal: str, count: int) -> str:
-    """Tab-separated grandfather entry (literal escaped for a safe round trip)."""
-    return f"{filepath}\t{_escape_literal(literal)}\t{count}"
-
-
-# ── Main ─────────────────────────────────────────────────────────────────────
 
 
 def collect_all_hits(
@@ -277,8 +211,7 @@ def collect_all_hits(
     """Scan all ``*.py`` files under *app_dir*, returning
     ``{relative_path: Counter{literal: count}}``.
 
-    Allowlisted files are skipped entirely here, so they never enter the
-    grandfather ledger.
+    Allowlisted files are skipped entirely here.
     """
     allowlist_patterns = load_allowlist(allowlist_path or ALLOWLIST_PATH)
     by_file: dict[str, Counter] = {}
@@ -302,104 +235,52 @@ def collect_all_hits(
     return by_file
 
 
-def do_check(
-    app_dir: Path = APP_DIR,
-    show_location: bool = True,
-    grandfather_path: Path | None = None,
-) -> int:
-    """Check all app files against allowlist + grandfather. Returns exit code.
+def do_check(app_dir: Path = APP_DIR, show_location: bool = True) -> int:
+    """Check all app files against the allowlist. Returns exit code.
 
-    Reports **both** directions, never short-circuited:
-    - literals present but not allowlisted/grandfathered, or off their count;
-    - **stale** ledger entries whose literal is gone (the ratchet).
+    Zero tolerance: any hardcoded language literal outside an allowlisted
+    plugin/registry module fails. The shrink-only grandfather ledger drained to
+    empty on 2026-07-30 (13 entries → 0) and was removed with its ratchet.
+
+    The last entry was instructive: ``pixabay.py``'s dict key ``"no"`` (the
+    English word) had been classed PERMANENT as "not drainable by any correct
+    action". It was drained anyway, by moving the 353-row query table into a JSON
+    data file — the checker's trigger is "a bare string literal in
+    ``app/**/*.py``", not "this string is a language code", and the trigger was
+    removable. Third time that reframing worked. **Before concluding a hit here is
+    a false positive you must exempt, check whether the trigger can be removed.**
+
+    The allowlist (file globs for sanctioned plugin/registry homes) is the only
+    escape hatch and is deliberately coarse — it exempts a whole file forever, so
+    adding one needs sign-off.
     """
-    grandfather = load_grandfather(grandfather_path or GRANDFATHER_PATH)
     by_file = collect_all_hits(app_dir)
     exit_code = 0
-    observed: set[tuple[str, str]] = set()
 
     for rel_path, counter in sorted(by_file.items()):
         for literal, count in sorted(counter.items()):
-            gf_key = (rel_path, literal)
-            observed.add(gf_key)
-            preview = _preview(literal)
-            if gf_key in grandfather:
-                gf_count = grandfather[gf_key]
-                if count == gf_count:
-                    continue
-                if count > gf_count:
-                    print(
-                        f"FAIL: {rel_path}:{count}x `{preview}` exceeds "
-                        f"grandfathered count {gf_count} "
-                        "(new violation of grandfathered seam)",
-                    )
-                    exit_code = 1
-                else:
-                    print(
-                        f"FAIL: {rel_path}:{count}x `{preview}` is below "
-                        f"grandfathered count {gf_count} "
-                        "(edit the line to match)",
-                    )
-                    exit_code = 1
-            else:
-                print(
-                    f"FAIL: {rel_path}:{count}x `{preview}` not in allowlist or grandfather",
-                )
-                exit_code = 1
-
-    stale = sorted(set(grandfather) - observed)
-    if stale:
-        print(
-            f"FAIL: {len(stale)} stale ledger entry(ies) — "
-            "the literal is gone, so the line is dead weight inflating the debt count:\n"
-            + "\n".join(f"  - {fname}\t`{_preview(literal)}`" for fname, literal in stale)
-            + f"\n  Fix: delete the line(s) from {grandfather_path or GRANDFATHER_PATH}",
-        )
-        exit_code = 1
+            print(
+                f"FAIL: {rel_path}:{count}x `{_preview(literal)}` — resolve it through "
+                "app/languages.py (get_language / get_deck_name / get_l2_css_class / …) "
+                "or move the data out of app/**/*.py.",
+            )
+            exit_code = 1
 
     return exit_code
-
-
-def do_write_grandfather(app_dir: Path = APP_DIR, allowlist_path: Path | None = None) -> None:
-    """Print grandfather-format lines to stdout, skipping allowlisted files."""
-    by_file = collect_all_hits(app_dir, allowlist_path=allowlist_path)
-    for rel_path in sorted(by_file):
-        counter = by_file[rel_path]
-        for literal in sorted(counter):
-            print(format_grandfather_line(rel_path, literal, counter[literal]))
 
 
 def main() -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Check app-file language literals against allowlist + grandfather.",
+        description="Check app-file language literals against the allowlist.",
     )
     parser.add_argument(
         "--no-location",
         action="store_true",
         help="Omit file:line from violation output (for CI).",
     )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--write-grandfather",
-        action="store_true",
-        help="Scan all files, output grandfather-format lines to stdout.",
-    )
-    group.add_argument(
-        "--check",
-        action="store_true",
-        default=True,
-        help="Default mode: check against allowlist + grandfather.",
-    )
-
     args, _unknown = parser.parse_known_intermixed_args()
-
-    if args.write_grandfather:
-        # The --no-location flag is irrelevant for grandfather generation
-        do_write_grandfather()
-        return 0
-
     return do_check(show_location=not args.no_location)
 
 

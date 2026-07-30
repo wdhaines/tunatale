@@ -2,19 +2,20 @@
 """AST-based checker that flags internal-mock violations in the test suite.
 
 Scans ``backend/tests/**/*.py`` for `patch("app.…")` and
-`monkeypatch.setattr("app.…", …)` calls not covered by the allowlist or
-grandfather file.
+`monkeypatch.setattr("app.…", …)` calls not covered by the allowlist.
 
-Allowlist (``tests/mock_allowlist.txt``)
+ZERO TOLERANCE. The shrink-only grandfather ledger drained to empty on
+2026-07-30 (22 entries → 0; the last 11 were the Anki envelope) and was removed
+along with its ratchet — an empty shrink-only ledger and "no additions, period"
+are the same rule, and the machinery was ~90 lines whose only evidence was its
+own unit tests, since ``scripts/`` is not coverage-measured.
+
+Allowlist (``tests/mock_allowlist.txt``) — the ONLY escape hatch
   Permanent glob patterns for true process/network boundaries, settings
-  pins, and path-constant pins — approved entries that never need review.
-
-Grandfather (``tests/mock_grandfather.txt``)
-  Tab-separated ``file<TAB>target<TAB>count`` lines for internal seams
-  flagged by the checker on its initial run.  The grandfather can only
-  shrink: unknown (file, target) → FAIL; count above recorded → FAIL
-  ("new violation of grandfathered seam"); count below → FAIL
-  ("edit the line to N").
+  pins, and path-constant pins. Adding one asserts that the target IS a
+  boundary, which is an architectural claim and needs user sign-off. It is not
+  a place to record debt; the fix for a failing check is to test through the
+  seam (canonical pattern: ``TestSociableSync``).
 
 Blind spots (not policed, by design):
   - ``patch.object(obj, "name")`` — predominantly settings/object pins.
@@ -22,16 +23,11 @@ Blind spots (not policed, by design):
 
 Usage::
 
-    # Check against allowlist + grandfather (exit 0 = clean)
+    # exit 0 = clean
     uv run python scripts/check_mock_boundaries.py
-
-    # Generate grandfather output to stdout
-    uv run python scripts/check_mock_boundaries.py --write-grandfather
 
 CLI flags:
   --no-location       Omit file:line from violation output (for CI).
-  --write-grandfather Scan all files, output grandfather-format lines.
-  --check             Default mode: check against allowlist + grandfather.
 """
 
 from __future__ import annotations
@@ -43,7 +39,6 @@ from collections import Counter
 from pathlib import Path
 
 ALLOWLIST_PATH = Path("tests/mock_allowlist.txt")
-GRANDFATHER_PATH = Path("tests/mock_grandfather.txt")
 TESTS_DIR = Path("tests")
 
 
@@ -199,36 +194,6 @@ def matches_allowlist(target: str, patterns: list[str]) -> bool:
 # ── Grandfather ──────────────────────────────────────────────────────────────
 
 
-def load_grandfather(path: Path = GRANDFATHER_PATH) -> dict[tuple[str, str], int]:
-    """Parse the grandfather file into ``{(file, target): count}``."""
-    result: dict[tuple[str, str], int] = {}
-    if not path.exists():
-        return result
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        parts = stripped.split("\t")
-        if len(parts) == 3:
-            fname, target, count_str = parts
-            comment_pos = count_str.find(" #")
-            if comment_pos != -1:
-                count_str = count_str[:comment_pos].rstrip()
-            try:
-                result[(fname, target)] = int(count_str)
-            except ValueError:
-                print(f"  [WARN] Bad grandfather line: {line}", file=sys.stderr)
-    return result
-
-
-def format_grandfather_line(filepath: str, target: str, count: int) -> str:
-    """Tab-separated grandfather entry."""
-    return f"{filepath}\t{target}\t{count}"
-
-
-# ── Main ─────────────────────────────────────────────────────────────────────
-
-
 def collect_all_hits(tests_dir: Path = TESTS_DIR) -> dict[str, Counter]:
     """Scan all ``*.py`` files under *tests_dir*, returning
     ``{relative_path: Counter{target: count}}``.
@@ -252,116 +217,51 @@ def collect_all_hits(tests_dir: Path = TESTS_DIR) -> dict[str, Counter]:
     return by_file
 
 
-def do_check(
-    tests_dir: Path = TESTS_DIR,
-    show_location: bool = True,
-    grandfather_path: Path | None = None,
-) -> int:
-    """Check all test files against allowlist + grandfather.  Returns exit code.
+def do_check(tests_dir: Path = TESTS_DIR, show_location: bool = True) -> int:
+    """Check all test files against the allowlist.  Returns exit code.
 
-    Reports **both** directions, never short-circuited:
-    - mocks present but not allowlisted/grandfathered, or off their count;
-    - **stale** ledger entries whose mock is gone (the ratchet).
+    Zero tolerance: any ``patch("app.…")`` / ``monkeypatch.setattr("app.…", …)``
+    that is not allowlisted fails. The grandfather ledger and its shrink-only
+    ratchet were removed on 2026-07-30, when the last of its 22 entries drained —
+    an empty shrink-only ledger and "no additions, period" behave identically, and
+    the ledger machinery was ~90 lines whose only evidence was its own unit tests
+    (``scripts/`` is not coverage-measured).
 
-    Note a target that became *allowlisted* also goes stale: the allowlist
-    ``continue`` below fires before the ledger lookup, so its entry can never be
-    reached again and is pure dead weight.
+    The allowlist remains the sole escape hatch, and deliberately so: it is a
+    claim that something IS a real process/network boundary, which is an
+    architectural statement needing sign-off — not a note that debt exists.
     """
     allowlist_patterns = load_allowlist()
-    grandfather = load_grandfather(grandfather_path or GRANDFATHER_PATH)
     by_file = collect_all_hits(tests_dir)
     exit_code = 0
-    observed: set[tuple[str, str]] = set()
 
     for rel_path, counter in sorted(by_file.items()):
         for target, count in sorted(counter.items()):
-            # Allowlisted?
             if matches_allowlist(target, allowlist_patterns):
                 continue
-            # Grandfathered?
-            gf_key = (rel_path, target)
-            observed.add(gf_key)
-            if gf_key in grandfather:
-                gf_count = grandfather[gf_key]
-                if count == gf_count:
-                    continue
-                if count > gf_count:
-                    print(
-                        f"FAIL: {rel_path}:{count}x `{target}` exceeds "
-                        f"grandfathered count {gf_count} "
-                        "(new violation of grandfathered seam)",
-                    )
-                    exit_code = 1
-                else:
-                    print(
-                        f"FAIL: {rel_path}:{count}x `{target}` is below "
-                        f"grandfathered count {gf_count} "
-                        "(edit the line to match)",
-                    )
-                    exit_code = 1
-            else:
-                print(
-                    f"FAIL: {rel_path}:{count}x `{target}` not in allowlist or grandfather",
-                )
-                exit_code = 1
-
-    stale = sorted(set(grandfather) - observed)
-    if stale:
-        print(
-            f"FAIL: {len(stale)} stale ledger entry(ies) — "
-            "the mock is gone (or now allowlisted), so the line is dead weight "
-            "inflating the debt count:\n"
-            + "\n".join(f"  - {fname}\t`{target}`" for fname, target in stale)
-            + f"\n  Fix: delete the line(s) from {grandfather_path or GRANDFATHER_PATH}",
-        )
-        exit_code = 1
+            print(
+                f"FAIL: {rel_path}:{count}x `{target}` is not a process/network boundary.\n"
+                "  Fix: test THROUGH the seam (see TestSociableSync in "
+                "tests/test_anki_sync_orchestrator.py), or — only if it is genuinely a "
+                f"boundary — add it to {ALLOWLIST_PATH} with user sign-off.",
+            )
+            exit_code = 1
 
     return exit_code
-
-
-def do_write_grandfather(tests_dir: Path = TESTS_DIR, allowlist_path: Path | None = None) -> None:
-    """Print grandfather-format lines to stdout, skipping allowlisted targets."""
-    allowlist_patterns = load_allowlist(allowlist_path or ALLOWLIST_PATH)
-    by_file = collect_all_hits(tests_dir)
-    for rel_path in sorted(by_file):
-        counter = by_file[rel_path]
-        for target in sorted(counter):
-            if matches_allowlist(target, allowlist_patterns):
-                continue
-            print(format_grandfather_line(rel_path, target, counter[target]))
 
 
 def main() -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Check test-file mock boundaries against allowlist + grandfather.",
+        description="Check test-file mock boundaries against the allowlist.",
     )
     parser.add_argument(
         "--no-location",
         action="store_true",
         help="Omit file:line from violation output (for CI).",
     )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--write-grandfather",
-        action="store_true",
-        help="Scan all files, output grandfather-format lines to stdout.",
-    )
-    group.add_argument(
-        "--check",
-        action="store_true",
-        default=True,
-        help="Default mode: check against allowlist + grandfather.",
-    )
-
     args, _unknown = parser.parse_known_intermixed_args()
-
-    if args.write_grandfather:
-        # The --no-location flag is irrelevant for grandfather generation
-        do_write_grandfather()
-        return 0
-
     return do_check(show_location=not args.no_location)
 
 

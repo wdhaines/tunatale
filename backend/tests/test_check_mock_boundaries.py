@@ -15,12 +15,10 @@ _SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(_SCRIPTS))
 
 from check_mock_boundaries import (  # noqa: E402
+    do_check,
     _is_monkeypatch_setattr,
     _is_patch,
-    do_write_grandfather,
-    format_grandfather_line,
     load_allowlist,
-    load_grandfather,
     matches_allowlist,
     scan_file,
 )
@@ -167,44 +165,6 @@ class TestAllowlist:
 # ── Grandfather ───────────────────────────────────────────────────────────────
 
 
-class TestGrandfather:
-    def test_load_grandfather_parses_valid_lines(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text("test_foo.py\tapp.bar\t3\ntest_baz.py\tapp.qux\t1\n")
-        d = load_grandfather(gf)
-        assert d == {("test_foo.py", "app.bar"): 3, ("test_baz.py", "app.qux"): 1}
-
-    def test_load_grandfather_skips_comments_and_blanks(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text("# header comment\n\ntest_a.py\tapp.x\t5\n")
-        d = load_grandfather(gf)
-        assert d == {("test_a.py", "app.x"): 5}
-
-    def test_load_grandfather_missing_file(self, tmp_path):
-        assert load_grandfather(tmp_path / "nope.txt") == {}
-
-    def test_load_grandfather_skips_bad_lines(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text("test_a.py\tapp.x\nnot-a-tab-line\n")
-        d = load_grandfather(gf)
-        assert d == {}  # both lines invalid
-
-    def test_format_grandfather_line(self):
-        assert format_grandfather_line("test_foo.py", "app.bar", 3) == "test_foo.py\tapp.bar\t3"
-
-    def test_entry_with_reason_parses_identically(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text("test_foo.py\tapp.bar\t3  # reason: DEFER\n")
-        d = load_grandfather(gf)
-        assert d == {("test_foo.py", "app.bar"): 3}
-
-    def test_hash_in_target_untouched(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text("test_foo.py\tapp.#.bar\t1\n")
-        d = load_grandfather(gf)
-        assert d == {("test_foo.py", "app.#.bar"): 1}
-
-
 # ── Integration-style ─────────────────────────────────────────────────────────
 
 
@@ -215,91 +175,59 @@ def test_scan_does_not_crash_on_syntax_error(tmp_path):
     assert scan_file(f) == []
 
 
-class TestGrandfatherOutput:
-    def test_allowlisted_targets_excluded_from_write_output(self, tmp_path):
-        """Invariant: ``--write-grandfather`` excludes targets matching the allowlist."""
-        import sys
-        from io import StringIO
-
-        tests_dir = tmp_path / "tests"
-        tests_dir.mkdir()
-        (tests_dir / "test_example.py").write_text(
-            "from unittest.mock import patch\n"
-            "\n"
-            "def test_x():\n"
-            '    patch("app.plugins.anki_sync.sync.main")\n'
-            '    patch("app.config.settings.database_url")\n'
-        )
-
-        allow_path = tmp_path / "allow.txt"
-        allow_path.write_text("app.config.settings.*\n")
-
-        captured = StringIO()
-        old_stdout = sys.stdout
-        sys.stdout = captured
-        try:
-            do_write_grandfather(tests_dir=tests_dir, allowlist_path=allow_path)
-        finally:
-            sys.stdout = old_stdout
-
-        output = captured.getvalue()
-        assert "app.plugins.anki_sync.sync.main" in output, "non-allowlisted target should appear in grandfather output"
-        assert "app.config.settings.database_url" not in output, (
-            "allowlisted target should NOT appear in grandfather output"
-        )
-
-
 # ── The stale-entry ratchet ──────────────────────────────────────────────────
 
 
-class TestStaleLedgerEntries:
-    """Same gap as the literal checker: an entry with no hit was never examined.
+class TestZeroTolerance:
+    """``do_check`` after the grandfather ledger was removed (2026-07-30).
 
-    ``do_check`` iterates current hits and looks each up in the ledger, so a
-    ledgered mock that has since been deleted — or that became allowlisted, which
-    ``continue``s before the ledger lookup ever happens — leaves a dead line no
-    gate complains about. See `check_openapi_snapshot.py::_check_untyped`, which
-    reports both directions and calls the second one the ratchet.
+    Replaces TestGrandfather / TestGrandfatherOutput / TestStaleLedgerEntries,
+    which tested a ledger that no longer exists. Without these ``do_check`` had
+    NO test at all — worth knowing, since ``scripts/`` is not coverage-measured,
+    so the 100% gate would not have said a word.
     """
 
-    def test_entry_with_no_remaining_mock_is_reported(self, tmp_path: Path):
-        from check_mock_boundaries import do_check
-
+    def _tree(self, tmp_path, source: str):
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
-        gf = tmp_path / "gf.txt"
-        gf.write_text("tests/test_gone.py\tapp.srs.db.SRSDatabase\t1\n", encoding="utf-8")
+        (tests_dir / "test_sample.py").write_text(source)
+        (tmp_path / "tests" / "mock_allowlist.txt").write_text("app.plugins.anki_sync.sync_orchestrator._run_driver\n")
+        return tests_dir
 
-        rc = do_check(tests_dir=tests_dir, grandfather_path=gf)
-        assert rc == 1
+    def test_clean_tree_passes(self, tmp_path, monkeypatch, capsys):
+        tests_dir = self._tree(tmp_path, "def test_x():\n    assert True\n")
+        monkeypatch.chdir(tmp_path)
+        assert do_check(tests_dir=tests_dir) == 0
+        assert capsys.readouterr().out == ""
 
-    def test_stale_report_names_the_entry(self, tmp_path: Path, capsys):
-        from check_mock_boundaries import do_check
+    def test_any_internal_mock_fails(self, tmp_path, monkeypatch, capsys):
+        """No ledger means no free pass — the whole point of the change."""
+        tests_dir = self._tree(
+            tmp_path,
+            'from unittest.mock import patch\n\n\ndef test_x():\n    with patch("app.srs.database.SRSDatabase"):\n        pass\n',
+        )
+        monkeypatch.chdir(tmp_path)
+        assert do_check(tests_dir=tests_dir) == 1
+        assert "app.srs.database.SRSDatabase" in capsys.readouterr().out
 
-        tests_dir = tmp_path / "tests"
-        tests_dir.mkdir()
-        gf = tmp_path / "gf.txt"
-        gf.write_text("tests/test_gone.py\tapp.srs.db.SRSDatabase\t1\n", encoding="utf-8")
-
-        do_check(tests_dir=tests_dir, grandfather_path=gf)
+    def test_failure_message_points_at_the_fix_not_a_ledger(self, tmp_path, monkeypatch, capsys):
+        """A checker with no escape hatch must say what to do, or it gets disabled."""
+        tests_dir = self._tree(
+            tmp_path,
+            'from unittest.mock import patch\n\n\ndef test_x():\n    with patch("app.srs.database.SRSDatabase"):\n        pass\n',
+        )
+        monkeypatch.chdir(tmp_path)
+        do_check(tests_dir=tests_dir)
         out = capsys.readouterr().out
-        assert "stale" in out.lower()
-        assert "app.srs.db.SRSDatabase" in out
+        assert "test THROUGH the seam" in out
+        assert "grandfather" not in out.lower()
 
-    def test_a_live_entry_is_not_reported_stale(self, tmp_path: Path):
-        from check_mock_boundaries import _relative_path, do_check, format_grandfather_line
-
-        tests_dir = tmp_path / "tests"
-        tests_dir.mkdir()
-        sample = tests_dir / "test_live.py"
-        sample.write_text(
-            "from unittest.mock import patch\n\n\ndef test_x():\n    with patch('app.srs.db.SRSDatabase'):\n        pass\n",
-            encoding="utf-8",
+    def test_allowlisted_boundary_still_passes(self, tmp_path, monkeypatch):
+        """The allowlist is the surviving escape hatch and must still work."""
+        tests_dir = self._tree(
+            tmp_path,
+            "from unittest.mock import patch\n\n\ndef test_x():\n"
+            '    with patch("app.plugins.anki_sync.sync_orchestrator._run_driver"):\n        pass\n',
         )
-        gf = tmp_path / "gf.txt"
-        gf.write_text(
-            format_grandfather_line(_relative_path(sample), "app.srs.db.SRSDatabase", 1) + "\n",
-            encoding="utf-8",
-        )
-
-        assert do_check(tests_dir=tests_dir, grandfather_path=gf) == 0
+        monkeypatch.chdir(tmp_path)
+        assert do_check(tests_dir=tests_dir) == 0

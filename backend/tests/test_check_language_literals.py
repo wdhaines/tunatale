@@ -17,12 +17,10 @@ _SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(_SCRIPTS))
 
 from check_language_literals import (  # noqa: E402
+    do_check,
     _matches_language_literal,
     _preview,
-    do_write_grandfather,
-    format_grandfather_line,
     load_allowlist,
-    load_grandfather,
     matches_allowlist,
     scan_file,
 )
@@ -170,66 +168,6 @@ class TestAllowlist:
 # ── Grandfather ───────────────────────────────────────────────────────────────
 
 
-class TestGrandfather:
-    def test_round_trip_simple_literal(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text(format_grandfather_line("app/foo.py", "sl", 3) + "\n")
-        d = load_grandfather(gf)
-        assert d == {("app/foo.py", "sl"): 3}
-
-    def test_round_trip_literal_with_newline_and_tab(self, tmp_path):
-        literal = 'line one\nline two\twith "tab" and \\backslash'
-        gf = tmp_path / "gf.txt"
-        gf.write_text(format_grandfather_line("app/foo.py", literal, 1) + "\n")
-        d = load_grandfather(gf)
-        assert d == {("app/foo.py", literal): 1}
-
-    def test_load_grandfather_skips_comments_and_blanks(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text("# header comment\n\napp/foo.py\tsl\t2\n")
-        d = load_grandfather(gf)
-        assert d == {("app/foo.py", "sl"): 2}
-
-    def test_load_grandfather_missing_file(self, tmp_path):
-        assert load_grandfather(tmp_path / "nope.txt") == {}
-
-    def test_load_grandfather_skips_bad_lines(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text("app/foo.py\tsl\nnot-a-tab-line\n")
-        d = load_grandfather(gf)
-        assert d == {}  # neither line has exactly 3 tab-separated parts
-
-    def test_load_grandfather_warns_on_bad_count(self, tmp_path, capsys):
-        gf = tmp_path / "gf.txt"
-        gf.write_text("app/foo.py\tsl\tnot-an-int\n")
-        d = load_grandfather(gf)
-        assert d == {}
-        captured = capsys.readouterr()
-        assert "Bad grandfather line" in captured.err
-
-    def test_format_grandfather_line(self):
-        assert format_grandfather_line("app/foo.py", "sl", 3) == "app/foo.py\tsl\t3"
-
-    def test_format_grandfather_line_escapes_special_chars(self):
-        line = format_grandfather_line("app/foo.py", "a\tb\nc\\d", 1)
-        # Exactly one physical line — no raw tab/newline leaked into the record.
-        assert "\n" not in line
-        assert line.count("\t") == 2  # only the two field-separator tabs
-
-    def test_entry_with_reason_parses_identically(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text("app/foo.py\tsl\t3  # reason: DEFER\n")
-        d = load_grandfather(gf)
-        assert d == {("app/foo.py", "sl"): 3}
-
-    def test_literal_with_hash_round_trips(self, tmp_path):
-        literal = 'class="slovene"[^>]*>\\s*([^<]+?)\\s*<  # with comment'
-        gf = tmp_path / "gf.txt"
-        gf.write_text(f"app/foo.py\t{literal}\t1\n")
-        d = load_grandfather(gf)
-        assert d == {("app/foo.py", literal): 1}
-
-
 # ── _preview ──────────────────────────────────────────────────────────────────
 
 
@@ -250,129 +188,47 @@ class TestPreview:
 # ── do_write_grandfather ──────────────────────────────────────────────────────
 
 
-class TestGrandfatherOutput:
-    def test_allowlisted_files_excluded_from_write_output(self, tmp_path, monkeypatch):
-        """Invariant: ``--write-grandfather`` excludes files matching the allowlist.
-
-        ``_relative_path`` computes paths relative to ``Path.cwd()``, so the
-        sample tree is built under a chdir'd tmp_path with a *relative*
-        ``app_dir`` — matching how the real script runs from ``backend/``.
-        """
-        import sys
-        from io import StringIO
-
-        monkeypatch.chdir(tmp_path)
-        app_dir = Path("app")
-        app_dir.mkdir()
-        (app_dir / "languages.py").write_text('CODE = "sl"\n')
-        (app_dir / "other.py").write_text('CODE = "nb"\n')
-
-        allow_path = Path("allow.txt")
-        allow_path.write_text("app/languages.py\n")
-
-        captured = StringIO()
-        old_stdout = sys.stdout
-        sys.stdout = captured
-        try:
-            do_write_grandfather(app_dir=app_dir, allowlist_path=allow_path)
-        finally:
-            sys.stdout = old_stdout
-
-        output = captured.getvalue()
-        assert "app/other.py" in output, "non-allowlisted file's hit should appear in grandfather output"
-        assert "app/languages.py" not in output, "allowlisted file's hit should NOT appear in grandfather output"
-
-    def test_init_and_pycache_files_skipped(self, tmp_path, monkeypatch):
-        import sys
-        from io import StringIO
-
-        monkeypatch.chdir(tmp_path)
-        app_dir = Path("app")
-        app_dir.mkdir()
-        (app_dir / "__init__.py").write_text('CODE = "sl"\n')
-        pycache_dir = app_dir / "__pycache__"
-        pycache_dir.mkdir()
-        (pycache_dir / "mod.py").write_text('CODE = "nb"\n')
-
-        allow_path = Path("allow.txt")
-        allow_path.write_text("")
-
-        captured = StringIO()
-        old_stdout = sys.stdout
-        sys.stdout = captured
-        try:
-            do_write_grandfather(app_dir=app_dir, allowlist_path=allow_path)
-        finally:
-            sys.stdout = old_stdout
-
-        assert captured.getvalue() == ""
-
-
 # ── The stale-entry ratchet ──────────────────────────────────────────────────
 
 
-class TestStaleLedgerEntries:
-    """A ledger entry whose violation is gone must FAIL, not sit there forever.
+class TestZeroTolerance:
+    """``do_check`` after the grandfather ledger was removed (2026-07-30).
 
-    ``do_check`` only ever iterated over *current* hits and looked each one up in
-    the ledger, so an entry with no remaining hit was never examined. Found
-    2026-07-30 draining the prompts.py literal (`1b7d09b`): the literal was gone,
-    the entry stayed, and both this checker and the touch-rule exited 0. It was
-    removed by hand — nothing would have caught it. `check_openapi_snapshot.py`
-    has had this ratchet all along.
+    Replaces the ledger test classes. Without these ``do_check`` had NO test at
+    all, and ``scripts/`` is not coverage-measured, so nothing would have said so.
     """
 
-    def test_entry_with_no_remaining_violation_is_reported(self, tmp_path: Path):
-        from check_language_literals import do_check
-
+    def _tree(self, tmp_path, source: str, allowlist: str = ""):
         app_dir = tmp_path / "app"
         app_dir.mkdir()
-        gf = tmp_path / "gf.txt"
-        gf.write_text("app/gone.py\tsl\t1\n", encoding="utf-8")
+        (app_dir / "thing.py").write_text(source)
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "language_literals_allowlist.txt").write_text(allowlist)
+        return app_dir
 
-        rc = do_check(app_dir=app_dir, grandfather_path=gf)
-        assert rc == 1
+    def test_clean_tree_passes(self, tmp_path, monkeypatch, capsys):
+        app_dir = self._tree(tmp_path, 'CODE = "fr"\n')
+        monkeypatch.chdir(tmp_path)
+        assert do_check(app_dir=app_dir) == 0
+        assert capsys.readouterr().out == ""
 
-    def test_stale_report_names_the_entry_and_how_to_fix_it(self, tmp_path: Path, capsys):
-        from check_language_literals import do_check
+    def test_any_language_literal_fails(self, tmp_path, monkeypatch, capsys):
+        app_dir = self._tree(tmp_path, 'CODE = "sl"\n')
+        monkeypatch.chdir(tmp_path)
+        assert do_check(app_dir=app_dir) == 1
+        assert "sl" in capsys.readouterr().out
 
-        app_dir = tmp_path / "app"
-        app_dir.mkdir()
-        gf = tmp_path / "gf.txt"
-        gf.write_text("app/gone.py\tsl\t1\n", encoding="utf-8")
-
-        do_check(app_dir=app_dir, grandfather_path=gf)
+    def test_failure_message_points_at_the_registry_not_a_ledger(self, tmp_path, monkeypatch, capsys):
+        app_dir = self._tree(tmp_path, 'CODE = "sl"\n')
+        monkeypatch.chdir(tmp_path)
+        do_check(app_dir=app_dir)
         out = capsys.readouterr().out
-        assert "stale" in out.lower()
-        assert "app/gone.py" in out
+        assert "app/languages.py" in out
+        assert "grandfather" not in out.lower()
 
-    def test_a_live_entry_is_not_reported_stale(self, tmp_path: Path):
-        from check_language_literals import _relative_path, do_check, format_grandfather_line
-
-        app_dir = tmp_path / "app"
-        app_dir.mkdir()
-        sample = app_dir / "live.py"
-        sample.write_text('CODE = "sl"\n', encoding="utf-8")
-        gf = tmp_path / "gf.txt"
-        gf.write_text(format_grandfather_line(_relative_path(sample), "sl", 1) + "\n", encoding="utf-8")
-
-        assert do_check(app_dir=app_dir, grandfather_path=gf) == 0
-
-    def test_a_PERMANENT_reason_does_not_exempt_an_entry_from_the_ratchet(self, tmp_path: Path):
-        """PERMANENT means 'no correct action can drain this', NOT 'never verify it'.
-
-        If the violation genuinely disappears, the entry is dead weight like any
-        other. Exempting PERMANENT from the ratchet is how an exemption class
-        becomes a dumping ground.
-        """
-        from check_language_literals import do_check
-
-        app_dir = tmp_path / "app"
-        app_dir.mkdir()
-        gf = tmp_path / "gf.txt"
-        gf.write_text(
-            "app/gone.py\tno\t1  # reason: PERMANENT — English word, not the language code\n",
-            encoding="utf-8",
-        )
-
-        assert do_check(app_dir=app_dir, grandfather_path=gf) == 1
+    def test_allowlisted_file_still_passes(self, tmp_path, monkeypatch):
+        """The file-glob allowlist is the surviving escape hatch."""
+        app_dir = self._tree(tmp_path, 'CODE = "sl"\n', allowlist="app/thing.py\n")
+        monkeypatch.chdir(tmp_path)
+        assert do_check(app_dir=app_dir) == 0

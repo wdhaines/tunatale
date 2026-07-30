@@ -1,5 +1,15 @@
 # Workstream: enforce the language-plugin architecture (make it real, not aspirational)
 
+> **Status note (2026-07-30).** This document describes the design as shipped,
+> including the shrink-only grandfather ledgers. **Those ledgers are gone.**
+> `mock_grandfather.txt` (22 → 0), `language_literals_grandfather.txt` (13 → 0)
+> and `date_today_grandfather.txt` (7 → 0) all drained to empty and were deleted
+> along with their ratchets and the `check_ledger_touch.py` touch-rule. Both
+> checkers are now zero-tolerance with the allowlists as the only escape hatch.
+> The ledger *pattern* below is still the right way to introduce a checker into a
+> codebase that already violates it — it is just no longer in use here. The one
+> surviving ledger is `tests/openapi_untyped_grandfather.txt` (43 entries).
+
 **Status:** DONE (2026-07-08) — Phases 1–3 landed + verified; Phase 4 docs/memory done;
 final `./test.sh` evidence at the bottom of the progress log.
 **Owner/handoff:** this doc is the pick-up point for a fresh chat context. Read it

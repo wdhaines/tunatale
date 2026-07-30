@@ -1,5 +1,0 @@
-# Grandfathered date.today() tier-1 composites.
-# Shrink-only — never add lines.
-# EMPTY as of 2026-07-29: all 7 production due_at_rollover_utc(date.today()) sites
-# were fixed to due_at_rollover_utc(anki_today()) — the set_due_date midnight-4am bug.
-# Brief: docs/briefs/bp-ledger-stage5-date-today.md

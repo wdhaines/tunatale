@@ -63,13 +63,13 @@ All commands use `uv run` (no manual venv activation). Never commit `.env`. Groq
 - **Coverage fails at <100%** (`pyproject.toml: fail_under = 100`)
 - **SRS tests**: `sqlite:///:memory:` via `srs_db` fixture
 - **Anki tests**: use the `fake_anki_db*` fixtures from `conftest.py` — never a real `collection.anki2`
-- **Mock-boundary check**: `./test.sh` + CI fail any `patch("app.…")` not in `backend/tests/mock_allowlist.txt` or the shrink-only `mock_grandfather.txt` — see `.claude/rules/testing.md`
+- **Mock-boundary check**: `./test.sh` + CI fail any `patch("app.…")` not in `backend/tests/mock_allowlist.txt`. **Zero tolerance** — the grandfather ledger was drained to empty and deleted (2026-07-30); the allowlist is the only escape hatch and additions need sign-off. See `.claude/rules/testing.md`
 - **Peer-sync tests** (`--run-peer-sync`): auto-start a throwaway `anki.syncserver`
 - **CI**: four parallel jobs in `.github/workflows/ci.yml` — backend (ruff → checkers → pytest), frontend (svelte-check + vitest), oracle-parity (`pytest -m oracle --run-oracle`), peer-sync. E2E (Playwright) is local-only via `./test.sh`.
 
 ## Key Conventions
 
-- **No hardcoded language logic** — resolve every per-language facet through the registry `app/languages.py` (`get_language` / `get_preprocessor` / … / `resolve_language_context(code, settings)`). Enforced: `scripts/check_language_literals.py` (`./test.sh` + CI) fails on language literals (`"sl"`/`"no"`, `Slovene`/`Norwegian`, `classla`/`stanza`, `*-Neural` voices) in `backend/app/**` outside allowlisted plugin modules (`tests/language_literals_allowlist.txt`; shrink-only ledger `tests/language_literals_grandfather.txt`). Rationale: `docs/language-plugin-hardening.md`.
+- **No hardcoded language logic** — resolve every per-language facet through the registry `app/languages.py` (`get_language` / `get_preprocessor` / … / `resolve_language_context(code, settings)`). Enforced: `scripts/check_language_literals.py` (`./test.sh` + CI) fails on language literals (`"sl"`/`"no"`, `Slovene`/`Norwegian`, `classla`/`stanza`, `*-Neural` voices) in `backend/app/**` outside allowlisted plugin modules (`tests/language_literals_allowlist.txt`). **Zero tolerance** — its ledger drained 13 → 0 and was deleted (2026-07-30). Rationale: `docs/language-plugin-hardening.md`.
 - **API contract drift** — backend→frontend type safety via a committed OpenAPI schema. `scripts/dump_openapi.py` writes `frontend/src/lib/api-schema.json`; `scripts/check_openapi_snapshot.py` enforces (a) snapshot freshness and (b) a shrink-only untyped-endpoint ledger (`tests/openapi_untyped_grandfather.txt`). Frontend derives types via `openapi-typescript`; `bun run check:api` catches stale types. Fix commands: `uv run python scripts/dump_openapi.py` (backend), `bun run gen:api` (frontend).
 - **No module-level side effects** — config via Pydantic Settings in `app/config.py`
 - **Anki safety**: hard invariants in `.claude/rules/anki-safety-core.md` (always loaded for Claude Code; other agents read it before any Anki/SRS work); full protocol in `.claude/rules/anki-sync.md`

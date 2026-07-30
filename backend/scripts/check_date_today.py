@@ -10,8 +10,13 @@ Tier 2 (bare ``date.today()`` in the Anki-day domain) was scoped and
 ledger that would never drain (per the brief's thesis that a checker with a
 huge ledger is theatre).
 
-Model on ``check_mock_boundaries.py``: same exit-code style, same
-``--write-grandfather``, same shrink-only ratchet WITH stale-entry enforcement.
+ZERO TOLERANCE. This checker had a shrink-only grandfather ledger while its 7
+seeded sites were being fixed; all 7 landed in ``b684d82`` and the ledger has
+been empty ever since. An empty shrink-only ledger and "no additions, period"
+are behaviourally identical, so the ledger, its ratchet and its stale-entry
+enforcement were removed (2026-07-30) rather than carried unexercised — any hit
+is now a failure. There is deliberately no escape hatch: tier 1 has no known
+false positives, and this composite is always wrong in the Anki-day domain.
 
 Brief: ``docs/briefs/bp-ledger-stage5-date-today.md``.
 """
@@ -22,8 +27,6 @@ import ast
 import sys
 from collections import Counter
 from pathlib import Path
-
-GRANDFATHER_PATH = Path("tests/date_today_grandfather.txt")
 
 # Stable construct identifiers (imported by drills, so values must not change).
 SHAPE_ROLLOVER = "due_at_rollover_utc(date.today())"
@@ -135,38 +138,6 @@ def _relative_path(filepath: Path) -> str:
 # ── Grandfather ledger ────────────────────────────────────────────────────────
 
 
-def load_grandfather(path: Path = GRANDFATHER_PATH) -> dict[tuple[str, str], int]:
-    """Parse ``file<TAB>construct<TAB>count  # reason`` into ``{(file, construct): count}``.
-
-    Splits on TAB **first**, then strips a trailing ``#`` comment from the LAST
-    field only — a construct can contain ``#``.  Skips blank/comment lines.
-    """
-    result: dict[tuple[str, str], int] = {}
-    if not path.exists():
-        return result
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        parts = stripped.split("\t")
-        if len(parts) == 3:
-            fname, construct, count_str = parts
-            # Strip trailing comment from the count field only
-            comment_pos = count_str.find(" #")
-            if comment_pos != -1:
-                count_str = count_str[:comment_pos].rstrip()
-            try:
-                result[(fname, construct)] = int(count_str)
-            except ValueError:
-                print(f"  [WARN] Bad grandfather line: {line}", file=sys.stderr)
-    return result
-
-
-def format_grandfather_line(filepath: str, construct: str, count: int) -> str:
-    """Tab-separated grandfather entry."""
-    return f"{filepath}\t{construct}\t{count}"
-
-
 def collect_all_hits(app_dir: Path = APP_DIR) -> dict[str, Counter]:
     """Scan ``app/`` for tier-1 hits. Returns ``{relative_path: Counter{construct: count}}``."""
     by_file: dict[str, Counter] = {}
@@ -190,78 +161,22 @@ def collect_all_hits(app_dir: Path = APP_DIR) -> dict[str, Counter]:
 # ── Ratchet ───────────────────────────────────────────────────────────────────
 
 
-def evaluate(
-    by_file: dict[str, Counter],
-    grandfather: dict[tuple[str, str], int],
-) -> tuple[int, list[str]]:
-    """Shrink-only ratchet.  Pure — no I/O.  Returns ``(exit_code, messages)``.
-
-    Three failure modes (all pinned by locked drills):
-      * count >  ledger  -> FAIL "new violation of grandfathered seam"
-      * not in ledger    -> FAIL (new violation)
-      * in ledger w/ 0  -> FAIL (stale entry — fix removed it)
-    """
-    exit_code = 0
-    messages: list[str] = []
-
-    for rel_path, counter in sorted(by_file.items()):
-        for construct, count in sorted(counter.items()):
-            gf_key = (rel_path, construct)
-            if gf_key in grandfather:
-                gf_count = grandfather[gf_key]
-                if count == gf_count:
-                    continue
-                if count > gf_count:
-                    messages.append(
-                        f"FAIL: {rel_path}:{count}x `{construct}` exceeds "
-                        f"grandfathered count {gf_count} "
-                        "(new violation of grandfathered seam)",
-                    )
-                    exit_code = 1
-                else:
-                    messages.append(
-                        f"FAIL: {rel_path}:{count}x `{construct}` is below "
-                        f"grandfathered count {gf_count} "
-                        "(edit the line to match)",
-                    )
-                    exit_code = 1
-            else:
-                messages.append(
-                    f"FAIL: {rel_path}:{count}x `{construct}` not in grandfather ledger",
-                )
-                exit_code = 1
-
-    # Stale entries: in grandfather but absent or reduced in actual
-    for (rel_path, construct), gf_count in sorted(grandfather.items()):
-        actual_count = by_file.get(rel_path, {}).get(construct, 0)
-        if actual_count == 0:
-            messages.append(
-                f"FAIL: {rel_path}:0x `{construct}` is below "
-                f"grandfathered count {gf_count} "
-                "(stale ledger entry — fix has removed it)",
-            )
-            exit_code = 1
-
-    return exit_code, messages
+def evaluate(by_file: dict[str, Counter]) -> tuple[int, list[str]]:
+    """Zero tolerance: any hit fails.  Pure — no I/O.  Returns ``(exit_code, messages)``."""
+    messages = [
+        f"FAIL: {rel_path}:{count}x `{construct}` — use anki_today(), not date.today()"
+        for rel_path, counter in sorted(by_file.items())
+        for construct, count in sorted(counter.items())
+    ]
+    return (1 if messages else 0), messages
 
 
 def do_check(app_dir: Path = APP_DIR) -> int:
-    """Load ledger, scan, evaluate, print.  Returns exit code."""
-    grandfather = load_grandfather()
-    by_file = collect_all_hits(app_dir)
-    exit_code, messages = evaluate(by_file, grandfather)
+    """Scan, evaluate, print.  Returns exit code."""
+    exit_code, messages = evaluate(collect_all_hits(app_dir))
     for msg in messages:
         print(msg)
     return exit_code
-
-
-def do_write_grandfather(app_dir: Path = APP_DIR) -> None:
-    """Scan ``app/`` and print grandfather-format lines to stdout."""
-    by_file = collect_all_hits(app_dir)
-    for rel_path in sorted(by_file):
-        counter = by_file[rel_path]
-        for construct in sorted(counter):
-            print(format_grandfather_line(rel_path, construct, counter[construct]))
 
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
@@ -273,25 +188,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Check for date.today() where the ANKI day is meant.",
     )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--write-grandfather",
-        action="store_true",
-        help="Scan all files, output grandfather-format lines to stdout.",
-    )
-    group.add_argument(
+    parser.add_argument(
         "--check",
         action="store_true",
         default=True,
-        help="Default mode: check against grandfather ledger.",
+        help="Default (and only) mode: fail on any hit.",
     )
-
-    args, _unknown = parser.parse_known_intermixed_args()
-
-    if args.write_grandfather:
-        do_write_grandfather()
-        return 0
-
+    parser.parse_known_intermixed_args()
     return do_check()
 
 

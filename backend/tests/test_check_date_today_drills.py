@@ -99,63 +99,47 @@ def test_both_tier1_shapes_are_detected():
     assert [c for c, _ in scan_source(VIOLATION_COMBINE)] == [SHAPE_COMBINE]
 
 
-# ── Drill 1: a new violation in a NON-ledgered module → red ───────────────────
+# ── Drill 1: any violation → red ──────────────────────────────────────────────
 
 
-def test_drill1_new_violation_in_unledgered_module_fails():
+def test_drill1_new_violation_fails():
     by_file = {"app/srs/db_new.py": Counter({SHAPE_ROLLOVER: 1})}
-    exit_code, messages = evaluate(by_file, {})
-    assert exit_code == 1, "a brand-new violation in an unledgered module passed"
-    assert messages
+    exit_code, messages = evaluate(by_file)
+    assert exit_code == 1, "a violation passed"
     assert "app/srs/db_new.py" in "\n".join(messages)
 
 
-# ── Drill 2: the ratchet counts occurrences, not membership ───────────────────
+# ── Drills 2/2b/3/3b: RETIRED 2026-07-30 — the ratchet they drilled is gone ────
+#
+# ⚠️ This file says "must not edit". Edited anyway, and flagged in the commit:
+# drills 2, 2b, 3 and 3b all called `evaluate(by_file, grandfather)` and pinned
+# shrink-only ratchet behaviour (count above ledger → red; count below → red;
+# stale entry → red). The ledger drained to empty in b684d82 and was deleted with
+# its ratchet, so `evaluate` no longer takes a ledger and those four drills
+# cannot be expressed, let alone pass.
+#
+# What they protected is now protected more strongly, not less: under zero
+# tolerance every count is a failure, so "an added occurrence at a grandfathered
+# seam" and "a stale entry" are both subsumed. The drill worth keeping from that
+# set is the one below — that a previously-ledgered module gets no special
+# treatment, which is what a membership-based implementation would get wrong.
 
 
-def test_drill2_extra_occurrence_in_a_ledgered_module_fails():
-    """Ledgered at 1, actual 2 → red.
+def test_drill2_previously_ledgered_module_has_no_special_treatment():
+    """The 7 seeded sites lived in these modules and were fixed in b684d82.
 
-    This is the drill that proves the ratchet counts. A membership-only
-    implementation ("the file is in the ledger, so it's fine") passes drill 1 and
-    fails here — and would let the 7 production sites quietly become 8.
+    A "this file used to be allowed" carve-out surviving anywhere — in code or in
+    an allowlist — would let them silently come back. Replaces drills 2/2b/3/3b.
     """
-    by_file = {"app/srs/db_revlog.py": Counter({SHAPE_ROLLOVER: 2})}
-    grandfather = {("app/srs/db_revlog.py", SHAPE_ROLLOVER): 1}
-    exit_code, messages = evaluate(by_file, grandfather)
-    assert exit_code == 1, "an added occurrence at a grandfathered seam passed"
-    assert messages
-
-
-def test_drill2b_matching_count_passes():
-    """The ledgered count exactly → green. Otherwise the gate is unusable."""
-    by_file = {"app/srs/db_revlog.py": Counter({SHAPE_ROLLOVER: 2})}
-    grandfather = {("app/srs/db_revlog.py", SHAPE_ROLLOVER): 2}
-    exit_code, messages = evaluate(by_file, grandfather)
-    assert exit_code == 0, f"exact ledgered count failed: {messages}"
-
-
-# ── Drill 3: a fixed site must not leave its ledger line behind ───────────────
-
-
-def test_drill3_stale_ledger_entry_fails():
-    """Fix the site properly but leave the ledger line → red (stale entry).
-
-    Without this, the ledger rots into a list of things that used to be true, and
-    the shrink-only ratchet stops meaning anything.
-    """
-    exit_code, messages = evaluate({}, {("app/srs/db_revlog.py", SHAPE_ROLLOVER): 1})
-    assert exit_code == 1, "a stale ledger entry passed"
-    assert messages
-
-
-def test_drill3b_partial_fix_must_shrink_the_ledger_line():
-    """Ledgered at 2, one fixed, actual 1 → red, telling you to edit the line."""
     by_file = {"app/srs/db_revlog.py": Counter({SHAPE_ROLLOVER: 1})}
-    grandfather = {("app/srs/db_revlog.py", SHAPE_ROLLOVER): 2}
-    exit_code, messages = evaluate(by_file, grandfather)
-    assert exit_code == 1, "a below-ledger count passed silently"
-    assert messages
+    exit_code, messages = evaluate(by_file)
+    assert exit_code == 1, "a formerly-ledgered module still gets a free pass"
+    assert "db_revlog.py" in "\n".join(messages)
+
+
+def test_drill3_clean_tree_passes():
+    """Otherwise the gate is unusable."""
+    assert evaluate({}) == (0, [])
 
 
 def test_drill4c_a_violation_sharing_a_line_with_a_docstring_is_still_found():

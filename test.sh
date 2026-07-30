@@ -64,9 +64,6 @@ full_log="$ROOT/.git/tt-test-last.log"
   echo "=== Language literal check ==="
   uv run python scripts/check_language_literals.py
 
-  echo "=== Ledger touch-rule check ==="
-  uv run python scripts/check_ledger_touch.py
-
   echo "=== Date today check ==="
   uv run python scripts/check_date_today.py
 

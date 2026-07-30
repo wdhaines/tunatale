@@ -28,11 +28,12 @@ paths:
 A mechanical checker enforces this. `backend/scripts/check_mock_boundaries.py` runs in `./test.sh` (after ruff) and in the CI backend job; it AST-scans `backend/tests/**` for `patch("app.…")` / `monkeypatch.setattr("app.…", …)` and fails on anything not covered by:
 
 - **`backend/tests/mock_allowlist.txt`** — permanent fnmatch globs for true boundaries (driver subprocess, network clients, `app.*.settings.*` config pins, `_MEDIA_DIR`-style path-constant pins). Additions require user approval — a boundary claim is an architectural claim.
-- **`backend/tests/mock_grandfather.txt`** — exact `file<TAB>target<TAB>count` ledger of pre-existing internal mocks. **Shrink-only ratchet**: counts may only go down; the checker tells you the exact line edit when a count changes. Never add a line. Regenerate with `--write-grandfather` (allowlisted targets are excluded — pinned by a unit test).
+
+There is **no grandfather ledger** — the allowlist is the only escape hatch. The shrink-only `mock_grandfather.txt` drained 22 → 0 entries and was deleted on 2026-07-30, along with its ratchet and the scope-keyed touch-rule that nagged about its entries. An empty shrink-only ledger and "no additions, period" are the same rule; the second needs no machinery.
 
 Known blind spots (documented in the script): `patch.object(obj, "name")` and 2-arg `monkeypatch.setattr(obj, …)` aren't policed — they're predominantly settings pins. Don't exploit this to smuggle an internal mock past the checker.
 
-**When the checker fails on your new test**: the fix is to test *through* the seam, not to grandfather it. The canonical pattern is `TestSociableSync` (`test_anki_sync_orchestrator.py`): the real `peer_sync` → `main` → `run_full_sync` pipeline runs against a real on-disk `SyntheticCollection` at `settings.tt_collection_path`, with ONLY `_run_driver` replaced by a `fake_driver` fixture that returns canned response dicts and records an op log. Assertions are **outcomes** (rows in the collection file, op-log leg sequence, file bytes), not mock-call shapes.
+**When the checker fails on your new test**: the fix is to test *through* the seam. There is nowhere to record it as debt, deliberately — the allowlist is a claim that the target IS a process/network boundary (an architectural statement needing user approval), not a place to park a mock. The canonical pattern is `TestSociableSync` (`test_anki_sync_orchestrator.py`): the real `peer_sync` → `main` → `run_full_sync` pipeline runs against a real on-disk `SyntheticCollection` at `settings.tt_collection_path`, with ONLY `_run_driver` replaced by a `fake_driver` fixture that returns canned response dicts and records an op log. Assertions are **outcomes** (rows in the collection file, op-log leg sequence, file bytes), not mock-call shapes.
 
 ## Test Tiers
 

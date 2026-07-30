@@ -40,9 +40,6 @@ jobs:
       - name: Language literal check
         run: uv run python scripts/check_language_literals.py
 
-      - name: Ledger touch-rule check
-        run: uv run python scripts/check_ledger_touch.py
-
       - name: Date today check
         run: uv run python scripts/check_date_today.py
 

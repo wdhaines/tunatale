@@ -17,10 +17,7 @@ sys.path.insert(0, str(_SCRIPTS))
 from check_date_today import (  # noqa: E402
     SHAPE_COMBINE,
     SHAPE_ROLLOVER,
-    do_write_grandfather,
     evaluate,
-    format_grandfather_line,
-    load_grandfather,
     scan_source,
 )
 
@@ -124,179 +121,44 @@ class TestScanSource:
         assert hits == [(SHAPE_ROLLOVER, 4)]
 
 
-# ── Grandfather ───────────────────────────────────────────────────────────────
-
-
-class TestGrandfather:
-    def test_round_trip_simple(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text(format_grandfather_line("app/foo.py", SHAPE_ROLLOVER, 3) + "\n")
-        d = load_grandfather(gf)
-        assert d == {("app/foo.py", SHAPE_ROLLOVER): 3}
-
-    def test_round_trip_combine(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text(format_grandfather_line("app/foo.py", SHAPE_COMBINE, 2) + "\n")
-        d = load_grandfather(gf)
-        assert d == {("app/foo.py", SHAPE_COMBINE): 2}
-
-    def test_load_grandfather_skips_comments_and_blanks(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text("# header comment\n\napp/foo.py\t" + SHAPE_ROLLOVER + "\t2\n")
-        d = load_grandfather(gf)
-        assert d == {("app/foo.py", SHAPE_ROLLOVER): 2}
-
-    def test_load_grandfather_missing_file(self, tmp_path):
-        assert load_grandfather(tmp_path / "nope.txt") == {}
-
-    def test_load_grandfather_skips_bad_lines(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text("app/foo.py\t" + SHAPE_ROLLOVER + "\nnot-a-tab-line\n")
-        d = load_grandfather(gf)
-        assert d == {}
-
-    def test_entry_with_reason_parses_identically(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text("app/foo.py\t" + SHAPE_ROLLOVER + "\t3  # reason: LIVE BUG, do not fix\n")
-        d = load_grandfather(gf)
-        assert d == {("app/foo.py", SHAPE_ROLLOVER): 3}
-
-    def test_hash_in_construct_untouched(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text("app/foo.py\t" + SHAPE_ROLLOVER + "\t1\n")
-        d = load_grandfather(gf)
-        assert d == {("app/foo.py", SHAPE_ROLLOVER): 1}
-
-    def test_format_grandfather_line(self):
-        assert format_grandfather_line("app/foo.py", SHAPE_ROLLOVER, 3) == ("app/foo.py\t" + SHAPE_ROLLOVER + "\t3")
-
-    def test_combine_with_reason_parses_identically(self, tmp_path):
-        gf = tmp_path / "gf.txt"
-        gf.write_text("app/bar.py\t" + SHAPE_COMBINE + "\t5  # reason: test fixture\n")
-        d = load_grandfather(gf)
-        assert d == {("app/bar.py", SHAPE_COMBINE): 5}
-
-
 # ── evaluate ──────────────────────────────────────────────────────────────────
 
 
 class TestEvaluate:
-    def test_no_violations_no_ledger_passes(self):
-        exit_code, messages = evaluate({}, {})
-        assert exit_code == 0
-        assert messages == []
+    """Zero tolerance since 2026-07-30: the ledger and its shrink-only ratchet are
+    gone, so there is exactly one rule — any hit fails."""
 
-    def test_ledgered_exact_match_passes(self):
-        by_file = {"app/srs/db_revlog.py": Counter({SHAPE_ROLLOVER: 2})}
-        grandfather = {("app/srs/db_revlog.py", SHAPE_ROLLOVER): 2}
-        exit_code, messages = evaluate(by_file, grandfather)
-        assert exit_code == 0
+    def test_no_violations_passes(self):
+        assert evaluate({}) == (0, [])
 
-    def test_new_violation_unledgered_fails(self):
+    def test_any_violation_fails(self):
         by_file = {"app/srs/db_new.py": Counter({SHAPE_ROLLOVER: 1})}
-        exit_code, messages = evaluate(by_file, {})
+        exit_code, messages = evaluate(by_file)
         assert exit_code == 1
-        assert any("not in grandfather ledger" in m for m in messages)
+        assert any("db_new.py" in m for m in messages)
 
-    def test_exceeds_ledgered_count_fails(self):
+    def test_message_names_the_fix(self):
+        """The failure has to say what to do; this checker has no escape hatch,
+        so an unhelpful message is the thing that gets it disabled."""
+        _, messages = evaluate({"app/foo.py": Counter({SHAPE_ROLLOVER: 1})})
+        assert "anki_today()" in messages[0]
+
+    def test_previously_ledgered_file_is_no_longer_exempt(self):
+        """The 7 seeded sites were fixed in b684d82. Their file re-offending must
+        fail like any other — there is no ledger left to grant it a free pass."""
         by_file = {"app/srs/db_revlog.py": Counter({SHAPE_ROLLOVER: 2})}
-        grandfather = {("app/srs/db_revlog.py", SHAPE_ROLLOVER): 1}
-        exit_code, messages = evaluate(by_file, grandfather)
+        exit_code, _ = evaluate(by_file)
         assert exit_code == 1
-        assert any("exceeds grandfathered count" in m for m in messages)
 
-    def test_below_ledgered_count_fails(self):
-        by_file = {"app/srs/db_revlog.py": Counter({SHAPE_ROLLOVER: 1})}
-        grandfather = {("app/srs/db_revlog.py", SHAPE_ROLLOVER): 3}
-        exit_code, messages = evaluate(by_file, grandfather)
-        assert exit_code == 1
-        assert any("below grandfathered count" in m for m in messages)
-
-    def test_stale_ledger_entry_fails(self):
-        exit_code, messages = evaluate({}, {("app/srs/db_revlog.py", SHAPE_ROLLOVER): 1})
-        assert exit_code == 1
-        assert any("stale ledger entry" in m for m in messages)
-
-    def test_multiple_files_mixed_results(self):
+    def test_every_file_with_a_hit_is_reported(self):
         by_file = {
-            "app/ok.py": Counter({SHAPE_ROLLOVER: 1}),
-            "app/bad.py": Counter({SHAPE_ROLLOVER: 1}),
+            "app/a.py": Counter({SHAPE_ROLLOVER: 1}),
+            "app/b.py": Counter({SHAPE_ROLLOVER: 1}),
         }
-        grandfather = {("app/ok.py", SHAPE_ROLLOVER): 1}
-        exit_code, messages = evaluate(by_file, grandfather)
+        exit_code, messages = evaluate(by_file)
         assert exit_code == 1
-        assert any("bad.py" in m for m in messages)
-        assert not any("ok.py" in m for m in messages)
+        assert len(messages) == 2
 
-    def test_combine_shape_respected_in_ratchet(self):
-        by_file = {"app/foo.py": Counter({SHAPE_COMBINE: 1})}
-        grandfather = {("app/foo.py", SHAPE_COMBINE): 1}
-        assert evaluate(by_file, grandfather) == (0, [])
-
-
-# ── do_write_grandfather ──────────────────────────────────────────────────────
-
-
-class TestGrandfatherOutput:
-    def test_output_format(self, tmp_path, monkeypatch):
-        import sys
-        from io import StringIO
-
-        monkeypatch.chdir(tmp_path)
-        app_dir = Path("app/srs")
-        app_dir.mkdir(parents=True)
-        (app_dir / "db_new.py").write_text("due_at_rollover_utc(date.today())\n")
-
-        captured = StringIO()
-        old_stdout = sys.stdout
-        sys.stdout = captured
-        try:
-            do_write_grandfather(app_dir=Path("app"))
-        finally:
-            sys.stdout = old_stdout
-
-        output = captured.getvalue().strip()
-        assert output
-        assert SHAPE_ROLLOVER in output
-        assert "app/srs/db_new.py" in output
-
-    def test_init_and_pycache_skipped(self, tmp_path, monkeypatch):
-        import sys
-        from io import StringIO
-
-        monkeypatch.chdir(tmp_path)
-        app_dir = Path("app")
-        app_dir.mkdir()
-        (app_dir / "__init__.py").write_text("due_at_rollover_utc(date.today())\n")
-        pycache = app_dir / "__pycache__"
-        pycache.mkdir()
-        (pycache / "mod.py").write_text("due_at_rollover_utc(date.today())\n")
-
-        captured = StringIO()
-        old_stdout = sys.stdout
-        sys.stdout = captured
-        try:
-            do_write_grandfather(app_dir=app_dir)
-        finally:
-            sys.stdout = old_stdout
-
-        assert captured.getvalue() == ""
-
-    def test_no_hits_yields_empty_output(self, tmp_path, monkeypatch):
-        import sys
-        from io import StringIO
-
-        monkeypatch.chdir(tmp_path)
-        app_dir = Path("app")
-        app_dir.mkdir()
-        (app_dir / "clean.py").write_text("x = 1\n")
-
-        captured = StringIO()
-        old_stdout = sys.stdout
-        sys.stdout = captured
-        try:
-            do_write_grandfather(app_dir=app_dir)
-        finally:
-            sys.stdout = old_stdout
-
-        assert captured.getvalue() == ""
+    def test_combine_shape_also_fails(self):
+        exit_code, _ = evaluate({"app/foo.py": Counter({SHAPE_COMBINE: 1})})
+        assert exit_code == 1
