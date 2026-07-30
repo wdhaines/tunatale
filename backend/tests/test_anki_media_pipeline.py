@@ -854,7 +854,7 @@ class TestFetchCardMedia:
 
         forvo_fn, tts_fn, _, dl_fn, norm_fn = _make_fakes(forvo_returns=b"audio")
         # english has 3+ words; no image_query so primary = build_query(english) = english
-        # build_query("water everywhere always") == "water everywhere always" (not in QUERY_MAP)
+        # build_query("water everywhere always") == "water everywhere always" (not in the query map)
         # retry: first 2 words of stripped = "water everywhere"
         await fetch_card_media(
             "voda",

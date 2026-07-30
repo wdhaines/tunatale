@@ -8,11 +8,11 @@ import httpx
 import pytest
 
 from app.cards.media.pixabay import (
-    QUERY_MAP,
     best_hit,
     build_query,
     download_hit,
     fetch_pixabay_image,
+    get_query_map,
     score_hit,
     search_pixabay,
 )
@@ -31,10 +31,26 @@ class TestBuildQuery:
         assert build_query("castle") == "castle"
 
     def test_query_map_has_wing_entry(self):
-        assert "wing" in QUERY_MAP
+        assert "wing" in get_query_map()
 
     def test_query_map_is_nonempty(self):
-        assert len(QUERY_MAP) > 50
+        assert len(get_query_map()) > 50
+
+    def test_query_map_categories_do_not_collide(self):
+        """Flattening the grouped data file must not silently drop a row.
+
+        The old inline dict was flat, so a duplicate key was a visible
+        redefinition; grouped by category, one category can shadow another's key
+        and the loss is invisible. Compare the flattened size against the raw
+        per-category row count.
+        """
+        import json
+
+        from app.cards.media.pixabay import _QUERY_MAP_PATH
+
+        grouped = json.loads(_QUERY_MAP_PATH.read_text(encoding="utf-8"))
+        raw_rows = sum(len(category) for category in grouped.values())
+        assert len(get_query_map()) == raw_rows
 
 
 # ── score_hit ──────────────────────────────────────────────────────────────────
@@ -315,7 +331,7 @@ class TestFetchPixabayImage:
                 return httpx.Response(200, content=b"img")
 
         client = httpx.Client(transport=_CapturingTransport())
-        # "court" maps to "courtroom interior" via QUERY_MAP, but an explicit
+        # "court" maps to "courtroom interior" via the query map, but an explicit
         # override must bypass build_query entirely.
         result = fetch_pixabay_image("court", api_key="k", http_client=client, query="empty jail cell")
         assert result is not None
@@ -333,7 +349,7 @@ class TestFetchPixabayImage:
 
         client = httpx.Client(transport=_CapturingTransport())
         fetch_pixabay_image("wing", api_key="k", http_client=client, query=None)
-        assert captured["q"] == "bird wing"  # QUERY_MAP entry, not raw "wing"
+        assert captured["q"] == "bird wing"  # query-map entry, not raw "wing"
 
     def test_returns_none_when_all_hits_in_used_urls(self):
         hits = [

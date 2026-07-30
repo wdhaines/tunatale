@@ -46,6 +46,8 @@ _SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(_SCRIPTS))
 
 from check_ledger_touch import (  # noqa: E402
+    GRANDFATHER_PATH,
+    LITERAL_GRANDFATHER_PATH,
     LedgerEntry,
     _load_entries,
     all_scopes,
@@ -555,19 +557,37 @@ def test_g8c_permanent_survives_the_canonical_reason_prefix():
     assert entry.permanent is True
 
 
-def test_g8d_permanent_is_recognised_in_the_ledger_ON_DISK():
-    """Anti-floor-shadow: assert against the real files, not a synthetic line.
+def test_g8d_both_ledgers_are_empty_so_no_entry_can_be_re_added():
+    """⚠️ REPLACES the on-disk PERMANENT guardrail, whose subject no longer exists.
 
-    The pre-existing unit tests fed `# PERMANENT: …` — a format the committed
-    ledgers never use — so they stayed green while production recognised zero
-    permanent entries. This test reads the actual ledgers, so a fix that only
-    satisfies synthetic input cannot pass it.
+    The original asserted the pixabay entry was present in the literal ledger and
+    parsed as permanent — deliberately reading the real files rather than a
+    synthetic line, because the bug it guarded (`ceeefac`) was a matcher that
+    passed on synthetic `# PERMANENT:` input while recognising zero real entries.
+
+    That entry has now been drained: its 353-row table moved to
+    ``app/cards/media/data/image_query_map.json``, which removed the checker's
+    trigger (a bare string literal in ``app/**/*.py``) rather than exempting it.
+    Both ledgers are therefore empty, and there is no real committed data left
+    for that assertion to read.
+
+    A first rewrite tried to assert "the parser agrees with the files about how
+    many entries are permanent". That was VACUOUS — with both files empty it
+    reduced to ``0 == 0`` and survived two separate sabotages of the parser
+    (dropping the permanent flag; silently discarding a line). Caught by drilling
+    it, which is the only reason it isn't still in the tree.
+
+    What is worth pinning instead is the state itself: both ledgers are empty and
+    must stay that way. This fails the moment anyone re-adds a line, which is the
+    "no additions, period" policy. The `# reason: PERMANENT` parse remains pinned
+    by the synthetic-but-real-format test above.
     """
-    entries = _load_entries()
-    pixabay = [e for e in entries if e.file.endswith("pixabay.py")]
-    assert pixabay, "expected the pixabay entry in the literal ledger"
-    assert all(e.permanent for e in pixabay), "real PERMANENT entry parsed as drainable debt"
-    assert permanent_count(entries) >= 1
+    for gf_path in (GRANDFATHER_PATH, LITERAL_GRANDFATHER_PATH):
+        if not gf_path.exists():
+            continue
+        live = [raw for raw in gf_path.read_text(encoding="utf-8").splitlines() if raw.strip() and raw[0] != "#"]
+        assert live == [], f"{gf_path.name} gained an entry; these ledgers are drained and closed: {live}"
+    assert _load_entries() == []
 
 
 def test_g8e_main_prints_the_drainable_and_permanent_counts(capsys, monkeypatch):
