@@ -140,3 +140,51 @@ class TestLoadGrandfather:
         f = tmp_path / "gf.txt"
         f.write_text("some_op  # reason: untyped handler\nanother_op\n", encoding="utf-8")
         assert _load_grandfather(f) == {"some_op", "another_op"}
+
+
+# ── binary endpoints must not advertise JSON ─────────────────────────────────
+
+
+class TestBinaryEndpointsDeclareNonJson:
+    """Binary-stream endpoints must declare their real media type, not JSON.
+
+    These three return ``Response``/``FileResponse`` with a binary body and can
+    never return JSON, but FastAPI advertises ``application/json`` unless the
+    route declares otherwise. That is not merely cosmetic: the generated
+    frontend types described a JSON body for a byte stream, and the endpoints
+    counted as untyped-JSON debt they could never repay.
+    """
+
+    BINARY_OPS = {
+        "download_lesson_zip_api_audio_lesson__lesson_id__zip_get": "application/zip",
+        "get_audio_api_audio__audio_id__get": "application/octet-stream",
+        "serve_media_api_srs_media__filename__get": "application/octet-stream",
+    }
+
+    def _content_types(self) -> dict[str, set[str]]:
+        from app.main import app
+
+        schema = app.openapi()
+        found: dict[str, set[str]] = {}
+        for methods in schema["paths"].values():
+            for op in methods.values():
+                if not isinstance(op, dict):
+                    continue
+                op_id = op.get("operationId")
+                if op_id in self.BINARY_OPS:
+                    found[op_id] = set(op["responses"]["200"].get("content", {}))
+        return found
+
+    def test_all_three_operations_are_present(self):
+        # Guards the test itself: a renamed operation-id must fail loudly here
+        # rather than silently asserting nothing.
+        assert set(self._content_types()) == set(self.BINARY_OPS)
+
+    def test_binary_endpoints_do_not_advertise_json(self):
+        for op_id, content in self._content_types().items():
+            assert "application/json" not in content, f"{op_id} still advertises JSON"
+
+    def test_binary_endpoints_declare_their_media_type(self):
+        found = self._content_types()
+        for op_id, media_type in self.BINARY_OPS.items():
+            assert media_type in found[op_id], f"{op_id} missing {media_type}"

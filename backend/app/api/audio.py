@@ -118,7 +118,12 @@ async def get_lesson_audio(lesson_id: str, request: Request):
     }
 
 
-@router.get("/lesson/{lesson_id}/zip", status_code=200)
+@router.get(
+    "/lesson/{lesson_id}/zip",
+    status_code=200,
+    response_class=Response,
+    responses={200: {"content": {"application/zip": {}}}},
+)
 async def download_lesson_zip(lesson_id: str, request: Request):
     """Return a ZIP of all section WAVs for a lesson with context-rich filenames."""
     store = request.state.content_store
@@ -158,7 +163,14 @@ async def download_lesson_zip(lesson_id: str, request: Request):
     )
 
 
-@router.get("/{audio_id}", status_code=200)
+@router.get(
+    "/{audio_id}",
+    status_code=200,
+    response_class=FileResponse,
+    # Concrete type is per-file (EXT_MEDIA_TYPE: audio/ogg, audio/mp4,
+    # audio/mpeg, audio/wav), so the schema documents the generic binary type.
+    responses={200: {"content": {"application/octet-stream": {}}}},
+)
 async def get_audio(audio_id: str, request: Request):
     store = request.state.content_store
     row = store.get_audio_file_row(audio_id)

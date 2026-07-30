@@ -1447,9 +1447,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": {}
-              }
+              "application/zip": {}
             },
             "description": "Successful Response"
           },
@@ -1526,9 +1524,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": {}
-              }
+              "application/octet-stream": {}
             },
             "description": "Successful Response"
           },
@@ -3861,9 +3857,7 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": {}
-              }
+              "application/octet-stream": {}
             },
             "description": "Successful Response"
           },

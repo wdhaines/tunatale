@@ -380,7 +380,12 @@ async def undo_grade(item_id: int, direction: str, request: Request):
     }
 
 
-@router.get("/media/{filename}", status_code=200)
+@router.get(
+    "/media/{filename}",
+    status_code=200,
+    response_class=FileResponse,
+    responses={200: {"content": {"application/octet-stream": {}}}},
+)
 async def serve_media(filename: str):
     media_dir = _MEDIA_DIR
     file_path = (media_dir / filename).resolve()

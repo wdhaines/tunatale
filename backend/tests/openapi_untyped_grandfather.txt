@@ -4,9 +4,7 @@ create_base_card_api_srs_items_base_post  # reason: untyped handler — returns 
 create_inflection_cloze_api_srs_inflection_clozes_post  # reason: untyped handler — returns a traced/variable shape
 create_item_api_srs_items_post  # reason: untyped handler — returns a traced/variable shape
 delete_image_api_srs_items__item_id__image_delete  # reason: untyped handler — returns a traced/variable shape
-download_lesson_zip_api_audio_lesson__lesson_id__zip_get  # reason: untyped handler — non-JSON (zip binary stream)
 drill_feedback_api_srs_items__item_id__direction__direction__feedback_post  # reason: untyped handler — returns conditional key-set
-get_audio_api_audio__audio_id__get  # reason: untyped handler — non-JSON (audio binary stream)
 get_curriculum_api_curriculum__curriculum_id__get  # reason: untyped handler — returns conditional key-set
 get_curriculum_progress_api_curriculum__curriculum_id__progress_get  # reason: untyped handler — returns a traced/variable shape
 get_curriculum_source_api_curriculum__curriculum_id__source_get  # reason: untyped handler — returns a traced/variable shape
@@ -36,7 +34,6 @@ refresh_media_api_admin_refresh_media_post  # reason: untyped handler — mechan
 render_audio_api_audio_render_post  # reason: untyped handler — returns a traced/variable shape
 reset_item_api_srs_items__item_id__reset_post  # reason: untyped handler — returns a traced/variable shape
 restore_known_item_api_srs_items__item_id__restore_known_post  # reason: untyped handler — returns a traced/variable shape
-serve_media_api_srs_media__filename__get  # reason: untyped handler — non-JSON (binary media file)
 set_item_state_api_srs_items__item_id__state_post  # reason: untyped handler — returns a traced/variable shape
 suspend_item_api_srs_items__item_id__suspend_post  # reason: untyped handler — returns a traced/variable shape
 translate_api_srs_translate_post  # reason: untyped handler — mechanical, awaiting scheduled batch

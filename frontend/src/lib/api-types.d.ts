@@ -2055,7 +2055,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/zip": unknown;
         };
       };
       /** @description Validation Error */
@@ -2119,7 +2119,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/octet-stream": unknown;
         };
       };
       /** @description Validation Error */
@@ -3824,7 +3824,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/octet-stream": unknown;
         };
       };
       /** @description Validation Error */
