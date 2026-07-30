@@ -12,6 +12,7 @@
 !check_mock_boundaries.py
 !check_language_literals.py
 !check_plugin_imports.py
+!check_ledger_touch.py
 !check_openapi_snapshot.py
 !dump_openapi.py
 !mutation_sweep_slicing.py
