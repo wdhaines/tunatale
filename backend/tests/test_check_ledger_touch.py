@@ -47,6 +47,7 @@ sys.path.insert(0, str(_SCRIPTS))
 
 from check_ledger_touch import (  # noqa: E402
     LedgerEntry,
+    _load_entries,
     all_scopes,
     check_touch,
     drainable_count,
@@ -535,3 +536,48 @@ def test_enclosing_scope_is_the_innermost_containing_range():
     start, end = _scope_of_violation(TWO_FUNCS, MOCK_TARGET)
     assert start <= 7 <= end
     assert start > 4, "returned the module range instead of the function's"
+
+
+# ── G8c-e: PERMANENT must be recognised in the REAL ledger format ────────────
+
+
+def test_g8c_permanent_survives_the_canonical_reason_prefix():
+    """`# reason:` is the canonical field (6d1c455); PERMANENT rides inside it.
+
+    The original matcher was `reason.startswith("PERMANENT:")`, which no real
+    ledger line can satisfy: the parser keeps the whole comment, so the reason
+    always begins `reason: `. Both the em-dash and colon separators must work —
+    the entry in the tree uses the em dash.
+    """
+    line = 'app/cards/media/pixabay.py\tno\t1  # reason: PERMANENT — English word "no", dict key'
+    entry = parse_ledger_line(line)
+    assert entry is not None
+    assert entry.permanent is True
+
+
+def test_g8d_permanent_is_recognised_in_the_ledger_ON_DISK():
+    """Anti-floor-shadow: assert against the real files, not a synthetic line.
+
+    The pre-existing unit tests fed `# PERMANENT: …` — a format the committed
+    ledgers never use — so they stayed green while production recognised zero
+    permanent entries. This test reads the actual ledgers, so a fix that only
+    satisfies synthetic input cannot pass it.
+    """
+    entries = _load_entries()
+    pixabay = [e for e in entries if e.file.endswith("pixabay.py")]
+    assert pixabay, "expected the pixabay entry in the literal ledger"
+    assert all(e.permanent for e in pixabay), "real PERMANENT entry parsed as drainable debt"
+    assert permanent_count(entries) >= 1
+
+
+def test_g8e_main_prints_the_drainable_and_permanent_counts(capsys, monkeypatch):
+    """permanent_count's docstring promised it was 'printed every run'. It wasn't.
+
+    Without the print, a growing PERMANENT set is invisible — which is how an
+    exemption class quietly becomes a dumping ground.
+    """
+    monkeypatch.setattr("check_ledger_touch.resolve_changed", lambda: ("skip-no-diff", set()))
+    main()
+    out = capsys.readouterr().out
+    assert "ledger:" in out, out
+    assert "drainable" in out and "permanent" in out, out

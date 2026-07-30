@@ -54,12 +54,23 @@ class LedgerEntry:
     reason: str = ""
 
 
+_PERMANENT_RE = re.compile(r"\s*(?:reason:\s*)?PERMANENT\b")
+
+
 def parse_ledger_line(line: str) -> LedgerEntry | None:
     """Parse `file<TAB>construct<TAB>count  # reason` into a LedgerEntry.
 
     Returns None for blank lines and whole-line comments. `permanent` is True when
     the trailing reason marks the entry PERMANENT (a checker false positive that
     no correct action can drain).
+
+    ⚠️ The PERMANENT marker rides **inside** the canonical `# reason:` field
+    (6d1c455), so the parsed reason begins `reason: `. An earlier
+    `reason.startswith("PERMANENT:")` could therefore never match a committed
+    line, and production recognised zero permanent entries while the unit tests —
+    which fed a bare `# PERMANENT:` that no real ledger uses — stayed green.
+    Hence `_PERMANENT_RE`: optional `reason:` prefix, then PERMANENT on a word
+    boundary so `PERMANENT:` and `PERMANENT —` both count.
 
     ⚠️ Split on TAB **first**, then strip a trailing comment from the LAST field
     only — a ledgered construct can itself contain a `#` (the prompts.py entry is
@@ -84,7 +95,7 @@ def parse_ledger_line(line: str) -> LedgerEntry | None:
         count = int(count_str)
     except ValueError:
         return None
-    permanent = reason.startswith("PERMANENT:")
+    permanent = _PERMANENT_RE.match(reason) is not None
     return LedgerEntry(file=file, construct=construct, count=count, permanent=permanent, reason=reason)
 
 
@@ -381,10 +392,15 @@ def main() -> int:
     mode, changed = resolve_changed()
     print(f"touch-rule: mode={mode}")
 
+    # Printed on EVERY run, including skips: an exemption class nobody counts is
+    # how PERMANENT quietly becomes a dumping ground. Real debt is the first
+    # number; the second must only ever shrink or be argued for.
+    entries = _load_entries()
+    print(f"ledger: {drainable_count(entries)} drainable, {permanent_count(entries)} permanent")
+
     if mode.startswith("skip"):
         return 0
 
-    entries = _load_entries()
     sources: dict[str, str] = {}
     for filepath in changed:
         p = Path(filepath)
