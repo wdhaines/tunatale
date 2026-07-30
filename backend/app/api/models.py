@@ -206,3 +206,60 @@ class CreateBaseCardRequest(BaseModel):
     sentence: str
     language_code: str
     translation: str = ""
+
+
+# ── Response models (BP ledger drain, bp-ledger-burndown-2026-07 stage 3) ────
+# Each mirrors a handler that returns a single fixed key-set — no conditional
+# keys, no delegation to a helper whose shape must be traced.
+
+
+class HealthResponse(BaseModel):
+    """Response of GET /api/health."""
+
+    status: str
+
+
+class StatusResponse(BaseModel):
+    """Response of endpoints that return only a fixed ``status`` string:
+    DELETE /api/srs/items/{id}, POST /api/srs/ignored-lemmas,
+    DELETE /api/srs/ignored-lemmas."""
+
+    status: str
+
+
+class MarkLessonReviewedResponse(BaseModel):
+    """Response of POST /api/srs/lesson/{lesson_id}/reviewed."""
+
+    ok: bool
+
+
+class DeleteCurriculumResponse(BaseModel):
+    """Response of DELETE /api/curriculum/{curriculum_id}."""
+
+    deleted: str
+
+
+class DeleteDayResponse(BaseModel):
+    """Response of DELETE /api/curriculum/{curriculum_id}/days/{day}."""
+
+    deleted_day: int
+    days: int
+
+
+class PlanResetResponse(BaseModel):
+    """Response of POST /api/curriculum/{curriculum_id}/plan/reset."""
+
+    reply_count_cleared: int
+
+
+class SetGenerationModeResponse(BaseModel):
+    """Response of POST /api/curriculum/{curriculum_id}/generation-mode."""
+
+    mode: str
+
+
+class PlanTurnPromptResponse(BaseModel):
+    """Response of POST /api/curriculum/{curriculum_id}/plan/turn/prompt."""
+
+    system_prompt: str
+    user_prompt: str

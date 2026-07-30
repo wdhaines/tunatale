@@ -138,6 +138,39 @@
         "title": "CreateItemRequest",
         "type": "object"
       },
+      "DeleteCurriculumResponse": {
+        "description": "Response of DELETE /api/curriculum/{curriculum_id}.",
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "string"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "DeleteCurriculumResponse",
+        "type": "object"
+      },
+      "DeleteDayResponse": {
+        "description": "Response of DELETE /api/curriculum/{curriculum_id}/days/{day}.",
+        "properties": {
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "deleted_day": {
+            "title": "Deleted Day",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted_day",
+          "days"
+        ],
+        "title": "DeleteDayResponse",
+        "type": "object"
+      },
       "DrillRequest": {
         "properties": {
           "lesson_review": {
@@ -231,6 +264,20 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "Response of GET /api/health.",
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "HealthResponse",
         "type": "object"
       },
       "IgnoreLemmaRequest": {
@@ -561,6 +608,20 @@
         "title": "ListenRequest",
         "type": "object"
       },
+      "MarkLessonReviewedResponse": {
+        "description": "Response of POST /api/srs/lesson/{lesson_id}/reviewed.",
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "MarkLessonReviewedResponse",
+        "type": "object"
+      },
       "PipelineRegenerateRequest": {
         "properties": {
           "day": {
@@ -614,6 +675,39 @@
         "title": "PlanFeedbackRequest",
         "type": "object"
       },
+      "PlanResetResponse": {
+        "description": "Response of POST /api/curriculum/{curriculum_id}/plan/reset.",
+        "properties": {
+          "reply_count_cleared": {
+            "title": "Reply Count Cleared",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "reply_count_cleared"
+        ],
+        "title": "PlanResetResponse",
+        "type": "object"
+      },
+      "PlanTurnPromptResponse": {
+        "description": "Response of POST /api/curriculum/{curriculum_id}/plan/turn/prompt.",
+        "properties": {
+          "system_prompt": {
+            "title": "System Prompt",
+            "type": "string"
+          },
+          "user_prompt": {
+            "title": "User Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "system_prompt",
+          "user_prompt"
+        ],
+        "title": "PlanTurnPromptResponse",
+        "type": "object"
+      },
       "PlanTurnRequest": {
         "properties": {
           "batch_size": {
@@ -658,6 +752,20 @@
         "title": "RenderAudioRequest",
         "type": "object"
       },
+      "SetGenerationModeResponse": {
+        "description": "Response of POST /api/curriculum/{curriculum_id}/generation-mode.",
+        "properties": {
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "SetGenerationModeResponse",
+        "type": "object"
+      },
       "SetStateRequest": {
         "properties": {
           "state": {
@@ -687,6 +795,20 @@
           "topic"
         ],
         "title": "StartPlanRequest",
+        "type": "object"
+      },
+      "StatusResponse": {
+        "description": "Response of endpoints that return only a fixed ``status`` string:\nDELETE /api/srs/items/{id}, POST /api/srs/ignored-lemmas,\nDELETE /api/srs/ignored-lemmas.",
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "StatusResponse",
         "type": "object"
       },
       "SuspendRequest": {
@@ -1153,7 +1275,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteCurriculumResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -1241,7 +1365,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteDayResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -1341,7 +1467,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SetGenerationModeResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -1614,7 +1742,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PlanResetResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -1716,7 +1846,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PlanTurnPromptResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -1825,7 +1957,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -2053,7 +2187,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -2090,7 +2226,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -2397,7 +2535,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3142,9 +3282,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Mark Lesson Reviewed Api Srs Lesson  Lesson Id  Reviewed Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MarkLessonReviewedResponse"
                 }
               }
             },

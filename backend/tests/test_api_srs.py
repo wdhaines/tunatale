@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import StatusResponse
 from app.main import app
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 
@@ -3609,6 +3610,15 @@ class TestIgnoredLemmas:
         assert resp.status_code == 200
         assert db.get_ignored_lemmas("sl") == {"ana"}
 
+    async def test_add_ignored_lemma_response_keys_match_model_exactly(self, api_app_state):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/ignored-lemmas",
+                json={"lemma": "Ana", "language_code": "sl"},
+            )
+        assert set(resp.json().keys()) == set(StatusResponse.model_fields)
+
     async def test_add_ignored_lemma_lowercases(self, api_app_state):
         db = api_app_state
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -3628,6 +3638,16 @@ class TestIgnoredLemmas:
             )
         assert resp.status_code == 200
         assert db.get_ignored_lemmas("sl") == set()
+
+    async def test_remove_ignored_lemma_response_keys_match_model_exactly(self, api_app_state):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        db = api_app_state
+        db.add_ignored_lemma("sl", "ana")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.delete(
+                "/api/srs/ignored-lemmas?lemma=Ana&language_code=sl",
+            )
+        assert set(resp.json().keys()) == set(StatusResponse.model_fields)
 
     async def test_remove_nonexistent_ignored_lemma(self, api_app_state):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

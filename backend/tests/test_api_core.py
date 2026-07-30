@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import HealthResponse
 from app.main import app
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
@@ -18,6 +19,12 @@ class TestHealth:
             response = await client.get("/api/health")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
+
+    async def test_health_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/health")
+        assert set(response.json().keys()) == set(HealthResponse.model_fields)
 
 
 class TestCurriculumEndpoints:

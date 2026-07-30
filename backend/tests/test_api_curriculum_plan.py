@@ -5,6 +5,13 @@ from dataclasses import asdict, dataclass, field
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import (
+    DeleteCurriculumResponse,
+    DeleteDayResponse,
+    PlanResetResponse,
+    PlanTurnPromptResponse,
+    SetGenerationModeResponse,
+)
 from app.generation.planner import CurriculumPlanner, PlannerError, PlannerTurn
 from app.generation.prompts import PLANNER_SYSTEM_PROMPT
 from app.languages import get_language
@@ -403,6 +410,15 @@ class TestPlanReset:
         assert saved["chat"] == []
         assert saved["proposed"] is None
 
+    async def test_reset_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        _setup(_planned_curriculum())
+
+        async with _client() as client:
+            response = await client.post("/api/curriculum/trip/plan/reset", json={})
+
+        assert set(response.json().keys()) == set(PlanResetResponse.model_fields)
+
     async def test_reset_counts_only_planner_replies(self):
         curriculum = _planned_curriculum(
             chat=[
@@ -490,6 +506,15 @@ class TestDeleteCurriculum:
         assert store.get_lesson("less_1") is None
         assert store.get_audio_file_row("aud_1") is None
 
+    async def test_delete_curriculum_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        _setup(_planned_curriculum())
+
+        async with _client() as client:
+            response = await client.delete("/api/curriculum/trip")
+
+        assert set(response.json().keys()) == set(DeleteCurriculumResponse.model_fields)
+
 
 class TestDeleteDay:
     async def test_delete_day_removes_curriculum_day_and_lessons(self):
@@ -519,6 +544,17 @@ class TestDeleteDay:
         assert [d.day for d in saved.days] == [1, 3]
         assert store.get_lesson("less_1") is None
         assert store.get_audio_file_row("aud_1") is None
+
+    async def test_delete_day_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        curriculum = _planned_curriculum()
+        curriculum.days.extend([_day(1), _day(2)])
+        _setup(curriculum)
+
+        async with _client() as client:
+            response = await client.delete("/api/curriculum/trip/days/2")
+
+        assert set(response.json().keys()) == set(DeleteDayResponse.model_fields)
 
     async def test_delete_day_unlinks_the_audio_from_disk(self, tmp_path):
         """Deleting a day must not leave its audio behind.
@@ -741,6 +777,18 @@ class TestPlanTurnPrompt:
         # user_prompt contains the learner-snapshot marker
         assert "no tracked vocabulary" in data["user_prompt"]
 
+    async def test_prompt_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        _setup(curriculum=_planned_curriculum(), planner=StubPlanner())
+
+        async with _client() as client:
+            resp = await client.post(
+                "/api/curriculum/trip/plan/turn/prompt",
+                json={"message": "plan 2 days", "batch_size": 2},
+            )
+
+        assert set(resp.json().keys()) == set(PlanTurnPromptResponse.model_fields)
+
     async def test_prompt_persists_nothing(self):
         """Follow-up GET shows chat/proposed unchanged after /plan/turn/prompt."""
         existing = _planned_curriculum(
@@ -823,6 +871,16 @@ class TestGenerationMode:
         assert resp.status_code == 200
         assert resp.json() == {"mode": "auto"}
         assert store.get_curriculum("trip").metadata["generation_mode"] == "auto"
+
+    async def test_set_generation_mode_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        _setup(_planned_curriculum())
+        async with _client() as client:
+            resp = await client.post(
+                "/api/curriculum/trip/generation-mode",
+                json={"mode": "manual"},
+            )
+        assert set(resp.json().keys()) == set(SetGenerationModeResponse.model_fields)
 
     async def test_set_generation_mode_unknown_curriculum_404(self):
         _setup()

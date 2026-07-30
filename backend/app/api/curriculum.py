@@ -9,10 +9,15 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.api._serializers import serialize_lesson
 from app.api.models import (
+    DeleteCurriculumResponse,
+    DeleteDayResponse,
     GenerationModeRequest,
     ImportPlanRequest,
     PlanFeedbackRequest,
+    PlanResetResponse,
+    PlanTurnPromptResponse,
     PlanTurnRequest,
+    SetGenerationModeResponse,
     StartPlanRequest,
 )
 from app.generation.planner import CurriculumPlanner, PlannerError, build_turn_prompt, parse_turn
@@ -136,7 +141,7 @@ async def plan_turn(curriculum_id: str, body: PlanTurnRequest, request: Request)
     return {"reply": turn.reply, "proposed": state["proposed"]}
 
 
-@router.post("/{curriculum_id}/plan/turn/prompt", status_code=200)
+@router.post("/{curriculum_id}/plan/turn/prompt", status_code=200, response_model=PlanTurnPromptResponse)
 async def plan_turn_prompt(curriculum_id: str, body: PlanTurnRequest, request: Request):
     """Export the exact prompts for a planner turn, without calling any LLM.
 
@@ -195,7 +200,7 @@ async def plan_commit(curriculum_id: str, request: Request):
     return {"id": curriculum_id, "days": len(curriculum.days)}
 
 
-@router.post("/{curriculum_id}/plan/reset", status_code=200)
+@router.post("/{curriculum_id}/plan/reset", status_code=200, response_model=PlanResetResponse)
 async def plan_reset(curriculum_id: str, request: Request):
     """Clear the planner chat and proposed batch (keeps feedback and committed days)."""
     store = request.state.content_store
@@ -223,7 +228,7 @@ async def plan_feedback(curriculum_id: str, body: PlanFeedbackRequest, request: 
     return {"feedback": state["feedback"]}
 
 
-@router.post("/{curriculum_id}/generation-mode", status_code=200)
+@router.post("/{curriculum_id}/generation-mode", status_code=200, response_model=SetGenerationModeResponse)
 async def set_generation_mode(curriculum_id: str, body: GenerationModeRequest, request: Request):
     """Set the generation mode for a curriculum: 'auto' (default, Groq pipeline) or 'manual' (copy/paste)."""
     store = request.state.content_store
@@ -294,7 +299,7 @@ async def get_curriculum_source(curriculum_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Curriculum not found") from None
 
 
-@router.delete("/{curriculum_id}", status_code=200)
+@router.delete("/{curriculum_id}", status_code=200, response_model=DeleteCurriculumResponse)
 async def delete_curriculum(curriculum_id: str, request: Request):
     store = request.state.content_store
     if not store.delete_curriculum(curriculum_id):
@@ -302,7 +307,7 @@ async def delete_curriculum(curriculum_id: str, request: Request):
     return {"deleted": curriculum_id}
 
 
-@router.delete("/{curriculum_id}/days/{day}", status_code=200)
+@router.delete("/{curriculum_id}/days/{day}", status_code=200, response_model=DeleteDayResponse)
 async def delete_day(curriculum_id: str, day: int, request: Request):
     """Delete a committed day: its lessons/audio are removed, the day itself is
     dropped from ``curriculum.days`` (no renumbering of later days). Existing

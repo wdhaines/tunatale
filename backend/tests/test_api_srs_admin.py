@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import StatusResponse
 from app.languages import get_language
 from app.main import app
 from app.models.srs_item import Direction, SRSState
@@ -202,6 +203,18 @@ class TestDeleteItem:
         assert response.status_code == 200
         assert response.json()["status"] == "deleted"
         assert db.count_collocations() == 0
+
+    async def test_delete_item_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        db = _db()
+        db.add_collocation(_unit("zdravo", "hello"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.delete(f"/api/srs/items/{row_id}")
+
+        assert set(response.json().keys()) == set(StatusResponse.model_fields)
 
     async def test_delete_item_returns_404_for_unknown_id(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

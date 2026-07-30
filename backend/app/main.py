@@ -13,6 +13,7 @@ load_dotenv()
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
+from app.api.models import HealthResponse  # noqa: E402
 from app.audio.edge_tts import EdgeTTSService  # noqa: E402
 from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
 from app.audio.renderer import LessonRenderer  # noqa: E402
@@ -286,7 +287,7 @@ app.include_router(admin.router)
 app.include_router(llm_api.router)
 
 
-@app.get("/api/health")
+@app.get("/api/health", response_model=HealthResponse)
 async def health():
     return {"status": "ok"}
 

@@ -26,7 +26,9 @@ from app.api.models import (
     InflectionClozeRequest,
     ListenPreviewResponse,
     ListenRequest,
+    MarkLessonReviewedResponse,
     SetStateRequest,
+    StatusResponse,
     SuspendRequest,
     TranslateRequest,
     UpdateItemRequest,
@@ -1064,7 +1066,7 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     return {"queue": queue, "has_unreviewed_listen": has_unreviewed_listen}
 
 
-@router.post("/lesson/{lesson_id}/reviewed", status_code=200)
+@router.post("/lesson/{lesson_id}/reviewed", status_code=200, response_model=MarkLessonReviewedResponse)
 async def mark_lesson_reviewed(lesson_id: str, request: Request) -> dict:
     """Record completion of a lesson-scoped 'Check your work' review.
 
@@ -1833,7 +1835,7 @@ async def patch_item(item_id: int, body: UpdateItemRequest, request: Request):
     return _item_to_dict(row_id, item, lang)
 
 
-@router.delete("/items/{item_id}", status_code=200)
+@router.delete("/items/{item_id}", status_code=200, response_model=StatusResponse)
 async def delete_item(item_id: int, request: Request):
     db = request.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
@@ -1931,14 +1933,14 @@ async def suspend_item(item_id: int, body: SuspendRequest, request: Request):
     return _item_to_dict(row_id, item, lang)
 
 
-@router.post("/ignored-lemmas", status_code=200)
+@router.post("/ignored-lemmas", status_code=200, response_model=StatusResponse)
 async def add_ignored_lemma(body: IgnoreLemmaRequest, request: Request):
     db = request.state.srs_db
     db.add_ignored_lemma(body.language_code, body.lemma)
     return {"status": "ok"}
 
 
-@router.delete("/ignored-lemmas", status_code=200)
+@router.delete("/ignored-lemmas", status_code=200, response_model=StatusResponse)
 async def remove_ignored_lemma(lemma: str, language_code: str, request: Request):
     db = request.state.srs_db
     db.remove_ignored_lemma(language_code, lemma)

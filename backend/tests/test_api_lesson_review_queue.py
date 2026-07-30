@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import MarkLessonReviewedResponse
 from app.main import app
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.models.srs_item import Direction, SRSState
@@ -418,3 +419,10 @@ class TestMarkLessonReviewed:
             assert resp.status_code == 200
             assert resp.json() == {"ok": True}
         assert db.latest_review_at("lesson-1") is not None
+
+    async def test_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
+        self._setup()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/srs/lesson/lesson-1/reviewed")
+        assert set(resp.json().keys()) == set(MarkLessonReviewedResponse.model_fields)

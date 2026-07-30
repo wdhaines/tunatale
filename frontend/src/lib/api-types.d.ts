@@ -1405,6 +1405,24 @@ export interface components {
       /** Word Count */
       word_count: number;
     };
+    /**
+     * DeleteCurriculumResponse
+     * @description Response of DELETE /api/curriculum/{curriculum_id}.
+     */
+    DeleteCurriculumResponse: {
+      /** Deleted */
+      deleted: string;
+    };
+    /**
+     * DeleteDayResponse
+     * @description Response of DELETE /api/curriculum/{curriculum_id}/days/{day}.
+     */
+    DeleteDayResponse: {
+      /** Days */
+      days: number;
+      /** Deleted Day */
+      deleted_day: number;
+    };
     /** DrillRequest */
     DrillRequest: {
       /**
@@ -1450,6 +1468,14 @@ export interface components {
     HTTPValidationError: {
       /** Detail */
       detail?: components["schemas"]["ValidationError"][];
+    };
+    /**
+     * HealthResponse
+     * @description Response of GET /api/health.
+     */
+    HealthResponse: {
+      /** Status */
+      status: string;
     };
     /** IgnoreLemmaRequest */
     IgnoreLemmaRequest: {
@@ -1597,6 +1623,14 @@ export interface components {
         [key: string]: "again" | "hard" | "good" | "easy" | "skip";
       };
     };
+    /**
+     * MarkLessonReviewedResponse
+     * @description Response of POST /api/srs/lesson/{lesson_id}/reviewed.
+     */
+    MarkLessonReviewedResponse: {
+      /** Ok */
+      ok: boolean;
+    };
     /** PipelineRegenerateRequest */
     PipelineRegenerateRequest: {
       /** Day */
@@ -1620,6 +1654,24 @@ export interface components {
       /** Note */
       note: string;
     };
+    /**
+     * PlanResetResponse
+     * @description Response of POST /api/curriculum/{curriculum_id}/plan/reset.
+     */
+    PlanResetResponse: {
+      /** Reply Count Cleared */
+      reply_count_cleared: number;
+    };
+    /**
+     * PlanTurnPromptResponse
+     * @description Response of POST /api/curriculum/{curriculum_id}/plan/turn/prompt.
+     */
+    PlanTurnPromptResponse: {
+      /** System Prompt */
+      system_prompt: string;
+      /** User Prompt */
+      user_prompt: string;
+    };
     /** PlanTurnRequest */
     PlanTurnRequest: {
       /**
@@ -1637,6 +1689,14 @@ export interface components {
       /** Lesson Id */
       lesson_id: string;
     };
+    /**
+     * SetGenerationModeResponse
+     * @description Response of POST /api/curriculum/{curriculum_id}/generation-mode.
+     */
+    SetGenerationModeResponse: {
+      /** Mode */
+      mode: string;
+    };
     /** SetStateRequest */
     SetStateRequest: {
       /** State */
@@ -1651,6 +1711,16 @@ export interface components {
       cefr_level: string;
       /** Topic */
       topic: string;
+    };
+    /**
+     * StatusResponse
+     * @description Response of endpoints that return only a fixed ``status`` string:
+     *     DELETE /api/srs/items/{id}, POST /api/srs/ignored-lemmas,
+     *     DELETE /api/srs/ignored-lemmas.
+     */
+    StatusResponse: {
+      /** Status */
+      status: string;
     };
     /** SuspendRequest */
     SuspendRequest: {
@@ -2013,7 +2083,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["DeleteCurriculumResponse"];
         };
       };
       /** @description Validation Error */
@@ -2045,7 +2115,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["DeleteDayResponse"];
         };
       };
       /** @description Validation Error */
@@ -2112,7 +2182,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["SetGenerationModeResponse"];
         };
       };
       /** @description Validation Error */
@@ -2310,7 +2380,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["PlanResetResponse"];
         };
       };
       /** @description Validation Error */
@@ -2380,7 +2450,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["PlanTurnPromptResponse"];
         };
       };
       /** @description Validation Error */
@@ -2471,7 +2541,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["HealthResponse"];
         };
       };
     };
@@ -2665,7 +2735,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["StatusResponse"];
         };
       };
       /** @description Validation Error */
@@ -2697,7 +2767,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["StatusResponse"];
         };
       };
       /** @description Validation Error */
@@ -2900,7 +2970,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["StatusResponse"];
         };
       };
       /** @description Validation Error */
@@ -3426,9 +3496,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            [key: string]: unknown;
-          };
+          "application/json": components["schemas"]["MarkLessonReviewedResponse"];
         };
       };
       /** @description Validation Error */
