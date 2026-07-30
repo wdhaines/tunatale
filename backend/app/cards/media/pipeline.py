@@ -56,7 +56,7 @@ async def fetch_card_media(
     english: str,
     *,
     pixabay_key: str,
-    language_code: str = "sl",
+    language_code: str | None = None,
     http_client: Any = None,
     tts_voice: str | None = None,
     normalize: bool = True,
@@ -86,6 +86,10 @@ async def fetch_card_media(
     download_fn = _download_fn or download_hit
     choose_fn = _choose_fn or choose_image_hit
     norm_fn = _normalize_fn or normalize_audio
+    if language_code is None:
+        from app.config import settings
+
+        language_code = settings.target_language
     # Resolve the synthesis voice from the card's language so a non-Slovene card
     # never gets Slovene TTS. Callers may still override explicitly (tests).
     voice = tts_voice or get_tts_voice(language_code)

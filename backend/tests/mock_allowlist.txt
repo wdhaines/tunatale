@@ -14,3 +14,8 @@ app.plugins.anki_sync.sync._MEDIA_DIR
 app.api.srs._MEDIA_DIR
 app.cards.media.vocab_media._MEDIA_DIR
 app.plugins.anki_sync.model_discovery._CACHE_PATH
+# Process/engine boundaries — heavy external subprocesses or lazy NLP model load
+app.cards.media.normalize._apply_normalization   # ffmpeg subprocess boundary (loudnorm apply pass)
+app.cards.media.normalize._measure_loudness      # ffmpeg subprocess boundary (loudnorm measure pass)
+app.api.generation.get_lemmatizer                # heavy classla/stanza engine boundary (lazy NLP model load)
+app.main.get_lemmatizer                          # heavy classla/stanza engine boundary (lifespan prewarm)

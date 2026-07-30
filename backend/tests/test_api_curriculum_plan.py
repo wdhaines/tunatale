@@ -12,8 +12,12 @@ from app.api.models import (
     PlanTurnPromptResponse,
     SetGenerationModeResponse,
 )
-from app.generation.planner import CurriculumPlanner, PlannerError, PlannerTurn
-from app.generation.prompts import PLANNER_SYSTEM_PROMPT
+from app.generation.planner import (
+    CurriculumPlanner,
+    PlannerError,
+    PlannerTurn,
+    build_turn_prompt,
+)
 from app.languages import get_language
 from app.llm.activity import ActivityLog
 from app.llm.client import LLMError
@@ -771,7 +775,15 @@ class TestPlanTurnPrompt:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["system_prompt"] == PLANNER_SYSTEM_PROMPT
+        curriculum = _planned_curriculum()
+        system_prompt_expected, _ = build_turn_prompt(
+            curriculum=curriculum,
+            user_message="plan 2 days",
+            batch_size=2,
+            learner_snapshot="The learner has no tracked vocabulary yet.",
+            language=get_language(curriculum.language_code),
+        )
+        assert data["system_prompt"] == system_prompt_expected
         assert isinstance(data["user_prompt"], str)
         assert len(data["user_prompt"]) > 0
         # user_prompt contains the learner-snapshot marker

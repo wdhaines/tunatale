@@ -36,11 +36,15 @@ def _resolve_voice(speaker: str, l2_voice_map: dict[str, str], narrator_voice: s
     return l2_voice_map.get(speaker, l2_voice_map.get("female-1", narrator_voice))
 
 
-def build_word_breakdown(phrase_text: str, language_code: str = "sl") -> list[str]:
+def build_word_breakdown(phrase_text: str, language_code: str | None = None) -> list[str]:
     """Build a Pimsleur-style syllable-level backward buildup sequence.
 
     Delegates to :func:`build_word_breakdown_spans` and discards provenance.
     """
+    if language_code is None:
+        from app.config import settings
+
+        language_code = settings.target_language
     return [c.text for c in build_word_breakdown_spans(phrase_text, language_code)]
 
 

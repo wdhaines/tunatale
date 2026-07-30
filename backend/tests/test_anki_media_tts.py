@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from app.cards.media.tts import DEFAULT_VOICE, generate_tts_audio
+from app.cards.media.tts import generate_tts_audio
+from app.languages import get_tts_voice
 
 
 class TestGenerateTtsAudio:
@@ -35,8 +36,11 @@ class TestGenerateTtsAudio:
         result = await generate_tts_audio("voda")
         assert result is None
 
-    async def test_default_voice_is_petra(self):
-        assert DEFAULT_VOICE == "sl-SI-PetraNeural"
+    async def test_default_voice_uses_settings_language(self):
+        from app.config import settings
+
+        voice = get_tts_voice(settings.target_language)
+        assert voice == "sl-SI-PetraNeural"
 
     async def test_accepts_custom_voice(self, monkeypatch):
         used_voice: list[str] = []

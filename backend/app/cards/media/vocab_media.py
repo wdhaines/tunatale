@@ -117,7 +117,7 @@ async def generate_vocab_media(
     *,
     llm: Any,
     pixabay_key: str,
-    language_code: str = "sl",
+    language_code: str | None = None,
     source_sentence: str = "",
     grammar: str = "",
     used_image_urls: set[str] | None = None,
@@ -136,6 +136,9 @@ async def generate_vocab_media(
     """
     if not pixabay_key:
         return {}
+
+    if language_code is None:
+        language_code = settings.target_language
 
     query_fn = _query_fn or generate_image_query
     fetch_fn = _fetch_fn or fetch_card_media

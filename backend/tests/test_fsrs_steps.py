@@ -26,9 +26,17 @@ class TestLearningStepSemantics:
     """Tests for scheduler with learning steps."""
 
     @pytest.fixture(autouse=True)
-    def _defaults(self, monkeypatch):
-        monkeypatch.setattr("app.srs.queue_stats.resolve_learning_steps", lambda db=None: ([1.0, 10.0], "default"))
-        monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([10.0], "default"))
+    def _defaults(self):
+        import json
+
+        from app.config import settings
+        from app.srs.database import SRSDatabase
+
+        db_path = settings.database_url.removeprefix("sqlite:///")
+        db = SRSDatabase(db_path)
+        db.set_anki_state_cache("learn_steps", json.dumps([1.0, 10.0]))
+        db.set_anki_state_cache("relearn_steps", json.dumps([10.0]))
+        db.close()
 
     # ── Anki cards.left encoding parity ──────────────────────────
     # Anki encodes cards.left as `today_left * 1000 + total_remaining`. The low
@@ -109,45 +117,74 @@ class TestLearningStepSemantics:
         assert new_dir.state == SRSState.LEARNING
         assert new_dir.left == 1  # total_remaining=1 → idx=1 (last step)
 
-    def test_new_again_empty_steps_graduates(self, monkeypatch):
+    def test_new_again_empty_steps_graduates(self):
         """NEW + AGAIN with empty learn_steps → graduates via _graduate_to_review (line 254)."""
-        # Patch the source functions in queue_stats since fsrs imports them locally
-        monkeypatch.setattr("app.srs.queue_stats.resolve_learning_steps", lambda db=None: ([], "default"))
+        import json
+
+        from app.config import settings
+        from app.srs.database import SRSDatabase
+
+        db_path = settings.database_url.removeprefix("sqlite:///")
+        db = SRSDatabase(db_path)
+        db.set_anki_state_cache("learn_steps", json.dumps([]))
+        db.close()
         item = _make_item(state=SRSState.NEW)
         result = schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION)
         new_dir = result.directions[Direction.RECOGNITION]
         assert new_dir.state == SRSState.REVIEW
         assert new_dir.stability > 0  # Hits lines 463-464 (_init_stability + _init_difficulty)
 
-    def test_review_again_empty_relearn_steps_graduates(self, monkeypatch):
+    def test_review_again_empty_relearn_steps_graduates(self):
         """REVIEW + AGAIN with empty relearn_steps → graduates immediately (line 311)."""
-        monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([], "default"))
+        import json
+
+        from app.config import settings
+        from app.srs.database import SRSDatabase
+
+        db_path = settings.database_url.removeprefix("sqlite:///")
+        db = SRSDatabase(db_path)
+        db.set_anki_state_cache("relearn_steps", json.dumps([]))
+        db.close()
         item = _make_item(state=SRSState.REVIEW)
         result = schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION)
         new_dir = result.directions[Direction.RECOGNITION]
         assert new_dir.state == SRSState.REVIEW
 
-    def test_schedule_with_steps_empty_steps_graduates(self, monkeypatch):
+    def test_schedule_with_steps_empty_steps_graduates(self):
         """LEARNING with empty steps and left=0 → graduates via _graduate_to_review (line 362)."""
-        monkeypatch.setattr("app.srs.queue_stats.resolve_learning_steps", lambda db=None: ([], "default"))
+        import json
+
+        from app.config import settings
+        from app.srs.database import SRSDatabase
+
+        db_path = settings.database_url.removeprefix("sqlite:///")
+        db = SRSDatabase(db_path)
+        db.set_anki_state_cache("learn_steps", json.dumps([]))
+        db.close()
         item = _make_item(state=SRSState.LEARNING, left=0)
         result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
         new_dir = result.directions[Direction.RECOGNITION]
         assert new_dir.state == SRSState.REVIEW
 
-    def test_learning_easy_relearning_graduates(self, monkeypatch):
+    def test_learning_easy_relearning_graduates(self):
         """RELEARNING + EASY → graduates (hits line 433→437 fallthrough)."""
-        # Use real steps for RELEARNING to get into _schedule_with_steps, then EASY
-        monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([10.0], "default"))
-        monkeypatch.setattr("app.srs.queue_stats.resolve_learning_steps", lambda db=None: ([1.0, 10.0], "default"))
+        # Autouse fixture seeds [1.0, 10.0] / [10.0] — same as the override was using
         item = _make_item(state=SRSState.RELEARNING, left=1001)  # 1 step remaining
         result = schedule(item, Rating.EASY, direction=Direction.RECOGNITION)
         new_dir = result.directions[Direction.RECOGNITION]
         assert new_dir.state == SRSState.REVIEW
 
-    def test_graduate_from_relearning_uses_next_stability_lapse(self, monkeypatch):
+    def test_graduate_from_relearning_uses_next_stability_lapse(self):
         """RELEARNING + GOOD (last step) → REVIEW, FSRS stability_lapse applied."""
-        monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([1.0], "default"))
+        import json
+
+        from app.config import settings
+        from app.srs.database import SRSDatabase
+
+        db_path = settings.database_url.removeprefix("sqlite:///")
+        db = SRSDatabase(db_path)
+        db.set_anki_state_cache("relearn_steps", json.dumps([1.0]))
+        db.close()
         # Start in RELEARNING with 1 step, rate GOOD to graduate
         item = _make_item(state=SRSState.RELEARNING, left=1001)
         result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
@@ -182,13 +219,17 @@ class TestLearningStepSemantics:
         assert new_dir.left is None
         assert new_dir.stability > 0  # FSRS init ran
 
-    def test_new_good_with_single_step_graduates(self, monkeypatch):
+    def test_new_good_with_single_step_graduates(self):
         """NEW + GOOD with single step deck → graduates immediately."""
-        # Override the autouse fixture: 1-step deck means GOOD = graduate
-        monkeypatch.setattr(
-            "app.srs.queue_stats.resolve_learning_steps",
-            lambda db=None: ([1.0], "default"),
-        )
+        import json
+
+        from app.config import settings
+        from app.srs.database import SRSDatabase
+
+        db_path = settings.database_url.removeprefix("sqlite:///")
+        db = SRSDatabase(db_path)
+        db.set_anki_state_cache("learn_steps", json.dumps([1.0]))
+        db.close()
         item = _make_item(state=SRSState.NEW)
         result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
         assert result.directions[Direction.RECOGNITION].state == SRSState.REVIEW
@@ -214,9 +255,8 @@ class TestLearningStepSemantics:
         assert new_dir.left is not None
         assert new_dir.left > 0
 
-    def test_relearning_hard_with_left_zero_normalizes_to_full_steps(self, monkeypatch):
+    def test_relearning_hard_with_left_zero_normalizes_to_full_steps(self):
         """RELEARNING + HARD with left=0 → normalizes to full steps, no IndexError."""
-        monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([10.0], "default"))
         item = _make_item(state=SRSState.RELEARNING, left=0)
         result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION)
         new_dir = result.directions[Direction.RECOGNITION]
@@ -269,7 +309,7 @@ class TestLearningStepSemantics:
         # 10min = 600s. Anki fuzz upper = min(int(600*0.25), 300) = 150.
         assert 600 <= delay_sec < 600 + 150, f"Hard later-step with fuzz must land in [600, 750); got {delay_sec}"
 
-    def test_new_hard_single_step_uses_again_times_1_5(self, monkeypatch):
+    def test_new_hard_single_step_uses_again_times_1_5(self):
         """NEW + HARD with a single-step learn config → 1.5x the again delay, NOT step[0].
 
         Anki's `hard_delay_secs_for_first_step` (rslib/.../scheduler/states/steps.rs:55-66):
@@ -282,7 +322,15 @@ class TestLearningStepSemantics:
         the "empirical Anki behavior beats source / never pin tests to TT's own
         port outputs" rule.
         """
-        monkeypatch.setattr("app.srs.queue_stats.resolve_learning_steps", lambda db=None: ([10.0], "default"))
+        import json
+
+        from app.config import settings
+        from app.srs.database import SRSDatabase
+
+        db_path = settings.database_url.removeprefix("sqlite:///")
+        db = SRSDatabase(db_path)
+        db.set_anki_state_cache("learn_steps", json.dumps([10.0]))
+        db.close()
         item = _make_item(state=SRSState.NEW)
         now = datetime.now(UTC)
         result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION, now=now)
@@ -293,7 +341,7 @@ class TestLearningStepSemantics:
             f"single-step NEW+Hard must use again*1.5=900s + fuzz, landing in [900, 1125); got {delay_sec}"
         )
 
-    def test_relearning_hard_single_step_uses_again_times_1_5(self, monkeypatch):
+    def test_relearning_hard_single_step_uses_again_times_1_5(self):
         """RELEARNING + HARD with single-step lapse delays → again*1.5, not step[0].
 
         Direct regression for the kupiti divergence (2026-05-18): user graded
@@ -301,7 +349,6 @@ class TestLearningStepSemantics:
         (raw step), Anki scheduled +15 min (Anki's first-step Hard formula). The
         gap put TT and Anki out of sync on the head card by 6 minutes.
         """
-        monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([10.0], "default"))
         # Relearning step 0 of 1: left=1
         item = _make_item(state=SRSState.RELEARNING, left=1)
         # Seed a non-NEW prior_state so the relearning path is exercised cleanly.
@@ -326,9 +373,17 @@ class TestLearningStepFuzz:
     """
 
     @pytest.fixture(autouse=True)
-    def _defaults(self, monkeypatch):
-        monkeypatch.setattr("app.srs.queue_stats.resolve_learning_steps", lambda db=None: ([1.0, 10.0], "default"))
-        monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([10.0], "default"))
+    def _defaults(self):
+        import json
+
+        from app.config import settings
+        from app.srs.database import SRSDatabase
+
+        db_path = settings.database_url.removeprefix("sqlite:///")
+        db = SRSDatabase(db_path)
+        db.set_anki_state_cache("learn_steps", json.dumps([1.0, 10.0]))
+        db.set_anki_state_cache("relearn_steps", json.dumps([10.0]))
+        db.close()
 
     def test_again_60s_step_due_at_falls_in_anki_fuzz_range(self):
         """For a 60s step, Anki schedules due in [60, 75) — TT must too."""
@@ -447,9 +502,17 @@ class TestShortTermAppliesInSteps:
     )
 
     @pytest.fixture(autouse=True)
-    def _defaults(self, monkeypatch):
-        monkeypatch.setattr("app.srs.queue_stats.resolve_learning_steps", lambda db=None: ([1.0, 10.0], "default"))
-        monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([10.0], "default"))
+    def _defaults(self):
+        import json
+
+        from app.config import settings
+        from app.srs.database import SRSDatabase
+
+        db_path = settings.database_url.removeprefix("sqlite:///")
+        db = SRSDatabase(db_path)
+        db.set_anki_state_cache("learn_steps", json.dumps([1.0, 10.0]))
+        db.set_anki_state_cache("relearn_steps", json.dumps([10.0]))
+        db.close()
 
     @pytest.mark.parametrize(
         ("name", "ratings", "expected_stabilities"),
@@ -624,9 +687,8 @@ class TestShortTermAppliesInSteps:
         # HARD with rating=2 < 3, no clamp → stability decreases
         assert new_dir.stability < 1.0
 
-    def test_relearning_again_short_term_same_day(self, monkeypatch):
+    def test_relearning_again_short_term_same_day(self):
         """REVIEW + AGAIN on same day → short-term applied, not lapse formula."""
-        monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([10.0], "default"))
         from app.srs.fsrs import _quantize_stability, _stability_short_term
 
         now = datetime.now(UTC)
@@ -645,9 +707,8 @@ class TestShortTermAppliesInSteps:
         expected = _quantize_stability(_stability_short_term(2.0, Rating.AGAIN, DEFAULT_FSRS5_PARAMS))
         assert new_dir.stability == expected
 
-    def test_relearning_again_lapse_multi_day(self, monkeypatch):
+    def test_relearning_again_lapse_multi_day(self):
         """REVIEW + AGAIN on multi-day gap → lapse formula, not short-term."""
-        monkeypatch.setattr("app.srs.queue_stats.resolve_relearning_steps", lambda db=None: ([10.0], "default"))
         from datetime import timedelta
 
         now = datetime.now(UTC)

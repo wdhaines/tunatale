@@ -19,7 +19,7 @@ from app.srs.anki_mirror.rollover import due_at_rollover_utc
 class DbCollocationsMixin:
     """Collocation CRUD. Mixed into SRSDatabase; relies on SRSDatabaseBase infra."""
 
-    def add_collocation(self, unit: SyntacticUnit, language_code: str = "sl") -> bool:
+    def add_collocation(self, unit: SyntacticUnit, language_code: str | None = None) -> bool:
         """Insert a new collocation; if it already exists, backfill an empty translation.
 
         New rows get both recognition and production direction rows (defaults).
@@ -29,6 +29,10 @@ class DbCollocationsMixin:
 
         Returns True if a new row was inserted, False if it already existed.
         """
+        if language_code is None:
+            from app.config import settings
+
+            language_code = settings.target_language
         if not unit.lemma and unit.word_count == 1 and len(card_surface_variants(language_code, unit.text)) == 1:
             unit.lemma = unit.text.casefold()
         disambig = unit.disambig_key

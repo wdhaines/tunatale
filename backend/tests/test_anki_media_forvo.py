@@ -108,7 +108,7 @@ class TestFetchForvoAudio:
                 httpx.Response(200, content=mp3_bytes),
             ]
         )
-        result = fetch_forvo_audio("voda", http_client=client)
+        result = fetch_forvo_audio("voda", language_code="sl", http_client=client)
         assert result == mp3_bytes
 
     def test_returns_none_when_no_slovenian_section(self):

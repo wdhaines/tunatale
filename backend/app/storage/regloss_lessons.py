@@ -157,15 +157,17 @@ async def _main() -> None:  # pragma: no cover — CLI wiring, run once against 
     import argparse
 
     parser = argparse.ArgumentParser(description="Re-gloss legacy lessons with surface-keyed translations.")
-    parser.add_argument("--language", default="sl", help="language code (default: sl)")
+    parser.add_argument("--language", default=None, help="language code (default: settings.target_language)")
     args = parser.parse_args()
 
+    from app.config import settings
+
+    lang_code = args.language or settings.target_language
     try:
-        language = get_language(args.language)
+        language = get_language(lang_code)
     except KeyError as e:
         raise SystemExit(str(e)) from None
 
-    from app.config import settings
     from app.llm.client import LLMClient
     from app.storage.store import ContentStore
 

@@ -13,16 +13,14 @@ class TestQueueStatsEndpoint:
     """Tests for GET /api/srs/queue-stats."""
 
     async def test_queue_stats_returns_200_with_shape(self):
-        from unittest.mock import patch
-
         from app.srs.database import SRSDatabase
 
         db = SRSDatabase(":memory:")
         app.state.srs_db = db
+        db.set_anki_state_cache("daily_new_cap", "20")
 
-        with patch("app.api.srs.resolve_daily_new_cap", return_value=(20, "default")):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.get("/api/srs/queue-stats")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/queue-stats")
 
         assert response.status_code == 200
         data = response.json()
@@ -34,8 +32,6 @@ class TestQueueStatsEndpoint:
         assert "cap_source" in data
 
     async def test_queue_stats_new_is_clamped_at_cap(self):
-        from unittest.mock import patch
-
         from app.models.syntactic_unit import SyntacticUnit
         from app.srs.database import SRSDatabase
 
@@ -46,30 +42,28 @@ class TestQueueStatsEndpoint:
                 language_code="sl",
             )
         app.state.srs_db = db
+        db.set_anki_state_cache("daily_new_cap", "3")
 
-        with patch("app.api.srs.resolve_daily_new_cap", return_value=(3, "default")):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.get("/api/srs/queue-stats")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/queue-stats")
 
         data = response.json()
         assert data["new"] == 3
         assert data["daily_new_cap"] == 3
-        assert data["cap_source"] == "default"
+        assert data["cap_source"] == "cache"
 
-    async def test_queue_stats_cap_source_from_anki(self):
-        from unittest.mock import patch
-
+    async def test_queue_stats_cap_source_from_cache(self):
         from app.srs.database import SRSDatabase
 
         db = SRSDatabase(":memory:")
         app.state.srs_db = db
+        db.set_anki_state_cache("daily_new_cap", "30")
 
-        with patch("app.api.srs.resolve_daily_new_cap", return_value=(30, "anki")):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.get("/api/srs/queue-stats")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/queue-stats")
 
         data = response.json()
-        assert data["cap_source"] == "anki"
+        assert data["cap_source"] == "cache"
         assert data["daily_new_cap"] == 30
 
     async def test_queue_stats_review_uses_tt_distinct_collocation_count(self):
@@ -81,11 +75,9 @@ class TestQueueStatsEndpoint:
 
         db = SRSDatabase(":memory:")
         app.state.srs_db = db
+        db.set_anki_state_cache("daily_new_cap", "20")
 
-        with (
-            patch("app.api.srs.resolve_daily_new_cap", return_value=(20, "default")),
-            patch.object(db, "count_review_due_collocations", return_value=42),
-        ):
+        with patch.object(db, "count_review_due_collocations", return_value=42):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/api/srs/queue-stats")
 

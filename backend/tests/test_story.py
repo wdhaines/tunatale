@@ -1,7 +1,7 @@
 """Story generation tests."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -326,14 +326,16 @@ class TestStoryGeneration:
         user_prompt = call_kwargs.args[0] if call_kwargs.args else call_kwargs.kwargs.get("prompt", "")
         assert "A2" in user_prompt
 
-    def test_missing_log_emits_warning_on_missing_glosses(self):
+    def test_missing_log_emits_warning_on_missing_glosses(self, caplog):
+        import logging
+
         from app.generation.story import _missing_log
 
-        with patch("app.generation.story.logger.warning") as mock_warn:
-            _missing_log(["boste", "bom"], "sl")
-        (args, _kwargs) = mock_warn.call_args
-        assert "omitted" in args[0]
-        assert "boste" in args[3]  # sample string includes the word
+        caplog.set_level(logging.WARNING, logger="app.generation.story")
+        _missing_log(["boste", "bom"], "sl")
+        assert len(caplog.records) == 1
+        assert "omitted" in caplog.records[0].getMessage()
+        assert "boste" in caplog.records[0].getMessage()
 
     async def test_parse_response_skips_malformed_key_phrases(self, language):
         """_parse_response skips key-phrase entries missing phrase/translation or non-dict."""
@@ -361,9 +363,12 @@ class TestStoryGeneration:
         assert lesson.key_phrases[0].phrase == "hvala"
         assert lesson.key_phrases[1].phrase == "prosim"
 
-    async def test_parse_response_logs_when_word_missing_from_glosses(self, language):
+    async def test_parse_response_logs_when_word_missing_from_glosses(self, language, caplog):
+        import logging
+
         from app.generation.story import StoryGenerator
 
+        caplog.set_level(logging.WARNING, logger="app.generation.story")
         generator = StoryGenerator(llm_client=MagicMock())
         data = {
             "title": "Test",
@@ -380,11 +385,10 @@ class TestStoryGeneration:
                 {"word": "dober", "translation": "good"},
             ],
         }
-        with patch("app.generation.story.logger.warning") as mock_warn:
-            lesson = generator._parse_response(data, language=language)
+        lesson = generator._parse_response(data, language=language)
         glosses = lesson.generation_metadata["token_glosses"]
         assert glosses.get("dober") == "good"
-        mock_warn.assert_called_once()
+        assert len(caplog.records) >= 1
 
     async def test_generate_system_prompt_contains_slovene_style_notes(self, generator, language, mock_llm):
         day = _make_curriculum_day()

@@ -22,7 +22,7 @@ async def synthesize_cloze_audios(
     sentence: str,
     word: str,
     *,
-    voice: str = "sl-SI-PetraNeural",
+    voice: str | None = None,
     media_dir: Path | None = None,
 ) -> None:
     """Idempotently synthesize sentence + word audio for a cloze collocation.
@@ -35,6 +35,11 @@ async def synthesize_cloze_audios(
     """
     media_root = media_dir or _MEDIA_DIR
     media_root.mkdir(parents=True, exist_ok=True)
+    if voice is None:
+        from app.config import settings
+        from app.languages import get_tts_voice
+
+        voice = get_tts_voice(settings.target_language)
 
     # ── Sentence audio ──────────────────────────────────────────────────
     sentence_hash = hashlib.sha256(sentence.encode("utf-8")).hexdigest()[:16]

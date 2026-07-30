@@ -310,39 +310,35 @@ def test_refresh_review_settings_skips_on_no_config_blob(tmp_path):
     assert db.get_anki_state_cache("bury_review") is None
 
 
-def test_resolve_new_spread_db_none(monkeypatch):
-    """Test resolve_new_spread when db is None and settings fail."""
+def test_resolve_new_spread_empty_cache_default():
+    """resolve_new_spread: a real db with an empty anki_state_cache falls back to the documented default."""
+    from app.srs.database import SRSDatabase
     from app.srs.queue_stats import resolve_new_spread
 
-    # Make SRSDatabase raise an exception
-    monkeypatch.setattr(
-        "app.srs.database.SRSDatabase.__init__", lambda self, x: (_ for _ in ()).throw(Exception("test"))
-    )
-    val, source = resolve_new_spread(None)
+    db = SRSDatabase(":memory:")
+    val, source = resolve_new_spread(db)
     assert source == "default"
     assert val == 0
 
 
-def test_resolve_bury_new_db_none(monkeypatch):
-    """Test resolve_bury_new when db is None and settings fail."""
+def test_resolve_bury_new_empty_cache_default():
+    """resolve_bury_new: a real db with an empty anki_state_cache falls back to the documented default."""
+    from app.srs.database import SRSDatabase
     from app.srs.queue_stats import resolve_bury_new
 
-    monkeypatch.setattr(
-        "app.srs.database.SRSDatabase.__init__", lambda self, x: (_ for _ in ()).throw(Exception("test"))
-    )
-    val, source = resolve_bury_new(None)
+    db = SRSDatabase(":memory:")
+    val, source = resolve_bury_new(db)
     assert source == "default"
     assert val is True
 
 
-def test_resolve_bury_review_db_none(monkeypatch):
-    """Test resolve_bury_review when db is None and settings fail."""
+def test_resolve_bury_review_empty_cache_default():
+    """resolve_bury_review: a real db with an empty anki_state_cache falls back to the documented default."""
+    from app.srs.database import SRSDatabase
     from app.srs.queue_stats import resolve_bury_review
 
-    monkeypatch.setattr(
-        "app.srs.database.SRSDatabase.__init__", lambda self, x: (_ for _ in ()).throw(Exception("test"))
-    )
-    val, source = resolve_bury_review(None)
+    db = SRSDatabase(":memory:")
+    val, source = resolve_bury_review(db)
     assert source == "default"
     assert val is True
 
@@ -620,16 +616,25 @@ def test_refresh_daily_new_cap_writes_nothing_when_legacy_new_key_missing(tmp_pa
 
 def test_resolve_daily_new_cap_db_creation_fails(monkeypatch):
     """Lines 332-337: db is None and SRSDatabase creation fails."""
+    from app.srs.database import SRSDatabase
     from app.srs.queue_stats import resolve_daily_new_cap
 
-    monkeypatch.setattr(
-        "app.srs.database.SRSDatabase.__init__", lambda self, x: (_ for _ in ()).throw(Exception("test"))
-    )
+    db = SRSDatabase(":memory:")
     # Make config default 0 so it falls through to hard default
     monkeypatch.setattr("app.srs.queue_stats.settings.anki_new_per_day_default", 0)
-    cap, source = resolve_daily_new_cap(None)
+    cap, source = resolve_daily_new_cap(db)
     assert source == "default"
     assert cap == 20
+
+
+def test_resolve_daily_new_cap_db_none_creation_fails(monkeypatch):
+    """db is None and SRSDatabase(path) errors → fall through to config/default."""
+    monkeypatch.setattr("app.srs.queue_stats.settings.database_url", "/nonexistent/unopenable/db.sqlite3")
+    from app.srs.queue_stats import resolve_daily_new_cap
+
+    cap, source = resolve_daily_new_cap(None)
+    assert source in ("config", "default")
+    assert cap > 0
 
 
 def test_resolve_daily_new_cap_corrupt_cache_value(monkeypatch):
@@ -674,13 +679,12 @@ def test_resolve_daily_new_cap_corrupt_cache_timestamp(monkeypatch):
 
 def test_resolve_daily_review_cap_db_creation_fails(monkeypatch):
     """db is None and SRSDatabase creation fails."""
+    from app.srs.database import SRSDatabase
     from app.srs.queue_stats import resolve_daily_review_cap
 
-    monkeypatch.setattr(
-        "app.srs.database.SRSDatabase.__init__", lambda self, x: (_ for _ in ()).throw(Exception("test"))
-    )
+    db = SRSDatabase(":memory:")
     monkeypatch.setattr("app.srs.queue_stats.settings.anki_reviews_per_day_default", 0)
-    cap, source = resolve_daily_review_cap(None)
+    cap, source = resolve_daily_review_cap(db)
     assert source == "default"
     assert cap == 200
 
@@ -1235,3 +1239,43 @@ class TestNewCardsIgnoreReviewLimit:
 
         with patch.object(SRSDatabase, "__init__", lambda self, x="": (_ for _ in ()).throw(Exception("boom"))):
             assert resolve_new_cards_ignore_review_limit(None) is False
+
+
+def test_resolve_daily_review_cap_db_none_creation_fails(monkeypatch):
+    """resolve_daily_review_cap: db=None, DB creation fails → fall through."""
+    monkeypatch.setattr("app.srs.queue_stats.settings.database_url", "/nonexistent/unopenable/db.sqlite3")
+    from app.srs.queue_stats import resolve_daily_review_cap
+
+    cap, source = resolve_daily_review_cap(None)
+    assert source in ("config", "default")
+    assert cap > 0
+
+
+def test_resolve_new_spread_db_none_creation_fails(monkeypatch):
+    """resolve_new_spread: db=None, DB creation fails → fall through."""
+    monkeypatch.setattr("app.srs.queue_stats.settings.database_url", "/nonexistent/unopenable/db.sqlite3")
+    from app.srs.queue_stats import resolve_new_spread
+
+    val, source = resolve_new_spread(None)
+    assert source == "default"
+    assert val == 0
+
+
+def test_resolve_bury_new_db_none_creation_fails(monkeypatch):
+    """resolve_bury_new: db=None, DB creation fails → fall through."""
+    monkeypatch.setattr("app.srs.queue_stats.settings.database_url", "/nonexistent/unopenable/db.sqlite3")
+    from app.srs.queue_stats import resolve_bury_new
+
+    val, source = resolve_bury_new(None)
+    assert source == "default"
+    assert val is True
+
+
+def test_resolve_bury_review_db_none_creation_fails(monkeypatch):
+    """resolve_bury_review: db=None, DB creation fails → fall through."""
+    monkeypatch.setattr("app.srs.queue_stats.settings.database_url", "/nonexistent/unopenable/db.sqlite3")
+    from app.srs.queue_stats import resolve_bury_review
+
+    val, source = resolve_bury_review(None)
+    assert source == "default"
+    assert val is True

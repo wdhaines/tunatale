@@ -28,8 +28,12 @@ def _make_client() -> httpx.Client:
     return httpx.Client(headers=_DEFAULT_HEADERS)
 
 
-def _extract_mp3_url(html: str, *, language_code: str = "sl") -> str | None:
+def _extract_mp3_url(html: str, *, language_code: str | None = None) -> str | None:
     """Parse Forvo HTML for a Play() call in *language_code*'s section. URL or None."""
+    if language_code is None:
+        from app.config import settings
+
+        language_code = settings.target_language
     container = f"language-container-{language_code}"
     lang_idx = max(
         html.find(f"id='{container}'"),
@@ -50,8 +54,14 @@ def _extract_mp3_url(html: str, *, language_code: str = "sl") -> str | None:
     return f"{_AUDIO_BASE}/{path}"
 
 
-def fetch_forvo_audio(word: str, *, language_code: str = "sl", http_client: httpx.Client | None = None) -> bytes | None:
+def fetch_forvo_audio(
+    word: str, *, language_code: str | None = None, http_client: httpx.Client | None = None
+) -> bytes | None:
     """Download the *language_code* pronunciation from Forvo. MP3 bytes or None."""
+    if language_code is None:
+        from app.config import settings
+
+        language_code = settings.target_language
     owned = http_client is None
     client = http_client or _make_client()
     try:

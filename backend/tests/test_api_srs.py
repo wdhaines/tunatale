@@ -1966,7 +1966,7 @@ class TestCreateItemWithSourceContext:
         assert data["text"] == "kako si"
         assert data["translation"] == "how are you"
 
-    async def test_create_item_without_translation_triggers_llm(self, api_app_state, monkeypatch):
+    async def test_create_item_without_translation_triggers_llm(self, api_app_state):
         """POST with empty translation triggers LLM auto-translate."""
         from unittest.mock import AsyncMock
 
@@ -1976,11 +1976,8 @@ class TestCreateItemWithSourceContext:
         mock_client = AsyncMock(spec=LLMClient)
         app.state.llm = mock_client
 
-        # Mock translate_term to return a translation
-        async def mock_translate(*args, **kwargs):
-            return "how are you"
-
-        monkeypatch.setattr("app.api.srs.translate_term", mock_translate)
+        # Wire complete() return value so the real translate_term() returns our expected gloss
+        mock_client.complete.return_value = "how are you"
 
         payload = {
             "text": "kako si",
