@@ -1,0 +1,7 @@
+# Grandfathered date.today() tier-1 composites in app/ code.
+# Shrink-only — never add lines. Each entry is a LIVE BUG.
+# Brief: docs/briefs/bp-ledger-stage5-date-today.md
+app/plugins/anki_sync/sqlite_reader.py	due_at_rollover_utc(date.today())	1  # LIVE BUG: do not fix — inside Anki safety envelope, orchestrator-owned
+app/srs/db_collocations.py	due_at_rollover_utc(date.today())	1  # LIVE BUG: do not fix — set_due_date midnight-4am bug site (orchestrator-owned)
+app/srs/db_directions.py	due_at_rollover_utc(date.today())	3  # LIVE BUG: do not fix — 3 call sites of set_due_date midnight-4am bug
+app/srs/db_revlog.py	due_at_rollover_utc(date.today())	2  # LIVE BUG: do not fix — set_due_date midnight-4am bug site (orchestrator-owned)

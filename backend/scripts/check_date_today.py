@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""Detect `date.today()` used where the ANKI day is meant.
+
+Tier 1: AST-detect two unambiguous composites:
+  * ``due_at_rollover_utc(date.today())``
+  * ``datetime.combine(date.today(), time(4, …))``
+
+Tier 2 (bare ``date.today()`` in the Anki-day domain) was scoped and
+**NOT shipped** — 18 hits in ``app/`` plus ~302 in tests is too broad for a
+ledger that would never drain (per the brief's thesis that a checker with a
+huge ledger is theatre).
+
+Model on ``check_mock_boundaries.py``: same exit-code style, same
+``--write-grandfather``, same shrink-only ratchet WITH stale-entry enforcement.
+
+Brief: ``docs/briefs/bp-ledger-stage5-date-today.md``.
+"""
+
+from __future__ import annotations
+
+import ast
+import sys
+from collections import Counter
+from pathlib import Path
+
+GRANDFATHER_PATH = Path("tests/date_today_grandfather.txt")
+
+# Stable construct identifiers (imported by drills, so values must not change).
+SHAPE_ROLLOVER = "due_at_rollover_utc(date.today())"
+SHAPE_COMBINE = "datetime.combine(date.today(), time(4, ...))"
+
+APP_DIR = Path("app")
+
+
+# ── AST helpers ───────────────────────────────────────────────────────────────
+
+
+def _call_fn_name(node: ast.Call) -> str | None:
+    """Return the function name, handling both ``Name`` and ``Attribute``."""
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def _is_date_today(node: ast.AST) -> bool:
+    """True if *node* is ``date.today()`` — a zero-arg call via attribute."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "date"
+        and node.func.attr == "today"
+        and not node.args
+        and not node.keywords
+    )
+
+
+def _is_time_4(node: ast.AST) -> bool:
+    """True if *node* is ``time(4, …)`` — first positional arg is ``4``."""
+    if not isinstance(node, ast.Call):
+        return False
+    name = _call_fn_name(node)
+    if name != "time":
+        return False
+    return len(node.args) >= 1 and isinstance(node.args[0], ast.Constant) and node.args[0].value == 4
+
+
+def _match_shape(node: ast.Call) -> str | None:
+    """Return the shape constant if *node* matches a tier-1 pattern."""
+    name = _call_fn_name(node)
+
+    if name == "due_at_rollover_utc" and len(node.args) == 1 and _is_date_today(node.args[0]):
+        return SHAPE_ROLLOVER
+
+    if name == "combine" and len(node.args) >= 2 and _is_date_today(node.args[0]) and _is_time_4(node.args[1]):
+        return SHAPE_COMBINE
+
+    return None
+
+
+# ── Scanning ──────────────────────────────────────────────────────────────────
+
+
+def scan_source(source: str) -> list[tuple[str, int]]:
+    """Return ``[(construct, lineno), …]`` for every tier-1 shape in *source*.
+
+    Docstrings and comments are inherently invisible to AST-based scanning, so no
+    filtering is needed or wanted — see the comment below.
+    """
+    # NO docstring/comment filtering is needed, and adding it is actively harmful.
+    # A docstring is a single string Constant: its text contains ZERO Call nodes, so
+    # `ast.walk` can never yield a hit from inside one. Comments are absent from the
+    # AST entirely. Being AST-based IS the docstring/comment skip.
+    #
+    # The original implementation carried a `_get_docstring_ranges()` line-range
+    # filter. It was unreachable for its stated purpose AND produced a FALSE
+    # NEGATIVE: a genuine violation sharing a line with a docstring fell inside the
+    # docstring's range and was silently dropped —
+    #     def f():
+    #         \"\"\"d\"\"\"; return due_at_rollover_utc(date.today())
+    # scanned as clean. Removed 2026-07-29; drill 4c pins the same-line case.
+    tree = ast.parse(source)
+    hits: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        shape = _match_shape(node)
+        if shape is None:
+            continue
+        hits.append((shape, node.lineno))
+
+    return hits
+
+
+def scan_file(filepath: Path) -> list[tuple[str, int]]:
+    """Read and scan a single ``.py`` file. Returns empty on parse error."""
+    source = filepath.read_text(encoding="utf-8")
+    try:
+        return scan_source(source)
+    except SyntaxError:
+        print(f"  [WARN] Skipping {filepath}: parse error", file=sys.stderr)
+        return []
+
+
+def _relative_path(filepath: Path) -> str:
+    """Return a path relative to the CWD (``backend/`` when run normally)."""
+    try:
+        return str(filepath.relative_to(Path.cwd()))
+    except ValueError:
+        return str(filepath)
+
+
+# ── Grandfather ledger ────────────────────────────────────────────────────────
+
+
+def load_grandfather(path: Path = GRANDFATHER_PATH) -> dict[tuple[str, str], int]:
+    """Parse ``file<TAB>construct<TAB>count  # reason`` into ``{(file, construct): count}``.
+
+    Splits on TAB **first**, then strips a trailing ``#`` comment from the LAST
+    field only — a construct can contain ``#``.  Skips blank/comment lines.
+    """
+    result: dict[tuple[str, str], int] = {}
+    if not path.exists():
+        return result
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.split("\t")
+        if len(parts) == 3:
+            fname, construct, count_str = parts
+            # Strip trailing comment from the count field only
+            comment_pos = count_str.find(" #")
+            if comment_pos != -1:
+                count_str = count_str[:comment_pos].rstrip()
+            try:
+                result[(fname, construct)] = int(count_str)
+            except ValueError:
+                print(f"  [WARN] Bad grandfather line: {line}", file=sys.stderr)
+    return result
+
+
+def format_grandfather_line(filepath: str, construct: str, count: int) -> str:
+    """Tab-separated grandfather entry."""
+    return f"{filepath}\t{construct}\t{count}"
+
+
+def collect_all_hits(app_dir: Path = APP_DIR) -> dict[str, Counter]:
+    """Scan ``app/`` for tier-1 hits. Returns ``{relative_path: Counter{construct: count}}``."""
+    by_file: dict[str, Counter] = {}
+    for pyfile in sorted(app_dir.rglob("*.py")):
+        if pyfile.name == "__init__.py":
+            continue
+        if "__pycache__" in pyfile.parts:
+            continue
+        hits = scan_file(pyfile)
+        if not hits:
+            continue
+        rel = _relative_path(pyfile)
+        counter: Counter = Counter()
+        for construct, _lineno in hits:
+            counter[construct] += 1
+        if counter:
+            by_file[rel] = counter
+    return by_file
+
+
+# ── Ratchet ───────────────────────────────────────────────────────────────────
+
+
+def evaluate(
+    by_file: dict[str, Counter],
+    grandfather: dict[tuple[str, str], int],
+) -> tuple[int, list[str]]:
+    """Shrink-only ratchet.  Pure — no I/O.  Returns ``(exit_code, messages)``.
+
+    Three failure modes (all pinned by locked drills):
+      * count >  ledger  -> FAIL "new violation of grandfathered seam"
+      * not in ledger    -> FAIL (new violation)
+      * in ledger w/ 0  -> FAIL (stale entry — fix removed it)
+    """
+    exit_code = 0
+    messages: list[str] = []
+
+    for rel_path, counter in sorted(by_file.items()):
+        for construct, count in sorted(counter.items()):
+            gf_key = (rel_path, construct)
+            if gf_key in grandfather:
+                gf_count = grandfather[gf_key]
+                if count == gf_count:
+                    continue
+                if count > gf_count:
+                    messages.append(
+                        f"FAIL: {rel_path}:{count}x `{construct}` exceeds "
+                        f"grandfathered count {gf_count} "
+                        "(new violation of grandfathered seam)",
+                    )
+                    exit_code = 1
+                else:
+                    messages.append(
+                        f"FAIL: {rel_path}:{count}x `{construct}` is below "
+                        f"grandfathered count {gf_count} "
+                        "(edit the line to match)",
+                    )
+                    exit_code = 1
+            else:
+                messages.append(
+                    f"FAIL: {rel_path}:{count}x `{construct}` not in grandfather ledger",
+                )
+                exit_code = 1
+
+    # Stale entries: in grandfather but absent or reduced in actual
+    for (rel_path, construct), gf_count in sorted(grandfather.items()):
+        actual_count = by_file.get(rel_path, {}).get(construct, 0)
+        if actual_count == 0:
+            messages.append(
+                f"FAIL: {rel_path}:0x `{construct}` is below "
+                f"grandfathered count {gf_count} "
+                "(stale ledger entry — fix has removed it)",
+            )
+            exit_code = 1
+
+    return exit_code, messages
+
+
+def do_check(app_dir: Path = APP_DIR) -> int:
+    """Load ledger, scan, evaluate, print.  Returns exit code."""
+    grandfather = load_grandfather()
+    by_file = collect_all_hits(app_dir)
+    exit_code, messages = evaluate(by_file, grandfather)
+    for msg in messages:
+        print(msg)
+    return exit_code
+
+
+def do_write_grandfather(app_dir: Path = APP_DIR) -> None:
+    """Scan ``app/`` and print grandfather-format lines to stdout."""
+    by_file = collect_all_hits(app_dir)
+    for rel_path in sorted(by_file):
+        counter = by_file[rel_path]
+        for construct in sorted(counter):
+            print(format_grandfather_line(rel_path, construct, counter[construct]))
+
+
+# ── CLI entry point ───────────────────────────────────────────────────────────
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Check for date.today() where the ANKI day is meant.",
+    )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--write-grandfather",
+        action="store_true",
+        help="Scan all files, output grandfather-format lines to stdout.",
+    )
+    group.add_argument(
+        "--check",
+        action="store_true",
+        default=True,
+        help="Default mode: check against grandfather ledger.",
+    )
+
+    args, _unknown = parser.parse_known_intermixed_args()
+
+    if args.write_grandfather:
+        do_write_grandfather()
+        return 0
+
+    return do_check()
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())

@@ -67,6 +67,9 @@ full_log="$ROOT/.git/tt-test-last.log"
   echo "=== Ledger touch-rule check ==="
   uv run python scripts/check_ledger_touch.py
 
+  echo "=== Date today check ==="
+  uv run python scripts/check_date_today.py
+
   echo "=== Plugin import check ==="
   uv run python scripts/check_plugin_imports.py
 

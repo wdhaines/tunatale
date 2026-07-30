@@ -13,6 +13,7 @@
 !check_language_literals.py
 !check_plugin_imports.py
 !check_ledger_touch.py
+!check_date_today.py
 !check_openapi_snapshot.py
 !dump_openapi.py
 !mutation_sweep_slicing.py
