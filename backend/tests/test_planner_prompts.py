@@ -1,7 +1,14 @@
-"""Tests for build_planner_turn_prompt and PLANNER_SYSTEM_PROMPT."""
+"""Tests for build_planner_turn_prompt and the planner system prompt."""
 
-from app.generation.prompts import PLANNER_SYSTEM_PROMPT, build_planner_turn_prompt
+from app.generation.prompts import build_planner_system_prompt, build_planner_turn_prompt
+from app.languages import LanguageConfig, get_planner_example
 from app.models.curriculum import CurriculumDay
+
+# The system prompt is now language-dependent (its worked example is resolved to a
+# NON-target language). These assertions are about the language-independent body,
+# so they render it for one concrete target.
+PLANNER_SYSTEM_PROMPT = build_planner_system_prompt("sl")
+_SL_EXAMPLE = get_planner_example("no")  # the example shown to a Slovene target
 
 _D16_DAYS = [
     CurriculumDay(
@@ -597,3 +604,101 @@ class TestBuildPlannerTurnPrompt:
         )
         assert "PLANNER: Sounds good!" in result
         assert "… [elided]" not in result
+
+
+# ── Anti-contamination: the worked example must never be the target language ──
+
+
+class TestPlannerExampleLanguage:
+    """The worked example is deliberately in a NON-target language.
+
+    Why this exists: the example teaches the *shape* of correct output. If it is
+    rendered in the target language, the model copies the example's language into
+    its reply — the planner-language-contamination class. The property used to
+    live implicitly in a hardcoded Norwegian literal, which was (a) invisible to
+    every test and (b) simply WRONG when the target IS Norwegian. A drain that
+    templated it to the target language passed the whole gate while destroying
+    the property; these tests are what makes that irreproducible.
+    """
+
+    def test_every_wired_language_gets_a_non_target_example(self):
+        from app.languages import get_planner_example, known_language_codes
+
+        checked = 0
+        for code in sorted(known_language_codes()):
+            example = get_planner_example(code)
+            if example is None:
+                continue
+            assert example.language_code != code, (
+                f"target {code!r} would be shown an example in its OWN language — this is the contamination regression"
+            )
+            checked += 1
+        assert checked >= 2, f"expected at least 2 languages with examples, got {checked}"
+
+    def test_example_collocations_are_real_phrases_not_placeholders(self):
+        from app.languages import get_planner_example, known_language_codes
+
+        for code in sorted(known_language_codes()):
+            example = get_planner_example(code)
+            if example is None:
+                continue
+            assert example.collocations, f"{code}: example has no collocations"
+            for phrase in example.collocations:
+                assert phrase.strip(), f"{code}: blank collocation"
+                assert not phrase.lower().startswith("phrase "), (
+                    f"{code}: placeholder collocation {phrase!r} — the worked example's "
+                    "job is to demonstrate real output shape"
+                )
+                assert "{" not in phrase and "}" not in phrase, f"{code}: unresolved template placeholder in {phrase!r}"
+
+    def test_rendered_prompt_names_the_example_language_not_the_target(self):
+        from app.generation.prompts import build_planner_system_prompt
+        from app.languages import get_language, get_planner_example, known_language_codes
+
+        for code in sorted(known_language_codes()):
+            example = get_planner_example(code)
+            if example is None:
+                continue
+            prompt = build_planner_system_prompt(code)
+            example_name = get_language(example.language_code).name
+            assert f"Example ({example_name} curriculum):" in prompt
+            target_name = get_language(code).name
+            assert f"Example ({target_name} curriculum):" not in prompt, (
+                f"{code}: example header names the TARGET language"
+            )
+
+    def test_slovene_still_gets_the_norwegian_example(self):
+        """Pins the concrete pairing both ways, so a resolver that returns a
+        constant (or the same language for everyone) cannot pass the generic
+        tests above by accident."""
+        from app.languages import get_planner_example
+
+        assert get_planner_example("sl").language_code == "no"
+        assert get_planner_example("no").language_code == "sl"
+
+    def test_unknown_language_code_raises(self):
+        """A typo'd code must fail loudly, not silently yield an example-free prompt."""
+        import pytest
+
+        from app.languages import get_planner_example
+
+        with pytest.raises(KeyError):
+            get_planner_example("definitely-not-a-language")
+
+    def test_single_language_install_gets_no_example(self):
+        """With only the target wired there IS no non-target example — return None.
+
+        A same-language example would be worse than none (it is the contamination
+        case), so the caller omits the block entirely.
+        """
+        from app.languages import _select_planner_example, get_language
+
+        only_sl = {"sl": LanguageConfig(language=get_language("sl"), planner_example=_SL_EXAMPLE)}
+        assert _select_planner_example("sl", only_sl) is None
+
+    def test_prompt_falls_back_to_the_example_free_base(self):
+        from app.generation.prompts import PLANNER_SYSTEM_PROMPT_BASE, _render_planner_system_prompt
+
+        rendered = _render_planner_system_prompt(None)
+        assert rendered == PLANNER_SYSTEM_PROMPT_BASE
+        assert "Example (" not in rendered

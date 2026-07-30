@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from app.cards.vocab_notetype import NORWEGIAN_VOCAB
-from app.languages import AlignmentConfig, LanguageConfig, register
+from app.languages import AlignmentConfig, LanguageConfig, PlannerExample, register
 from app.models.language import NARRATOR_VOICE, Language
 from app.plugins.languages.no.alignment import MODEL_ID, NORWEGIAN_VOWELS, create_aligner
 from app.plugins.languages.no.norwegian_breakdown import (
@@ -41,6 +41,15 @@ register(
         slow_word_fn=slow_norwegian_word,
         variant_separator=",",
         syllabifier_fn=syllabify_norwegian_word,
+        planner_example=PlannerExample(
+            language_code="no",
+            day=5,
+            title="At the bakery",
+            focus="Ordering pastries and paying",
+            collocations=("et br\u00f8d, takk", "hvor mye koster det?"),
+            learning_objective="Order food and handle payment in simple exchanges.",
+            story_guidance="A quick visit to a Bergen bakery; friendly small talk with the baker.",
+        ),
         style_notes=_style_notes,
         function_words_path=Path(__file__).parent / "data" / "function_words.json",
         breakdown_spans_fn=build_norwegian_breakdown_spans,

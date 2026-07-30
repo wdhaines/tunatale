@@ -6,7 +6,15 @@ All prompts request JSON responses for deterministic parsing.
 
 from __future__ import annotations
 
-from app.languages import get_morphology_profile, get_style_notes
+import json
+
+from app.languages import (
+    PlannerExample,
+    get_language,
+    get_morphology_profile,
+    get_planner_example,
+    get_style_notes,
+)
 from app.models.language import Language
 from app.models.strategy import ContentStrategy
 
@@ -263,7 +271,7 @@ def get_strategy_prompt(strategy: ContentStrategy) -> str:
 
 # ── Planner prompts ───────────────────────────────────────────────────────
 
-PLANNER_SYSTEM_PROMPT = """\
+PLANNER_SYSTEM_PROMPT_BASE = """\
 You are a language curriculum planner helping a learner build a study plan.
 
 Pedagogical approach:
@@ -287,12 +295,53 @@ Reply conversationally. When proposing days, include exactly one fenced ```json 
 "collocations": ["<target-language phrase, no gloss>"], \
 "learning_objective": "<English>", "story_guidance": "<English>"}]}
 
-Example (Norwegian curriculum):
-{"days": [{"day": 5, "title": "At the bakery", "focus": "Ordering pastries and paying", \
-"collocations": ["et br\u00f8d, takk", "hvor mye koster det?"], \
-"learning_objective": "Order food and handle payment in simple exchanges.", \
-"story_guidance": "A quick visit to a Bergen bakery; friendly small talk with the baker."}]}
 When only discussing, include no JSON. 3\u20138 collocations per day."""
+
+
+_EXAMPLE_ANCHOR = "When only discussing, include no JSON."
+
+
+def build_planner_system_prompt(code: str) -> str:
+    """Planner system prompt for a curriculum whose target language is *code*.
+
+    Splices in one worked example, resolved through the registry so it is always
+    in a language OTHER than *code* (``get_planner_example``). The example is
+    what teaches the model the output *shape*; showing it in the target language
+    causes the model to copy that language into its reply, which is the
+    planner-language-contamination class this indirection exists to prevent.
+
+    Falls back to the example-free base when no other language supplies one — a
+    same-language example would be worse than none.
+    """
+    return _render_planner_system_prompt(get_planner_example(code))
+
+
+def _render_planner_system_prompt(example: PlannerExample | None) -> str:
+    """Splice *example* into the base prompt; return the base when it is ``None``.
+
+    Separate from the resolver so the no-example fallback (a single-language
+    install) is testable without standing up a registry.
+    """
+    if example is None:
+        return PLANNER_SYSTEM_PROMPT_BASE
+    payload = {
+        "days": [
+            {
+                "day": example.day,
+                "title": example.title,
+                "focus": example.focus,
+                "collocations": list(example.collocations),
+                "learning_objective": example.learning_objective,
+                "story_guidance": example.story_guidance,
+            }
+        ]
+    }
+    # ensure_ascii=False keeps non-ASCII letters as characters, matching the
+    # hand-written block this replaced; escaping them would change every hash.
+    rendered = json.dumps(payload, ensure_ascii=False)
+    name = get_language(example.language_code).name
+    block = f"Example ({name} curriculum):\n{rendered}\n"
+    return PLANNER_SYSTEM_PROMPT_BASE.replace(_EXAMPLE_ANCHOR, block + _EXAMPLE_ANCHOR)
 
 
 def build_planner_turn_prompt(

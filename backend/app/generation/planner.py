@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.generation.json_parsing import split_reply_and_json
-from app.generation.prompts import PLANNER_SYSTEM_PROMPT, build_planner_turn_prompt
+from app.generation.prompts import build_planner_system_prompt, build_planner_turn_prompt
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.language import Language
 from app.storage.plan_io import get_planner_state, validate_plan_days
@@ -51,7 +51,9 @@ def build_turn_prompt(
     """Build the system and user prompts for one planner turn.
 
     Pure function of its inputs — no LLM, no DB.  Returns
-    ``(PLANNER_SYSTEM_PROMPT, user_prompt)``.
+    ``(system_prompt, user_prompt)``. The system prompt is language-dependent:
+    its worked example is resolved to a NON-target language (see
+    ``build_planner_system_prompt``).
     """
     start_day = max(d.day for d in curriculum.days) + 1 if curriculum.days else 1
 
@@ -72,7 +74,7 @@ def build_turn_prompt(
         start_day=start_day,
     )
 
-    return (PLANNER_SYSTEM_PROMPT, user_prompt)
+    return (build_planner_system_prompt(language.code), user_prompt)
 
 
 def parse_turn(

@@ -51,6 +51,31 @@ class AlignmentConfig:
 
 
 @dataclass
+class PlannerExample:
+    """One worked planner day, with its ``collocations`` in *language_code*.
+
+    The planner system prompt shows exactly one of these. It is deliberately in a
+    language **different from the curriculum's target**: the example teaches the
+    *shape* of correct output, and an example in the target language gets copied
+    into the model's reply (the planner-language-contamination class). The
+    non-target property used to be implicit in a hardcoded Norwegian literal,
+    which no test asserted and which was simply wrong when the target was
+    Norwegian.
+
+    Every field except ``collocations`` is English, matching the JSON contract the
+    prompt states just above the example.
+    """
+
+    language_code: str
+    day: int
+    title: str
+    focus: str
+    collocations: tuple[str, ...]
+    learning_objective: str
+    story_guidance: str
+
+
+@dataclass
 class LanguageConfig:
     """Per-language wiring.
 
@@ -112,6 +137,10 @@ class LanguageConfig:
     # Forced-alignment wiring for that slicing. ``None`` when the language has no
     # aligner, which is also a complete off-switch for the feature.
     alignment: AlignmentConfig | None = None
+    # A worked planner example day written IN THIS language, shown to the planner
+    # when some OTHER language is the target. See ``get_planner_example``.
+    # ``None`` for languages that supply no example (``en``).
+    planner_example: PlannerExample | None = None
 
 
 _CONFIGS: dict[str, LanguageConfig] = {}
@@ -167,6 +196,44 @@ def get_language(code: str) -> Language:
     if code not in _CONFIGS:
         raise KeyError(f"Unknown language code: {code!r}. Valid: {sorted(_CONFIGS)}")
     return _CONFIGS[code].language
+
+
+def get_planner_example(code: str) -> PlannerExample | None:
+    """Return a worked planner example in a language **other than** *code*.
+
+    Picks the lowest-sorting registered language that both differs from *code*
+    and supplies an example, so the choice is deterministic and — structurally —
+    can never be *code* itself. That is the whole point: the caller cannot
+    accidentally show a target-language example, because the target is excluded
+    before selection rather than checked afterwards.
+
+    Returns ``None`` when no other language supplies one (a single-language
+    install). Callers omit the example block entirely in that case; a
+    same-language example would be worse than none.
+
+    Raises ``KeyError`` when *code* is not a known language.
+    """
+    discover()
+    if code not in _CONFIGS:
+        raise KeyError(f"Unknown language code: {code!r}. Valid: {sorted(_CONFIGS)}")
+    return _select_planner_example(code, _CONFIGS)
+
+
+def _select_planner_example(code: str, configs: dict[str, LanguageConfig]) -> PlannerExample | None:
+    """Pure selector behind :func:`get_planner_example`.
+
+    Split out so the single-language case (no other language supplies an example)
+    is testable by passing a one-entry mapping, rather than by monkeypatching the
+    module-level registry — a test that mutates ``_CONFIGS`` would leak into every
+    later test in the session.
+    """
+    for other in sorted(configs):
+        if other == code:
+            continue
+        example = configs[other].planner_example
+        if example is not None:
+            return example
+    return None
 
 
 def known_language_codes() -> frozenset[str]:

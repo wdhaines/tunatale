@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from app.cards.vocab_notetype import SLOVENE_VOCAB
-from app.languages import LanguageConfig, register
+from app.languages import LanguageConfig, PlannerExample, register
 from app.models.language import NARRATOR_VOICE, Language
 from app.plugins.languages.sl.preprocessor import SlovenePreprocessor
 from app.plugins.languages.sl.syllabify import syllabify_slovene_word
@@ -34,6 +34,15 @@ register(
         lemmatizer_type="classla",
         morphology_profile="slavic",
         syllabifier_fn=syllabify_slovene_word,
+        planner_example=PlannerExample(
+            language_code="sl",
+            day=5,
+            title="At the bakery",
+            focus="Ordering pastries and paying",
+            collocations=("en kruh, prosim", "koliko stane?"),
+            learning_objective="Order food and handle payment in simple exchanges.",
+            story_guidance="A quick visit to a Ljubljana bakery; friendly small talk with the baker.",
+        ),
         style_notes=_style_notes,
         function_words_path=Path(__file__).parent / "data" / "function_words.json",
     ),
