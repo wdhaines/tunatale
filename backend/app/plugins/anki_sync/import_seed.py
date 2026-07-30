@@ -17,7 +17,7 @@ from typing import Any
 
 from app.common.guid import compute_guid
 from app.config import settings
-from app.languages import card_surface_variants, get_deck_name
+from app.languages import card_surface_variants, get_deck_name, get_l2_css_class
 from app.media.importer import compute_sha256, copy_media_file
 from app.models.srs_item import Direction, DirectionState
 from app.models.syntactic_unit import BackField, SyntacticUnit
@@ -249,6 +249,10 @@ def import_seed(
         media_dir = settings.media_dir
     if fallback_log_path is None:
         fallback_log_path = settings.anki_fallback_log
+    # The L2 markup class for the deck being imported — registry-resolved, never a
+    # literal. Reading a Norwegian deck with the Slovene class skips the markup
+    # pass and the Slovene-char scorer can hand back the English gloss as the L2.
+    l2_css_class = get_l2_css_class(language_code)
 
     results: dict[str, Any] = {
         "new_parents": 0,
@@ -284,11 +288,11 @@ def import_seed(
             # Slovene decks) falls back to the positional/HTML heuristics.
             article = ""
             extras: tuple[BackField, ...] = ()
-            profile_result = extract_via_profile(note)
+            profile_result = extract_via_profile(note, l2_css_class)
             if profile_result is not None:
                 l2_text, translation, disambig, article, extras = profile_result
             else:
-                l2_text = extract_l2_from_fields(note.fields)
+                l2_text = extract_l2_from_fields(note.fields, l2_css_class)
                 disambig = extract_disambig_from_fields(note.fields)
                 # Layer 31: if a field uses the `<b>L2</b><br><i>EN</i>` pattern
                 # (Pronunciation/Basic notetype), the English gloss lives inside
@@ -301,7 +305,7 @@ def import_seed(
                     translation = gloss
                 else:
                     l2_idx = next(
-                        (i for i, f in enumerate(note.fields) if extract_l2(f) == l2_text and l2_text),
+                        (i for i, f in enumerate(note.fields) if extract_l2(f, l2_css_class) == l2_text and l2_text),
                         0,
                     )
                     other_idx = 1 - l2_idx if len(note.fields) > 1 else 0

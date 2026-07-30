@@ -359,7 +359,12 @@ def main(
             # the language threading lives there, not in a loop here.
             import asyncio
 
-            reader = OfflineReader(ctx.conn, deck_name)
+            # No getattr fallback: a settings object without target_language used to
+            # sync silently as Slovene, which for a Norwegian deck means the wrong
+            # vocab notetype AND the wrong L2 markup class. Settings always defines
+            # it; the fallback existed only for test doubles that omitted it.
+            language_code = _s.target_language
+            reader = OfflineReader(ctx.conn, deck_name, language_code=language_code)
             writer = OfflineWriter(ctx.conn, media_dir=_media_dir)
             sync = AnkiSync(
                 db=db,
@@ -368,7 +373,7 @@ def main(
                 _anki_col_ver=col_ver,
                 _anki_col_crt=col_crt,
             )
-            model_name = _resolve_model_name(_s, getattr(_s, "target_language", "sl"), ctx.conn, deck_name)
+            model_name = _resolve_model_name(_s, language_code, ctx.conn, deck_name)
             create, push, pull, media = asyncio.run(
                 run_full_sync(
                     sync,

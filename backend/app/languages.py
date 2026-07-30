@@ -331,6 +331,19 @@ def get_vocab_notetype(code: str) -> VocabNotetype | None:
     return config.vocab_notetype if config else None
 
 
+def get_l2_css_class(code: str) -> str:
+    """Return the CSS class that wraps the L2 word on *code*'s cards.
+
+    This is the marker the Anki field parsers key on to find the target-language
+    text (``app/plugins/anki_sync/sqlite_reader.py``). Empty string when the
+    language has no TT vocab notetype (``en``, an unknown code) — the parsers
+    then fall through to their positional/HTML heuristics, which is the correct
+    behaviour when there is no markup to look for.
+    """
+    notetype = get_vocab_notetype(code)
+    return notetype.l2_css_class if notetype is not None else ""
+
+
 def get_breakdown_spans(code: str) -> Callable[[str], list[BreakdownChunk]] | None:
     """Return *code*'s provenance-carrying breakdown function, or ``None``.
 

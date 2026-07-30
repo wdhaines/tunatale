@@ -455,9 +455,20 @@ def extract_translation(field_html: str) -> str:
     return re.sub(r"<[^>]+>", "", field_html).strip()
 
 
-def extract_l2(field_html: str) -> str:
-    """Extract L2 text from a field, preferring elements with class="slovene"."""
-    m = re.search(r'class="slovene"[^>]*>\s*([^<]+?)\s*<', field_html)
+def _l2_markup_re(l2_css_class: str) -> re.Pattern[str]:
+    """Regex matching the element that wraps the L2 word for *l2_css_class*.
+
+    The class is the ACTIVE language's ``VocabNotetype.l2_css_class`` (``slovene``,
+    ``norwegian``, …) — never a literal. A language-agnostic ``class="[^"]*"``
+    would be wrong: it would also match the ``english``/``gram`` wrappers the
+    same card templates emit, and hand back the gloss.
+    """
+    return re.compile(rf'class="{re.escape(l2_css_class)}"[^>]*>\s*([^<]+?)\s*<')
+
+
+def extract_l2(field_html: str, l2_css_class: str) -> str:
+    """Extract L2 text from a field, preferring elements with the L2 markup class."""
+    m = _l2_markup_re(l2_css_class).search(field_html)
     if m:
         return m.group(1).strip()
     clean = re.sub(r"<[^>]+>", "", field_html)
@@ -518,20 +529,26 @@ _QA_INTERROGATIVES = frozenset(
 )
 
 
-def extract_l2_from_fields(fields: list[str]) -> str:
-    """Return the L2 text from fields, preferring class="slovene" markup.
+def extract_l2_from_fields(fields: list[str], l2_css_class: str) -> str:
+    """Return the L2 text from fields, preferring the L2 markup class.
+
+    ``l2_css_class`` is the active language's ``VocabNotetype.l2_css_class``,
+    resolved through the registry by the caller.
 
     Anki notes with inverse card layouts put the image in ``fields[0]`` and the
     target-language word in ``fields[1]``; callers should pass the whole list so
     we find the L2 text regardless of which slot it lives in.
 
-    When no field has ``class="slovene"``, falls back to the field whose stripped
+    When no field carries the markup, falls back to the field whose stripped
     text contains Slovene characters (č, š, ž, etc.) or fewer English stopwords,
-    to avoid returning long English questions from phonics cards.
+    to avoid returning long English questions from phonics cards. That fallback
+    is Slovene-shaped, which is exactly why the markup pass must key on the
+    right class — see TestL2MarkupIsPerLanguage.
     """
-    # First pass: find field with class="slovene"
+    # First pass: find the field carrying the language's L2 markup class.
+    markup_re = _l2_markup_re(l2_css_class)
     for field in fields:
-        m = re.search(r'class="slovene"[^>]*>\s*([^<]+?)\s*<', field)
+        m = markup_re.search(field)
         if m:
             return m.group(1).strip()
 
@@ -555,7 +572,7 @@ def extract_l2_from_fields(fields: list[str]) -> str:
             if first_word in _QA_INTERROGATIVES:
                 return first
 
-    # Second pass: no field has class="slovene".
+    # Second pass: no field carries the L2 markup class.
     # Score each field: prefer fields with Slovene-specific or IPA phonetic characters
     # (since phonics cards have answers with IPA like [ɛ], [bɛˈseːda], etc.)
     # Slovene-specific characters (not in English) plus dictionary stress diacritics
@@ -662,7 +679,7 @@ def extract_back_fields(note: AnkiNote) -> tuple[BackField, ...]:
     return tuple(result)
 
 
-def extract_via_profile(note: AnkiNote) -> tuple[str, str, str, str, tuple[BackField, ...]] | None:
+def extract_via_profile(note: AnkiNote, l2_css_class: str) -> tuple[str, str, str, str, tuple[BackField, ...]] | None:
     """Return ``(l2, translation, disambig, article, extras)`` via *note*'s profile.
 
     Returns ``None`` when the note's notetype has no profile — the caller then
@@ -678,7 +695,7 @@ def extract_via_profile(note: AnkiNote) -> tuple[str, str, str, str, tuple[BackF
     if profile is None:
         return None
     by_name = dict(zip(note.field_names, note.fields, strict=False))
-    l2 = extract_l2(by_name.get(profile.l2, ""))
+    l2 = extract_l2(by_name.get(profile.l2, ""), l2_css_class)
     translation = extract_translation(by_name.get(profile.translation, ""))
     # profile.disambig/article may be None (no such field) — dict.get(None, "") is "".
     disambig = by_name.get(profile.disambig, "").strip()

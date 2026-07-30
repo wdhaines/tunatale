@@ -1,10 +1,3 @@
-tests/test_anki_sync_main.py	app.plugins.anki_sync.import_seed.refresh_media_from_conn	3  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
-tests/test_anki_sync_main.py	app.plugins.anki_sync.sync.AnkiSync.detect_and_reset_orphans	1  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
-tests/test_anki_sync_main.py	app.plugins.anki_sync.sync.AnkiSync.sync_pull	6  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
-tests/test_anki_sync_main.py	app.plugins.anki_sync.sync.AnkiSync.sync_push	6  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
-tests/test_anki_sync_main.py	app.plugins.anki_sync.sync.OfflineWriter	1  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
-tests/test_anki_sync_main.py	app.plugins.anki_sync.sync._write_sync_soak_log	6  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
-tests/test_anki_sync_main.py	app.plugins.anki_sync.sync.run_full_sync	2  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
 tests/test_anki_sync_orchestrator.py	app.plugins.anki_sync.sync_orchestrator.bootstrap_collection	1  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
 tests/test_anki_sync_orchestrator.py	app.plugins.anki_sync.sync_orchestrator.peer_sync	2  # reason: DEFER — inside Anki safety envelope, orchestrator-owned
 tests/test_api_admin.py	app.plugins.anki_sync.import_seed.import_seed	3  # reason: DEFER — inside Anki safety envelope, orchestrator-owned

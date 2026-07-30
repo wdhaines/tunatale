@@ -736,7 +736,9 @@ def test_tt_grade_memory_state_survives_push_pull_round_trip(fake_anki_db):
             ),
         )
 
-        sync = AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=OfflineWriter(conn))
+        sync = AnkiSync(
+            db=db, _reader=OfflineReader(conn, "0. Slovene", language_code="sl"), _writer=OfflineWriter(conn)
+        )
         sync.sync_push()
         sync.sync_pull()
 

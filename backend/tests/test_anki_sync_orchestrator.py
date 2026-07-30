@@ -667,7 +667,7 @@ class TestSociableSync:
         from app.plugins.anki_sync.sync import OfflineReader
 
         with safe_open(settings.tt_collection_path, mode="ro") as ctx:
-            reader = OfflineReader(ctx.conn, settings.anki_deck_name)
+            reader = OfflineReader(ctx.conn, settings.anki_deck_name, language_code="sl")
             records = reader.get_note_records()
             assert any(r.anki_note_id == item.anki_note_id for r in records), (
                 f"No notes row with anki_note_id={item.anki_note_id} in tt_collection"
@@ -707,7 +707,7 @@ class TestSociableSync:
         from app.plugins.anki_sync.sync import OfflineReader
 
         with safe_open(settings.tt_collection_path, mode="ro") as ctx:
-            reader = OfflineReader(ctx.conn, settings.anki_deck_name)
+            reader = OfflineReader(ctx.conn, settings.anki_deck_name, language_code="sl")
             records = reader.get_note_records()
             assert any(r.anki_note_id == item.anki_note_id for r in records)
 

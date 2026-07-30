@@ -5,6 +5,8 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 
+import pytest
+
 from app.plugins.anki_sync.sync import (
     CreateNewReport,
     PullReport,
@@ -73,6 +75,43 @@ class TestRunFullSync:
                 lambda *a, _n=name, **k: recorder.append(_n),
             )
 
+    def _importable_media_setup(self, tmp_path):
+        """A collection + TT db + media dir wired so the REAL media-refresh phase
+        has exactly one file to import.
+
+        Returned so each media test can assert on the phase's actual effect
+        (``new_media``) instead of on a mock's call record: with this setup a run
+        that executes the phase reports ``new_media == 1``, and a run that skips
+        it reports 0. That difference is the evidence — no ``patch("app.…")``.
+        """
+        from app.models.srs_item import Direction
+        from app.models.syntactic_unit import SyntacticUnit
+        from tests._helpers.anki_sync_create_new import _make_dual_collection_conn
+
+        conn = _make_dual_collection_conn()
+        note_id = 4242
+        fields = ["voda", "water", "", '<img src="voda.jpg">', "", "", ""]
+        conn.execute(
+            "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+            "VALUES (?, 'g-voda', 1000001, 0, 0, '', ?, 'voda', 0, 0, '')",
+            (note_id, "\x1f".join(fields)),
+        )
+        conn.execute("INSERT INTO cards (id, nid, did, ord) VALUES (?, ?, 12345, 0)", (note_id * 10, note_id))
+        conn.commit()
+
+        anki_media = tmp_path / "collection.media"
+        anki_media.mkdir()
+        (anki_media / "voda.jpg").write_bytes(b"VODAIMAGE")
+
+        db = SRSDatabase(":memory:")
+        db.add_collocation(
+            SyntacticUnit(text="voda", translation="water", word_count=1, difficulty=1, source="corpus"),
+            language_code="sl",
+        )
+        guid = db.get_collocation("voda").guid
+        db.set_anki_ids(guid, note_id, {Direction.RECOGNITION: note_id * 10})
+        return conn, db, anki_media
+
     async def test_runs_every_phase_in_order_when_not_dry_run(self, monkeypatch, tmp_path):
         from unittest.mock import MagicMock
 
@@ -80,9 +119,9 @@ class TestRunFullSync:
         refreshed: list[str] = []
         sync = self._make_spy_sync(calls)
         self._patch_refreshes(monkeypatch, refreshed)
-        monkeypatch.setattr("app.plugins.anki_sync.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
 
-        db = MagicMock()
+        soak_log = tmp_path / "sync.log"
+        db = SRSDatabase(":memory:")
 
         create, push, pull, media_report = await run_full_sync(
             sync,
@@ -90,12 +129,14 @@ class TestRunFullSync:
             db,
             deck_name="0. Slovene",
             model_name="Slovene Vocabulary",
-            sync_log_path=tmp_path / "sync.log",
+            sync_log_path=soak_log,
             dry_run=False,
         )
 
         # Core phases run in the create→push→pull order, soak last.
-        assert calls == ["orphans", "create", "push", "pull", "soak"]
+        assert calls == ["orphans", "create", "push", "pull"]
+        # The soak heartbeat is the real file the phase writes, not a mock marker.
+        assert "SYNC_SOAK" in soak_log.read_text()
         # Every deck-config refresh fired — this is the gap that bit the peer path.
         assert set(refreshed) == set(_REFRESH_FUNCS)
         assert isinstance(create, CreateNewReport)
@@ -117,9 +158,9 @@ class TestRunFullSync:
         refreshed: list[str] = []
         sync = self._make_spy_sync(calls)
         self._patch_refreshes(monkeypatch, refreshed)
-        monkeypatch.setattr("app.plugins.anki_sync.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
 
-        db = MagicMock()
+        soak_log = tmp_path / "sync.log"
+        db = SRSDatabase(":memory:")
 
         _, _, _, media_report = await run_full_sync(
             sync,
@@ -127,11 +168,13 @@ class TestRunFullSync:
             db,
             deck_name="0. Slovene",
             model_name="Slovene Vocabulary",
-            sync_log_path=tmp_path / "sync.log",
+            sync_log_path=soak_log,
             dry_run=True,
         )
 
         assert calls == ["orphans", "create", "push", "pull"]
+        # dry_run writes no soak artifact at all.
+        assert not soak_log.exists()
         assert refreshed == []
         assert media_report == {
             "new_media": 0,
@@ -156,10 +199,10 @@ class TestRunFullSync:
         sync.sync_push = MagicMock(side_effect=lambda **kw: captured.update(force=kw.get("force_fsrs")) or PushReport())
         sync.sync_pull = MagicMock(return_value=PullReport())
         self._patch_refreshes(monkeypatch, [])
-        monkeypatch.setattr("app.plugins.anki_sync.sync._write_sync_soak_log", lambda *a, **k: None)
 
         sentinel = object()
-        db = MagicMock()
+        soak_log = tmp_path / "sync.log"
+        db = SRSDatabase(":memory:")
 
         _, _, _, media_report = await run_full_sync(
             sync,
@@ -167,7 +210,7 @@ class TestRunFullSync:
             db,
             deck_name="D",
             model_name="M",
-            sync_log_path=tmp_path / "sync.log",
+            sync_log_path=soak_log,
             media_fn=sentinel,
             force_fsrs=True,
             dry_run=False,
@@ -184,13 +227,20 @@ class TestRunFullSync:
         }
 
     async def test_includes_media_refresh_when_media_dir_set(self, monkeypatch, tmp_path):
-        """media_dir=Path triggers the Anki→TT media-refresh phase after pull, before soak.
+        """media_dir=Path runs the Anki→TT media-refresh phase for real.
 
-        Also pins that ``image_fetch_failed`` survives the wholesale reassignment of
-        ``media_report`` to ``refresh_media_from_conn``'s dict (which has no image key):
-        the create report's ``image_failed`` must still surface in the final report.
+        Evidence is the phase's effect — a file copied into TT's media dir and a
+        ``new_media`` count — not a mock's call record. Also pins that
+        ``image_fetch_failed`` survives the wholesale reassignment of
+        ``media_report`` to ``refresh_media_from_conn``'s dict: the real function
+        genuinely returns no image key, so the merge in ``run_full_sync`` is what
+        keeps the create report's ``image_failed`` in the final report. (The old
+        version faked that missing key in a stub; now it is the real contract.)
+
+        The media/soak *relative* order is deliberately not asserted here — with
+        both phases real there is no non-mock observable for it. The ordering that
+        the b0a4b8a class is about (orphans→create→push→pull) still is.
         """
-        from unittest.mock import MagicMock
 
         calls: list[str] = []
         sync = self._make_spy_sync(calls)
@@ -201,62 +251,65 @@ class TestRunFullSync:
 
         sync.sync_create_new = _create_with_failures
         self._patch_refreshes(monkeypatch, [])
-        monkeypatch.setattr("app.plugins.anki_sync.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
 
-        def _media_refresh(*a, **k):
-            calls.append("media_refresh")
-            # Deliberately WITHOUT an image key — the merge in run_full_sync must
-            # re-add image_fetch_failed after this reassignment.
-            return {"new_media": 0, "updated_media": 0, "unchanged_media": 0, "collapsed_media": 0}
-
-        media_spy = MagicMock(side_effect=_media_refresh)
-        monkeypatch.setattr("app.plugins.anki_sync.import_seed.refresh_media_from_conn", media_spy)
-
-        db = MagicMock()
+        conn, db, anki_media = self._importable_media_setup(tmp_path)
+        # media_dir is the SOURCE (where the pulled Anki media lives); the dest is
+        # the module path constant, pinned to tmp (allowlisted path-constant pin).
+        tt_media = tmp_path / "tt_media"
+        tt_media.mkdir()
+        monkeypatch.setattr("app.plugins.anki_sync.sync._MEDIA_DIR", tt_media)
+        soak_log = tmp_path / "sync.log"
 
         _, _, _, media_report = await run_full_sync(
             sync,
-            MagicMock(),
+            conn,
             db,
             deck_name="0. Slovene",
             model_name="Slovene Vocabulary",
-            sync_log_path=tmp_path / "sync.log",
-            media_dir=tmp_path,
+            sync_log_path=soak_log,
+            media_dir=anki_media,
             dry_run=False,
         )
 
-        assert calls == ["orphans", "create", "push", "pull", "media_refresh", "soak"]
-        media_spy.assert_called_once()
-        assert media_spy.call_args.kwargs["deck_name"] == "0. Slovene"
+        assert calls == ["orphans", "create", "push", "pull"]
+        # The phase ran: the image is now in TT's media dir with the right bytes.
+        assert media_report["new_media"] == 1
+        assert (tt_media / "voda.jpg").read_bytes() == b"VODAIMAGE"
         # image_fetch_failed survives refresh_media_from_conn's reassignment.
         assert media_report["image_fetch_failed"] == 3
+        assert "SYNC_SOAK" in soak_log.read_text()
 
     async def test_skips_media_refresh_when_media_dir_none(self, monkeypatch, tmp_path):
-        """media_dir=None (CLI default) skips the media-refresh phase."""
-        from unittest.mock import MagicMock
+        """media_dir=None (CLI default) skips the media-refresh phase.
 
+        The setup has an importable image, so ``new_media == 0`` and an empty TT
+        media dir are positive evidence the phase did NOT run — not merely the
+        absence of a mock call.
+        """
         calls: list[str] = []
         sync = self._make_spy_sync(calls)
         self._patch_refreshes(monkeypatch, [])
-        monkeypatch.setattr("app.plugins.anki_sync.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
 
-        media_spy = MagicMock()
-        monkeypatch.setattr("app.plugins.anki_sync.import_seed.refresh_media_from_conn", media_spy)
-
-        db = MagicMock()
+        conn, db, anki_media = self._importable_media_setup(tmp_path)
+        # media_dir is the SOURCE (where the pulled Anki media lives); the dest is
+        # the module path constant, pinned to tmp (allowlisted path-constant pin).
+        tt_media = tmp_path / "tt_media"
+        tt_media.mkdir()
+        monkeypatch.setattr("app.plugins.anki_sync.sync._MEDIA_DIR", tt_media)
+        soak_log = tmp_path / "sync.log"
 
         _, _, _, media_report = await run_full_sync(
             sync,
-            MagicMock(),
+            conn,
             db,
             deck_name="0. Slovene",
             model_name="Slovene Vocabulary",
-            sync_log_path=tmp_path / "sync.log",
+            sync_log_path=soak_log,
             dry_run=False,
         )
 
-        assert calls == ["orphans", "create", "push", "pull", "soak"]
-        media_spy.assert_not_called()
+        assert calls == ["orphans", "create", "push", "pull"]
+        assert list(tt_media.iterdir()) == []
         assert media_report == {
             "new_media": 0,
             "updated_media": 0,
@@ -266,32 +319,35 @@ class TestRunFullSync:
         }
 
     async def test_skips_media_refresh_on_dry_run(self, monkeypatch, tmp_path):
-        """dry_run=True skips the media-refresh phase even when media_dir is set."""
-        from unittest.mock import MagicMock
+        """dry_run=True skips the media-refresh phase even when media_dir is set.
 
+        Same positive evidence as above: the importable image stays unimported.
+        """
         calls: list[str] = []
         sync = self._make_spy_sync(calls)
         self._patch_refreshes(monkeypatch, [])
-        monkeypatch.setattr("app.plugins.anki_sync.sync._write_sync_soak_log", lambda *a, **k: calls.append("soak"))
 
-        media_spy = MagicMock()
-        monkeypatch.setattr("app.plugins.anki_sync.import_seed.refresh_media_from_conn", media_spy)
-
-        db = MagicMock()
+        conn, db, anki_media = self._importable_media_setup(tmp_path)
+        # media_dir is the SOURCE (where the pulled Anki media lives); the dest is
+        # the module path constant, pinned to tmp (allowlisted path-constant pin).
+        tt_media = tmp_path / "tt_media"
+        tt_media.mkdir()
+        monkeypatch.setattr("app.plugins.anki_sync.sync._MEDIA_DIR", tt_media)
+        soak_log = tmp_path / "sync.log"
 
         _, _, _, media_report = await run_full_sync(
             sync,
-            MagicMock(),
+            conn,
             db,
             deck_name="0. Slovene",
             model_name="Slovene Vocabulary",
-            sync_log_path=tmp_path / "sync.log",
-            media_dir=tmp_path,
+            sync_log_path=soak_log,
+            media_dir=anki_media,
             dry_run=True,
         )
 
         assert calls == ["orphans", "create", "push", "pull"]
-        media_spy.assert_not_called()
+        assert list(tt_media.iterdir()) == []
         assert media_report == {
             "new_media": 0,
             "updated_media": 0,
@@ -305,25 +361,31 @@ class TestMainDelegatesToRunFullSync:
     """main() (the peer-sync reconcile) must route through run_full_sync, not a
     bespoke subset of phases."""
 
-    def test_main_calls_run_full_sync(self, tmp_path, monkeypatch):
-        from unittest.mock import AsyncMock
+    def test_main_defaults_the_soak_log_path_from_settings(self, tmp_path, monkeypatch):
+        """No ``_sync_log_path``: main() must default the soak-log path from
+        ``settings.sync_log``, NOT a hardcoded ``~/.tunatale/logs/sync.log``.
 
-        anki_conn = sqlite3.connect(":memory:")
-        anki_conn.execute("CREATE TABLE col (ver INTEGER, crt INTEGER)")
-        anki_conn.execute("INSERT INTO col VALUES (18, 0)")
-        anki_conn.commit()
+        The hardcoded default ignored the conftest isolation fixture's
+        ``monkeypatch(settings, "sync_log", tmp)``, so peer-sync tests (which route
+        through tt_sync_main without ``_sync_log_path``) leaked SYNC_SOAK
+        heartbeats into the user's real production sync.log.
 
-        spy = AsyncMock(return_value=(CreateNewReport(), PushReport(), PullReport(), {}))
-        monkeypatch.setattr("app.plugins.anki_sync.sync.run_full_sync", spy)
+        The evidence is the heartbeat file appearing at that path after a REAL
+        sync. Asserting ``spy.await_args.kwargs["sync_log_path"]`` — as this used
+        to — could not have caught a run_full_sync that accepted the argument and
+        wrote somewhere else, which is precisely the bug's shape.
+        """
+        from tests._helpers.anki_sync_create_new import _make_dual_collection_conn
 
+        anki_conn = _make_dual_collection_conn()
         tt_db = SRSDatabase(":memory:")
-
         settings_log = tmp_path / "from_settings" / "sync.log"
 
         class FakeSettings:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
             anki_model_name = "Slovene Vocabulary"
+            target_language = "sl"
             database_url = "sqlite:///:memory:"
             sync_log = settings_log
 
@@ -331,12 +393,7 @@ class TestMainDelegatesToRunFullSync:
         def fake_safe_open(path, mode):
             yield type("Ctx", (), {"conn": anki_conn})()
 
-        # No _sync_log_path: main() must default the soak-log path from
-        # settings.sync_log, NOT a hardcoded ~/.tunatale/logs/sync.log. The
-        # hardcoded default ignored the conftest isolation fixture's
-        # monkeypatch(settings, "sync_log", tmp), so peer-sync tests (which route
-        # through tt_sync_main without _sync_log_path) leaked SYNC_SOAK heartbeats
-        # into the user's real production sync.log.
+        _patch_all_refreshes(monkeypatch)
         exit_code = main(
             argv=[],
             _settings=FakeSettings(),
@@ -345,53 +402,56 @@ class TestMainDelegatesToRunFullSync:
         )
 
         assert exit_code == 0
-        assert spy.await_count == 1
-        # Default (CLI) call passes no media generator or media dir.
-        assert spy.await_args.kwargs["media_fn"] is None
-        assert spy.await_args.kwargs["media_dir"] is None
-        assert spy.await_args.kwargs["sync_log_path"] == settings_log
+        # The nested parent dir was created and the heartbeat landed there.
+        assert "SYNC_SOAK" in settings_log.read_text()
 
     def test_main_forwards_media_fn_and_media_dir(self, tmp_path, monkeypatch):
         """When peer_sync supplies a media generator + media dir, main() threads
-        them into run_full_sync / OfflineWriter (so peer-sync'd cards get media)."""
-        from unittest.mock import AsyncMock
+        them into run_full_sync / OfflineWriter (so peer-sync'd cards get media).
 
-        anki_conn = sqlite3.connect(":memory:")
-        anki_conn.execute("CREATE TABLE col (ver INTEGER, crt INTEGER)")
-        anki_conn.execute("INSERT INTO col VALUES (18, 0)")
-        anki_conn.commit()
+        Both seams are proven by ONE outcome: the generated audio bytes land in
+        ``_media_dir``. That can only happen if ``_media_fn`` reached
+        ``sync_create_new`` AND ``_media_dir`` reached the ``OfflineWriter`` that
+        writes the file (``store_media_file`` is a no-op when its media_dir is
+        None). The previous version mocked run_full_sync and wrapped OfflineWriter
+        in a spy, so it checked that main() *passed* the arguments — never that
+        anything downstream used them.
+        """
+        from app.cards.media.pipeline import MediaResult
+        from app.models.syntactic_unit import SyntacticUnit
+        from tests._helpers.anki_sync_create_new import _make_dual_collection_conn
 
-        spy = AsyncMock(
-            return_value=(
-                CreateNewReport(),
-                PushReport(),
-                PullReport(),
-                {"new_media": 0, "updated_media": 0, "collapsed_media": 0},
-            )
-        )
-        monkeypatch.setattr("app.plugins.anki_sync.sync.run_full_sync", spy)
-        captured_media_dir = {}
-        real_writer = __import__("app.plugins.anki_sync.sync", fromlist=["OfflineWriter"]).OfflineWriter
-
-        def _spy_writer(conn, media_dir=None):
-            captured_media_dir["v"] = media_dir
-            return real_writer(conn, media_dir=media_dir)
-
-        monkeypatch.setattr("app.plugins.anki_sync.sync.OfflineWriter", _spy_writer)
-
+        anki_conn = _make_dual_collection_conn()
         tt_db = SRSDatabase(":memory:")
-        sentinel_fn = object()
+        # An unlinked collocation, so sync_create_new mints it and asks for media.
+        tt_db.add_collocation(
+            SyntacticUnit(text="voda", translation="water", word_count=1, difficulty=1, source="user"),
+            language_code="sl",
+        )
+
+        media_calls: list[str] = []
+
+        async def _media_fn(word, english, *, used_image_urls, source_sentence="", grammar=""):
+            media_calls.append(word)
+            return MediaResult(audio_bytes=b"AUDIOBYTES", audio_source="tts")
+
         media_dir = tmp_path / "collection.media"
+        media_dir.mkdir()
 
         class FakeSettings:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
             anki_model_name = "Slovene Vocabulary"
+            target_language = "sl"
             database_url = "sqlite:///:memory:"
 
         @contextmanager
         def fake_safe_open(path, mode):
             yield type("Ctx", (), {"conn": anki_conn})()
+
+        _patch_all_refreshes(monkeypatch)
+        monkeypatch.setattr("app.plugins.anki_sync.sync._MEDIA_DIR", tmp_path / "tt_media")
+        (tmp_path / "tt_media").mkdir()
 
         exit_code = main(
             argv=[],
@@ -400,13 +460,16 @@ class TestMainDelegatesToRunFullSync:
             _sync_log_path=tmp_path / "sync.log",
             _db=tt_db,
             _media_dir=media_dir,
-            _media_fn=sentinel_fn,
+            _media_fn=_media_fn,
         )
 
         assert exit_code == 0
-        assert spy.await_args.kwargs["media_fn"] is sentinel_fn
-        assert spy.await_args.kwargs["media_dir"] == media_dir
-        assert captured_media_dir["v"] == media_dir
+        # media_fn reached sync_create_new…
+        assert media_calls == ["voda"]
+        # …and media_dir reached the OfflineWriter that wrote the bytes.
+        written = list(media_dir.glob("*.mp3"))
+        assert len(written) == 1
+        assert written[0].read_bytes() == b"AUDIOBYTES"
 
 
 class TestMainOrphanThreshold:
@@ -417,23 +480,35 @@ class TestMainOrphanThreshold:
     the peer path, exposing it."""
 
     def test_orphan_threshold_returns_1_not_raises(self, tmp_path, monkeypatch):
-        from app.plugins.anki_sync.sync import OrphanThresholdExceededError
+        """The REAL orphan guard trips and main() converts it to exit 1.
 
-        anki_conn = sqlite3.connect(":memory:")
-        anki_conn.execute("CREATE TABLE col (ver INTEGER, crt INTEGER)")
-        anki_conn.execute("INSERT INTO col VALUES (18, 0)")
-        anki_conn.commit()
+        Previously ``detect_and_reset_orphans`` was replaced with a stub that
+        raised, so this proved only that main() catches the exception type — the
+        guard's own trigger condition (``orphan_count / len(tt_card_ids) > 0.25``)
+        was never exercised from here. Now a TT direction points at a card id
+        that does not exist in the collection: 1 orphan of 1 tracked card = 100%,
+        and the real guard raises.
+        """
+        from app.models.srs_item import Direction
+        from app.models.syntactic_unit import SyntacticUnit
+        from tests._helpers.anki_sync_create_new import _make_dual_collection_conn
+
+        # Collection has the deck but no cards at all → every TT pointer is dead.
+        anki_conn = _make_dual_collection_conn()
         tt_db = SRSDatabase(":memory:")
-
-        def _raise(self):
-            raise OrphanThresholdExceededError("too many orphans — aborting")
-
-        monkeypatch.setattr("app.plugins.anki_sync.sync.AnkiSync.detect_and_reset_orphans", _raise)
+        tt_db.add_collocation(
+            SyntacticUnit(text="oprostiti", translation="to excuse", word_count=1, difficulty=1, source="user"),
+            language_code="sl",
+        )
+        guid = tt_db.get_collocation("oprostiti").guid
+        tt_db.set_anki_ids(guid, 999001, {Direction.RECOGNITION: 9990010})
+        assert tt_db.list_anki_card_ids() == {9990010}
 
         class FakeSettings:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
             anki_model_name = "Slovene Vocabulary"
+            target_language = "sl"
             database_url = "sqlite:///:memory:"
 
         @contextmanager
@@ -461,6 +536,7 @@ class TestMainCreateNew:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
             anki_model_name = "Slovene Vocabulary"
+            target_language = "sl"
             database_url = "sqlite:///:memory:"
 
         return FakeSettings()
@@ -482,14 +558,6 @@ class TestMainCreateNew:
             yield type("Ctx", (), {"conn": anki_conn})()
 
         # Isolate the create-new behavior from the heavy push/pull/refresh machinery.
-        monkeypatch.setattr(
-            "app.plugins.anki_sync.sync.AnkiSync.sync_push",
-            lambda self, dry_run=False, force_fsrs=False: PushReport(),
-        )
-        monkeypatch.setattr(
-            "app.plugins.anki_sync.sync.AnkiSync.sync_pull",
-            lambda self, dry_run=False: PullReport(),
-        )
         _patch_all_refreshes(monkeypatch)
 
         exit_code = main(
@@ -522,7 +590,17 @@ class TestMainCreateNew:
             "VALUES (?, 'g-opr', 1000001, 0, 0, '', ?, 'oprostiti', 0, 0, '')",
             (note_id, "\x1f".join(fields)),
         )
-        anki_conn.execute("INSERT INTO cards (id, nid, did, ord) VALUES (?, ?, 12345, 0)", (note_id * 10, note_id))
+        # Full column set, as real Anki always writes. The partial 4-column INSERT
+        # this replaced left reps/lapses/type/queue NULL, which real sync_pull reads
+        # straight into DirectionState and then fails to persist (NOT NULL on
+        # collocation_directions.reps). It went unnoticed because sync_pull was
+        # mocked out here — the pull path this test is named for never ran.
+        anki_conn.execute(
+            "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, "
+            "factor, reps, lapses, left, odue, odid, flags, data) "
+            "VALUES (?, ?, 12345, 0, 0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+            (note_id * 10, note_id),
+        )
         anki_conn.commit()
 
         # The new image lives in the (pulled) Anki media dir = main's _media_dir.
@@ -544,16 +622,13 @@ class TestMainCreateNew:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
             anki_model_name = "Slovene Vocabulary"
+            target_language = "sl"
             database_url = "sqlite:///:memory:"
 
         @contextmanager
         def fake_safe_open(path, mode):
             yield type("Ctx", (), {"conn": anki_conn})()
 
-        monkeypatch.setattr(
-            "app.plugins.anki_sync.sync.AnkiSync.sync_push", lambda self, dry_run=False, force_fsrs=False: PushReport()
-        )
-        monkeypatch.setattr("app.plugins.anki_sync.sync.AnkiSync.sync_pull", lambda self, dry_run=False: PullReport())
         _patch_all_refreshes(monkeypatch)
 
         exit_code = main(
@@ -584,15 +659,6 @@ class TestMainCreateNew:
         @contextmanager
         def fake_safe_open(path, mode):
             yield type("Ctx", (), {"conn": anki_conn})()
-
-        monkeypatch.setattr(
-            "app.plugins.anki_sync.sync.AnkiSync.sync_push",
-            lambda self, dry_run=False, force_fsrs=False: PushReport(),
-        )
-        monkeypatch.setattr(
-            "app.plugins.anki_sync.sync.AnkiSync.sync_pull",
-            lambda self, dry_run=False: PullReport(),
-        )
 
         exit_code = main(
             argv=["--dry-run"],
@@ -635,14 +701,6 @@ class TestMainCreateNew:
         def fake_safe_open(path, mode):
             yield type("Ctx", (), {"conn": anki_conn})()
 
-        monkeypatch.setattr(
-            "app.plugins.anki_sync.sync.AnkiSync.sync_push",
-            lambda self, dry_run=False, force_fsrs=False: PushReport(),
-        )
-        monkeypatch.setattr(
-            "app.plugins.anki_sync.sync.AnkiSync.sync_pull",
-            lambda self, dry_run=False: PullReport(),
-        )
         _patch_all_refreshes(monkeypatch)
 
         exit_code = main(
@@ -684,6 +742,7 @@ class TestMain:
             anki_collection_path = str(db_path)
             anki_deck_name = "Test"
             anki_model_name = "Basic"
+            target_language = "sl"
             sqlite_db_path = ":memory:"
             sync_log = tmp_path / "sync.log"
 
@@ -717,6 +776,7 @@ class TestMain:
             anki_collection_path = str(db_path)
             anki_deck_name = "Test"
             anki_model_name = "Basic"
+            target_language = "sl"
             database_url = "sqlite:///:memory:"
             sync_log = tmp_path / "sync.log"
 
@@ -796,34 +856,54 @@ class TestSyncSoakLog:
         assert "bury_kind" in text
 
     def test_non_dry_run_writes_soak_log(self, tmp_path, monkeypatch):
-        """A non-dry CLI sync persists a SYNC_SOAK heartbeat to the injected path."""
-        db_path = tmp_path / "collection.anki2"
-        with sqlite3.connect(str(db_path)) as conn:
-            conn.execute("CREATE TABLE col (ver INTEGER, crt INTEGER, decks TEXT)")
-            conn.execute("INSERT INTO col VALUES (18, 0, '{}')")
-            conn.commit()
+        """A non-dry CLI sync persists a SYNC_SOAK heartbeat whose counts are the
+        REAL pull's.
+
+        This used to assert ``pull_dirs=4`` — a number that existed only because
+        ``sync_pull`` was mocked to return ``PullReport(directions_updated=4)``.
+        The heartbeat is the soak's health signal, so a fabricated count made the
+        one test that reads it prove nothing. Now a genuinely-divergent Anki row
+        drives the count, and the assertion is derived from the sync's own report.
+        """
+        from app.models.srs_item import Direction
+        from app.models.syntactic_unit import SyntacticUnit
+        from tests._helpers.anki_sync_create_new import _make_dual_collection_conn
+
+        anki_conn = _make_dual_collection_conn()
+        note_id = 7777
+        anki_conn.execute(
+            "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+            "VALUES (?, 'g-opr', 1000001, 0, 0, '', ?, 'oprostiti', 0, 0, '')",
+            (note_id, "\x1f".join(["oprostiti", "to excuse", "", "", "", "", ""])),
+        )
+        # A REVIEW card with real FSRS memory state — TT's linked direction is NEW,
+        # so _direction_differs fires and sync_pull actually writes.
+        anki_conn.execute(
+            "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, "
+            "factor, reps, lapses, left, odue, odid, flags, data) "
+            "VALUES (?, ?, 12345, 0, 0, 0, 2, 2, 100, 21, 2500, 5, 1, 0, 0, 0, 0, ?)",
+            (note_id * 10, note_id, '{"s": 21.5, "d": 5.2}'),
+        )
+        anki_conn.commit()
 
         tt_db = SRSDatabase(":memory:")
+        tt_db.add_collocation(
+            SyntacticUnit(text="oprostiti", translation="to excuse", word_count=1, difficulty=1, source="user"),
+            language_code="sl",
+        )
+        guid = tt_db.get_collocation("oprostiti").guid
+        tt_db.set_anki_ids(guid, note_id, {Direction.RECOGNITION: note_id * 10})
 
         class FakeSettings:
-            anki_collection_path = str(db_path)
-            anki_deck_name = "Test"
-            anki_model_name = "Basic"
+            anki_collection_path = "unused"
+            anki_deck_name = "0. Slovene"
+            anki_model_name = "Slovene Vocabulary"
+            target_language = "sl"
 
         @contextmanager
         def fake_safe_open(path, mode):
-            conn = sqlite3.connect(str(db_path))
-            yield type("Ctx", (), {"conn": conn})()
-            conn.close()
+            yield type("Ctx", (), {"conn": anki_conn})()
 
-        monkeypatch.setattr(
-            "app.plugins.anki_sync.sync.AnkiSync.sync_push",
-            lambda self, dry_run=False, force_fsrs=False: PushReport(directions_pushed=3),
-        )
-        monkeypatch.setattr(
-            "app.plugins.anki_sync.sync.AnkiSync.sync_pull",
-            lambda self, dry_run=False: PullReport(directions_updated=4),
-        )
         _patch_all_refreshes(monkeypatch)
 
         log_path = tmp_path / "logs" / "sync.log"
@@ -837,10 +917,21 @@ class TestSyncSoakLog:
 
         assert exit_code == 0
         text = log_path.read_text()
-        # 0 divergences => clean heartbeat.
-        assert "SYNC_SOAK pull_notes=" in text
-        assert "recompute_divergences=0" in text
-        assert "pull_dirs=4 conflicts=0" in text
+        # Both soak line types, produced by a REAL sync rather than a hand-built
+        # PullReport: the heartbeat, and the per-divergence detail. TT has no
+        # revlog for this card, so its forward replay (s=1.0) cannot reproduce
+        # Anki's s=21.5 — a genuine recompute divergence, which is exactly the
+        # signal the soak exists to surface.
+        assert "SYNC_SOAK pull_notes=0 pull_dirs=1 conflicts=0 recompute_divergences=1" in text
+        assert "RECOMPUTE_DIVERGENCE cid=1 dir=recognition" in text
+        assert "anki_s=21.5000" in text
+        # And TT's row now carries Anki's state — the pull actually wrote.
+        with tt_db._get_conn() as conn:
+            reps, stability = conn.execute(
+                "SELECT reps, stability FROM collocation_directions WHERE direction = 'recognition'"
+            ).fetchone()
+        assert reps == 5
+        assert stability == pytest.approx(21.5)
 
     def test_dry_run_skips_soak_log(self, tmp_path, monkeypatch):
         """A dry run leaves no soak artifact (mirrors 'dry_run writes nothing')."""
@@ -856,21 +947,13 @@ class TestSyncSoakLog:
             anki_collection_path = str(db_path)
             anki_deck_name = "Test"
             anki_model_name = "Basic"
+            target_language = "sl"
 
         @contextmanager
         def fake_safe_open(path, mode):
             conn = sqlite3.connect(str(db_path))
             yield type("Ctx", (), {"conn": conn})()
             conn.close()
-
-        monkeypatch.setattr(
-            "app.plugins.anki_sync.sync.AnkiSync.sync_push",
-            lambda self, dry_run=False, force_fsrs=False: PushReport(),
-        )
-        monkeypatch.setattr(
-            "app.plugins.anki_sync.sync.AnkiSync.sync_pull",
-            lambda self, dry_run=False: PullReport(),
-        )
 
         log_path = tmp_path / "logs" / "sync.log"
         exit_code = main(
@@ -892,6 +975,7 @@ class TestResolveModelName:
         target_language = "no"
         anki_deck_name = "0. 6000 Most Frequent Norwegian Words [Part 1]"
         anki_model_name = ""
+        target_language = "sl"
         database_urls = {"sl": "sqlite:///./tunatale_sl.db", "no": "sqlite:///./tunatale_no.db"}
 
     def test_resolve_model_name_prefers_language_vocab_notetype(self):

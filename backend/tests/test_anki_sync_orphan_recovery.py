@@ -387,7 +387,7 @@ class TestOfflineReaderGraves:
             [(111, 1), (222, 1), (333, 0), (444, 2)],
         )
         conn.commit()
-        reader = OfflineReader(conn, "0. Slovene")
+        reader = OfflineReader(conn, "0. Slovene", language_code="sl")
         assert reader.get_grave_note_ids() == {111, 222}
 
     def test_empty_set_when_graves_table_absent(self):
@@ -396,5 +396,5 @@ class TestOfflineReaderGraves:
         from app.plugins.anki_sync.sync import OfflineReader
 
         conn = sqlite3.connect(":memory:")  # minimal collection, no graves table
-        reader = OfflineReader(conn, "0. Slovene")
+        reader = OfflineReader(conn, "0. Slovene", language_code="sl")
         assert reader.get_grave_note_ids() == set()

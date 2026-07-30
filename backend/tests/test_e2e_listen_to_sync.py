@@ -338,7 +338,7 @@ class TestListenToSyncRoundTrip:
         # ── Full sync (the single canonical sequence — no phase subset) ────
         sync = AnkiSync(
             db=db,
-            _reader=OfflineReader(anki_conn, "0. Slovene"),
+            _reader=OfflineReader(anki_conn, "0. Slovene", language_code="sl"),
             _writer=OfflineWriter(anki_conn),
             _anki_col_crt=col_crt,
         )

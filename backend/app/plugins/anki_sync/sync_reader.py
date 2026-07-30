@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from app.languages import get_l2_css_class
 from app.models.syntactic_unit import BackField
 from app.plugins.anki_sync.sqlite_reader import (
     extract_disambig_from_fields,
@@ -31,9 +32,13 @@ from app.plugins.anki_sync.sync_common import (
 class OfflineReader:
     """Read NoteRecords from a raw sqlite3.Connection to collection.anki2."""
 
-    def __init__(self, conn: sqlite3.Connection, deck_name: str) -> None:
+    def __init__(self, conn: sqlite3.Connection, deck_name: str, *, language_code: str) -> None:
         self._conn = conn
         self._deck_name = deck_name
+        # The L2 markup class the field parsers look for. Resolved once here (not
+        # per note) and never a literal — a Slovene class read against a Norwegian
+        # deck silently returns the English gloss as the L2. See get_l2_css_class.
+        self._l2_css_class = get_l2_css_class(language_code)
 
     def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list[sqlite3.Row]:
         """Return revlog rows for *card_id* with id > *after_ms*.
@@ -105,16 +110,16 @@ class OfflineReader:
                 translation = extract_cloze_translation(back_extra)
                 sentence_translation = extract_cloze_sentence_translation(back_extra)
                 note_text = extract_cloze_note(back_extra)
-                l2_text = extract_l2_from_fields(note.fields)
+                l2_text = extract_l2_from_fields(note.fields, self._l2_css_class)
                 disambig_key = ""
                 article = ""
                 extras: tuple[BackField, ...] = ()
             else:
-                profile_result = extract_via_profile(note)
+                profile_result = extract_via_profile(note, self._l2_css_class)
                 if profile_result is not None:
                     l2_text, translation, disambig_key, article, extras = profile_result
                 else:
-                    l2_text = extract_l2_from_fields(note.fields)
+                    l2_text = extract_l2_from_fields(note.fields, self._l2_css_class)
                     translation = extract_translation(note.fields[1]) if len(note.fields) > 1 else ""
                     disambig_key = extract_disambig_from_fields(note.fields)
                     article = ""

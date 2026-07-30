@@ -699,33 +699,81 @@ class TestFsrsMemoryStatePresent:
 class TestExtractL2:
     def test_extracts_from_class_slovene(self):
         html = '<span class="slovene">hiša</span>'
-        assert extract_l2(html) == "hiša"
+        assert extract_l2(html, "slovene") == "hiša"
 
     def test_falls_back_to_stripped_text(self):
         html = "<b>banka</b>"
-        assert extract_l2(html) == "banka"
+        assert extract_l2(html, "slovene") == "banka"
 
     def test_plain_text_returned_as_is(self):
-        assert extract_l2("banka") == "banka"
+        assert extract_l2("banka", "slovene") == "banka"
+
+
+class TestL2MarkupIsPerLanguage:
+    """The L2-markup fast path must key on the ACTIVE language's l2_css_class.
+
+    Regression: both regexes hardcoded ``class="slovene"``, so a Norwegian note
+    never matched its own ``class="norwegian"`` markup and fell through to the
+    Slovene-character scorer — whose charset has no æ/ø/å. On an inverse-layout
+    note where both fields score 0, the strict-``>`` tiebreak then returns the
+    EARLIER field, i.e. the English gloss, and the collocation is imported with
+    the English word as its L2. The markup pass exists precisely to stop this
+    (see extract_l2_from_fields' "banka"/"bank" note).
+    """
+
+    _NO_INVERSE = ['<span class="english">bank</span>', '<span class="norwegian">banken</span>']
+
+    def test_norwegian_markup_wins_over_the_scorer_tiebreak(self):
+        from app.cards.vocab_notetype import NORWEGIAN_VOCAB
+
+        assert extract_l2_from_fields(self._NO_INVERSE, NORWEGIAN_VOCAB.l2_css_class) == "banken"
+
+    def test_slovene_class_does_not_match_a_norwegian_note(self):
+        """The bug, pinned: resolving the Slovene class against a Norwegian note
+        skips the markup pass and the scorer hands back the English field."""
+        from app.cards.vocab_notetype import SLOVENE_VOCAB
+
+        assert extract_l2_from_fields(self._NO_INVERSE, SLOVENE_VOCAB.l2_css_class) == "bank"
+
+    def test_extract_l2_honours_the_norwegian_class(self):
+        from app.cards.vocab_notetype import NORWEGIAN_VOCAB
+
+        # The gloss shares the field, so the markup pass and the HTML-strip
+        # fallback give DIFFERENT answers — otherwise this test would pass even
+        # with the class hardcoded back to "slovene" (drilled).
+        html = '<span class="norwegian">være</span> <i>to be</i>'
+        assert extract_l2(html, NORWEGIAN_VOCAB.l2_css_class) == "være"
+        # With the Slovene class the markup pass misses and the HTML-strip runs,
+        # dragging the English gloss in with it.
+        assert extract_l2(html, "slovene") == "være to be"
+
+    def test_registry_resolves_a_distinct_class_per_wired_language(self):
+        """Guards the drain itself: if some language ever shares another's L2
+        class, the fast path would cross-match and this whole scheme breaks."""
+        from app.languages import get_vocab_notetype
+
+        classes = [v.l2_css_class for code in ("sl", "no") if (v := get_vocab_notetype(code)) is not None]
+        assert len(classes) == 2
+        assert len(set(classes)) == 2
 
 
 class TestExtractL2FromFields:
     def test_returns_first_field_when_it_has_l2(self):
-        assert extract_l2_from_fields(['<span class="slovene">hiša</span>', "house"]) == "hiša"
+        assert extract_l2_from_fields(['<span class="slovene">hiša</span>', "house"], "slovene") == "hiša"
 
     def test_falls_back_to_second_field_when_first_is_image_only(self):
         fields = ['<div class="img"><img src="dog.jpg"></div>', '<div class="slovene">pes</div>']
-        assert extract_l2_from_fields(fields) == "pes"
+        assert extract_l2_from_fields(fields, "slovene") == "pes"
 
     def test_falls_back_to_second_field_plain_text_when_first_empty(self):
         fields = ["<div></div>", "<b>banka</b>"]
-        assert extract_l2_from_fields(fields) == "banka"
+        assert extract_l2_from_fields(fields, "slovene") == "banka"
 
     def test_returns_empty_when_no_field_yields_text(self):
-        assert extract_l2_from_fields(["<div></div>", "  "]) == ""
+        assert extract_l2_from_fields(["<div></div>", "  "], "slovene") == ""
 
     def test_empty_list_returns_empty(self):
-        assert extract_l2_from_fields([]) == ""
+        assert extract_l2_from_fields([], "slovene") == ""
 
     def test_qa_front_with_interrogative_and_question_mark_wins(self):
         """When Field 0 is an English Q&A prompt (e.g. 'What sound is v word-initial...?'),
@@ -740,14 +788,14 @@ class TestExtractL2FromFields:
             "[sound:sl_vrata.mp3][w] — voiced bilabial, like English <i>w</i>"
             "<br><br><i>vrata</i> → [ˈwɾaːta] — door<br><i>vlak</i> → [wlak] — train",
         ]
-        assert extract_l2_from_fields(fields).startswith("What sound is")
+        assert extract_l2_from_fields(fields, "slovene").startswith("What sound is")
 
     def test_qa_how_question_with_diacritic_back_still_returns_question(self):
         fields = [
             "How is syllabic <b>r</b> pronounced in <i>trg</i> (town square)?",
             "[sound:sl_trg.mp3][tərg] — r acts as the syllable nucleus with a schwa-like quality",
         ]
-        assert extract_l2_from_fields(fields).startswith("How is")
+        assert extract_l2_from_fields(fields, "slovene").startswith("How is")
 
     def test_field0_ending_with_question_but_no_interrogative_falls_through_to_scoring(self):
         """A non-question first field that happens to end with '?' (no interrogative
@@ -755,7 +803,7 @@ class TestExtractL2FromFields:
         fields = ["banka?", "<div>bank</div>"]
         # No interrogative, falls through. Both clean strip to short text;
         # neither has Slovene chars, so the earlier field wins by tie-break.
-        assert extract_l2_from_fields(fields) == "banka?"
+        assert extract_l2_from_fields(fields, "slovene") == "banka?"
 
     def test_phonics_qa_prompt_returns_question_not_answer(self):
         """Phonics Q&A notes use Field 0 for an English question and Field 1 for the
@@ -770,7 +818,7 @@ class TestExtractL2FromFields:
             "What phoneme does unstressed <b>e before</b> the stressed syllable represent?",
             "[sound:sl_beseda.mp3]/ɛ/ = [ɛ] — open-mid front<br><br><i>besêda</i> [bɛˈseːda]",
         ]
-        result = extract_l2_from_fields(fields)
+        result = extract_l2_from_fields(fields, "slovene")
         assert result.startswith("What phoneme"), f"Q&A front should win on the new heuristic; got: {result!r}"
 
     def test_ipa_chars_boost_score_when_no_qa_pattern(self):
@@ -780,7 +828,7 @@ class TestExtractL2FromFields:
             "Practice the phoneme with the audio",  # no '?', no interrogative
             "[ɛ] besêda [bɛˈseːda]",  # several IPA chars
         ]
-        result = extract_l2_from_fields(fields)
+        result = extract_l2_from_fields(fields, "slovene")
         assert "besêda" in result
 
     def test_dictionary_stress_diacritic_counts_as_slovene(self):
@@ -788,7 +836,7 @@ class TestExtractL2FromFields:
         # that aren't in the basic čšž set. They should still score positively
         # so the L2 field wins over an English gloss.
         fields = ["before the stressed syllable", "besêda"]
-        assert extract_l2_from_fields(fields) == "besêda"
+        assert extract_l2_from_fields(fields, "slovene") == "besêda"
 
     def test_b_then_i_pattern_returns_b_content(self):
         """Pronunciation/Basic notetype Front field: `<b>SLOVENE</b><br><i>ENGLISH</i>`.
@@ -796,12 +844,12 @@ class TestExtractL2FromFields:
         the new behavior that extracts the `<b>...</b>` group as L2.
         """
         fields = ["<b>nič</b><br><i>nothing</i>", "[sound:sl_nic.mp3][nətʃ]"]
-        assert extract_l2_from_fields(fields) == "nič"
+        assert extract_l2_from_fields(fields, "slovene") == "nič"
 
     def test_b_then_i_pattern_with_whitespace(self):
         """Tolerate whitespace and minor variation between the <b> and <i> tags."""
         fields = ["<b>ulica</b><br/>  <i>street</i>", "[sound:sl_ulica.mp3]"]
-        assert extract_l2_from_fields(fields) == "ulica"
+        assert extract_l2_from_fields(fields, "slovene") == "ulica"
 
 
 class TestExtractGlossFromFields:
@@ -1143,7 +1191,7 @@ class TestNotetypeProfileExtraction:
         note = self._note(tmp_path)[0]
         # disambig comes from 'Word class' ('verb'); article from 'Article' (blank — verb).
         # extras is () — the minimal fixture carries none of the rich back fields.
-        assert extract_via_profile(note) == ("være", "to be", "verb", "", ())
+        assert extract_via_profile(note, "slovene") == ("være", "to be", "verb", "", ())
 
     def test_extract_via_profile_reads_article_for_nouns(self, tmp_path):
         from app.plugins.anki_sync.sqlite_reader import extract_via_profile
@@ -1157,13 +1205,13 @@ class TestNotetypeProfileExtraction:
             conn.close()
         noun = next(n for n in notes if "noun" in n.fields)
         # 'et løfte' (a promise) — article read from the 'Article' field by name
-        assert extract_via_profile(noun) == ("løfte", "promise", "noun", "et", ())
+        assert extract_via_profile(noun, "slovene") == ("løfte", "promise", "noun", "et", ())
 
     def test_extract_via_profile_returns_none_without_profile(self):
         from app.plugins.anki_sync.sqlite_reader import AnkiNote, extract_via_profile
 
         note = AnkiNote(id=1, anki_guid="g", mid=999, mod=0, tags=[], fields=["x"], notetype_name="Unprofiled")
-        assert extract_via_profile(note) is None
+        assert extract_via_profile(note, "slovene") is None
 
     def test_offline_reader_uses_profile_for_norwegian_notes(self, tmp_path):
         from app.plugins.anki_sync.sync import OfflineReader
@@ -1172,7 +1220,7 @@ class TestNotetypeProfileExtraction:
         db_path = build_norwegian_anki_db(tmp_path)
         conn = sqlite3.connect(str(db_path))
         try:
-            records = OfflineReader(conn, self.DECK).get_note_records()
+            records = OfflineReader(conn, self.DECK, language_code="sl").get_note_records()
         finally:
             conn.close()
         assert len(records) == 1
@@ -1297,6 +1345,6 @@ class TestExtractBackFields:
         note = _full_norwegian_note(
             {"Norwegian word": "være", "Word class": "verb", "English translation": "to be", "IPA": "/ˈʋæːɾə/"}
         )
-        l2, translation, disambig, article, extras = extract_via_profile(note)
+        l2, translation, disambig, article, extras = extract_via_profile(note, "slovene")
         assert (l2, translation, disambig, article) == ("være", "to be", "verb", "")
         assert [(e.label, e.html) for e in extras] == [("IPA", "/ˈʋæːɾə/")]

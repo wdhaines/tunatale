@@ -119,13 +119,13 @@ def test_extract_cloze_note(label, back_extra, expected):
 class TestOfflineReader:
     def test_returns_five_records(self, fake_anki_db):
         conn = sqlite3.connect(str(fake_anki_db))
-        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        records = OfflineReader(conn, "0. Slovene", language_code="sl").get_note_records()
         conn.close()
         assert len(records) == 5
 
     def test_extracts_l2_text_and_translation(self, fake_anki_db):
         conn = sqlite3.connect(str(fake_anki_db))
-        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        records = OfflineReader(conn, "0. Slovene", language_code="sl").get_note_records()
         conn.close()
         texts = {r.l2_text for r in records}
         assert "banka" in texts
@@ -136,14 +136,14 @@ class TestOfflineReader:
 
     def test_each_note_has_two_cards(self, fake_anki_db):
         conn = sqlite3.connect(str(fake_anki_db))
-        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        records = OfflineReader(conn, "0. Slovene", language_code="sl").get_note_records()
         conn.close()
         assert all(len(r.cards) == 2 for r in records)
 
     def test_suspended_card_queue_minus_one(self, fake_anki_db):
         """Note 1003 (miza) has production card suspended (queue=-1)."""
         conn = sqlite3.connect(str(fake_anki_db))
-        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        records = OfflineReader(conn, "0. Slovene", language_code="sl").get_note_records()
         conn.close()
         miza = next(r for r in records if r.l2_text == "miza")
         prod = next(c for c in miza.cards if c.ord == 1)
@@ -151,7 +151,7 @@ class TestOfflineReader:
 
     def test_unknown_deck_returns_empty(self, fake_anki_db):
         conn = sqlite3.connect(str(fake_anki_db))
-        records = OfflineReader(conn, "No Such Deck").get_note_records()
+        records = OfflineReader(conn, "No Such Deck", language_code="sl").get_note_records()
         conn.close()
         assert records == []
 
@@ -175,7 +175,7 @@ class TestOfflineReader:
         )
         conn.commit()
 
-        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        records = OfflineReader(conn, "0. Slovene", language_code="sl").get_note_records()
         conn.close()
         target_card = next(c for r in records for c in r.cards if c.anki_card_id == cid)
         assert target_card.first_review_ms == 1_700_000_000_000
@@ -191,7 +191,7 @@ class TestOfflineReader:
         cid = conn.execute("SELECT id FROM cards LIMIT 1").fetchone()[0]
         conn.execute("UPDATE cards SET data=? WHERE id=?", (json.dumps({"lrt": 1779293316}), cid))
         conn.commit()
-        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        records = OfflineReader(conn, "0. Slovene", language_code="sl").get_note_records()
         conn.close()
         target = next(c for r in records for c in r.cards if c.anki_card_id == cid)
         assert target.fsrs_known is False
@@ -202,7 +202,7 @@ class TestOfflineReader:
         cid = conn.execute("SELECT id FROM cards LIMIT 1").fetchone()[0]
         conn.execute("UPDATE cards SET data=? WHERE id=?", (json.dumps({"s": 7.5, "d": 5.2, "lrt": 1779293316}), cid))
         conn.commit()
-        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        records = OfflineReader(conn, "0. Slovene", language_code="sl").get_note_records()
         conn.close()
         target = next(c for r in records for c in r.cards if c.anki_card_id == cid)
         assert target.fsrs_known is True
@@ -217,7 +217,7 @@ class TestOfflineReader:
         conn.execute("UPDATE cards SET queue=1, type=3, data='{}' WHERE id=?", (cid,))
         conn.execute("INSERT INTO revlog VALUES (?, ?, 0, 1, -600, 1, 0, 1200, 1)", (1_700_000_500_000, cid))
         conn.commit()
-        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        records = OfflineReader(conn, "0. Slovene", language_code="sl").get_note_records()
         conn.close()
         target = next(c for r in records for c in r.cards if c.anki_card_id == cid)
         assert target.last_review == datetime.fromtimestamp(1_700_000_500_000 / 1000, tz=UTC)
@@ -231,7 +231,7 @@ class TestOfflineReader:
         conn.execute("UPDATE cards SET data=? WHERE id=?", (json.dumps({"s": 7.5, "d": 5.2, "lrt": 1779293316}), cid))
         conn.execute("INSERT INTO revlog VALUES (?, ?, 0, 3, 10, 1, 2500, 1200, 1)", (1_700_000_500_000, cid))
         conn.commit()
-        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        records = OfflineReader(conn, "0. Slovene", language_code="sl").get_note_records()
         conn.close()
         target = next(c for r in records for c in r.cards if c.anki_card_id == cid)
         assert target.last_review == datetime.fromtimestamp(1779293316, tz=UTC)
@@ -244,7 +244,7 @@ class TestOfflineReader:
         conn.execute("UPDATE cards SET queue=1, type=3, data='{}' WHERE id=?", (cid,))
         conn.execute("DELETE FROM revlog WHERE cid=?", (cid,))
         conn.commit()
-        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        records = OfflineReader(conn, "0. Slovene", language_code="sl").get_note_records()
         conn.close()
         target = next(c for r in records for c in r.cards if c.anki_card_id == cid)
         assert target.last_review is None
@@ -252,7 +252,7 @@ class TestOfflineReader:
     def test_note_record_fields(self, fake_anki_db):
         """NoteRecord exposes anki_note_id, anki_guid, mod."""
         conn = sqlite3.connect(str(fake_anki_db))
-        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        records = OfflineReader(conn, "0. Slovene", language_code="sl").get_note_records()
         conn.close()
         for rec in records:
             assert rec.anki_note_id > 0
@@ -282,7 +282,7 @@ class TestOfflineReader:
             " reps INTEGER, lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER, flags INTEGER, data TEXT)"
         )
         conn.commit()
-        records = OfflineReader(conn, "Empty Deck").get_note_records()
+        records = OfflineReader(conn, "Empty Deck", language_code="sl").get_note_records()
         conn.close()
         assert records == []
 
@@ -330,7 +330,7 @@ class TestOfflineReader:
         )
         conn.commit()
 
-        records = OfflineReader(conn, deck_name).get_note_records()
+        records = OfflineReader(conn, deck_name, language_code="sl").get_note_records()
         conn.close()
 
         assert len(records) == 2
@@ -1241,7 +1241,7 @@ class TestOfflineReaderPopulatesLastReview:
         conn.close()
 
         conn = sqlite3.connect(str(fake_anki_db))
-        records = OfflineReader(conn, "0. Slovene").get_note_records()
+        records = OfflineReader(conn, "0. Slovene", language_code="sl").get_note_records()
         conn.close()
 
         # Find card 10010 specifically (banka recognition)
@@ -2385,7 +2385,9 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
         conn = sqlite3.connect(str(fake_anki_db))
         conn.row_factory = sqlite3.Row  # production uses safe_open which sets this
         try:
-            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+            AnkiSync(
+                db=db, _reader=OfflineReader(conn, "0. Slovene", language_code="sl"), _writer=FakeWriter()
+            ).sync_pull()
         finally:
             conn.close()
 
@@ -2412,7 +2414,7 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
         conn = sqlite3.connect(str(fake_anki_db))
         conn.row_factory = sqlite3.Row
         try:
-            sync = AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter())
+            sync = AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene", language_code="sl"), _writer=FakeWriter())
             sync.sync_pull()
             sync.sync_pull()
         finally:
@@ -2455,7 +2457,9 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
         conn = sqlite3.connect(str(fake_anki_db))
         conn.row_factory = sqlite3.Row  # production uses safe_open which sets this
         try:
-            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+            AnkiSync(
+                db=db, _reader=OfflineReader(conn, "0. Slovene", language_code="sl"), _writer=FakeWriter()
+            ).sync_pull()
         finally:
             conn.close()
 
@@ -2522,7 +2526,9 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
         conn = sqlite3.connect(str(fake_anki_db))
         conn.row_factory = sqlite3.Row
         try:
-            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+            AnkiSync(
+                db=db, _reader=OfflineReader(conn, "0. Slovene", language_code="sl"), _writer=FakeWriter()
+            ).sync_pull()
         finally:
             conn.close()
 
@@ -2575,7 +2581,9 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
         conn = sqlite3.connect(str(fake_anki_db))
         conn.row_factory = sqlite3.Row
         try:
-            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+            AnkiSync(
+                db=db, _reader=OfflineReader(conn, "0. Slovene", language_code="sl"), _writer=FakeWriter()
+            ).sync_pull()
         finally:
             conn.close()
 
@@ -2634,7 +2642,9 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
             )
             pushed = sorted(r["id"] for r in conn.execute("SELECT id FROM revlog WHERE cid=?", (cid,)))
             assert pushed == [tt_grade_ms, phone_ms], "pushed grade keeps its grade-time id, not bumped past phone_ms"
-            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+            AnkiSync(
+                db=db, _reader=OfflineReader(conn, "0. Slovene", language_code="sl"), _writer=FakeWriter()
+            ).sync_pull()
         finally:
             conn.close()
 
@@ -2733,7 +2743,9 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
             reviews_before = db.count_reviews_completed_today(today)
 
             # Real pull: should NOT re-ingest the pushed grades.
-            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+            AnkiSync(
+                db=db, _reader=OfflineReader(conn, "0. Slovene", language_code="sl"), _writer=FakeWriter()
+            ).sync_pull()
         finally:
             conn.close()
 
@@ -2777,7 +2789,9 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
         conn = sqlite3.connect(str(fake_anki_db))
         conn.row_factory = sqlite3.Row
         try:
-            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+            AnkiSync(
+                db=db, _reader=OfflineReader(conn, "0. Slovene", language_code="sl"), _writer=FakeWriter()
+            ).sync_pull()
         finally:
             conn.close()
 
@@ -2818,7 +2832,9 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
         conn = sqlite3.connect(str(fake_anki_db))
         conn.row_factory = sqlite3.Row
         try:
-            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+            AnkiSync(
+                db=db, _reader=OfflineReader(conn, "0. Slovene", language_code="sl"), _writer=FakeWriter()
+            ).sync_pull()
         finally:
             conn.close()
 
@@ -2847,7 +2863,9 @@ class TestSyncPullIngestsAnkiRevlogIntoTtRevlog:
         conn = sqlite3.connect(str(fake_anki_db))
         conn.row_factory = sqlite3.Row  # production uses safe_open which sets this
         try:
-            AnkiSync(db=db, _reader=OfflineReader(conn, "0. Slovene"), _writer=FakeWriter()).sync_pull()
+            AnkiSync(
+                db=db, _reader=OfflineReader(conn, "0. Slovene", language_code="sl"), _writer=FakeWriter()
+            ).sync_pull()
         finally:
             conn.close()
 
