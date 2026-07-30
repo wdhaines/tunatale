@@ -8,6 +8,7 @@ import time
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import StatusResponse
 from app.generation.pipeline import LessonPipeline
 from app.languages import get_language
 from app.llm.activity import ActivityLog
@@ -196,7 +197,9 @@ class TestPipelineRetryEndpoint:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/curriculum/cur-1/pipeline/retry", json={"day": 1})
         assert response.status_code == 200
-        assert response.json() == {"status": "queued"}
+        data = response.json()
+        assert data == {"status": "queued"}
+        assert set(data.keys()) == set(StatusResponse.model_fields)
 
 
 class TestPipelineRegenerateEndpoint:
@@ -249,4 +252,6 @@ class TestPipelineRegenerateEndpoint:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/curriculum/cur-1/pipeline/regenerate", json={"day": 1})
         assert response.status_code == 200
-        assert response.json() == {"status": "queued"}
+        data = response.json()
+        assert data == {"status": "queued"}
+        assert set(data.keys()) == set(StatusResponse.model_fields)

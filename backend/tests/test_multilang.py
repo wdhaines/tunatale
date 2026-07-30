@@ -6,6 +6,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import LanguageItem, LanguagesResponse
 from app.languages import get_language
 from app.main import _language_db_map, app
 from app.models.syntactic_unit import SyntacticUnit
@@ -128,6 +129,9 @@ class TestPerRequestIsolation:
         assert {lang["code"] for lang in body["languages"]} == {"sl", "no"}
         assert {lang["name"] for lang in body["languages"]} == {"Slovene", "Norwegian"}
         assert body["active"] == "no"
+        assert set(body.keys()) == set(LanguagesResponse.model_fields)
+        for lang in body["languages"]:
+            assert set(lang.keys()) == set(LanguageItem.model_fields)
 
     async def test_grade_in_one_language_does_not_touch_the_other(self, two_language_app):
         """A write through one connection is invisible to the other (no shared DB)."""
@@ -158,6 +162,8 @@ class TestLanguagesEndpointFallbacks:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 body = (await client.get("/api/languages")).json()
             assert body["languages"] == [{"code": "sl", "name": "Slovene"}]
+            assert set(body.keys()) == set(LanguagesResponse.model_fields)
+            assert set(body["languages"][0].keys()) == set(LanguageItem.model_fields)
         finally:
             self._cleanup()
 
@@ -167,3 +173,4 @@ class TestLanguagesEndpointFallbacks:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             body = (await client.get("/api/languages")).json()
         assert body["languages"] == []
+        assert set(body.keys()) == set(LanguagesResponse.model_fields)

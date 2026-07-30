@@ -507,6 +507,41 @@
         "title": "ImportPlanRequest",
         "type": "object"
       },
+      "ImportStoryResponse": {
+        "description": "Response of POST /api/story/import.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/StorySection"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "sections",
+          "warnings"
+        ],
+        "title": "ImportStoryResponse",
+        "type": "object"
+      },
       "InflectionClozeRequest": {
         "properties": {
           "feature": {
@@ -548,6 +583,52 @@
           "language_code"
         ],
         "title": "InflectionClozeRequest",
+        "type": "object"
+      },
+      "LanguageItem": {
+        "description": "One element of LanguagesResponse.languages.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "name"
+        ],
+        "title": "LanguageItem",
+        "type": "object"
+      },
+      "LanguagesResponse": {
+        "description": "Response of GET /api/languages.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "string"
+          },
+          "languages": {
+            "items": {
+              "$ref": "#/components/schemas/LanguageItem"
+            },
+            "title": "Languages",
+            "type": "array"
+          },
+          "sync_available": {
+            "title": "Sync Available",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "languages",
+          "active",
+          "sync_available"
+        ],
+        "title": "LanguagesResponse",
         "type": "object"
       },
       "ListenPreviewCandidate": {
@@ -716,6 +797,90 @@
           "lesson_id"
         ],
         "title": "ListenRequest",
+        "type": "object"
+      },
+      "LlmActivityResponse": {
+        "description": "Response of GET /api/llm/activity.\n\n``events`` is intentionally bare ``list``: ActivityLog.record_llm_call\nsplats a caller-supplied ``info`` dict (``{**info, \"seq\", \"kind\"}``) whose\nkeys vary by call site (success vs. 429 vs. pipeline events carry different\nfields), so there is no constant element key-set to model.",
+        "properties": {
+          "events": {
+            "items": {},
+            "title": "Events",
+            "type": "array"
+          },
+          "latest": {
+            "title": "Latest",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "latest",
+          "events"
+        ],
+        "title": "LlmActivityResponse",
+        "type": "object"
+      },
+      "LlmHealthResponse": {
+        "description": "Response of GET /api/llm/health.",
+        "properties": {
+          "consecutive_failures": {
+            "title": "Consecutive Failures",
+            "type": "integer"
+          },
+          "fallback_allowed": {
+            "title": "Fallback Allowed",
+            "type": "boolean"
+          },
+          "healthy": {
+            "title": "Healthy",
+            "type": "boolean"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LlmLastError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "llm_mode": {
+            "title": "Llm Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "healthy",
+          "consecutive_failures",
+          "last_error",
+          "fallback_allowed",
+          "llm_mode"
+        ],
+        "title": "LlmHealthResponse",
+        "type": "object"
+      },
+      "LlmLastError": {
+        "description": "Non-null value of LlmHealthResponse.last_error.",
+        "properties": {
+          "ago_s": {
+            "title": "Ago S",
+            "type": "number"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "message",
+          "ago_s"
+        ],
+        "title": "LlmLastError",
         "type": "object"
       },
       "MarkLessonReviewedResponse": {
@@ -1013,6 +1178,25 @@
           "status"
         ],
         "title": "StatusResponse",
+        "type": "object"
+      },
+      "StorySection": {
+        "description": "One element of ImportStoryResponse.sections / GenerateStoryResponse.sections.",
+        "properties": {
+          "phrase_count": {
+            "title": "Phrase Count",
+            "type": "integer"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "phrase_count"
+        ],
+        "title": "StorySection",
         "type": "object"
       },
       "SuspendRequest": {
@@ -1769,7 +1953,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -1819,7 +2005,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -2192,7 +2380,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/LanguagesResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -2221,9 +2411,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Llm Activity Api Llm Activity Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/LlmActivityResponse"
                 }
               }
             },
@@ -2254,9 +2442,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Llm Health Api Llm Health Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/LlmHealthResponse"
                 }
               }
             },
@@ -3951,7 +4137,9 @@
           "201": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ImportStoryResponse"
+                }
               }
             },
             "description": "Successful Response"

@@ -10,7 +10,13 @@ import anyio
 from fastapi import APIRouter, HTTPException, Request
 
 from app.api._serializers import serialize_lesson
-from app.api.models import GenerateStoryRequest, GenerateStoryResponse, GetStoryPromptResponse, ImportLessonRequest
+from app.api.models import (
+    GenerateStoryRequest,
+    GenerateStoryResponse,
+    GetStoryPromptResponse,
+    ImportLessonRequest,
+    ImportStoryResponse,
+)
 from app.generation.ids import mint_id
 from app.generation.json_parsing import parse_json_object
 from app.generation.story import StoryGenerationError, build_story_prompts
@@ -121,7 +127,7 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
     return {"id": lesson_id, "title": lesson.title, "sections": sections}
 
 
-@router.post("/import", status_code=201)
+@router.post("/import", status_code=201, response_model=ImportStoryResponse)
 async def import_story(body: ImportLessonRequest, request: Request):
     """Rebuild a Lesson from an edited Story-JSON file (docs/lesson-authoring.md).
 

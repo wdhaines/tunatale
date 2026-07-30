@@ -17,6 +17,7 @@ import time
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.api.models import LlmActivityResponse, LlmHealthResponse
 from app.config import settings
 
 router = APIRouter(prefix="/api/llm", tags=["llm"])
@@ -70,7 +71,7 @@ def _status_payload(client) -> dict:
     }
 
 
-@router.get("/health")
+@router.get("/health", response_model=LlmHealthResponse)
 async def llm_health(request: Request) -> dict:
     client = _unwrap(request)
     if settings.llm_mode == "mock":
@@ -105,7 +106,7 @@ async def rate_limit_status(request: Request) -> dict:
     return _status_payload(_unwrap(request))
 
 
-@router.get("/activity", status_code=200)
+@router.get("/activity", status_code=200, response_model=LlmActivityResponse)
 async def llm_activity(request: Request, since: int = 0) -> dict:
     log = getattr(request.app.state, "activity_log", None)
     if log is None:

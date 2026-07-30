@@ -4,6 +4,7 @@ import pytest
 import respx
 from httpx import ASGITransport, AsyncClient, Response
 
+from app.api.models import LlmActivityResponse
 from app.llm.activity import ActivityLog
 from app.llm.client import GROQ_API_URL, OLLAMA_DEFAULT_URL, LLMClient, LLMError
 from app.main import app
@@ -119,6 +120,7 @@ class TestActivityEndpoint:
         assert body["latest"] == 1
         assert len(body["events"]) == 1
         assert body["events"][0]["seq"] == 1
+        assert set(body.keys()) == set(LlmActivityResponse.model_fields)
 
     async def test_no_activity_log_returns_empty(self):
         if hasattr(app.state, "activity_log"):
@@ -126,7 +128,9 @@ class TestActivityEndpoint:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
             response = await http.get("/api/llm/activity?since=0")
         assert response.status_code == 200
-        assert response.json() == {"latest": 0, "events": []}
+        body = response.json()
+        assert body == {"latest": 0, "events": []}
+        assert set(body.keys()) == set(LlmActivityResponse.model_fields)
 
     async def test_since_latest_returns_empty(self):
         log = ActivityLog(maxlen=100)

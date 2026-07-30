@@ -1577,6 +1577,20 @@ export interface components {
       /** Topic */
       topic: string;
     };
+    /**
+     * ImportStoryResponse
+     * @description Response of POST /api/story/import.
+     */
+    ImportStoryResponse: {
+      /** Id */
+      id: string;
+      /** Sections */
+      sections: components["schemas"]["StorySection"][];
+      /** Title */
+      title: string;
+      /** Warnings */
+      warnings: string[];
+    };
     /** InflectionClozeRequest */
     InflectionClozeRequest: {
       /** Feature */
@@ -1599,6 +1613,28 @@ export interface components {
        * @default
        */
       translation: string;
+    };
+    /**
+     * LanguageItem
+     * @description One element of LanguagesResponse.languages.
+     */
+    LanguageItem: {
+      /** Code */
+      code: string;
+      /** Name */
+      name: string;
+    };
+    /**
+     * LanguagesResponse
+     * @description Response of GET /api/languages.
+     */
+    LanguagesResponse: {
+      /** Active */
+      active: string;
+      /** Languages */
+      languages: components["schemas"]["LanguageItem"][];
+      /** Sync Available */
+      sync_available: boolean;
     };
     /**
      * ListenPreviewCandidate
@@ -1672,6 +1708,48 @@ export interface components {
       word_ratings: {
         [key: string]: "again" | "hard" | "good" | "easy" | "skip";
       };
+    };
+    /**
+     * LlmActivityResponse
+     * @description Response of GET /api/llm/activity.
+     *
+     *     ``events`` is intentionally bare ``list``: ActivityLog.record_llm_call
+     *     splats a caller-supplied ``info`` dict (``{**info, "seq", "kind"}``) whose
+     *     keys vary by call site (success vs. 429 vs. pipeline events carry different
+     *     fields), so there is no constant element key-set to model.
+     */
+    LlmActivityResponse: {
+      /** Events */
+      events: unknown[];
+      /** Latest */
+      latest: number;
+    };
+    /**
+     * LlmHealthResponse
+     * @description Response of GET /api/llm/health.
+     */
+    LlmHealthResponse: {
+      /** Consecutive Failures */
+      consecutive_failures: number;
+      /** Fallback Allowed */
+      fallback_allowed: boolean;
+      /** Healthy */
+      healthy: boolean;
+      last_error: components["schemas"]["LlmLastError"] | null;
+      /** Llm Mode */
+      llm_mode: string;
+    };
+    /**
+     * LlmLastError
+     * @description Non-null value of LlmHealthResponse.last_error.
+     */
+    LlmLastError: {
+      /** Ago S */
+      ago_s: number;
+      /** Message */
+      message: string;
+      /** Status */
+      status: number;
     };
     /**
      * MarkLessonReviewedResponse
@@ -1817,6 +1895,16 @@ export interface components {
     StatusResponse: {
       /** Status */
       status: string;
+    };
+    /**
+     * StorySection
+     * @description One element of ImportStoryResponse.sections / GenerateStoryResponse.sections.
+     */
+    StorySection: {
+      /** Phrase Count */
+      phrase_count: number;
+      /** Type */
+      type: string;
     };
     /** SuspendRequest */
     SuspendRequest: {
@@ -2344,7 +2432,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["StatusResponse"];
         };
       };
       /** @description Validation Error */
@@ -2379,7 +2467,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["StatusResponse"];
         };
       };
       /** @description Validation Error */
@@ -2657,7 +2745,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["LanguagesResponse"];
         };
       };
     };
@@ -2679,9 +2767,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            [key: string]: unknown;
-          };
+          "application/json": components["schemas"]["LlmActivityResponse"];
         };
       };
       /** @description Validation Error */
@@ -2710,9 +2796,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            [key: string]: unknown;
-          };
+          "application/json": components["schemas"]["LlmHealthResponse"];
         };
       };
     };
@@ -3964,7 +4048,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["ImportStoryResponse"];
         };
       };
       /** @description Validation Error */

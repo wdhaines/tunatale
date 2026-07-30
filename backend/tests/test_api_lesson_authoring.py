@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import ImportStoryResponse, StorySection
 from app.languages import get_language
 from app.main import app
 from app.models.curriculum import Curriculum, CurriculumDay
@@ -122,6 +123,9 @@ class TestLessonAuthoringEndpoints:
         assert len(data["sections"]) == 7
         assert data["warnings"] == []
         assert store.get_lesson(data["id"]) is not None
+        assert set(data.keys()) == set(ImportStoryResponse.model_fields)
+        for section in data["sections"]:
+            assert set(section.keys()) == set(StorySection.model_fields)
         # Verify pipeline enqueued a render job
         assert pipeline._jobs[("sl", "c1", 1)]["state"] == "queued"
         assert pipeline._jobs[("sl", "c1", 1)]["kind"] == "render"
@@ -171,9 +175,11 @@ class TestLessonAuthoringEndpoints:
             )
 
         assert response.status_code == 201
-        warnings = response.json()["warnings"]
+        data = response.json()
+        warnings = data["warnings"]
         assert len(warnings) == 1
         assert "robot-9" in warnings[0]
+        assert set(data.keys()) == set(ImportStoryResponse.model_fields)
 
     async def test_import_round_trips_via_source(self):
         """Export → import → export: the story survives the round trip."""

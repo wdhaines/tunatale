@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.api.models import PipelineRegenerateRequest, PipelineRetryRequest
+from app.api.models import PipelineRegenerateRequest, PipelineRetryRequest, StatusResponse
 
 router = APIRouter(prefix="/api/curriculum", tags=["pipeline"])
 
@@ -37,7 +37,7 @@ async def pipeline_status(curriculum_id: str, request: Request):
     return pipeline.status_for(language_code, curriculum_id)
 
 
-@router.post("/{curriculum_id}/pipeline/retry", status_code=200)
+@router.post("/{curriculum_id}/pipeline/retry", status_code=200, response_model=StatusResponse)
 async def pipeline_retry(curriculum_id: str, body: PipelineRetryRequest, request: Request):
     pipeline = _pipeline(request)
     if pipeline is None:
@@ -53,7 +53,7 @@ async def pipeline_retry(curriculum_id: str, body: PipelineRetryRequest, request
     return {"status": status}
 
 
-@router.post("/{curriculum_id}/pipeline/regenerate", status_code=200)
+@router.post("/{curriculum_id}/pipeline/regenerate", status_code=200, response_model=StatusResponse)
 async def pipeline_regenerate(curriculum_id: str, body: PipelineRegenerateRequest, request: Request):
     pipeline = _pipeline(request)
     if pipeline is None:

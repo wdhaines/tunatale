@@ -12,6 +12,7 @@ import pytest
 import respx
 from httpx import ASGITransport, AsyncClient, Response
 
+from app.api.models import LlmHealthResponse, LlmLastError
 from app.config import settings
 from app.llm.client import GROQ_API_URL, LLMClient
 from app.llm.usage_ledger import UsageLedger
@@ -176,6 +177,7 @@ class TestLlmHealth:
             assert body["last_error"] is None
             assert body["fallback_allowed"] is False
             assert body["llm_mode"] == settings.llm_mode
+            assert set(body.keys()) == set(LlmHealthResponse.model_fields)
         finally:
             settings.llm_mode = original_mode
 
@@ -197,6 +199,8 @@ class TestLlmHealth:
             assert body["last_error"]["message"] == "Groq returned HTTP 401"
             assert body["last_error"]["ago_s"] == pytest.approx(10, abs=3)
             assert body["fallback_allowed"] is False
+            assert set(body.keys()) == set(LlmHealthResponse.model_fields)
+            assert set(body["last_error"].keys()) == set(LlmLastError.model_fields)
         finally:
             settings.llm_mode = original_mode
 
@@ -210,5 +214,6 @@ class TestLlmHealth:
             body = await _get_health()
             assert body["healthy"] is True
             assert body["consecutive_failures"] == 0
+            assert set(body.keys()) == set(LlmHealthResponse.model_fields)
         finally:
             settings.llm_mode = original_mode

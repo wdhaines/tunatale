@@ -326,3 +326,65 @@ class GetStoryPromptResponse(BaseModel):
 
     system_prompt: str
     user_prompt: str
+
+
+class StorySection(BaseModel):
+    """One element of ImportStoryResponse.sections / GenerateStoryResponse.sections."""
+
+    type: str
+    phrase_count: int
+
+
+class ImportStoryResponse(BaseModel):
+    """Response of POST /api/story/import."""
+
+    id: str
+    title: str
+    sections: list[StorySection]
+    warnings: list[str]
+
+
+class LanguageItem(BaseModel):
+    """One element of LanguagesResponse.languages."""
+
+    code: str
+    name: str
+
+
+class LanguagesResponse(BaseModel):
+    """Response of GET /api/languages."""
+
+    languages: list[LanguageItem]
+    active: str
+    sync_available: bool
+
+
+class LlmLastError(BaseModel):
+    """Non-null value of LlmHealthResponse.last_error."""
+
+    status: int
+    message: str
+    ago_s: float
+
+
+class LlmHealthResponse(BaseModel):
+    """Response of GET /api/llm/health."""
+
+    healthy: bool
+    consecutive_failures: int
+    last_error: LlmLastError | None
+    fallback_allowed: bool
+    llm_mode: str
+
+
+class LlmActivityResponse(BaseModel):
+    """Response of GET /api/llm/activity.
+
+    ``events`` is intentionally bare ``list``: ActivityLog.record_llm_call
+    splats a caller-supplied ``info`` dict (``{**info, "seq", "kind"}``) whose
+    keys vary by call site (success vs. 429 vs. pipeline events carry different
+    fields), so there is no constant element key-set to model.
+    """
+
+    latest: int
+    events: list

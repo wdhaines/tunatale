@@ -23,16 +23,10 @@ get_queue_stats_api_srs_queue_stats_get  # reason: untyped handler — mechanica
 get_review_queue_api_srs_review_queue_get  # reason: untyped handler — returns a traced/variable shape
 get_stats_api_srs_stats_get  # reason: untyped handler — mechanical, awaiting scheduled batch
 import_listens_api_srs_listens_import_post  # reason: untyped handler — mechanical, awaiting scheduled batch
-import_story_api_story_import_post  # reason: untyped handler — mechanical, awaiting scheduled batch
-languages_api_languages_get  # reason: untyped handler — mechanical, awaiting scheduled batch
 list_curricula_api_curriculum_get  # reason: untyped handler — returns a traced/variable shape
 list_items_api_srs_items_get  # reason: untyped handler — returns a traced/variable shape
-llm_activity_api_llm_activity_get  # reason: untyped handler — mechanical, awaiting scheduled batch
-llm_health_api_llm_health_get  # reason: untyped handler — mechanical, awaiting scheduled batch
 mark_lesson_listened_api_srs_listen_post  # reason: untyped handler — mechanical, awaiting scheduled batch
 patch_item_api_srs_items__item_id__patch  # reason: untyped handler — returns a traced/variable shape
-pipeline_regenerate_api_curriculum__curriculum_id__pipeline_regenerate_post  # reason: untyped handler — mechanical, awaiting scheduled batch
-pipeline_retry_api_curriculum__curriculum_id__pipeline_retry_post  # reason: untyped handler — mechanical, awaiting scheduled batch
 pipeline_status_api_curriculum__curriculum_id__pipeline_get  # reason: untyped handler — returns a traced/variable shape
 put_image_from_url_api_srs_items__item_id__image_put  # reason: untyped handler — returns a traced/variable shape
 put_image_upload_api_srs_items__item_id__image_upload_put  # reason: untyped handler — returns a traced/variable shape
