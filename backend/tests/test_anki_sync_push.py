@@ -15,6 +15,7 @@ from app.plugins.anki_sync.sync import (
     _local_today_4am,
     build_cloze_back_extra,
 )
+from app.srs.anki_mirror.rollover import anki_today
 from app.srs.database import SRSDatabase
 from tests._helpers.anki_sync_push import FakeReader, FakeWriter  # noqa: F401
 from tests.conftest import make_card_record, make_note_record
@@ -447,9 +448,12 @@ class TestOfflineWriter:
         assert row["usn"] == -1
 
     def test_set_due_date_shifts_due_relative_to_today(self):
-        from datetime import date, timedelta
+        from datetime import timedelta
 
-        col_crt = int((date.today() - timedelta(days=200)).strftime("%s"))
+        # Seed relative to anki_today(), not date.today(): set_due_date computes
+        # days_since_crt from the ANKI day, so a date.today() seed makes the
+        # hardcoded expectation off by one inside [midnight, 04:00) (CI runs UTC).
+        col_crt = int((anki_today() - timedelta(days=200)).strftime("%s"))
         conn = _make_anki_full_db(col_crt=col_crt)
         _seed_note_and_cards(conn, queue=2, card_type=2, due=0, ivl=1)
         writer = OfflineWriter(conn)
@@ -481,9 +485,12 @@ class TestOfflineWriter:
             writer.update_note_fields(9001, {"Back": "bank"})
 
     def test_set_due_date_preserves_suspension(self):
-        from datetime import date, timedelta
+        from datetime import timedelta
 
-        col_crt = int((date.today() - timedelta(days=200)).strftime("%s"))
+        # Seed relative to anki_today(), not date.today(): set_due_date computes
+        # days_since_crt from the ANKI day, so a date.today() seed makes the
+        # hardcoded expectation off by one inside [midnight, 04:00) (CI runs UTC).
+        col_crt = int((anki_today() - timedelta(days=200)).strftime("%s"))
         conn = _make_anki_full_db(col_crt=col_crt)
         _seed_note_and_cards(conn, queue=-1, card_type=2, due=0)
         writer = OfflineWriter(conn)

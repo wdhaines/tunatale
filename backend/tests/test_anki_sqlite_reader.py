@@ -18,6 +18,7 @@ from app.plugins.anki_sync.sqlite_reader import (
     list_media_refs,
     parse_fsrs_data,
 )
+from app.srs.anki_mirror.rollover import anki_today
 
 
 class TestComputeDueAt:
@@ -60,13 +61,13 @@ class TestComputeDueAt:
     def test_queue_0_fallback_to_today(self):
         """queue 0: fall back to today at 04:00 UTC."""
         result = compute_due_at(queue=0, due_raw=999, col_crt=0)
-        expected = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        expected = datetime.combine(anki_today(), time(4, 0), tzinfo=UTC)
         assert result == expected
 
     def test_queue_minus_1_suspended(self):
         """queue -1 with no card_type (defaults to 0/new): today at 04:00 UTC."""
         result = compute_due_at(queue=-1, due_raw=0, col_crt=0)
-        expected = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        expected = datetime.combine(anki_today(), time(4, 0), tzinfo=UTC)
         assert result == expected
 
     def test_queue_minus_2_buried_review_preserves_due(self):
@@ -113,7 +114,7 @@ class TestComputeDueAt:
     def test_queue_minus_2_buried_new_falls_back(self):
         """Buried new card (queue=-2, card_type=0): due_raw is a position, fall back."""
         result = compute_due_at(queue=-2, due_raw=999, col_crt=0, card_type=0)
-        expected = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        expected = datetime.combine(anki_today(), time(4, 0), tzinfo=UTC)
         assert result == expected
 
 
@@ -436,7 +437,7 @@ class TestFsrsMemoryStatePresent:
             col_crt=1704067200,
             due_raw=5,
         )
-        assert state.due_at == datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        assert state.due_at == datetime.combine(anki_today(), time(4, 0), tzinfo=UTC)
         assert state.anki_due == 5
 
     def test_review_card_captures_anki_due(self):
@@ -1060,7 +1061,7 @@ class TestLeftAndDueAtFromCards:
         assert len(cards) == 1
         state = cards[0].fsrs_state
         assert state.left is None
-        assert state.due_at == datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+        assert state.due_at == datetime.combine(anki_today(), time(4, 0), tzinfo=UTC)
 
     def test_review_card_due_at_uses_col_crt(self, tmp_path):
         """queue=2 (review): left is None, due_at = col_crt + due days at 4am UTC."""

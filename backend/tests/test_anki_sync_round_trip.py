@@ -528,7 +528,7 @@ def test_known_push_via_offline_writer_writes_review_card():
     assert card is not None, "card must exist in Anki"
     assert card["queue"] == 2, f"expected queue=2 (review), got queue={card['queue']}"
     assert card["type"] == 2, f"expected type=2 (review), got type={card['type']}"
-    days_since_crt = (date.today() - date.fromtimestamp(col_crt)).days
+    days_since_crt = (anki_today() - date.fromtimestamp(col_crt)).days
     expected_due = days_since_crt + max_ivl
     assert card["due"] == expected_due, f"expected due={expected_due}, got due={card['due']}"
     assert card["ivl"] == max_ivl, f"expected ivl={max_ivl}, got ivl={card['ivl']}"
