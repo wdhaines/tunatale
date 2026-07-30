@@ -91,18 +91,29 @@ Most `.claude/rules/*.md` carry `paths:` frontmatter — Claude Code auto-loads 
 
 - **Commit gate** (PreToolUse): `git commit` asks for confirmation unless `./test.sh` has passed on the exact current tree — `test.sh` records a tree fingerprint via `.claude/hooks/commit_gate.py --record` on success. A *failing* run deletes the fingerprint, so a flaky green cannot outlive a red on the same tree.
 - **Pipe guard** (PreToolUse): `.claude/hooks/gate_pipe_guard.py` **denies** any command that pipes `./test.sh` (`| tail`, `| tee`, `| grep`). A pipeline's `$?` is the last command's, so a failed gate reads as 0, and `tail -n` throws away the failure detail you piped in order to see. Searching for the string (`grep test.sh …`, `cat test.sh | head`) is unaffected. test.sh also tees every run to `.git/tt-test-last.log` and names it in the FAILED banner.
-- ⚠️ **Canonical gate invocation — absolute path, and the LOG is the evidence:**
+- ⚠️ **Canonical gate invocation — absolute path, gate LAST, and the LOG is the
+  only evidence:**
   ```bash
+  cd /Users/wdhaines/CascadeProjects/tunatale
   /Users/wdhaines/CascadeProjects/tunatale/test.sh > /tmp/gate.txt 2>&1
-  echo "REAL_GATE_EXIT=$?"      # its own statement, so this IS the gate's status
+  # ← NOTHING after this line. No `echo`, no cleanup, nothing.
   ```
-  Then read `/tmp/gate.txt` and confirm `=== All checks passed ===` plus 100.00%
-  backend coverage. **A "phantom gate" produced a fictional green on 2026-07-29:**
-  `./test.sh > log 2>&1; echo "EXIT=$?"` printed `EXIT=0` while the log contained
-  `no such file or directory: ./test.sh`. Two causes compounded — an earlier `cd`
-  persisted across tool calls so the relative path missed, and in `cmd; echo $?`
-  the reported status is the **echo's**, not the gate's. It was caught only by
-  reading the log tail, one command before a commit.
+  Then read `/tmp/gate.txt`: require `=== All checks passed ===` (the failure form
+  is `=== FAILED (backend=N frontend=N) ===`), 100.00% backend coverage, and a
+  sane ruff count (~374 and growing; a tiny N means discovery broke).
+  **Two fictional greens on 2026-07-29, same root class:**
+  1. `./test.sh > log 2>&1; echo "EXIT=$?"` printed `EXIT=0` while the log said
+     `no such file or directory: ./test.sh` — an earlier `cd` had persisted across
+     tool calls, so the relative path missed.
+  2. The "fix" of putting `echo "REAL_GATE_EXIT=$?"` on its **own line** was ALSO
+     wrong: it prints the gate's status, but the *script's* exit status is still
+     the echo's, so the harness reported success on a run whose log ended in
+     `=== FAILED (backend=1 frontend=0) ===`.
+
+  **The rule that actually holds: any command after the gate steals the exit
+  status — separate line or not.** Make the gate the final statement, and treat
+  the log tail as the sole evidence. Never trust a reported exit code, your own
+  `echo`, or a log's size alone.
   **Rules, for every agent and every gate run:** absolute path always; never `cd`
   away from the repo in a session that will run the gate; keep `echo $?` in its own
   statement or omit it; and treat the log tail as the sole evidence — an exit code
