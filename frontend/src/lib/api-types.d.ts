@@ -1346,6 +1346,16 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /**
+     * BackfillTranslationsResponse
+     * @description Response of POST /api/srs/backfill-translations.
+     */
+    BackfillTranslationsResponse: {
+      /** Glosses Found */
+      glosses_found: number;
+      /** Updated */
+      updated: number;
+    };
     /** Body_put_image_upload_api_srs_items__item_id__image_upload_put */
     Body_put_image_upload_api_srs_items__item_id__image_upload_put: {
       /** File */
@@ -1355,6 +1365,14 @@ export interface components {
     BulkDeleteRequest: {
       /** Ids */
       ids: number[];
+    };
+    /**
+     * BulkDeleteResponse
+     * @description Response of POST /api/srs/items/bulk-delete.
+     */
+    BulkDeleteResponse: {
+      /** Deleted */
+      deleted: number;
     };
     /**
      * CommitPendingResponse
@@ -1559,6 +1577,20 @@ export interface components {
       lesson_ids: string[];
     };
     /**
+     * ImportListensResponse
+     * @description Response of POST /api/srs/listens/import.
+     *
+     *     Each list holds lesson ids, partitioned by what the import did with them.
+     */
+    ImportListensResponse: {
+      /** Already Present */
+      already_present: string[];
+      /** Imported */
+      imported: string[];
+      /** Unknown */
+      unknown: string[];
+    };
+    /**
      * ImportPlanRequest
      * @description Self-describing plan file for curriculum authoring.
      *
@@ -1637,6 +1669,18 @@ export interface components {
       sync_available: boolean;
     };
     /**
+     * LessonTranscriptResponse
+     * @description Response of GET /api/srs/lesson/{lesson_id}/transcript.
+     */
+    LessonTranscriptResponse: {
+      /** Dialogue Lines */
+      dialogue_lines: components["schemas"]["TranscriptDialogueLine"][];
+      /** Key Phrases */
+      key_phrases: components["schemas"]["TranscriptKeyPhrase"][];
+      /** Lesson Id */
+      lesson_id: string;
+    };
+    /**
      * ListenPreviewCandidate
      * @description One row of GET /lesson/{id}/listen-preview's response.
      */
@@ -1708,6 +1752,28 @@ export interface components {
       word_ratings: {
         [key: string]: "again" | "hard" | "good" | "easy" | "skip";
       };
+    };
+    /**
+     * ListenedLesson
+     * @description One element of ListensResponse.lessons.
+     *
+     *     Shape declared at ``db_listens.py::get_listened_lessons``.
+     */
+    ListenedLesson: {
+      /** Last Listened At */
+      last_listened_at: string;
+      /** Lesson Id */
+      lesson_id: string;
+      /** Listen Count */
+      listen_count: number;
+    };
+    /**
+     * ListensResponse
+     * @description Response of GET /api/srs/listens.
+     */
+    ListensResponse: {
+      /** Lessons */
+      lessons: components["schemas"]["ListenedLesson"][];
     };
     /**
      * LlmActivityResponse
@@ -1860,6 +1926,16 @@ export interface components {
       /** State */
       state: string;
     };
+    /**
+     * SrsStatsResponse
+     * @description Response of GET /api/srs/stats.
+     */
+    SrsStatsResponse: {
+      /** Due Today */
+      due_today: number;
+      /** Total */
+      total: number;
+    };
     /** StartPlanRequest */
     StartPlanRequest: {
       /**
@@ -1913,12 +1989,134 @@ export interface components {
       /** Suspended */
       suspended: boolean;
     };
+    /**
+     * TranscriptDialogueLine
+     * @description One element of LessonTranscriptResponse.dialogue_lines.
+     */
+    TranscriptDialogueLine: {
+      /** Role */
+      role: string;
+      /** Sentence */
+      sentence: string;
+      /** Words */
+      words: components["schemas"]["TranscriptWord"][];
+    };
+    /**
+     * TranscriptKeyPhrase
+     * @description One element of LessonTranscriptResponse.key_phrases.
+     */
+    TranscriptKeyPhrase: {
+      /** Phrase */
+      phrase: string;
+      /** Translation */
+      translation: string;
+    };
+    /**
+     * TranscriptWord
+     * @description One element of TranscriptDialogueLine.words.
+     *
+     *     The 25 fields the handler projects out of ``transcript.WordToken``. Note
+     *     that ``WordToken.collocation_is_due`` is deliberately NOT among them — it is
+     *     computed but never serialized, and adding it here would not surface it (the
+     *     model can only filter, never invent).
+     */
+    TranscriptWord: {
+      /** Active Direction */
+      active_direction: string | null;
+      /** Active State */
+      active_state: string;
+      /** Card Type */
+      card_type: string | null;
+      /** Collocation Lemma */
+      collocation_lemma: string | null;
+      /** Collocation Progress */
+      collocation_progress: number | null;
+      /** Collocation Span Id */
+      collocation_span_id: number | null;
+      /** Collocation Srs State */
+      collocation_srs_state: string | null;
+      /** Collocation Start */
+      collocation_start: boolean;
+      /** Collocation Translation */
+      collocation_translation: string | null;
+      /** Inflectable */
+      inflectable: boolean;
+      /** Inflection Feature */
+      inflection_feature: string | null;
+      /** Is Due */
+      is_due: boolean;
+      /** Known Marked */
+      known_marked: boolean;
+      /** Lemma */
+      lemma: string;
+      /** Prefix Punct */
+      prefix_punct: string;
+      /** Progress */
+      progress: number | null;
+      /** Recognition Is Due */
+      recognition_is_due: boolean;
+      /** Recognition Reviewable */
+      recognition_reviewable: boolean;
+      /** Recognition State */
+      recognition_state: string | null;
+      /** Srs Item Id */
+      srs_item_id: number | null;
+      /** Srs State */
+      srs_state: string;
+      /** Suffix Punct */
+      suffix_punct: string;
+      /** Surface */
+      surface: string;
+      /** Translation */
+      translation: string | null;
+      /** Well Known */
+      well_known: boolean;
+    };
+    /**
+     * TranslateMissingResponse
+     * @description Response of POST /api/srs/translate-missing.
+     *
+     *     Two returns — the "nothing untranslated" early return and the batch loop's
+     *     — but both carry exactly these keys, so there is no conditional key-set.
+     *     Both branches are pinned by their own key-set test.
+     */
+    TranslateMissingResponse: {
+      /** Skipped */
+      skipped: number;
+      /** Translated */
+      translated: number;
+    };
     /** TranslateRequest */
     TranslateRequest: {
       /** Language Code */
       language_code: string;
       /** Text */
       text: string;
+    };
+    /**
+     * TranslateResponse
+     * @description Response of POST /api/srs/translate.
+     */
+    TranslateResponse: {
+      /** Translation */
+      translation: string;
+    };
+    /**
+     * UndoGradeResponse
+     * @description Response of POST /api/srs/items/{item_id}/direction/{direction}/undo.
+     *
+     *     ``restored_state`` is ``SRSState.value``; ``restored_due_at`` is an ISO-8601
+     *     timestamp — both already stringified by the handler.
+     */
+    UndoGradeResponse: {
+      /** Direction */
+      direction: string;
+      /** Restored Due At */
+      restored_due_at: string;
+      /** Restored State */
+      restored_state: string;
+      /** Status */
+      status: string;
     };
     /** UpdateItemRequest */
     UpdateItemRequest: {
@@ -2860,7 +3058,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["BackfillTranslationsResponse"];
         };
       };
     };
@@ -3119,7 +3317,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["BulkDeleteResponse"];
         };
       };
       /** @description Validation Error */
@@ -3253,7 +3451,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["UndoGradeResponse"];
         };
       };
       /** @description Validation Error */
@@ -3707,7 +3905,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["LessonTranscriptResponse"];
         };
       };
       /** @description Validation Error */
@@ -3769,7 +3967,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["ListensResponse"];
         };
       };
     };
@@ -3793,7 +3991,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["ImportListensResponse"];
         };
       };
       /** @description Validation Error */
@@ -3938,7 +4136,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["SrsStatsResponse"];
         };
       };
     };
@@ -3962,7 +4160,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["TranslateResponse"];
         };
       };
       /** @description Validation Error */
@@ -3991,7 +4189,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["TranslateMissingResponse"];
         };
       };
     };

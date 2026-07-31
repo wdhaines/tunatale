@@ -1,5 +1,3 @@
-backfill_translations_api_srs_backfill_translations_post  # reason: untyped handler — mechanical, awaiting scheduled batch
-bulk_delete_items_api_srs_items_bulk_delete_post  # reason: untyped handler — mechanical, awaiting scheduled batch
 create_base_card_api_srs_items_base_post  # reason: untyped handler — returns a traced/variable shape
 create_inflection_cloze_api_srs_inflection_clozes_post  # reason: untyped handler — returns a traced/variable shape
 create_item_api_srs_items_post  # reason: untyped handler — returns a traced/variable shape
@@ -14,13 +12,9 @@ get_lesson_api_story__lesson_id__get  # reason: untyped handler — returns a tr
 get_lesson_by_day_api_curriculum__curriculum_id__days__day__lesson_get  # reason: untyped handler — returns a traced/variable shape
 get_lesson_review_queue_api_srs_lesson__lesson_id__review_queue_get  # reason: untyped handler — mechanical, awaiting scheduled batch
 get_lesson_source_api_story__lesson_id__source_get  # reason: untyped handler — returns a traced/variable shape
-get_lesson_transcript_api_srs_lesson__lesson_id__transcript_get  # reason: untyped handler — mechanical, awaiting scheduled batch
-get_listens_api_srs_listens_get  # reason: untyped handler — mechanical, awaiting scheduled batch
 get_new_collocations_api_srs_new_get  # reason: untyped handler — returns a traced/variable shape
 get_queue_stats_api_srs_queue_stats_get  # reason: untyped handler — mechanical, awaiting scheduled batch
 get_review_queue_api_srs_review_queue_get  # reason: untyped handler — returns a traced/variable shape
-get_stats_api_srs_stats_get  # reason: untyped handler — mechanical, awaiting scheduled batch
-import_listens_api_srs_listens_import_post  # reason: untyped handler — mechanical, awaiting scheduled batch
 list_curricula_api_curriculum_get  # reason: untyped handler — returns a traced/variable shape
 list_items_api_srs_items_get  # reason: untyped handler — returns a traced/variable shape
 mark_lesson_listened_api_srs_listen_post  # reason: untyped handler — mechanical, awaiting scheduled batch
@@ -36,8 +30,5 @@ reset_item_api_srs_items__item_id__reset_post  # reason: untyped handler — ret
 restore_known_item_api_srs_items__item_id__restore_known_post  # reason: untyped handler — returns a traced/variable shape
 set_item_state_api_srs_items__item_id__state_post  # reason: untyped handler — returns a traced/variable shape
 suspend_item_api_srs_items__item_id__suspend_post  # reason: untyped handler — returns a traced/variable shape
-translate_api_srs_translate_post  # reason: untyped handler — mechanical, awaiting scheduled batch
-translate_missing_api_srs_translate_missing_post  # reason: untyped handler — mechanical, awaiting scheduled batch
 trigger_peer_sync_api_anki_peer_sync_post  # reason: untyped handler — mechanical, awaiting scheduled batch
-undo_grade_api_srs_items__item_id__direction__direction__undo_post  # reason: untyped handler — mechanical, awaiting scheduled batch
 untrack_item_api_srs_items__item_id__untrack_post  # reason: untyped handler — returns conditional key-set

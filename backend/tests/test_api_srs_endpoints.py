@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import SrsStatsResponse
 from app.main import app
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
@@ -38,6 +39,18 @@ class TestSRSEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert "total" in data
+
+    async def test_srs_stats_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 5)."""
+        from app.srs.database import SRSDatabase
+
+        app.state.srs_db = SRSDatabase(":memory:")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/stats")
+
+        assert set(response.json().keys()) == {"total", "due_today"}
+        assert set(SrsStatsResponse.model_fields) == {"total", "due_today"}
 
     async def test_srs_new_returns_200(self):
         from app.models.syntactic_unit import SyntacticUnit

@@ -7,6 +7,7 @@ import datetime
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import UndoGradeResponse
 from app.languages import get_language
 from app.main import app
 from app.models.srs_item import Direction, DirectionState, SRSState
@@ -616,6 +617,19 @@ class TestUndoGradeEndpoint:
         assert r2.json()["status"] == "ok"
         assert self._rec_state(item_id) == prior
         assert _db().latest_revlog_id_for_direction(item_id, Direction.RECOGNITION) is None
+
+    async def test_undo_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 5)."""
+        item_id = self._item_id()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await c.post(
+                f"/api/srs/items/{item_id}/direction/recognition/feedback",
+                json={"rating": "good"},
+            )
+            r = await c.post(f"/api/srs/items/{item_id}/direction/recognition/undo")
+
+        assert set(r.json().keys()) == {"status", "direction", "restored_state", "restored_due_at"}
+        assert set(UndoGradeResponse.model_fields) == {"status", "direction", "restored_state", "restored_due_at"}
 
     async def test_undo_without_any_grade_returns_409(self):
         item_id = self._item_id()

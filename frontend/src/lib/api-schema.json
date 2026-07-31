@@ -1,6 +1,25 @@
 {
   "components": {
     "schemas": {
+      "BackfillTranslationsResponse": {
+        "description": "Response of POST /api/srs/backfill-translations.",
+        "properties": {
+          "glosses_found": {
+            "title": "Glosses Found",
+            "type": "integer"
+          },
+          "updated": {
+            "title": "Updated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updated",
+          "glosses_found"
+        ],
+        "title": "BackfillTranslationsResponse",
+        "type": "object"
+      },
       "Body_put_image_upload_api_srs_items__item_id__image_upload_put": {
         "properties": {
           "file": {
@@ -29,6 +48,20 @@
           "ids"
         ],
         "title": "BulkDeleteRequest",
+        "type": "object"
+      },
+      "BulkDeleteResponse": {
+        "description": "Response of POST /api/srs/items/bulk-delete.",
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "BulkDeleteResponse",
         "type": "object"
       },
       "CommitPendingResponse": {
@@ -466,6 +499,39 @@
         "title": "ImportListensRequest",
         "type": "object"
       },
+      "ImportListensResponse": {
+        "description": "Response of POST /api/srs/listens/import.\n\nEach list holds lesson ids, partitioned by what the import did with them.",
+        "properties": {
+          "already_present": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Already Present",
+            "type": "array"
+          },
+          "imported": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Imported",
+            "type": "array"
+          },
+          "unknown": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unknown",
+            "type": "array"
+          }
+        },
+        "required": [
+          "imported",
+          "already_present",
+          "unknown"
+        ],
+        "title": "ImportListensResponse",
+        "type": "object"
+      },
       "ImportPlanRequest": {
         "description": "Self-describing plan file for curriculum authoring.\n\n``days`` stays a free list \u2014 its schema is validated by\n``plan_io.validate_plan_days`` so errors carry field paths.",
         "properties": {
@@ -629,6 +695,36 @@
           "sync_available"
         ],
         "title": "LanguagesResponse",
+        "type": "object"
+      },
+      "LessonTranscriptResponse": {
+        "description": "Response of GET /api/srs/lesson/{lesson_id}/transcript.",
+        "properties": {
+          "dialogue_lines": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptDialogueLine"
+            },
+            "title": "Dialogue Lines",
+            "type": "array"
+          },
+          "key_phrases": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptKeyPhrase"
+            },
+            "title": "Key Phrases",
+            "type": "array"
+          },
+          "lesson_id": {
+            "title": "Lesson Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lesson_id",
+          "key_phrases",
+          "dialogue_lines"
+        ],
+        "title": "LessonTranscriptResponse",
         "type": "object"
       },
       "ListenPreviewCandidate": {
@@ -797,6 +893,47 @@
           "lesson_id"
         ],
         "title": "ListenRequest",
+        "type": "object"
+      },
+      "ListenedLesson": {
+        "description": "One element of ListensResponse.lessons.\n\nShape declared at ``db_listens.py::get_listened_lessons``.",
+        "properties": {
+          "last_listened_at": {
+            "title": "Last Listened At",
+            "type": "string"
+          },
+          "lesson_id": {
+            "title": "Lesson Id",
+            "type": "string"
+          },
+          "listen_count": {
+            "title": "Listen Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lesson_id",
+          "listen_count",
+          "last_listened_at"
+        ],
+        "title": "ListenedLesson",
+        "type": "object"
+      },
+      "ListensResponse": {
+        "description": "Response of GET /api/srs/listens.",
+        "properties": {
+          "lessons": {
+            "items": {
+              "$ref": "#/components/schemas/ListenedLesson"
+            },
+            "title": "Lessons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lessons"
+        ],
+        "title": "ListensResponse",
         "type": "object"
       },
       "LlmActivityResponse": {
@@ -1114,6 +1251,25 @@
         "title": "SetStateRequest",
         "type": "object"
       },
+      "SrsStatsResponse": {
+        "description": "Response of GET /api/srs/stats.",
+        "properties": {
+          "due_today": {
+            "title": "Due Today",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "due_today"
+        ],
+        "title": "SrsStatsResponse",
+        "type": "object"
+      },
       "StartPlanRequest": {
         "properties": {
           "cefr_level": {
@@ -1223,6 +1379,289 @@
         "title": "SuspendRequest",
         "type": "object"
       },
+      "TranscriptDialogueLine": {
+        "description": "One element of LessonTranscriptResponse.dialogue_lines.",
+        "properties": {
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "sentence": {
+            "title": "Sentence",
+            "type": "string"
+          },
+          "words": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptWord"
+            },
+            "title": "Words",
+            "type": "array"
+          }
+        },
+        "required": [
+          "role",
+          "sentence",
+          "words"
+        ],
+        "title": "TranscriptDialogueLine",
+        "type": "object"
+      },
+      "TranscriptKeyPhrase": {
+        "description": "One element of LessonTranscriptResponse.key_phrases.",
+        "properties": {
+          "phrase": {
+            "title": "Phrase",
+            "type": "string"
+          },
+          "translation": {
+            "title": "Translation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phrase",
+          "translation"
+        ],
+        "title": "TranscriptKeyPhrase",
+        "type": "object"
+      },
+      "TranscriptWord": {
+        "description": "One element of TranscriptDialogueLine.words.\n\nThe 25 fields the handler projects out of ``transcript.WordToken``. Note\nthat ``WordToken.collocation_is_due`` is deliberately NOT among them \u2014 it is\ncomputed but never serialized, and adding it here would not surface it (the\nmodel can only filter, never invent).",
+        "properties": {
+          "active_direction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Direction"
+          },
+          "active_state": {
+            "title": "Active State",
+            "type": "string"
+          },
+          "card_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Type"
+          },
+          "collocation_lemma": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collocation Lemma"
+          },
+          "collocation_progress": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collocation Progress"
+          },
+          "collocation_span_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collocation Span Id"
+          },
+          "collocation_srs_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collocation Srs State"
+          },
+          "collocation_start": {
+            "title": "Collocation Start",
+            "type": "boolean"
+          },
+          "collocation_translation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collocation Translation"
+          },
+          "inflectable": {
+            "title": "Inflectable",
+            "type": "boolean"
+          },
+          "inflection_feature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inflection Feature"
+          },
+          "is_due": {
+            "title": "Is Due",
+            "type": "boolean"
+          },
+          "known_marked": {
+            "title": "Known Marked",
+            "type": "boolean"
+          },
+          "lemma": {
+            "title": "Lemma",
+            "type": "string"
+          },
+          "prefix_punct": {
+            "title": "Prefix Punct",
+            "type": "string"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress"
+          },
+          "recognition_is_due": {
+            "title": "Recognition Is Due",
+            "type": "boolean"
+          },
+          "recognition_reviewable": {
+            "title": "Recognition Reviewable",
+            "type": "boolean"
+          },
+          "recognition_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recognition State"
+          },
+          "srs_item_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Srs Item Id"
+          },
+          "srs_state": {
+            "title": "Srs State",
+            "type": "string"
+          },
+          "suffix_punct": {
+            "title": "Suffix Punct",
+            "type": "string"
+          },
+          "surface": {
+            "title": "Surface",
+            "type": "string"
+          },
+          "translation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation"
+          },
+          "well_known": {
+            "title": "Well Known",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "surface",
+          "prefix_punct",
+          "suffix_punct",
+          "lemma",
+          "srs_state",
+          "srs_item_id",
+          "translation",
+          "collocation_span_id",
+          "collocation_start",
+          "collocation_srs_state",
+          "collocation_lemma",
+          "collocation_translation",
+          "collocation_progress",
+          "card_type",
+          "active_state",
+          "active_direction",
+          "is_due",
+          "progress",
+          "inflectable",
+          "inflection_feature",
+          "known_marked",
+          "recognition_reviewable",
+          "recognition_state",
+          "recognition_is_due",
+          "well_known"
+        ],
+        "title": "TranscriptWord",
+        "type": "object"
+      },
+      "TranslateMissingResponse": {
+        "description": "Response of POST /api/srs/translate-missing.\n\nTwo returns \u2014 the \"nothing untranslated\" early return and the batch loop's\n\u2014 but both carry exactly these keys, so there is no conditional key-set.\nBoth branches are pinned by their own key-set test.",
+        "properties": {
+          "skipped": {
+            "title": "Skipped",
+            "type": "integer"
+          },
+          "translated": {
+            "title": "Translated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "translated",
+          "skipped"
+        ],
+        "title": "TranslateMissingResponse",
+        "type": "object"
+      },
       "TranslateRequest": {
         "properties": {
           "language_code": {
@@ -1239,6 +1678,49 @@
           "language_code"
         ],
         "title": "TranslateRequest",
+        "type": "object"
+      },
+      "TranslateResponse": {
+        "description": "Response of POST /api/srs/translate.",
+        "properties": {
+          "translation": {
+            "title": "Translation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "translation"
+        ],
+        "title": "TranslateResponse",
+        "type": "object"
+      },
+      "UndoGradeResponse": {
+        "description": "Response of POST /api/srs/items/{item_id}/direction/{direction}/undo.\n\n``restored_state`` is ``SRSState.value``; ``restored_due_at`` is an ISO-8601\ntimestamp \u2014 both already stringified by the handler.",
+        "properties": {
+          "direction": {
+            "title": "Direction",
+            "type": "string"
+          },
+          "restored_due_at": {
+            "title": "Restored Due At",
+            "type": "string"
+          },
+          "restored_state": {
+            "title": "Restored State",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "direction",
+          "restored_state",
+          "restored_due_at"
+        ],
+        "title": "UndoGradeResponse",
         "type": "object"
       },
       "UpdateItemRequest": {
@@ -2505,7 +2987,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/BackfillTranslationsResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -2893,7 +3377,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/BulkDeleteResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3092,7 +3578,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/UndoGradeResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3721,7 +4209,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/LessonTranscriptResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3789,7 +4279,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ListensResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3818,7 +4310,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ImportListensResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4001,7 +4495,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SrsStatsResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4030,7 +4526,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/TranslateResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4060,7 +4558,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/TranslateMissingResponse"
+                }
               }
             },
             "description": "Successful Response"

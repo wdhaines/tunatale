@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import ImportListensResponse, ListenedLesson, ListensResponse
 from app.languages import get_language
 from app.main import app
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
@@ -67,6 +68,33 @@ class TestListensEndpoints:
         # Ordered by last_listened_at DESC — lesson-b was inserted after lesson-a.
         assert lessons[0]["lesson_id"] == "lesson-b"
         assert lessons[1]["lesson_id"] == "lesson-a"
+
+    async def test_get_listens_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 5).
+
+        Pins the ELEMENT key-set too — a bare ``list`` would drain the ledger
+        entry while generating ``unknown[]`` in api-types.d.ts, which is the
+        thing the ledger exists to prevent (batch 3's rule).
+        """
+        self.db.record_listen("lesson-a")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/listens")
+
+        assert set(resp.json().keys()) == {"lessons"}
+        assert set(resp.json()["lessons"][0].keys()) == {"lesson_id", "listen_count", "last_listened_at"}
+        assert set(ListensResponse.model_fields) == {"lessons"}
+        assert set(ListenedLesson.model_fields) == {"lesson_id", "listen_count", "last_listened_at"}
+
+    async def test_import_listens_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 5)."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/listens/import",
+                json={"lesson_ids": ["lesson-a", "lesson-x"]},
+            )
+
+        assert set(resp.json().keys()) == {"imported", "already_present", "unknown"}
+        assert set(ImportListensResponse.model_fields) == {"imported", "already_present", "unknown"}
 
     async def test_import_split(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

@@ -5,7 +5,13 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.api.models import StatusResponse
+from app.api.models import (
+    BackfillTranslationsResponse,
+    BulkDeleteResponse,
+    StatusResponse,
+    TranslateMissingResponse,
+    TranslateResponse,
+)
 from app.languages import get_language
 from app.main import app
 from app.models.srs_item import Direction, SRSState
@@ -234,6 +240,18 @@ class TestDeleteItem:
         assert response.status_code == 200
         assert response.json()["deleted"] == 2
         assert db.count_collocations() == 1
+
+    async def test_bulk_delete_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 5)."""
+        db = _db()
+        db.add_collocation(_unit("a", "a"), language_code="sl")
+        rows, _ = db.list_collocations()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/items/bulk-delete", json={"ids": [rows[0][0]]})
+
+        assert set(response.json().keys()) == {"deleted"}
+        assert set(BulkDeleteResponse.model_fields) == {"deleted"}
 
 
 class TestCreateItem:
@@ -731,6 +749,14 @@ class TestBackfillTranslations:
         assert response.status_code == 200
         assert response.json() == {"updated": 0, "glosses_found": 0}
 
+    async def test_backfill_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 5)."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/backfill-translations")
+
+        assert set(response.json().keys()) == {"updated", "glosses_found"}
+        assert set(BackfillTranslationsResponse.model_fields) == {"updated", "glosses_found"}
+
 
 class TestTranslateMissing:
     """Tests for POST /api/srs/translate-missing."""
@@ -807,6 +833,30 @@ class TestTranslateMissing:
         assert response.status_code == 200
         assert db.get_collocation("zdravo").syntactic_unit.translation == "hello"
 
+    async def test_translate_missing_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 5).
+
+        The handler has TWO returns — the "nothing untranslated" early return
+        and the batch loop's — so both need pinning: `response_model=` filters,
+        and a branch whose key-set was never asserted is unguarded.
+        """
+        from unittest.mock import AsyncMock, MagicMock
+
+        db = _db()
+        db.add_collocation(_unit("zdravo"), language_code="sl")
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value='{"zdravo": "hello"}')
+        app.state.llm = mock_llm
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            translated = await client.post("/api/srs/translate-missing")
+            # Second call: everything is translated now, so this takes the early return.
+            early = await client.post("/api/srs/translate-missing")
+
+        assert set(translated.json().keys()) == {"translated", "skipped"}
+        assert set(early.json().keys()) == {"translated", "skipped"}
+        assert set(TranslateMissingResponse.model_fields) == {"translated", "skipped"}
+
 
 class TestTranslate:
     """Tests for POST /api/srs/translate."""
@@ -829,6 +879,23 @@ class TestTranslate:
         assert "translation" in data
         assert data["translation"] == "in the city centre"
         mock_llm.complete.assert_awaited_once()
+
+    async def test_translate_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 5)."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_llm = MagicMock()
+        mock_llm.complete = AsyncMock(return_value="in the city centre")
+        app.state.llm = mock_llm
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/translate",
+                json={"text": "centru mesta", "language_code": "sl"},
+            )
+
+        assert set(response.json().keys()) == {"translation"}
+        assert set(TranslateResponse.model_fields) == {"translation"}
 
     async def test_translate_empty_text_returns_422(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

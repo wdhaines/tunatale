@@ -16,21 +16,30 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
 from app.api.models import (
+    BackfillTranslationsResponse,
     BulkDeleteRequest,
+    BulkDeleteResponse,
     CommitPendingResponse,
     CreateBaseCardRequest,
     CreateItemRequest,
     DrillRequest,
     IgnoreLemmaRequest,
     ImportListensRequest,
+    ImportListensResponse,
     InflectionClozeRequest,
+    LessonTranscriptResponse,
     ListenPreviewResponse,
     ListenRequest,
+    ListensResponse,
     MarkLessonReviewedResponse,
     SetStateRequest,
+    SrsStatsResponse,
     StatusResponse,
     SuspendRequest,
+    TranslateMissingResponse,
     TranslateRequest,
+    TranslateResponse,
+    UndoGradeResponse,
     UpdateItemRequest,
 )
 from app.audio.cloze_tts import synthesize_cloze_audios
@@ -357,7 +366,7 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
     return response
 
 
-@router.post("/items/{item_id}/direction/{direction}/undo", status_code=200)
+@router.post("/items/{item_id}/direction/{direction}/undo", status_code=200, response_model=UndoGradeResponse)
 async def undo_grade(item_id: int, direction: str, request: Request):
     """Undo the most recent TT-native grade on (item, direction).
 
@@ -978,13 +987,13 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     }
 
 
-@router.get("/listens", status_code=200)
+@router.get("/listens", status_code=200, response_model=ListensResponse)
 async def get_listens(request: Request):
     db = request.state.srs_db
     return {"lessons": db.get_listened_lessons()}
 
 
-@router.post("/listens/import", status_code=200)
+@router.post("/listens/import", status_code=200, response_model=ImportListensResponse)
 async def import_listens(body: ImportListensRequest, request: Request):
     store = request.state.content_store
     db = request.state.srs_db
@@ -1409,7 +1418,7 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
     return {"candidates": creates + tracked}
 
 
-@router.get("/lesson/{lesson_id}/transcript", status_code=200)
+@router.get("/lesson/{lesson_id}/transcript", status_code=200, response_model=LessonTranscriptResponse)
 async def get_lesson_transcript(lesson_id: str, request: Request):
     store = request.state.content_store
     lesson = store.get_lesson(lesson_id)
@@ -1487,7 +1496,7 @@ def _build_translate_prompt(words: list[str], language_name: str) -> str:
 _VALID_LANGUAGE_CODES = known_language_codes()
 
 
-@router.post("/translate", status_code=200)
+@router.post("/translate", status_code=200, response_model=TranslateResponse)
 async def translate(body: TranslateRequest, request: Request):
     if not body.text.strip():
         raise HTTPException(status_code=422, detail="text must not be empty")
@@ -1503,7 +1512,7 @@ async def translate(body: TranslateRequest, request: Request):
     return {"translation": translation}
 
 
-@router.post("/translate-missing", status_code=200)
+@router.post("/translate-missing", status_code=200, response_model=TranslateMissingResponse)
 async def translate_missing(request: Request):
     """Call the LLM to fill in translations for every card that has none."""
     db = request.state.srs_db
@@ -1535,7 +1544,7 @@ async def translate_missing(request: Request):
     return {"translated": translated, "skipped": skipped}
 
 
-@router.post("/backfill-translations", status_code=200)
+@router.post("/backfill-translations", status_code=200, response_model=BackfillTranslationsResponse)
 async def backfill_translations(request: Request):
     """One-time repair: fill empty translations from all stored lesson glosses."""
     store = request.state.content_store
@@ -1545,7 +1554,7 @@ async def backfill_translations(request: Request):
     return {"updated": updated, "glosses_found": len(glosses)}
 
 
-@router.get("/stats", status_code=200)
+@router.get("/stats", status_code=200, response_model=SrsStatsResponse)
 async def get_stats(request: Request):
     db = request.state.srs_db
     today = anki_today()
@@ -1876,7 +1885,7 @@ async def delete_item(item_id: int, request: Request):
     return {"status": "deleted"}
 
 
-@router.post("/items/bulk-delete", status_code=200)
+@router.post("/items/bulk-delete", status_code=200, response_model=BulkDeleteResponse)
 async def bulk_delete_items(body: BulkDeleteRequest, request: Request):
     db = request.state.srs_db
     deleted = db.delete_collocations(body.ids)

@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import (
+    LessonTranscriptResponse,
+    TranscriptDialogueLine,
+    TranscriptKeyPhrase,
+    TranscriptWord,
+)
 from app.main import app
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
@@ -150,6 +156,84 @@ class TestTranscriptEndpoint:
         assert data["lesson_id"] == "lesson-1"
         assert isinstance(data["key_phrases"], list)
         assert isinstance(data["dialogue_lines"], list)
+
+    async def test_transcript_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 5).
+
+        Asserts all THREE nesting levels — top, dialogue_lines, and the 25-field
+        words element. A top-level-only assertion would pass with the nested
+        models missing fields, and `response_model=` would then silently delete
+        them from every word in the payload.
+
+        Pinned against LITERAL key sets, not ``set(Model.model_fields)``. Once
+        ``response_model=`` is in place the latter is circular — the model
+        filters the payload to its own fields, so deleting a field shrinks both
+        sides of the assertion and the test stays green. Verified by drill: with
+        ``set(Model.model_fields)`` here, dropping ``well_known`` from
+        TranscriptWord passed; against these literals it fails.
+        """
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="Zdravo.", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
+            key_phrases=[KeyPhraseInfo(phrase="Zdravo", translation="Hello")],
+        )
+
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = SRSDatabase(":memory:")
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/lesson/lesson-1/transcript")
+
+        data = response.json()
+        assert set(data.keys()) == {"lesson_id", "key_phrases", "dialogue_lines"}
+        assert set(data["key_phrases"][0].keys()) == {"phrase", "translation"}
+        line = data["dialogue_lines"][0]
+        assert set(line.keys()) == {"role", "sentence", "words"}
+        assert set(line["words"][0].keys()) == {
+            "surface",
+            "prefix_punct",
+            "suffix_punct",
+            "lemma",
+            "srs_state",
+            "srs_item_id",
+            "translation",
+            "collocation_span_id",
+            "collocation_start",
+            "collocation_srs_state",
+            "collocation_lemma",
+            "collocation_translation",
+            "collocation_progress",
+            "card_type",
+            "active_state",
+            "active_direction",
+            "is_due",
+            "progress",
+            "inflectable",
+            "inflection_feature",
+            "known_marked",
+            "recognition_reviewable",
+            "recognition_state",
+            "recognition_is_due",
+            "well_known",
+        }
+        # The models must agree with those literals — this is the half that
+        # `response_model=` can silently break, so assert it explicitly rather
+        # than relying on the payload comparison above (which the model filters).
+        assert set(LessonTranscriptResponse.model_fields) == set(data.keys())
+        assert set(TranscriptKeyPhrase.model_fields) == set(data["key_phrases"][0].keys())
+        assert set(TranscriptDialogueLine.model_fields) == set(line.keys())
+        assert set(TranscriptWord.model_fields) == set(line["words"][0].keys())
 
     async def test_returns_404_for_missing_lesson(self):
         from app.srs.database import SRSDatabase

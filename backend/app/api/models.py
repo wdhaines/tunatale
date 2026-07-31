@@ -388,3 +388,150 @@ class LlmActivityResponse(BaseModel):
 
     latest: int
     events: list
+
+
+# ── Batch 5: SRS status returns and the lesson transcript ───────────────────
+#
+# Every model below was derived by reading its handler's return dict, not the
+# underlying dataclass — the two differ (WordToken carries `collocation_is_due`,
+# which get_lesson_transcript does not emit). `response_model=` FILTERS, so a
+# field the model omits is silently deleted from the live payload; each of these
+# is pinned by a key-set test written against the UNFILTERED handler output.
+
+
+class SrsStatsResponse(BaseModel):
+    """Response of GET /api/srs/stats."""
+
+    total: int
+    due_today: int
+
+
+class BulkDeleteResponse(BaseModel):
+    """Response of POST /api/srs/items/bulk-delete."""
+
+    deleted: int
+
+
+class BackfillTranslationsResponse(BaseModel):
+    """Response of POST /api/srs/backfill-translations."""
+
+    updated: int
+    glosses_found: int
+
+
+class TranslateResponse(BaseModel):
+    """Response of POST /api/srs/translate."""
+
+    translation: str
+
+
+class TranslateMissingResponse(BaseModel):
+    """Response of POST /api/srs/translate-missing.
+
+    Two returns — the "nothing untranslated" early return and the batch loop's
+    — but both carry exactly these keys, so there is no conditional key-set.
+    Both branches are pinned by their own key-set test.
+    """
+
+    translated: int
+    skipped: int
+
+
+class ImportListensResponse(BaseModel):
+    """Response of POST /api/srs/listens/import.
+
+    Each list holds lesson ids, partitioned by what the import did with them.
+    """
+
+    imported: list[str]
+    already_present: list[str]
+    unknown: list[str]
+
+
+class UndoGradeResponse(BaseModel):
+    """Response of POST /api/srs/items/{item_id}/direction/{direction}/undo.
+
+    ``restored_state`` is ``SRSState.value``; ``restored_due_at`` is an ISO-8601
+    timestamp — both already stringified by the handler.
+    """
+
+    status: str
+    direction: str
+    restored_state: str
+    restored_due_at: str
+
+
+class ListenedLesson(BaseModel):
+    """One element of ListensResponse.lessons.
+
+    Shape declared at ``db_listens.py::get_listened_lessons``.
+    """
+
+    lesson_id: str
+    listen_count: int
+    last_listened_at: str
+
+
+class ListensResponse(BaseModel):
+    """Response of GET /api/srs/listens."""
+
+    lessons: list[ListenedLesson]
+
+
+class TranscriptKeyPhrase(BaseModel):
+    """One element of LessonTranscriptResponse.key_phrases."""
+
+    phrase: str
+    translation: str
+
+
+class TranscriptWord(BaseModel):
+    """One element of TranscriptDialogueLine.words.
+
+    The 25 fields the handler projects out of ``transcript.WordToken``. Note
+    that ``WordToken.collocation_is_due`` is deliberately NOT among them — it is
+    computed but never serialized, and adding it here would not surface it (the
+    model can only filter, never invent).
+    """
+
+    surface: str
+    prefix_punct: str
+    suffix_punct: str
+    lemma: str
+    srs_state: str
+    srs_item_id: int | None
+    translation: str | None
+    collocation_span_id: int | None
+    collocation_start: bool
+    collocation_srs_state: str | None
+    collocation_lemma: str | None
+    collocation_translation: str | None
+    collocation_progress: float | None
+    card_type: str | None
+    active_state: str
+    active_direction: str | None
+    is_due: bool
+    progress: float | None
+    inflectable: bool
+    inflection_feature: str | None
+    known_marked: bool
+    recognition_reviewable: bool
+    recognition_state: str | None
+    recognition_is_due: bool
+    well_known: bool
+
+
+class TranscriptDialogueLine(BaseModel):
+    """One element of LessonTranscriptResponse.dialogue_lines."""
+
+    role: str
+    sentence: str
+    words: list[TranscriptWord]
+
+
+class LessonTranscriptResponse(BaseModel):
+    """Response of GET /api/srs/lesson/{lesson_id}/transcript."""
+
+    lesson_id: str
+    key_phrases: list[TranscriptKeyPhrase]
+    dialogue_lines: list[TranscriptDialogueLine]
