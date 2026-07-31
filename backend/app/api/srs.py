@@ -766,6 +766,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     new_cap, _ = resolve_daily_new_cap(db)
     creation_budget = max(0, new_cap - db.count_new_introduced_today(today) - db.count_new_created_today(today))
     lemma_candidates: list[str] = []
+    # Lemmas the user rated "skip" this listen. They stay in `lemma_candidates`
+    # (so they hold their rank position) but the staged-creation loop below
+    # consumes their slot instead of creating a card — a skip is "not today",
+    # not the ignore list, so the lemma is still offered on the next listen.
+    skipped_lemmas: set[str] = set()
 
     # Build variant index once for this listen request — mirrors the transcript's
     # _build_variant_index usage so /listen resolves the same cards the transcript
@@ -796,9 +801,10 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             # db.get_ignored_lemmas). Casefolded to match the lemmatizer output.
             if lemma.lower() in ignored:
                 continue
-            # "skip" on an untracked lemma suppresses card creation for it.
+            # "skip" on an untracked lemma consumes its rank slot rather than
+            # freeing it for the next-ranked lemma to be promoted into.
             if body.word_ratings.get(lemma, "good") == "skip":
-                continue
+                skipped_lemmas.add(lemma)
             lemma_candidates.append(lemma)
         else:
             # ── Existing row — skip cloze, grade recognition for eligible vocab ──
@@ -922,9 +928,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # cards and takes the top of the ranking; cards created by this listen are
     # "existing" for the next one.
     ranked = _rank_listen_candidates([], lemma_candidates, lemma_occurrences)
-    for _kind, cand in ranked:
-        if created_count >= creation_budget:
+    for i, (_kind, cand) in enumerate(ranked):
+        if i >= creation_budget:
             break
+        if cand in skipped_lemmas:
+            continue  # slot consumed, nothing created — no promotion
         lemma = cand
         is_func = is_function_word_for(
             lemma, lemma_to_surfaces.get(lemma, set()), lesson.language_code, surface_to_upos

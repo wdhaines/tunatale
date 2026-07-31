@@ -1,21 +1,24 @@
-"""The server-side half of the creation-tail contract: skipping a shown create
-row promotes the FIRST tail row, deterministically.
+"""Skipping a create row CONSUMES its creation slot — it does not free it.
 
-Orchestrator-authored for `docs/briefs/bp-listen-preview-creation-budget-ux-2026-07.md`
-(Option B). ⚠️ DO NOT EDIT while implementing that brief — this is the oracle,
+Orchestrator-authored. ⚠️ DO NOT EDIT while implementing — this is the oracle,
 not a test of your implementation. If an assertion looks wrong, STOP and report.
 
-Why this test carries weight beyond its own assertions: the modal derives the
-divider CLIENT-side. It shows "the first N still-checked create rows, in the
-order the server sent them" and never tells the server which lemmas to create.
-That derivation is only honest if the server, re-ranking over the reduced
-candidate set, lands on exactly the same rows. It does, because
-`_rank_listen_candidates` sorts with a STABLE sort keyed on `-occurrences`:
-removing one element never reorders the remainder. This file pins that property
-at the API level, so a future change to the ranking (e.g. the frequency-ranking
-brief) cannot silently invalidate the frontend without going red here.
+Ratified by the user 2026-07-31, reversing the promote-on-uncheck semantics this
+file pinned earlier the same day (`d589559`). The model now:
 
-The companion frontend test is
+- A skipped untracked lemma still occupies its rank position, so the budget slot
+  is spent whether or not a card is created. Nothing is promoted into its place.
+- Skip All therefore creates NOTHING, rather than quietly creating the next
+  block of lemmas the user never saw.
+- The unspent daily-new headroom is not wasted: the queue engine's
+  `new_quota = cap - introduced_today` never subtracted created-today, so
+  existing NEW cards fill the session normally. That fallback needs no code and
+  is not asserted here — it is simply why "create nothing" is the right answer.
+
+Consequence worth understanding before changing anything: because skipping never
+promotes, the server's `will_create` flag is correct no matter what the user
+checks, so the modal partitions on it STATICALLY. The client-side re-derivation
+this file used to justify is gone. See
 `frontend/src/routes/c/[curriculumId]/l/[lessonId]/ListenPreviewModal.creationTail.test.ts`.
 """
 
@@ -87,10 +90,10 @@ def _created(db, lemmas: list[str]) -> set[str]:
     return {lem for lem in lemmas if db.get_collocation_by_lemma(lem) is not None}
 
 
-class TestSkippedCreatePromotesTheFirstTailRow:
-    async def test_ranking_is_the_order_the_preview_disclosed(self):
-        """Baseline the whole file depends on: the preview's create block is the
-        full ranking, live block first."""
+class TestSkipConsumesItsCreationSlot:
+    async def test_preview_discloses_the_full_ranking_with_the_budget_flagged(self):
+        """Unchanged by this reversal: the preview is still the full ranking,
+        live block first. Only what a SKIP does to it has changed."""
         db = _setup()
         db.set_anki_state_cache("daily_new_cap", "2")
 
@@ -101,40 +104,32 @@ class TestSkippedCreatePromotesTheFirstTailRow:
         assert [c["text"] for c in creates if c["will_create"]] == ["banka", "kava"]
         assert [c["text"] for c in creates if not c["will_create"]] == ["hotel", "center", "mesto"]
 
-    async def test_skipping_one_live_row_creates_the_first_tail_row_instead(self):
-        """The residual the brief exists to disclose, pinned as behavior: the
-        budget is spent by RANK, so a skipped live row frees its slot to the
-        next-ranked lemma — the first row of the disclosed tail, never an
-        arbitrary one."""
+    async def test_skipping_one_live_row_creates_only_the_other_one(self):
+        """The reversal, in one assertion: the freed slot is NOT handed to the
+        next-ranked lemma. `hotel` led the tail and stays uncreated."""
         db = _setup()
         db.set_anki_state_cache("daily_new_cap", "2")
 
         listen = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"banka": "skip"}})
 
-        assert listen["created"] == 2
-        # kava stays (it was live and untouched); hotel is promoted because it
-        # led the tail. center and mesto, further down the tail, are not.
-        assert _created(db, _EXPECTED_RANK) == {"kava", "hotel"}
+        assert listen["created"] == 1
+        assert _created(db, _EXPECTED_RANK) == {"kava"}
 
-    async def test_skipping_every_live_row_promotes_the_next_block_in_order(self):
-        """Skip All. The freed slots go to the top of the tail, in tail order.
-
-        NOTE: this is today's server behavior surfaced, not introduced. If it
-        should instead CONSUME the slot (skip meaning "create nothing"), that is
-        a separate decision the user has not made — do not change it here.
-        """
+    async def test_skip_all_creates_nothing(self):
+        """The case that motivated the reversal. Skipping every live create is a
+        refusal, not a request for two different cards."""
         db = _setup()
         db.set_anki_state_cache("daily_new_cap", "2")
 
         listen = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"banka": "skip", "kava": "skip"}})
 
-        assert listen["created"] == 2
-        assert _created(db, _EXPECTED_RANK) == {"hotel", "center"}
+        assert listen["created"] == 0
+        assert _created(db, _EXPECTED_RANK) == set()
 
     async def test_skipping_a_tail_row_changes_nothing(self):
-        """A tail row is not actionable, so naming it must be inert: the same
-        two live rows are created either way. This is what lets the modal send
-        NOTHING for tail rows without changing the outcome."""
+        """A tail row is outside the budget window, so naming it is inert — it
+        neither creates anything nor displaces a live row. This is what lets the
+        modal send NOTHING for tail rows."""
         db = _setup()
         db.set_anki_state_cache("daily_new_cap", "2")
 
@@ -142,3 +137,17 @@ class TestSkippedCreatePromotesTheFirstTailRow:
 
         assert listen["created"] == 2
         assert _created(db, _EXPECTED_RANK) == {"banka", "kava"}
+
+    async def test_a_skipped_lemma_is_still_offered_on_the_next_listen(self):
+        """Consuming the slot must not mean consuming the CANDIDATE. A skip is
+        'not today', so the lemma comes back — otherwise skipping would silently
+        blacklist a word (that is what the ignore list is for)."""
+        db = _setup()
+        db.set_anki_state_cache("daily_new_cap", "2")
+
+        await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"banka": "skip", "kava": "skip"}})
+
+        preview = await _get_preview()
+        creates = [c["text"] for c in preview["candidates"] if c["kind"] == "create"]
+        assert "banka" in creates, "a skipped lemma must remain a candidate"
+        assert "kava" in creates

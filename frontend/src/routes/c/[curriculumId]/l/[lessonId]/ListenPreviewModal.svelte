@@ -139,12 +139,12 @@
 			// means the backend defaults to "good" and CREATES the card, so
 			// seeding a tail row would create a card the budget does not cover.
 			const rts: Record<string, WordRating> = {};
-			const liveKeys = new Set(liveCreates.map((c) => candidateKey(c)));
 			for (const c of candidates) {
 				const key = candidateKey(c);
 				if (c.well_known) {
 					rts[key] = 'skip';
-				} else if (c.kind === 'create' && !liveKeys.has(key)) {
+				} else if (c.kind === 'create' && c.will_create === false) {
+					// Tail rows (outside the creation budget) get NO entry at all.
 					continue;
 				} else {
 					rts[key] = 'good';
@@ -190,27 +190,7 @@
 		handleInteraction();
 		if (rating === 'skip') rememberGrade(key);
 		else confirmed.add(key);
-		const rts = { ...ratings, [key]: rating };
-		reconcileCreateBlock(rts);
-		ratings = rts;
-	}
-
-	// Keeps the ratings map aligned with the derived live/tail split for create
-	// rows. A promoted tail row must carry a default "good" so it renders as a
-	// normal live row; a demoted live row must lose its entry entirely so it
-	// can never leak into the commit payload. A skipped row is the user's
-	// reversible choice, so it is left exactly as it is.
-	function reconcileCreateBlock(rts: Record<string, WordRating>) {
-		const liveKeys = new Set(liveCreateRowsFrom(rts).map((c) => candidateKey(c)));
-		for (const c of candidates) {
-			if (c.kind !== 'create') continue;
-			const key = candidateKey(c);
-			if (liveKeys.has(key)) {
-				if (rts[key] === undefined) rts[key] = 'good';
-			} else {
-				delete rts[key];
-			}
-		}
+		ratings = { ...ratings, [key]: rating };
 	}
 
 	/** True when a row still carries the grade the listen assumed for it. */
@@ -237,15 +217,12 @@
 			if (tailKeys.has(key)) continue;
 			if (rts[key] === 'skip') rts[key] = rememberedGrade[key] ?? 'good';
 		}
-		reconcileCreateBlock(rts);
 		ratings = rts;
 	}
 
 	// Bulk-skip the LIVE rows only. Tail rows are never written: they have no
-	// ratings entry and must keep none. Deliberately does NOT reconcile — a row
-	// promoted by the re-rank stays unseeded, so the footer count reads what
-	// the user asked for, not what the server will do with the freed slots
-	// (today's behavior, surfaced rather than fixed).
+	// ratings entry and must keep none. The live/tail split is static (the
+	// server's `will_create` flag), so no reconciliation is needed here.
 	function skipAll() {
 		handleInteraction();
 		const rts: Record<string, WordRating> = { ...ratings };
@@ -303,44 +280,21 @@
 	}
 
 	// ── Over-budget creation tail ──────────────────────────────────────────
-	// The server spends the per-listen creation budget by RANK, not by row
-	// identity: `_rank_listen_candidates` sorts with a STABLE sort, so
-	// unchecking a live create promotes the next-ranked lemma the preview never
-	// displayed. `will_create` is only correct for the untouched state, so the
-	// live/tail divider is re-derived from the CURRENT ratings on every change.
-	const creationBudget = $derived(
-		candidates.filter((c) => c.kind === 'create' && c.will_create).length,
+	// A skip no longer frees its slot for promotion (the server consumes the
+	// slot instead — see mark_lesson_listened), so `will_create` is correct no
+	// matter what the user checks. The live/tail split is therefore a STATIC
+	// filter on the server's flag, not a re-derivation from current ratings.
+	let tailCandidates = $derived(
+		candidates.filter((c) => c.kind === 'create' && c.will_create === false),
 	);
 
-	/** The live create rows: the first `creationBudget` create rows, in server
-	 *  order, whose rating is not "skip". A skipped row stays live (it is the
-	 *  user's reversible choice) but does not consume a slot. */
-	function liveCreateRowsFrom(rts: Record<string, WordRating>): ListenPreviewCandidate[] {
-		const rows: ListenPreviewCandidate[] = [];
-		let seen = 0;
-		for (const c of candidates) {
-			if (c.kind !== 'create') continue;
-			if (rts[candidateKey(c)] !== 'skip') seen += 1;
-			if (seen > creationBudget) break;
-			rows.push(c);
-		}
-		return rows;
-	}
-
-	let liveCreates = $derived(liveCreateRowsFrom(ratings));
-
 	// The gradeable set: every tracked (word/kp) row that is not well-known,
-	// plus the live create rows. Tail rows are rendered separately and
-	// read-only.
+	// plus every create row the server will actually create. Tail rows are
+	// rendered separately and read-only.
 	let liveCandidates = $derived([
 		...candidates.filter((c) => c.kind !== 'create' && !c.well_known),
-		...liveCreates,
+		...candidates.filter((c) => c.kind === 'create' && c.will_create !== false),
 	]);
-
-	let tailCandidates = $derived.by(() => {
-		const liveKeys = new Set(liveCreates.map((c) => candidateKey(c)));
-		return candidates.filter((c) => c.kind === 'create' && !liveKeys.has(candidateKey(c)));
-	});
 
 	let wellKnownCandidates = $derived(candidates.filter((c) => c.well_known));
 
