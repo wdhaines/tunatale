@@ -307,7 +307,7 @@ def refresh_desired_retention(db: SRSDatabase, conn: sqlite3.Connection, deck_na
         db.set_anki_state_cache("desired_retention", repr(dr))
 
 
-def resolve_daily_review_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
+def resolve_daily_review_cap(db: SRSDatabase) -> tuple[int, str]:
     """Return (cap, source) where source is 'cache', 'config', or 'default'.
 
     Priority:
@@ -315,24 +315,15 @@ def resolve_daily_review_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
     2. settings.anki_reviews_per_day_default — 'config'
     3. Hard default 200 — 'default'
     """
-    if db is None:
+    row = db.get_anki_state_cache("daily_review_cap")
+    if row is not None:
+        value_str, updated_at = row
         try:
-            from app.srs.database import SRSDatabase
-
-            db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-        except Exception:
-            db = None
-
-    if db is not None:
-        row = db.get_anki_state_cache("daily_review_cap")
-        if row is not None:
-            value_str, updated_at = row
-            try:
-                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
-                    return (int(value_str), "cache")
-            except ValueError, TypeError, OverflowError:
-                pass
+            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                return (int(value_str), "cache")
+        except ValueError, TypeError, OverflowError:
+            pass
 
     config_default = getattr(settings, "anki_reviews_per_day_default", 0)
     if config_default:
@@ -418,7 +409,7 @@ def refresh_review_settings(db: SRSDatabase, conn: sqlite3.Connection, deck_name
         db.set_anki_state_cache("bury_review", str(bool(bury_reviews_raw)))
 
 
-def resolve_daily_new_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
+def resolve_daily_new_cap(db: SRSDatabase) -> tuple[int, str]:
     """Return (cap, source) where source is 'cache', 'config', or 'default'.
 
     Priority:
@@ -426,24 +417,15 @@ def resolve_daily_new_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
     2. settings.anki_new_per_day_default — 'config'
     3. Hard default 20 — 'default'
     """
-    if db is None:
+    row = db.get_anki_state_cache("daily_new_cap")
+    if row is not None:
+        value_str, updated_at = row
         try:
-            from app.srs.database import SRSDatabase
-
-            db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-        except Exception:
-            db = None
-
-    if db is not None:
-        row = db.get_anki_state_cache("daily_new_cap")
-        if row is not None:
-            value_str, updated_at = row
-            try:
-                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
-                    return (int(value_str), "cache")
-            except ValueError, TypeError, OverflowError:
-                pass
+            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                return (int(value_str), "cache")
+        except ValueError, TypeError, OverflowError:
+            pass
 
     config_default = getattr(settings, "anki_new_per_day_default", 0)
     if config_default:
@@ -452,86 +434,59 @@ def resolve_daily_new_cap(db: SRSDatabase | None = None) -> tuple[int, str]:
     return (_DEFAULT_NEW_PER_DAY, "default")
 
 
-def resolve_new_spread(db: SRSDatabase | None = None) -> tuple[int, str]:
+def resolve_new_spread(db: SRSDatabase) -> tuple[int, str]:
     """Return (new_spread, source) where source is 'cache' or 'default'.
 
     new_spread: 0=mix, 1=after_reviews, 2=before_reviews
     Default is 0 (mix).
     """
-    if db is None:
+    row = db.get_anki_state_cache("new_spread")
+    if row is not None:
+        value_str, updated_at = row
         try:
-            from app.srs.database import SRSDatabase
-
-            db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-        except Exception:
-            db = None
-
-    if db is not None:
-        row = db.get_anki_state_cache("new_spread")
-        if row is not None:
-            value_str, updated_at = row
-            try:
-                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
-                    val = int(value_str)
-                    if val in (0, 1, 2):
-                        return (val, "cache")
-            except ValueError, TypeError, OverflowError:
-                pass
+            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                val = int(value_str)
+                if val in (0, 1, 2):
+                    return (val, "cache")
+        except ValueError, TypeError, OverflowError:
+            pass
 
     return (_DEFAULT_NEW_SPREAD, "default")
 
 
-def resolve_bury_new(db: SRSDatabase | None = None) -> tuple[bool, str]:
+def resolve_bury_new(db: SRSDatabase) -> tuple[bool, str]:
     """Return (bury_new, source) where source is 'cache' or 'default'.
 
     Default is True (bury new siblings).
     """
-    if db is None:
+    row = db.get_anki_state_cache("bury_new")
+    if row is not None:
+        value_str, updated_at = row
         try:
-            from app.srs.database import SRSDatabase
-
-            db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-        except Exception:
-            db = None
-
-    if db is not None:
-        row = db.get_anki_state_cache("bury_new")
-        if row is not None:
-            value_str, updated_at = row
-            try:
-                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
-                    return (value_str == "True", "cache")
-            except ValueError, TypeError, OverflowError:
-                pass
+            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                return (value_str == "True", "cache")
+        except ValueError, TypeError, OverflowError:
+            pass
 
     return (_DEFAULT_BURY_NEW, "default")
 
 
-def resolve_bury_review(db: SRSDatabase | None = None) -> tuple[bool, str]:
+def resolve_bury_review(db: SRSDatabase) -> tuple[bool, str]:
     """Return (bury_review, source) where source is 'cache' or 'default'.
 
     Default is True (bury review siblings).
     """
-    if db is None:
+    row = db.get_anki_state_cache("bury_review")
+    if row is not None:
+        value_str, updated_at = row
         try:
-            from app.srs.database import SRSDatabase
-
-            db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-        except Exception:
-            db = None
-
-    if db is not None:
-        row = db.get_anki_state_cache("bury_review")
-        if row is not None:
-            value_str, updated_at = row
-            try:
-                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
-                    return (value_str == "True", "cache")
-            except ValueError, TypeError, OverflowError:
-                pass
+            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                return (value_str == "True", "cache")
+        except ValueError, TypeError, OverflowError:
+            pass
 
     return (_DEFAULT_BURY_REVIEW, "default")
 
@@ -550,19 +505,12 @@ def refresh_col_crt(db: SRSDatabase, conn: sqlite3.Connection) -> None:
         pass
 
 
-def resolve_col_crt(db: SRSDatabase | None = None) -> int | None:
+def resolve_col_crt(db: SRSDatabase) -> int | None:
     """Return the cached ``col.crt`` (epoch seconds), or *None* if unavailable.
 
     Pre-sync (no cache entry) or a corrupt value falls through to *None*;
     callers must accept the UTC-date fallback.
     """
-    if db is None:
-        try:
-            from app.srs.database import SRSDatabase as _SRSDatabase
-
-            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-        except Exception:
-            return None
     row = db.get_anki_state_cache("col_crt")
     if row is None:
         return None
@@ -874,20 +822,12 @@ def refresh_easy_days(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str)
         db.set_anki_state_cache("easy_days_percentages", json.dumps(days))
 
 
-def resolve_easy_days(db: SRSDatabase | None = None) -> list[float] | None:
+def resolve_easy_days(db: SRSDatabase) -> list[float] | None:
     """Return the cached easy_days_percentages list, or None (→ all-Normal).
 
     None means the deck has no EasyDay overrides; LoadBalancer(None, ...) then
     treats every weekday as Normal (load_balancer.rs:284-298).
     """
-    if db is None:
-        try:
-            from app.srs.database import SRSDatabase as _SRSDatabase
-
-            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-        except Exception:
-            return None
-
     row = db.get_anki_state_cache("easy_days_percentages")
     if row is None:
         return None
@@ -924,16 +864,8 @@ def refresh_load_balancer_enabled(db: SRSDatabase, conn: sqlite3.Connection) -> 
         db.set_anki_state_cache("load_balancer_enabled", "true" if val else "false")
 
 
-def resolve_load_balancer_enabled(db: SRSDatabase | None = None) -> bool:
+def resolve_load_balancer_enabled(db: SRSDatabase) -> bool:
     """Return the cached loadBalancerEnabled flag. Defaults to False (Anki's default)."""
-    if db is None:
-        try:
-            from app.srs.database import SRSDatabase as _SRSDatabase
-
-            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-        except Exception:
-            return _DEFAULT_LOAD_BALANCER_ENABLED
-
     row = db.get_anki_state_cache("load_balancer_enabled")
     if row is not None:
         return row[0] == "true"
@@ -970,16 +902,8 @@ def refresh_new_cards_ignore_review_limit(db: SRSDatabase, conn: sqlite3.Connect
         db.set_anki_state_cache("new_cards_ignore_review_limit", "true" if val else "false")
 
 
-def resolve_new_cards_ignore_review_limit(db: SRSDatabase | None = None) -> bool:
+def resolve_new_cards_ignore_review_limit(db: SRSDatabase) -> bool:
     """Return the cached newCardsIgnoreReviewLimit flag. Defaults to False (Anki's default)."""
-    if db is None:
-        try:
-            from app.srs.database import SRSDatabase as _SRSDatabase
-
-            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-        except Exception:
-            return _DEFAULT_NEW_CARDS_IGNORE_REVIEW_LIMIT
-
     row = db.get_anki_state_cache("new_cards_ignore_review_limit")
     if row is not None:
         return row[0] == "true"
@@ -1104,30 +1028,21 @@ def refresh_maximum_review_interval(db: SRSDatabase, conn: sqlite3.Connection, d
 _DEFAULT_MAXIMUM_REVIEW_INTERVAL = 36500
 
 
-def resolve_maximum_review_interval(db: SRSDatabase | None = None) -> tuple[int, str]:
+def resolve_maximum_review_interval(db: SRSDatabase) -> tuple[int, str]:
     """Return (max_ivl, source) where source is 'cache' or 'default'.
 
     Priority:
     1. anki_state_cache (written during sync) — 'cache'
     2. Hard default 36500 — 'default'
     """
-    if db is None:
+    row = db.get_anki_state_cache("maximum_review_interval")
+    if row is not None:
+        value_str, updated_at = row
         try:
-            from app.srs.database import SRSDatabase as _SRSDatabase
-
-            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-        except Exception:
-            db = None
-
-    if db is not None:
-        row = db.get_anki_state_cache("maximum_review_interval")
-        if row is not None:
-            value_str, updated_at = row
-            try:
-                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
-                    return (int(value_str), "cache")
-            except ValueError, TypeError, OverflowError:
-                pass
+            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                return (int(value_str), "cache")
+        except ValueError, TypeError, OverflowError:
+            pass
 
     return (_DEFAULT_MAXIMUM_REVIEW_INTERVAL, "default")

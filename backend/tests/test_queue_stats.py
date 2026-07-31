@@ -627,16 +627,6 @@ def test_resolve_daily_new_cap_db_creation_fails(monkeypatch):
     assert cap == 20
 
 
-def test_resolve_daily_new_cap_db_none_creation_fails(monkeypatch):
-    """db is None and SRSDatabase(path) errors → fall through to config/default."""
-    monkeypatch.setattr("app.srs.queue_stats.settings.database_url", "/nonexistent/unopenable/db.sqlite3")
-    from app.srs.queue_stats import resolve_daily_new_cap
-
-    cap, source = resolve_daily_new_cap(None)
-    assert source in ("config", "default")
-    assert cap > 0
-
-
 def test_resolve_daily_new_cap_corrupt_cache_value(monkeypatch):
     """Lines 347-348: Cache has invalid value_str that int() raises ValueError."""
     from app.srs.queue_stats import resolve_daily_new_cap
@@ -1025,38 +1015,6 @@ class TestMaximumReviewInterval:
         val, source = resolve_maximum_review_interval(srs_db)
         assert source == "default"
 
-    def test_resolve_maximum_review_interval_no_db_creates_fresh(self):
-        """When db=None, creates a fresh in-memory DB and returns default."""
-        from unittest.mock import patch
-
-        from app.config import settings as app_settings
-        from app.srs.queue_stats import resolve_maximum_review_interval
-
-        with patch.object(app_settings, "database_url", "sqlite:///:memory:"):
-            val, source = resolve_maximum_review_interval(db=None)
-        assert val == 36500
-        assert source == "default"
-
-    def test_resolve_maximum_review_interval_no_db_fallback(self):
-        """When db=None and DB creation fails, returns default."""
-        from unittest.mock import patch
-
-        from app.srs.database import SRSDatabase
-        from app.srs.queue_stats import resolve_maximum_review_interval
-
-        call_count = 0
-
-        def _fail_init(self, db_path=":memory:"):
-            nonlocal call_count
-            call_count += 1
-            raise Exception("simulated failure")
-
-        with patch.object(SRSDatabase, "__init__", _fail_init):
-            val, source = resolve_maximum_review_interval(db=None)
-        assert call_count == 1, f"expected 1 __init__ call, got {call_count}"
-        assert val == 36500
-        assert source == "default"
-
 
 class TestEffectiveReviewBudget:
     """Layer 76: new-card intros consume the review-per-day budget.
@@ -1221,61 +1179,3 @@ class TestNewCardsIgnoreReviewLimit:
         from app.srs.queue_stats import resolve_new_cards_ignore_review_limit
 
         assert resolve_new_cards_ignore_review_limit(SRSDatabase(":memory:")) is False
-
-    def test_resolve_no_db_creates_fresh(self):
-        from unittest.mock import patch
-
-        from app.config import settings as app_settings
-        from app.srs.queue_stats import resolve_new_cards_ignore_review_limit
-
-        with patch.object(app_settings, "database_url", "sqlite:///:memory:"):
-            assert resolve_new_cards_ignore_review_limit(db=None) is False
-
-    def test_resolve_db_none_creation_fails(self):
-        from unittest.mock import patch
-
-        from app.srs.database import SRSDatabase
-        from app.srs.queue_stats import resolve_new_cards_ignore_review_limit
-
-        with patch.object(SRSDatabase, "__init__", lambda self, x="": (_ for _ in ()).throw(Exception("boom"))):
-            assert resolve_new_cards_ignore_review_limit(None) is False
-
-
-def test_resolve_daily_review_cap_db_none_creation_fails(monkeypatch):
-    """resolve_daily_review_cap: db=None, DB creation fails → fall through."""
-    monkeypatch.setattr("app.srs.queue_stats.settings.database_url", "/nonexistent/unopenable/db.sqlite3")
-    from app.srs.queue_stats import resolve_daily_review_cap
-
-    cap, source = resolve_daily_review_cap(None)
-    assert source in ("config", "default")
-    assert cap > 0
-
-
-def test_resolve_new_spread_db_none_creation_fails(monkeypatch):
-    """resolve_new_spread: db=None, DB creation fails → fall through."""
-    monkeypatch.setattr("app.srs.queue_stats.settings.database_url", "/nonexistent/unopenable/db.sqlite3")
-    from app.srs.queue_stats import resolve_new_spread
-
-    val, source = resolve_new_spread(None)
-    assert source == "default"
-    assert val == 0
-
-
-def test_resolve_bury_new_db_none_creation_fails(monkeypatch):
-    """resolve_bury_new: db=None, DB creation fails → fall through."""
-    monkeypatch.setattr("app.srs.queue_stats.settings.database_url", "/nonexistent/unopenable/db.sqlite3")
-    from app.srs.queue_stats import resolve_bury_new
-
-    val, source = resolve_bury_new(None)
-    assert source == "default"
-    assert val is True
-
-
-def test_resolve_bury_review_db_none_creation_fails(monkeypatch):
-    """resolve_bury_review: db=None, DB creation fails → fall through."""
-    monkeypatch.setattr("app.srs.queue_stats.settings.database_url", "/nonexistent/unopenable/db.sqlite3")
-    from app.srs.queue_stats import resolve_bury_review
-
-    val, source = resolve_bury_review(None)
-    assert source == "default"
-    assert val is True

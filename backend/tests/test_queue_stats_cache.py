@@ -1080,12 +1080,6 @@ class TestResolveDailyReviewCap:
         cap, source = resolve_daily_review_cap(db)
         assert source in ("config", "default")
 
-    def test_resolve_with_no_db_auto_creates(self):
-        """Calling resolve_daily_review_cap() with no db auto-creates one from settings."""
-        cap, source = resolve_daily_review_cap()
-        assert isinstance(cap, int)
-        assert isinstance(source, str)
-
 
 class TestReadReviewsPerDayFromAnkiFallback:
     def test_returns_none_when_col_table_missing_row(self):
@@ -1310,24 +1304,3 @@ class TestRefreshAndResolveColCrt:
         db = SRSDatabase(":memory:")
         db.set_anki_state_cache("col_crt", "not-an-integer")
         assert resolve_col_crt(db) is None
-
-    def test_resolve_db_none_creates_fresh_from_settings(self, monkeypatch):
-        """db=None constructs a default SRSDatabase from settings.database_url."""
-        from app.config import settings as app_settings
-        from app.srs.queue_stats import resolve_col_crt
-
-        monkeypatch.setattr(app_settings, "database_url", "sqlite:///:memory:")
-        # Fresh in-memory DB has no col_crt cache entry → resolves to None without raising.
-        assert resolve_col_crt(db=None) is None
-
-    def test_resolve_db_none_falls_back_to_none_when_creation_fails(self, monkeypatch):
-        """db=None and settings.database_url is an unopenable path → except Exception: return None.
-
-        A null byte in the path is rejected by the OS path APIs before any I/O
-        happens — a genuine ValueError, no mock needed.
-        """
-        from app.config import settings as app_settings
-        from app.srs.queue_stats import resolve_col_crt
-
-        monkeypatch.setattr(app_settings, "database_url", "sqlite:////tmp/\x00bad.db")
-        assert resolve_col_crt(db=None) is None

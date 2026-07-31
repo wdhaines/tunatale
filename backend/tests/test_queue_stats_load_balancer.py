@@ -176,12 +176,8 @@ class TestLoadBalancerEnabledReader:
     def test_resolve_defaults_false(self):
         assert resolve_load_balancer_enabled(SRSDatabase(":memory:")) is False
 
-    def test_resolve_db_none_creation_fails(self):
+    def test_resolve_with_new_db_returns_default(self):
         assert resolve_load_balancer_enabled(SRSDatabase(":memory:")) is False
-
-    def test_resolve_db_none_creation_fails_path(self, monkeypatch):
-        monkeypatch.setattr("app.srs.queue_stats.settings.database_url", "/nonexistent/unopenable/db.sqlite3")
-        assert resolve_load_balancer_enabled(None) is False
 
 
 class TestEasyDaysReader:
@@ -237,12 +233,8 @@ class TestEasyDaysReader:
     def test_resolve_defaults_none(self):
         assert resolve_easy_days(SRSDatabase(":memory:")) is None
 
-    def test_resolve_db_none_creation_fails(self):
+    def test_resolve_with_new_db_returns_default(self):
         assert resolve_easy_days(SRSDatabase(":memory:")) is None
-
-    def test_resolve_db_none_creation_fails_path(self, monkeypatch):
-        monkeypatch.setattr("app.srs.queue_stats.settings.database_url", "/nonexistent/unopenable/db.sqlite3")
-        assert resolve_easy_days(None) is None
 
 
 class TestLoadBalancerDBHelpers:
