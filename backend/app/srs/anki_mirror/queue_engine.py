@@ -29,7 +29,7 @@ from app.srs.anki_mirror.queue_stats import (
     set_session_main_queue,
 )
 from app.srs.anki_mirror.rollover import anki_today
-from app.srs.fsrs import compute_retrievability
+from app.srs.fsrs import FSRSParams, compute_retrievability
 
 _FNV_OFFSET_BASIS_64 = 0xCBF29CE484222325
 _FNV_PRIME_64 = 0x100000001B3
@@ -56,6 +56,7 @@ def _merge_by_retrievability_ascending(
     prod: list[tuple[int, SRSItem, str]],
     today: datetime.date,
     col_crt: int | None = None,
+    params: FSRSParams | None = None,
 ) -> list[tuple[int, SRSItem, str, Direction]]:
     """Sort the combined due pool by retrievability ascending.
 
@@ -67,7 +68,8 @@ def _merge_by_retrievability_ascending(
     either field is missing, fall back to anki_card_id then row_id so the order
     stays deterministic but no longer claims Anki parity.
     """
-    params, _ = resolve_fsrs_params()
+    if params is None:
+        params, _ = resolve_fsrs_params()
     dr = params.desired_retention
     decay = params.decay
 
@@ -212,6 +214,7 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     bury_new, _ = resolve_bury_new(db)
     bury_review, _ = resolve_bury_review(db)
     col_crt = resolve_col_crt(db)
+    params, _ = resolve_fsrs_params(db)
 
     introduced_today = db.count_new_introduced_today(today)
     new_quota = max(0, cap - introduced_today)
@@ -246,7 +249,7 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
 
     due_rec = db.get_due_items(today, Direction.RECOGNITION)
     due_prod = db.get_due_items(today, Direction.PRODUCTION)
-    due = _merge_by_retrievability_ascending(due_rec, due_prod, today, col_crt=col_crt)
+    due = _merge_by_retrievability_ascending(due_rec, due_prod, today, col_crt=col_crt, params=params)
     if bury_review:
         due = [t for t in due if t[0] not in buried]
     # TT-only: a listen stages a provisional grade without applying it. The card

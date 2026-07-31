@@ -103,6 +103,29 @@ class TestLearningStepSemantics:
         assert new_dir.state == SRSState.RELEARNING
         assert new_dir.left is not None  # Should have relearning steps
 
+    def test_relearning_uses_injected_relearn_steps(self):
+        """RELEARNING + AGAIN walks the INJECTED relearn_steps, not the db-resolved ones.
+
+        Layer 82 seam: schedule() takes its steps by injection like params. The
+        db-less resolver (which reads the singular settings.database_url) is only
+        consulted when nothing is injected.
+        """
+        item = _make_item(state=SRSState.RELEARNING, left=1001)
+        now = datetime.now(UTC)
+        result = schedule(
+            item,
+            Rating.AGAIN,
+            direction=Direction.RECOGNITION,
+            now=now,
+            relearn_steps=[45.0],
+        )
+        new_dir = result.directions[Direction.RECOGNITION]
+        assert new_dir.state == SRSState.RELEARNING
+        delta_min = (new_dir.due_at - now).total_seconds() / 60
+        # 45-min step fuzzed +0..300s (Anki's learning-step fuzz only adds time),
+        # vs the fixture's [10.0] relearn steps a db-resolved fallback would use.
+        assert 45.0 <= delta_min <= 50.0
+
     def test_empty_steps_graduate_immediately(self):
         """With empty learn_steps, LEARNING + GOOD → graduates immediately."""
         # Use the autouse fixture which provides [1.0, 10.0] steps

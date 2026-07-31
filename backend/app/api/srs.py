@@ -70,7 +70,9 @@ from app.srs.queue_stats import (
     resolve_daily_new_cap,
     resolve_daily_review_cap,
     resolve_fsrs_params,
+    resolve_learning_steps,
     resolve_new_cards_ignore_review_limit,
+    resolve_relearning_steps,
 )
 from app.srs.tokenizer import tokenize
 from app.srs.transcript import _build_variant_index, extract_transcript
@@ -284,6 +286,8 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
     _, item, _ = result
 
     fsrs_params, _ = resolve_fsrs_params(db)
+    learn_steps, _ = resolve_learning_steps(db)
+    relearn_steps, _ = resolve_relearning_steps(db)
     col_crt = resolve_col_crt(db)
     now = datetime.datetime.now(datetime.UTC)
     balancer = build_live_load_balancer(db, now=now, col_crt=col_crt)
@@ -297,6 +301,8 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
         now=now,
         col_crt=col_crt,
         load_balancer=balancer,
+        learn_steps=learn_steps,
+        relearn_steps=relearn_steps,
     )
     db.update_direction_by_id(item_id, dir_enum, updated.directions[dir_enum])
     # Lesson "Check your work" re-grade of a card the listen already reviewed
@@ -695,11 +701,22 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # Built on first use: most listens confirm nothing, and the load-balancer
     # histogram is not free. The shared balancer + monotonic grade clock across
     # the batch mirror commit-pending exactly.
-    grade_ctx: dict = {"applied": 0, "now": None, "last_ms": 0, "params": None, "col_crt": None, "balancer": None}
+    grade_ctx: dict = {
+        "applied": 0,
+        "now": None,
+        "last_ms": 0,
+        "params": None,
+        "learn_steps": None,
+        "relearn_steps": None,
+        "col_crt": None,
+        "balancer": None,
+    }
 
     def _apply_confirmed(collocation_id: int, rating_str: str) -> None:
         if grade_ctx["params"] is None:
             grade_ctx["params"], _ = resolve_fsrs_params(db)
+            grade_ctx["learn_steps"], _ = resolve_learning_steps(db)
+            grade_ctx["relearn_steps"], _ = resolve_relearning_steps(db)
             grade_ctx["col_crt"] = resolve_col_crt(db)
             grade_ctx["balancer"] = build_live_load_balancer(
                 db, now=datetime.datetime.now(datetime.UTC), col_crt=grade_ctx["col_crt"]
@@ -713,6 +730,8 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             col_crt=grade_ctx["col_crt"],
             balancer=grade_ctx["balancer"],
             last_grade_ms=grade_ctx["last_ms"],
+            learn_steps=grade_ctx["learn_steps"],
+            relearn_steps=grade_ctx["relearn_steps"],
         )
         grade_ctx["now"] = now
         grade_ctx["last_ms"] = last_ms
@@ -1098,6 +1117,8 @@ def _apply_grade_now(
     col_crt,
     balancer,
     last_grade_ms: int,
+    learn_steps,
+    relearn_steps,
 ) -> tuple[datetime.datetime, int]:
     """Apply one grade for real: ``schedule`` → revlog → ``dirty_fsrs``.
 
@@ -1123,6 +1144,8 @@ def _apply_grade_now(
         now=now,
         col_crt=col_crt,
         load_balancer=balancer,
+        learn_steps=learn_steps,
+        relearn_steps=relearn_steps,
     )
     db.update_direction_by_id(collocation_id, dir_enum, updated.directions[dir_enum])
     row = build_revlog_row(
@@ -1161,6 +1184,8 @@ async def commit_pending_grades(lesson_id: str, request: Request) -> CommitPendi
     db = request.state.srs_db
 
     fsrs_params, _ = resolve_fsrs_params(db)
+    learn_steps, _ = resolve_learning_steps(db)
+    relearn_steps, _ = resolve_relearning_steps(db)
     col_crt = resolve_col_crt(db)
     now = datetime.datetime.now(datetime.UTC)
     balancer = build_live_load_balancer(db, now=now, col_crt=col_crt)
@@ -1184,6 +1209,8 @@ async def commit_pending_grades(lesson_id: str, request: Request) -> CommitPendi
             col_crt=col_crt,
             balancer=balancer,
             last_grade_ms=last_grade_ms,
+            learn_steps=learn_steps,
+            relearn_steps=relearn_steps,
         )
         db.clear_pending_grade(collocation_id, dir_enum.value)
         applied += 1

@@ -809,6 +809,8 @@ def schedule(
     now: datetime | None = None,
     col_crt: int | None = None,
     load_balancer: object | None = None,
+    learn_steps: list[float] | None = None,
+    relearn_steps: list[float] | None = None,
 ) -> SRSItem:
     """Apply a review rating to the given direction of an SRSItem.
 
@@ -826,6 +828,12 @@ def schedule(
     - LEARNING/RELEARNING + EASY → graduate immediately
     - REVIEW + AGAIN → RELEARNING (step 0)
     - REVIEW + HARD/GOOD/EASY → REVIEW (FSRS interval)
+
+    `learn_steps` / `relearn_steps`, when given, are the steps this grade
+    walks instead of whatever the (db-less) resolver would return — the
+    caller that holds the request's db resolves them and injects them, the
+    same way `params` is injected. `None` keeps the historical db-less
+    resolution for callers that never thread a db.
     """
     # Anki-day rollover, not local midnight, for BOTH the default and the
     # "is this a live grade" comparison below — they must use the same clock.
@@ -863,6 +871,8 @@ def schedule(
             last_review_dt,
             col_crt=col_crt,
             load_balancer=load_balancer,
+            learn_steps=learn_steps,
+            relearn_steps=relearn_steps,
         )
 
     # Handle NEW state with learning steps (Anki parity)
@@ -879,6 +889,7 @@ def schedule(
             review_date=review_date,
             col_crt=col_crt,
             load_balancer=load_balancer,
+            learn_steps=learn_steps,
         )
 
     # REVIEW state logic
@@ -896,6 +907,7 @@ def schedule(
                 last_review_dt,
                 col_crt=col_crt,
                 load_balancer=load_balancer,
+                relearn_steps=relearn_steps,
             )
         else:
             # REVIEW + HARD/GOOD/EASY. Layer 62: route the cascade stabilities
@@ -990,6 +1002,7 @@ def _schedule_new(
     review_date: date | None = None,
     col_crt: int | None = None,
     load_balancer: object | None = None,
+    learn_steps: list[float] | None = None,
 ) -> SRSItem:
     """NEW + any rating: walk learn_steps like Anki.
 
@@ -1012,7 +1025,10 @@ def _schedule_new(
             load_balancer=load_balancer,
         )
 
-    steps, _ = _get_steps_for_state(SRSState.LEARNING)
+    if learn_steps is not None:
+        steps = learn_steps
+    else:
+        steps, _ = _get_steps_for_state(SRSState.LEARNING)
     if not steps:
         return _graduate_to_review(
             item,
@@ -1113,6 +1129,7 @@ def _schedule_review_again(
     last_review_dt: datetime,
     col_crt: int | None = None,
     load_balancer: object | None = None,
+    relearn_steps: list[float] | None = None,
 ) -> SRSItem:
     """Handle REVIEW + AGAIN: enter RELEARNING with relearning steps."""
     from dataclasses import replace
@@ -1139,7 +1156,10 @@ def _schedule_review_again(
     new_stability = _quantize_stability(_clamp_stability(new_stability))
     new_difficulty = _quantize_difficulty(new_difficulty)
 
-    steps, _ = _get_steps_for_state(SRSState.RELEARNING)
+    if relearn_steps is not None:
+        steps = relearn_steps
+    else:
+        steps, _ = _get_steps_for_state(SRSState.RELEARNING)
 
     if not steps:
         # Empty steps = graduate immediately (same as Anki)
@@ -1201,11 +1221,22 @@ def _schedule_with_steps(
     last_review_dt: datetime,
     col_crt: int | None = None,
     load_balancer: object | None = None,
+    learn_steps: list[float] | None = None,
+    relearn_steps: list[float] | None = None,
 ) -> SRSItem:
     """Handle LEARNING/RELEARNING with step semantics."""
     from dataclasses import replace
 
-    steps, _ = _get_steps_for_state(prev.state)
+    if prev.state == SRSState.RELEARNING:
+        if relearn_steps is not None:
+            steps = relearn_steps
+        else:
+            steps, _ = _get_steps_for_state(SRSState.RELEARNING)
+    else:
+        if learn_steps is not None:
+            steps = learn_steps
+        else:
+            steps, _ = _get_steps_for_state(SRSState.LEARNING)
 
     if not steps:
         # Empty steps list = graduate immediately
