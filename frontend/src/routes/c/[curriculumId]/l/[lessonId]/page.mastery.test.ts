@@ -152,6 +152,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             progress: null,
             well_known: false,
             due_at: null,
+            will_create: true,
           },
         ],
       });
@@ -197,6 +198,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             progress: null,
             well_known: false,
             due_at: null,
+            will_create: true,
           },
         ],
       });
@@ -262,6 +264,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             progress: null,
             well_known: false,
             due_at: null,
+            will_create: true,
           },
         ],
       });
@@ -547,6 +550,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             progress: null,
             well_known: false,
             due_at: null,
+            will_create: true,
           },
         ],
       });
@@ -833,6 +837,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             progress: null,
             well_known: false,
             due_at: null,
+            will_create: true,
           },
         ],
       });

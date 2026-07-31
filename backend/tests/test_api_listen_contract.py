@@ -54,6 +54,7 @@ class TestListenPreviewContract:
             "translation",
             "progress",
             "well_known",
+            "will_create",
             "due_at",
         }
 

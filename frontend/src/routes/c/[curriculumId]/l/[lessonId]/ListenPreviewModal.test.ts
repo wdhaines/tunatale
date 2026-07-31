@@ -74,6 +74,7 @@ const createCandidate = (text: string) => ({
   progress: null,
   well_known: false,
   due_at: null,
+  will_create: true,
 });
 
 const wordCandidate = (
@@ -95,6 +96,7 @@ const wordCandidate = (
   progress: opts?.progress ?? 0.3,
   well_known: opts?.well_known ?? false,
   due_at: opts?.due_at ?? null,
+  will_create: true,
 });
 
 const kpCandidate = (text: string, opts?: { translation?: string; progress?: number }) => ({
@@ -107,6 +109,7 @@ const kpCandidate = (text: string, opts?: { translation?: string; progress?: num
   progress: opts?.progress ?? 0.1,
   well_known: false,
   due_at: null,
+  will_create: true,
 });
 
 const gradeBtn = (container: HTMLElement, key: string, grade: string) =>

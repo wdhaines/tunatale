@@ -39,6 +39,14 @@ class ListenPreviewCandidate(BaseModel):
     translation: str
     progress: float | None
     well_known: bool = False
+    # True for every tracked row and for the create rows this listen will
+    # actually create; False only for create rows past the per-listen creation
+    # budget, which the modal renders as a read-only "next listen" tail.
+    # The default spares Python callers from restating it, but NOT the frontend:
+    # FastAPI emits the serialization schema, where a defaulted field is still
+    # `required`, so the generated TS type demands it and every candidate
+    # fixture must carry it.
+    will_create: bool = True
     due_at: str | None = None
 
 

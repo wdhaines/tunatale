@@ -115,9 +115,11 @@
 		handleInteraction();
 	}
 
-	let selectedCount = $derived(
-		candidates.filter((c) => ratings[candidateKey(c)] !== 'skip').length,
-	);
+	// The footer count is what a commit would actually create, so it must
+	// exclude tail rows. Counting ratings ENTRIES rather than candidates does
+	// that for free: an over-budget tail row carries no entry at all, so it can
+	// never inflate the count.
+	let selectedCount = $derived(Object.values(ratings).filter((r) => r !== 'skip').length);
 
 	onMount(async () => {
 		// Focus the overlay immediately so a real Escape keypress (which a
@@ -132,10 +134,21 @@
 			const preview = await api.getListenPreview(lessonId);
 			candidates = preview.candidates;
 			// Default: everything "good" — except well-known rows, which start
-			// "skip" (and collapsed inside the disclosure).
+			// "skip" (and collapsed inside the disclosure). Over-budget create
+			// rows get NO entry at all: for a create, absent from word_ratings
+			// means the backend defaults to "good" and CREATES the card, so
+			// seeding a tail row would create a card the budget does not cover.
 			const rts: Record<string, WordRating> = {};
+			const liveKeys = new Set(liveCreates.map((c) => candidateKey(c)));
 			for (const c of candidates) {
-				rts[candidateKey(c)] = c.well_known ? 'skip' : 'good';
+				const key = candidateKey(c);
+				if (c.well_known) {
+					rts[key] = 'skip';
+				} else if (c.kind === 'create' && !liveKeys.has(key)) {
+					continue;
+				} else {
+					rts[key] = 'good';
+				}
 			}
 			ratings = rts;
 
@@ -177,7 +190,27 @@
 		handleInteraction();
 		if (rating === 'skip') rememberGrade(key);
 		else confirmed.add(key);
-		ratings = { ...ratings, [key]: rating };
+		const rts = { ...ratings, [key]: rating };
+		reconcileCreateBlock(rts);
+		ratings = rts;
+	}
+
+	// Keeps the ratings map aligned with the derived live/tail split for create
+	// rows. A promoted tail row must carry a default "good" so it renders as a
+	// normal live row; a demoted live row must lose its entry entirely so it
+	// can never leak into the commit payload. A skipped row is the user's
+	// reversible choice, so it is left exactly as it is.
+	function reconcileCreateBlock(rts: Record<string, WordRating>) {
+		const liveKeys = new Set(liveCreateRowsFrom(rts).map((c) => candidateKey(c)));
+		for (const c of candidates) {
+			if (c.kind !== 'create') continue;
+			const key = candidateKey(c);
+			if (liveKeys.has(key)) {
+				if (rts[key] === undefined) rts[key] = 'good';
+			} else {
+				delete rts[key];
+			}
+		}
 	}
 
 	/** True when a row still carries the grade the listen assumed for it. */
@@ -192,21 +225,31 @@
 
 	// Restores each skipped row to the grade it last held, falling back to
 	// "good" for a row that never carried one (a well-known row, which starts
-	// skipped). Rows already on a real grade are untouched.
+	// skipped). Rows already on a real grade are untouched. Iterates every
+	// candidate EXCEPT tail rows: a well-known row is still a live decision,
+	// but a display-only tail row must not be pulled above the divider.
 	function gradeAll() {
 		handleInteraction();
 		const rts: Record<string, WordRating> = { ...ratings };
+		const tailKeys = new Set(tailCandidates.map((c) => candidateKey(c)));
 		for (const c of candidates) {
 			const key = candidateKey(c);
+			if (tailKeys.has(key)) continue;
 			if (rts[key] === 'skip') rts[key] = rememberedGrade[key] ?? 'good';
 		}
+		reconcileCreateBlock(rts);
 		ratings = rts;
 	}
 
+	// Bulk-skip the LIVE rows only. Tail rows are never written: they have no
+	// ratings entry and must keep none. Deliberately does NOT reconcile — a row
+	// promoted by the re-rank stays unseeded, so the footer count reads what
+	// the user asked for, not what the server will do with the freed slots
+	// (today's behavior, surfaced rather than fixed).
 	function skipAll() {
 		handleInteraction();
 		const rts: Record<string, WordRating> = { ...ratings };
-		for (const c of candidates) {
+		for (const c of liveCandidates) {
 			const key = candidateKey(c);
 			rememberGrade(key);
 			rts[key] = 'skip';
@@ -259,7 +302,46 @@
 		return `color: ${masteryColor(p)}; background: ${masteryBackgroundColor(p)};`;
 	}
 
-	let mainCandidates = $derived(candidates.filter((c) => !c.well_known));
+	// ── Over-budget creation tail ──────────────────────────────────────────
+	// The server spends the per-listen creation budget by RANK, not by row
+	// identity: `_rank_listen_candidates` sorts with a STABLE sort, so
+	// unchecking a live create promotes the next-ranked lemma the preview never
+	// displayed. `will_create` is only correct for the untouched state, so the
+	// live/tail divider is re-derived from the CURRENT ratings on every change.
+	const creationBudget = $derived(
+		candidates.filter((c) => c.kind === 'create' && c.will_create).length,
+	);
+
+	/** The live create rows: the first `creationBudget` create rows, in server
+	 *  order, whose rating is not "skip". A skipped row stays live (it is the
+	 *  user's reversible choice) but does not consume a slot. */
+	function liveCreateRowsFrom(rts: Record<string, WordRating>): ListenPreviewCandidate[] {
+		const rows: ListenPreviewCandidate[] = [];
+		let seen = 0;
+		for (const c of candidates) {
+			if (c.kind !== 'create') continue;
+			if (rts[candidateKey(c)] !== 'skip') seen += 1;
+			if (seen > creationBudget) break;
+			rows.push(c);
+		}
+		return rows;
+	}
+
+	let liveCreates = $derived(liveCreateRowsFrom(ratings));
+
+	// The gradeable set: every tracked (word/kp) row that is not well-known,
+	// plus the live create rows. Tail rows are rendered separately and
+	// read-only.
+	let liveCandidates = $derived([
+		...candidates.filter((c) => c.kind !== 'create' && !c.well_known),
+		...liveCreates,
+	]);
+
+	let tailCandidates = $derived.by(() => {
+		const liveKeys = new Set(liveCreates.map((c) => candidateKey(c)));
+		return candidates.filter((c) => c.kind === 'create' && !liveKeys.has(candidateKey(c)));
+	});
+
 	let wellKnownCandidates = $derived(candidates.filter((c) => c.well_known));
 
 	// Builds the commit payload purely from local reads — never assigns into
@@ -269,6 +351,10 @@
 	// "good", so an ordinary good row contributes nothing. Well-known rows are
 	// an exception: the backend skips a well-known lemma absent from
 	// word_ratings, so a graded well-known row MUST emit its explicit rating.
+	// ⚠️ Polarity is INVERTED for the tail: a create row absent from
+	// word_ratings is the backend's "good" → it creates the card. So a tail
+	// row must emit NOTHING — emitting "skip" would drop it from
+	// lemma_candidates and suppress the very promotion the tail displays.
 	function buildRatings(): {
 		wordRatings: Record<string, WordRating>;
 		kpRatings: Record<string, WordRating>;
@@ -280,8 +366,10 @@
 		const confirmedWords: string[] = [];
 		const confirmedKps: string[] = [];
 
+		const tailKeys = new Set(tailCandidates.map((c) => candidateKey(c)));
 		for (const c of candidates) {
 			const key = candidateKey(c);
+			if (tailKeys.has(key)) continue;
 			const rating = ratings[key] ?? 'good';
 			// Confirmation rides its own list rather than being inferred from
 			// presence in the ratings map: a well-known row has to appear there
@@ -421,15 +509,55 @@
 					</li>
 				{/snippet}
 
+				{#snippet tailRow(c: ListenPreviewCandidate)}
+					{@const key = candidateKey(c)}
+					<!-- Read-only: the tail is what the NEXT listen will get if the
+					     current ratings hold. It shows text + gloss + "new" only —
+					     reusing candidateRow would render a grade control, and a
+					     tail row must not be gradeable. -->
+					<li class="candidate tail">
+						<span class="text" lang={languageCode}>{c.text}</span>
+
+						<div class="sub" class:revealed={revealed.has(key)}>
+							{#if c.translation}
+								<button
+									type="button"
+									class="gloss"
+									class:blurred={!revealed.has(key)}
+									aria-label={revealed.has(key) ? c.translation : `Reveal gloss for ${c.text}`}
+									onclick={() => revealGloss(key)}
+								>{c.translation}</button>
+							{:else}
+								<span class="gloss empty" aria-label="No gloss available">&mdash;</span>
+							{/if}
+						</div>
+
+						<span class="tag day" style={dueStyle(c)}>
+							{dueLabel(c)}
+						</span>
+					</li>
+				{/snippet}
+
 				<div class="list-head" aria-hidden="true">
 					<span>Word</span><span>Due</span><span>Proposed grade</span>
 				</div>
 
 				<ul class="list">
-					{#each mainCandidates as c (candidateKey(c))}
+					{#each liveCandidates as c (candidateKey(c))}
 						{@render candidateRow(c)}
 					{/each}
 				</ul>
+
+				{#if tailCandidates.length > 0}
+					<details class="tail-group">
+						<summary>{tailCandidates.length} more — next listen</summary>
+						<ul class="list">
+							{#each tailCandidates as c (candidateKey(c))}
+								{@render tailRow(c)}
+							{/each}
+						</ul>
+					</details>
+				{/if}
 
 				{#if wellKnownCandidates.length > 0}
 					<details class="well-known-group">
@@ -766,15 +894,25 @@
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
 	}
+	.tail-group,
 	.well-known-group {
 		border-top: 1px solid var(--color-border);
 		padding-top: 0.5rem;
 		margin-top: 0.25rem;
 	}
+	.tail-group summary,
 	.well-known-group summary {
 		font-size: 0.8rem;
 		color: var(--color-muted);
 		cursor: pointer;
 		padding: 0.25rem 0;
+	}
+	/* The tail is what the NEXT listen gets — present so the user can see what
+	   an uncheck just promoted, but not something to decide on now. */
+	.candidate.tail {
+		opacity: 0.7;
+	}
+	.candidate.tail:hover {
+		background: transparent;
 	}
 </style>

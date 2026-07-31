@@ -939,14 +939,14 @@ export interface paths {
      * Get Listen Preview
      * @description Read-only classification of what a listen would stage for a lesson.
      *
-     *     The ``create`` rows are exactly what a listen against this same state
-     *     would create RIGHT NOW: untracked lemmas ranked by
-     *     ``_rank_listen_candidates`` and truncated to the same per-listen creation
-     *     budget ``mark_lesson_listened`` uses (``resolve_daily_new_cap`` minus
-     *     today's introductions and still-NEW same-day creations). Without this the
-     *     preview and the commit disagree — a same-day re-listen has ~0 budget left
-     *     and would create nothing even though the preview showed every untracked
-     *     lemma as checked.
+     *     The ``create`` rows are every untracked lemma, ranked by
+     *     ``_rank_listen_candidates`` and flagged with ``will_create`` against the
+     *     same per-listen creation budget ``mark_lesson_listened`` uses
+     *     (``resolve_daily_new_cap`` minus today's introductions and still-NEW
+     *     same-day creations): rows within budget are True (live), the over-budget
+     *     tail is False. Without the flag the preview and the commit disagree — a
+     *     same-day re-listen has ~0 budget left and would create nothing even though
+     *     the preview showed every untracked lemma as checked.
      *
      *     Tracked word/kp candidates are unchanged: creations first, then tracked by
      *     mastery ascending (least-known first). Strictly read-only — no pending
@@ -954,10 +954,13 @@ export interface paths {
      *     ``_analyze_lesson_words`` lemma-cache warm-up. The response informs the
      *     frontend preview modal without committing anything.
      *
-     *     Residual divergence (documented, not fixed here): if the user unchecks a
-     *     shown create row before committing, the commit re-ranks over the
-     *     remaining untracked set and may create a DIFFERENT lemma the preview never
-     *     showed — the budget is spent by rank order, not by row identity.
+     *     Array order (frontend contract): create rows come first, in rank order,
+     *     live rows (``will_create`` True) before tail rows (``will_create`` False);
+     *     then the tracked rows sorted as today. Do not reorder or interleave. The
+     *     preview and commit agree because ``_rank_listen_candidates`` sorts by
+     *     ``-occurrences`` with a stable sort — removing a live create promotes the
+     *     next-ranked tail row without reordering the rest, so the first N still-
+     *     checked create rows are exactly what ``mark_lesson_listened`` will create.
      */
     get: operations["get_listen_preview_api_srs_lesson__lesson_id__listen_preview_get"];
     put?: never;
@@ -1808,6 +1811,11 @@ export interface components {
        * @default false
        */
       well_known: boolean;
+      /**
+       * Will Create
+       * @default true
+       */
+      will_create: boolean;
     };
     /**
      * ListenPreviewResponse

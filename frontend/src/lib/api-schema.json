@@ -1045,6 +1045,11 @@
             "default": false,
             "title": "Well Known",
             "type": "boolean"
+          },
+          "will_create": {
+            "default": true,
+            "title": "Will Create",
+            "type": "boolean"
           }
         },
         "required": [
@@ -4697,7 +4702,7 @@
     },
     "/api/srs/lesson/{lesson_id}/listen-preview": {
       "get": {
-        "description": "Read-only classification of what a listen would stage for a lesson.\n\nThe ``create`` rows are exactly what a listen against this same state\nwould create RIGHT NOW: untracked lemmas ranked by\n``_rank_listen_candidates`` and truncated to the same per-listen creation\nbudget ``mark_lesson_listened`` uses (``resolve_daily_new_cap`` minus\ntoday's introductions and still-NEW same-day creations). Without this the\npreview and the commit disagree \u2014 a same-day re-listen has ~0 budget left\nand would create nothing even though the preview showed every untracked\nlemma as checked.\n\nTracked word/kp candidates are unchanged: creations first, then tracked by\nmastery ascending (least-known first). Strictly read-only \u2014 no pending\nwrites, no card creation, no side effects beyond the\n``_analyze_lesson_words`` lemma-cache warm-up. The response informs the\nfrontend preview modal without committing anything.\n\nResidual divergence (documented, not fixed here): if the user unchecks a\nshown create row before committing, the commit re-ranks over the\nremaining untracked set and may create a DIFFERENT lemma the preview never\nshowed \u2014 the budget is spent by rank order, not by row identity.",
+        "description": "Read-only classification of what a listen would stage for a lesson.\n\nThe ``create`` rows are every untracked lemma, ranked by\n``_rank_listen_candidates`` and flagged with ``will_create`` against the\nsame per-listen creation budget ``mark_lesson_listened`` uses\n(``resolve_daily_new_cap`` minus today's introductions and still-NEW\nsame-day creations): rows within budget are True (live), the over-budget\ntail is False. Without the flag the preview and the commit disagree \u2014 a\nsame-day re-listen has ~0 budget left and would create nothing even though\nthe preview showed every untracked lemma as checked.\n\nTracked word/kp candidates are unchanged: creations first, then tracked by\nmastery ascending (least-known first). Strictly read-only \u2014 no pending\nwrites, no card creation, no side effects beyond the\n``_analyze_lesson_words`` lemma-cache warm-up. The response informs the\nfrontend preview modal without committing anything.\n\nArray order (frontend contract): create rows come first, in rank order,\nlive rows (``will_create`` True) before tail rows (``will_create`` False);\nthen the tracked rows sorted as today. Do not reorder or interleave. The\npreview and commit agree because ``_rank_listen_candidates`` sorts by\n``-occurrences`` with a stable sort \u2014 removing a live create promotes the\nnext-ranked tail row without reordering the rest, so the first N still-\nchecked create rows are exactly what ``mark_lesson_listened`` will create.",
         "operationId": "get_listen_preview_api_srs_lesson__lesson_id__listen_preview_get",
         "parameters": [
           {
