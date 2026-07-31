@@ -23,6 +23,7 @@ from app.api.models import (
     CreateBaseCardRequest,
     CreateItemRequest,
     DrillRequest,
+    DueCollocationsResponse,
     IgnoreLemmaRequest,
     ImportListensRequest,
     ImportListensResponse,
@@ -33,6 +34,7 @@ from app.api.models import (
     ListensResponse,
     ListItemsResponse,
     MarkLessonReviewedResponse,
+    NewCollocationsResponse,
     SetStateRequest,
     SrsItemResponse,
     SrsStatsResponse,
@@ -251,7 +253,7 @@ async def _generate_add_time_media(
     )
 
 
-@router.get("/due", status_code=200)
+@router.get("/due", status_code=200, response_model=DueCollocationsResponse, response_model_exclude_unset=True)
 async def get_due_collocations(request: Request, direction: str = "recognition"):
     db = request.state.srs_db
     today = anki_today()
@@ -268,7 +270,7 @@ async def get_due_collocations(request: Request, direction: str = "recognition")
     return {"due": _triples_to_dicts(db, triples)}
 
 
-@router.get("/new", status_code=200)
+@router.get("/new", status_code=200, response_model=NewCollocationsResponse, response_model_exclude_unset=True)
 async def get_new_collocations(request: Request, limit: int = 10, direction: str = "recognition"):
     db = request.state.srs_db
     try:

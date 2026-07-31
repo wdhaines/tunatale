@@ -17,7 +17,7 @@ import time
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.api.models import LlmActivityResponse, LlmHealthResponse
+from app.api.models import LlmActivityResponse, LlmHealthResponse, RateLimitStatusResponse
 from app.config import settings
 
 router = APIRouter(prefix="/api/llm", tags=["llm"])
@@ -101,7 +101,7 @@ async def llm_health(request: Request) -> dict:
     }
 
 
-@router.get("/rate-limit")
+@router.get("/rate-limit", response_model=RateLimitStatusResponse)
 async def rate_limit_status(request: Request) -> dict:
     return _status_payload(_unwrap(request))
 
@@ -115,7 +115,7 @@ async def llm_activity(request: Request, since: int = 0) -> dict:
     return {"latest": latest, "events": events}
 
 
-@router.post("/rate-limit/probe")
+@router.post("/rate-limit/probe", response_model=RateLimitStatusResponse)
 async def rate_limit_probe(request: Request) -> dict:
     client = _unwrap(request)
     if not getattr(client, "groq_api_key", None):

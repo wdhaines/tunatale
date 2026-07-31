@@ -643,3 +643,81 @@ class UntrackItemResponse(BaseModel):
 
     action: str
     item: SrsItemResponse | None = None
+
+
+# ── Batch 6b: the due/new envelopes ─────────────────────────────────────────
+#
+# get_due_collocations / get_new_collocations serialize through the same
+# ``srs.py::_item_to_dict`` / ``_direction_to_dict`` as 6a, so their element
+# model is SrsItemResponse unchanged — only the envelopes are new. Both routes
+# take ``response_model_exclude_unset=True`` because the nested
+# DirectionStateResponse omits ``left`` when None (same trap as 6a).
+
+
+class DueCollocationsResponse(BaseModel):
+    """Response of GET /api/srs/due."""
+
+    due: list[SrsItemResponse]
+
+
+class NewCollocationsResponse(BaseModel):
+    """Response of GET /api/srs/new."""
+
+    new: list[SrsItemResponse]
+
+
+# ── Batch 6d: the image-item response ────────────────────────────────────────
+#
+# The 5-key static literal returned bare by PUT /items/{id}/image, PUT
+# /items/{id}/image/upload, and DELETE /items/{id}/image (``srs_images.py::
+# _item_response``). No conditional keys — ``image_url`` is always emitted
+# (null when the card has no image), so a plain ``response_model=`` suffices.
+
+
+class ImageItemResponse(BaseModel):
+    """Response of the three SRS image endpoints."""
+
+    id: int
+    text: str
+    translation: str
+    card_type: str
+    image_url: str | None
+
+
+# ── Batch 6f: LLM rate-limit status ─────────────────────────────────────────
+#
+# GET /api/llm/rate-limit and POST /api/llm/rate-limit/probe both end in
+# ``llm.py::_status_payload``, so they share one model. Nested objects are
+# whole-or-None (built as full dict literals or left None), so a plain
+# ``response_model=`` (no exclude_unset) is safe.
+
+
+class RateLimitSnapshot(BaseModel):
+    """Non-null value of RateLimitStatusResponse.snapshot."""
+
+    age_s: float
+    requests_limit: int | None
+    requests_remaining: int | None
+    requests_reset_in_s: float | None
+    tokens_limit: int | None
+    tokens_remaining: int | None
+    tokens_reset_in_s: float | None
+
+
+class Last429(BaseModel):
+    """Non-null value of RateLimitStatusResponse.last_429."""
+
+    ago_s: float
+    retry_in_s: float | None
+
+
+class RateLimitStatusResponse(BaseModel):
+    """Response of GET /api/llm/rate-limit and POST /api/llm/rate-limit/probe."""
+
+    provider: str
+    model: str | None
+    llm_mode: str
+    snapshot: RateLimitSnapshot | None
+    last_429: Last429 | None
+    tokens_used_24h: int | None
+    tokens_per_day_limit: int

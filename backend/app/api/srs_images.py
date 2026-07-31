@@ -13,6 +13,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
+from app.api.models import ImageItemResponse
 from app.cards.media import pixabay as _pixabay_mod
 from app.cards.media import vocab_media as _vocab_media
 from app.cards.media.pixabay import PixabaySearch
@@ -124,7 +125,7 @@ class _UrlBody(BaseModel):
     url: str
 
 
-@router.put("/items/{item_id}/image")
+@router.put("/items/{item_id}/image", response_model=ImageItemResponse)
 async def put_image_from_url(
     item_id: int,
     body: _UrlBody,
@@ -171,7 +172,7 @@ async def put_image_from_url(
     return _item_response(db, coll_id, item)
 
 
-@router.put("/items/{item_id}/image/upload")
+@router.put("/items/{item_id}/image/upload", response_model=ImageItemResponse)
 async def put_image_upload(
     item_id: int,
     request: Request,
@@ -193,7 +194,7 @@ async def put_image_upload(
     return _item_response(db, coll_id, item)
 
 
-@router.delete("/items/{item_id}/image")
+@router.delete("/items/{item_id}/image", response_model=ImageItemResponse)
 async def delete_image(
     item_id: int,
     request: Request,

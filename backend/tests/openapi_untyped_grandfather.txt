@@ -1,26 +1,19 @@
 create_base_card_api_srs_items_base_post  # reason: untyped handler — returns a traced/variable shape
 create_inflection_cloze_api_srs_inflection_clozes_post  # reason: untyped handler — returns a traced/variable shape
-delete_image_api_srs_items__item_id__image_delete  # reason: untyped handler — returns a traced/variable shape
 drill_feedback_api_srs_items__item_id__direction__direction__feedback_post  # reason: untyped handler — returns conditional key-set
 get_curriculum_api_curriculum__curriculum_id__get  # reason: untyped handler — returns conditional key-set
 get_curriculum_progress_api_curriculum__curriculum_id__progress_get  # reason: untyped handler — returns a traced/variable shape
 get_curriculum_source_api_curriculum__curriculum_id__source_get  # reason: untyped handler — returns a traced/variable shape
-get_due_collocations_api_srs_due_get  # reason: untyped handler — returns a traced/variable shape
 get_image_candidates_api_srs_items__item_id__image_candidates_get  # reason: untyped handler — mechanical, awaiting scheduled batch
 get_lesson_api_story__lesson_id__get  # reason: untyped handler — returns a traced/variable shape
 get_lesson_by_day_api_curriculum__curriculum_id__days__day__lesson_get  # reason: untyped handler — returns a traced/variable shape
 get_lesson_review_queue_api_srs_lesson__lesson_id__review_queue_get  # reason: untyped handler — mechanical, awaiting scheduled batch
 get_lesson_source_api_story__lesson_id__source_get  # reason: untyped handler — returns a traced/variable shape
-get_new_collocations_api_srs_new_get  # reason: untyped handler — returns a traced/variable shape
 get_queue_stats_api_srs_queue_stats_get  # reason: untyped handler — mechanical, awaiting scheduled batch
 get_review_queue_api_srs_review_queue_get  # reason: untyped handler — returns a traced/variable shape
 list_curricula_api_curriculum_get  # reason: untyped handler — returns a traced/variable shape
 mark_lesson_listened_api_srs_listen_post  # reason: untyped handler — mechanical, awaiting scheduled batch
 pipeline_status_api_curriculum__curriculum_id__pipeline_get  # reason: untyped handler — returns a traced/variable shape
-put_image_from_url_api_srs_items__item_id__image_put  # reason: untyped handler — returns a traced/variable shape
-put_image_upload_api_srs_items__item_id__image_upload_put  # reason: untyped handler — returns a traced/variable shape
-rate_limit_probe_api_llm_rate_limit_probe_post  # reason: untyped handler — returns a traced/variable shape
-rate_limit_status_api_llm_rate_limit_get  # reason: untyped handler — returns a traced/variable shape
 refresh_media_api_admin_refresh_media_post  # reason: untyped handler — mechanical, awaiting scheduled batch
 render_audio_api_audio_render_post  # reason: untyped handler — returns a traced/variable shape
 trigger_peer_sync_api_anki_peer_sync_post  # reason: untyped handler — mechanical, awaiting scheduled batch

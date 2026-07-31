@@ -1487,6 +1487,14 @@ export interface components {
        */
       time_ms: number;
     };
+    /**
+     * DueCollocationsResponse
+     * @description Response of GET /api/srs/due.
+     */
+    DueCollocationsResponse: {
+      /** Due */
+      due: components["schemas"]["SrsItemResponse"][];
+    };
     /** GenerateStoryRequest */
     GenerateStoryRequest: {
       /** Curriculum Id */
@@ -1566,6 +1574,22 @@ export interface components {
       language_code: string;
       /** Lemma */
       lemma: string;
+    };
+    /**
+     * ImageItemResponse
+     * @description Response of the three SRS image endpoints.
+     */
+    ImageItemResponse: {
+      /** Card Type */
+      card_type: string;
+      /** Id */
+      id: number;
+      /** Image Url */
+      image_url: string | null;
+      /** Text */
+      text: string;
+      /** Translation */
+      translation: string;
     };
     /**
      * ImportCurriculumPlanResponse
@@ -1716,6 +1740,16 @@ export interface components {
       languages: components["schemas"]["LanguageItem"][];
       /** Sync Available */
       sync_available: boolean;
+    };
+    /**
+     * Last429
+     * @description Non-null value of RateLimitStatusResponse.last_429.
+     */
+    Last429: {
+      /** Ago S */
+      ago_s: number;
+      /** Retry In S */
+      retry_in_s: number | null;
     };
     /**
      * LessonTranscriptResponse
@@ -1884,6 +1918,14 @@ export interface components {
       /** Ok */
       ok: boolean;
     };
+    /**
+     * NewCollocationsResponse
+     * @description Response of GET /api/srs/new.
+     */
+    NewCollocationsResponse: {
+      /** New */
+      new: components["schemas"]["SrsItemResponse"][];
+    };
     /** PipelineRegenerateRequest */
     PipelineRegenerateRequest: {
       /** Day */
@@ -1966,6 +2008,44 @@ export interface components {
       } | null;
       /** Reply */
       reply: string;
+    };
+    /**
+     * RateLimitSnapshot
+     * @description Non-null value of RateLimitStatusResponse.snapshot.
+     */
+    RateLimitSnapshot: {
+      /** Age S */
+      age_s: number;
+      /** Requests Limit */
+      requests_limit: number | null;
+      /** Requests Remaining */
+      requests_remaining: number | null;
+      /** Requests Reset In S */
+      requests_reset_in_s: number | null;
+      /** Tokens Limit */
+      tokens_limit: number | null;
+      /** Tokens Remaining */
+      tokens_remaining: number | null;
+      /** Tokens Reset In S */
+      tokens_reset_in_s: number | null;
+    };
+    /**
+     * RateLimitStatusResponse
+     * @description Response of GET /api/llm/rate-limit and POST /api/llm/rate-limit/probe.
+     */
+    RateLimitStatusResponse: {
+      last_429: components["schemas"]["Last429"] | null;
+      /** Llm Mode */
+      llm_mode: string;
+      /** Model */
+      model: string | null;
+      /** Provider */
+      provider: string;
+      snapshot: components["schemas"]["RateLimitSnapshot"] | null;
+      /** Tokens Per Day Limit */
+      tokens_per_day_limit: number;
+      /** Tokens Used 24H */
+      tokens_used_24h: number | null;
     };
     /** RenderAudioRequest */
     RenderAudioRequest: {
@@ -3144,9 +3224,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            [key: string]: unknown;
-          };
+          "application/json": components["schemas"]["RateLimitStatusResponse"];
         };
       };
     };
@@ -3166,9 +3244,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            [key: string]: unknown;
-          };
+          "application/json": components["schemas"]["RateLimitStatusResponse"];
         };
       };
     };
@@ -3210,7 +3286,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["DueCollocationsResponse"];
         };
       };
       /** @description Validation Error */
@@ -3616,7 +3692,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["ImageItemResponse"];
         };
       };
       /** @description Validation Error */
@@ -3647,7 +3723,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["ImageItemResponse"];
         };
       };
       /** @description Validation Error */
@@ -3715,7 +3791,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["ImageItemResponse"];
         };
       };
       /** @description Validation Error */
@@ -4184,7 +4260,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["NewCollocationsResponse"];
         };
       };
       /** @description Validation Error */

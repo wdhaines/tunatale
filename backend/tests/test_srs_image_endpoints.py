@@ -726,6 +726,64 @@ class TestDeleteImage:
 # -- coverage gap helpers ------------------------------------------------------
 
 
+class TestImageItemKeySets:
+    """Key-set oracles for the 6d response_model flips (the three image verbs).
+
+    All three return ``srs_images.py::_item_response`` bare — a 5-key static
+    literal with no conditional keys. PUT/upload pin the ``image_url``-present
+    branch, DELETE (no image) the ``image_url``-None branch.
+    """
+
+    @respx.mock
+    async def test_put_from_url_response_keys_match_model_exactly(self, api, monkeypatch, tmp_path):
+        from app.api.models import ImageItemResponse
+        from tests._helpers.srs_image_shape import IMAGE_ITEM_KEYS
+
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
+        api.add_collocation(_unit(), language_code="sl")
+        cid = _id_for_text(api, "voda")
+        respx.get("http://img.test/keys.jpg").mock(
+            return_value=httpx.Response(200, content=_JPG, headers={"content-type": "image/jpeg"}),
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.put(f"/api/srs/items/{cid}/image", json={"url": "http://img.test/keys.jpg"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body.keys()) == IMAGE_ITEM_KEYS
+        assert set(ImageItemResponse.model_fields) == IMAGE_ITEM_KEYS
+
+    async def test_put_upload_response_keys_match_model_exactly(self, api, monkeypatch, tmp_path):
+        from app.api.models import ImageItemResponse
+        from tests._helpers.srs_image_shape import IMAGE_ITEM_KEYS
+
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
+        api.add_collocation(_unit(), language_code="sl")
+        cid = _id_for_text(api, "voda")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.put(
+                f"/api/srs/items/{cid}/image/upload",
+                files={"file": ("keys.png", io.BytesIO(_PNG), "image/png")},
+            )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body.keys()) == IMAGE_ITEM_KEYS
+        assert set(ImageItemResponse.model_fields) == IMAGE_ITEM_KEYS
+
+    async def test_delete_response_keys_match_model_exactly(self, api):
+        from app.api.models import ImageItemResponse
+        from tests._helpers.srs_image_shape import IMAGE_ITEM_KEYS
+
+        api.add_collocation(_unit(), language_code="sl")
+        cid = _id_for_text(api, "voda")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.delete(f"/api/srs/items/{cid}/image")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body.keys()) == IMAGE_ITEM_KEYS
+        assert body["image_url"] is None
+        assert set(ImageItemResponse.model_fields) == IMAGE_ITEM_KEYS
+
+
 class TestSniffExtCoverage:
     def test_riff_not_webp_returns_none(self):
         """Data starting with RIFF but missing the inner WEBP marker is not a match."""

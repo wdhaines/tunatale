@@ -321,6 +321,23 @@
         "title": "DrillRequest",
         "type": "object"
       },
+      "DueCollocationsResponse": {
+        "description": "Response of GET /api/srs/due.",
+        "properties": {
+          "due": {
+            "items": {
+              "$ref": "#/components/schemas/SrsItemResponse"
+            },
+            "title": "Due",
+            "type": "array"
+          }
+        },
+        "required": [
+          "due"
+        ],
+        "title": "DueCollocationsResponse",
+        "type": "object"
+      },
       "GenerateStoryRequest": {
         "properties": {
           "curriculum_id": {
@@ -489,6 +506,47 @@
           "language_code"
         ],
         "title": "IgnoreLemmaRequest",
+        "type": "object"
+      },
+      "ImageItemResponse": {
+        "description": "Response of the three SRS image endpoints.",
+        "properties": {
+          "card_type": {
+            "title": "Card Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Url"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "translation": {
+            "title": "Translation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "translation",
+          "card_type",
+          "image_url"
+        ],
+        "title": "ImageItemResponse",
         "type": "object"
       },
       "ImportCurriculumPlanResponse": {
@@ -829,6 +887,32 @@
           "sync_available"
         ],
         "title": "LanguagesResponse",
+        "type": "object"
+      },
+      "Last429": {
+        "description": "Non-null value of RateLimitStatusResponse.last_429.",
+        "properties": {
+          "ago_s": {
+            "title": "Ago S",
+            "type": "number"
+          },
+          "retry_in_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry In S"
+          }
+        },
+        "required": [
+          "ago_s",
+          "retry_in_s"
+        ],
+        "title": "Last429",
         "type": "object"
       },
       "LessonTranscriptResponse": {
@@ -1190,6 +1274,23 @@
         "title": "MarkLessonReviewedResponse",
         "type": "object"
       },
+      "NewCollocationsResponse": {
+        "description": "Response of GET /api/srs/new.",
+        "properties": {
+          "new": {
+            "items": {
+              "$ref": "#/components/schemas/SrsItemResponse"
+            },
+            "title": "New",
+            "type": "array"
+          }
+        },
+        "required": [
+          "new"
+        ],
+        "title": "NewCollocationsResponse",
+        "type": "object"
+      },
       "PipelineRegenerateRequest": {
         "properties": {
           "day": {
@@ -1365,6 +1466,162 @@
           "reply"
         ],
         "title": "PlanTurnResponse",
+        "type": "object"
+      },
+      "RateLimitSnapshot": {
+        "description": "Non-null value of RateLimitStatusResponse.snapshot.",
+        "properties": {
+          "age_s": {
+            "title": "Age S",
+            "type": "number"
+          },
+          "requests_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requests Limit"
+          },
+          "requests_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requests Remaining"
+          },
+          "requests_reset_in_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requests Reset In S"
+          },
+          "tokens_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Limit"
+          },
+          "tokens_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Remaining"
+          },
+          "tokens_reset_in_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Reset In S"
+          }
+        },
+        "required": [
+          "age_s",
+          "requests_limit",
+          "requests_remaining",
+          "requests_reset_in_s",
+          "tokens_limit",
+          "tokens_remaining",
+          "tokens_reset_in_s"
+        ],
+        "title": "RateLimitSnapshot",
+        "type": "object"
+      },
+      "RateLimitStatusResponse": {
+        "description": "Response of GET /api/llm/rate-limit and POST /api/llm/rate-limit/probe.",
+        "properties": {
+          "last_429": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Last429"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "llm_mode": {
+            "title": "Llm Mode",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RateLimitSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tokens_per_day_limit": {
+            "title": "Tokens Per Day Limit",
+            "type": "integer"
+          },
+          "tokens_used_24h": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Used 24H"
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "llm_mode",
+          "snapshot",
+          "last_429",
+          "tokens_used_24h",
+          "tokens_per_day_limit"
+        ],
+        "title": "RateLimitStatusResponse",
         "type": "object"
       },
       "RenderAudioRequest": {
@@ -3299,9 +3556,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Rate Limit Status Api Llm Rate Limit Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RateLimitStatusResponse"
                 }
               }
             },
@@ -3322,9 +3577,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Rate Limit Probe Api Llm Rate Limit Probe Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RateLimitStatusResponse"
                 }
               }
             },
@@ -3378,7 +3631,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/DueCollocationsResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3984,7 +4239,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ImageItemResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4032,7 +4289,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ImageItemResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4138,7 +4397,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ImageItemResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4775,7 +5036,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/NewCollocationsResponse"
+                }
               }
             },
             "description": "Successful Response"

@@ -557,6 +557,91 @@ class TestSRSEndpoints:
         assert data["staged"] == 0
 
 
+class TestDueNewItemShape:
+    """Key-set oracles for the 6b response_model flips (get_due / get_new).
+
+    Pins the shared ``SrsItemResponse`` element shape through the due/new
+    envelopes, asserting literal key-sets against the (unfiltered) handler
+    output. The due branch exercises the ``left``-present direction branch
+    (LEARNING); the new branch the ``left``-omitted branch.
+    """
+
+    async def test_due_response_keys_match_model_exactly(self):
+        from datetime import UTC, datetime, timedelta
+
+        from app.api.models import DueCollocationsResponse
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+        from tests._helpers.srs_item_shape import (
+            DIRECTION_KEYS,
+            DIRECTION_WITHOUT_LEFT,
+            SRS_ITEM_KEYS,
+        )
+
+        db = SRSDatabase(":memory:")
+        db.add_collocation(
+            SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus"),
+            language_code="sl",
+        )
+        item = db.get_collocation("banka")
+        db.update_direction(
+            item.guid,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.LEARNING,
+                stability=1.0,
+                left=2,
+                due_at=datetime.now(UTC) + timedelta(minutes=1),
+            ),
+        )
+        app.state.srs_db = db
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/due", params={"direction": "recognition"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert set(data.keys()) == {"due"}
+        assert set(DueCollocationsResponse.model_fields) == {"due"}
+        item_payload = data["due"][0]
+        assert set(item_payload.keys()) == SRS_ITEM_KEYS
+        assert set(item_payload["directions"].keys()) == {"recognition", "production"}
+        assert set(item_payload["directions"]["recognition"].keys()) == DIRECTION_KEYS  # learning: left present
+        assert item_payload["directions"]["recognition"]["left"] == 2
+        assert set(item_payload["directions"]["production"].keys()) == DIRECTION_WITHOUT_LEFT
+
+    async def test_new_response_keys_match_model_exactly(self):
+        from app.api.models import NewCollocationsResponse
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+        from tests._helpers.srs_item_shape import (
+            DIRECTION_WITHOUT_LEFT,
+            SRS_ITEM_KEYS,
+        )
+
+        db = SRSDatabase(":memory:")
+        db.add_collocation(
+            SyntacticUnit(text="dober dan", translation="good day", word_count=2, difficulty=1, source="corpus"),
+            language_code="sl",
+        )
+        app.state.srs_db = db
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/new")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert set(data.keys()) == {"new"}
+        assert set(NewCollocationsResponse.model_fields) == {"new"}
+        item_payload = data["new"][0]
+        assert set(item_payload.keys()) == SRS_ITEM_KEYS
+        assert set(item_payload["directions"].keys()) == {"recognition", "production"}
+        assert set(item_payload["directions"]["recognition"].keys()) == DIRECTION_WITHOUT_LEFT
+        assert set(item_payload["directions"]["production"].keys()) == DIRECTION_WITHOUT_LEFT
+
+
 class TestResolveGlossTranslation:
     """Gloss lookup for /listen card creation: lemma → surface → warn (no silent '')."""
 

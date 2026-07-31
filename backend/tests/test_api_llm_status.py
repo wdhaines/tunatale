@@ -154,6 +154,75 @@ class TestRateLimitProbe:
         assert response.status_code == 503
 
 
+class TestRateLimitKeySets:
+    """Key-set oracles for the 6f response_model flips (rate-limit + probe).
+
+    Both endpoints end in ``llm.py::_status_payload``, so both share
+    ``RateLimitStatusResponse``. Full-snapshot test pins the nested shapes;
+    the null-branches test pins the ``snapshot is None`` / ``last_429 is None``
+    keys at the top level.
+    """
+
+    async def test_status_response_keys_match_model_exactly(self):
+        from app.api.models import RateLimitStatusResponse
+        from tests._helpers.llm_rate_limit_shape import (
+            RATE_LIMIT_LAST_429_KEYS,
+            RATE_LIMIT_SNAPSHOT_KEYS,
+            RATE_LIMIT_STATUS_KEYS,
+        )
+
+        client = LLMClient(groq_api_key="test-key")
+        client.last_rate_limits = {
+            "captured_at": time.time(),
+            "requests_limit": 1000,
+            "requests_remaining": 998,
+            "requests_reset_s": 60.0,
+            "tokens_limit": 8000,
+            "tokens_remaining": 7000,
+            "tokens_reset_s": 5.0,
+        }
+        client.last_429 = {"at": time.time(), "retry_after_s": 30.0}
+        app.state.llm = client
+        body = await _get_status()
+        assert set(body.keys()) == RATE_LIMIT_STATUS_KEYS
+        assert set(RateLimitStatusResponse.model_fields) == RATE_LIMIT_STATUS_KEYS
+        assert set(body["snapshot"].keys()) == RATE_LIMIT_SNAPSHOT_KEYS
+        assert set(body["last_429"].keys()) == RATE_LIMIT_LAST_429_KEYS
+
+    async def test_null_branches_keys_match_model_exactly(self):
+        from app.api.models import RateLimitStatusResponse
+        from tests._helpers.llm_rate_limit_shape import RATE_LIMIT_STATUS_KEYS
+
+        app.state.llm = LLMClient(groq_api_key="test-key")
+        body = await _get_status()
+        assert body["snapshot"] is None
+        assert body["last_429"] is None
+        assert set(body.keys()) == RATE_LIMIT_STATUS_KEYS
+        assert set(RateLimitStatusResponse.model_fields) == RATE_LIMIT_STATUS_KEYS
+
+    async def test_probe_response_keys_match_model_exactly(self):
+        from tests._helpers.llm_rate_limit_shape import (
+            RATE_LIMIT_SNAPSHOT_KEYS,
+            RATE_LIMIT_STATUS_KEYS,
+        )
+
+        app.state.llm = LLMClient(groq_api_key="test-key")
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(
+                return_value=Response(
+                    200,
+                    headers=_RL_HEADERS,
+                    json={"choices": [{"message": {"content": "ok"}}]},
+                )
+            )
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+                response = await http.post("/api/llm/rate-limit/probe")
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body.keys()) == RATE_LIMIT_STATUS_KEYS
+        assert set(body["snapshot"].keys()) == RATE_LIMIT_SNAPSHOT_KEYS
+
+
 async def _get_health() -> dict:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
         response = await http.get("/api/llm/health")
