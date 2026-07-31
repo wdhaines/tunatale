@@ -120,7 +120,8 @@ class TestActivityEndpoint:
         assert body["latest"] == 1
         assert len(body["events"]) == 1
         assert body["events"][0]["seq"] == 1
-        assert set(body.keys()) == set(LlmActivityResponse.model_fields)
+        assert set(body.keys()) == {"latest", "events"}
+        assert set(LlmActivityResponse.model_fields) == {"latest", "events"}
 
     async def test_no_activity_log_returns_empty(self):
         if hasattr(app.state, "activity_log"):
@@ -130,7 +131,8 @@ class TestActivityEndpoint:
         assert response.status_code == 200
         body = response.json()
         assert body == {"latest": 0, "events": []}
-        assert set(body.keys()) == set(LlmActivityResponse.model_fields)
+        assert set(body.keys()) == {"latest", "events"}
+        assert set(LlmActivityResponse.model_fields) == {"latest", "events"}
 
     async def test_since_latest_returns_empty(self):
         log = ActivityLog(maxlen=100)

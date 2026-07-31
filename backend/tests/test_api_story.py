@@ -319,7 +319,8 @@ class TestStoryEndpoints:
                 json={"curriculum_id": "test-curriculum-id", "day": 1, "strategy": "WIDER"},
             )
 
-        assert set(response.json().keys()) == set(GenerateStoryResponse.model_fields)
+        assert set(response.json().keys()) == {"id", "title", "sections"}
+        assert set(GenerateStoryResponse.model_fields) == {"id", "title", "sections"}
         app.state.srs_db.close()
 
     async def test_generate_story_returns_201(self, monkeypatch):
@@ -580,7 +581,8 @@ class TestStoryEndpoints:
                 params={"curriculum_id": "test-curriculum-id", "day": 1, "strategy": "WIDER"},
             )
 
-        assert set(response.json().keys()) == set(GetStoryPromptResponse.model_fields)
+        assert set(response.json().keys()) == {"system_prompt", "user_prompt"}
+        assert set(GetStoryPromptResponse.model_fields) == {"system_prompt", "user_prompt"}
 
     async def test_prewarm_swallows_exception(self, monkeypatch):
         """_prewarm_lesson logs and swallows exceptions from get_lemmatizer (lines 52-53)."""

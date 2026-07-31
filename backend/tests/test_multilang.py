@@ -129,9 +129,11 @@ class TestPerRequestIsolation:
         assert {lang["code"] for lang in body["languages"]} == {"sl", "no"}
         assert {lang["name"] for lang in body["languages"]} == {"Slovene", "Norwegian"}
         assert body["active"] == "no"
-        assert set(body.keys()) == set(LanguagesResponse.model_fields)
+        assert set(body.keys()) == {"languages", "active", "sync_available"}
+        assert set(LanguagesResponse.model_fields) == {"languages", "active", "sync_available"}
         for lang in body["languages"]:
-            assert set(lang.keys()) == set(LanguageItem.model_fields)
+            assert set(lang.keys()) == {"code", "name"}
+            assert set(LanguageItem.model_fields) == {"code", "name"}
 
     async def test_grade_in_one_language_does_not_touch_the_other(self, two_language_app):
         """A write through one connection is invisible to the other (no shared DB)."""
@@ -162,8 +164,10 @@ class TestLanguagesEndpointFallbacks:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 body = (await client.get("/api/languages")).json()
             assert body["languages"] == [{"code": "sl", "name": "Slovene"}]
-            assert set(body.keys()) == set(LanguagesResponse.model_fields)
-            assert set(body["languages"][0].keys()) == set(LanguageItem.model_fields)
+            assert set(body.keys()) == {"languages", "active", "sync_available"}
+            assert set(LanguagesResponse.model_fields) == {"languages", "active", "sync_available"}
+            assert set(body["languages"][0].keys()) == {"code", "name"}
+            assert set(LanguageItem.model_fields) == {"code", "name"}
         finally:
             self._cleanup()
 
@@ -173,4 +177,5 @@ class TestLanguagesEndpointFallbacks:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             body = (await client.get("/api/languages")).json()
         assert body["languages"] == []
-        assert set(body.keys()) == set(LanguagesResponse.model_fields)
+        assert set(body.keys()) == {"languages", "active", "sync_available"}
+        assert set(LanguagesResponse.model_fields) == {"languages", "active", "sync_available"}

@@ -322,7 +322,8 @@ class TestAudioEndpoints:
             await client.post("/api/audio/render", json={"lesson_id": lesson_id})
             response = await client.get(f"/api/audio/lesson/{lesson_id}")
 
-        assert set(response.json().keys()) == set(GetLessonAudioResponse.model_fields)
+        assert set(response.json().keys()) == {"audio_id", "lesson_id", "sections", "cues"}
+        assert set(GetLessonAudioResponse.model_fields) == {"audio_id", "lesson_id", "sections", "cues"}
 
     async def test_get_lesson_audio_endpoint(self, tmp_path):
         """GET /api/audio/lesson/{lesson_id} returns existing audio files list."""

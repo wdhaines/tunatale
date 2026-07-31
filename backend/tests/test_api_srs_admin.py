@@ -220,7 +220,8 @@ class TestDeleteItem:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.delete(f"/api/srs/items/{row_id}")
 
-        assert set(response.json().keys()) == set(StatusResponse.model_fields)
+        assert set(response.json().keys()) == {"status"}
+        assert set(StatusResponse.model_fields) == {"status"}
 
     async def test_delete_item_returns_404_for_unknown_id(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

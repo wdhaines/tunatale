@@ -177,7 +177,20 @@ class TestLlmHealth:
             assert body["last_error"] is None
             assert body["fallback_allowed"] is False
             assert body["llm_mode"] == settings.llm_mode
-            assert set(body.keys()) == set(LlmHealthResponse.model_fields)
+            assert set(body.keys()) == {
+                "healthy",
+                "consecutive_failures",
+                "last_error",
+                "fallback_allowed",
+                "llm_mode",
+            }
+            assert set(LlmHealthResponse.model_fields) == {
+                "healthy",
+                "consecutive_failures",
+                "last_error",
+                "fallback_allowed",
+                "llm_mode",
+            }
         finally:
             settings.llm_mode = original_mode
 
@@ -199,8 +212,22 @@ class TestLlmHealth:
             assert body["last_error"]["message"] == "Groq returned HTTP 401"
             assert body["last_error"]["ago_s"] == pytest.approx(10, abs=3)
             assert body["fallback_allowed"] is False
-            assert set(body.keys()) == set(LlmHealthResponse.model_fields)
-            assert set(body["last_error"].keys()) == set(LlmLastError.model_fields)
+            assert set(body.keys()) == {
+                "healthy",
+                "consecutive_failures",
+                "last_error",
+                "fallback_allowed",
+                "llm_mode",
+            }
+            assert set(LlmHealthResponse.model_fields) == {
+                "healthy",
+                "consecutive_failures",
+                "last_error",
+                "fallback_allowed",
+                "llm_mode",
+            }
+            assert set(body["last_error"].keys()) == {"status", "message", "ago_s"}
+            assert set(LlmLastError.model_fields) == {"status", "message", "ago_s"}
         finally:
             settings.llm_mode = original_mode
 
@@ -214,6 +241,19 @@ class TestLlmHealth:
             body = await _get_health()
             assert body["healthy"] is True
             assert body["consecutive_failures"] == 0
-            assert set(body.keys()) == set(LlmHealthResponse.model_fields)
+            assert set(body.keys()) == {
+                "healthy",
+                "consecutive_failures",
+                "last_error",
+                "fallback_allowed",
+                "llm_mode",
+            }
+            assert set(LlmHealthResponse.model_fields) == {
+                "healthy",
+                "consecutive_failures",
+                "last_error",
+                "fallback_allowed",
+                "llm_mode",
+            }
         finally:
             settings.llm_mode = original_mode

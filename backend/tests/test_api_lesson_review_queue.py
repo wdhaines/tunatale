@@ -425,4 +425,5 @@ class TestMarkLessonReviewed:
         self._setup()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post("/api/srs/lesson/lesson-1/reviewed")
-        assert set(resp.json().keys()) == set(MarkLessonReviewedResponse.model_fields)
+        assert set(resp.json().keys()) == {"ok"}
+        assert set(MarkLessonReviewedResponse.model_fields) == {"ok"}

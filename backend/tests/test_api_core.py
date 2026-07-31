@@ -24,7 +24,8 @@ class TestHealth:
         """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/health")
-        assert set(response.json().keys()) == set(HealthResponse.model_fields)
+        assert set(response.json().keys()) == {"status"}
+        assert set(HealthResponse.model_fields) == {"status"}
 
 
 class TestCurriculumEndpoints:
@@ -432,7 +433,8 @@ class TestCurriculumPlanIOEndpoints:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/curriculum/import", json=body)
 
-        assert set(response.json().keys()) == set(ImportCurriculumPlanResponse.model_fields)
+        assert set(response.json().keys()) == {"id", "topic", "language_code", "days"}
+        assert set(ImportCurriculumPlanResponse.model_fields) == {"id", "topic", "language_code", "days"}
 
     async def test_import_returns_201(self):
         from app.storage.store import ContentStore

@@ -3614,7 +3614,8 @@ class TestIgnoredLemmas:
                 "/api/srs/ignored-lemmas",
                 json={"lemma": "Ana", "language_code": "sl"},
             )
-        assert set(resp.json().keys()) == set(StatusResponse.model_fields)
+        assert set(resp.json().keys()) == {"status"}
+        assert set(StatusResponse.model_fields) == {"status"}
 
     async def test_add_ignored_lemma_lowercases(self, api_app_state):
         db = api_app_state
@@ -3644,7 +3645,8 @@ class TestIgnoredLemmas:
             resp = await client.delete(
                 "/api/srs/ignored-lemmas?lemma=Ana&language_code=sl",
             )
-        assert set(resp.json().keys()) == set(StatusResponse.model_fields)
+        assert set(resp.json().keys()) == {"status"}
+        assert set(StatusResponse.model_fields) == {"status"}
 
     async def test_remove_nonexistent_ignored_lemma(self, api_app_state):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

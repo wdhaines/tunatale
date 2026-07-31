@@ -199,7 +199,8 @@ class TestPipelineRetryEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data == {"status": "queued"}
-        assert set(data.keys()) == set(StatusResponse.model_fields)
+        assert set(data.keys()) == {"status"}
+        assert set(StatusResponse.model_fields) == {"status"}
 
 
 class TestPipelineRegenerateEndpoint:
@@ -254,4 +255,5 @@ class TestPipelineRegenerateEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data == {"status": "queued"}
-        assert set(data.keys()) == set(StatusResponse.model_fields)
+        assert set(data.keys()) == {"status"}
+        assert set(StatusResponse.model_fields) == {"status"}

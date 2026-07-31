@@ -123,9 +123,11 @@ class TestLessonAuthoringEndpoints:
         assert len(data["sections"]) == 7
         assert data["warnings"] == []
         assert store.get_lesson(data["id"]) is not None
-        assert set(data.keys()) == set(ImportStoryResponse.model_fields)
+        assert set(data.keys()) == {"id", "title", "sections", "warnings"}
+        assert set(ImportStoryResponse.model_fields) == {"id", "title", "sections", "warnings"}
         for section in data["sections"]:
-            assert set(section.keys()) == set(StorySection.model_fields)
+            assert set(section.keys()) == {"type", "phrase_count"}
+            assert set(StorySection.model_fields) == {"type", "phrase_count"}
         # Verify pipeline enqueued a render job
         assert pipeline._jobs[("sl", "c1", 1)]["state"] == "queued"
         assert pipeline._jobs[("sl", "c1", 1)]["kind"] == "render"
@@ -179,7 +181,8 @@ class TestLessonAuthoringEndpoints:
         warnings = data["warnings"]
         assert len(warnings) == 1
         assert "robot-9" in warnings[0]
-        assert set(data.keys()) == set(ImportStoryResponse.model_fields)
+        assert set(data.keys()) == {"id", "title", "sections", "warnings"}
+        assert set(ImportStoryResponse.model_fields) == {"id", "title", "sections", "warnings"}
 
     async def test_import_round_trips_via_source(self):
         """Export → import → export: the story survives the round trip."""

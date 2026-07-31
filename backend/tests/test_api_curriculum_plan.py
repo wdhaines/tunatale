@@ -124,7 +124,20 @@ class TestStartPlan:
         async with _client() as client:
             response = await client.post("/api/curriculum/plan", json={"topic": "Visiting Ljubljana"})
 
-        assert set(response.json().keys()) == set(StartPlanResponse.model_fields)
+        assert set(response.json().keys()) == {
+            "id",
+            "topic",
+            "language_code",
+            "cefr_level",
+            "days",
+        }
+        assert set(StartPlanResponse.model_fields) == {
+            "id",
+            "topic",
+            "language_code",
+            "cefr_level",
+            "days",
+        }
 
     async def test_start_plan_creates_empty_curriculum(self):
         store = _setup()
@@ -165,7 +178,8 @@ class TestPlanTurn:
         async with _client() as client:
             response = await client.post("/api/curriculum/trip/plan/turn", json={"message": "thoughts?"})
 
-        assert set(response.json().keys()) == set(PlanTurnResponse.model_fields)
+        assert set(response.json().keys()) == {"reply", "proposed"}
+        assert set(PlanTurnResponse.model_fields) == {"reply", "proposed"}
 
     @pytest.mark.parametrize("bad_size", [0, -1, 15])
     async def test_turn_batch_size_out_of_bounds_422(self, bad_size):
@@ -309,7 +323,8 @@ class TestPlanCommit:
         async with _client() as client:
             response = await client.post("/api/curriculum/trip/plan/commit", json={})
 
-        assert set(response.json().keys()) == set(PlanCommitResponse.model_fields)
+        assert set(response.json().keys()) == {"id", "days"}
+        assert set(PlanCommitResponse.model_fields) == {"id", "days"}
 
     async def test_commit_unknown_curriculum_404(self):
         _setup()
@@ -454,7 +469,8 @@ class TestPlanReset:
         async with _client() as client:
             response = await client.post("/api/curriculum/trip/plan/reset", json={})
 
-        assert set(response.json().keys()) == set(PlanResetResponse.model_fields)
+        assert set(response.json().keys()) == {"reply_count_cleared"}
+        assert set(PlanResetResponse.model_fields) == {"reply_count_cleared"}
 
     async def test_reset_counts_only_planner_replies(self):
         curriculum = _planned_curriculum(
@@ -503,7 +519,8 @@ class TestPlanFeedback:
         async with _client() as client:
             response = await client.post("/api/curriculum/trip/plan/feedback", json={"day": 1, "note": "too fast"})
 
-        assert set(response.json().keys()) == set(PlanFeedbackResponse.model_fields)
+        assert set(response.json().keys()) == {"feedback"}
+        assert set(PlanFeedbackResponse.model_fields) == {"feedback"}
 
     async def test_feedback_appended_and_persisted(self):
         curriculum = _planned_curriculum(feedback=[{"day": 1, "note": "old note"}])
@@ -561,7 +578,8 @@ class TestDeleteCurriculum:
         async with _client() as client:
             response = await client.delete("/api/curriculum/trip")
 
-        assert set(response.json().keys()) == set(DeleteCurriculumResponse.model_fields)
+        assert set(response.json().keys()) == {"deleted"}
+        assert set(DeleteCurriculumResponse.model_fields) == {"deleted"}
 
 
 class TestDeleteDay:
@@ -602,7 +620,8 @@ class TestDeleteDay:
         async with _client() as client:
             response = await client.delete("/api/curriculum/trip/days/2")
 
-        assert set(response.json().keys()) == set(DeleteDayResponse.model_fields)
+        assert set(response.json().keys()) == {"deleted_day", "days"}
+        assert set(DeleteDayResponse.model_fields) == {"deleted_day", "days"}
 
     async def test_delete_day_unlinks_the_audio_from_disk(self, tmp_path):
         """Deleting a day must not leave its audio behind.
@@ -843,7 +862,8 @@ class TestPlanTurnPrompt:
                 json={"message": "plan 2 days", "batch_size": 2},
             )
 
-        assert set(resp.json().keys()) == set(PlanTurnPromptResponse.model_fields)
+        assert set(resp.json().keys()) == {"system_prompt", "user_prompt"}
+        assert set(PlanTurnPromptResponse.model_fields) == {"system_prompt", "user_prompt"}
 
     async def test_prompt_persists_nothing(self):
         """Follow-up GET shows chat/proposed unchanged after /plan/turn/prompt."""
@@ -936,7 +956,8 @@ class TestGenerationMode:
                 "/api/curriculum/trip/generation-mode",
                 json={"mode": "manual"},
             )
-        assert set(resp.json().keys()) == set(SetGenerationModeResponse.model_fields)
+        assert set(resp.json().keys()) == {"mode"}
+        assert set(SetGenerationModeResponse.model_fields) == {"mode"}
 
     async def test_set_generation_mode_unknown_curriculum_404(self):
         _setup()
