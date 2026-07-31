@@ -1,6 +1,5 @@
 create_base_card_api_srs_items_base_post  # reason: untyped handler — returns a traced/variable shape
 create_inflection_cloze_api_srs_inflection_clozes_post  # reason: untyped handler — returns a traced/variable shape
-create_item_api_srs_items_post  # reason: untyped handler — returns a traced/variable shape
 delete_image_api_srs_items__item_id__image_delete  # reason: untyped handler — returns a traced/variable shape
 drill_feedback_api_srs_items__item_id__direction__direction__feedback_post  # reason: untyped handler — returns conditional key-set
 get_curriculum_api_curriculum__curriculum_id__get  # reason: untyped handler — returns conditional key-set
@@ -16,9 +15,7 @@ get_new_collocations_api_srs_new_get  # reason: untyped handler — returns a tr
 get_queue_stats_api_srs_queue_stats_get  # reason: untyped handler — mechanical, awaiting scheduled batch
 get_review_queue_api_srs_review_queue_get  # reason: untyped handler — returns a traced/variable shape
 list_curricula_api_curriculum_get  # reason: untyped handler — returns a traced/variable shape
-list_items_api_srs_items_get  # reason: untyped handler — returns a traced/variable shape
 mark_lesson_listened_api_srs_listen_post  # reason: untyped handler — mechanical, awaiting scheduled batch
-patch_item_api_srs_items__item_id__patch  # reason: untyped handler — returns a traced/variable shape
 pipeline_status_api_curriculum__curriculum_id__pipeline_get  # reason: untyped handler — returns a traced/variable shape
 put_image_from_url_api_srs_items__item_id__image_put  # reason: untyped handler — returns a traced/variable shape
 put_image_upload_api_srs_items__item_id__image_upload_put  # reason: untyped handler — returns a traced/variable shape
@@ -26,9 +23,4 @@ rate_limit_probe_api_llm_rate_limit_probe_post  # reason: untyped handler — re
 rate_limit_status_api_llm_rate_limit_get  # reason: untyped handler — returns a traced/variable shape
 refresh_media_api_admin_refresh_media_post  # reason: untyped handler — mechanical, awaiting scheduled batch
 render_audio_api_audio_render_post  # reason: untyped handler — returns a traced/variable shape
-reset_item_api_srs_items__item_id__reset_post  # reason: untyped handler — returns a traced/variable shape
-restore_known_item_api_srs_items__item_id__restore_known_post  # reason: untyped handler — returns a traced/variable shape
-set_item_state_api_srs_items__item_id__state_post  # reason: untyped handler — returns a traced/variable shape
-suspend_item_api_srs_items__item_id__suspend_post  # reason: untyped handler — returns a traced/variable shape
 trigger_peer_sync_api_anki_peer_sync_post  # reason: untyped handler — mechanical, awaiting scheduled batch
-untrack_item_api_srs_items__item_id__untrack_post  # reason: untyped handler — returns conditional key-set

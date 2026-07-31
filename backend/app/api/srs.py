@@ -31,8 +31,10 @@ from app.api.models import (
     ListenPreviewResponse,
     ListenRequest,
     ListensResponse,
+    ListItemsResponse,
     MarkLessonReviewedResponse,
     SetStateRequest,
+    SrsItemResponse,
     SrsStatsResponse,
     StatusResponse,
     SuspendRequest,
@@ -40,6 +42,7 @@ from app.api.models import (
     TranslateRequest,
     TranslateResponse,
     UndoGradeResponse,
+    UntrackItemResponse,
     UpdateItemRequest,
 )
 from app.audio.cloze_tts import synthesize_cloze_audios
@@ -1648,7 +1651,7 @@ _STATE_MAP = {
 }
 
 
-@router.post("/items", status_code=201)
+@router.post("/items", status_code=201, response_model=SrsItemResponse, response_model_exclude_unset=True)
 async def create_item(body: CreateItemRequest, request: Request):
     db = request.state.srs_db
     if body.word_count < 1:
@@ -1825,7 +1828,7 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     )
 
 
-@router.get("/items", status_code=200)
+@router.get("/items", status_code=200, response_model=ListItemsResponse, response_model_exclude_unset=True)
 async def list_items(
     request: Request,
     search: str | None = None,
@@ -1863,7 +1866,7 @@ async def list_items(
     }
 
 
-@router.patch("/items/{item_id}", status_code=200)
+@router.patch("/items/{item_id}", status_code=200, response_model=SrsItemResponse, response_model_exclude_unset=True)
 async def patch_item(item_id: int, body: UpdateItemRequest, request: Request):
     db = request.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
@@ -1892,7 +1895,9 @@ async def bulk_delete_items(body: BulkDeleteRequest, request: Request):
     return {"deleted": deleted}
 
 
-@router.post("/items/{item_id}/reset", status_code=200)
+@router.post(
+    "/items/{item_id}/reset", status_code=200, response_model=SrsItemResponse, response_model_exclude_unset=True
+)
 async def reset_item(item_id: int, request: Request):
     db = request.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
@@ -1902,7 +1907,12 @@ async def reset_item(item_id: int, request: Request):
     return _item_to_dict(row_id, item, lang)
 
 
-@router.post("/items/{item_id}/state", status_code=200)
+@router.post(
+    "/items/{item_id}/state",
+    status_code=200,
+    response_model=SrsItemResponse,
+    response_model_exclude_unset=True,
+)
 async def set_item_state(item_id: int, body: SetStateRequest, request: Request):
     if body.state not in _VALID_USER_STATES:
         raise HTTPException(
@@ -1930,7 +1940,12 @@ async def set_item_state(item_id: int, body: SetStateRequest, request: Request):
     return _item_to_dict(row_id, item, lang)
 
 
-@router.post("/items/{item_id}/restore-known", status_code=200)
+@router.post(
+    "/items/{item_id}/restore-known",
+    status_code=200,
+    response_model=SrsItemResponse,
+    response_model_exclude_unset=True,
+)
 async def restore_known_item(item_id: int, request: Request):
     """Reverse a "Mark known" — restore the snapshotted pre-known schedule.
 
@@ -1946,7 +1961,12 @@ async def restore_known_item(item_id: int, request: Request):
     return _item_to_dict(row_id, item, lang)
 
 
-@router.post("/items/{item_id}/untrack", status_code=200)
+@router.post(
+    "/items/{item_id}/untrack",
+    status_code=200,
+    response_model=UntrackItemResponse,
+    response_model_exclude_unset=True,
+)
 async def untrack_item(item_id: int, request: Request):
     db = request.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
@@ -1958,7 +1978,12 @@ async def untrack_item(item_id: int, request: Request):
     return {"action": "suspended", "item": _item_to_dict(row_id, item, lang)}
 
 
-@router.post("/items/{item_id}/suspend", status_code=200)
+@router.post(
+    "/items/{item_id}/suspend",
+    status_code=200,
+    response_model=SrsItemResponse,
+    response_model_exclude_unset=True,
+)
 async def suspend_item(item_id: int, body: SuspendRequest, request: Request):
     db = request.state.srs_db
     if db.get_collocation_by_id(item_id) is None:

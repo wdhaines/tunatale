@@ -204,6 +204,85 @@
         "title": "DeleteDayResponse",
         "type": "object"
       },
+      "DirectionStateResponse": {
+        "description": "One direction of an SRS item; serves the 8 ``_item_to_dict`` endpoints.\n\n``left`` is omitted when None (``srs.py::_direction_to_dict``), so it must\nride on ``response_model_exclude_unset`` \u2014 never a plain ``response_model``.",
+        "properties": {
+          "anki_card_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anki Card Id"
+          },
+          "difficulty": {
+            "title": "Difficulty",
+            "type": "number"
+          },
+          "due_at": {
+            "title": "Due At",
+            "type": "string"
+          },
+          "lapses": {
+            "title": "Lapses",
+            "type": "integer"
+          },
+          "last_review": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Review"
+          },
+          "last_review_time_ms": {
+            "title": "Last Review Time Ms",
+            "type": "integer"
+          },
+          "left": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Left"
+          },
+          "reps": {
+            "title": "Reps",
+            "type": "integer"
+          },
+          "stability": {
+            "title": "Stability",
+            "type": "number"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "due_at",
+          "stability",
+          "difficulty",
+          "reps",
+          "lapses",
+          "last_review",
+          "last_review_time_ms",
+          "anki_card_id"
+        ],
+        "title": "DirectionStateResponse",
+        "type": "object"
+      },
       "DrillRequest": {
         "properties": {
           "lesson_review": {
@@ -651,6 +730,61 @@
         "title": "InflectionClozeRequest",
         "type": "object"
       },
+      "ItemDirections": {
+        "description": "SrsItemResponse.directions; production is None for single-template notes.",
+        "properties": {
+          "production": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DirectionStateResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recognition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DirectionStateResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "recognition",
+          "production"
+        ],
+        "title": "ItemDirections",
+        "type": "object"
+      },
+      "ItemExtra": {
+        "description": "One element of SrsItemResponse.extras (a BackField \u2192 {label, html, tier}).",
+        "properties": {
+          "html": {
+            "title": "Html",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "html",
+          "tier"
+        ],
+        "title": "ItemExtra",
+        "type": "object"
+      },
       "LanguageItem": {
         "description": "One element of LanguagesResponse.languages.",
         "properties": {
@@ -725,6 +859,28 @@
           "dialogue_lines"
         ],
         "title": "LessonTranscriptResponse",
+        "type": "object"
+      },
+      "ListItemsResponse": {
+        "description": "Response of GET /api/srs/items.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SrsItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "ListItemsResponse",
         "type": "object"
       },
       "ListenPreviewCandidate": {
@@ -1251,6 +1407,184 @@
         "title": "SetStateRequest",
         "type": "object"
       },
+      "SrsItemResponse": {
+        "description": "Response of create_item, patch_item, reset_item, restore_known_item,\nset_item_state, and suspend_item; the element of list_items and untrack_item.\n\nExactly 25 keys, one per ``_item_to_dict`` output key.",
+        "properties": {
+          "anki_note_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anki Note Id"
+          },
+          "article": {
+            "title": "Article",
+            "type": "string"
+          },
+          "audio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audio Url"
+          },
+          "card_type": {
+            "title": "Card Type",
+            "type": "string"
+          },
+          "difficulty": {
+            "title": "Difficulty",
+            "type": "number"
+          },
+          "directions": {
+            "$ref": "#/components/schemas/ItemDirections"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "extras": {
+            "items": {
+              "$ref": "#/components/schemas/ItemExtra"
+            },
+            "title": "Extras",
+            "type": "array"
+          },
+          "grammar": {
+            "title": "Grammar",
+            "type": "string"
+          },
+          "guid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guid"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Url"
+          },
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "lapses": {
+            "title": "Lapses",
+            "type": "integer"
+          },
+          "last_review": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Review"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "pos": {
+            "title": "Pos",
+            "type": "string"
+          },
+          "reps": {
+            "title": "Reps",
+            "type": "integer"
+          },
+          "source_sentence": {
+            "title": "Source Sentence",
+            "type": "string"
+          },
+          "source_sentence_translation": {
+            "title": "Source Sentence Translation",
+            "type": "string"
+          },
+          "stability": {
+            "title": "Stability",
+            "type": "number"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "translation": {
+            "title": "Translation",
+            "type": "string"
+          },
+          "word_count": {
+            "title": "Word Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "translation",
+          "word_count",
+          "state",
+          "due_at",
+          "stability",
+          "difficulty",
+          "reps",
+          "lapses",
+          "last_review",
+          "language_code",
+          "guid",
+          "anki_note_id",
+          "directions",
+          "card_type",
+          "source_sentence",
+          "source_sentence_translation",
+          "image_url",
+          "audio_url",
+          "grammar",
+          "note",
+          "article",
+          "extras",
+          "pos"
+        ],
+        "title": "SrsItemResponse",
+        "type": "object"
+      },
       "SrsStatsResponse": {
         "description": "Response of GET /api/srs/stats.",
         "properties": {
@@ -1721,6 +2055,30 @@
           "restored_due_at"
         ],
         "title": "UndoGradeResponse",
+        "type": "object"
+      },
+      "UntrackItemResponse": {
+        "description": "Response of POST /api/srs/items/{item_id}/untrack.\n\nTwo branches \u2014 ``{\"action\": \"deleted\"}`` and ``{\"action\": \"suspended\",\n\"item\": ...}``. ``item`` is optional and left unset on the deleted branch,\nwhich is why the route uses ``response_model_exclude_unset``.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "item": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SrsItemResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "UntrackItemResponse",
         "type": "object"
       },
       "UpdateItemRequest": {
@@ -3257,7 +3615,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ListItemsResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3294,7 +3654,9 @@
           "201": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SrsItemResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3469,7 +3831,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SrsItemResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3814,7 +4178,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SrsItemResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3855,7 +4221,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SrsItemResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3905,7 +4273,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SrsItemResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3955,7 +4325,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SrsItemResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3995,7 +4367,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/UntrackItemResponse"
+                }
               }
             },
             "description": "Successful Response"

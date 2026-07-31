@@ -535,3 +535,111 @@ class LessonTranscriptResponse(BaseModel):
     lesson_id: str
     key_phrases: list[TranscriptKeyPhrase]
     dialogue_lines: list[TranscriptDialogueLine]
+
+
+# ── Batch 6a: the shared SRS item shape ─────────────────────────────────────
+#
+# Four element models + two envelopes, serving the 8 endpoints that serialize
+# through ``srs.py::_item_to_dict`` / ``_direction_to_dict`` (create_item,
+# list_items, patch_item, reset_item, restore_known_item, set_item_state,
+# suspend_item, untrack_item). Every field below is the serializer's OUTPUT
+# type (post ``.isoformat()`` / ``.value``), NOT the source dataclass type —
+# ``SrsItemResponse.difficulty`` is a float because it rides the direction, not
+# ``SyntacticUnit.difficulty`` (an int 1-5), and ``due_at``/``last_review`` are
+# nullable on the item (``flat_src`` is None for single-template notes) though
+# they are not on the direction.
+#
+# Every route takes ``response_model_exclude_unset=True`` because
+# ``_direction_to_dict`` OMITS ``left`` when it is None; a plain
+# ``response_model=`` would ADD ``"left": null`` to every payload that today
+# omits the key. Same for ``untrack_item``'s short branch, which omits ``item``.
+
+
+class DirectionStateResponse(BaseModel):
+    """One direction of an SRS item; serves the 8 ``_item_to_dict`` endpoints.
+
+    ``left`` is omitted when None (``srs.py::_direction_to_dict``), so it must
+    ride on ``response_model_exclude_unset`` — never a plain ``response_model``.
+    """
+
+    state: str  # ds.state.value
+    due_at: str  # ds.due_at.isoformat()
+    stability: float
+    difficulty: float
+    reps: int
+    lapses: int
+    last_review: str | None
+    last_review_time_ms: int
+    anki_card_id: int | None
+    left: int | None = None  # omitted when None
+
+
+class ItemExtra(BaseModel):
+    """One element of SrsItemResponse.extras (a BackField → {label, html, tier})."""
+
+    label: str
+    html: str
+    tier: str
+
+
+class ItemDirections(BaseModel):
+    """SrsItemResponse.directions; production is None for single-template notes."""
+
+    recognition: DirectionStateResponse | None
+    production: DirectionStateResponse | None
+
+
+class SrsItemResponse(BaseModel):
+    """Response of create_item, patch_item, reset_item, restore_known_item,
+    set_item_state, and suspend_item; the element of list_items and untrack_item.
+
+    Exactly 25 keys, one per ``_item_to_dict`` output key.
+    """
+
+    id: int
+    text: str
+    translation: str
+    word_count: int
+    # ── the 7 **flat keys — from flat_src, which is None-able, so due_at and
+    #    last_review are nullable here even though they are not on the direction
+    state: str
+    due_at: str | None
+    stability: float
+    difficulty: float
+    reps: int
+    lapses: int
+    last_review: str | None
+    # ── the rest
+    language_code: str
+    guid: str | None
+    anki_note_id: int | None
+    directions: ItemDirections
+    card_type: str
+    source_sentence: str
+    source_sentence_translation: str
+    image_url: str | None
+    audio_url: str | None
+    grammar: str
+    note: str
+    article: str
+    extras: list[ItemExtra]
+    pos: str
+
+
+class ListItemsResponse(BaseModel):
+    """Response of GET /api/srs/items."""
+
+    items: list[SrsItemResponse]
+    total: int
+
+
+class UntrackItemResponse(BaseModel):
+    """Response of POST /api/srs/items/{item_id}/untrack.
+
+    Two branches — ``{"action": "deleted"}`` and ``{"action": "suspended",
+    "item": ...}``. ``item`` is optional and left unset on the deleted branch,
+    which is why the route uses ``response_model_exclude_unset``.
+    """
+
+    action: str
+    item: SrsItemResponse | None = None

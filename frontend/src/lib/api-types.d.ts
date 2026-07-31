@@ -1441,6 +1441,35 @@ export interface components {
       /** Deleted Day */
       deleted_day: number;
     };
+    /**
+     * DirectionStateResponse
+     * @description One direction of an SRS item; serves the 8 ``_item_to_dict`` endpoints.
+     *
+     *     ``left`` is omitted when None (``srs.py::_direction_to_dict``), so it must
+     *     ride on ``response_model_exclude_unset`` — never a plain ``response_model``.
+     */
+    DirectionStateResponse: {
+      /** Anki Card Id */
+      anki_card_id: number | null;
+      /** Difficulty */
+      difficulty: number;
+      /** Due At */
+      due_at: string;
+      /** Lapses */
+      lapses: number;
+      /** Last Review */
+      last_review: string | null;
+      /** Last Review Time Ms */
+      last_review_time_ms: number;
+      /** Left */
+      left?: number | null;
+      /** Reps */
+      reps: number;
+      /** Stability */
+      stability: number;
+      /** State */
+      state: string;
+    };
     /** DrillRequest */
     DrillRequest: {
       /**
@@ -1647,6 +1676,26 @@ export interface components {
       translation: string;
     };
     /**
+     * ItemDirections
+     * @description SrsItemResponse.directions; production is None for single-template notes.
+     */
+    ItemDirections: {
+      production: components["schemas"]["DirectionStateResponse"] | null;
+      recognition: components["schemas"]["DirectionStateResponse"] | null;
+    };
+    /**
+     * ItemExtra
+     * @description One element of SrsItemResponse.extras (a BackField → {label, html, tier}).
+     */
+    ItemExtra: {
+      /** Html */
+      html: string;
+      /** Label */
+      label: string;
+      /** Tier */
+      tier: string;
+    };
+    /**
      * LanguageItem
      * @description One element of LanguagesResponse.languages.
      */
@@ -1679,6 +1728,16 @@ export interface components {
       key_phrases: components["schemas"]["TranscriptKeyPhrase"][];
       /** Lesson Id */
       lesson_id: string;
+    };
+    /**
+     * ListItemsResponse
+     * @description Response of GET /api/srs/items.
+     */
+    ListItemsResponse: {
+      /** Items */
+      items: components["schemas"]["SrsItemResponse"][];
+      /** Total */
+      total: number;
     };
     /**
      * ListenPreviewCandidate
@@ -1927,6 +1986,64 @@ export interface components {
       state: string;
     };
     /**
+     * SrsItemResponse
+     * @description Response of create_item, patch_item, reset_item, restore_known_item,
+     *     set_item_state, and suspend_item; the element of list_items and untrack_item.
+     *
+     *     Exactly 25 keys, one per ``_item_to_dict`` output key.
+     */
+    SrsItemResponse: {
+      /** Anki Note Id */
+      anki_note_id: number | null;
+      /** Article */
+      article: string;
+      /** Audio Url */
+      audio_url: string | null;
+      /** Card Type */
+      card_type: string;
+      /** Difficulty */
+      difficulty: number;
+      directions: components["schemas"]["ItemDirections"];
+      /** Due At */
+      due_at: string | null;
+      /** Extras */
+      extras: components["schemas"]["ItemExtra"][];
+      /** Grammar */
+      grammar: string;
+      /** Guid */
+      guid: string | null;
+      /** Id */
+      id: number;
+      /** Image Url */
+      image_url: string | null;
+      /** Language Code */
+      language_code: string;
+      /** Lapses */
+      lapses: number;
+      /** Last Review */
+      last_review: string | null;
+      /** Note */
+      note: string;
+      /** Pos */
+      pos: string;
+      /** Reps */
+      reps: number;
+      /** Source Sentence */
+      source_sentence: string;
+      /** Source Sentence Translation */
+      source_sentence_translation: string;
+      /** Stability */
+      stability: number;
+      /** State */
+      state: string;
+      /** Text */
+      text: string;
+      /** Translation */
+      translation: string;
+      /** Word Count */
+      word_count: number;
+    };
+    /**
      * SrsStatsResponse
      * @description Response of GET /api/srs/stats.
      */
@@ -2117,6 +2234,19 @@ export interface components {
       restored_state: string;
       /** Status */
       status: string;
+    };
+    /**
+     * UntrackItemResponse
+     * @description Response of POST /api/srs/items/{item_id}/untrack.
+     *
+     *     Two branches — ``{"action": "deleted"}`` and ``{"action": "suspended",
+     *     "item": ...}``. ``item`` is optional and left unset on the deleted branch,
+     *     which is why the route uses ``response_model_exclude_unset``.
+     */
+    UntrackItemResponse: {
+      /** Action */
+      action: string;
+      item?: components["schemas"]["SrsItemResponse"] | null;
     };
     /** UpdateItemRequest */
     UpdateItemRequest: {
@@ -3216,7 +3346,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["ListItemsResponse"];
         };
       };
       /** @description Validation Error */
@@ -3249,7 +3379,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["SrsItemResponse"];
         };
       };
       /** @description Validation Error */
@@ -3383,7 +3513,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["SrsItemResponse"];
         };
       };
       /** @description Validation Error */
@@ -3616,7 +3746,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["SrsItemResponse"];
         };
       };
       /** @description Validation Error */
@@ -3647,7 +3777,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["SrsItemResponse"];
         };
       };
       /** @description Validation Error */
@@ -3682,7 +3812,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["SrsItemResponse"];
         };
       };
       /** @description Validation Error */
@@ -3717,7 +3847,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["SrsItemResponse"];
         };
       };
       /** @description Validation Error */
@@ -3748,7 +3878,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["UntrackItemResponse"];
         };
       };
       /** @description Validation Error */

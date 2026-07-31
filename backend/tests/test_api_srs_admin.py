@@ -19,10 +19,27 @@ from app.models.syntactic_unit import SyntacticUnit
 from app.srs.anki_mirror.rollover import anki_today
 from app.srs.database import SRSDatabase
 from app.storage.store import ContentStore
+from tests._helpers.srs_item_shape import DIRECTION_KEYS, DIRECTION_WITHOUT_LEFT, SRS_ITEM_KEYS
 
 
 def _unit(text: str, translation: str = "") -> SyntacticUnit:
     return SyntacticUnit(text=text, translation=translation, word_count=1, difficulty=1, source="corpus")
+
+
+def _assert_item_keys(data: dict) -> None:
+    """Assert an SrsItemResponse payload's key-sets at all nesting levels.
+
+    Used by the bare-item endpoints (create/patch/reset/restore-known/
+    set-state/suspend) and the item element of list/untrack. Asserts the
+    review/new direction branch (``left`` absent); the list_items key-set test
+    pins the ``left``-present branch separately.
+    """
+    assert set(data.keys()) == SRS_ITEM_KEYS
+    assert set(data["directions"].keys()) == {"recognition", "production"}
+    assert data["directions"]["recognition"] is not None
+    assert data["directions"]["production"] is not None
+    assert set(data["directions"]["recognition"].keys()) == DIRECTION_WITHOUT_LEFT
+    assert set(data["directions"]["production"].keys()) == DIRECTION_WITHOUT_LEFT
 
 
 @pytest.fixture(autouse=True)
@@ -150,6 +167,52 @@ class TestListItems:
         assert len(items) == 1
         assert items[0]["image_url"] is None
 
+    async def test_list_items_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 6a).
+
+        Seeds a LEARNING recognition direction with ``left`` set plus one
+        ``extras`` element, so the ``left``-present branch of
+        ``_direction_to_dict`` and the extras element shape are pinned here.
+        """
+        from app.api.models import ListItemsResponse
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.models.syntactic_unit import BackField
+
+        db = _db()
+        extras = (BackField(label="IPA", html="/bɑŋkɑ/", tier="summary"),)
+        db.add_collocation(
+            SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus", extras=extras),
+            language_code="sl",
+        )
+        item = db.get_collocation("banka")
+        now = datetime.now(UTC)
+        db.update_direction(
+            item.guid,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                state=SRSState.LEARNING,
+                stability=1.0,
+                left=2,
+                due_at=now + timedelta(minutes=1),
+            ),
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/srs/items", params={"search": "banka"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert set(data.keys()) == {"items", "total"}
+        assert set(ListItemsResponse.model_fields) == {"items", "total"}
+        item_payload = data["items"][0]
+        assert set(item_payload.keys()) == SRS_ITEM_KEYS
+        assert set(item_payload["directions"].keys()) == {"recognition", "production"}
+        assert set(item_payload["directions"]["recognition"].keys()) == DIRECTION_KEYS  # learning: left present
+        assert item_payload["directions"]["recognition"]["left"] == 2
+        assert set(item_payload["directions"]["production"].keys()) == DIRECTION_WITHOUT_LEFT
+        assert set(item_payload["extras"][0].keys()) == {"label", "html", "tier"}
+
 
 class TestPatchItem:
     """Tests for PATCH /api/srs/items/{id}."""
@@ -192,6 +255,22 @@ class TestPatchItem:
                 json={"text": "a", "translation": "dup"},
             )
         assert response.status_code == 409
+
+    async def test_patch_item_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 6a)."""
+        db = _db()
+        db.add_collocation(_unit("zdravo", "hello"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.patch(
+                f"/api/srs/items/{row_id}",
+                json={"text": "Zdravo!", "translation": "Hello!"},
+            )
+
+        assert response.status_code == 200
+        _assert_item_keys(response.json())
 
 
 class TestDeleteItem:
@@ -320,6 +399,31 @@ class TestCreateItem:
         item = db.get_collocation("hvala")
         assert item is not None
         assert item.syntactic_unit.translation == "thank you"
+
+    async def test_create_item_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 6a).
+
+        create_item is the bare-item case. A fresh vocab card carries both NEW
+        directions with no ``left``, so this also pins the review/new branch of
+        ``_direction_to_dict`` and the model-vs-literal half for all four
+        element models.
+        """
+        from app.api.models import DirectionStateResponse, ItemDirections, ItemExtra, SrsItemResponse
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/srs/items",
+                json={"text": "banka", "language_code": "sl", "word_count": 1, "translation": "bank"},
+            )
+
+        assert response.status_code == 201
+        _assert_item_keys(response.json())
+        assert response.json()["extras"] == []
+
+        assert set(SrsItemResponse.model_fields) == SRS_ITEM_KEYS
+        assert set(ItemDirections.model_fields) == {"recognition", "production"}
+        assert set(DirectionStateResponse.model_fields) == DIRECTION_KEYS
+        assert set(ItemExtra.model_fields) == {"label", "html", "tier"}
 
 
 class TestTranscriptEnrichment:
@@ -527,6 +631,19 @@ class TestSetState:
         item = db.get_collocation("banka")
         assert item.directions[Direction.RECOGNITION].dirty_fsrs is True
 
+    async def test_set_state_item_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 6a)."""
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/srs/items/{row_id}/state", json={"state": "known"})
+
+        assert response.status_code == 200
+        _assert_item_keys(response.json())
+
 
 class TestRestoreKnown:
     """Tests for POST /api/srs/items/{id}/restore-known."""
@@ -577,6 +694,26 @@ class TestRestoreKnown:
             response = await client.post("/api/srs/items/9999/restore-known")
         assert response.status_code == 404
 
+    async def test_restore_known_item_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 6a)."""
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        item = db.get_collocation("banka")
+        ds = item.directions[Direction.RECOGNITION]
+        ds.state = SRSState.REVIEW
+        ds.stability = 7.5
+        ds.due_at = datetime(2026, 3, 1, 4, 0, tzinfo=UTC)
+        db.update_direction(item.guid, Direction.RECOGNITION, ds)
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post(f"/api/srs/items/{row_id}/state", json={"state": "known"})
+            response = await client.post(f"/api/srs/items/{row_id}/restore-known")
+
+        assert response.status_code == 200
+        _assert_item_keys(response.json())
+
 
 class TestUntrack:
     """Tests for POST /api/srs/items/{id}/untrack."""
@@ -620,6 +757,45 @@ class TestUntrack:
             response = await client.post("/api/srs/items/9999/untrack")
         assert response.status_code == 404
 
+    async def test_untrack_item_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 6a).
+
+        Two branches — ``{"action": "deleted"}`` (never-synced row) and
+        ``{"action": "suspended", "item": ...}`` (synced row) — so both need
+        pinning. ``response_model_exclude_unset`` leaves ``item`` off the short
+        branch.
+        """
+        from app.api.models import UntrackItemResponse
+
+        db = _db()
+        db.add_collocation(_unit("banka", "bank"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            deleted = await client.post(f"/api/srs/items/{row_id}/untrack")
+
+        assert deleted.status_code == 200
+        assert set(deleted.json().keys()) == {"action"}
+        assert deleted.json()["action"] == "deleted"
+
+        db.add_collocation(_unit("kava", "coffee"), language_code="sl")
+        rows, _ = db.list_collocations()
+        synced_id = rows[0][0]
+        with db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET anki_note_id = 12345 WHERE id = ?", (synced_id,))
+            conn.commit()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            suspended = await client.post(f"/api/srs/items/{synced_id}/untrack")
+
+        assert suspended.status_code == 200
+        data = suspended.json()
+        assert set(data.keys()) == {"action", "item"}
+        assert data["action"] == "suspended"
+        _assert_item_keys(data["item"])
+        assert set(UntrackItemResponse.model_fields) == {"action", "item"}
+
 
 class TestResetSuspend:
     """Tests for reset and suspend endpoints."""
@@ -651,6 +827,19 @@ class TestResetSuspend:
         data = response.json()
         assert data["state"] == "new"
         assert data["reps"] == 0
+
+    async def test_reset_item_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 6a)."""
+        db = _db()
+        db.add_collocation(_unit("hvala", "thank you"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/srs/items/{row_id}/reset")
+
+        assert response.status_code == 200
+        _assert_item_keys(response.json())
 
     async def test_suspend_item_invalid_direction_returns_422(self):
         db = _db()
@@ -712,6 +901,24 @@ class TestResetSuspend:
             assert due_resp.status_code == 200
             due_texts = [i["text"] for i in due_resp.json()["due"]]
             assert "lep" not in due_texts
+
+    async def test_suspend_item_response_keys_match_model_exactly(self):
+        """Oracle for the response_model flip (openapi ledger batch 6a).
+
+        suspend_item returns a BARE item (``srs.py:1974``), not an
+        ``{action, item}`` envelope — that shape belongs to untrack_item
+        (brief corrected 2026-07-31).
+        """
+        db = _db()
+        db.add_collocation(_unit("lep", "nice"), language_code="sl")
+        rows, _ = db.list_collocations()
+        row_id = rows[0][0]
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/srs/items/{row_id}/suspend", json={"suspended": True})
+
+        assert response.status_code == 200
+        _assert_item_keys(response.json())
 
 
 class TestBackfillTranslations:
