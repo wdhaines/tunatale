@@ -35,6 +35,11 @@ export function createApiMock() {
     regenerateDay: vi.fn(),
     deleteCurriculumDay: vi.fn(),
     getRateLimit: vi.fn().mockResolvedValue(null),
+    // Default RESOLVES to [] (not pending) so every other page test file keeps
+    // passing untouched: the lesson page fetches the day→lesson map on mount,
+    // and empty progress means no prev/next links render. vi.clearAllMocks()
+    // clears only call history, so the default implementation survives.
+    getCurriculumProgress: vi.fn().mockResolvedValue([]),
     probeRateLimit: vi.fn().mockResolvedValue(null),
     ignoreLemma: vi.fn(),
     unignoreLemma: vi.fn(),

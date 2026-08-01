@@ -218,22 +218,31 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(container.querySelectorAll(".toggle-pill").length).toBe(1);
   });
 
-  it("puts the toggle in the header row beside the title, not on a row of its own", () => {
-    // Compacting the sticky card (2026-07-27): the mode toggle shares the
-    // header row with the breadcrumb/title column instead of costing a full
-    // row below it. Structural, not visual — jsdom applies no component CSS,
-    // so "upper right" is expressed as "second child of the header row".
+  it("puts the toggle in the title's row, not on a row of its own", () => {
+    // Compacting the sticky card (2026-07-27) moved the toggle out of a row of
+    // its own and up beside the title; adding the day pager (2026-07-31) must
+    // NOT undo that — the first attempt pushed the toggle back down to a lone
+    // row under the stats and it read as orphaned. Structural, not visual —
+    // jsdom applies no component CSS, so this is expressed as DOM adjacency.
+    //
+    // Scope, honestly: this render has no mastery line, so "toggle last" and
+    // "toggle beside the title" are the same DOM here and only the weaker claim
+    // (not nested in the title column, nothing wedged between) is testable. Full
+    // band order is pinned by page.lessonNav.test.ts, which renders the stats —
+    // verified by moving mode-row to the end: that test fails, this one doesn't.
     const { container } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
     });
     const header = container.querySelector(".card.player-card .player-header");
     expect(header).toBeTruthy();
-    // Row 1 of the header grid: title column, then the toggle column. Anything
-    // after those two (the stats line) is a full-width row below them.
-    const columns = Array.from(header!.children);
-    expect(columns[0].classList.contains("player-title-area")).toBe(true);
-    expect(columns[1].querySelector(".toggle-pill")).toBeTruthy();
-    expect(columns[0].querySelector(".toggle-pill")).toBeFalsy();
+    const children = Array.from(header!.children);
+    const titleIdx = children.findIndex((el) => el.classList.contains("player-title-area"));
+    expect(titleIdx).toBeGreaterThanOrEqual(0);
+    // Immediately after the title area — the two share the header's one
+    // two-column band, so nothing may come between them.
+    expect(children[titleIdx + 1].classList.contains("mode-row")).toBe(true);
+    expect(children[titleIdx + 1].querySelector(".toggle-pill")).toBeTruthy();
+    expect(children[titleIdx].querySelector(".toggle-pill")).toBeFalsy();
   });
 
   it("renders the sticky card with toggle and Render Audio when audio is missing", () => {

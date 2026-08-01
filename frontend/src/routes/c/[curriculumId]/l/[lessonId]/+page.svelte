@@ -2,7 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
-	import type { LessonAudio, TranscriptData, ListenResponse, PeerSyncResult } from '$lib/api';
+	import type { LessonAudio, TranscriptData, ListenResponse, PeerSyncResult, DayProgress } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import LessonPlayer from '$lib/components/LessonPlayer.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
@@ -74,6 +74,32 @@
 	// key for a lesson whose day is no longer in the plan (deleted in another tab).
 	let dayPosition = $derived(
 		data.curriculum.days.find((d) => d.day === data.lesson.day)?.position ?? data.lesson.day
+	);
+
+	// Prev/next links need the day→lesson map, which `data.curriculum.days`
+	// (day + position) does not carry — it comes from the progress endpoint
+	// (DayProgress: day + position + lesson_id). onMount, not $effect, is
+	// deliberate: prev/next navigation stays inside one curriculum, so the map
+	// does not need to refetch per lesson.
+	let dayLessons: DayProgress[] = $state([]);
+	onMount(async () => {
+		try {
+			dayLessons = await api.getCurriculumProgress(data.curriculum.id);
+		} catch {
+			// Non-critical chrome: a failed side fetch must never blank the lesson
+			// over the nav links, so leave dayLessons empty and do NOT set `error`.
+		}
+	});
+
+	// Order by position (the plan's display order), not array order and not by
+	// `day` — day is the stable key and goes gappy when days are deleted.
+	const orderedLessons = $derived([...dayLessons].sort((a, b) => a.position - b.position));
+	const currentIndex = $derived(orderedLessons.findIndex((d) => d.day === data.lesson.day));
+	const prevLesson = $derived(currentIndex > 0 ? orderedLessons[currentIndex - 1] : null);
+	const nextLesson = $derived(
+		currentIndex >= 0 && currentIndex < orderedLessons.length - 1
+			? orderedLessons[currentIndex + 1]
+			: null
 	);
 
 	// SvelteKit reuses this component on same-route param changes (e.g. the
@@ -589,8 +615,23 @@
 		     phone — and the toggle is only two lines tall, so nothing below it
 		     needs to keep clearing it. -->
 		<div class="player-header">
+			<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
+			<!-- Day pager: its own full-width band directly under the curriculum link,
+			     prev hard left and next hard right, so it reads as one axis of travel
+			     rather than two links fighting the breadcrumb for the same corner.
+			     Hidden entirely (not rendered empty) when there is no neighbour — an
+			     empty nav would still cost a grid row and its gap. -->
+			{#if prevLesson || nextLesson}
+				<nav class="lesson-nav" aria-label="Lesson navigation">
+					{#if prevLesson}
+						<a class="lesson-nav-link" href="/c/{data.curriculum.id}/l/{prevLesson.lesson_id}">← Day {prevLesson.position}</a>
+					{/if}
+					{#if nextLesson}
+						<a class="lesson-nav-link lesson-nav-next" href="/c/{data.curriculum.id}/l/{nextLesson.lesson_id}">Day {nextLesson.position} →</a>
+					{/if}
+				</nav>
+			{/if}
 			<div class="player-title-area">
-				<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
 				<h1>{data.lesson.title}</h1>
 				{#if syncStatus}
 					<p class="sync-status">{syncStatus}</p>
@@ -757,8 +798,11 @@
 		flex-direction: column;
 		gap: 1.25rem;
 	}
-	/* Title column left, mode toggle top-right — one row instead of two — with
-	   the stats line spanning both columns underneath. */
+	/* Four stacked bands, narrowing from context to content: curriculum link,
+	   day pager, then the title sharing ONE row with the mode toggle (they are
+	   the two things the eye lands on), then the stats. Only that third band is
+	   two-column; the rest span the full width so the pager's arrows can sit at
+	   the card's outer edges. */
 	.player-header {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) auto;
@@ -766,8 +810,15 @@
 		column-gap: 1rem;
 		row-gap: 0.2rem;
 	}
+	.player-header > .breadcrumb,
+	.player-header > .lesson-nav,
 	.player-header > .mastery-line {
 		grid-column: 1 / -1;
+	}
+	/* Level with the title, not the top of its column: `align-items: start` would
+	   hang the pill off the band's top edge and the h1 is the taller box. */
+	.player-header > .mode-row {
+		align-self: center;
 	}
 	.player-title-area {
 		display: flex;
@@ -783,6 +834,34 @@
 		text-decoration: none;
 	}
 	.breadcrumb:hover {
+		color: var(--color-primary);
+	}
+	/* Prev at the left edge, next at the right — the pager's own width IS the
+	   affordance. `margin-left: auto` on the next link (rather than
+	   space-between) keeps it hard right when prev is absent on day one. */
+	.lesson-nav {
+		display: flex;
+		align-items: baseline;
+		gap: 0.75rem;
+		/* The pager sits between two muted lines that both start with an arrow;
+		   without this it reads as a second breadcrumb glued to the first. */
+		margin: 0.15rem 0 0.35rem;
+	}
+	.lesson-nav-next {
+		margin-left: auto;
+	}
+	/* Same treatment as .breadcrumb, one step smaller — these are secondary to the
+	   "back to curriculum" link they sit opposite. */
+	.lesson-nav-link {
+		color: var(--color-muted);
+		font-size: 0.8rem;
+		/* One notch lighter than .breadcrumb (600): sibling navigation is
+		   secondary to the way back out. */
+		font-weight: 500;
+		text-decoration: none;
+		white-space: nowrap;
+	}
+	.lesson-nav-link:hover {
 		color: var(--color-primary);
 	}
 	h1 {
