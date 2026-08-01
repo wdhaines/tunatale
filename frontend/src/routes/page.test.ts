@@ -16,6 +16,7 @@ vi.mock("$lib/api", () => ({
     listCurricula: vi.fn(),
     startPlan: vi.fn(),
     getCurriculumProgress: vi.fn(),
+    deleteCurriculum: vi.fn(),
   },
 }));
 
@@ -28,6 +29,7 @@ import { api } from "$lib/api";
 import { listenedStore } from "$lib/stores/listened.svelte";
 const mockListCurricula = vi.mocked(api.listCurricula);
 const mockStartPlan = vi.mocked(api.startPlan);
+const mockDeleteCurriculum = vi.mocked(api.deleteCurriculum);
 const mockGetCurriculumProgress = vi.mocked(api.getCurriculumProgress);
 const mockListenedHas = vi.mocked(listenedStore.has);
 
@@ -319,5 +321,82 @@ describe("New curriculum disclosure", () => {
     await fireEvent.click(getByRole("button", { name: "Start planning" }));
 
     expect(await findByText("bad thing")).toBeTruthy();
+  });
+});
+
+describe("Delete curriculum", () => {
+  const twoCurricula = [
+    { id: "curric-a", topic: "Ordering Coffee", created_at: "2026-04-10 12:00:00" },
+    { id: "curric-b", topic: "At the Airport", created_at: "2026-04-07 08:30:00" },
+  ];
+
+  it("renders a Delete button per curriculum", async () => {
+    mockListCurricula.mockResolvedValue(twoCurricula);
+    const { findByRole, getByRole } = render(Page);
+
+    expect(await findByRole("button", { name: "Delete Ordering Coffee" })).toBeTruthy();
+    expect(getByRole("button", { name: "Delete At the Airport" })).toBeTruthy();
+  });
+
+  it("arms on the first click without deleting", async () => {
+    mockListCurricula.mockResolvedValue(twoCurricula);
+    const { findByRole, getByRole } = render(Page);
+
+    await fireEvent.click(await findByRole("button", { name: "Delete Ordering Coffee" }));
+
+    expect(getByRole("button", { name: "Confirm delete Ordering Coffee" })).toBeTruthy();
+    // The sibling card stays unarmed — arming is per-curriculum.
+    expect(getByRole("button", { name: "Delete At the Airport" })).toBeTruthy();
+    expect(mockDeleteCurriculum).not.toHaveBeenCalled();
+  });
+
+  it("deletes on the second click and drops the card from the library", async () => {
+    mockListCurricula.mockResolvedValue(twoCurricula);
+    mockDeleteCurriculum.mockResolvedValue({ deleted: "curric-a" });
+    const { findByRole, getByRole, queryByText } = render(Page);
+
+    await fireEvent.click(await findByRole("button", { name: "Delete Ordering Coffee" }));
+    await fireEvent.click(getByRole("button", { name: "Confirm delete Ordering Coffee" }));
+
+    await waitFor(() => {
+      expect(mockDeleteCurriculum).toHaveBeenCalledWith("curric-a");
+      expect(queryByText("Ordering Coffee")).toBeNull();
+    });
+    expect(getByRole("button", { name: "Delete At the Airport" })).toBeTruthy();
+  });
+
+  it("disarms on blur", async () => {
+    mockListCurricula.mockResolvedValue(twoCurricula);
+    const { findByRole, getByRole } = render(Page);
+
+    const button = await findByRole("button", { name: "Delete Ordering Coffee" });
+    await fireEvent.click(button);
+    await fireEvent.blur(getByRole("button", { name: "Confirm delete Ordering Coffee" }));
+
+    expect(getByRole("button", { name: "Delete Ordering Coffee" })).toBeTruthy();
+    expect(mockDeleteCurriculum).not.toHaveBeenCalled();
+  });
+
+  it("keeps the card and shows the error when the delete fails", async () => {
+    mockListCurricula.mockResolvedValue(twoCurricula);
+    mockDeleteCurriculum.mockRejectedValue(new Error("DELETE /api/curriculum/curric-a: Not Found"));
+    const { findByRole, getByRole, findByText, getByText } = render(Page);
+
+    await fireEvent.click(await findByRole("button", { name: "Delete Ordering Coffee" }));
+    await fireEvent.click(getByRole("button", { name: "Confirm delete Ordering Coffee" }));
+
+    expect(await findByText(/Not Found/)).toBeTruthy();
+    expect(getByText("Ordering Coffee")).toBeTruthy();
+  });
+
+  it("shows a stringified error when the delete rejects with a non-Error", async () => {
+    mockListCurricula.mockResolvedValue(twoCurricula);
+    mockDeleteCurriculum.mockRejectedValue("nope");
+    const { findByRole, getByRole, findByText } = render(Page);
+
+    await fireEvent.click(await findByRole("button", { name: "Delete Ordering Coffee" }));
+    await fireEvent.click(getByRole("button", { name: "Confirm delete Ordering Coffee" }));
+
+    expect(await findByText("nope")).toBeTruthy();
   });
 });

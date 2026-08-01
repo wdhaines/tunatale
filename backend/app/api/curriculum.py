@@ -307,8 +307,12 @@ async def get_curriculum_source(curriculum_id: str, request: Request):
 @router.delete("/{curriculum_id}", status_code=200, response_model=DeleteCurriculumResponse)
 async def delete_curriculum(curriculum_id: str, request: Request):
     store = request.state.content_store
-    if not store.delete_curriculum(curriculum_id):
+    orphaned = store.delete_curriculum(curriculum_id)
+    if orphaned is None:
         raise HTTPException(status_code=404, detail="Curriculum not found")
+    # Unlink as well as delete the rows — same split (and same leak) as delete_day.
+    for file_path in orphaned:
+        Path(file_path).unlink(missing_ok=True)
     return {"deleted": curriculum_id}
 
 

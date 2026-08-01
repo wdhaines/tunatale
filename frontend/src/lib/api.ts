@@ -650,6 +650,10 @@ export class TunaTaleAPI {
     });
   }
 
+  async deleteCurriculum(id: string): Promise<{ deleted: string }> {
+    return this.request(`/api/curriculum/${id}`, { method: "DELETE" });
+  }
+
   async deleteCurriculumDay(
     id: string,
     day: number,

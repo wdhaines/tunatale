@@ -141,8 +141,27 @@ class ContentStore:
             result.append({"id": row["id"], "topic": c.topic, "created_at": row["created_at"]})
         return result
 
-    def delete_curriculum(self, curriculum_id: str) -> bool:
+    def delete_curriculum(self, curriculum_id: str) -> list[str] | None:
+        """Delete a curriculum and everything under it; return the orphaned audio paths.
+
+        ``None`` means no such curriculum (the caller's 404), a list means
+        deleted — possibly empty, for a plan that was never rendered.
+
+        Returns the paths for the same reason :meth:`delete_lessons_for_day`
+        does: the storage layer owns rows, the caller owns the filesystem. This
+        used to return ``bool``, so the endpoint had nothing to unlink and every
+        deleted curriculum left its whole render set on disk — the same leak
+        found at day granularity, one level up.
+        """
         with self._get_conn() as conn:
+            paths = [
+                row["file_path"]
+                for row in conn.execute(
+                    "SELECT file_path FROM audio_files"
+                    " WHERE lesson_id IN (SELECT id FROM lessons WHERE curriculum_id = ?)",
+                    (curriculum_id,),
+                )
+            ]
             conn.execute(
                 "DELETE FROM audio_files WHERE lesson_id IN (SELECT id FROM lessons WHERE curriculum_id = ?)",
                 (curriculum_id,),
@@ -150,7 +169,7 @@ class ContentStore:
             conn.execute("DELETE FROM lessons WHERE curriculum_id = ?", (curriculum_id,))
             deleted = conn.execute("DELETE FROM curricula WHERE id = ?", (curriculum_id,)).rowcount > 0
             conn.commit()
-        return deleted
+        return paths if deleted else None
 
     # ── Lessons ───────────────────────────────────────────────────────────
 

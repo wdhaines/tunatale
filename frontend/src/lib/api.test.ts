@@ -334,6 +334,26 @@ describe("TunaTaleAPI", () => {
       );
     });
 
+    it("deleteCurriculum calls DELETE /api/curriculum/:id", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ deleted: "trip-1" })));
+
+      const result = await api.deleteCurriculum("trip-1");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/trip-1`,
+        expect.objectContaining({ method: "DELETE" }),
+      );
+      expect(result).toEqual({ deleted: "trip-1" });
+    });
+
+    it("deleteCurriculum throws on 404", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Not Found")));
+
+      await expect(api.deleteCurriculum("missing")).rejects.toThrow(
+        "DELETE /api/curriculum/missing: Not Found",
+      );
+    });
+
     it("getPlanTurnPrompt calls POST /api/curriculum/:id/plan/turn/prompt", async () => {
       vi.stubGlobal(
         "fetch",

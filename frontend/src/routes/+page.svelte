@@ -40,6 +40,35 @@
 		return next;
 	});
 
+	// Two-click delete, one card at a time (same pattern as the lesson page's
+	// "Delete day"): the first click arms that card, the second deletes. Blur
+	// disarms, so a click elsewhere can't leave a primed button behind.
+	let confirmingDeleteId: string | null = $state(null);
+	let deletingId: string | null = $state(null);
+	let deleteError = $state('');
+
+	async function handleDelete(id: string) {
+		confirmingDeleteId = null;
+		deletingId = id;
+		deleteError = '';
+		try {
+			await api.deleteCurriculum(id);
+			curricula = curricula.filter((c) => c.id !== id);
+		} catch (e) {
+			deleteError = e instanceof Error ? e.message : String(e);
+		} finally {
+			deletingId = null;
+		}
+	}
+
+	function handleDeleteClick(id: string) {
+		if (confirmingDeleteId === id) {
+			handleDelete(id);
+		} else {
+			confirmingDeleteId = id;
+		}
+	}
+
 	// Mini-form for starting a new plan (chat-based; replaces one-shot generation)
 	let planTopic = $state('');
 	let planCefr = $state('A2');
@@ -190,10 +219,26 @@
 								<a class="continue-link" href={p.continueHref}>{p.continueLabel}</a>
 							</div>
 						{/if}
+						<button
+							type="button"
+							class="delete-btn"
+							class:confirming={confirmingDeleteId === c.id}
+							aria-label={confirmingDeleteId === c.id
+								? `Confirm delete ${c.topic}`
+								: `Delete ${c.topic}`}
+							onclick={() => handleDeleteClick(c.id)}
+							onblur={() => (confirmingDeleteId = null)}
+							disabled={deletingId === c.id}
+						>
+							{confirmingDeleteId === c.id ? 'Confirm delete' : 'Delete'}
+						</button>
 					</div>
 				</li>
 			{/each}
 		</ul>
+		{#if deleteError}
+			<p class="error delete-error">{deleteError}</p>
+		{/if}
 	{/if}
 </main>
 
@@ -316,6 +361,33 @@
 	.continue-link:hover {
 		background: var(--color-primary);
 		color: var(--color-on-primary);
+	}
+	.delete-btn {
+		align-self: flex-start;
+		flex-shrink: 0;
+		padding: 0.4rem 0.9rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-pill);
+		background: var(--color-surface);
+		color: var(--color-muted);
+		font-size: 0.8rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.delete-btn:hover {
+		color: var(--color-danger);
+		border-color: var(--color-danger);
+	}
+	.delete-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.delete-btn.confirming {
+		border-color: var(--color-danger);
+		color: var(--color-danger);
+	}
+	.delete-error {
+		margin-top: 0.75rem;
 	}
 	.empty {
 		display: flex;

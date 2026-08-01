@@ -571,6 +571,35 @@ class TestDeleteCurriculum:
         assert store.get_lesson("less_1") is None
         assert store.get_audio_file_row("aud_1") is None
 
+    async def test_delete_curriculum_unlinks_the_audio_from_disk(self, tmp_path):
+        """Same leak `delete_day` was fixed for, one level up.
+
+        Deleting a whole curriculum dropped the audio rows and left every render
+        on disk, unreachable by anything. Now reachable from the UI (home-page
+        Delete button), so a leak here is one click away, not an API-only path.
+        """
+        store = _setup(_planned_curriculum())
+        from app.models.lesson import Lesson
+
+        lesson = Lesson(
+            title="L1",
+            language_code="sl",
+            generation_metadata={"source_prompt": "x", "model": "y"},
+        )
+        audio = tmp_path / "lesson.opus"
+        audio.write_bytes(b"audio")
+        gone = tmp_path / "never_written.opus"
+        store.save_lesson("less_1", "trip", 1, lesson)
+        store.save_audio_file("aud_1", "less_1", str(audio))
+        store.save_audio_file("aud_2", "less_1", str(gone))
+
+        async with _client() as client:
+            response = await client.delete("/api/curriculum/trip")
+
+        # An already-missing file is the outcome we want, not a 500.
+        assert response.status_code == 200
+        assert not audio.exists(), "deleted curriculum left its audio file on disk"
+
     async def test_delete_curriculum_response_keys_match_model_exactly(self):
         """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
         _setup(_planned_curriculum())
