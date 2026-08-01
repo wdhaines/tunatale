@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.api.models import GetLessonAudioResponse
+from app.api.models import GetLessonAudioResponse, RenderAudioResponse, RenderAudioSection, RenderSectionCue
 from app.main import app
 from app.models.curriculum import Curriculum
 from app.models.lesson import Lesson, Phrase, Section, SectionType
@@ -301,6 +301,61 @@ class TestAudioEndpoints:
         full_row = store.get_audio_file_row(data["audio_id"])
         assert full_row is not None
         assert full_row["cues_json"] is not None
+
+    async def test_render_audio_response_keys_match_model(self, tmp_path):
+        """Oracle for the response_model flip (openapi ledger batch 7)."""
+        from app.storage.store import ContentStore
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        lesson_id = "lesson-render-keys"
+        store.save_lesson(lesson_id, "some-curriculum-id", 1, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+
+        assert response.status_code == 202
+        data = response.json()
+        assert set(data.keys()) == {"audio_id", "lesson_id", "sections", "cues"}
+        assert set(data["sections"][0].keys()) == {"audio_id", "section_index", "section_type", "title"}
+        assert set(data["cues"][0].keys()) == {
+            "index",
+            "start_ms",
+            "end_ms",
+            "section_index",
+            "section_type",
+            "phrase_index",
+            "role",
+            "language_code",
+            "text",
+            "ref",
+        }
+        # ref is built as {"kind": "narration"} (no target_index) on the title
+        # cue and {"kind": "line", "target_index": N} on L2 line cues — both
+        # branches must survive the response model (exclude_unset).
+        assert set(data["cues"][0]["ref"].keys()) == {"kind"}
+        assert set(data["cues"][1]["ref"].keys()) == {"kind", "target_index"}
+        assert set(RenderAudioResponse.model_fields) == {"audio_id", "lesson_id", "sections", "cues"}
+        assert set(RenderAudioSection.model_fields) == {"audio_id", "section_index", "section_type", "title"}
+        assert set(RenderSectionCue.model_fields) == {
+            "index",
+            "start_ms",
+            "end_ms",
+            "section_index",
+            "section_type",
+            "phrase_index",
+            "role",
+            "language_code",
+            "text",
+            "ref",
+        }
 
     async def test_get_lesson_audio_keys_match_model(self, tmp_path):
         """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""

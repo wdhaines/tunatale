@@ -116,6 +116,29 @@
         "title": "CreateBaseCardRequest",
         "type": "object"
       },
+      "CreateCardResponse": {
+        "description": "Response of POST /api/srs/items/base and POST /api/srs/inflection-clozes\n(``srs.py::_persist_new_card``); ``item`` is the batch-6a SrsItemResponse.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "item": {
+            "$ref": "#/components/schemas/SrsItemResponse"
+          },
+          "was_created": {
+            "title": "Was Created",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "was_created",
+          "item"
+        ],
+        "title": "CreateCardResponse",
+        "type": "object"
+      },
       "CreateItemRequest": {
         "properties": {
           "language_code": {
@@ -169,6 +192,180 @@
           "word_count"
         ],
         "title": "CreateItemRequest",
+        "type": "object"
+      },
+      "CurriculumDayWithPosition": {
+        "description": "One element of GetCurriculumResponse.days / .proposed.days.\n\nMirrors ``CurriculumDay`` (``app/models/curriculum.py``) plus ``position``,\nthe handler-computed contiguous display ordinal (``Curriculum.day_positions()``)\n\u2014 as opposed to ``day``, a stable but possibly-gappy key.",
+        "properties": {
+          "collocations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Collocations",
+            "type": "array"
+          },
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "focus": {
+            "title": "Focus",
+            "type": "string"
+          },
+          "learning_objective": {
+            "title": "Learning Objective",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "story_guidance": {
+            "title": "Story Guidance",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "title",
+          "focus",
+          "collocations",
+          "learning_objective",
+          "story_guidance",
+          "position"
+        ],
+        "title": "CurriculumDayWithPosition",
+        "type": "object"
+      },
+      "CurriculumProgressEntry": {
+        "description": "One element of the response of GET /api/curriculum/{curriculum_id}/progress.",
+        "properties": {
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "lesson_id": {
+            "title": "Lesson Id",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day",
+          "lesson_id",
+          "position"
+        ],
+        "title": "CurriculumProgressEntry",
+        "type": "object"
+      },
+      "CurriculumSourceDay": {
+        "description": "One element of CurriculumSourceResponse.days.\n\nThe raw ``CurriculumDay`` fields with no ``position`` \u2014 unlike\n``CurriculumDayWithPosition``, ``export_plan`` is the editable plan file,\nnot the UI-facing view.",
+        "properties": {
+          "collocations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Collocations",
+            "type": "array"
+          },
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "focus": {
+            "title": "Focus",
+            "type": "string"
+          },
+          "learning_objective": {
+            "title": "Learning Objective",
+            "type": "string"
+          },
+          "story_guidance": {
+            "title": "Story Guidance",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "title",
+          "focus",
+          "collocations",
+          "learning_objective",
+          "story_guidance"
+        ],
+        "title": "CurriculumSourceDay",
+        "type": "object"
+      },
+      "CurriculumSourceResponse": {
+        "description": "Response of GET /api/curriculum/{curriculum_id}/source (``plan_io.export_plan``).",
+        "properties": {
+          "cefr_level": {
+            "title": "Cefr Level",
+            "type": "string"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/CurriculumSourceDay"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "topic",
+          "language_code",
+          "cefr_level",
+          "days"
+        ],
+        "title": "CurriculumSourceResponse",
+        "type": "object"
+      },
+      "CurriculumSummary": {
+        "description": "One element of the response of GET /api/curriculum (``store.list_curricula``).",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "topic",
+          "created_at"
+        ],
+        "title": "CurriculumSummary",
         "type": "object"
       },
       "DeleteCurriculumResponse": {
@@ -407,6 +604,59 @@
         "title": "GenerationModeRequest",
         "type": "object"
       },
+      "GetCurriculumResponse": {
+        "description": "Response of GET /api/curriculum/{curriculum_id}.",
+        "properties": {
+          "cefr_level": {
+            "title": "Cefr Level",
+            "type": "string"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/CurriculumDayWithPosition"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "generation_mode": {
+            "title": "Generation Mode",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "proposed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProposedBatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "topic",
+          "language_code",
+          "cefr_level",
+          "days",
+          "proposed",
+          "generation_mode"
+        ],
+        "title": "GetCurriculumResponse",
+        "type": "object"
+      },
       "GetLessonAudioResponse": {
         "description": "Response of GET /api/audio/lesson/{lesson_id}.",
         "properties": {
@@ -506,6 +756,72 @@
           "language_code"
         ],
         "title": "IgnoreLemmaRequest",
+        "type": "object"
+      },
+      "ImageCandidate": {
+        "description": "One element of ImageCandidatesResponse.candidates (a Pixabay hit).",
+        "properties": {
+          "height": {
+            "title": "Height",
+            "type": "integer"
+          },
+          "likes": {
+            "title": "Likes",
+            "type": "integer"
+          },
+          "preview_url": {
+            "title": "Preview Url",
+            "type": "string"
+          },
+          "tags": {
+            "title": "Tags",
+            "type": "string"
+          },
+          "webformat_url": {
+            "title": "Webformat Url",
+            "type": "string"
+          },
+          "width": {
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "preview_url",
+          "webformat_url",
+          "tags",
+          "width",
+          "height",
+          "likes"
+        ],
+        "title": "ImageCandidate",
+        "type": "object"
+      },
+      "ImageCandidatesResponse": {
+        "description": "Response of GET /api/srs/items/{item_id}/image/candidates.",
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ImageCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query",
+          "status",
+          "candidates"
+        ],
+        "title": "ImageCandidatesResponse",
         "type": "object"
       },
       "ImageItemResponse": {
@@ -915,6 +1231,152 @@
         "title": "Last429",
         "type": "object"
       },
+      "LessonKeyPhrase": {
+        "description": "One element of LessonResponse.key_phrases.",
+        "properties": {
+          "phrase": {
+            "title": "Phrase",
+            "type": "string"
+          },
+          "translation": {
+            "title": "Translation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phrase",
+          "translation"
+        ],
+        "title": "LessonKeyPhrase",
+        "type": "object"
+      },
+      "LessonPhrase": {
+        "description": "One element of LessonSection.phrases.",
+        "properties": {
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "voice_id": {
+            "title": "Voice Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "role",
+          "language_code",
+          "voice_id"
+        ],
+        "title": "LessonPhrase",
+        "type": "object"
+      },
+      "LessonResponse": {
+        "description": "Response of GET /api/story/{lesson_id} and\nGET /api/curriculum/{curriculum_id}/days/{day}/lesson\n(``_serializers.serialize_lesson``). ``day`` is omitted by the by-day\nroute (serialized without one), so it rides on ``response_model_exclude_unset``.",
+        "properties": {
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "key_phrases": {
+            "items": {
+              "$ref": "#/components/schemas/LessonKeyPhrase"
+            },
+            "title": "Key Phrases",
+            "type": "array"
+          },
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/LessonSection"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "language_code",
+          "key_phrases",
+          "sections"
+        ],
+        "title": "LessonResponse",
+        "type": "object"
+      },
+      "LessonSection": {
+        "description": "One element of LessonResponse.sections.",
+        "properties": {
+          "phrases": {
+            "items": {
+              "$ref": "#/components/schemas/LessonPhrase"
+            },
+            "title": "Phrases",
+            "type": "array"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "phrases"
+        ],
+        "title": "LessonSection",
+        "type": "object"
+      },
+      "LessonSourceResponse": {
+        "description": "Response of GET /api/story/{lesson_id}/source (``lesson_io.export_lesson``).\n\n``story`` stays a bare dict on purpose: it is the raw editable Story-JSON\nfile \u2014 heterogeneous, versioned, and already treated as opaque by both the\nimport request model (``ImportLessonRequest.story``) and the frontend\n(``StorySourceResponse.story: Record<string, unknown>``).",
+        "properties": {
+          "curriculum_id": {
+            "title": "Curriculum Id",
+            "type": "string"
+          },
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "story": {
+            "additionalProperties": true,
+            "title": "Story",
+            "type": "object"
+          }
+        },
+        "required": [
+          "curriculum_id",
+          "day",
+          "story"
+        ],
+        "title": "LessonSourceResponse",
+        "type": "object"
+      },
       "LessonTranscriptResponse": {
         "description": "Response of GET /api/srs/lesson/{lesson_id}/transcript.",
         "properties": {
@@ -1297,6 +1759,83 @@
         "title": "NewCollocationsResponse",
         "type": "object"
       },
+      "PipelineDayStatus": {
+        "description": "One element of PipelineStatusResponse.days (``LessonPipeline.status_for``).",
+        "properties": {
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "has_audio": {
+            "title": "Has Audio",
+            "type": "boolean"
+          },
+          "lesson_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Id"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "retryable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retryable"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "position",
+          "state",
+          "lesson_id",
+          "has_audio",
+          "error",
+          "retryable",
+          "detail"
+        ],
+        "title": "PipelineDayStatus",
+        "type": "object"
+      },
       "PipelineRegenerateRequest": {
         "properties": {
           "day": {
@@ -1330,6 +1869,28 @@
           "day"
         ],
         "title": "PipelineRetryRequest",
+        "type": "object"
+      },
+      "PipelineStatusResponse": {
+        "description": "Response of GET /api/curriculum/{curriculum_id}/pipeline.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineDayStatus"
+            },
+            "title": "Days",
+            "type": "array"
+          }
+        },
+        "required": [
+          "active",
+          "days"
+        ],
+        "title": "PipelineStatusResponse",
         "type": "object"
       },
       "PlanCommitResponse": {
@@ -1472,6 +2033,28 @@
           "reply"
         ],
         "title": "PlanTurnResponse",
+        "type": "object"
+      },
+      "ProposedBatch": {
+        "description": "Non-null value of GetCurriculumResponse.proposed: an uncommitted planner batch.",
+        "properties": {
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/CurriculumDayWithPosition"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "start_day": {
+            "title": "Start Day",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_day",
+          "days"
+        ],
+        "title": "ProposedBatch",
         "type": "object"
       },
       "RateLimitSnapshot": {
@@ -1641,6 +2224,178 @@
           "lesson_id"
         ],
         "title": "RenderAudioRequest",
+        "type": "object"
+      },
+      "RenderAudioResponse": {
+        "description": "Response of POST /api/audio/render (``render_service.render_lesson_audio``).",
+        "properties": {
+          "audio_id": {
+            "title": "Audio Id",
+            "type": "string"
+          },
+          "cues": {
+            "items": {
+              "$ref": "#/components/schemas/RenderSectionCue"
+            },
+            "title": "Cues",
+            "type": "array"
+          },
+          "lesson_id": {
+            "title": "Lesson Id",
+            "type": "string"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/RenderAudioSection"
+            },
+            "title": "Sections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "audio_id",
+          "lesson_id",
+          "sections",
+          "cues"
+        ],
+        "title": "RenderAudioResponse",
+        "type": "object"
+      },
+      "RenderAudioSection": {
+        "description": "One element of RenderAudioResponse.sections.",
+        "properties": {
+          "audio_id": {
+            "title": "Audio Id",
+            "type": "string"
+          },
+          "section_index": {
+            "title": "Section Index",
+            "type": "integer"
+          },
+          "section_type": {
+            "title": "Section Type",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "audio_id",
+          "section_index",
+          "section_type",
+          "title"
+        ],
+        "title": "RenderAudioSection",
+        "type": "object"
+      },
+      "RenderCueRef": {
+        "description": "Non-null value of RenderSectionCue.ref.\n\n``target_index`` is omitted on narration cues (built as ``{\"kind\":\n\"narration\"}`` in ``cues.py``), so it rides on\n``response_model_exclude_unset``.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "line",
+              "key_phrase",
+              "narration"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "target_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Index"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "RenderCueRef",
+        "type": "object"
+      },
+      "RenderSectionCue": {
+        "description": "One element of RenderAudioResponse.cues (a full-manifest ``Cue``).",
+        "properties": {
+          "end_ms": {
+            "title": "End Ms",
+            "type": "integer"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "phrase_index": {
+            "title": "Phrase Index",
+            "type": "integer"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RenderCueRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "section_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Index"
+          },
+          "section_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Type"
+          },
+          "start_ms": {
+            "title": "Start Ms",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "start_ms",
+          "end_ms",
+          "section_index",
+          "section_type",
+          "phrase_index",
+          "role",
+          "language_code",
+          "text"
+        ],
+        "title": "RenderSectionCue",
         "type": "object"
       },
       "SetGenerationModeResponse": {
@@ -2588,7 +3343,9 @@
           "202": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RenderAudioResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -2655,7 +3412,13 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CurriculumSummary"
+                  },
+                  "title": "Response List Curricula Api Curriculum Get",
+                  "type": "array"
+                }
               }
             },
             "description": "Successful Response"
@@ -2808,7 +3571,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/GetCurriculumResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -2909,7 +3674,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/LessonResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3002,7 +3769,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineStatusResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3391,7 +4160,13 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CurriculumProgressEntry"
+                  },
+                  "title": "Response Get Curriculum Progress Api Curriculum  Curriculum Id  Progress Get",
+                  "type": "array"
+                }
               }
             },
             "description": "Successful Response"
@@ -3431,7 +4206,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/CurriculumSourceResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3770,9 +4547,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Inflection Cloze Api Srs Inflection Clozes Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CreateCardResponse"
                 }
               }
             },
@@ -3958,9 +4733,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Base Card Api Srs Items Base Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CreateCardResponse"
                 }
               }
             },
@@ -4353,7 +5126,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ImageCandidatesResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -5382,7 +6157,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/LessonResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -5423,7 +6200,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/LessonSourceResponse"
+                }
               }
             },
             "description": "Successful Response"

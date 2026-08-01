@@ -732,3 +732,248 @@ class RateLimitStatusResponse(BaseModel):
     last_429: Last429 | None
     tokens_used_24h: int | None
     tokens_per_day_limit: int
+
+
+# ── Batch 7: curriculum listing/detail/progress/source + pipeline + image
+#    candidates (BP ledger drain) ─────────────────────────────────────────
+#
+# Every field below is a fixed key — none of these handlers ever omit a key
+# conditionally, so a plain ``response_model=`` suffices (no exclude_unset).
+# Each is pinned by a key-set test written against the UNFILTERED handler
+# output, per the drain recipe.
+
+
+class CurriculumSummary(BaseModel):
+    """One element of the response of GET /api/curriculum (``store.list_curricula``)."""
+
+    id: str
+    topic: str
+    created_at: str
+
+
+class CurriculumDayWithPosition(BaseModel):
+    """One element of GetCurriculumResponse.days / .proposed.days.
+
+    Mirrors ``CurriculumDay`` (``app/models/curriculum.py``) plus ``position``,
+    the handler-computed contiguous display ordinal (``Curriculum.day_positions()``)
+    — as opposed to ``day``, a stable but possibly-gappy key.
+    """
+
+    day: int
+    title: str
+    focus: str
+    collocations: list[str]
+    learning_objective: str
+    story_guidance: str
+    position: int
+
+
+class ProposedBatch(BaseModel):
+    """Non-null value of GetCurriculumResponse.proposed: an uncommitted planner batch."""
+
+    start_day: int
+    days: list[CurriculumDayWithPosition]
+
+
+class GetCurriculumResponse(BaseModel):
+    """Response of GET /api/curriculum/{curriculum_id}."""
+
+    id: str
+    topic: str
+    language_code: str
+    cefr_level: str
+    days: list[CurriculumDayWithPosition]
+    proposed: ProposedBatch | None
+    generation_mode: str
+
+
+class CurriculumProgressEntry(BaseModel):
+    """One element of the response of GET /api/curriculum/{curriculum_id}/progress."""
+
+    day: int
+    lesson_id: str
+    position: int
+
+
+class CurriculumSourceDay(BaseModel):
+    """One element of CurriculumSourceResponse.days.
+
+    The raw ``CurriculumDay`` fields with no ``position`` — unlike
+    ``CurriculumDayWithPosition``, ``export_plan`` is the editable plan file,
+    not the UI-facing view.
+    """
+
+    day: int
+    title: str
+    focus: str
+    collocations: list[str]
+    learning_objective: str
+    story_guidance: str
+
+
+class CurriculumSourceResponse(BaseModel):
+    """Response of GET /api/curriculum/{curriculum_id}/source (``plan_io.export_plan``)."""
+
+    id: str
+    topic: str
+    language_code: str
+    cefr_level: str
+    days: list[CurriculumSourceDay]
+
+
+class PipelineDayStatus(BaseModel):
+    """One element of PipelineStatusResponse.days (``LessonPipeline.status_for``)."""
+
+    day: int
+    position: int
+    state: str
+    lesson_id: str | None
+    has_audio: bool
+    error: str | None
+    retryable: bool | None
+    detail: str | None
+
+
+class PipelineStatusResponse(BaseModel):
+    """Response of GET /api/curriculum/{curriculum_id}/pipeline."""
+
+    active: bool
+    days: list[PipelineDayStatus]
+
+
+class ImageCandidate(BaseModel):
+    """One element of ImageCandidatesResponse.candidates (a Pixabay hit)."""
+
+    preview_url: str
+    webformat_url: str
+    tags: str
+    width: int
+    height: int
+    likes: int
+
+
+class ImageCandidatesResponse(BaseModel):
+    """Response of GET /api/srs/items/{item_id}/image/candidates."""
+
+    query: str
+    status: str
+    candidates: list[ImageCandidate]
+
+
+# ── Batch 8: story/audio/card response models (BP ledger drain) ──────────────
+#
+# get_lesson and get_lesson_by_day serialize through the same
+# ``_serializers.serialize_lesson``, so they share ONE model — the brief
+# explicitly forbids two near-duplicates. ``day`` is conditionally present
+# (only get_lesson passes it), so both routes need
+# ``response_model_exclude_unset``. render_audio's cues nest ``ref`` whose
+# ``target_index`` is omitted on narration cues — same exclude_unset reason.
+# create_base_card and create_inflection_cloze share the ``_persist_new_card``
+# tail, which nests the batch-6a SrsItemResponse (already exclude_unset-bound
+# for the DirectionStateResponse ``left`` key).
+
+
+class LessonKeyPhrase(BaseModel):
+    """One element of LessonResponse.key_phrases."""
+
+    phrase: str
+    translation: str
+
+
+class LessonPhrase(BaseModel):
+    """One element of LessonSection.phrases."""
+
+    text: str
+    role: str
+    language_code: str
+    voice_id: str
+
+
+class LessonSection(BaseModel):
+    """One element of LessonResponse.sections."""
+
+    type: str
+    phrases: list[LessonPhrase]
+
+
+class LessonResponse(BaseModel):
+    """Response of GET /api/story/{lesson_id} and
+    GET /api/curriculum/{curriculum_id}/days/{day}/lesson
+    (``_serializers.serialize_lesson``). ``day`` is omitted by the by-day
+    route (serialized without one), so it rides on ``response_model_exclude_unset``.
+    """
+
+    id: str
+    title: str
+    language_code: str
+    key_phrases: list[LessonKeyPhrase]
+    sections: list[LessonSection]
+    day: int | None = None  # omitted when unset
+
+
+class LessonSourceResponse(BaseModel):
+    """Response of GET /api/story/{lesson_id}/source (``lesson_io.export_lesson``).
+
+    ``story`` stays a bare dict on purpose: it is the raw editable Story-JSON
+    file — heterogeneous, versioned, and already treated as opaque by both the
+    import request model (``ImportLessonRequest.story``) and the frontend
+    (``StorySourceResponse.story: Record<string, unknown>``).
+    """
+
+    curriculum_id: str
+    day: int
+    story: dict
+
+
+class RenderCueRef(BaseModel):
+    """Non-null value of RenderSectionCue.ref.
+
+    ``target_index`` is omitted on narration cues (built as ``{"kind":
+    "narration"}`` in ``cues.py``), so it rides on
+    ``response_model_exclude_unset``.
+    """
+
+    kind: Literal["line", "key_phrase", "narration"]
+    target_index: int | None = None  # omitted when unset
+
+
+class RenderSectionCue(BaseModel):
+    """One element of RenderAudioResponse.cues (a full-manifest ``Cue``)."""
+
+    index: int
+    start_ms: int
+    end_ms: int
+    section_index: int | None
+    section_type: str | None
+    phrase_index: int
+    role: str
+    language_code: str
+    text: str
+    ref: RenderCueRef | None = None
+
+
+class RenderAudioSection(BaseModel):
+    """One element of RenderAudioResponse.sections."""
+
+    audio_id: str
+    section_index: int
+    section_type: str
+    title: str
+
+
+class RenderAudioResponse(BaseModel):
+    """Response of POST /api/audio/render (``render_service.render_lesson_audio``)."""
+
+    audio_id: str
+    lesson_id: str
+    sections: list[RenderAudioSection]
+    cues: list[RenderSectionCue]
+
+
+class CreateCardResponse(BaseModel):
+    """Response of POST /api/srs/items/base and POST /api/srs/inflection-clozes
+    (``srs.py::_persist_new_card``); ``item`` is the batch-6a SrsItemResponse."""
+
+    id: int
+    was_created: bool
+    item: SrsItemResponse

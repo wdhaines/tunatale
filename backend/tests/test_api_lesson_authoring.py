@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from httpx import ASGITransport, AsyncClient
 
-from app.api.models import ImportStoryResponse, StorySection
+from app.api.models import ImportStoryResponse, LessonSourceResponse, StorySection
 from app.languages import get_language
 from app.main import app
 from app.models.curriculum import Curriculum, CurriculumDay
@@ -79,6 +79,24 @@ class TestLessonAuthoringEndpoints:
             "text": "Dober dan!",
             "translation": "Good day!",
         }
+
+    async def test_get_source_response_keys_match_model(self):
+        """Oracle for the response_model flip (openapi ledger batch 7)."""
+        from app.generation.story import build_lesson_from_story
+
+        store = self._store_with_curriculum()
+        lesson = build_lesson_from_story(self._story(), language=get_language("sl"))
+        store.save_lesson("lesson-1", "c1", 1, lesson)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/story/lesson-1/source")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert set(data.keys()) == {"curriculum_id", "day", "story"}
+        assert set(data["story"].keys()) == {"title", "key_phrases", "scenes", "dialogue_glosses", "morphology_focus"}
+        assert set(LessonSourceResponse.model_fields) == {"curriculum_id", "day", "story"}
 
     async def test_get_source_404_when_lesson_missing(self):
         from app.storage.store import ContentStore

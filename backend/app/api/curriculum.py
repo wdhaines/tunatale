@@ -9,11 +9,16 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.api._serializers import serialize_lesson
 from app.api.models import (
+    CurriculumProgressEntry,
+    CurriculumSourceResponse,
+    CurriculumSummary,
     DeleteCurriculumResponse,
     DeleteDayResponse,
     GenerationModeRequest,
+    GetCurriculumResponse,
     ImportCurriculumPlanResponse,
     ImportPlanRequest,
+    LessonResponse,
     PlanCommitResponse,
     PlanFeedbackRequest,
     PlanFeedbackResponse,
@@ -243,13 +248,13 @@ async def set_generation_mode(curriculum_id: str, body: GenerationModeRequest, r
     return {"mode": body.mode}
 
 
-@router.get("", status_code=200)
+@router.get("", status_code=200, response_model=list[CurriculumSummary])
 async def list_curricula(request: Request):
     store = request.state.content_store
     return store.list_curricula()
 
 
-@router.get("/{curriculum_id}", status_code=200)
+@router.get("/{curriculum_id}", status_code=200, response_model=GetCurriculumResponse)
 async def get_curriculum(curriculum_id: str, request: Request):
     store = request.state.content_store
     curriculum = store.get_curriculum(curriculum_id)
@@ -280,7 +285,7 @@ async def get_curriculum(curriculum_id: str, request: Request):
     }
 
 
-@router.get("/{curriculum_id}/progress")
+@router.get("/{curriculum_id}/progress", response_model=list[CurriculumProgressEntry])
 async def get_curriculum_progress(curriculum_id: str, request: Request):
     store = request.state.content_store
     curriculum = store.get_curriculum(curriculum_id)
@@ -295,7 +300,7 @@ async def get_curriculum_progress(curriculum_id: str, request: Request):
     ]
 
 
-@router.get("/{curriculum_id}/source", status_code=200)
+@router.get("/{curriculum_id}/source", status_code=200, response_model=CurriculumSourceResponse)
 async def get_curriculum_source(curriculum_id: str, request: Request):
     store = request.state.content_store
     try:
@@ -344,7 +349,15 @@ async def delete_day(curriculum_id: str, day: int, request: Request):
     return {"deleted_day": day, "days": len(curriculum.days)}
 
 
-@router.get("/{curriculum_id}/days/{day}/lesson", status_code=200)
+@router.get(
+    "/{curriculum_id}/days/{day}/lesson",
+    status_code=200,
+    response_model=LessonResponse,
+    # serialize_lesson is called without a day here (unlike get_lesson), so the
+    # payload has no "day" key — exclude_unset keeps it that way instead of
+    # re-adding "day": null.
+    response_model_exclude_unset=True,
+)
 async def get_lesson_by_day(curriculum_id: str, day: int, request: Request):
     store = request.state.content_store
     result = store.get_latest_lesson_by_day(curriculum_id, day)

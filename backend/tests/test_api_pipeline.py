@@ -8,7 +8,7 @@ import time
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.api.models import StatusResponse
+from app.api.models import PipelineDayStatus, PipelineStatusResponse, StatusResponse
 from app.generation.pipeline import LessonPipeline
 from app.languages import get_language
 from app.llm.activity import ActivityLog
@@ -138,6 +138,30 @@ class TestPipelineStatusEndpoint:
         assert len(data["days"]) == 1
         assert data["days"][0]["day"] == 1
         assert data["days"][0]["state"] in ("queued", "generating", "rendering", "ready")
+
+    async def test_response_keys_match_model_exactly(self, tmp_path):
+        """Oracle for the response_model flip (BP ledger drain), written against
+        the UNFILTERED handler output."""
+        pipeline, store, gen, _ = _pipeline(tmp_path)
+        curriculum = Curriculum(id="cur-1", topic="t", language_code="sl", cefr_level="A2", days=[_day(1)])
+        store.save_curriculum("cur-1", curriculum)
+        app.state.content_store = store
+        app.state.language = get_language("sl")
+        app.state.srs_db = store
+        app.state.pipeline = pipeline
+
+        pipeline.start()
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/curriculum/cur-1/pipeline")
+
+        data = response.json()
+        assert set(data.keys()) == {"active", "days"}
+        assert set(PipelineStatusResponse.model_fields) == {"active", "days"}
+
+        day_keys = {"day", "position", "state", "lesson_id", "has_audio", "error", "retryable", "detail"}
+        assert set(data["days"][0].keys()) == day_keys
+        assert set(PipelineDayStatus.model_fields) == day_keys
 
 
 class TestPipelineRetryEndpoint:

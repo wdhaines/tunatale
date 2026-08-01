@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
-from app.api.models import GetLessonAudioResponse, RenderAudioRequest
+from app.api.models import GetLessonAudioResponse, RenderAudioRequest, RenderAudioResponse
 from app.audio.render_service import render_lesson_audio
 from app.audio.transcode import EXT_MEDIA_TYPE
 from app.generation.section_builder import SECTION_TITLES
@@ -60,7 +60,15 @@ def _build_section_filename(topic: str, day: int, section_index: int, section_ty
     return f"{safe_topic}_Day{day:02d}_{section_index + 1:02d}_{safe_title}{ext}"
 
 
-@router.post("/render", status_code=202)
+@router.post(
+    "/render",
+    status_code=202,
+    response_model=RenderAudioResponse,
+    # cues[].ref omits target_index on narration cues ({"kind": "narration"})
+    # — a plain response_model would re-add "target_index": null to every
+    # narration ref.
+    response_model_exclude_unset=True,
+)
 async def render_audio(body: RenderAudioRequest, request: Request):
     store = request.state.content_store
     lesson = store.get_lesson(body.lesson_id)

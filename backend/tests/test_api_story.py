@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 from httpx import ASGITransport, AsyncClient
 
-from app.api.models import GenerateStoryResponse, GetStoryPromptResponse
+from app.api.models import GenerateStoryResponse, GetStoryPromptResponse, LessonResponse
 from app.languages import get_language
 from app.main import app
 from app.models.curriculum import Curriculum, CurriculumDay
@@ -96,6 +96,45 @@ class TestStoryEndpoints:
         assert len(data["key_phrases"]) == 2
         assert data["key_phrases"][0] == {"phrase": "dober dan", "translation": "good day"}
         assert data["key_phrases"][1] == {"phrase": "prosim kavo", "translation": "a coffee please"}
+
+    async def test_get_lesson_response_keys_match_model(self):
+        """Oracle for the response_model flip (openapi ledger batch 7)."""
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        mock_lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.KEY_PHRASES,
+                    phrases=[
+                        Phrase(text="dober dan", role="female-1", voice_id="sl-SI-PetraNeural", language_code="sl"),
+                    ],
+                ),
+            ],
+            key_phrases=[KeyPhraseInfo(phrase="dober dan", translation="good day")],
+        )
+        store.save_lesson("lesson-keys", "curriculum-1", 3, mock_lesson)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/story/lesson-keys")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert set(data.keys()) == {"id", "title", "language_code", "key_phrases", "sections", "day"}
+        assert set(data["key_phrases"][0].keys()) == {"phrase", "translation"}
+        assert set(data["sections"][0].keys()) == {"type", "phrases"}
+        assert set(data["sections"][0]["phrases"][0].keys()) == {"text", "role", "language_code", "voice_id"}
+        assert set(LessonResponse.model_fields) == {
+            "id",
+            "title",
+            "language_code",
+            "key_phrases",
+            "sections",
+            "day",
+        }
 
     async def test_get_lesson_returns_empty_key_phrases_for_old_lesson(self):
         from app.storage.store import ContentStore

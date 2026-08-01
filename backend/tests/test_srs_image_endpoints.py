@@ -17,6 +17,7 @@ import pytest
 import respx
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import ImageCandidate, ImageCandidatesResponse
 from app.main import app
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
@@ -274,6 +275,26 @@ class TestCandidates:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.get(f"/api/srs/items/{cid}/image/candidates")
         assert len(resp.json()["candidates"]) == 24
+
+    async def test_response_keys_match_model_exactly(self, api, monkeypatch):
+        """Oracle for the response_model flip (BP ledger drain), written against
+        the UNFILTERED handler output."""
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "pixabay_api_key", "test-key")
+        monkeypatch.setattr("app.cards.media.pixabay.search_pixabay", _make_fake_search(status="ok"))
+        api.add_collocation(_unit(), language_code="sl")
+        cid = _id_for_text(api, "voda")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get(f"/api/srs/items/{cid}/image/candidates")
+
+        data = resp.json()
+        assert set(data.keys()) == {"query", "status", "candidates"}
+        assert set(ImageCandidatesResponse.model_fields) == {"query", "status", "candidates"}
+
+        candidate_keys = {"preview_url", "webformat_url", "tags", "width", "height", "likes"}
+        assert set(data["candidates"][0].keys()) == candidate_keys
+        assert set(ImageCandidate.model_fields) == candidate_keys
 
 
 # -- PUT image from URL -------------------------------------------------------

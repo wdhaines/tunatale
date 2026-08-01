@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.api.models import PipelineRegenerateRequest, PipelineRetryRequest, StatusResponse
+from app.api.models import (
+    PipelineRegenerateRequest,
+    PipelineRetryRequest,
+    PipelineStatusResponse,
+    StatusResponse,
+)
 
 router = APIRouter(prefix="/api/curriculum", tags=["pipeline"])
 
@@ -21,7 +26,7 @@ def _get_curriculum_or_404(store, curriculum_id: str) -> object:
     return curriculum
 
 
-@router.get("/{curriculum_id}/pipeline", status_code=200)
+@router.get("/{curriculum_id}/pipeline", status_code=200, response_model=PipelineStatusResponse)
 async def pipeline_status(curriculum_id: str, request: Request):
     pipeline = _pipeline(request)
     if pipeline is None:

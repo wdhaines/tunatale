@@ -13,10 +13,12 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import CreateCardResponse
 from app.common.guid import compute_guid
 from app.main import app
 from app.models.srs_item import Direction, SRSState
 from tests._helpers.lemmatizer import StubLemmatizer
+from tests._helpers.srs_item_shape import SRS_ITEM_KEYS
 
 
 def _stub_verb(monkeypatch, surface: str, lemma: str) -> None:
@@ -132,6 +134,47 @@ class TestCreateBaseCard:
         assert resp.status_code == 200
         coll = api_app_state.get_collocation_by_guid(compute_guid("pokazati", "sl", ""))
         assert coll.syntactic_unit.translation == "I will show"
+
+    async def test_base_card_response_keys_match_model(self, api_app_state):
+        """Oracle for the response_model flip (openapi ledger batch 7)."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "kava",
+                    "lemma": "kava",
+                    "sentence": "Pijem kavo.",
+                    "language_code": "sl",
+                    "translation": "coffee",
+                },
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert set(data.keys()) == {"id", "was_created", "item"}
+        assert set(data["item"].keys()) == SRS_ITEM_KEYS
+        assert set(CreateCardResponse.model_fields) == {"id", "was_created", "item"}
+
+        # Element-level key set for the NESTED direction — the assertion the
+        # top-level ones cannot make. `_direction_to_dict` OMITS `left` when it
+        # is None (a fresh base card is NEW, so it always is), and a plain
+        # `response_model=` would put `"left": null` back in. That is a payload
+        # rewrite in the ADD direction, which is what
+        # `response_model_exclude_unset=True` on this route exists to prevent.
+        # Without this line the flag is unpinned: stripping it leaves the whole
+        # file green, so the guard reads as protection it does not provide.
+        rec = data["item"]["directions"]["recognition"]
+        assert set(rec.keys()) == {
+            "state",
+            "due_at",
+            "stability",
+            "difficulty",
+            "reps",
+            "lapses",
+            "last_review",
+            "last_review_time_ms",
+            "anki_card_id",
+        }, "a NEW card's direction must not carry a `left` key"
 
     async def test_clozes_only_verb_rejected(self, api_app_state):
         """A clozes-only verb (biti) has no base card — 409, no row created."""

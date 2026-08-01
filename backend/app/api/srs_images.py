@@ -13,7 +13,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
-from app.api.models import ImageItemResponse
+from app.api.models import ImageCandidatesResponse, ImageItemResponse
 from app.cards.media import pixabay as _pixabay_mod
 from app.cards.media import vocab_media as _vocab_media
 from app.cards.media.pixabay import PixabaySearch
@@ -76,7 +76,7 @@ def _item_response(db, coll_id: int, item) -> dict:
     }
 
 
-@router.get("/items/{item_id}/image/candidates")
+@router.get("/items/{item_id}/image/candidates", response_model=ImageCandidatesResponse)
 async def get_image_candidates(
     item_id: int,
     request: Request,

@@ -21,6 +21,7 @@ from app.api.models import (
     BulkDeleteResponse,
     CommitPendingResponse,
     CreateBaseCardRequest,
+    CreateCardResponse,
     CreateItemRequest,
     DrillRequest,
     DueCollocationsResponse,
@@ -1904,7 +1905,14 @@ async def _persist_new_card(
     }
 
 
-@router.post("/items/base", status_code=200)
+@router.post(
+    "/items/base",
+    status_code=200,
+    response_model=CreateCardResponse,
+    # item nests SrsItemResponse whose directions omit "left" when None
+    # (srs.py::_direction_to_dict) — same exclude_unset trap as create_item.
+    response_model_exclude_unset=True,
+)
 async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dict:
     """Create a base card for an unknown clicked word (Phase 5, Part C / decision 8, C-a).
 
@@ -2202,7 +2210,13 @@ def _queue_item_to_dict(
     return base
 
 
-@router.post("/inflection-clozes", status_code=200)
+@router.post(
+    "/inflection-clozes",
+    status_code=200,
+    response_model=CreateCardResponse,
+    # Same nested SrsItemResponse "left" trap as /items/base — see above.
+    response_model_exclude_unset=True,
+)
 async def create_inflection_cloze(body: InflectionClozeRequest, request: Request) -> dict:
     """Create one morphology cloze for an inflected surface (Phase 4a).
 

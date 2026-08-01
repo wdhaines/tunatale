@@ -1407,6 +1407,18 @@ export interface components {
        */
       translation: string;
     };
+    /**
+     * CreateCardResponse
+     * @description Response of POST /api/srs/items/base and POST /api/srs/inflection-clozes
+     *     (``srs.py::_persist_new_card``); ``item`` is the batch-6a SrsItemResponse.
+     */
+    CreateCardResponse: {
+      /** Id */
+      id: number;
+      item: components["schemas"]["SrsItemResponse"];
+      /** Was Created */
+      was_created: boolean;
+    };
     /** CreateItemRequest */
     CreateItemRequest: {
       /** Language Code */
@@ -1429,6 +1441,92 @@ export interface components {
       translation: string;
       /** Word Count */
       word_count: number;
+    };
+    /**
+     * CurriculumDayWithPosition
+     * @description One element of GetCurriculumResponse.days / .proposed.days.
+     *
+     *     Mirrors ``CurriculumDay`` (``app/models/curriculum.py``) plus ``position``,
+     *     the handler-computed contiguous display ordinal (``Curriculum.day_positions()``)
+     *     — as opposed to ``day``, a stable but possibly-gappy key.
+     */
+    CurriculumDayWithPosition: {
+      /** Collocations */
+      collocations: string[];
+      /** Day */
+      day: number;
+      /** Focus */
+      focus: string;
+      /** Learning Objective */
+      learning_objective: string;
+      /** Position */
+      position: number;
+      /** Story Guidance */
+      story_guidance: string;
+      /** Title */
+      title: string;
+    };
+    /**
+     * CurriculumProgressEntry
+     * @description One element of the response of GET /api/curriculum/{curriculum_id}/progress.
+     */
+    CurriculumProgressEntry: {
+      /** Day */
+      day: number;
+      /** Lesson Id */
+      lesson_id: string;
+      /** Position */
+      position: number;
+    };
+    /**
+     * CurriculumSourceDay
+     * @description One element of CurriculumSourceResponse.days.
+     *
+     *     The raw ``CurriculumDay`` fields with no ``position`` — unlike
+     *     ``CurriculumDayWithPosition``, ``export_plan`` is the editable plan file,
+     *     not the UI-facing view.
+     */
+    CurriculumSourceDay: {
+      /** Collocations */
+      collocations: string[];
+      /** Day */
+      day: number;
+      /** Focus */
+      focus: string;
+      /** Learning Objective */
+      learning_objective: string;
+      /** Story Guidance */
+      story_guidance: string;
+      /** Title */
+      title: string;
+    };
+    /**
+     * CurriculumSourceResponse
+     * @description Response of GET /api/curriculum/{curriculum_id}/source (``plan_io.export_plan``).
+     */
+    CurriculumSourceResponse: {
+      /** Cefr Level */
+      cefr_level: string;
+      /** Days */
+      days: components["schemas"]["CurriculumSourceDay"][];
+      /** Id */
+      id: string;
+      /** Language Code */
+      language_code: string;
+      /** Topic */
+      topic: string;
+    };
+    /**
+     * CurriculumSummary
+     * @description One element of the response of GET /api/curriculum (``store.list_curricula``).
+     */
+    CurriculumSummary: {
+      /** Created At */
+      created_at: string;
+      /** Id */
+      id: string;
+      /** Topic */
+      topic: string;
     };
     /**
      * DeleteCurriculumResponse
@@ -1539,6 +1637,25 @@ export interface components {
       mode: "auto" | "manual";
     };
     /**
+     * GetCurriculumResponse
+     * @description Response of GET /api/curriculum/{curriculum_id}.
+     */
+    GetCurriculumResponse: {
+      /** Cefr Level */
+      cefr_level: string;
+      /** Days */
+      days: components["schemas"]["CurriculumDayWithPosition"][];
+      /** Generation Mode */
+      generation_mode: string;
+      /** Id */
+      id: string;
+      /** Language Code */
+      language_code: string;
+      proposed: components["schemas"]["ProposedBatch"] | null;
+      /** Topic */
+      topic: string;
+    };
+    /**
      * GetLessonAudioResponse
      * @description Response of GET /api/audio/lesson/{lesson_id}.
      */
@@ -1581,6 +1698,36 @@ export interface components {
       language_code: string;
       /** Lemma */
       lemma: string;
+    };
+    /**
+     * ImageCandidate
+     * @description One element of ImageCandidatesResponse.candidates (a Pixabay hit).
+     */
+    ImageCandidate: {
+      /** Height */
+      height: number;
+      /** Likes */
+      likes: number;
+      /** Preview Url */
+      preview_url: string;
+      /** Tags */
+      tags: string;
+      /** Webformat Url */
+      webformat_url: string;
+      /** Width */
+      width: number;
+    };
+    /**
+     * ImageCandidatesResponse
+     * @description Response of GET /api/srs/items/{item_id}/image/candidates.
+     */
+    ImageCandidatesResponse: {
+      /** Candidates */
+      candidates: components["schemas"]["ImageCandidate"][];
+      /** Query */
+      query: string;
+      /** Status */
+      status: string;
     };
     /**
      * ImageItemResponse
@@ -1757,6 +1904,80 @@ export interface components {
       ago_s: number;
       /** Retry In S */
       retry_in_s: number | null;
+    };
+    /**
+     * LessonKeyPhrase
+     * @description One element of LessonResponse.key_phrases.
+     */
+    LessonKeyPhrase: {
+      /** Phrase */
+      phrase: string;
+      /** Translation */
+      translation: string;
+    };
+    /**
+     * LessonPhrase
+     * @description One element of LessonSection.phrases.
+     */
+    LessonPhrase: {
+      /** Language Code */
+      language_code: string;
+      /** Role */
+      role: string;
+      /** Text */
+      text: string;
+      /** Voice Id */
+      voice_id: string;
+    };
+    /**
+     * LessonResponse
+     * @description Response of GET /api/story/{lesson_id} and
+     *     GET /api/curriculum/{curriculum_id}/days/{day}/lesson
+     *     (``_serializers.serialize_lesson``). ``day`` is omitted by the by-day
+     *     route (serialized without one), so it rides on ``response_model_exclude_unset``.
+     */
+    LessonResponse: {
+      /** Day */
+      day?: number | null;
+      /** Id */
+      id: string;
+      /** Key Phrases */
+      key_phrases: components["schemas"]["LessonKeyPhrase"][];
+      /** Language Code */
+      language_code: string;
+      /** Sections */
+      sections: components["schemas"]["LessonSection"][];
+      /** Title */
+      title: string;
+    };
+    /**
+     * LessonSection
+     * @description One element of LessonResponse.sections.
+     */
+    LessonSection: {
+      /** Phrases */
+      phrases: components["schemas"]["LessonPhrase"][];
+      /** Type */
+      type: string;
+    };
+    /**
+     * LessonSourceResponse
+     * @description Response of GET /api/story/{lesson_id}/source (``lesson_io.export_lesson``).
+     *
+     *     ``story`` stays a bare dict on purpose: it is the raw editable Story-JSON
+     *     file — heterogeneous, versioned, and already treated as opaque by both the
+     *     import request model (``ImportLessonRequest.story``) and the frontend
+     *     (``StorySourceResponse.story: Record<string, unknown>``).
+     */
+    LessonSourceResponse: {
+      /** Curriculum Id */
+      curriculum_id: string;
+      /** Day */
+      day: number;
+      /** Story */
+      story: {
+        [key: string]: unknown;
+      };
     };
     /**
      * LessonTranscriptResponse
@@ -1938,6 +2159,28 @@ export interface components {
       /** New */
       new: components["schemas"]["SrsItemResponse"][];
     };
+    /**
+     * PipelineDayStatus
+     * @description One element of PipelineStatusResponse.days (``LessonPipeline.status_for``).
+     */
+    PipelineDayStatus: {
+      /** Day */
+      day: number;
+      /** Detail */
+      detail: string | null;
+      /** Error */
+      error: string | null;
+      /** Has Audio */
+      has_audio: boolean;
+      /** Lesson Id */
+      lesson_id: string | null;
+      /** Position */
+      position: number;
+      /** Retryable */
+      retryable: boolean | null;
+      /** State */
+      state: string;
+    };
     /** PipelineRegenerateRequest */
     PipelineRegenerateRequest: {
       /** Day */
@@ -1953,6 +2196,16 @@ export interface components {
     PipelineRetryRequest: {
       /** Day */
       day: number;
+    };
+    /**
+     * PipelineStatusResponse
+     * @description Response of GET /api/curriculum/{curriculum_id}/pipeline.
+     */
+    PipelineStatusResponse: {
+      /** Active */
+      active: boolean;
+      /** Days */
+      days: components["schemas"]["PipelineDayStatus"][];
     };
     /**
      * PlanCommitResponse
@@ -2022,6 +2275,16 @@ export interface components {
       reply: string;
     };
     /**
+     * ProposedBatch
+     * @description Non-null value of GetCurriculumResponse.proposed: an uncommitted planner batch.
+     */
+    ProposedBatch: {
+      /** Days */
+      days: components["schemas"]["CurriculumDayWithPosition"][];
+      /** Start Day */
+      start_day: number;
+    };
+    /**
      * RateLimitSnapshot
      * @description Non-null value of RateLimitStatusResponse.snapshot.
      */
@@ -2063,6 +2326,76 @@ export interface components {
     RenderAudioRequest: {
       /** Lesson Id */
       lesson_id: string;
+    };
+    /**
+     * RenderAudioResponse
+     * @description Response of POST /api/audio/render (``render_service.render_lesson_audio``).
+     */
+    RenderAudioResponse: {
+      /** Audio Id */
+      audio_id: string;
+      /** Cues */
+      cues: components["schemas"]["RenderSectionCue"][];
+      /** Lesson Id */
+      lesson_id: string;
+      /** Sections */
+      sections: components["schemas"]["RenderAudioSection"][];
+    };
+    /**
+     * RenderAudioSection
+     * @description One element of RenderAudioResponse.sections.
+     */
+    RenderAudioSection: {
+      /** Audio Id */
+      audio_id: string;
+      /** Section Index */
+      section_index: number;
+      /** Section Type */
+      section_type: string;
+      /** Title */
+      title: string;
+    };
+    /**
+     * RenderCueRef
+     * @description Non-null value of RenderSectionCue.ref.
+     *
+     *     ``target_index`` is omitted on narration cues (built as ``{"kind":
+     *     "narration"}`` in ``cues.py``), so it rides on
+     *     ``response_model_exclude_unset``.
+     */
+    RenderCueRef: {
+      /**
+       * Kind
+       * @enum {string}
+       */
+      kind: "line" | "key_phrase" | "narration";
+      /** Target Index */
+      target_index?: number | null;
+    };
+    /**
+     * RenderSectionCue
+     * @description One element of RenderAudioResponse.cues (a full-manifest ``Cue``).
+     */
+    RenderSectionCue: {
+      /** End Ms */
+      end_ms: number;
+      /** Index */
+      index: number;
+      /** Language Code */
+      language_code: string;
+      /** Phrase Index */
+      phrase_index: number;
+      ref?: components["schemas"]["RenderCueRef"] | null;
+      /** Role */
+      role: string;
+      /** Section Index */
+      section_index: number | null;
+      /** Section Type */
+      section_type: string | null;
+      /** Start Ms */
+      start_ms: number;
+      /** Text */
+      text: string;
     };
     /**
      * SetGenerationModeResponse
@@ -2508,7 +2841,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["RenderAudioResponse"];
         };
       };
       /** @description Validation Error */
@@ -2568,7 +2901,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["CurriculumSummary"][];
         };
       };
     };
@@ -2656,7 +2989,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["GetCurriculumResponse"];
         };
       };
       /** @description Validation Error */
@@ -2751,7 +3084,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["LessonResponse"];
         };
       };
       /** @description Validation Error */
@@ -2817,7 +3150,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["PipelineStatusResponse"];
         };
       };
       /** @description Validation Error */
@@ -3085,7 +3418,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["CurriculumProgressEntry"][];
         };
       };
       /** @description Validation Error */
@@ -3116,7 +3449,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["CurriculumSourceResponse"];
         };
       };
       /** @description Validation Error */
@@ -3396,9 +3729,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            [key: string]: unknown;
-          };
+          "application/json": components["schemas"]["CreateCardResponse"];
         };
       };
       /** @description Validation Error */
@@ -3500,9 +3831,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            [key: string]: unknown;
-          };
+          "application/json": components["schemas"]["CreateCardResponse"];
         };
       };
       /** @description Validation Error */
@@ -3768,7 +4097,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["ImageCandidatesResponse"];
         };
       };
       /** @description Validation Error */
@@ -4528,7 +4857,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["LessonResponse"];
         };
       };
       /** @description Validation Error */
@@ -4559,7 +4888,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["LessonSourceResponse"];
         };
       };
       /** @description Validation Error */

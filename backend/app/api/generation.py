@@ -16,6 +16,8 @@ from app.api.models import (
     GetStoryPromptResponse,
     ImportLessonRequest,
     ImportStoryResponse,
+    LessonResponse,
+    LessonSourceResponse,
 )
 from app.generation.ids import mint_id
 from app.generation.json_parsing import parse_json_object
@@ -199,7 +201,7 @@ async def get_story_prompt(
     return {"system_prompt": system_prompt, "user_prompt": user_prompt}
 
 
-@router.get("/{lesson_id}/source", status_code=200)
+@router.get("/{lesson_id}/source", status_code=200, response_model=LessonSourceResponse)
 async def get_lesson_source(lesson_id: str, request: Request):
     """Export a lesson as its editable, self-describing Story-JSON file."""
     store = request.state.content_store
@@ -209,7 +211,15 @@ async def get_lesson_source(lesson_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Lesson not found") from None
 
 
-@router.get("/{lesson_id}", status_code=200)
+@router.get(
+    "/{lesson_id}",
+    status_code=200,
+    response_model=LessonResponse,
+    # day is only present when the serializer resolved one (get_lesson passes
+    # it; get_lesson_by_day does not) — a plain response_model would rewrite the
+    # payload by re-adding "day": null on the by-day route.
+    response_model_exclude_unset=True,
+)
 async def get_lesson(lesson_id: str, request: Request):
     store = request.state.content_store
     row = store.get_lesson_row(lesson_id)

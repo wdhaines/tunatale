@@ -8,10 +8,12 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import CreateCardResponse
 from app.common.guid import compute_guid
 from app.main import app
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
+from tests._helpers.srs_item_shape import SRS_ITEM_KEYS
 
 
 class TestInflectionClozes:
@@ -75,6 +77,46 @@ class TestInflectionClozes:
         assert cloze.syntactic_unit.grammar == "ljubljana, accusative singular"
         assert cloze.anki_note_id is None
         assert cloze.directions[Direction.PRODUCTION].state == SRSState.NEW
+
+    async def test_inflection_cloze_response_keys_match_model(self, api_app_state):
+        """Oracle for the response_model flip (openapi ledger batch 7)."""
+        self._seed_base_learned(api_app_state)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "Ljubljano",
+                    "lemma": "ljubljana",
+                    "feature": "noun:acc:sg",
+                    "sentence": "Grem v Ljubljano.",
+                    "language_code": "sl",
+                },
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert set(data.keys()) == {"id", "was_created", "item"}
+        assert set(data["item"].keys()) == SRS_ITEM_KEYS
+        assert set(CreateCardResponse.model_fields) == {"id", "was_created", "item"}
+
+        # Element-level key set for the NESTED direction — see the twin
+        # assertion in test_api_base_cards.py. A cloze is production-only and
+        # NEW, so `_direction_to_dict` omits `left`; a plain `response_model=`
+        # would re-add `"left": null`. This is what pins
+        # `response_model_exclude_unset=True` on this route.
+        prod = data["item"]["directions"]["production"]
+        assert set(prod.keys()) == {
+            "state",
+            "due_at",
+            "stability",
+            "difficulty",
+            "reps",
+            "lapses",
+            "last_review",
+            "last_review_time_ms",
+            "anki_card_id",
+        }, "a NEW cloze's direction must not carry a `left` key"
 
     async def test_base_absent_returns_409(self, api_app_state):
         """No base collocation → 409, no row created."""
