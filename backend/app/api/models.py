@@ -977,3 +977,97 @@ class CreateCardResponse(BaseModel):
     id: int
     was_created: bool
     item: SrsItemResponse
+
+
+# ── Batch 9: badge / sync surfaces + the conditional-key grade response ──────
+# Mechanically simple (single-return static literals) but load-bearing: these
+# sit on the review badge, the pending bucket and the Anki envelope, so a
+# dropped key is a silently wrong number rather than a 500.
+
+
+class QueueStatsResponse(BaseModel):
+    """Response of GET /api/srs/queue-stats — the three badges plus the caps
+    and their provenance.
+
+    ``new``/``review`` are already MIN'd against the daily caps by the handler
+    (see ``.claude/rules/anki-queue-parity.md`` rule 12); the ``*_source``
+    fields report whether each cap came from the Anki cache, config, or the
+    hardcoded default.
+    """
+
+    new: int
+    learning: int
+    review: int
+    daily_new_cap: int
+    cap_source: str
+    daily_review_cap: int
+    review_cap_source: str
+    fsrs_source: str
+
+
+class ListenResponse(BaseModel):
+    """Response of POST /api/srs/listen.
+
+    ``staged`` counts grades parked in the pending bucket for "Check your
+    work"; ``applied`` counts the ones the user confirmed by hand, which are
+    graded immediately. They are disjoint.
+    """
+
+    status: str
+    staged: int
+    applied: int
+    created: int
+    remaining_candidates: int
+    listen_count: int
+
+
+class RefreshMediaResponse(BaseModel):
+    """Response of POST /api/admin/refresh-media (counts from ``import_seed``).
+
+    ``errors`` is fed by ``skipped_guid_collisions`` ALONE — a skipped
+    non-vocab note is normal, not a failure, and must not inflate this.
+    """
+
+    updated: int
+    unchanged: int
+    new: int
+    errors: int
+
+
+class PeerSyncResponse(BaseModel):
+    """Response of POST /api/anki/peer-sync (``PeerSyncReport``).
+
+    ⚠️ ``pull_required``/``push_required`` are NOT booleans despite the names —
+    they carry AnkiWeb's proto ``SyncCollectionResponse.ChangesRequired`` code
+    (``0 NO_CHANGES``, ``1 NORMAL_SYNC``, ``2 FULL_SYNC``, …; see
+    ``sync_orchestrator._full_sync_required``), and they are ``None`` on a leg
+    that never ran — which is exactly what a dry run produces. Typing them
+    ``bool`` made the dry-run path raise ResponseValidationError, i.e. a 500 on
+    a working endpoint; caught by ``test_forwards_dry_run`` during this flip.
+    ``tt_push_pull_exit`` is likewise ``None`` until the push leg runs.
+    """
+
+    auth_success: bool
+    pull_required: int | None
+    push_required: int | None
+    tt_push_pull_exit: int | None
+    dry_run: bool
+
+
+class DrillFeedbackResponse(BaseModel):
+    """Response of POST /api/srs/items/{id}/direction/{direction}/feedback.
+
+    ``left`` is CONDITIONAL: ``drill_feedback`` appends it only when the new
+    direction has a learning-step counter, so a REVIEW-state result omits the
+    key entirely. The route therefore carries
+    ``response_model_exclude_unset=True`` — without it FastAPI would put
+    ``"left": null`` back into the omitting branch, rewriting the payload in
+    the ADD direction. Both branches are pinned in
+    ``test_api_srs_directions.py::test_feedback_response_keys_match_model_both_branches``.
+    """
+
+    status: str
+    direction: str
+    new_due_at: str
+    new_state: str
+    left: int | None = None

@@ -23,6 +23,7 @@ from app.api.models import (
     CreateBaseCardRequest,
     CreateCardResponse,
     CreateItemRequest,
+    DrillFeedbackResponse,
     DrillRequest,
     DueCollocationsResponse,
     IgnoreLemmaRequest,
@@ -32,10 +33,12 @@ from app.api.models import (
     LessonTranscriptResponse,
     ListenPreviewResponse,
     ListenRequest,
+    ListenResponse,
     ListensResponse,
     ListItemsResponse,
     MarkLessonReviewedResponse,
     NewCollocationsResponse,
+    QueueStatsResponse,
     SetStateRequest,
     SrsItemResponse,
     SrsStatsResponse,
@@ -282,7 +285,14 @@ async def get_new_collocations(request: Request, limit: int = 10, direction: str
     return {"new": _triples_to_dicts(db, triples)}
 
 
-@router.post("/items/{item_id}/direction/{direction}/feedback", status_code=200)
+@router.post(
+    "/items/{item_id}/direction/{direction}/feedback",
+    status_code=200,
+    response_model=DrillFeedbackResponse,
+    # `left` is appended only when the new direction has one; a plain
+    # response_model would re-add "left": null to the omitting branch.
+    response_model_exclude_unset=True,
+)
 async def drill_feedback(item_id: int, direction: str, body: DrillRequest, request: Request):
     try:
         dir_enum = Direction(direction)
@@ -713,7 +723,7 @@ def _resolve_card_for_lemma(
     return res
 
 
-@router.post("/listen", status_code=200)
+@router.post("/listen", status_code=200, response_model=ListenResponse)
 async def mark_lesson_listened(body: ListenRequest, request: Request):
     store = request.state.content_store
     lesson = store.get_lesson(body.lesson_id)
@@ -1716,7 +1726,7 @@ async def get_stats(request: Request):
     return {"total": db.count_collocations(), "due_today": db.count_due_collocations(today)}
 
 
-@router.get("/queue-stats", status_code=200)
+@router.get("/queue-stats", status_code=200, response_model=QueueStatsResponse)
 async def get_queue_stats(request: Request, response: Response):
     # Live state; never cache. Without this, a normal browser refresh can be
     # served from heuristic disk cache and the badges go stale.

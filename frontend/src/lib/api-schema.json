@@ -480,6 +480,46 @@
         "title": "DirectionStateResponse",
         "type": "object"
       },
+      "DrillFeedbackResponse": {
+        "description": "Response of POST /api/srs/items/{id}/direction/{direction}/feedback.\n\n``left`` is CONDITIONAL: ``drill_feedback`` appends it only when the new\ndirection has a learning-step counter, so a REVIEW-state result omits the\nkey entirely. The route therefore carries\n``response_model_exclude_unset=True`` \u2014 without it FastAPI would put\n``\"left\": null`` back into the omitting branch, rewriting the payload in\nthe ADD direction. Both branches are pinned in\n``test_api_srs_directions.py::test_feedback_response_keys_match_model_both_branches``.",
+        "properties": {
+          "direction": {
+            "title": "Direction",
+            "type": "string"
+          },
+          "left": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Left"
+          },
+          "new_due_at": {
+            "title": "New Due At",
+            "type": "string"
+          },
+          "new_state": {
+            "title": "New State",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "direction",
+          "new_due_at",
+          "new_state"
+        ],
+        "title": "DrillFeedbackResponse",
+        "type": "object"
+      },
       "DrillRequest": {
         "properties": {
           "lesson_review": {
@@ -1603,6 +1643,45 @@
         "title": "ListenRequest",
         "type": "object"
       },
+      "ListenResponse": {
+        "description": "Response of POST /api/srs/listen.\n\n``staged`` counts grades parked in the pending bucket for \"Check your\nwork\"; ``applied`` counts the ones the user confirmed by hand, which are\ngraded immediately. They are disjoint.",
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "integer"
+          },
+          "created": {
+            "title": "Created",
+            "type": "integer"
+          },
+          "listen_count": {
+            "title": "Listen Count",
+            "type": "integer"
+          },
+          "remaining_candidates": {
+            "title": "Remaining Candidates",
+            "type": "integer"
+          },
+          "staged": {
+            "title": "Staged",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "staged",
+          "applied",
+          "created",
+          "remaining_candidates",
+          "listen_count"
+        ],
+        "title": "ListenResponse",
+        "type": "object"
+      },
       "ListenedLesson": {
         "description": "One element of ListensResponse.lessons.\n\nShape declared at ``db_listens.py::get_listened_lessons``.",
         "properties": {
@@ -1757,6 +1836,61 @@
           "new"
         ],
         "title": "NewCollocationsResponse",
+        "type": "object"
+      },
+      "PeerSyncResponse": {
+        "description": "Response of POST /api/anki/peer-sync (``PeerSyncReport``).\n\n\u26a0\ufe0f ``pull_required``/``push_required`` are NOT booleans despite the names \u2014\nthey carry AnkiWeb's proto ``SyncCollectionResponse.ChangesRequired`` code\n(``0 NO_CHANGES``, ``1 NORMAL_SYNC``, ``2 FULL_SYNC``, \u2026; see\n``sync_orchestrator._full_sync_required``), and they are ``None`` on a leg\nthat never ran \u2014 which is exactly what a dry run produces. Typing them\n``bool`` made the dry-run path raise ResponseValidationError, i.e. a 500 on\na working endpoint; caught by ``test_forwards_dry_run`` during this flip.\n``tt_push_pull_exit`` is likewise ``None`` until the push leg runs.",
+        "properties": {
+          "auth_success": {
+            "title": "Auth Success",
+            "type": "boolean"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "pull_required": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pull Required"
+          },
+          "push_required": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Push Required"
+          },
+          "tt_push_pull_exit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tt Push Pull Exit"
+          }
+        },
+        "required": [
+          "auth_success",
+          "pull_required",
+          "push_required",
+          "tt_push_pull_exit",
+          "dry_run"
+        ],
+        "title": "PeerSyncResponse",
         "type": "object"
       },
       "PipelineDayStatus": {
@@ -2057,6 +2191,55 @@
         "title": "ProposedBatch",
         "type": "object"
       },
+      "QueueStatsResponse": {
+        "description": "Response of GET /api/srs/queue-stats \u2014 the three badges plus the caps\nand their provenance.\n\n``new``/``review`` are already MIN'd against the daily caps by the handler\n(see ``.claude/rules/anki-queue-parity.md`` rule 12); the ``*_source``\nfields report whether each cap came from the Anki cache, config, or the\nhardcoded default.",
+        "properties": {
+          "cap_source": {
+            "title": "Cap Source",
+            "type": "string"
+          },
+          "daily_new_cap": {
+            "title": "Daily New Cap",
+            "type": "integer"
+          },
+          "daily_review_cap": {
+            "title": "Daily Review Cap",
+            "type": "integer"
+          },
+          "fsrs_source": {
+            "title": "Fsrs Source",
+            "type": "string"
+          },
+          "learning": {
+            "title": "Learning",
+            "type": "integer"
+          },
+          "new": {
+            "title": "New",
+            "type": "integer"
+          },
+          "review": {
+            "title": "Review",
+            "type": "integer"
+          },
+          "review_cap_source": {
+            "title": "Review Cap Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "new",
+          "learning",
+          "review",
+          "daily_new_cap",
+          "cap_source",
+          "daily_review_cap",
+          "review_cap_source",
+          "fsrs_source"
+        ],
+        "title": "QueueStatsResponse",
+        "type": "object"
+      },
       "RateLimitSnapshot": {
         "description": "Non-null value of RateLimitStatusResponse.snapshot.",
         "properties": {
@@ -2211,6 +2394,35 @@
           "tokens_per_day_limit"
         ],
         "title": "RateLimitStatusResponse",
+        "type": "object"
+      },
+      "RefreshMediaResponse": {
+        "description": "Response of POST /api/admin/refresh-media (counts from ``import_seed``).\n\n``errors`` is fed by ``skipped_guid_collisions`` ALONE \u2014 a skipped\nnon-vocab note is normal, not a failure, and must not inflate this.",
+        "properties": {
+          "errors": {
+            "title": "Errors",
+            "type": "integer"
+          },
+          "new": {
+            "title": "New",
+            "type": "integer"
+          },
+          "unchanged": {
+            "title": "Unchanged",
+            "type": "integer"
+          },
+          "updated": {
+            "title": "Updated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updated",
+          "unchanged",
+          "new",
+          "errors"
+        ],
+        "title": "RefreshMediaResponse",
         "type": "object"
       },
       "RenderAudioRequest": {
@@ -3187,9 +3399,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Refresh Media Api Admin Refresh Media Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RefreshMediaResponse"
                 }
               }
             },
@@ -3222,7 +3432,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PeerSyncResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4926,7 +5138,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/DrillFeedbackResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -5666,7 +5880,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ListenResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -5848,7 +6064,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/QueueStatsResponse"
+                }
               }
             },
             "description": "Successful Response"

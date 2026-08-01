@@ -248,6 +248,52 @@ class TestItemDictShape:
 class TestDrillEndpoint:
     """POST /api/srs/items/{id}/direction/{direction}/feedback"""
 
+    async def test_feedback_response_keys_match_model_both_branches(self):
+        """Key-set oracle for POST /items/{id}/direction/{dir}/feedback.
+
+        This is the ONE ledger entry with genuinely conditional keys:
+        `drill_feedback` appends `left` only when the new direction has one
+        (`if new_dir.left is not None`). Both branches are pinned here, because
+        a plain `response_model=` would put `"left": null` back into the
+        omitting branch — a payload rewrite in the ADD direction, which is what
+        `response_model_exclude_unset=True` on this route prevents. Asserting
+        only the `left`-carrying branch would leave that flag unpinned.
+
+        Written against UNFILTERED output before the flip, and the literals are
+        the independent oracle: `set(json) == set(model_fields)` alone goes
+        circular the moment `response_model=` starts filtering the payload.
+        """
+        from app.api.models import DrillFeedbackResponse
+
+        db = _db()
+        db.add_collocation(_unit("voda"), language_code="sl")
+        rows, _ = db.list_collocations(search="voda", limit=1)
+        item_id = rows[0][0]
+        base = {"status", "direction", "new_due_at", "new_state"}
+
+        # Branch 1 — a NEW card graded "again" enters the learning arc, so the
+        # direction carries a `left` step counter and the key IS present.
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.post(
+                f"/api/srs/items/{item_id}/direction/recognition/feedback",
+                json={"rating": "again"},
+            )
+        assert r.status_code == 200
+        assert r.json()["new_state"] == "learning"
+        assert set(r.json().keys()) == base | {"left"}
+
+        # Branch 2 — graduating to REVIEW clears `left`, so the key is OMITTED.
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r2 = await c.post(
+                f"/api/srs/items/{item_id}/direction/recognition/feedback",
+                json={"rating": "easy"},
+            )
+        assert r2.status_code == 200
+        assert r2.json()["new_state"] == "review"
+        assert set(r2.json().keys()) == base, "a REVIEW direction must not carry a `left` key"
+
+        assert set(DrillFeedbackResponse.model_fields) == base | {"left"}
+
     async def test_recognition_drill_advances_recognition_only(self):
         db = _db()
         db.add_collocation(_unit("voda"), language_code="sl")

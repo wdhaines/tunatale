@@ -49,6 +49,24 @@ class TestListenClozeIntegration:
         app.state.content_store = store
         return db
 
+    async def test_listen_response_keys_match_model(self):
+        """Key-set oracle for POST /api/srs/listen.
+
+        Written against the UNFILTERED handler output before `response_model=`
+        went on the route, so it fails if the model drops a live key. The
+        literal is the independent oracle; `set(json) == set(model_fields)`
+        alone would be circular once the flip is in.
+        """
+        from app.api.models import ListenResponse
+
+        await self._setup_lesson()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert response.status_code == 200
+        expected = {"status", "staged", "applied", "created", "remaining_candidates", "listen_count"}
+        assert set(response.json().keys()) == expected
+        assert set(ListenResponse.model_fields) == expected
+
     async def test_listen_creates_cloze_card_when_enabled(self):
         """Created cloze rows have state='new', reps=0, introduced_at IS NULL."""
 

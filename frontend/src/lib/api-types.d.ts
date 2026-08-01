@@ -1575,6 +1575,30 @@ export interface components {
       /** State */
       state: string;
     };
+    /**
+     * DrillFeedbackResponse
+     * @description Response of POST /api/srs/items/{id}/direction/{direction}/feedback.
+     *
+     *     ``left`` is CONDITIONAL: ``drill_feedback`` appends it only when the new
+     *     direction has a learning-step counter, so a REVIEW-state result omits the
+     *     key entirely. The route therefore carries
+     *     ``response_model_exclude_unset=True`` — without it FastAPI would put
+     *     ``"left": null`` back into the omitting branch, rewriting the payload in
+     *     the ADD direction. Both branches are pinned in
+     *     ``test_api_srs_directions.py::test_feedback_response_keys_match_model_both_branches``.
+     */
+    DrillFeedbackResponse: {
+      /** Direction */
+      direction: string;
+      /** Left */
+      left?: number | null;
+      /** New Due At */
+      new_due_at: string;
+      /** New State */
+      new_state: string;
+      /** Status */
+      status: string;
+    };
     /** DrillRequest */
     DrillRequest: {
       /**
@@ -2080,6 +2104,28 @@ export interface components {
       };
     };
     /**
+     * ListenResponse
+     * @description Response of POST /api/srs/listen.
+     *
+     *     ``staged`` counts grades parked in the pending bucket for "Check your
+     *     work"; ``applied`` counts the ones the user confirmed by hand, which are
+     *     graded immediately. They are disjoint.
+     */
+    ListenResponse: {
+      /** Applied */
+      applied: number;
+      /** Created */
+      created: number;
+      /** Listen Count */
+      listen_count: number;
+      /** Remaining Candidates */
+      remaining_candidates: number;
+      /** Staged */
+      staged: number;
+      /** Status */
+      status: string;
+    };
+    /**
      * ListenedLesson
      * @description One element of ListensResponse.lessons.
      *
@@ -2158,6 +2204,31 @@ export interface components {
     NewCollocationsResponse: {
       /** New */
       new: components["schemas"]["SrsItemResponse"][];
+    };
+    /**
+     * PeerSyncResponse
+     * @description Response of POST /api/anki/peer-sync (``PeerSyncReport``).
+     *
+     *     ⚠️ ``pull_required``/``push_required`` are NOT booleans despite the names —
+     *     they carry AnkiWeb's proto ``SyncCollectionResponse.ChangesRequired`` code
+     *     (``0 NO_CHANGES``, ``1 NORMAL_SYNC``, ``2 FULL_SYNC``, …; see
+     *     ``sync_orchestrator._full_sync_required``), and they are ``None`` on a leg
+     *     that never ran — which is exactly what a dry run produces. Typing them
+     *     ``bool`` made the dry-run path raise ResponseValidationError, i.e. a 500 on
+     *     a working endpoint; caught by ``test_forwards_dry_run`` during this flip.
+     *     ``tt_push_pull_exit`` is likewise ``None`` until the push leg runs.
+     */
+    PeerSyncResponse: {
+      /** Auth Success */
+      auth_success: boolean;
+      /** Dry Run */
+      dry_run: boolean;
+      /** Pull Required */
+      pull_required: number | null;
+      /** Push Required */
+      push_required: number | null;
+      /** Tt Push Pull Exit */
+      tt_push_pull_exit: number | null;
     };
     /**
      * PipelineDayStatus
@@ -2285,6 +2356,34 @@ export interface components {
       start_day: number;
     };
     /**
+     * QueueStatsResponse
+     * @description Response of GET /api/srs/queue-stats — the three badges plus the caps
+     *     and their provenance.
+     *
+     *     ``new``/``review`` are already MIN'd against the daily caps by the handler
+     *     (see ``.claude/rules/anki-queue-parity.md`` rule 12); the ``*_source``
+     *     fields report whether each cap came from the Anki cache, config, or the
+     *     hardcoded default.
+     */
+    QueueStatsResponse: {
+      /** Cap Source */
+      cap_source: string;
+      /** Daily New Cap */
+      daily_new_cap: number;
+      /** Daily Review Cap */
+      daily_review_cap: number;
+      /** Fsrs Source */
+      fsrs_source: string;
+      /** Learning */
+      learning: number;
+      /** New */
+      new: number;
+      /** Review */
+      review: number;
+      /** Review Cap Source */
+      review_cap_source: string;
+    };
+    /**
      * RateLimitSnapshot
      * @description Non-null value of RateLimitStatusResponse.snapshot.
      */
@@ -2321,6 +2420,23 @@ export interface components {
       tokens_per_day_limit: number;
       /** Tokens Used 24H */
       tokens_used_24h: number | null;
+    };
+    /**
+     * RefreshMediaResponse
+     * @description Response of POST /api/admin/refresh-media (counts from ``import_seed``).
+     *
+     *     ``errors`` is fed by ``skipped_guid_collisions`` ALONE — a skipped
+     *     non-vocab note is normal, not a failure, and must not inflate this.
+     */
+    RefreshMediaResponse: {
+      /** Errors */
+      errors: number;
+      /** New */
+      new: number;
+      /** Unchanged */
+      unchanged: number;
+      /** Updated */
+      updated: number;
     };
     /** RenderAudioRequest */
     RenderAudioRequest: {
@@ -2722,9 +2838,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            [key: string]: unknown;
-          };
+          "application/json": components["schemas"]["RefreshMediaResponse"];
         };
       };
     };
@@ -2746,7 +2860,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["PeerSyncResponse"];
         };
       };
       /** @description Validation Error */
@@ -3966,7 +4080,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["DrillFeedbackResponse"];
         };
       };
       /** @description Validation Error */
@@ -4485,7 +4599,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["ListenResponse"];
         };
       };
       /** @description Validation Error */
@@ -4630,7 +4744,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": unknown;
+          "application/json": components["schemas"]["QueueStatsResponse"];
         };
       };
     };

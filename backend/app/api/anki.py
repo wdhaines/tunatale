@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.api.models import PeerSyncResponse
 from app.cards.media.pipeline import fetch_card_media
 from app.cards.media.query_llm import generate_image_query
 
@@ -42,7 +43,7 @@ def _build_media_fn(llm, db):
     return _media_fn
 
 
-@router.post("/peer-sync", status_code=200)
+@router.post("/peer-sync", status_code=200, response_model=PeerSyncResponse)
 async def trigger_peer_sync(request: Request, dry_run: bool = False):
     """Sync TT's own collection to AnkiWeb (or a self-host server) as a peer.
 

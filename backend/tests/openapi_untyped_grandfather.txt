@@ -1,7 +1,2 @@
-drill_feedback_api_srs_items__item_id__direction__direction__feedback_post  # reason: untyped handler — returns conditional key-set
 get_lesson_review_queue_api_srs_lesson__lesson_id__review_queue_get  # reason: untyped handler — mechanical, awaiting scheduled batch
-get_queue_stats_api_srs_queue_stats_get  # reason: untyped handler — mechanical, awaiting scheduled batch
 get_review_queue_api_srs_review_queue_get  # reason: untyped handler — returns a traced/variable shape
-mark_lesson_listened_api_srs_listen_post  # reason: untyped handler — mechanical, awaiting scheduled batch
-refresh_media_api_admin_refresh_media_post  # reason: untyped handler — mechanical, awaiting scheduled batch
-trigger_peer_sync_api_anki_peer_sync_post  # reason: untyped handler — mechanical, awaiting scheduled batch

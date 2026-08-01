@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from app.api.models import RefreshMediaResponse
+
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
-@router.post("/refresh-media", status_code=200)
+@router.post("/refresh-media", status_code=200, response_model=RefreshMediaResponse)
 async def refresh_media() -> dict:
     """Re-import media from Anki, updating changed files (SHA-aware).
 

@@ -103,6 +103,34 @@ def _stamp_reviews_completed_today(db, today: date, count: int):
 
 
 class TestQueueStats:
+    async def test_queue_stats_response_keys_match_model(self, api_app_state):
+        """Key-set oracle for GET /api/srs/queue-stats.
+
+        Written against the UNFILTERED handler output before `response_model=`
+        went on the route, so it fails if the model drops a live key. The
+        literal is the independent oracle; asserting `model_fields` as well is
+        what keeps the model honest afterwards — `set(json) == set(model_fields)`
+        alone is circular once the flip is in, because `response_model=` filters
+        the payload down to the model's own fields.
+        """
+        from app.api.models import QueueStatsResponse
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/queue-stats")
+        assert resp.status_code == 200
+        expected = {
+            "new",
+            "learning",
+            "review",
+            "daily_new_cap",
+            "cap_source",
+            "daily_review_cap",
+            "review_cap_source",
+            "fsrs_source",
+        }
+        assert set(resp.json().keys()) == expected
+        assert set(QueueStatsResponse.model_fields) == expected
+
     async def test_queue_stats_includes_fsrs_source_default(self, api_app_state):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get("/api/srs/queue-stats")
