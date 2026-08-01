@@ -176,3 +176,35 @@ class TestSuspendedCardStillExcluded:
         # SUSPENDED is not LEARNING/RELEARNING/REVIEW → _listen_grade_class returns None
         assert "anna" not in preview_texts
         assert "boris" in preview_texts
+
+
+class TestNorwegianProperNounIgnore:
+    """Reproduction attempt for the 2026-07-29 field incident: three lemmas on
+    the card-less ignore list ('hansen', 'lund', 'alibi') acquired vocab cards
+    with ``source='llm'`` — the signature of ``mark_lesson_listened``'s staged
+    creation loop — four days AFTER the ignore guard shipped (4df8cab).
+
+    Difference from the tests above, and the only shape difference the field
+    data shows: the language is Norwegian, and the lemmas are proper nouns that
+    appear CAPITALIZED in the source text ('Hansen'), so the guard's
+    ``lemma.lower() in ignored`` depends on what the lemmatizer emits for a
+    capitalized token.
+    """
+
+    async def test_capitalized_proper_noun_is_not_created_in_norwegian(self):
+        db = _setup(
+            ["Hansen kom til Lund.", "Hansen fant et alibi."],
+            language_code="no",
+        )
+        for lem in ("hansen", "lund", "alibi"):
+            db.add_ignored_lemma("no", lem)
+
+        preview = await _get_preview()
+        preview_texts = {c["text"].lower() for c in preview["candidates"]}
+        assert "hansen" not in preview_texts, f"ignored lemma offered for creation: {preview_texts}"
+        assert "lund" not in preview_texts, f"ignored lemma offered for creation: {preview_texts}"
+        assert "alibi" not in preview_texts, f"ignored lemma offered for creation: {preview_texts}"
+
+        await _post_listen({"lesson_id": "lesson-1"})
+        for lem in ("hansen", "lund", "alibi"):
+            assert db.get_collocation_by_lemma(lem) is None, f"card created for ignored lemma {lem!r}"
