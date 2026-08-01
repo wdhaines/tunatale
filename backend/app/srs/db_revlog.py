@@ -142,9 +142,21 @@ class DbRevlogMixin:
         writing it back (and merging non-FSRS fields).
         """
         from app.srs.fsrs import DEFAULT_FSRS5_PARAMS, Rating, schedule
+        from app.srs.queue_stats import resolve_learning_steps, resolve_relearning_steps
 
         if params is None:
             params = DEFAULT_FSRS5_PARAMS
+
+        # Layer 82 follow-up: resolve the steps HERE and inject them, rather
+        # than letting `schedule()` fall back to `_get_steps_for_state`, which
+        # self-constructs a database from the SINGULAR `settings.database_url`.
+        # In multi-language mode the request's db comes from the PLURAL
+        # `database_urls[code]` map, so that fallback replayed a Norwegian
+        # card's revlog on SLOVENE learning steps. `self` is already the
+        # request's own database, so no new plumbing is needed — the defect was
+        # only ever that nobody passed it down.
+        learn_steps, _ = resolve_learning_steps(self)
+        relearn_steps, _ = resolve_relearning_steps(self)
 
         sql = """
             SELECT id, button_chosen, taken_millis, review_kind, factor
@@ -218,6 +230,8 @@ class DbRevlogMixin:
                 time_ms=row["id"],
                 now=now_dt,
                 col_crt=col_crt,
+                learn_steps=learn_steps,
+                relearn_steps=relearn_steps,
             )
 
         return item.directions[direction]
