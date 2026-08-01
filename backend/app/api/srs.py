@@ -494,8 +494,11 @@ def _listen_grade_class(
 ) -> str | None:
     """Classify a recognition direction for /listen grading.
 
-    Returns one of ``"learning"``, ``"due"``, ``"ahead"``, or ``None`` (not
-    eligible).  ``last_review`` gates ONLY the once-per-day window
+    Returns one of ``"new"``, ``"learning"``, ``"due"``, ``"ahead"``, or
+    ``None`` (not eligible).  A NEW-state direction classifies as ``"new"``:
+    the card exists but has never been introduced, and hearing the word is
+    allowed to introduce it (subject to the shared introduction budget — see
+    ``_allocate_new_state_budget``).  ``last_review`` gates ONLY the once-per-day window
     (already-graded-today returns ``None`` for both due and ahead); a missing
     or legacy non-datetime ``last_review`` means "not graded today" and falls
     through to the dueness check.  The REVIEW-state dueness boundary matches
@@ -504,6 +507,8 @@ def _listen_grade_class(
     """
     if rec is None:
         return None
+    if rec.state == SRSState.NEW:
+        return "new"
     if rec.state in (SRSState.LEARNING, SRSState.RELEARNING):
         return "learning"
     if rec.state != SRSState.REVIEW:
@@ -528,6 +533,61 @@ def _release_review_kind(prev_dir: DirectionState) -> int | None:
     """
     start, end, end_of_day_utc = _listen_day_window()
     return 3 if _listen_grade_class(prev_dir, start, end, end_of_day_utc=end_of_day_utc) == "ahead" else None
+
+
+def _created_in_window(
+    created_at: str | None,
+    today_start: datetime.datetime,
+    today_end: datetime.datetime,
+) -> bool:
+    """Whether a collocation's ``created_at`` falls inside today's Anki day.
+
+    Deliberately takes the window from ``_listen_day_window`` rather than
+    consulting ``datetime.date.today()``: the Anki day rolls over at 4 AM local,
+    so a card created at 01:00 belongs to *yesterday*'s allowance
+    (``scripts/check_date_today.py`` enforces this repo-wide).
+
+    ``collocations.created_at`` is SQLite ``datetime('now')`` format — UTC,
+    space-separated, no timezone suffix — which ``fromisoformat`` accepts; a
+    legacy or malformed value simply reads as "not today" rather than 500ing
+    the preview.
+    """
+    if not created_at:
+        return False
+    try:
+        stamp = datetime.datetime.fromisoformat(created_at)
+    except ValueError:
+        return False
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=datetime.UTC)
+    return today_start <= stamp.astimezone(datetime.UTC) < today_end
+
+
+def _allocate_new_state_budget[T](
+    rows: list[tuple[T, bool]],
+    budget: int,
+) -> tuple[list[T], list[T], int]:
+    """Split NEW-state candidates into (live, over-budget tail, budget left).
+
+    ``rows`` is ``(payload, created_today)`` in candidate order. Releasing a
+    staged grade on a NEW-state card *introduces* it, so introductions and
+    creations draw on ONE shared budget — otherwise a lesson with 40 NEW-state
+    words would introduce 40 cards in a single listen.
+
+    Two rules make the accounting honest:
+
+    * A card **created today is free**. It already holds a slot via
+      ``count_new_created_today``, which is subtracted when the budget is
+      computed; charging it again would double-count the same card.
+    * Free rows are ordered ahead of charged rows, and NEW-state rows are
+      allocated before creations, so **cards already in the deck get finished
+      before more are added**.
+
+    The returned budget remainder is what creation may still spend.
+    """
+    free = [payload for payload, created_today in rows if created_today]
+    charged = [payload for payload, created_today in rows if not created_today]
+    return free + charged[:budget], charged[budget:], max(0, budget - len(charged))
 
 
 def _bump_grade_clock(last_ms: int) -> tuple[datetime.datetime, int]:
@@ -764,7 +824,12 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # day). Deliberately does NOT subtract the whole-deck NEW backlog —
     # the queue engine's new-quota remains the real flow limiter.
     new_cap, _ = resolve_daily_new_cap(db)
-    creation_budget = max(0, new_cap - db.count_new_introduced_today(today) - db.count_new_created_today(today))
+    intro_budget = max(0, new_cap - db.count_new_introduced_today(today) - db.count_new_created_today(today))
+    # ((collocation_id, rating, is_confirmed), created_today) for every
+    # NEW-state candidate, in the same candidate order the preview uses.
+    # Staging is deferred until the shared introduction budget is allocated,
+    # so the commit acts on exactly the set the preview offered.
+    new_state_pending: list[tuple[tuple[int, str, bool], bool]] = []
     lemma_candidates: list[str] = []
     # Lemmas the user rated "skip" this listen. They stay in `lemma_candidates`
     # (so they hold their rank position) but the staged-creation loop below
@@ -861,10 +926,23 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             ):
                 continue
             rating_str = body.word_ratings.get(lemma, "good")
-            if rating_str == "skip":
-                continue
             listen_coll_id = db.get_collocation_id_by_guid(existing.guid)
             assert listen_coll_id is not None
+            if grade_cls == "new":
+                # Deferred to the shared introduction budget below. Allocation
+                # is rating-independent — the preview has no ratings to consult,
+                # so consulting them here would let the two sides disagree about
+                # which rows are live (the 6a5c718 preview↔commit bug class).
+                # The skip filter is applied when the allocated rows are staged.
+                new_state_pending.append(
+                    (
+                        (listen_coll_id, rating_str, lemma in confirmed_words),
+                        _created_in_window(db.get_created_at_by_guid(existing.guid), today_start, today_end),
+                    )
+                )
+                continue
+            if rating_str == "skip":
+                continue
             if lemma in confirmed_words:
                 _apply_confirmed(listen_coll_id, rating_str)
             else:
@@ -907,10 +985,19 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         ):
             continue
         rating_str = body.kp_ratings.get(kp.phrase, "good")
-        if rating_str == "skip":
-            continue
         kp_coll_id = db.get_collocation_id_by_guid(existing.guid)
         assert kp_coll_id is not None
+        if grade_cls == "new":
+            # Same shared budget as NEW-state words — mirrors the preview.
+            new_state_pending.append(
+                (
+                    (kp_coll_id, rating_str, kp.phrase in confirmed_kps),
+                    _created_in_window(db.get_created_at_by_guid(existing.guid), today_start, today_end),
+                )
+            )
+            continue
+        if rating_str == "skip":
+            continue
         if kp.phrase in confirmed_kps:
             _apply_confirmed(kp_coll_id, rating_str)
         else:
@@ -927,6 +1014,19 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # No persisted cursor: each listen recomputes lesson-word-set minus tracked
     # cards and takes the top of the ranking; cards created by this listen are
     # "existing" for the next one.
+    # ── Shared introduction budget: NEW-state rows first, then creations ──
+    # Mirrors get_listen_preview exactly; whatever budget survives the
+    # introductions is what creation may spend.
+    live_new, _tail_new, creation_budget = _allocate_new_state_budget(new_state_pending, intro_budget)
+    for _coll_id, _rating, _confirmed in live_new:
+        if _rating == "skip":
+            continue
+        if _confirmed:
+            _apply_confirmed(_coll_id, _rating)
+        else:
+            db.stage_pending_grade(body.lesson_id, _coll_id, Direction.RECOGNITION.value, _rating, "new")
+            staged_count += 1
+
     ranked = _rank_listen_candidates([], lemma_candidates, lemma_occurrences)
     for i, (_kind, cand) in enumerate(ranked):
         if i >= creation_budget:
@@ -1063,12 +1163,16 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     reachable from the main queue: with no pending row, the Layer 81 exclusion
     does not hold it back.
 
-    Consequences worth knowing: a NEW card can never appear (``_listen_grade_class``
-    returns None for NEW, so nothing stages it), and neither can a cloze. Release
-    by any path — per-card grade, ``commit-pending``, or an Anki-side grade
-    arriving via ``sync_pull`` — clears the row, which is what drops the card
-    from this queue; no separate "graded since the arming listen" filter is
-    needed.
+    Consequences worth knowing: a NEW card CAN appear here (since 2026-08
+    ``_listen_grade_class`` returns ``"new"`` for a NEW-state direction, so a
+    listen stages carded-but-never-introduced words), but only up to the shared
+    introduction budget — releasing such a row *introduces* the card, spending
+    Anki's daily new-card allowance, so ``_allocate_new_state_budget`` caps how
+    many a single listen can arm. A cloze still can never appear: staging is
+    RECOGNITION-only and cloze is production-only. Release by any path —
+    per-card grade, ``commit-pending``, or an Anki-side grade arriving via
+    ``sync_pull`` — clears the row, which is what drops the card from this
+    queue; no separate "graded since the arming listen" filter is needed.
     """
     response.headers["Cache-Control"] = "no-store"
     store = request.state.content_store
@@ -1289,11 +1393,17 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
 
     from app.srs.mastery import compute_mastery_progress
 
-    _GROUP_RANK = {"learning": 0, "due": 1, "ahead": 2}
+    # NEW-state rows are introductions, so they sort with the creations that
+    # share their budget — ahead of "learning" (0). -1 is the create rank.
+    _GROUP_RANK = {"new": -1, "learning": 0, "due": 1, "ahead": 2}
     horizon = settings.listen_due_horizon_days
 
     candidates: list[dict] = []
     lemma_candidates: list[str] = []
+    # (row, created_today) for every NEW-state candidate, in candidate order.
+    # Held back from `candidates` until the shared introduction budget is
+    # allocated below, which is what stamps their `will_create`.
+    new_state_rows: list[tuple[dict, bool]] = []
 
     # ── Word-level candidates (tracked + untracked) ─────────────────────
     for lemma in words.first_sentence:
@@ -1336,20 +1446,27 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
             # which renders the same words as "known"); "ahead" adds the
             # not-graded-today gate this list also needs.
             well_known_flag = grade_cls == "ahead" and is_well_known(rec, today, horizon)
-            candidates.append(
-                {
-                    "kind": "word",
-                    "text": lemma,
-                    "item_id": existing_id,
-                    "grade_class": grade_cls,
-                    "rating": "good",
-                    "translation": existing.syntactic_unit.translation or "",
-                    "progress": progress,
-                    "well_known": well_known_flag,
-                    "due_at": due_at_str,
-                    "_group_rank": _GROUP_RANK.get(grade_cls, 3),
-                }
-            )
+            row = {
+                "kind": "word",
+                "text": lemma,
+                "item_id": existing_id,
+                "grade_class": grade_cls,
+                "rating": "good",
+                "translation": existing.syntactic_unit.translation or "",
+                # A NEW-state card has no schedule yet: `progress: None` renders
+                # it in the unknown colour like a create row, rather than a
+                # misleading red-for-0%.
+                "progress": None if grade_cls == "new" else progress,
+                "well_known": well_known_flag,
+                "due_at": None if grade_cls == "new" else due_at_str,
+                "_group_rank": _GROUP_RANK.get(grade_cls, 3),
+            }
+            if grade_cls == "new":
+                new_state_rows.append(
+                    (row, _created_in_window(db.get_created_at_by_guid(existing.guid), today_start, today_end))
+                )
+            else:
+                candidates.append(row)
 
     # ── Key phrase candidates (tracked only; creation deferred) ──────────
     for kp in lesson.key_phrases:
@@ -1374,25 +1491,45 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
             else None
         )
         well_known_flag = grade_cls == "ahead" and is_well_known(rec, today, horizon)
-        candidates.append(
-            {
-                "kind": "kp",
-                "text": kp.phrase,
-                "item_id": kp_id,
-                "grade_class": grade_cls,
-                "rating": "good",
-                "translation": item.syntactic_unit.translation or kp.translation or "",
-                "progress": progress,
-                "well_known": well_known_flag,
-                "due_at": due_at_str,
-                "_group_rank": _GROUP_RANK.get(grade_cls, 3),
-            }
-        )
+        kp_row = {
+            "kind": "kp",
+            "text": kp.phrase,
+            "item_id": kp_id,
+            "grade_class": grade_cls,
+            "rating": "good",
+            "translation": item.syntactic_unit.translation or kp.translation or "",
+            "progress": None if grade_cls == "new" else progress,
+            "well_known": well_known_flag,
+            "due_at": None if grade_cls == "new" else due_at_str,
+            "_group_rank": _GROUP_RANK.get(grade_cls, 3),
+        }
+        # A NEW-state key phrase is an introduction too — it draws on the same
+        # budget as NEW-state words and creations. Leaving it out would let a
+        # lesson introduce key phrases without limit, and (worse) would stage
+        # in the commit a row the preview never budgeted.
+        if grade_cls == "new":
+            new_state_rows.append(
+                (kp_row, _created_in_window(db.get_created_at_by_guid(item.guid), today_start, today_end))
+            )
+        else:
+            candidates.append(kp_row)
 
     # ── Ranked, budget-truncated creation candidates (mirrors
     # mark_lesson_listened's staged-creation loop exactly, D2/D3) ──────────
     new_cap, _ = resolve_daily_new_cap(db)
-    creation_budget = max(0, new_cap - db.count_new_introduced_today(today) - db.count_new_created_today(today))
+    intro_budget = max(0, new_cap - db.count_new_introduced_today(today) - db.count_new_created_today(today))
+    # ONE budget covers introductions and creations. NEW-state rows are
+    # allocated first (finish the deck's existing cards before adding more);
+    # whatever survives is what creation may still spend.
+    live_new, tail_new, creation_budget = _allocate_new_state_budget(new_state_rows, intro_budget)
+    for _row in live_new:
+        _row["will_create"] = True
+    for _row in tail_new:
+        # Past the budget → the existing collapsed "N more — next listen" tail,
+        # the same mechanism over-budget creations already use.
+        _row["will_create"] = False
+    candidates.extend(live_new)
+    candidates.extend(tail_new)
     ranked = _rank_listen_candidates([], lemma_candidates, words.occurrences)
     # A create row has no card yet, so there is no stored translation to read —
     # the gloss comes from the lesson's own map, resolved through the SAME

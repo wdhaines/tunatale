@@ -1299,7 +1299,14 @@ class TestListenGradeClass:
         )
         assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) == "ahead"
 
-    def test_new_state_returns_none(self):
+    def test_new_state_returns_new(self):
+        """A NEW-state card is surfaced, not dropped (2026-08).
+
+        This used to assert ``None``: a carded-but-never-introduced lemma was
+        invisible to both the preview and the commit, so the lesson stats line
+        counted it as "new" while the preview showed no row for it at all.
+        Introduction is now offered, capped by the shared introduction budget.
+        """
         from datetime import date
 
         from app.api.srs import _listen_grade_class
@@ -1315,7 +1322,7 @@ class TestListenGradeClass:
             state=SRSState.NEW,
             reps=0,
         )
-        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) is None
+        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) == "new"
 
 
 class TestListenWindowUsesAnkiRollover:

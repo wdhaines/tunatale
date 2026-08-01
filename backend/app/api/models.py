@@ -34,14 +34,17 @@ class ListenPreviewCandidate(BaseModel):
     kind: Literal["create", "word", "kp"]
     text: str
     item_id: int | None
-    grade_class: Literal["create", "learning", "due", "ahead"]
+    grade_class: Literal["create", "new", "learning", "due", "ahead"]
     rating: Literal["again", "hard", "good", "easy", "skip"]
     translation: str
     progress: float | None
     well_known: bool = False
-    # True for every tracked row and for the create rows this listen will
-    # actually create; False only for create rows past the per-listen creation
-    # budget, which the modal renders as a read-only "next listen" tail.
+    # True for every row this listen will actually act on; False for rows past
+    # the shared introduction budget, which the modal renders as a read-only
+    # "next listen" tail. Two populations can be False: create rows beyond the
+    # budget, and `grade_class="new"` rows (a NEW-state card whose introduction
+    # this listen cannot afford) — both spend the same allowance, so both
+    # overflow into the same tail.
     # The default spares Python callers from restating it, but NOT the frontend:
     # FastAPI emits the serialization schema, where a defaulted field is still
     # `required`, so the generated TS type demands it and every candidate

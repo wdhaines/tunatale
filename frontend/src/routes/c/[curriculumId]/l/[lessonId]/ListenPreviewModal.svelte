@@ -143,8 +143,9 @@
 				const key = candidateKey(c);
 				if (c.well_known) {
 					rts[key] = 'skip';
-				} else if (c.kind === 'create' && c.will_create === false) {
-					// Tail rows (outside the creation budget) get NO entry at all.
+				} else if (c.will_create === false) {
+					// Tail rows (outside the shared introduction budget) get NO entry
+					// at all — over-budget create rows AND NEW-state rows alike.
 					continue;
 				} else {
 					rts[key] = 'good';
@@ -257,8 +258,14 @@
 	// says overdue, so the word carried nothing. The two states that are not a
 	// day count keep a word of their own.
 	function dueLabel(c: ListenPreviewCandidate): string {
-		if (c.kind === 'create') return 'new';
-		if (c.grade_class === 'learning') return 'learn';
+		// A NEW-state card reads exactly like a create row: both are "not yet
+		// introduced", and the difference (card already exists) is not something
+		// the learner needs to see. Stated explicitly rather than leaning on the
+		// `?? c.grade_class` fallback below, which would also produce "new" for
+		// a null due_at but only by coincidence.
+		if (c.kind === 'create' || c.grade_class === 'new') return 'new';
+		// "learning", not "learn" — matches the lesson stats line's bucket names.
+		if (c.grade_class === 'learning') return 'learning';
 		return formatDueAt(c.due_at ?? null) ?? c.grade_class ?? '';
 	}
 
@@ -272,7 +279,11 @@
 	// red→yellow→green by progress, so a word looks the same here as it does in
 	// the transcript. Dueness is weight, not hue (WordSpan's `.word-due`).
 	function dueStyle(c: ListenPreviewCandidate): string {
-		if (c.kind === 'create') {
+		// NEW-state rows join create rows in the unknown colour. They carry
+		// `progress: null`, and the `?? 0` below would otherwise paint them the
+		// red of 0% mastery — which reads as "you keep failing this" rather than
+		// "you haven't started it".
+		if (c.kind === 'create' || c.grade_class === 'new') {
 			return `color: ${UNKNOWN_COLOR}; background: color-mix(in srgb, ${UNKNOWN_COLOR} 18%, transparent);`;
 		}
 		const p = c.progress ?? 0;
@@ -284,15 +295,18 @@
 	// slot instead — see mark_lesson_listened), so `will_create` is correct no
 	// matter what the user checks. The live/tail split is therefore a STATIC
 	// filter on the server's flag, not a re-derivation from current ratings.
-	let tailCandidates = $derived(
-		candidates.filter((c) => c.kind === 'create' && c.will_create === false),
-	);
+	// Two populations overflow here now: create rows past the budget, and
+	// NEW-state rows whose INTRODUCTION the budget cannot afford (releasing one
+	// spends the same daily new-card allowance a creation does). `will_create`
+	// is false on exactly those rows and defaults true everywhere else, so the
+	// flag alone partitions them — no need to enumerate kinds.
+	let tailCandidates = $derived(candidates.filter((c) => c.will_create === false));
 
-	// The gradeable set: every tracked (word/kp) row that is not well-known,
-	// plus every create row the server will actually create. Tail rows are
-	// rendered separately and read-only.
+	// The gradeable set: every tracked (word/kp) row that is not well-known and
+	// not over budget, plus every create row the server will actually create.
+	// Tail rows are rendered separately and read-only.
 	let liveCandidates = $derived([
-		...candidates.filter((c) => c.kind !== 'create' && !c.well_known),
+		...candidates.filter((c) => c.kind !== 'create' && !c.well_known && c.will_create !== false),
 		...candidates.filter((c) => c.kind === 'create' && c.will_create !== false),
 	]);
 
@@ -515,7 +529,9 @@
 
 				{#if wellKnownCandidates.length > 0}
 					<details class="well-known-group">
-						<summary>{wellKnownCandidates.length} well-known word{wellKnownCandidates.length !== 1 ? 's' : ''}</summary>
+						<!-- "known", matching the lesson stats line's bucket. The API field
+					     is still `well_known`; only the label changed. -->
+					<summary>{wellKnownCandidates.length} known word{wellKnownCandidates.length !== 1 ? 's' : ''}</summary>
 						<ul class="list">
 							{#each wellKnownCandidates as c (candidateKey(c))}
 								{@render candidateRow(c)}

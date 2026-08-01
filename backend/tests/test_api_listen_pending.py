@@ -223,14 +223,25 @@ class TestListenStagesInsteadOfGrading:
         assert data["staged"] == 0
         assert _revlog_count(db) == 0
 
-    async def test_new_card_stages_nothing(self):
+    async def test_new_card_stages_an_introduction(self):
+        """A NEW-state card now stages, within the shared introduction budget.
+
+        This used to assert "stages nothing" — the old ``_listen_grade_class``
+        returned None for NEW, hiding carded-but-never-introduced words from
+        the preview and the commit alike (2026-08). The seeded card is created
+        during this test, so it is free against the budget (it already holds a
+        slot via ``count_new_created_today``) and is always offered.
+        """
         db = _setup(_lesson(["banka"]))
         _seed(db, "banka", klass="new")
 
         data = await _listen()
 
-        assert db.get_pending_grades(LESSON_ID) == []
-        assert data["staged"] == 0
+        rows = db.get_pending_grades(LESSON_ID)
+        assert len(rows) == 1
+        assert rows[0]["grade_class"] == "new"
+        assert data["staged"] == 1
+        assert _revlog_count(db) == 0, "staging must not grade"
 
     async def test_multiple_eligible_cards_stage_one_row_each(self):
         db = _setup(_lesson(["banka center"]))

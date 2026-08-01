@@ -1004,12 +1004,16 @@ export interface paths {
      *     reachable from the main queue: with no pending row, the Layer 81 exclusion
      *     does not hold it back.
      *
-     *     Consequences worth knowing: a NEW card can never appear (``_listen_grade_class``
-     *     returns None for NEW, so nothing stages it), and neither can a cloze. Release
-     *     by any path — per-card grade, ``commit-pending``, or an Anki-side grade
-     *     arriving via ``sync_pull`` — clears the row, which is what drops the card
-     *     from this queue; no separate "graded since the arming listen" filter is
-     *     needed.
+     *     Consequences worth knowing: a NEW card CAN appear here (since 2026-08
+     *     ``_listen_grade_class`` returns ``"new"`` for a NEW-state direction, so a
+     *     listen stages carded-but-never-introduced words), but only up to the shared
+     *     introduction budget — releasing such a row *introduces* the card, spending
+     *     Anki's daily new-card allowance, so ``_allocate_new_state_budget`` caps how
+     *     many a single listen can arm. A cloze still can never appear: staging is
+     *     RECOGNITION-only and cloze is production-only. Release by any path —
+     *     per-card grade, ``commit-pending``, or an Anki-side grade arriving via
+     *     ``sync_pull`` — clears the row, which is what drops the card from this
+     *     queue; no separate "graded since the arming listen" filter is needed.
      */
     get: operations["get_lesson_review_queue_api_srs_lesson__lesson_id__review_queue_get"];
     put?: never;
@@ -1787,7 +1791,7 @@ export interface components {
        * Grade Class
        * @enum {string}
        */
-      grade_class: "create" | "learning" | "due" | "ahead";
+      grade_class: "create" | "new" | "learning" | "due" | "ahead";
       /** Item Id */
       item_id: number | null;
       /**

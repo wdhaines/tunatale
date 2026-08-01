@@ -80,11 +80,12 @@ const createCandidate = (text: string) => ({
 const wordCandidate = (
   text: string,
   opts?: {
-    grade_class?: "create" | "learning" | "due" | "ahead";
+    grade_class?: "create" | "new" | "learning" | "due" | "ahead";
     translation?: string;
-    progress?: number;
+    progress?: number | null;
     well_known?: boolean;
     due_at?: string | null;
+    will_create?: boolean;
   },
 ) => ({
   kind: "word" as const,
@@ -93,11 +94,20 @@ const wordCandidate = (
   grade_class: opts?.grade_class ?? ("learning" as const),
   rating: "good" as const,
   translation: opts?.translation ?? "",
-  progress: opts?.progress ?? 0.3,
+  progress: opts?.progress === undefined ? 0.3 : opts.progress,
   well_known: opts?.well_known ?? false,
   due_at: opts?.due_at ?? null,
-  will_create: true,
+  will_create: opts?.will_create ?? true,
 });
+
+/** A carded-but-never-introduced word: the row this 2026-08 change surfaces. */
+const newStateCandidate = (text: string, opts?: { will_create?: boolean }) =>
+  wordCandidate(text, {
+    grade_class: "new",
+    progress: null,
+    due_at: null,
+    will_create: opts?.will_create ?? true,
+  });
 
 const kpCandidate = (text: string, opts?: { translation?: string; progress?: number }) => ({
   kind: "kp" as const,
@@ -1171,7 +1181,9 @@ describe("ListenPreviewModal", () => {
     // The well-known row is inside a <details> element
     const details = container.querySelector("details");
     expect(details).toBeTruthy();
-    expect(getByText("1 well-known word")).toBeTruthy();
+    // Terminology alignment (2026-08): the stats line's bucket is "known".
+    // The API field stays `well_known`; only the label changed.
+    expect(getByText("1 known word")).toBeTruthy();
 
     // It starts on Skip
     expect(isActive(gradeBtn(container, "word:hvala", "skip"))).toBe(true);
@@ -1365,7 +1377,10 @@ describe("ListenPreviewModal", () => {
     expect(dueCellText(container)).toBe("new");
   });
 
-  it("shows 'learn' for a learning row", async () => {
+  // Terminology alignment (2026-08): the lesson stats line says
+  // new / learning / due / review / known, so the preview says the same. This
+  // assertion used to read "learn".
+  it("shows 'learning' for a learning row", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [wordCandidate("prosim", { grade_class: "learning", due_at: dueInDays(2) })],
     });
@@ -1375,7 +1390,37 @@ describe("ListenPreviewModal", () => {
     });
 
     await waitFor(() => getByText("prosim"));
-    expect(dueCellText(container)).toBe("learn");
+    expect(dueCellText(container)).toBe("learning");
+  });
+
+  it("shows 'new' for a NEW-state word row, identical to a create row", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [newStateCandidate("hansen")],
+    });
+
+    const { container, getByText } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => getByText("hansen"));
+    expect(dueCellText(container)).toBe("new");
+  });
+
+  it("renders a NEW-state row in the unknown colour, not red-for-0%", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [newStateCandidate("hansen"), createCandidate("kava")],
+    });
+
+    const { container, getByText } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => getByText("hansen"));
+    const cells = [...container.querySelectorAll(".tag.day")] as HTMLElement[];
+    expect(cells).toHaveLength(2);
+    // A NEW-state card has no schedule yet — progress is null, so it must not
+    // be coloured as if it were 0% mastered.
+    expect(cells[0].getAttribute("style")).toBe(cells[1].getAttribute("style"));
   });
 
   it("falls back to the grade_class word when due_at is an invalid date string", async () => {
@@ -1974,6 +2019,51 @@ describe("ListenPreviewModal", () => {
       await waitFor(() => getByText("prosim"));
       await fireEvent.click(gradeBtn(container, "word:prosim", "skip"));
       expect(gradeBtn(container, "word:prosim", "skip").classList.contains("auto")).toBe(false);
+    });
+  });
+});
+
+describe("NEW-state rows and the shared introduction budget", () => {
+  it("puts an over-budget NEW-state row in the tail, not the gradeable list", async () => {
+    // Releasing a staged grade on a NEW-state card INTRODUCES it, spending
+    // Anki's daily new-card allowance — so rows past the budget must be
+    // read-only, exactly like over-budget create rows.
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        newStateCandidate("hansen", { will_create: true }),
+        newStateCandidate("lund", { will_create: false }),
+      ],
+    });
+
+    const { container, getByText } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => getByText("hansen"));
+    expect(getByText("1 more — next listen")).toBeTruthy();
+    expect(gradeBtn(container, "word:hansen", "good")).toBeTruthy();
+    expect(gradeBtn(container, "word:lund", "good")).toBeNull();
+  });
+
+  it("never names an over-budget NEW-state row in the commit payload", async () => {
+    // Same polarity trap as the create tail: naming a row the user was never
+    // offered asserts a decision they never made.
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        newStateCandidate("hansen", { will_create: true }),
+        newStateCandidate("lund", { will_create: false }),
+      ],
+    });
+
+    const { getByText } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => getByText("hansen"));
+    await fireEvent.click(getByText("Mark 1 as listened"));
+
+    await waitFor(() => {
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], []);
     });
   });
 });
