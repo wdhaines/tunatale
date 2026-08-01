@@ -593,7 +593,13 @@ class TestDueNewItemShape:
                 state=SRSState.LEARNING,
                 stability=1.0,
                 left=2,
-                due_at=datetime.now(UTC) + timedelta(minutes=1),
+                # Past, not `now + 1 minute`: /due filters `due_at <= end of
+                # anki_today()`, a LOCAL date, against a UTC-aware timestamp. In
+                # the evening (local 20:00 → UTC midnight) a near-future UTC seed
+                # lands on tomorrow's UTC date and drops out of the response —
+                # the test went red nightly, green by day. Only the LEARNING
+                # state + `left` matter to this key-set oracle, not the offset.
+                due_at=datetime.now(UTC) - timedelta(days=1),
             ),
         )
         app.state.srs_db = db
