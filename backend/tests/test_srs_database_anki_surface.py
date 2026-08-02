@@ -537,3 +537,55 @@ class TestBeginTransaction:
             raise ValueError("deliberate")
         assert srs_db.get_collocation("banka") is None
         assert srs_db.get_collocation("hiša") is None
+
+
+class TestSetAnkiIdsRelinkTrace:
+    """A silent re-point of an already-linked card is how `foran` split in two.
+
+    The source deck ships 18 words on two notes each; TT keeps one collocation
+    per word, so nothing pins which twin it references. On 2026-07-14 `foran`
+    re-pointed and then alternated for three weeks, splitting its review history
+    across both cards and leaving TT holding a due date from the card it wasn't
+    tracking — surfacing only as a phantom "new" card on 2026-08-02.
+
+    Re-pointing is legitimate in places (orphan recovery re-mints pointers,
+    cleanup_function_word_notes converts a note to Cloze), so this traces rather
+    than refuses — matching the BURY_TRACE / RECOMPUTE_DIVERGENCE precedent.
+    """
+
+    def _link(self, srs_db, note_id: int, card_id: int) -> str:
+        guid = compute_guid("foran", "no")
+        srs_db.upsert_by_guid(_unit("foran", "in front of"), "no", _dirs())
+        srs_db.set_anki_ids(guid, note_id, {Direction.RECOGNITION: card_id})
+        return guid
+
+    def test_first_link_is_silent(self, srs_db, caplog):
+        guid = compute_guid("foran", "no")
+        srs_db.upsert_by_guid(_unit("foran", "in front of"), "no", _dirs())
+        with caplog.at_level("WARNING"):
+            srs_db.set_anki_ids(guid, 300232, {Direction.RECOGNITION: 300233})
+        assert "RELINK_TRACE" not in caplog.text
+
+    def test_relinking_to_the_same_ids_is_silent(self, srs_db, caplog):
+        guid = self._link(srs_db, 300232, 300233)
+        with caplog.at_level("WARNING"):
+            srs_db.set_anki_ids(guid, 300232, {Direction.RECOGNITION: 300233})
+        assert "RELINK_TRACE" not in caplog.text
+
+    def test_repointing_a_linked_card_traces(self, srs_db, caplog):
+        guid = self._link(srs_db, 300232, 300233)
+        with caplog.at_level("WARNING"):
+            srs_db.set_anki_ids(guid, 305378, {Direction.RECOGNITION: 305379})
+        assert "RELINK_TRACE" in caplog.text
+        assert "card 300233 -> 305379" in caplog.text
+        assert "note 300232 -> 305378" in caplog.text
+        assert "recognition" in caplog.text
+
+    def test_repoint_still_writes_the_new_ids(self, srs_db, caplog):
+        """Trace, don't refuse — orphan recovery depends on the write landing."""
+        guid = self._link(srs_db, 300232, 300233)
+        with caplog.at_level("WARNING"):
+            srs_db.set_anki_ids(guid, 305378, {Direction.RECOGNITION: 305379})
+        item = srs_db.get_collocation("foran")
+        assert item.anki_note_id == 305378
+        assert item.directions[Direction.RECOGNITION].anki_card_id == 305379

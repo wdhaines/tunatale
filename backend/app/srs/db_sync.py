@@ -7,10 +7,13 @@ handling — the TT side of the sync seam. Anki-parity danger zone — see
 before changing anything here.
 """
 
+import logging
 from datetime import UTC, datetime
 
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.srs.db_base import _DIR_COLUMNS, _parse_last_review
+
+logger = logging.getLogger(__name__)
 
 
 class DbSyncMixin:
@@ -67,12 +70,44 @@ class DbSyncMixin:
         note_id: int,
         card_ids: dict[Direction, int],
     ) -> None:
-        """Set anki_note_id on the parent and anki_card_id on each direction row."""
+        """Set anki_note_id on the parent and anki_card_id on each direction row.
+
+        **RELINK_TRACE.** Re-pointing an already-linked direction at a *different*
+        Anki card is logged at WARNING. It is legitimate in some paths — orphan
+        recovery re-mints pointers, and `cleanup_function_word_notes` converts a
+        note to Cloze — so this traces rather than refuses; a hard failure here
+        would break those recoveries.
+
+        It is traced because a *silent* re-point is how `foran` split in two: the
+        source deck ships 18 words on two notes each, TT keeps one collocation per
+        word, and nothing pins which twin it references. On 2026-07-14 `foran`
+        re-pointed and then alternated for three weeks, splitting one word's review
+        history across both cards and leaving TT holding a due date from the card it
+        wasn't tracking. It surfaced only as a phantom "new" card on 2026-08-02.
+        Grep `RELINK_TRACE` when a card's history looks discontinuous.
+        """
         with self._get_conn() as conn:
-            row = conn.execute("SELECT id FROM collocations WHERE guid = ?", (guid,)).fetchone()
+            row = conn.execute("SELECT id, anki_note_id FROM collocations WHERE guid = ?", (guid,)).fetchone()
             if row is None:
                 return
             coll_id = row["id"]
+            prev_note_id = row["anki_note_id"]
+            for direction, card_id in card_ids.items():
+                prev = conn.execute(
+                    "SELECT anki_card_id FROM collocation_directions WHERE collocation_id = ? AND direction = ?",
+                    (coll_id, direction.value),
+                ).fetchone()
+                prev_card_id = prev["anki_card_id"] if prev is not None else None
+                if prev_card_id is not None and prev_card_id != card_id:
+                    logger.warning(
+                        "RELINK_TRACE cid=%s dir=%s card %s -> %s note %s -> %s",
+                        coll_id,
+                        direction.value,
+                        prev_card_id,
+                        card_id,
+                        prev_note_id,
+                        note_id,
+                    )
             conn.execute(
                 "UPDATE collocations SET anki_note_id = ? WHERE id = ?",
                 (note_id, coll_id),
