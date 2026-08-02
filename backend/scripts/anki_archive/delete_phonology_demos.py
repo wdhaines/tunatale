@@ -133,7 +133,9 @@ def apply_deletes(
             tt_conn.execute("DELETE FROM collocations WHERE id = ?", (item.tt_collocation_id,))
             counts["tt_collocations_deleted"] += 1
 
-    anki_conn.execute("UPDATE col SET mod = ?, usn = -1", (now_ms,))
+    # col.mod signals the change; col.usn is the sync anchor and must survive —
+    # the grave rows carry their own usn=-1, which is what pushes. Layer 61.
+    anki_conn.execute("UPDATE col SET mod = ?", (now_ms,))
     anki_conn.commit()
     tt_conn.commit()
     return counts

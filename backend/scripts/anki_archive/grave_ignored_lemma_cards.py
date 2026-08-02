@@ -144,7 +144,9 @@ def apply_graves(
     if counts["notes_graved"] or counts["cards_graved"]:
         # Data-only: col.mod tells Anki the collection changed; col.scm stays
         # put so this remains an incremental sync (anki-sync.md §Deletes).
-        anki_conn.execute("UPDATE col SET mod = ?, usn = -1", (int(time.time() * 1000),))
+        # col.usn is the sync ANCHOR (server's last USN), never a dirty flag —
+        # the grave rows carry their own usn=-1, which is what pushes. Layer 61.
+        anki_conn.execute("UPDATE col SET mod = ?", (int(time.time() * 1000),))
     anki_conn.commit()
     tt_conn.commit()
     return counts

@@ -47,7 +47,9 @@ To delete notes/cards while keeping AnkiWeb in sync, write a grave row instead o
 - `type` constants (from `rslib/src/storage/graves/mod.rs:13-19`): `0 = Card`, `1 = Note`, `2 = Deck`.
 - One grave per card AND one grave per note (Anki's `remove_notes_inner` does this in `rslib/src/notes/mod.rs:502-515`). For a note with two cards: 2 grave rows of `type=0` (the cids) + 1 grave row of `type=1` (the nid).
 - `usn=-1` on every new grave row (client-side; the server rewrites it during sync).
-- Bump `col.mod` and set `col.usn=-1`. **Don't** touch `col.scm` — deletes are data-only, no full upload.
+- Bump `col.mod` only. **Don't** set `col.usn=-1` (Layer 61 — same rule as every other mutation above; the grave rows already carry `usn=-1`, which is what pushes). **Don't** touch `col.scm` — deletes are data-only, no full upload.
+
+  This bullet used to say "set `col.usn=-1`", contradicting the Layer 61 rule 20 lines up, and all three delete scripts followed it. Because deletes deliberately leave `scm` alone, they fall outside the "one-shot migrations force a one-way sync anyway" carve-out: a delete run left the collection with `col.usn=-1` and no other symptom, silently armed. **Fired 2026-08-02** — a phone session advanced the server's USN, and the next desktop sync demanded a full download (`scm` re-stamped mid-sync, `col.usn=-1`, 0 dirty rows). Pinned by `tests/test_anki_grave_ignored_lemma_cards.py::test_preserves_col_usn`.
 
 Canonical pattern (mirror `scripts/anki_archive/delete_phonology_demos.py` or `scripts/anki_archive/cleanup_function_word_notes.py`):
 
@@ -59,7 +61,7 @@ for cid in card_ids:
     conn.execute("DELETE FROM cards WHERE id=?", (cid,))
 conn.execute("INSERT OR REPLACE INTO graves (oid, type, usn) VALUES (?, ?, -1)", (nid, _GRAVE_KIND_NOTE))
 conn.execute("DELETE FROM notes WHERE id=?", (nid,))
-conn.execute("UPDATE col SET mod=?, usn=-1", (int(time.time() * 1000),))
+conn.execute("UPDATE col SET mod=?", (int(time.time() * 1000),))  # NOT usn=-1 — Layer 61
 ```
 
 Verify post-write: each deleted nid has exactly one type=1 grave; each deleted cid has exactly one type=0 grave.

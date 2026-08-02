@@ -103,9 +103,14 @@ DELETE_OPS: tuple[DeleteOp, ...] = (
 )
 
 
-def _bump_col_dirty(anki_conn: sqlite3.Connection) -> None:
+def _bump_col(anki_conn: sqlite3.Connection) -> None:
+    """Signal the change via col.mod only.
+
+    col.usn is the sync anchor (the server's last USN), not a per-row dirty
+    flag — the grave rows carry their own usn=-1, which is what pushes. Layer 61.
+    """
     now_ms = int(time.time() * 1000)
-    anki_conn.execute("UPDATE col SET mod = ?, usn = -1", (now_ms,))
+    anki_conn.execute("UPDATE col SET mod = ?", (now_ms,))
 
 
 def _add_graves_and_delete_note(anki_conn: sqlite3.Connection, nid: int) -> int:
@@ -143,7 +148,7 @@ def apply_fix_image(anki_conn: sqlite3.Connection, tt_conn: sqlite3.Connection, 
         "UPDATE notes SET flds = ?, mod = ?, usn = -1 WHERE id = ?",
         (new_flds, now_secs, op.anki_nid),
     )
-    _bump_col_dirty(anki_conn)
+    _bump_col(anki_conn)
     anki_conn.commit()
 
     tt_row = tt_conn.execute("SELECT id FROM collocations WHERE anki_note_id = ?", (op.anki_nid,)).fetchone()
@@ -210,7 +215,7 @@ def apply_convert_to_cloze(
         (new_cid, op.tt_collocation_id),
     )
 
-    _bump_col_dirty(anki_conn)
+    _bump_col(anki_conn)
     anki_conn.commit()
     tt_conn.commit()
     return new_nid
@@ -227,7 +232,7 @@ def apply_delete(anki_conn: sqlite3.Connection, tt_conn: sqlite3.Connection, op:
         (op.tt_collocation_id,),
     )
     tt_conn.execute("DELETE FROM collocations WHERE id = ?", (op.tt_collocation_id,))
-    _bump_col_dirty(anki_conn)
+    _bump_col(anki_conn)
     anki_conn.commit()
     tt_conn.commit()
     return True

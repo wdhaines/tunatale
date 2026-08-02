@@ -187,6 +187,34 @@ class TestApplyGraves:
         assert after["mod"] > before["mod"]
         assert after["scm"] == before["scm"]
 
+    def test_preserves_col_usn(self, fake_anki_db):
+        """`col.usn` is the sync *anchor* (the server's last USN), not a dirty flag.
+
+        Layer 61: clobbering it to -1 is invisible while the desktop is the only
+        writer, but the moment another device advances the server's USN the
+        collection can no longer reconcile incrementally — AnkiWeb demands a full
+        sync and Anki stamps a fresh `scm`. The graved rows carry their own
+        `usn = -1`, which is what actually pushes; `col.mod` signals the change.
+
+        Observed in the wild 2026-08-02: a delete run left `col.usn = -1`, a phone
+        session advanced the server, and the next desktop sync forced a full
+        download. `scm` is asserted above; without this, the delete path re-arms
+        that trap on every run.
+        """
+        anki = _anki_conn(fake_anki_db)
+        tt = _tt_conn()
+        _seed_anki_note(anki, 9001, (9101,))
+        _seed_tt(tt, 1, "hansen", nid=9001)
+        _ignore(tt, "hansen")
+        anki.execute("UPDATE col SET usn = 1149")
+        anki.commit()
+
+        apply_graves(anki, tt, plan_graves(anki, tt, "no"))
+
+        assert anki.execute("SELECT usn FROM col").fetchone()["usn"] == 1149
+        # The rows themselves still push.
+        assert {r["usn"] for r in anki.execute("SELECT usn FROM graves")} == {-1}
+
     def test_tt_only_row_writes_no_graves(self, fake_anki_db):
         anki = _anki_conn(fake_anki_db)
         tt = _tt_conn()
