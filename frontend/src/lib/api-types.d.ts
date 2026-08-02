@@ -1954,6 +1954,67 @@ export interface components {
       voice_id: string;
     };
     /**
+     * LessonQueueItemResponse
+     * @description A lesson "Check your work" item: a queue item plus the staged rating.
+     */
+    LessonQueueItemResponse: {
+      /** Anki Note Id */
+      anki_note_id: number | null;
+      /** Article */
+      article: string;
+      /** Audio Url */
+      audio_url: string | null;
+      /** Card Type */
+      card_type: string;
+      /** Difficulty */
+      difficulty: number;
+      /** Direction */
+      direction: string;
+      directions: components["schemas"]["ItemDirections"];
+      /** Due At */
+      due_at: string | null;
+      /** Extras */
+      extras: components["schemas"]["ItemExtra"][];
+      /** Grammar */
+      grammar: string;
+      /** Guid */
+      guid: string | null;
+      /** Id */
+      id: number;
+      /** Image Url */
+      image_url: string | null;
+      /** Language Code */
+      language_code: string;
+      /** Lapses */
+      lapses: number;
+      /** Last Review */
+      last_review: string | null;
+      /** Note */
+      note: string;
+      /** Pending Rating */
+      pending_rating: string;
+      /** Pos */
+      pos: string;
+      /** Reps */
+      reps: number;
+      /** Source Sentence */
+      source_sentence: string;
+      /** Source Sentence Translation */
+      source_sentence_translation: string;
+      /** Stability */
+      stability: number;
+      /** State */
+      state: string;
+      /** Text */
+      text: string;
+      /** Translation */
+      translation: string;
+      /** Word Audio Url */
+      word_audio_url: string | null;
+      /** Word Count */
+      word_count: number;
+    };
+    /**
      * LessonResponse
      * @description Response of GET /api/story/{lesson_id} and
      *     GET /api/curriculum/{curriculum_id}/days/{day}/lesson
@@ -1973,6 +2034,16 @@ export interface components {
       sections: components["schemas"]["LessonSection"][];
       /** Title */
       title: string;
+    };
+    /**
+     * LessonReviewQueueResponse
+     * @description Response of GET /api/srs/lesson/{lesson_id}/review-queue.
+     */
+    LessonReviewQueueResponse: {
+      /** Has Unreviewed Listen */
+      has_unreviewed_listen: boolean;
+      /** Queue */
+      queue: components["schemas"]["LessonQueueItemResponse"][];
     };
     /**
      * LessonSection
@@ -2356,6 +2427,69 @@ export interface components {
       start_day: number;
     };
     /**
+     * QueueItemResponse
+     * @description One served card: the 25 ``_item_to_dict`` keys + the 2 queue-only keys.
+     *
+     *     The 7 flat per-direction keys inherited from SrsItemResponse are overwritten
+     *     by ``_queue_item_to_dict`` with the *queued* direction's values, so their
+     *     types are unchanged — only their provenance is.
+     */
+    QueueItemResponse: {
+      /** Anki Note Id */
+      anki_note_id: number | null;
+      /** Article */
+      article: string;
+      /** Audio Url */
+      audio_url: string | null;
+      /** Card Type */
+      card_type: string;
+      /** Difficulty */
+      difficulty: number;
+      /** Direction */
+      direction: string;
+      directions: components["schemas"]["ItemDirections"];
+      /** Due At */
+      due_at: string | null;
+      /** Extras */
+      extras: components["schemas"]["ItemExtra"][];
+      /** Grammar */
+      grammar: string;
+      /** Guid */
+      guid: string | null;
+      /** Id */
+      id: number;
+      /** Image Url */
+      image_url: string | null;
+      /** Language Code */
+      language_code: string;
+      /** Lapses */
+      lapses: number;
+      /** Last Review */
+      last_review: string | null;
+      /** Note */
+      note: string;
+      /** Pos */
+      pos: string;
+      /** Reps */
+      reps: number;
+      /** Source Sentence */
+      source_sentence: string;
+      /** Source Sentence Translation */
+      source_sentence_translation: string;
+      /** Stability */
+      stability: number;
+      /** State */
+      state: string;
+      /** Text */
+      text: string;
+      /** Translation */
+      translation: string;
+      /** Word Audio Url */
+      word_audio_url: string | null;
+      /** Word Count */
+      word_count: number;
+    };
+    /**
      * QueueStatsResponse
      * @description Response of GET /api/srs/queue-stats — the three badges plus the caps
      *     and their provenance.
@@ -2512,6 +2646,14 @@ export interface components {
       start_ms: number;
       /** Text */
       text: string;
+    };
+    /**
+     * ReviewQueueResponse
+     * @description Response of GET /api/srs/review-queue.
+     */
+    ReviewQueueResponse: {
+      /** Queue */
+      queue: components["schemas"]["QueueItemResponse"][];
     };
     /**
      * SetGenerationModeResponse
@@ -4502,9 +4644,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            [key: string]: unknown;
-          };
+          "application/json": components["schemas"]["LessonReviewQueueResponse"];
         };
       };
       /** @description Validation Error */
@@ -4766,9 +4906,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            [key: string]: unknown;
-          };
+          "application/json": components["schemas"]["ReviewQueueResponse"];
         };
       };
       /** @description Validation Error */

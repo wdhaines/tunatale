@@ -1,2 +1,0 @@
-get_lesson_review_queue_api_srs_lesson__lesson_id__review_queue_get  # reason: untyped handler — mechanical, awaiting scheduled batch
-get_review_queue_api_srs_review_queue_get  # reason: untyped handler — returns a traced/variable shape

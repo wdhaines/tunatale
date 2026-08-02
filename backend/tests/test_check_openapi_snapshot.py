@@ -12,7 +12,7 @@ from pathlib import Path
 _SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(_SCRIPTS))
 
-from check_openapi_snapshot import _check_untyped, _collect_untyped, _load_grandfather  # noqa: E402
+from check_openapi_snapshot import _check_untyped, _collect_untyped  # noqa: E402
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -96,50 +96,43 @@ class TestCollectUntyped:
 # ── _check_untyped gate ──────────────────────────────────────────────────────
 
 
-class TestCheckUntyped:
-    """Tests for the untyped-endpoint gate with grandfather enforcement."""
+class TestZeroTolerance:
+    """The untyped gate after the ledger drained 70 -> 0 (2026-08-02).
 
-    def test_new_untyped_endpoint_fails(self, tmp_path: Path):
-        ledger = tmp_path / "grandfather.txt"
-        ledger.write_text("existing_op\n", encoding="utf-8")
-        schema = _schema_with_response("new_op", {})
-        assert _check_untyped(schema, ledger) == 1
+    There is no grandfather file and no membership test any more: ANY untyped
+    operation fails. These replace the three ratchet tests (new-untyped /
+    ledgered-passes / stale-entry), whose premise — a ledger to be a member of —
+    no longer exists. Both of the behaviours those pinned are subsumed: under
+    zero tolerance an untyped op fails whether or not it was ever ledgered, and
+    a now-typed op simply passes with nothing left to go stale.
+    """
 
-    def test_ledgered_endpoint_passes(self, tmp_path: Path):
-        ledger = tmp_path / "grandfather.txt"
-        ledger.write_text("known_op\n", encoding="utf-8")
-        schema = _schema_with_response("known_op", {})
-        assert _check_untyped(schema, ledger) == 0
+    def test_clean_schema_passes(self):
+        schema = _schema_with_response("typed_op", {"$ref": "#/components/schemas/Foo"})
+        assert _check_untyped(schema) == 0
 
-    def test_stale_ledger_entry_fails(self, tmp_path: Path):
-        """An operation in the ledger that is now typed must be removed."""
-        ledger = tmp_path / "grandfather.txt"
-        ledger.write_text("now_typed_op\n", encoding="utf-8")
-        schema = _schema_with_response("now_typed_op", {"$ref": "#/components/schemas/Foo"})
-        assert _check_untyped(schema, ledger) == 1
+    def test_any_untyped_endpoint_fails(self):
+        schema = _schema_with_response("some_op", {})
+        assert _check_untyped(schema) == 1
 
+    def test_previously_ledgered_operation_gets_no_free_pass(self):
+        """The last two drained entries, re-offered untyped, must still fail.
 
-# ── _load_grandfather ────────────────────────────────────────────────────────
+        A membership-based implementation would let these through; that is the
+        thing the ledger's deletion had to not preserve.
+        """
+        for op_id in (
+            "get_review_queue_api_srs_review_queue_get",
+            "get_lesson_review_queue_api_srs_lesson__lesson_id__review_queue_get",
+        ):
+            assert _check_untyped(_schema_with_response(op_id, {})) == 1
 
-
-class TestLoadGrandfather:
-    def test_reads_entries(self, tmp_path: Path):
-        f = tmp_path / "gf.txt"
-        f.write_text("a\nb\n", encoding="utf-8")
-        assert _load_grandfather(f) == {"a", "b"}
-
-    def test_missing_file(self, tmp_path: Path):
-        assert _load_grandfather(tmp_path / "nope.txt") == set()
-
-    def test_skips_blanks_and_comments(self, tmp_path: Path):
-        f = tmp_path / "gf.txt"
-        f.write_text("\n# comment\na\n\nb\n", encoding="utf-8")
-        assert _load_grandfather(f) == {"a", "b"}
-
-    def test_strips_trailing_reason(self, tmp_path: Path):
-        f = tmp_path / "gf.txt"
-        f.write_text("some_op  # reason: untyped handler\nanother_op\n", encoding="utf-8")
-        assert _load_grandfather(f) == {"some_op", "another_op"}
+    def test_failure_message_names_the_fix(self, capsys):
+        _check_untyped(_schema_with_response("some_op", {}))
+        out = capsys.readouterr().out
+        assert "some_op" in out
+        assert "response_model=" in out
+        assert "grandfather" not in out.lower()
 
 
 # ── binary endpoints must not advertise JSON ─────────────────────────────────

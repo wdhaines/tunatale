@@ -1319,6 +1319,206 @@
         "title": "LessonPhrase",
         "type": "object"
       },
+      "LessonQueueItemResponse": {
+        "description": "A lesson \"Check your work\" item: a queue item plus the staged rating.",
+        "properties": {
+          "anki_note_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anki Note Id"
+          },
+          "article": {
+            "title": "Article",
+            "type": "string"
+          },
+          "audio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audio Url"
+          },
+          "card_type": {
+            "title": "Card Type",
+            "type": "string"
+          },
+          "difficulty": {
+            "title": "Difficulty",
+            "type": "number"
+          },
+          "direction": {
+            "title": "Direction",
+            "type": "string"
+          },
+          "directions": {
+            "$ref": "#/components/schemas/ItemDirections"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "extras": {
+            "items": {
+              "$ref": "#/components/schemas/ItemExtra"
+            },
+            "title": "Extras",
+            "type": "array"
+          },
+          "grammar": {
+            "title": "Grammar",
+            "type": "string"
+          },
+          "guid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guid"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Url"
+          },
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "lapses": {
+            "title": "Lapses",
+            "type": "integer"
+          },
+          "last_review": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Review"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "pending_rating": {
+            "title": "Pending Rating",
+            "type": "string"
+          },
+          "pos": {
+            "title": "Pos",
+            "type": "string"
+          },
+          "reps": {
+            "title": "Reps",
+            "type": "integer"
+          },
+          "source_sentence": {
+            "title": "Source Sentence",
+            "type": "string"
+          },
+          "source_sentence_translation": {
+            "title": "Source Sentence Translation",
+            "type": "string"
+          },
+          "stability": {
+            "title": "Stability",
+            "type": "number"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "translation": {
+            "title": "Translation",
+            "type": "string"
+          },
+          "word_audio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Word Audio Url"
+          },
+          "word_count": {
+            "title": "Word Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "translation",
+          "word_count",
+          "state",
+          "due_at",
+          "stability",
+          "difficulty",
+          "reps",
+          "lapses",
+          "last_review",
+          "language_code",
+          "guid",
+          "anki_note_id",
+          "directions",
+          "card_type",
+          "source_sentence",
+          "source_sentence_translation",
+          "image_url",
+          "audio_url",
+          "grammar",
+          "note",
+          "article",
+          "extras",
+          "pos",
+          "direction",
+          "word_audio_url",
+          "pending_rating"
+        ],
+        "title": "LessonQueueItemResponse",
+        "type": "object"
+      },
       "LessonResponse": {
         "description": "Response of GET /api/story/{lesson_id} and\nGET /api/curriculum/{curriculum_id}/days/{day}/lesson\n(``_serializers.serialize_lesson``). ``day`` is omitted by the by-day\nroute (serialized without one), so it rides on ``response_model_exclude_unset``.",
         "properties": {
@@ -1368,6 +1568,28 @@
           "sections"
         ],
         "title": "LessonResponse",
+        "type": "object"
+      },
+      "LessonReviewQueueResponse": {
+        "description": "Response of GET /api/srs/lesson/{lesson_id}/review-queue.",
+        "properties": {
+          "has_unreviewed_listen": {
+            "title": "Has Unreviewed Listen",
+            "type": "boolean"
+          },
+          "queue": {
+            "items": {
+              "$ref": "#/components/schemas/LessonQueueItemResponse"
+            },
+            "title": "Queue",
+            "type": "array"
+          }
+        },
+        "required": [
+          "queue",
+          "has_unreviewed_listen"
+        ],
+        "title": "LessonReviewQueueResponse",
         "type": "object"
       },
       "LessonSection": {
@@ -2191,6 +2413,201 @@
         "title": "ProposedBatch",
         "type": "object"
       },
+      "QueueItemResponse": {
+        "description": "One served card: the 25 ``_item_to_dict`` keys + the 2 queue-only keys.\n\nThe 7 flat per-direction keys inherited from SrsItemResponse are overwritten\nby ``_queue_item_to_dict`` with the *queued* direction's values, so their\ntypes are unchanged \u2014 only their provenance is.",
+        "properties": {
+          "anki_note_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anki Note Id"
+          },
+          "article": {
+            "title": "Article",
+            "type": "string"
+          },
+          "audio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audio Url"
+          },
+          "card_type": {
+            "title": "Card Type",
+            "type": "string"
+          },
+          "difficulty": {
+            "title": "Difficulty",
+            "type": "number"
+          },
+          "direction": {
+            "title": "Direction",
+            "type": "string"
+          },
+          "directions": {
+            "$ref": "#/components/schemas/ItemDirections"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "extras": {
+            "items": {
+              "$ref": "#/components/schemas/ItemExtra"
+            },
+            "title": "Extras",
+            "type": "array"
+          },
+          "grammar": {
+            "title": "Grammar",
+            "type": "string"
+          },
+          "guid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guid"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Url"
+          },
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "lapses": {
+            "title": "Lapses",
+            "type": "integer"
+          },
+          "last_review": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Review"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "pos": {
+            "title": "Pos",
+            "type": "string"
+          },
+          "reps": {
+            "title": "Reps",
+            "type": "integer"
+          },
+          "source_sentence": {
+            "title": "Source Sentence",
+            "type": "string"
+          },
+          "source_sentence_translation": {
+            "title": "Source Sentence Translation",
+            "type": "string"
+          },
+          "stability": {
+            "title": "Stability",
+            "type": "number"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "translation": {
+            "title": "Translation",
+            "type": "string"
+          },
+          "word_audio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Word Audio Url"
+          },
+          "word_count": {
+            "title": "Word Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "translation",
+          "word_count",
+          "state",
+          "due_at",
+          "stability",
+          "difficulty",
+          "reps",
+          "lapses",
+          "last_review",
+          "language_code",
+          "guid",
+          "anki_note_id",
+          "directions",
+          "card_type",
+          "source_sentence",
+          "source_sentence_translation",
+          "image_url",
+          "audio_url",
+          "grammar",
+          "note",
+          "article",
+          "extras",
+          "pos",
+          "direction",
+          "word_audio_url"
+        ],
+        "title": "QueueItemResponse",
+        "type": "object"
+      },
       "QueueStatsResponse": {
         "description": "Response of GET /api/srs/queue-stats \u2014 the three badges plus the caps\nand their provenance.\n\n``new``/``review`` are already MIN'd against the daily caps by the handler\n(see ``.claude/rules/anki-queue-parity.md`` rule 12); the ``*_source``\nfields report whether each cap came from the Anki cache, config, or the\nhardcoded default.",
         "properties": {
@@ -2608,6 +3025,23 @@
           "text"
         ],
         "title": "RenderSectionCue",
+        "type": "object"
+      },
+      "ReviewQueueResponse": {
+        "description": "Response of GET /api/srs/review-queue.",
+        "properties": {
+          "queue": {
+            "items": {
+              "$ref": "#/components/schemas/QueueItemResponse"
+            },
+            "title": "Queue",
+            "type": "array"
+          }
+        },
+        "required": [
+          "queue"
+        ],
+        "title": "ReviewQueueResponse",
         "type": "object"
       },
       "SetGenerationModeResponse": {
@@ -5753,9 +6187,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Lesson Review Queue Api Srs Lesson  Lesson Id  Review Queue Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/LessonReviewQueueResponse"
                 }
               }
             },
@@ -6099,9 +6531,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Review Queue Api Srs Review Queue Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReviewQueueResponse"
                 }
               }
             },

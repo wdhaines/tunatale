@@ -30,6 +30,7 @@ from app.api.models import (
     ImportListensRequest,
     ImportListensResponse,
     InflectionClozeRequest,
+    LessonReviewQueueResponse,
     LessonTranscriptResponse,
     ListenPreviewResponse,
     ListenRequest,
@@ -39,6 +40,7 @@ from app.api.models import (
     MarkLessonReviewedResponse,
     NewCollocationsResponse,
     QueueStatsResponse,
+    ReviewQueueResponse,
     SetStateRequest,
     SrsItemResponse,
     SrsStatsResponse,
@@ -1148,7 +1150,15 @@ def _has_unreviewed_listen(latest_listen: str | None, latest_review: str | None)
     return latest_listen is not None and (latest_review is None or latest_listen > latest_review)
 
 
-@router.get("/lesson/{lesson_id}/review-queue", status_code=200)
+@router.get(
+    "/lesson/{lesson_id}/review-queue",
+    status_code=200,
+    response_model=LessonReviewQueueResponse,
+    # The nested DirectionStateResponse omits `left` when None
+    # (srs.py::_direction_to_dict) — a plain response_model would put
+    # "left": null back into every NEW/REVIEW direction.
+    response_model_exclude_unset=True,
+)
 async def get_lesson_review_queue(lesson_id: str, request: Request, response: Response) -> dict:
     """Lesson-scoped "Check your work" queue: exactly the listen's autograded cards.
 
@@ -2330,7 +2340,13 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
     return result
 
 
-@router.get("/review-queue", status_code=200)
+@router.get(
+    "/review-queue",
+    status_code=200,
+    response_model=ReviewQueueResponse,
+    # Same nested `left` omission as the lesson queue — see above.
+    response_model_exclude_unset=True,
+)
 async def get_review_queue(request: Request, response: Response, session_start: bool = False) -> dict:
     """Return the entire ordered review queue in one shot.
 

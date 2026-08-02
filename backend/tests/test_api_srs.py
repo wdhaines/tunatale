@@ -643,6 +643,76 @@ class TestReviewQueueArticleAndPos:
         assert next(q for q in data["queue"] if q["text"] == "orden")["extras"] == []
 
 
+class TestReviewQueueResponseShape:
+    """Oracle for the /review-queue response_model flip (openapi ledger batch 6c).
+
+    Written against the UNFILTERED handler output BEFORE the flip, so it fails if
+    the model drops a live key. Key sets are LITERALS (``QUEUE_ITEM_KEYS``), never
+    ``set(Model.model_fields)`` — the latter is circular once ``response_model=``
+    filters the payload to the model's own fields.
+    """
+
+    def _seed_learning_plus_review(self, db, today):
+        """One LEARNING recognition card (``left`` set) + one REVIEW card.
+
+        The learning card's *production* sibling stays NEW with ``left=None``, so a
+        single served item carries both nested-direction branches.
+        """
+        now = datetime.now(UTC)
+        seed_direction(
+            db,
+            text="ucim",
+            direction=Direction.RECOGNITION,
+            state=SRSState.LEARNING,
+            due_at=now - timedelta(minutes=5),
+            left=1001,
+            last_review=now - timedelta(minutes=15),
+        )
+        _add_review_due_collocation(db, "banka", today)
+
+    async def test_queue_item_key_set_and_nested_direction_left(self, api_app_state):
+        from tests._helpers.srs_item_shape import DIRECTION_KEYS, DIRECTION_WITHOUT_LEFT, QUEUE_ITEM_KEYS
+
+        db = api_app_state
+        self._seed_learning_plus_review(db, anki_today())
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/review-queue?session_start=1")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert set(data.keys()) == {"queue"}
+        assert len(data["queue"]) == 2
+        for entry in data["queue"]:
+            assert set(entry.keys()) == QUEUE_ITEM_KEYS
+
+        # Nested direction key sets — the assertion the top-level ones cannot
+        # make, and the one that actually pins `response_model_exclude_unset`.
+        # `_direction_to_dict` OMITS `left` when it is None; a plain
+        # `response_model=` puts `"left": null` back in, rewriting the payload in
+        # the ADD direction. Both branches are pinned: without them, stripping
+        # the flag leaves this file green and the flag is protection in name only.
+        ucim = next(q for q in data["queue"] if q["text"] == "ucim")
+        assert ucim["state"] == "learning"
+        assert set(ucim["directions"]["recognition"].keys()) == DIRECTION_KEYS, "a LEARNING direction must carry `left`"
+        assert set(ucim["directions"]["production"].keys()) == DIRECTION_WITHOUT_LEFT, (
+            "a NEW direction must not carry a `left` key"
+        )
+        banka = next(q for q in data["queue"] if q["text"] == "banka")
+        assert banka["state"] == "review"
+        assert set(banka["directions"]["recognition"].keys()) == DIRECTION_WITHOUT_LEFT, (
+            "a REVIEW direction must not carry a `left` key"
+        )
+
+    async def test_queue_item_model_fields_match_the_literal(self, api_app_state):
+        """Keeps the model honest against the same hand-written literal."""
+        from app.api.models import QueueItemResponse, ReviewQueueResponse
+        from tests._helpers.srs_item_shape import QUEUE_ITEM_KEYS
+
+        assert set(QueueItemResponse.model_fields) == QUEUE_ITEM_KEYS
+        assert set(ReviewQueueResponse.model_fields) == {"queue"}
+
+
 class TestReviewQueue:
     async def test_returns_empty_queue_when_nothing_due(self, api_app_state):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail if the committed OpenAPI snapshot is stale or has new untyped endpoints.
+"""Fail if the committed OpenAPI snapshot is stale or has untyped endpoints.
 
 Two checks:
 
@@ -7,24 +7,25 @@ Two checks:
    memory and diffs it against ``frontend/src/lib/api-schema.json``.  A diff
    means the developer forgot to re-run ``dump_openapi.py``.
 
-2. **Untyped endpoint gate** — every operation with a 2xx JSON response must
-   declare a Pydantic response model.  The grandfather file
-   ``tests/openapi_untyped_grandfather.txt`` lists the current exceptions (one
-   operation-id per line).  A new untyped endpoint fails even if it is not yet
-   in the ledger.  The ledger is **shrink-only**: an entry that is no longer
-   untyped must be removed.
+2. **Untyped endpoint gate — zero tolerance.** Every operation with a 2xx JSON
+   response must declare a Pydantic response model.  There is no ledger and no
+   escape hatch: any untyped operation fails.
+
+   The shrink-only ``tests/openapi_untyped_grandfather.txt`` drained 70 -> 0 over
+   eleven batches and was deleted on 2026-08-02, along with the ratchet that
+   enforced it, exactly as the mock / language-literal / date-today ledgers were
+   in ``7b34c73``.  "Shrink-only ledger, currently at zero" and "no additions,
+   period" are the same rule; only the second needs machinery.
 
 Usage::
 
     uv run python scripts/check_openapi_snapshot.py
-    uv run python scripts/check_openapi_snapshot.py --write-grandfather
 
 Exit 0 = all clean; exit 1 = violation.
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from pathlib import Path
@@ -32,7 +33,6 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = BACKEND_DIR.parent / "frontend" / "src" / "lib" / "api-schema.json"
 DUMP_SCRIPT = Path(__file__).resolve().parent / "dump_openapi.py"
-GRANDFATHER_PATH = BACKEND_DIR / "tests" / "openapi_untyped_grandfather.txt"
 
 
 def _is_typed_schema(schema: dict | list, *, _depth: int = 0) -> bool:
@@ -82,23 +82,6 @@ def _collect_untyped(schema: dict[str, object]) -> list[str]:
     return sorted(untyped)
 
 
-def _load_grandfather(path: Path | None = None) -> set[str]:
-    path = path or GRANDFATHER_PATH
-    if not path.exists():
-        return set()
-    result: set[str] = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        comment_pos = stripped.find(" #")
-        if comment_pos != -1:
-            stripped = stripped[:comment_pos].rstrip()
-        if stripped:
-            result.add(stripped)
-    return result
-
-
 def _check_staleness(current: dict[str, object]) -> int:
     """Return 0 if committed snapshot matches *current*, else 1 with a hint."""
     if not SCHEMA_PATH.exists():
@@ -129,48 +112,22 @@ def _check_staleness(current: dict[str, object]) -> int:
     return 1
 
 
-def _check_untyped(schema: dict[str, object], grandfather_path: Path | None = None) -> int:
-    """Return 0 if the ledger is consistent, else 1.
+def _check_untyped(schema: dict[str, object]) -> int:
+    """Return 0 if every 2xx JSON operation is typed, else 1.
 
-    Reports **both** directions in a single run (never short-circuited):
-    - New untyped endpoints not yet in the ledger.
-    - Stale ledger entries that are no longer untyped (the ratchet).
+    Zero tolerance — no ledger, no exceptions. A binary endpoint that trips this
+    should declare its real media type (``responses=`` / ``response_class=``)
+    rather than advertising JSON; see ``TestBinaryEndpointsDeclareNonJson``.
     """
-    untyped = set(_collect_untyped(schema))
-    grandfather = _load_grandfather(grandfather_path)
-
-    new_untyped = sorted(untyped - grandfather)
-    stale_entries = sorted(grandfather - untyped)
-
-    rc = 0
-    if new_untyped:
-        print(
-            f"FAIL: {len(new_untyped)} new untyped endpoint(s) (not in grandfather):\n"
-            + "\n".join(f"  - {op}" for op in new_untyped)
-            + "\n  Fix: add response_model= to the route, then uv run python scripts/dump_openapi.py"
-        )
-        rc = 1
-
-    if stale_entries:
-        print(
-            f"FAIL: {len(stale_entries)} stale ledger entry(ies) — "
-            "these endpoints now have a response model, remove them from the grandfather:\n"
-            + "\n".join(f"  - {op}" for op in stale_entries)
-            + f"\n  Fix: delete the line(s) from {grandfather_path or GRANDFATHER_PATH}"
-        )
-        rc = 1
-
-    return rc
-
-
-def do_write_grandfather(schema: dict[str, object] | None = None) -> None:
-    """Print the current untyped set in grandfather format (to stdout)."""
-    if schema is None:
-        from app.main import app
-
-        schema = app.openapi()
-    for op in _collect_untyped(schema):
-        print(op)
+    untyped = _collect_untyped(schema)
+    if not untyped:
+        return 0
+    print(
+        f"FAIL: {len(untyped)} untyped endpoint(s) — a 2xx JSON response with no schema:\n"
+        + "\n".join(f"  - {op}" for op in untyped)
+        + "\n  Fix: add response_model= to the route, then uv run python scripts/dump_openapi.py"
+    )
+    return 1
 
 
 def do_check() -> int:
@@ -190,23 +147,5 @@ def do_check() -> int:
     return rc
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Check OpenAPI snapshot freshness and untyped-endpoint gate.",
-    )
-    parser.add_argument(
-        "--write-grandfather",
-        action="store_true",
-        help="Print the current untyped set in grandfather format to stdout.",
-    )
-    args = parser.parse_args()
-
-    if args.write_grandfather:
-        do_write_grandfather()
-        return 0
-
-    return do_check()
-
-
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(do_check())

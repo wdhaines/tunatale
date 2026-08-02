@@ -176,6 +176,60 @@ class TestLessonReviewQueue:
         assert set(main_item.keys()) <= set(lesson_item.keys())
         assert set(lesson_item.keys()) - set(main_item.keys()) == {"pending_rating"}
 
+    async def test_response_key_sets_and_nested_direction_left(self):
+        """Oracle for the response_model flip (openapi ledger batch 6c).
+
+        Written against the UNFILTERED handler output BEFORE the flip, with
+        LITERAL key sets — ``set(Model.model_fields)`` alone would be circular
+        once ``response_model=`` filters the payload to the model's own fields.
+        """
+        from tests._helpers.srs_item_shape import DIRECTION_KEYS, DIRECTION_WITHOUT_LEFT, LESSON_QUEUE_ITEM_KEYS
+
+        db = self._setup(self._lesson(["banka", "center"]))
+        self._track(db, "banka")
+        self._set_dir(db, "banka", "recognition", "learning")
+        # `left` is what makes the nested-direction branch observable: it is the
+        # only key `_direction_to_dict` conditionally omits.
+        item = db.get_collocation("banka")
+        ds = item.directions[Direction.RECOGNITION]
+        ds.left = 1001
+        db.update_direction(item.guid, Direction.RECOGNITION, ds)
+        self._stage(db, "banka", grade_class="learning")
+        self._track(db, "center")
+        self._set_dir(db, "center", "recognition", "review")
+        self._stage(db, "center", grade_class="due")
+
+        resp = await self._get_queue()
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert set(data.keys()) == {"queue", "has_unreviewed_listen"}
+        assert len(data["queue"]) == 2
+        for entry in data["queue"]:
+            assert set(entry.keys()) == LESSON_QUEUE_ITEM_KEYS
+
+        # `_direction_to_dict` OMITS `left` when None; a plain `response_model=`
+        # would put `"left": null` back in — a payload rewrite in the ADD
+        # direction, which is exactly what `response_model_exclude_unset=True`
+        # exists to prevent here. Pin BOTH branches, or the flag is unpinned and
+        # stripping it leaves this file green.
+        banka = next(q for q in data["queue"] if q["text"] == "banka")
+        assert set(banka["directions"]["recognition"].keys()) == DIRECTION_KEYS, (
+            "a LEARNING direction must carry `left`"
+        )
+        center = next(q for q in data["queue"] if q["text"] == "center")
+        assert set(center["directions"]["recognition"].keys()) == DIRECTION_WITHOUT_LEFT, (
+            "a REVIEW direction must not carry a `left` key"
+        )
+
+    async def test_lesson_queue_model_fields_match_the_literal(self):
+        """Keeps the models honest against the same hand-written literals."""
+        from app.api.models import LessonQueueItemResponse, LessonReviewQueueResponse
+        from tests._helpers.srs_item_shape import LESSON_QUEUE_ITEM_KEYS
+
+        assert set(LessonQueueItemResponse.model_fields) == LESSON_QUEUE_ITEM_KEYS
+        assert set(LessonReviewQueueResponse.model_fields) == {"queue", "has_unreviewed_listen"}
+
     async def test_review_touched_today_excluded_without_a_pending_row(self):
         """Regression (om / vite, 2026-07-27). A card confirmed in the listen
         preview is applied immediately and holds no pending row; "touched today"

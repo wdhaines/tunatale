@@ -677,6 +677,53 @@ class NewCollocationsResponse(BaseModel):
     new: list[SrsItemResponse]
 
 
+# ── Batch 6c: the two queue routes ───────────────────────────────────────────
+#
+# ``get_review_queue`` and ``get_lesson_review_queue`` both serialize through
+# ``srs.py::_queue_item_to_dict``, which is ``_item_to_dict``'s output plus
+# ``direction`` and ``word_audio_url`` — hence one item model composed from
+# SrsItemResponse rather than two near-duplicates. The lesson route then stamps
+# ``pending_rating`` onto each entry after the serializer returns, which is the
+# ONLY difference between the two element shapes.
+#
+# Both routes need ``response_model_exclude_unset=True``: the nested
+# DirectionStateResponse omits ``left`` when None (same trap as 6a/6b), and a
+# plain ``response_model=`` would ADD ``"left": null`` back. Pinned by the
+# nested-direction key-set assertions in ``test_api_srs.py::
+# TestReviewQueueResponseShape`` and ``test_api_lesson_review_queue.py``.
+
+
+class QueueItemResponse(SrsItemResponse):
+    """One served card: the 25 ``_item_to_dict`` keys + the 2 queue-only keys.
+
+    The 7 flat per-direction keys inherited from SrsItemResponse are overwritten
+    by ``_queue_item_to_dict`` with the *queued* direction's values, so their
+    types are unchanged — only their provenance is.
+    """
+
+    direction: str  # Direction.value of the card actually being served
+    word_audio_url: str | None  # cloze only; None for vocab (whose word audio is audio_url)
+
+
+class LessonQueueItemResponse(QueueItemResponse):
+    """A lesson "Check your work" item: a queue item plus the staged rating."""
+
+    pending_rating: str
+
+
+class ReviewQueueResponse(BaseModel):
+    """Response of GET /api/srs/review-queue."""
+
+    queue: list[QueueItemResponse]
+
+
+class LessonReviewQueueResponse(BaseModel):
+    """Response of GET /api/srs/lesson/{lesson_id}/review-queue."""
+
+    queue: list[LessonQueueItemResponse]
+    has_unreviewed_listen: bool
+
+
 # ── Batch 6d: the image-item response ────────────────────────────────────────
 #
 # The 5-key static literal returned bare by PUT /items/{id}/image, PUT
