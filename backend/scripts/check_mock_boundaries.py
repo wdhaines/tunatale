@@ -25,9 +25,6 @@ Usage::
 
     # exit 0 = clean
     uv run python scripts/check_mock_boundaries.py
-
-CLI flags:
-  --no-location       Omit file:line from violation output (for CI).
 """
 
 from __future__ import annotations
@@ -217,7 +214,7 @@ def collect_all_hits(tests_dir: Path = TESTS_DIR) -> dict[str, Counter]:
     return by_file
 
 
-def do_check(tests_dir: Path = TESTS_DIR, show_location: bool = True) -> int:
+def do_check(tests_dir: Path = TESTS_DIR) -> int:
     """Check all test files against the allowlist.  Returns exit code.
 
     Zero tolerance: any ``patch("app.…")`` / ``monkeypatch.setattr("app.…", …)``
@@ -250,20 +247,5 @@ def do_check(tests_dir: Path = TESTS_DIR, show_location: bool = True) -> int:
     return exit_code
 
 
-def main() -> int:
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Check test-file mock boundaries against the allowlist.",
-    )
-    parser.add_argument(
-        "--no-location",
-        action="store_true",
-        help="Omit file:line from violation output (for CI).",
-    )
-    args, _unknown = parser.parse_known_intermixed_args()
-    return do_check(show_location=not args.no_location)
-
-
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(do_check())

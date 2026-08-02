@@ -36,9 +36,6 @@ Usage::
 
     # exit 0 = clean
     uv run python scripts/check_language_literals.py
-
-CLI flags:
-  --no-location       Omit file:line from violation output (for CI).
 """
 
 from __future__ import annotations
@@ -235,7 +232,7 @@ def collect_all_hits(
     return by_file
 
 
-def do_check(app_dir: Path = APP_DIR, show_location: bool = True) -> int:
+def do_check(app_dir: Path = APP_DIR) -> int:
     """Check all app files against the allowlist. Returns exit code.
 
     Zero tolerance: any hardcoded language literal outside an allowlisted
@@ -269,20 +266,5 @@ def do_check(app_dir: Path = APP_DIR, show_location: bool = True) -> int:
     return exit_code
 
 
-def main() -> int:
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Check app-file language literals against the allowlist.",
-    )
-    parser.add_argument(
-        "--no-location",
-        action="store_true",
-        help="Omit file:line from violation output (for CI).",
-    )
-    args, _unknown = parser.parse_known_intermixed_args()
-    return do_check(show_location=not args.no_location)
-
-
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(do_check())

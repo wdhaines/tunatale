@@ -128,15 +128,6 @@ class TestEvaluate:
     """Zero tolerance since 2026-07-30: the ledger and its shrink-only ratchet are
     gone, so there is exactly one rule — any hit fails."""
 
-    def test_no_violations_passes(self):
-        assert evaluate({}) == (0, [])
-
-    def test_any_violation_fails(self):
-        by_file = {"app/srs/db_new.py": Counter({SHAPE_ROLLOVER: 1})}
-        exit_code, messages = evaluate(by_file)
-        assert exit_code == 1
-        assert any("db_new.py" in m for m in messages)
-
     def test_message_names_the_fix(self):
         """The failure has to say what to do; this checker has no escape hatch,
         so an unhelpful message is the thing that gets it disabled."""
@@ -162,3 +153,115 @@ class TestEvaluate:
     def test_combine_shape_also_fails(self):
         exit_code, _ = evaluate({"app/foo.py": Counter({SHAPE_COMBINE: 1})})
         assert exit_code == 1
+
+
+# ── Drills ────────────────────────────────────────────────────────────────────
+
+# Synthetic sources only — parsed from strings so the checker's own scan of the
+# repo never flags these samples.
+
+VIOLATION_ROLLOVER = """\
+from app.srs.anki_mirror.rollover import due_at_rollover_utc
+from datetime import date
+
+
+def compute():
+    return due_at_rollover_utc(date.today()).isoformat()
+"""
+
+VIOLATION_COMBINE = """\
+from datetime import date, datetime, time
+
+
+def compute():
+    return datetime.combine(date.today(), time(4, 0))
+"""
+
+# `date.today()` appearing ONLY in prose. Both a docstring and a comment, because
+# several real app/ hits are warnings against this very pattern.
+PROSE_ONLY = '''\
+from app.srs.anki_mirror.rollover import anki_today
+
+
+def compute():
+    """Use anki_today(), never due_at_rollover_utc(date.today()).
+
+    The Anki day rolls over at 04:00, so date.today() names tomorrow's Anki day
+    between midnight and 04:00.
+    """
+    # Do not write due_at_rollover_utc(date.today()) here.
+    return anki_today()
+'''
+
+
+# ── Drill 4 (run this first — it is the cheapest to get wrong) ────────────────
+
+
+def test_drill4_date_today_in_a_comment_or_docstring_is_not_a_violation():
+    """Prose mentioning the pattern must not be flagged.
+
+    A regex implementation passes every other drill and fails this one. Several of
+    the 18 `app/` occurrences are docstrings warning against exactly this
+    construct; flagging them is self-defeating and would seed the ledger with
+    entries that must never be "fixed".
+    """
+    assert scan_source(PROSE_ONLY) == [], (
+        "flagged a date.today() that appears only in a docstring/comment — use the AST, not a regex"
+    )
+
+
+def test_drill4b_a_real_violation_is_still_found_in_a_file_that_also_has_prose():
+    """The prose skip must not swallow genuine hits in the same file."""
+    mixed = PROSE_ONLY + "\n\n" + VIOLATION_ROLLOVER
+    hits = scan_source(mixed)
+    assert [c for c, _ in hits] == [SHAPE_ROLLOVER], f"expected one real hit, got {hits}"
+
+
+# ── Both tier-1 shapes are detected ───────────────────────────────────────────
+
+
+def test_both_tier1_shapes_are_detected():
+    """Tier 1 is exactly these two composites."""
+    assert [c for c, _ in scan_source(VIOLATION_ROLLOVER)] == [SHAPE_ROLLOVER]
+    assert [c for c, _ in scan_source(VIOLATION_COMBINE)] == [SHAPE_COMBINE]
+
+
+# ── Drill 1: any violation → red ──────────────────────────────────────────────
+
+
+def test_drill1_new_violation_fails():
+    by_file = {"app/srs/db_new.py": Counter({SHAPE_ROLLOVER: 1})}
+    exit_code, messages = evaluate(by_file)
+    assert exit_code == 1, "a violation passed"
+    assert "app/srs/db_new.py" in "\n".join(messages)
+
+
+def test_drill2_previously_ledgered_module_has_no_special_treatment():
+    """The 7 seeded sites lived in these modules and were fixed in b684d82.
+
+    A "this file used to be allowed" carve-out surviving anywhere — in code or in
+    an allowlist — would let them silently come back. Replaces drills 2/2b/3/3b.
+    """
+    by_file = {"app/srs/db_revlog.py": Counter({SHAPE_ROLLOVER: 1})}
+    exit_code, messages = evaluate(by_file)
+    assert exit_code == 1, "a formerly-ledgered module still gets a free pass"
+    assert "db_revlog.py" in "\n".join(messages)
+
+
+def test_drill3_clean_tree_passes():
+    """Otherwise the gate is unusable."""
+    assert evaluate({}) == (0, [])
+
+
+def test_drill4c_a_violation_sharing_a_line_with_a_docstring_is_still_found():
+    """A real violation on the SAME LINE as a docstring must not be skipped.
+
+    Found by audit 2026-07-29. The first implementation filtered hits by docstring
+    LINE RANGES, which was unreachable for its stated purpose (a docstring's text
+    contains no Call nodes) but did produce a false negative: a genuine call sharing
+    a line with a docstring fell inside the range and was silently dropped. Being
+    AST-based is itself the docstring/comment skip; no line filtering is wanted.
+    """
+    same_line = 'def f():\n    """d"""; return due_at_rollover_utc(date.today())\n'
+    hits = scan_source(same_line)
+    assert [c for c, _ in hits] == [SHAPE_ROLLOVER], f"violation on a docstring's line was skipped: {hits}"

@@ -182,21 +182,5 @@ def do_check(app_dir: Path = APP_DIR) -> int:
 # ── CLI entry point ───────────────────────────────────────────────────────────
 
 
-def main() -> int:
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Check for date.today() where the ANKI day is meant.",
-    )
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        default=True,
-        help="Default (and only) mode: fail on any hit.",
-    )
-    parser.parse_known_intermixed_args()
-    return do_check()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+if __name__ == "__main__":
+    sys.exit(do_check())
