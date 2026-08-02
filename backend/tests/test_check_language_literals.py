@@ -20,8 +20,6 @@ from check_language_literals import (  # noqa: E402
     do_check,
     _matches_language_literal,
     _preview,
-    load_allowlist,
-    matches_allowlist,
     scan_file,
 )
 
@@ -136,33 +134,6 @@ class TestScanFile:
         f = tmp_path / "bad_syntax.py"
         f.write_text("This is not valid python {{{{\n")
         assert scan_file(f) == []
-
-
-# ── Allowlist ─────────────────────────────────────────────────────────────────
-
-
-class TestAllowlist:
-    def test_load_allowlist_skips_comments_and_blanks(self, tmp_path):
-        allow = tmp_path / "allow.txt"
-        allow.write_text("# this is a comment\n\napp/config.py\n  # indented comment  \napp/audio/preprocessing/*.py\n")
-        patterns = load_allowlist(allow)
-        assert patterns == ["app/config.py", "app/audio/preprocessing/*.py"]
-
-    def test_load_allowlist_missing_file(self, tmp_path):
-        missing = tmp_path / "nope.txt"
-        assert load_allowlist(missing) == []
-
-    def test_matches_allowlist_exact_file(self):
-        patterns = ["app/config.py", "app/audio/preprocessing/*.py"]
-        assert matches_allowlist("app/config.py", patterns) is True
-
-    def test_matches_allowlist_glob(self):
-        patterns = ["app/config.py", "app/audio/preprocessing/*.py"]
-        assert matches_allowlist("app/audio/preprocessing/slovene.py", patterns) is True
-
-    def test_matches_allowlist_no_match(self):
-        patterns = ["app/config.py", "app/audio/preprocessing/*.py"]
-        assert matches_allowlist("app/api/srs.py", patterns) is False
 
 
 # ── Grandfather ───────────────────────────────────────────────────────────────

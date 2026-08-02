@@ -28,6 +28,11 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from _checker_lib import (
+    _call_fn_name,
+    collect_all_hits,
+)
+
 # Stable construct identifiers (imported by drills, so values must not change).
 SHAPE_ROLLOVER = "due_at_rollover_utc(date.today())"
 SHAPE_COMBINE = "datetime.combine(date.today(), time(4, ...))"
@@ -36,15 +41,6 @@ APP_DIR = Path("app")
 
 
 # ── AST helpers ───────────────────────────────────────────────────────────────
-
-
-def _call_fn_name(node: ast.Call) -> str | None:
-    """Return the function name, handling both ``Name`` and ``Attribute``."""
-    if isinstance(node.func, ast.Name):
-        return node.func.id
-    if isinstance(node.func, ast.Attribute):
-        return node.func.attr
-    return None
 
 
 def _is_date_today(node: ast.AST) -> bool:
@@ -127,38 +123,7 @@ def scan_file(filepath: Path) -> list[tuple[str, int]]:
         return []
 
 
-def _relative_path(filepath: Path) -> str:
-    """Return a path relative to the CWD (``backend/`` when run normally)."""
-    try:
-        return str(filepath.relative_to(Path.cwd()))
-    except ValueError:
-        return str(filepath)
-
-
 # ── Grandfather ledger ────────────────────────────────────────────────────────
-
-
-def collect_all_hits(app_dir: Path = APP_DIR) -> dict[str, Counter]:
-    """Scan ``app/`` for tier-1 hits. Returns ``{relative_path: Counter{construct: count}}``."""
-    by_file: dict[str, Counter] = {}
-    for pyfile in sorted(app_dir.rglob("*.py")):
-        if pyfile.name == "__init__.py":
-            continue
-        if "__pycache__" in pyfile.parts:
-            continue
-        hits = scan_file(pyfile)
-        if not hits:
-            continue
-        rel = _relative_path(pyfile)
-        counter: Counter = Counter()
-        for construct, _lineno in hits:
-            counter[construct] += 1
-        if counter:
-            by_file[rel] = counter
-    return by_file
-
-
-# ── Ratchet ───────────────────────────────────────────────────────────────────
 
 
 def evaluate(by_file: dict[str, Counter]) -> tuple[int, list[str]]:
@@ -173,7 +138,7 @@ def evaluate(by_file: dict[str, Counter]) -> tuple[int, list[str]]:
 
 def do_check(app_dir: Path = APP_DIR) -> int:
     """Scan, evaluate, print.  Returns exit code."""
-    exit_code, messages = evaluate(collect_all_hits(app_dir))
+    exit_code, messages = evaluate(collect_all_hits(app_dir, scan_file))
     for msg in messages:
         print(msg)
     return exit_code

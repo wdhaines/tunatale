@@ -18,8 +18,6 @@ from check_mock_boundaries import (  # noqa: E402
     do_check,
     _is_monkeypatch_setattr,
     _is_patch,
-    load_allowlist,
-    matches_allowlist,
     scan_file,
 )
 
@@ -133,33 +131,6 @@ class TestScanFile:
         assert len(hits) == 3
         xs = [t for t, _ in hits if t == "app.x"]
         assert len(xs) == 2
-
-
-# ── Allowlist ─────────────────────────────────────────────────────────────────
-
-
-class TestAllowlist:
-    def test_load_allowlist_skips_comments_and_blanks(self, tmp_path):
-        allow = tmp_path / "allow.txt"
-        allow.write_text("# this is a comment\n\napp.foo.*\n  # indented comment  \napp.bar.baz\n")
-        patterns = load_allowlist(allow)
-        assert patterns == ["app.foo.*", "app.bar.baz"]
-
-    def test_load_allowlist_missing_file(self, tmp_path):
-        missing = tmp_path / "nope.txt"
-        assert load_allowlist(missing) == []
-
-    def test_matches_allowlist_glob(self):
-        patterns = ["app.audio.edge_tts.edge_tts.*", "app.config.settings.*"]
-        assert matches_allowlist("app.audio.edge_tts.edge_tts.Communicate", patterns) is True
-        assert matches_allowlist("app.config.settings.anki_collection_path", patterns) is True
-        assert matches_allowlist("app.plugins.anki_sync.sync.main", patterns) is False
-
-    def test_matches_allowlist_star_dot_star(self):
-        patterns = ["app.*.settings.*"]
-        assert matches_allowlist("app.config.settings.foo", patterns) is True
-        assert matches_allowlist("app.srs.queue_stats.settings.bar", patterns) is True
-        assert matches_allowlist("app.config.notsettings.foo", patterns) is False
 
 
 # ── Grandfather ───────────────────────────────────────────────────────────────

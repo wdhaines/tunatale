@@ -41,11 +41,16 @@ Usage::
 from __future__ import annotations
 
 import ast
-import fnmatch
 import re
 import sys
 from collections import Counter
 from pathlib import Path
+
+from _checker_lib import (
+    _relative_path,
+    load_allowlist,
+    matches_allowlist,
+)
 
 ALLOWLIST_PATH = Path("tests/language_literals_allowlist.txt")
 APP_DIR = Path("app")
@@ -128,66 +133,6 @@ def scan_file(filepath: Path) -> list[tuple[str, int]]:
         if _matches_language_literal(node.value):
             hits.append((node.value, node.lineno))
     return hits
-
-
-def _relative_path(filepath: Path) -> str:
-    """Convert an absolute path to one relative to the backend/ root."""
-    try:
-        return str(filepath.relative_to(Path.cwd()))
-    except ValueError:
-        return str(filepath)
-
-
-# ── Allowlist ─────────────────────────────────────────────────────────────────
-
-
-def load_allowlist(path: Path = ALLOWLIST_PATH) -> list[str]:
-    """Return non-empty, non-comment lines from the allowlist file.
-
-    Inline comments (``app/foo.py  # why``) are stripped so the remaining
-    text is a clean fnmatch glob.
-    """
-    if not path.exists():
-        return []
-    lines: list[str] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        # Strip inline comment (first unquoted ``#``)
-        comment_pos = _find_inline_comment(stripped)
-        if comment_pos is not None:
-            stripped = stripped[:comment_pos].rstrip()
-        if stripped:
-            lines.append(stripped)
-    return lines
-
-
-def _find_inline_comment(s: str) -> int | None:
-    """Return index of the first ``#`` that starts a comment (not inside a
-    string or escaped), or None."""
-    in_single = False
-    in_double = False
-    escape = False
-    for i, ch in enumerate(s):
-        if escape:
-            escape = False
-            continue
-        if ch == "\\":
-            escape = True
-            continue
-        if ch == "'" and not in_double:
-            in_single = not in_single
-        elif ch == '"' and not in_single:
-            in_double = not in_double
-        elif ch == "#" and not in_single and not in_double:
-            return i
-    return None
-
-
-def matches_allowlist(rel_path: str, patterns: list[str]) -> bool:
-    """Return True if *rel_path* matches any allowlist glob."""
-    return any(fnmatch.fnmatch(rel_path, pat) for pat in patterns)
 
 
 # ── Grandfather ──────────────────────────────────────────────────────────────
