@@ -55,8 +55,8 @@ def _merge_by_retrievability_ascending(
     rec: list[tuple[int, SRSItem, str]],
     prod: list[tuple[int, SRSItem, str]],
     today: datetime.date,
-    col_crt: int | None = None,
-    params: FSRSParams | None = None,
+    col_crt: int | None,
+    params: FSRSParams,
 ) -> list[tuple[int, SRSItem, str, Direction]]:
     """Sort the combined due pool by retrievability ascending.
 
@@ -68,8 +68,6 @@ def _merge_by_retrievability_ascending(
     either field is missing, fall back to anki_card_id then row_id so the order
     stays deterministic but no longer claims Anki parity.
     """
-    if params is None:
-        params, _ = resolve_fsrs_params()
     dr = params.desired_retention
     decay = params.decay
 

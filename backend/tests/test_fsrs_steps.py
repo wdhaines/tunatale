@@ -142,50 +142,23 @@ class TestLearningStepSemantics:
 
     def test_new_again_empty_steps_graduates(self):
         """NEW + AGAIN with empty learn_steps → graduates via _graduate_to_review (line 254)."""
-        import json
-
-        from app.config import settings
-        from app.srs.database import SRSDatabase
-
-        db_path = settings.database_url.removeprefix("sqlite:///")
-        db = SRSDatabase(db_path)
-        db.set_anki_state_cache("learn_steps", json.dumps([]))
-        db.close()
         item = _make_item(state=SRSState.NEW)
-        result = schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION)
+        result = schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION, learn_steps=[])
         new_dir = result.directions[Direction.RECOGNITION]
         assert new_dir.state == SRSState.REVIEW
         assert new_dir.stability > 0  # Hits lines 463-464 (_init_stability + _init_difficulty)
 
     def test_review_again_empty_relearn_steps_graduates(self):
         """REVIEW + AGAIN with empty relearn_steps → graduates immediately (line 311)."""
-        import json
-
-        from app.config import settings
-        from app.srs.database import SRSDatabase
-
-        db_path = settings.database_url.removeprefix("sqlite:///")
-        db = SRSDatabase(db_path)
-        db.set_anki_state_cache("relearn_steps", json.dumps([]))
-        db.close()
         item = _make_item(state=SRSState.REVIEW)
-        result = schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION)
+        result = schedule(item, Rating.AGAIN, direction=Direction.RECOGNITION, relearn_steps=[])
         new_dir = result.directions[Direction.RECOGNITION]
         assert new_dir.state == SRSState.REVIEW
 
     def test_schedule_with_steps_empty_steps_graduates(self):
         """LEARNING with empty steps and left=0 → graduates via _graduate_to_review (line 362)."""
-        import json
-
-        from app.config import settings
-        from app.srs.database import SRSDatabase
-
-        db_path = settings.database_url.removeprefix("sqlite:///")
-        db = SRSDatabase(db_path)
-        db.set_anki_state_cache("learn_steps", json.dumps([]))
-        db.close()
         item = _make_item(state=SRSState.LEARNING, left=0)
-        result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
+        result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION, learn_steps=[])
         new_dir = result.directions[Direction.RECOGNITION]
         assert new_dir.state == SRSState.REVIEW
 
@@ -199,18 +172,9 @@ class TestLearningStepSemantics:
 
     def test_graduate_from_relearning_uses_next_stability_lapse(self):
         """RELEARNING + GOOD (last step) → REVIEW, FSRS stability_lapse applied."""
-        import json
-
-        from app.config import settings
-        from app.srs.database import SRSDatabase
-
-        db_path = settings.database_url.removeprefix("sqlite:///")
-        db = SRSDatabase(db_path)
-        db.set_anki_state_cache("relearn_steps", json.dumps([1.0]))
-        db.close()
         # Start in RELEARNING with 1 step, rate GOOD to graduate
         item = _make_item(state=SRSState.RELEARNING, left=1001)
-        result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
+        result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION, relearn_steps=[1.0])
         new_dir = result.directions[Direction.RECOGNITION]
         assert new_dir.state == SRSState.REVIEW
         assert new_dir.stability > 0  # Confirms FSRS next_stability_lapse was applied
@@ -244,17 +208,8 @@ class TestLearningStepSemantics:
 
     def test_new_good_with_single_step_graduates(self):
         """NEW + GOOD with single step deck → graduates immediately."""
-        import json
-
-        from app.config import settings
-        from app.srs.database import SRSDatabase
-
-        db_path = settings.database_url.removeprefix("sqlite:///")
-        db = SRSDatabase(db_path)
-        db.set_anki_state_cache("learn_steps", json.dumps([1.0]))
-        db.close()
         item = _make_item(state=SRSState.NEW)
-        result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION)
+        result = schedule(item, Rating.GOOD, direction=Direction.RECOGNITION, learn_steps=[1.0])
         assert result.directions[Direction.RECOGNITION].state == SRSState.REVIEW
 
     def test_learning_hard_with_left_zero_normalizes_to_full_steps(self):
@@ -345,18 +300,9 @@ class TestLearningStepSemantics:
         the "empirical Anki behavior beats source / never pin tests to TT's own
         port outputs" rule.
         """
-        import json
-
-        from app.config import settings
-        from app.srs.database import SRSDatabase
-
-        db_path = settings.database_url.removeprefix("sqlite:///")
-        db = SRSDatabase(db_path)
-        db.set_anki_state_cache("learn_steps", json.dumps([10.0]))
-        db.close()
         item = _make_item(state=SRSState.NEW)
         now = datetime.now(UTC)
-        result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION, now=now)
+        result = schedule(item, Rating.HARD, direction=Direction.RECOGNITION, now=now, learn_steps=[10.0])
         new_dir = result.directions[Direction.RECOGNITION]
         delay_sec = (new_dir.due_at - now).total_seconds()
         # 900s base + fuzz upper = min(int(900*0.25), 300) = 225 → range [900, 1125).

@@ -561,14 +561,6 @@ class TestResolveFSRSParams:
         params, source = resolve_fsrs_params(db)
         assert params == DEFAULT_FSRS5_PARAMS
 
-    def test_returns_default_when_db_creation_fails(self, monkeypatch):
-        from app.srs import queue_stats
-
-        monkeypatch.setattr(queue_stats.settings, "database_url", "sqlite:////__invalid/path/db.sqlite")
-        params, source = resolve_fsrs_params()
-        assert params == DEFAULT_FSRS5_PARAMS
-        assert source == "default"
-
 
 class TestPbFSRSHelpersExtra:
     """Coverage for edge paths in the new FSRS protobuf helpers."""

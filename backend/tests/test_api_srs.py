@@ -1387,7 +1387,12 @@ class TestReviewQueue:
 
         from app.api.srs import _merge_by_retrievability_ascending
 
-        result = _merge_by_retrievability_ascending([], [], date.today())
+        # col_crt/params are required now, not defaulted: the old `params=None`
+        # fallback resolved them from `settings.database_url`, the singular
+        # setting, which reads one fixed language regardless of the request.
+        from app.srs.fsrs import DEFAULT_FSRS5_PARAMS
+
+        result = _merge_by_retrievability_ascending([], [], date.today(), col_crt=None, params=DEFAULT_FSRS5_PARAMS)
         assert result == []
 
     async def test_merge_directions_empty_inputs(self, api_app_state):

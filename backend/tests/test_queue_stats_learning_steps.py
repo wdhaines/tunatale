@@ -131,20 +131,6 @@ class TestResolveLearningSteps:
         assert steps == [10.0]
         assert source == "default"
 
-    def test_resolve_learning_steps_returns_default_when_db_is_none(self):
-        """Lines 566-567: resolve_learning_steps with db=None and SRSDatabase creation fails."""
-        # Use a database URL that will fail to create
-        from app.config import settings
-
-        original_url = settings.database_url
-        try:
-            settings.database_url = "sqlite:////nonexistent/path/db.sqlite"
-            steps, source = resolve_learning_steps(db=None)
-            assert steps == [1.0, 10.0]
-            assert source == "default"
-        finally:
-            settings.database_url = original_url
-
     def test_resolve_learning_steps_returns_default_when_cache_missing(self):
         """Lines 569→580: fresh DB, no cache row written."""
         db = SRSDatabase(":memory:")
@@ -169,19 +155,6 @@ class TestResolveLearningSteps:
         steps, source = resolve_learning_steps(db=db)
         assert steps == [1.0, 10.0]
         assert source == "default"
-
-    def test_resolve_relearning_steps_returns_default_when_db_is_none(self):
-        """Lines 593-594: resolve_relearning_steps with db=None and SRSDatabase creation fails."""
-        from app.config import settings
-
-        original_url = settings.database_url
-        try:
-            settings.database_url = "sqlite:////nonexistent/path/db.sqlite"
-            steps, source = resolve_relearning_steps(db=None)
-            assert steps == [10.0]
-            assert source == "default"
-        finally:
-            settings.database_url = original_url
 
     def test_resolve_relearning_steps_returns_default_when_cache_missing(self):
         """Lines 596→607: fresh DB, no cache row written."""

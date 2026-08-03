@@ -787,16 +787,26 @@ def _grade_prior_state(prev: DirectionState, new_state: SRSState) -> SRSState:
 
 
 def _get_steps_for_state(state: SRSState) -> tuple[list[float], str]:
-    """Get learning/relearning steps for the given state.
+    """Anki's default steps for *state*, used when a caller injects none.
 
-    Returns (steps_list, step_field_name).
+    Returns (steps_list, source).
+
+    Deliberately resolves NO database. This used to call
+    ``resolve_learning_steps()`` / ``resolve_relearning_steps()`` with no db,
+    which built one from ``settings.database_url`` — the SINGULAR setting, i.e.
+    one fixed language regardless of the card being scheduled. A caller that
+    forgot to inject steps therefore graded a Norwegian card on Slovene steps,
+    silently (Layer 82). Every production ``schedule()`` call site injects steps
+    resolved from the request's own db; these constants are the honest default
+    for everyone else, and they are what the pre-existing behaviour already
+    produced under test (conftest pins the singular setting at an empty tmp db,
+    so the cache lookup always missed).
     """
-    from app.srs.queue_stats import resolve_learning_steps, resolve_relearning_steps
+    from app.srs.queue_stats import _DEFAULT_LEARN_STEPS, _DEFAULT_RELEARN_STEPS
 
     if state == SRSState.RELEARNING:
-        return resolve_relearning_steps()
-    else:
-        return resolve_learning_steps()
+        return (_DEFAULT_RELEARN_STEPS, "default")
+    return (_DEFAULT_LEARN_STEPS, "default")
 
 
 def schedule(

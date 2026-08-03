@@ -662,34 +662,28 @@ def refresh_fsrs_params(db: SRSDatabase, conn: sqlite3.Connection, deck_name: st
     )
 
 
-def resolve_fsrs_params(db: SRSDatabase | None = None) -> tuple[FSRSParams, str]:
-    """Return (params, source) where source is 'cache' or 'default'."""
-    if db is None:
+def resolve_fsrs_params(db: SRSDatabase) -> tuple[FSRSParams, str]:
+    """Return (params, source) where source is 'cache' or 'default'.
+
+    ``db`` is REQUIRED — see :func:`resolve_learning_steps` for why.
+    """
+    row = db.get_anki_state_cache("fsrs_params")
+    if row is not None:
+        value_str, updated_at = row
         try:
-            from app.srs.database import SRSDatabase as _SRSDatabase
-
-            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-        except Exception:
-            db = None
-
-    if db is not None:
-        row = db.get_anki_state_cache("fsrs_params")
-        if row is not None:
-            value_str, updated_at = row
-            try:
-                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
-                    cached = json.loads(value_str)
-                    # Backward compat: old cache rows lack "version"; infer from weight count
-                    return (
-                        FSRSParams(
-                            weights=tuple(cached["weights"]),
-                            desired_retention=float(cached["desired_retention"]),
-                        ),
-                        "cache",
-                    )
-            except ValueError, TypeError, KeyError:
-                pass
+            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                cached = json.loads(value_str)
+                # Backward compat: old cache rows lack "version"; infer from weight count
+                return (
+                    FSRSParams(
+                        weights=tuple(cached["weights"]),
+                        desired_retention=float(cached["desired_retention"]),
+                    ),
+                    "cache",
+                )
+        except ValueError, TypeError, KeyError:
+            pass
 
     return (DEFAULT_FSRS5_PARAMS, "default")
 
@@ -735,56 +729,49 @@ def refresh_learning_steps(db: SRSDatabase, conn: sqlite3.Connection, deck_name:
         db.set_anki_state_cache("relearn_steps", json.dumps(relearn_steps))
 
 
-def resolve_learning_steps(db: SRSDatabase | None = None) -> tuple[list[float], str]:
+def resolve_learning_steps(db: SRSDatabase) -> tuple[list[float], str]:
     """Return (steps, source) where source is 'cache' or 'default'.
 
     Steps are in minutes (float). Default is [1.0, 10.0] (Anki's default).
+
+    ``db`` is REQUIRED. These resolvers used to fall back to a database built
+    from ``settings.database_url`` when given none — but that is the SINGULAR
+    setting, which on a multi-language install names one language (Slovene
+    here) regardless of the request. An unwired caller therefore scheduled a
+    Norwegian card on Slovene steps, silently and with no error (Layer 82). The
+    parameter is now mandatory so an unwired caller is a ``TypeError`` at the
+    call site instead of a wrong answer; resolve the db through
+    ``resolve_language_context(code, settings)`` and pass it in.
     """
-    if db is None:
+    row = db.get_anki_state_cache("learn_steps")
+    if row is not None:
+        value_str, updated_at = row
         try:
-            from app.srs.database import SRSDatabase as _SRSDatabase
-
-            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-        except Exception:
-            db = None
-
-    if db is not None:
-        row = db.get_anki_state_cache("learn_steps")
-        if row is not None:
-            value_str, updated_at = row
-            try:
-                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
-                    return (json.loads(value_str), "cache")
-            except ValueError, TypeError, OverflowError:
-                pass
+            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                return (json.loads(value_str), "cache")
+        except ValueError, TypeError, OverflowError:
+            pass
 
     return (_DEFAULT_LEARN_STEPS, "default")
 
 
-def resolve_relearning_steps(db: SRSDatabase | None = None) -> tuple[list[float], str]:
+def resolve_relearning_steps(db: SRSDatabase) -> tuple[list[float], str]:
     """Return (steps, source) where source is 'cache' or 'default'.
 
     Steps are in minutes (float). Default is [10.0] (Anki's default).
+
+    ``db`` is REQUIRED — see :func:`resolve_learning_steps` for why.
     """
-    if db is None:
+    row = db.get_anki_state_cache("relearn_steps")
+    if row is not None:
+        value_str, updated_at = row
         try:
-            from app.srs.database import SRSDatabase as _SRSDatabase
-
-            db = _SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
-        except Exception:
-            db = None
-
-    if db is not None:
-        row = db.get_anki_state_cache("relearn_steps")
-        if row is not None:
-            value_str, updated_at = row
-            try:
-                age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-                if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
-                    return (json.loads(value_str), "cache")
-            except ValueError, TypeError, OverflowError:
-                pass
+            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                return (json.loads(value_str), "cache")
+        except ValueError, TypeError, OverflowError:
+            pass
 
     return (_DEFAULT_RELEARN_STEPS, "default")
 

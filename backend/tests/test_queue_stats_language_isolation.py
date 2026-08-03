@@ -46,7 +46,23 @@ reintroduced db-less fallback yields hardcoded defaults instead of the injected
 values and the assertion breaks. They are mechanism-agnostic -- they pin the
 absence of the read, not the shape of the fix.
 
-## ⚠️ KNOWN GAP IN THIS ORACLE -- read before trusting a green run
+## ✅ GAP CLOSED 2026-08-03 -- see TestSingularSettingIsUnreachable at the foot
+
+The gap described below was closed structurally rather than by adding the
+wiring tests it asks for. The db-less fallbacks are gone: ``db`` is now a
+REQUIRED parameter on all three resolvers, ``params`` is required on
+``_merge_by_retrievability_ascending``, and ``fsrs._get_steps_for_state``
+returns module constants instead of resolving a database. An unwired caller is
+now a ``TypeError`` at the call site, so it cannot reach production, and the
+inspection grep below is no longer the only thing standing between you and a
+cross-language read. A checker (``scripts/check_singular_database_url.py``)
+fails the gate on any new ``settings.database_url`` read outside the three
+allowlisted readers.
+
+The original text is kept below because the reasoning still explains WHY the
+seam/wiring distinction matters when adding future oracles of this shape.
+
+## ⚠️ KNOWN GAP IN THIS ORACLE (HISTORICAL -- closed, see above)
 
 These tests pin the SEAM (the callee accepts and honours injected values). They
 do NOT pin the WIRING (that the callers actually resolve from the request db and
@@ -301,3 +317,72 @@ class TestQueueSortUsesTheRequestLanguageParams:
         ordered = _merge_by_retrievability_ascending(rec, prod, date.today(), col_crt=None, params=params)
 
         assert [t[0] for t in ordered] == [1, 2]
+
+
+class TestSingularSettingIsUnreachable:
+    """Closes this file's KNOWN GAP structurally, rather than by inspection.
+
+    The gap above is that these tests pin the SEAM (the callee honours injected
+    values) but not the WIRING (that callers resolve from the request db and
+    pass them) — an unwired caller silently fell through to
+    ``settings.database_url``, the SINGULAR setting, which on a multi-language
+    install is Slovene. That is how a Norwegian card got scheduled on Slovene
+    steps (Layer 82), and the same read is what made
+    ``grave_ignored_lemma_cards --language no`` report "Nothing to grave" for a
+    month.
+
+    The fix removes the fallback outright: ``db`` is required, so an unwired
+    caller is a ``TypeError`` at the call site instead of a wrong answer. These
+    tests pin the ABSENCE of the read, so they survive any reshaping of it.
+    """
+
+    @pytest.mark.parametrize(
+        "func_name",
+        ["resolve_fsrs_params", "resolve_learning_steps", "resolve_relearning_steps"],
+    )
+    def test_resolvers_require_a_database(self, func_name):
+        from app.srs import queue_stats
+
+        with pytest.raises(TypeError):
+            getattr(queue_stats, func_name)()
+
+    def test_merge_by_retrievability_requires_params(self):
+        from app.srs.anki_mirror.queue_engine import _merge_by_retrievability_ascending
+
+        with pytest.raises(TypeError):
+            _merge_by_retrievability_ascending([], [], date.today())
+
+    def test_schedule_without_injected_steps_never_reads_the_singular_db(self, two_language_dbs):
+        """LOAD-BEARING, and it must FAIL before the fix.
+
+        Most callers (and most tests) let ``schedule`` default its steps. The
+        fixture seeds the singular setting with Slovene's 1-minute first step
+        while the module default is also [1.0, 10.0] — indistinguishable. So
+        re-point the singular at the NORWEGIAN db, whose 25-minute first step
+        differs from the default: if the default still resolves from a
+        database, the card lands in the 25-min band; if it comes from the
+        module constant, it lands in the 1-min band.
+
+        An unopenable path would NOT work here — the old resolver swallowed the
+        connection error and returned the same defaults, so that version of this
+        test passed before the fix and proved nothing.
+        """
+        _, db_no = two_language_dbs
+        import app.srs.queue_stats as qs
+
+        qs.settings.database_url = qs.settings.database_urls["no"]
+
+        # AGAIN keeps the card on step 0, so this reads the FIRST step (1.0 min
+        # default vs Norwegian's 25.0) and the bands below mean what they say.
+        # GOOD would advance to step 1 and compare 10.0 against 55.0 instead —
+        # still separated, but no longer "first step".
+        updated = schedule(_new_item(), Rating.AGAIN, review_date=date.today())
+        state = updated.directions[Direction.RECOGNITION]
+        assert state.state is SRSState.LEARNING
+        delta_min = (state.due_at - datetime.datetime.now(UTC)).total_seconds() / 60
+
+        lo, hi = _SL_FIRST_STEP_BAND
+        assert lo <= delta_min <= hi, (
+            f"expected the module-default first step ({lo}-{hi} min), got {delta_min:.1f} min — "
+            "schedule resolved its default steps from settings.database_url"
+        )
