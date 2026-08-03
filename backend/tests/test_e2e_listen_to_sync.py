@@ -199,9 +199,14 @@ class TestListenToSyncRoundTrip:
         db = SRSDatabase(":memory:")
 
         store = ContentStore(":memory:")
-        # Occurrence counts: banka 3, center 2, hotel 1 — all content words
-        # (vocab), so with daily_new_cap=2 the ranked creation pass takes
-        # banka + center and leaves hotel as a remaining candidate.
+        # All content words (vocab). Ranking is corpus frequency (wordfreq zipf)
+        # as of 2026-08-03, not in-lesson occurrence count — zipf(sl) is
+        # center 5.21, hotel 4.98, banka 4.39 (occurrences run the other way:
+        # banka 3, center 2, hotel 1). So with daily_new_cap=2 the ranked
+        # creation pass takes center + hotel and leaves banka as a remaining
+        # candidate. What this test guards — the capped subset, and only it,
+        # reaching Anki as real notes matched by guid — is ranking-agnostic;
+        # only the identity of the two survivors moved.
         lesson = Lesson(
             title="Day 1",
             language_code="sl",
@@ -232,10 +237,10 @@ class TestListenToSyncRoundTrip:
         assert data["remaining_candidates"] == 1
         assert db.count_collocations() == 2
 
-        banka = db.get_collocation_by_lemma("banka")
         center = db.get_collocation_by_lemma("center")
-        assert banka is not None and center is not None
-        assert db.get_collocation_by_lemma("hotel") is None
+        hotel = db.get_collocation_by_lemma("hotel")
+        assert center is not None and hotel is not None
+        assert db.get_collocation_by_lemma("banka") is None
 
         # ── 2. Sync create new ────────────────────────────────────────────
         anki_conn = _make_dual_collection_conn()
@@ -251,7 +256,7 @@ class TestListenToSyncRoundTrip:
         assert report.skipped == 0
         assert report.linked == 0
         note_guids = {r["guid"] for r in anki_conn.execute("SELECT guid FROM notes").fetchall()}
-        assert note_guids == {banka.guid, center.guid}
+        assert note_guids == {center.guid, hotel.guid}
 
     async def test_listen_ahead_grade_round_trips_as_filtered_and_skips_anki_daily_counter(self, monkeypatch, tmp_path):
         """Brief Step B round-trip: a listen's ahead grade pushes to Anki's

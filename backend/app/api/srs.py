@@ -7,6 +7,7 @@ import json
 import logging
 import re
 from collections import Counter
+from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import NamedTuple
@@ -56,7 +57,7 @@ from app.api.models import (
 from app.audio.cloze_tts import synthesize_cloze_audios
 from app.common.guid import compute_guid
 from app.config import settings
-from app.languages import get_tts_voice, known_language_codes
+from app.languages import get_tts_voice, get_wordfreq_lang, known_language_codes
 from app.llm.translate import generate_word_gloss, translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -632,16 +633,43 @@ def _bump_grade_clock(last_ms: int) -> tuple[datetime.datetime, int]:
     return now, ms
 
 
-def _rank_listen_candidates(key_phrases, lemmas, occurrences) -> list[tuple[str, object]]:
+def _rank_listen_candidates(
+    key_phrases, lemmas, occurrences, *, zipf: Callable[[str], float] | None = None
+) -> list[tuple[str, object]]:
     """Rank untracked creation candidates for a staged listen (plan D2).
 
     Key phrases first, in lesson order — they're the lesson's pedagogical
-    core. Then lemmas by in-lesson occurrence count descending; the stable
-    sort keeps ties in first-appearance order (the order of ``lemmas``).
+    core, never reordered by frequency. Then lemmas: when ``zipf`` is provided,
+    by corpus frequency (wordfreq zipf) descending — the most useful word is
+    created first, and OOV lemmas (zipf 0.0, typically proper nouns) sink to
+    the end, so names stop becoming a lesson's first cards. Equal frequency
+    breaks on in-lesson occurrence count descending, then first-appearance
+    order (the stable sort keeps ``lemmas``' order). With ``zipf=None`` the
+    sort is EXACTLY today's behavior — in-lesson occurrence count descending,
+    stable ties — the fallback for a language with no ``wordfreq_lang``.
     Returns ``("kp", key_phrase)`` / ``("lemma", lemma)`` tuples.
     """
-    ranked_lemmas = sorted(lemmas, key=lambda lem: -occurrences.get(lem, 0))
+    if zipf is None:
+        ranked_lemmas = sorted(lemmas, key=lambda lem: -occurrences.get(lem, 0))
+    else:
+        ranked_lemmas = sorted(lemmas, key=lambda lem: (-zipf(lem), -occurrences.get(lem, 0)))
     return [("kp", kp) for kp in key_phrases] + [("lemma", lem) for lem in ranked_lemmas]
+
+
+def _zipf_for(language_code: str) -> Callable[[str], float] | None:
+    """Return a lemma → wordfreq zipf-frequency callable for *language_code*.
+
+    ``None`` when the language has no ``wordfreq_lang`` — callers fall back to
+    occurrence-count ranking. ``import wordfreq`` lives inside this function
+    (no module-level side effects per repo convention), so a language that
+    never ranks pays no import cost.
+    """
+    wordfreq_lang = get_wordfreq_lang(language_code)
+    if wordfreq_lang is None:
+        return None
+    import wordfreq
+
+    return lambda lem: wordfreq.zipf_frequency(lem, wordfreq_lang)
 
 
 class _LessonWords(NamedTuple):
@@ -772,6 +800,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     lemma_to_surfaces = words.surfaces
     lemma_to_first_surface = words.first_surface
     surface_to_upos = words.surface_upos
+    # Corpus-frequency ranker for creation candidates — None when the language
+    # has no wordfreq code, which falls back to in-lesson occurrence ranking.
+    # Resolved once per request; the preview passes the SAME callable so the
+    # two orderings cannot drift (the 6a5c718 bug class).
+    zipf = _zipf_for(lesson.language_code)
 
     # Card-less ignore list: lemmas the user explicitly opted out of.
     # Fetched once per request; both-sides casefolded so a capitalized stored
@@ -1054,7 +1087,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             db.stage_pending_grade(body.lesson_id, _coll_id, Direction.RECOGNITION.value, _rating, "new")
             staged_count += 1
 
-    ranked = _rank_listen_candidates([], lemma_candidates, lemma_occurrences)
+    ranked = _rank_listen_candidates([], lemma_candidates, lemma_occurrences, zipf=zipf)
     for i, (_kind, cand) in enumerate(ranked):
         if i >= creation_budget:
             break
@@ -1405,8 +1438,9 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
     Array order (frontend contract): create rows come first, in rank order,
     live rows (``will_create`` True) before tail rows (``will_create`` False);
     then the tracked rows sorted as today. Do not reorder or interleave. The
-    preview and commit agree because ``_rank_listen_candidates`` sorts by
-    ``-occurrences`` with a stable sort — removing a live create promotes the
+    preview and commit agree because both pass the SAME ``zipf`` callable
+    (resolved once per request via ``_zipf_for``) into
+    ``_rank_listen_candidates`` — removing a live create promotes the
     next-ranked tail row without reordering the rest, so the first N still-
     checked create rows are exactly what ``mark_lesson_listened`` will create.
     """
@@ -1417,6 +1451,11 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
     db = request.state.srs_db
 
     words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
+
+    # Corpus-frequency ranker for creation candidates — mirrors
+    # mark_lesson_listened: the SAME callable must stamp `will_create` here and
+    # drive creation there, or preview↔commit diverge (the 6a5c718 bug class).
+    zipf = _zipf_for(lesson.language_code)
 
     # Card-less ignore list — mirrored from mark_lesson_listened.
     ignored = {lem.lower() for lem in db.get_ignored_lemmas(lesson.language_code)}
@@ -1565,7 +1604,7 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
         _row["will_create"] = False
     candidates.extend(live_new)
     candidates.extend(tail_new)
-    ranked = _rank_listen_candidates([], lemma_candidates, words.occurrences)
+    ranked = _rank_listen_candidates([], lemma_candidates, words.occurrences, zipf=zipf)
     # A create row has no card yet, so there is no stored translation to read —
     # the gloss comes from the lesson's own map, resolved through the SAME
     # helper mark_lesson_listened uses when it creates the card. Reusing it (as

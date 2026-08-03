@@ -149,6 +149,9 @@ class LanguageConfig:
     # when some OTHER language is the target. See ``get_planner_example``.
     # ``None`` for languages that supply no example (``en``).
     planner_example: PlannerExample | None = None
+    # wordfreq lookup code for pedagogical ranking; None disables frequency
+    # ranking (creation candidates fall back to in-lesson occurrence count).
+    wordfreq_lang: str | None = None
 
 
 _CONFIGS: dict[str, LanguageConfig] = {}
@@ -440,6 +443,15 @@ def get_function_words_path(code: str) -> Path | None:
     discover()
     config = _CONFIGS.get(code)
     return config.function_words_path if config else None
+
+
+def get_wordfreq_lang(code: str) -> str | None:
+    """Return the wordfreq lookup code for *code*, or ``None`` when the language
+    has no wordfreq code (frequency ranking is disabled).
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    return config.wordfreq_lang if config else None
 
 
 def card_surface_variants(code: str, text: str) -> list[str]:

@@ -182,14 +182,19 @@ class TestPreviewBudgetExhausted:
 
 class TestPreviewCreateOrder:
     async def test_create_rows_are_in_rank_order_not_analysis_order(self):
-        """occurrences: hotel=1, kava=2, banka=3 (first-appearance order is
-        hotel, kava, banka). Ranked (occurrence desc) order is banka, kava,
-        hotel. Budget=2 flags the two HIGHEST-occurrence lemmas — and the tail
-        continues the same ranking rather than reverting to analysis order."""
+        """Rank order is not analysis (first-appearance) order.
+
+        Updated 2026-08-03: ranking is corpus frequency, not occurrence count.
+        First-appearance order is hotel, kava, banka; zipf(sl) is hotel 4.98,
+        banka 4.39, kava 4.09, so the ranked order is hotel, banka, kava.
+        Budget=2 flags the two commonest — and the tail continues the same
+        ranking rather than reverting to analysis order. The discrimination
+        survives the swap: analysis order would put kava live and banka in the
+        tail, which is exactly what this asserts against."""
         db = _setup(["hotel kava banka kava banka banka"])
         db.set_anki_state_cache("daily_new_cap", "2")
 
         preview = await _get_preview()
 
-        assert _live(preview) == ["banka", "kava"], f"expected ranked order, got {_live(preview)}"
-        assert _tail(preview) == ["hotel"]
+        assert _live(preview) == ["hotel", "banka"], f"expected ranked order, got {_live(preview)}"
+        assert _tail(preview) == ["kava"]

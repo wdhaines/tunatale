@@ -33,13 +33,25 @@ from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 PREVIEW_URL = "/api/srs/lesson/lesson-1/listen-preview"
 LISTEN_URL = "/api/srs/listen"
 
-# occurrences: banka=3, kava=2, hotel=1, center=1, mesto=1.
-# First-appearance order: hotel, kava, banka, center, mesto.
-# Stable sort on -occurrences therefore ranks:
-#     banka, kava, hotel, center, mesto
-# With a cap of 2: live = [banka, kava], tail = [hotel, center, mesto].
+# ⚠️ RANKING FIXTURE UPDATED 2026-08-03 (bp-frequency-ranking-2026-07).
+# The behaviour under test — a skip CONSUMES its slot and promotes nothing — is
+# unchanged and every assertion below still pins it. Only *which* lemmas fall
+# inside the budget moved, because ranking switched from in-lesson occurrence
+# count to corpus frequency (wordfreq zipf, commonest first).
+#
+# occurrences: banka=3, kava=2, hotel=1, center=1, mesto=1
+# zipf(sl):    mesto=5.79, center=5.21, hotel=4.98, banka=4.39, kava=4.09
+#
+#   was (occurrence desc): banka, kava, hotel, center, mesto
+#   now (zipf desc):       mesto, center, hotel, banka, kava
+#
+# With a cap of 2: live = [mesto, center], tail = [hotel, banka, kava].
+# Note the skip targets below had to move with it: two tests skipped rows that
+# were live ONLY under the old ranking, and skipping a tail row is inert — so
+# keeping the old lemmas would have silently turned those tests into no-ops
+# that pass without exercising anything.
 _SENTENCE = "hotel kava banka kava banka banka center mesto"
-_EXPECTED_RANK = ["banka", "kava", "hotel", "center", "mesto"]
+_EXPECTED_RANK = ["mesto", "center", "hotel", "banka", "kava"]
 
 
 def _setup(language_code: str = "sl"):
@@ -101,19 +113,19 @@ class TestSkipConsumesItsCreationSlot:
         creates = [c for c in preview["candidates"] if c["kind"] == "create"]
 
         assert [c["text"] for c in creates] == _EXPECTED_RANK
-        assert [c["text"] for c in creates if c["will_create"]] == ["banka", "kava"]
-        assert [c["text"] for c in creates if not c["will_create"]] == ["hotel", "center", "mesto"]
+        assert [c["text"] for c in creates if c["will_create"]] == ["mesto", "center"]
+        assert [c["text"] for c in creates if not c["will_create"]] == ["hotel", "banka", "kava"]
 
     async def test_skipping_one_live_row_creates_only_the_other_one(self):
         """The reversal, in one assertion: the freed slot is NOT handed to the
-        next-ranked lemma. `hotel` led the tail and stays uncreated."""
+        next-ranked lemma. `hotel` leads the tail and stays uncreated."""
         db = _setup()
         db.set_anki_state_cache("daily_new_cap", "2")
 
-        listen = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"banka": "skip"}})
+        listen = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"mesto": "skip"}})
 
         assert listen["created"] == 1
-        assert _created(db, _EXPECTED_RANK) == {"kava"}
+        assert _created(db, _EXPECTED_RANK) == {"center"}
 
     async def test_skip_all_creates_nothing(self):
         """The case that motivated the reversal. Skipping every live create is a
@@ -121,7 +133,7 @@ class TestSkipConsumesItsCreationSlot:
         db = _setup()
         db.set_anki_state_cache("daily_new_cap", "2")
 
-        listen = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"banka": "skip", "kava": "skip"}})
+        listen = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"mesto": "skip", "center": "skip"}})
 
         assert listen["created"] == 0
         assert _created(db, _EXPECTED_RANK) == set()
@@ -133,10 +145,10 @@ class TestSkipConsumesItsCreationSlot:
         db = _setup()
         db.set_anki_state_cache("daily_new_cap", "2")
 
-        listen = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"mesto": "skip"}})
+        listen = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"kava": "skip"}})
 
         assert listen["created"] == 2
-        assert _created(db, _EXPECTED_RANK) == {"banka", "kava"}
+        assert _created(db, _EXPECTED_RANK) == {"mesto", "center"}
 
     async def test_a_skipped_lemma_is_still_offered_on_the_next_listen(self):
         """Consuming the slot must not mean consuming the CANDIDATE. A skip is
@@ -145,9 +157,9 @@ class TestSkipConsumesItsCreationSlot:
         db = _setup()
         db.set_anki_state_cache("daily_new_cap", "2")
 
-        await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"banka": "skip", "kava": "skip"}})
+        await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"mesto": "skip", "center": "skip"}})
 
         preview = await _get_preview()
         creates = [c["text"] for c in preview["candidates"] if c["kind"] == "create"]
-        assert "banka" in creates, "a skipped lemma must remain a candidate"
-        assert "kava" in creates
+        assert "mesto" in creates, "a skipped lemma must remain a candidate"
+        assert "center" in creates

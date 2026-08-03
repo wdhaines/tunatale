@@ -82,7 +82,13 @@ class TestListenStagedCreation:
         return resp.json()
 
     async def test_budget_caps_creation_to_highest_frequency_lemmas(self):
-        # occurrences: banka 3, center 2, hotel 1
+        # Ranking is corpus frequency (wordfreq zipf), not in-lesson occurrence
+        # count — updated 2026-08-03 with bp-frequency-ranking-2026-07. The cap
+        # behaviour under test is unchanged; only which 2 of the 3 lemmas it
+        # admits moved.
+        #   occurrences: banka 3, center 2, hotel 1
+        #   zipf(sl):    center 5.21, hotel 4.98, banka 4.39
+        # So the budget of 2 now takes center + hotel and leaves banka.
         db = self._setup(self._lesson(["banka center hotel", "banka center", "banka"]))
         db.set_anki_state_cache("daily_new_cap", "2")
 
@@ -101,9 +107,9 @@ class TestListenStagedCreation:
         assert data["staged"] == 0
         assert data["remaining_candidates"] == 1
         assert data["listen_count"] == 1
-        assert db.get_collocation_by_lemma("banka") is not None
         assert db.get_collocation_by_lemma("center") is not None
-        assert db.get_collocation_by_lemma("hotel") is None
+        assert db.get_collocation_by_lemma("hotel") is not None
+        assert db.get_collocation_by_lemma("banka") is None
 
     async def test_listen_no_longer_creates_key_phrase_cards(self):
         """Untracked key phrases are skipped; only lemmas are created."""

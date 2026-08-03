@@ -45,5 +45,6 @@ register(
         ),
         style_notes=_style_notes,
         function_words_path=Path(__file__).parent / "data" / "function_words.json",
+        wordfreq_lang="sl",
     ),
 )

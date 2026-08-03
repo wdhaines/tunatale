@@ -56,6 +56,7 @@ register(
         ),
         style_notes=_style_notes,
         function_words_path=Path(__file__).parent / "data" / "function_words.json",
+        wordfreq_lang="nb",
         breakdown_spans_fn=build_norwegian_breakdown_spans,
         alignment=AlignmentConfig(
             model_id=MODEL_ID,

@@ -957,8 +957,9 @@ export interface paths {
      *     Array order (frontend contract): create rows come first, in rank order,
      *     live rows (``will_create`` True) before tail rows (``will_create`` False);
      *     then the tracked rows sorted as today. Do not reorder or interleave. The
-     *     preview and commit agree because ``_rank_listen_candidates`` sorts by
-     *     ``-occurrences`` with a stable sort — removing a live create promotes the
+     *     preview and commit agree because both pass the SAME ``zipf`` callable
+     *     (resolved once per request via ``_zipf_for``) into
+     *     ``_rank_listen_candidates`` — removing a live create promotes the
      *     next-ranked tail row without reordering the rest, so the first N still-
      *     checked create rows are exactly what ``mark_lesson_listened`` will create.
      */
