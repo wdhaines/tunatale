@@ -327,3 +327,53 @@ def test_apply_requires_explicit_plan(fake_anki_db, bad_mode):
 
     params = list(inspect.signature(fn).parameters)
     assert params == ["anki_conn", "tt_conn", "items"]
+
+
+class TestResolveTtDbPath:
+    """``--language`` must pick that language's db, not the singular default.
+
+    ``settings.database_url`` does NOT follow ``--language``. Reading it made
+    ``plan_graves``' ``c.language_code = ?`` filter match zero rows and print
+    "Nothing to grave" for a language with plenty — a silent no-op, not an
+    error. Observed 2026-08-03: ``--language no`` read the Slovene db, so the
+    hansen/lund/alibi cards the script exists to remove survived every run.
+    Every pre-existing ``main`` test passes ``--tt-db`` explicitly, which is
+    exactly why the default path went unexercised.
+    """
+
+    def _settings(self, monkeypatch, **over):
+        from app.config import settings as real
+
+        s = real.model_copy(update=over)
+        monkeypatch.setattr("scripts.anki_archive.grave_ignored_lemma_cards.settings", s)
+        return s
+
+    def test_resolves_through_the_language_registry(self, monkeypatch):
+        from pathlib import Path
+
+        from scripts.anki_archive.grave_ignored_lemma_cards import _resolve_tt_db_path
+
+        self._settings(
+            monkeypatch,
+            database_url="sqlite:///./tunatale_sl.db",
+            database_urls={"sl": "sqlite:///./tunatale_sl.db", "no": "sqlite:///./tunatale_no.db"},
+        )
+
+        assert _resolve_tt_db_path(None, "no") == Path("./tunatale_no.db")
+        assert _resolve_tt_db_path(None, "sl") == Path("./tunatale_sl.db")
+
+    def test_explicit_override_wins(self, monkeypatch, tmp_path):
+        from scripts.anki_archive.grave_ignored_lemma_cards import _resolve_tt_db_path
+
+        self._settings(monkeypatch, database_urls={"no": "sqlite:///./tunatale_no.db"})
+
+        assert _resolve_tt_db_path(tmp_path / "explicit.db", "no") == tmp_path / "explicit.db"
+
+    def test_unconfigured_language_falls_back_to_the_singular_default(self, monkeypatch):
+        from pathlib import Path
+
+        from scripts.anki_archive.grave_ignored_lemma_cards import _resolve_tt_db_path
+
+        self._settings(monkeypatch, database_url="sqlite:///./only.db", database_urls={})
+
+        assert _resolve_tt_db_path(None, "no") == Path("./only.db")

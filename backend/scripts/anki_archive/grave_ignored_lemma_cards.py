@@ -168,6 +168,25 @@ def _open_tt(path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _resolve_tt_db_path(override: Path | None, language_code: str) -> Path:
+    """TT db for *language_code*, resolved through the language registry.
+
+    ``settings.database_url`` is the single-language default and does NOT follow
+    ``--language``. Reading it makes ``plan_graves``' ``c.language_code = ?``
+    filter match zero rows and report "Nothing to grave" for a language that has
+    plenty — a silent no-op rather than an error. Observed 2026-08-03:
+    ``--language no`` read the Slovene db, so the ignored-but-carded cards this
+    script exists to remove survived every run. Same failure shape as the
+    vacuous guard ``grave_duplicate_notes.main`` documents.
+    """
+    if override is not None:
+        return override
+    from app.languages import resolve_language_context
+
+    ctx = resolve_language_context(language_code, settings)
+    return Path(ctx.db_url.removeprefix("sqlite:///"))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Grave Anki notes for ignored lemmas.")
     parser.add_argument("--dry-run", action="store_true", help="show the plan without writing")
@@ -177,8 +196,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     anki_path = args.anki_db or settings.anki_collection_path
-    tt_path = args.tt_db or Path(settings.database_url.removeprefix("sqlite:///"))
     language_code = args.language or settings.target_language
+    tt_path = _resolve_tt_db_path(args.tt_db, language_code)
 
     if not Path(anki_path).exists() or not Path(tt_path).exists():
         missing = anki_path if not Path(anki_path).exists() else tt_path
