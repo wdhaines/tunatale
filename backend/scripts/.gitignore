@@ -8,6 +8,13 @@
 # unchanged and ruff discovery is correct everywhere.
 # (anki_archive/ predates the ignore rule and stays tracked; tracked files
 # override gitignore. It remains outside ruff scope, same as CI today.)
+#
+# But "tracked files override gitignore" only protects files that were ALREADY
+# tracked when `*` landed — a NEW anki_archive script is swallowed silently.
+# Twice now a commit added a tracked test importing an untracked script
+# (1029ab1, 6b8f225), which passes ./test.sh locally (the file is on disk) and
+# fails CI at import on a fresh checkout with ModuleNotFoundError. Any
+# anki_archive script a tracked test imports must be negated here.
 *
 !check_mock_boundaries.py
 !check_language_literals.py
@@ -21,3 +28,8 @@
 !bp_watchdog.py
 !__init__.py
 !.gitignore
+# anki_archive/ must be re-included for git to descend into it at all; `*` still
+# excludes its contents, so only the scripts negated below are tracked.
+!anki_archive/
+!anki_archive/grave_duplicate_notes.py
+!anki_archive/reanchor_crossed_collocation.py

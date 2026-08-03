@@ -23,7 +23,14 @@ import sqlite3
 
 import pytest
 
-from scripts.anki_archive.grave_duplicate_notes import DuplicateOp, apply_graves, plan_graves
+from scripts.anki_archive.grave_duplicate_notes import (
+    DuplicateOp,
+    apply_graves,
+    apply_repoints,
+    ops_for_language,
+    plan_graves,
+    plan_repoints,
+)
 
 _GRAVE_KIND_CARD, _GRAVE_KIND_NOTE = 0, 1
 
@@ -69,7 +76,7 @@ def _seed_tt(conn, cid: int, text: str, nid: int, anki_card_id: int) -> None:
     conn.commit()
 
 
-_OP = DuplicateOp(word="foran", doomed_nid=5378, survivor_nid=232)
+_OP = DuplicateOp(word="foran", doomed_nid=5378, survivor_nid=232, language="no")
 
 
 class TestPlanGraves:
@@ -167,3 +174,134 @@ class TestApplyGraves:
         assert apply_graves(anki, []) == {"notes_graved": 0, "cards_graved": 0}
 
         assert anki.execute("SELECT mod FROM col").fetchone()["mod"] == before
+
+
+_SL_OP = DuplicateOp(word="kako si", doomed_nid=9095, survivor_nid=7550, language="sl", repoint=True)
+
+
+class TestOpsForLanguage:
+    """One global op list, but each op is checked against ITS OWN language's db.
+
+    ``plan_graves``' "TT points at the doomed note" guard reads whichever TT db
+    the CLI opened. Running it against another language's db makes that guard
+    pass vacuously — the exact footgun the module docstring warns about — so a
+    Slovene op must never be planned during a Norwegian run.
+    """
+
+    def test_selects_only_the_named_language(self):
+        assert ops_for_language("no", [_OP, _SL_OP]) == [_OP]
+        assert ops_for_language("sl", [_OP, _SL_OP]) == [_SL_OP]
+
+    def test_unknown_language_selects_nothing(self):
+        assert ops_for_language("de", [_OP, _SL_OP]) == []
+
+
+class TestPlanRepoints:
+    """``repoint=True`` inverts the guard: TT tracks the DOOMED note, and the
+    survivor is the twin it does not track (the pair-1 Slovene cloze shape)."""
+
+    def test_plans_the_move_from_doomed_to_survivor(self, fake_anki_db):
+        anki = _anki_conn(fake_anki_db)
+        _seed_note(anki, 7550, (7550,), "kako si")
+        _seed_note(anki, 9095, (9095,), "kako si")
+        tt = _tt_conn()
+        _seed_tt(tt, 294, "kako si", nid=9095, anki_card_id=9095)
+
+        moves = plan_repoints(anki, tt, [_SL_OP])
+
+        assert len(moves) == 1
+        assert moves[0].tt_collocation_id == 294
+        assert moves[0].from_nid == 9095
+        assert moves[0].to_nid == 7550
+        assert moves[0].card_moves == ((9095, 7550),)
+
+    def test_ignores_ops_not_marked_repoint(self, fake_anki_db):
+        anki = _anki_conn(fake_anki_db)
+        _seed_note(anki, 232, (233,), "foran")
+        _seed_note(anki, 5378, (5379,), "foran")
+        tt = _tt_conn()
+        _seed_tt(tt, 1478, "foran", nid=232, anki_card_id=233)
+
+        assert plan_repoints(anki, tt, [_OP]) == []
+
+    def test_is_idempotent_once_tt_already_points_at_the_survivor(self, fake_anki_db):
+        anki = _anki_conn(fake_anki_db)
+        _seed_note(anki, 7550, (7550,), "kako si")
+        _seed_note(anki, 9095, (9095,), "kako si")
+        tt = _tt_conn()
+        _seed_tt(tt, 294, "kako si", nid=7550, anki_card_id=7550)
+
+        assert plan_repoints(anki, tt, [_SL_OP]) == []
+
+    def test_refuses_when_survivor_is_missing(self, fake_anki_db):
+        anki = _anki_conn(fake_anki_db)
+        _seed_note(anki, 9095, (9095,), "kako si")
+        tt = _tt_conn()
+        _seed_tt(tt, 294, "kako si", nid=9095, anki_card_id=9095)
+
+        with pytest.raises(ValueError, match="survivor note 7550 not found"):
+            plan_repoints(anki, tt, [_SL_OP])
+
+    def test_refuses_when_ords_do_not_line_up(self, fake_anki_db):
+        """A survivor missing an ord the collocation references would strand
+        that direction on a dead card id — refuse rather than write a NULL."""
+        anki = _anki_conn(fake_anki_db)
+        _seed_note(anki, 7550, (7550,), "kako si")
+        _seed_note(anki, 9095, (9095, 9096), "kako si")
+        tt = _tt_conn()
+        _seed_tt(tt, 294, "kako si", nid=9095, anki_card_id=9095)
+        tt.execute("INSERT INTO collocation_directions VALUES (294, 'production', 9096)")
+        tt.commit()
+
+        with pytest.raises(ValueError, match="ord 1"):
+            plan_repoints(anki, tt, [_SL_OP])
+
+
+class TestApplyRepoints:
+    def test_moves_note_and_card_pointers(self, fake_anki_db):
+        anki = _anki_conn(fake_anki_db)
+        _seed_note(anki, 7550, (7550,), "kako si")
+        _seed_note(anki, 9095, (9095,), "kako si")
+        tt = _tt_conn()
+        _seed_tt(tt, 294, "kako si", nid=9095, anki_card_id=9095)
+
+        counts = apply_repoints(tt, plan_repoints(anki, tt, [_SL_OP]))
+
+        assert counts == {"collocations_repointed": 1, "directions_repointed": 1}
+        assert tt.execute("SELECT anki_note_id FROM collocations WHERE id = 294").fetchone()[0] == 7550
+        assert (
+            tt.execute("SELECT anki_card_id FROM collocation_directions WHERE collocation_id = 294").fetchone()[0]
+            == 7550
+        )
+
+    def test_repoint_then_grave_leaves_one_live_note(self, fake_anki_db):
+        """The pair-1 sequence end to end: re-point first, and the guard that
+        would otherwise refuse the grave is satisfied."""
+        anki = _anki_conn(fake_anki_db)
+        _seed_note(anki, 7550, (7550,), "kako si")
+        _seed_note(anki, 9095, (9095,), "kako si")
+        tt = _tt_conn()
+        _seed_tt(tt, 294, "kako si", nid=9095, anki_card_id=9095)
+
+        apply_repoints(tt, plan_repoints(anki, tt, [_SL_OP]))
+        apply_graves(anki, plan_graves(anki, tt, [_SL_OP]))
+
+        assert anki.execute("SELECT COUNT(*) FROM notes WHERE id = 9095").fetchone()[0] == 0
+        assert anki.execute("SELECT COUNT(*) FROM notes WHERE id = 7550").fetchone()[0] == 1
+        assert tt.execute("SELECT anki_note_id FROM collocations WHERE id = 294").fetchone()[0] == 7550
+
+    def test_graving_before_repointing_still_refuses(self, fake_anki_db):
+        """Order matters — the guard stays armed until the re-point lands."""
+        anki = _anki_conn(fake_anki_db)
+        _seed_note(anki, 7550, (7550,), "kako si")
+        _seed_note(anki, 9095, (9095,), "kako si")
+        tt = _tt_conn()
+        _seed_tt(tt, 294, "kako si", nid=9095, anki_card_id=9095)
+
+        with pytest.raises(ValueError, match="points at doomed note 9095"):
+            plan_graves(anki, tt, [_SL_OP])
+
+    def test_empty_plan_writes_nothing(self):
+        tt = _tt_conn()
+
+        assert apply_repoints(tt, []) == {"collocations_repointed": 0, "directions_repointed": 0}
