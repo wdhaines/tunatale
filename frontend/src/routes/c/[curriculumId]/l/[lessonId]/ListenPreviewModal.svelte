@@ -310,6 +310,19 @@
 		...candidates.filter((c) => c.kind === 'create' && c.will_create !== false),
 	]);
 
+	// Numerator of the cut line. An "introduction" is any row that spends the
+	// shared daily new-card allowance: a create row (new card) or a NEW-state
+	// row (existing card, never introduced). Tracked non-new rows carry
+	// `will_create` defaulted true and must NOT be counted — they are reviews,
+	// and folding them in would inflate the total against a budget they never
+	// draw on. The denominator is this plus the tail, since every tail row is
+	// by construction one of those two kinds.
+	let liveIntroCount = $derived(
+		candidates.filter(
+			(c) => (c.kind === 'create' || c.grade_class === 'new') && c.will_create !== false,
+		).length,
+	);
+
 	let wellKnownCandidates = $derived(candidates.filter((c) => c.well_known));
 
 	// Builds the commit payload purely from local reads — never assigns into
@@ -479,10 +492,17 @@
 
 				{#snippet tailRow(c: ListenPreviewCandidate)}
 					{@const key = candidateKey(c)}
-					<!-- Read-only: the tail is what the NEXT listen will get if the
-					     current ratings hold. It shows text + gloss + "new" only —
-					     reusing candidateRow would render a grade control, and a
-					     tail row must not be gradeable. -->
+					<!-- Read-only: the tail is what the NEXT listen will get. It shows
+					     text + gloss + "new" + a "next listen" tag — reusing
+					     candidateRow would render a grade control, and a tail row must
+					     not be gradeable. The tag puts the row's status on its own face;
+					     before 2026-08-03 that status lived only in a collapsed <details>
+					     summary, which is the hidden state this replaced. It is
+					     deliberately NOT a pre-checked Skip button: skip is a user
+					     decision that CONSUMES a creation slot (srs.py, `skipped_lemmas`),
+					     over-budget is a system state that consumes nothing. Rendering the
+					     second as the first would offer a control that cannot act — the
+					     commit loop breaks on rank index before it reaches these rows. -->
 					<li class="candidate tail">
 						<span class="text" lang={languageCode}>{c.text}</span>
 
@@ -503,6 +523,10 @@
 						<span class="tag day" style={dueStyle(c)}>
 							{dueLabel(c)}
 						</span>
+
+						<!-- Occupies the grade column, so the row keeps the list's grid and
+						     the reason it is inert sits exactly where its control would be. -->
+						<span class="tag next-listen">next listen</span>
 					</li>
 				{/snippet}
 
@@ -514,18 +538,21 @@
 					{#each liveCandidates as c (candidateKey(c))}
 						{@render candidateRow(c)}
 					{/each}
-				</ul>
 
-				{#if tailCandidates.length > 0}
-					<details class="tail-group">
-						<summary>{tailCandidates.length} more — next listen</summary>
-						<ul class="list">
-							{#each tailCandidates as c (candidateKey(c))}
-								{@render tailRow(c)}
-							{/each}
-						</ul>
-					</details>
-				{/if}
+					<!-- The cut is stated, not hidden. It was a collapsed <details>
+					     until 2026-08-03; a disclosure reads as "there is a decision
+					     behind here", and there is not one. Naming the limit that drew
+					     the line points at the lever that actually moves it (the daily
+					     new-card cap) instead of implying a per-row control. -->
+					{#if tailCandidates.length > 0}
+						<li class="cut-line">
+							Introducing {liveIntroCount} of {liveIntroCount + tailCandidates.length} today — daily new-card limit
+						</li>
+						{#each tailCandidates as c (candidateKey(c))}
+							{@render tailRow(c)}
+						{/each}
+					{/if}
+				</ul>
 
 				{#if wellKnownCandidates.length > 0}
 					<details class="well-known-group">
@@ -864,25 +891,45 @@
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
 	}
-	.tail-group,
 	.well-known-group {
 		border-top: 1px solid var(--color-border);
 		padding-top: 0.5rem;
 		margin-top: 0.25rem;
 	}
-	.tail-group summary,
 	.well-known-group summary {
 		font-size: 0.8rem;
 		color: var(--color-muted);
 		cursor: pointer;
 		padding: 0.25rem 0;
 	}
-	/* The tail is what the NEXT listen gets — present so the user can see what
-	   an uncheck just promoted, but not something to decide on now. */
+	/* The divider IS the cut line — it carries the border rather than sitting
+	   next to one, so there is exactly one horizontal rule at the boundary and
+	   it is the one with the explanation on it. */
+	.cut-line {
+		border-top: 1px solid var(--color-border);
+		margin-top: 0.35rem;
+		padding: 0.5rem 0.15rem 0.35rem;
+		font-size: 0.7rem;
+		color: var(--color-muted);
+		text-align: center;
+	}
+	/* Held back by the budget, not by a choice: dimmed and non-interactive, but
+	   never collapsed. Cursor stays default so the row does not invite a click
+	   it cannot honour — the gloss inside is the one exception, and sets its
+	   own pointer. */
 	.candidate.tail {
-		opacity: 0.7;
+		opacity: 0.62;
+		cursor: default;
 	}
 	.candidate.tail:hover {
 		background: transparent;
+	}
+	.tag.next-listen {
+		grid-column: 3;
+		grid-row: 1 / 3;
+		align-self: center;
+		justify-self: start;
+		font-style: italic;
+		border: 1px dashed var(--color-border);
 	}
 </style>

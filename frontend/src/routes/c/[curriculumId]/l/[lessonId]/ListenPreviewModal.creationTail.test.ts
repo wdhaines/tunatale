@@ -20,6 +20,18 @@
  * engine's `new_quota = cap - introduced_today`, which never counted creations.
  *
  * Backend companion: `backend/tests/test_api_listen_creation_skip_consumes_slot.py`.
+ *
+ * PRESENTATION CHANGE 2026-08-03 (user decision): the tail no longer hides
+ * inside a collapsed `<details>`. It renders inline in the same list, dimmed,
+ * tagged "next listen", under a line that states the cut. The complaint that
+ * drove it: a disclosure is a hidden state, and "N more — next listen" implied
+ * a decision the user could not act on. **Only the presentation assertions
+ * moved.** Every semantic invariant above — skip consumes its slot, the tail is
+ * read-only, the tail emits nothing on commit — is unchanged and still pinned
+ * below. Marking tail rows as "skipped" was considered and REJECTED: `skip` is
+ * a user decision that consumes a creation slot (`srs.py::mark_lesson_listened`,
+ * `skipped_lemmas`), over-budget is a system state that consumes nothing, and
+ * conflating them yields a control that either lies or silently does nothing.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
@@ -105,6 +117,17 @@ const gradeBtn = (container: HTMLElement, key: string, grade: string) =>
 
 const isActive = (b: HTMLButtonElement) => b.classList.contains("active");
 
+/** A tail row is dimmed, inline, and wears the "next listen" tag. */
+const isTail = (container: HTMLElement, text: string) =>
+  [...container.querySelectorAll("li.candidate.tail")].some(
+    (li) => li.querySelector(".text")?.textContent === text,
+  );
+
+const tailTags = (container: HTMLElement) =>
+  [...container.querySelectorAll("li.candidate.tail .tag.next-listen")].map((el) =>
+    el.textContent?.trim(),
+  );
+
 /** A row is LIVE iff it carries the grade control; a tail row is read-only. */
 const isLive = (container: HTMLElement, text: string) =>
   container.querySelector(`button[data-candidate='create:${text}']`) !== null;
@@ -112,7 +135,7 @@ const isLive = (container: HTMLElement, text: string) =>
 // ── Tests ─────────────────────────────────────────────────────────────
 
 describe("ListenPreviewModal — over-budget creation tail", () => {
-  it("renders the tail read-only inside its own disclosure, in server order", async () => {
+  it("renders the tail read-only and INLINE — one flat list, no disclosure", async () => {
     mockGetListenPreview.mockResolvedValue(previewWithTail());
 
     const { getByText, container } = render(ListenPreviewModal, {
@@ -128,15 +151,39 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     expect(isLive(container, "smør")).toBe(false);
     expect(isLive(container, "ost")).toBe(false);
 
-    // The tail is still visible — disclosure, not deletion.
-    expect(getByText("brød")).toBeTruthy();
-    expect(getByText("ost")).toBeTruthy();
-    expect(getByText("3 more — next listen")).toBeTruthy();
+    // Nothing is collapsed: the tail rows sit in the SAME <ul> as the live
+    // rows. This is the whole point of the 2026-08-03 change — a <details>
+    // the user must open is a hidden state.
+    expect(container.querySelector("details.tail-group")).toBeNull();
+    expect(container.querySelector(".tail-group")).toBeNull();
 
-    // Server order is preserved in the DOM: brød before smør before ost.
-    const body = container.textContent ?? "";
-    expect(body.indexOf("brød")).toBeLessThan(body.indexOf("smør"));
-    expect(body.indexOf("smør")).toBeLessThan(body.indexOf("ost"));
+    const lists = container.querySelectorAll("ul.list");
+    const rows = [...lists[0].querySelectorAll("li.candidate")].map(
+      (li) => li.querySelector(".text")?.textContent,
+    );
+    expect(rows).toEqual(["kake", "melk", "brød", "smør", "ost"]);
+
+    // Each held-back row says so on its own face, rather than being counted
+    // in a summary the user has to expand to decode.
+    expect(isTail(container, "brød")).toBe(true);
+    expect(isTail(container, "ost")).toBe(true);
+    expect(isTail(container, "kake")).toBe(false);
+    expect(tailTags(container)).toEqual(["next listen", "next listen", "next listen"]);
+  });
+
+  it("states the cut instead of hiding it", async () => {
+    mockGetListenPreview.mockResolvedValue(previewWithTail());
+
+    const { getByText, queryByText } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    await waitFor(() => getByText("kake"));
+
+    // 2 live introductions of 5 total; the reason is named, not implied.
+    expect(getByText("Introducing 2 of 5 today — daily new-card limit")).toBeTruthy();
+    // The old disclosure summary is gone for good.
+    expect(queryByText(/more — next listen/)).toBeNull();
   });
 
   it("skipping a live create promotes NOTHING — the tail is static", async () => {
@@ -157,7 +204,8 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     expect(isLive(container, "brød")).toBe(false);
     expect(isLive(container, "smør")).toBe(false);
     expect(isLive(container, "ost")).toBe(false);
-    expect(getByText("3 more — next listen")).toBeTruthy();
+    expect(isTail(container, "brød")).toBe(true);
+    expect(getByText("Introducing 2 of 5 today — daily new-card limit")).toBeTruthy();
 
     // The skipped row stays live and stays skipped — legible and reversible.
     expect(isLive(container, "kake")).toBe(true);
@@ -194,7 +242,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     await fireEvent.click(gradeBtn(container, "create:kake", "good")!);
 
     await waitFor(() => expect(getByText("Mark 2 as listened")).toBeTruthy());
-    expect(getByText("3 more — next listen")).toBeTruthy();
+    expect(getByText("Introducing 2 of 5 today — daily new-card limit")).toBeTruthy();
     expect(isLive(container, "brød")).toBe(false);
   });
 
@@ -254,7 +302,8 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
 
     // Zero live creates remain, and the tail is untouched by the bulk action.
     await waitFor(() => expect(getByText("Mark as listened")).toBeTruthy());
-    expect(getByText("3 more — next listen")).toBeTruthy();
+    // The cut line is server state: skipping live rows does not move it.
+    expect(getByText("Introducing 2 of 5 today — daily new-card limit")).toBeTruthy();
 
     await fireEvent.click(getByText("Mark as listened"));
 
@@ -281,7 +330,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
 
     await waitFor(() => expect(getByText("Mark 2 as listened")).toBeTruthy());
     expect(isLive(container, "brød")).toBe(false);
-    expect(getByText("3 more — next listen")).toBeTruthy();
+    expect(getByText("Introducing 2 of 5 today — daily new-card limit")).toBeTruthy();
   });
 
   it("a zero budget puts every create in the tail and grades none", async () => {
@@ -298,11 +347,11 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
 
     expect(isLive(container, "brød")).toBe(false);
     expect(isLive(container, "smør")).toBe(false);
-    expect(getByText("2 more — next listen")).toBeTruthy();
+    expect(getByText("Introducing 0 of 2 today — daily new-card limit")).toBeTruthy();
     expect(getByText("Mark as listened")).toBeTruthy();
   });
 
-  it("shows no tail disclosure when the budget covers everything", async () => {
+  it("shows no cut line when the budget covers everything", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [createCandidate("kake", true), createCandidate("melk", true)],
     });
@@ -315,6 +364,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
 
     expect(isLive(container, "kake")).toBe(true);
     expect(isLive(container, "melk")).toBe(true);
-    expect(queryByText(/more — next listen/)).toBeNull();
+    expect(queryByText(/daily new-card limit/)).toBeNull();
+    expect(container.querySelectorAll("li.candidate.tail")).toHaveLength(0);
   });
 });

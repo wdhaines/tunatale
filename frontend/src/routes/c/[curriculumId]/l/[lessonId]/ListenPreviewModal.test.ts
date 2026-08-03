@@ -2040,7 +2040,10 @@ describe("NEW-state rows and the shared introduction budget", () => {
     });
 
     await waitFor(() => getByText("hansen"));
-    expect(getByText("1 more — next listen")).toBeTruthy();
+    // A NEW-state row counts as an introduction on both sides of the cut line:
+    // 1 live of 2 total. It is held back, not skipped — releasing it would
+    // spend the same daily new-card allowance a creation does.
+    expect(getByText("Introducing 1 of 2 today — daily new-card limit")).toBeTruthy();
     expect(gradeBtn(container, "word:hansen", "good")).toBeTruthy();
     expect(gradeBtn(container, "word:lund", "good")).toBeNull();
   });
