@@ -832,6 +832,12 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # twice. Only the auto-rated remainder goes to the pending bucket.
     confirmed_words = set(body.confirmed_words)
     confirmed_kps = set(body.confirmed_kps)
+    # Opt-ins past the daily new-card cap — one deliberate, per-row action per
+    # over-budget row (Anki's own "Increase today's new card limit"). Kept
+    # separate from the ratings maps: presence in `word_ratings` is overloaded
+    # (absent = default "good" = create), so it cannot carry the opt-in signal.
+    over_cap_words = set(body.over_cap_words)
+    over_cap_kps = set(body.over_cap_kps)
     # Built on first use: most listens confirm nothing, and the load-balancer
     # histogram is not free. The shared balancer + monotonic grade clock across
     # the batch mirror commit-pending exactly.
@@ -885,11 +891,13 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # the queue engine's new-quota remains the real flow limiter.
     new_cap, _ = resolve_daily_new_cap(db)
     intro_budget = max(0, new_cap - db.count_new_introduced_today(today) - db.count_new_created_today(today))
-    # ((collocation_id, rating, is_confirmed), created_today) for every
-    # NEW-state candidate, in the same candidate order the preview uses.
-    # Staging is deferred until the shared introduction budget is allocated,
-    # so the commit acts on exactly the set the preview offered.
-    new_state_pending: list[tuple[tuple[int, str, bool], bool]] = []
+    # ((collocation_id, rating, is_confirmed, opted_past_cap), created_today)
+    # for every NEW-state candidate, in the same candidate order the preview
+    # uses. The over-cap flag is resolved AT APPEND TIME — the payload carries
+    # no text, and each loop already knows whether it is looking at a word or a
+    # key phrase, so matching there makes it structurally impossible to honour a
+    # key phrase named in `over_cap_words`.
+    new_state_pending: list[tuple[tuple[int, str, bool, bool], bool]] = []
     lemma_candidates: list[str] = []
     # Lemmas the user rated "skip" this listen. They stay in `lemma_candidates`
     # (so they hold their rank position) but the staged-creation loop below
@@ -996,7 +1004,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 # The skip filter is applied when the allocated rows are staged.
                 new_state_pending.append(
                     (
-                        (listen_coll_id, rating_str, lemma in confirmed_words),
+                        (listen_coll_id, rating_str, lemma in confirmed_words, lemma in over_cap_words),
                         _created_in_window(db.get_created_at_by_guid(existing.guid), today_start, today_end),
                     )
                 )
@@ -1051,7 +1059,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             # Same shared budget as NEW-state words — mirrors the preview.
             new_state_pending.append(
                 (
-                    (kp_coll_id, rating_str, kp.phrase in confirmed_kps),
+                    (kp_coll_id, rating_str, kp.phrase in confirmed_kps, kp.phrase in over_cap_kps),
                     _created_in_window(db.get_created_at_by_guid(existing.guid), today_start, today_end),
                 )
             )
@@ -1077,8 +1085,15 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # ── Shared introduction budget: NEW-state rows first, then creations ──
     # Mirrors get_listen_preview exactly; whatever budget survives the
     # introductions is what creation may spend.
-    live_new, _tail_new, creation_budget = _allocate_new_state_budget(new_state_pending, intro_budget)
-    for _coll_id, _rating, _confirmed in live_new:
+    live_new, tail_new, creation_budget = _allocate_new_state_budget(new_state_pending, intro_budget)
+    # Opting in a tail NEW-state row stages it exactly as a live one is — the
+    # two lists differ only in that the allocation cut `tail_new` at the shared
+    # introduction budget. The creation budget is deliberately NOT re-reduced
+    # for opt-ins: the allocation already priced these rows, and shrinking
+    # creation_budget here would let the opt-in slide the live/tail divider
+    # (promote-on-uncheck, rejected 2026-07-31).
+    opted_in_tail = [row for row in tail_new if row[3]]
+    for _coll_id, _rating, _confirmed, _over_cap in live_new + opted_in_tail:
         if _rating == "skip":
             continue
         if _confirmed:
@@ -1089,8 +1104,13 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
     ranked = _rank_listen_candidates([], lemma_candidates, lemma_occurrences, zipf=zipf)
     for i, (_kind, cand) in enumerate(ranked):
-        if i >= creation_budget:
-            break
+        # Over-budget rows are skipped (a gated `continue`, not a `break`) so
+        # an opted-in tail lemma ranked BELOW the first over-budget row is still
+        # reached. A name is honoured only here, while iterating real ranked
+        # candidates — an unknown or in-budget lemma matches nothing and
+        # creates nothing, structurally (no standalone validation pass).
+        if i >= creation_budget and cand not in over_cap_words:
+            continue
         if cand in skipped_lemmas:
             continue  # slot consumed, nothing created — no promotion
         lemma = cand

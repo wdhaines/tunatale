@@ -1843,6 +1843,22 @@
             "title": "Lesson Id",
             "type": "string"
           },
+          "over_cap_kps": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Over Cap Kps",
+            "type": "array"
+          },
+          "over_cap_words": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Over Cap Words",
+            "type": "array"
+          },
           "word_ratings": {
             "additionalProperties": {
               "enum": [

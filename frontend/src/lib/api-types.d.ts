@@ -2168,6 +2168,16 @@ export interface components {
       /** Lesson Id */
       lesson_id: string;
       /**
+       * Over Cap Kps
+       * @default []
+       */
+      over_cap_kps: string[];
+      /**
+       * Over Cap Words
+       * @default []
+       */
+      over_cap_words: string[];
+      /**
        * Word Ratings
        * @default {}
        */

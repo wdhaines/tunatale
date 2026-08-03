@@ -22,6 +22,14 @@ class ListenRequest(BaseModel):
     # "reviewed".
     confirmed_words: list[str] = []  # lemmas the user graded by hand
     confirmed_kps: list[str] = []  # key-phrase texts the user graded by hand
+    # Lemmas / key-phrase texts the user deliberately opted past the daily
+    # new-card cap in the preview. Kept separate from the ratings maps for the
+    # same reason `confirmed_words` is — presence there is overloaded. For a
+    # create row the polarity is INVERTED: absent from `word_ratings` means the
+    # backend's default "good", which CREATES the card, so presence cannot
+    # distinguish "opted in past the cap" from an ordinary live row.
+    over_cap_words: list[str] = []  # lemmas the user opted past the daily new-card cap
+    over_cap_kps: list[str] = []  # key-phrase texts, same
 
 
 class ImportListensRequest(BaseModel):
