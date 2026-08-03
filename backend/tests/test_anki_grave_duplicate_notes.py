@@ -1,10 +1,14 @@
 """Grave the redundant Anki note when one word has two notes in the deck.
 
-The source deck ("6000 Most Frequent Norwegian Words") ships 18 words on two
-notes each — an artifact of the Oct 2023 import, mostly adjacent frequency
-ranks. TT keeps one collocation per word, so its ``anki_card_id`` can re-point
-between the twins across syncs; ``foran`` ping-ponged from 2026-07-14 onward,
-splitting one word's review history across two cards.
+A TT guid is ``(text, language, disambig_key)`` with POS as the disambig, so
+two Anki notes sharing the same **(text, POS)** collapse to one collocation
+with two candidate cards and nothing pins which ``anki_card_id`` references.
+``foran`` — both notes tagged ``preposition`` — ping-ponged from 2026-07-14
+onward, splitting one word's review history across two cards.
+
+POS homonyms (``løfte`` noun/verb, ``vår`` noun/det) are NOT this: a different
+POS yields a different guid and a separate pinned collocation. Only genuine
+(text, POS) collapses belong in ``DUPLICATE_OPS``.
 
 This script graves the redundant twin the Anki-safe way (``graves``, per
 `.claude/rules/anki-sync.md`) so only the card TT tracks survives.

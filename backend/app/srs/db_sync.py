@@ -78,13 +78,21 @@ class DbSyncMixin:
         note to Cloze — so this traces rather than refuses; a hard failure here
         would break those recoveries.
 
-        It is traced because a *silent* re-point is how `foran` split in two: the
-        source deck ships 18 words on two notes each, TT keeps one collocation per
-        word, and nothing pins which twin it references. On 2026-07-14 `foran`
-        re-pointed and then alternated for three weeks, splitting one word's review
-        history across both cards and leaving TT holding a due date from the card it
-        wasn't tracking. It surfaced only as a phantom "new" card on 2026-08-02.
-        Grep `RELINK_TRACE` when a card's history looks discontinuous.
+        It is traced because a *silent* re-point is how `foran` split in two. The
+        vulnerable shape is **two Anki notes sharing the same (text, POS)**: they
+        collapse to one guid, so one collocation has two candidate cards and
+        nothing pins which it references. Homonyms are NOT this — a different POS
+        means a different `disambig_key`, hence a different guid and a separate
+        collocation pinned to its own card (the Norwegian deck's 17 POS-homonyms,
+        `løfte` noun/verb, `vår` noun/det, … are all correctly split).
+
+        `foran` had both notes tagged `preposition`. On 2026-07-14 it re-pointed
+        and then alternated for three weeks, splitting one word's review history
+        across both cards and leaving TT holding a due date from the card it
+        wasn't tracking; it surfaced only as a phantom "new" card on 2026-08-02.
+        It was the sole collapsing group in the entire collection (4,500+ notes,
+        every deck) and is now repaired. Grep `RELINK_TRACE` when a card's history
+        looks discontinuous.
         """
         with self._get_conn() as conn:
             row = conn.execute("SELECT id, anki_note_id FROM collocations WHERE guid = ?", (guid,)).fetchone()
