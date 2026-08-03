@@ -90,9 +90,11 @@ class DbSyncMixin:
         and then alternated for three weeks, splitting one word's review history
         across both cards and leaving TT holding a due date from the card it
         wasn't tracking; it surfaced only as a phantom "new" card on 2026-08-02.
-        It was the sole collapsing group in the entire collection (4,500+ notes,
-        every deck) and is now repaired. Grep `RELINK_TRACE` when a card's history
-        looks discontinuous.
+        It is not the only one: `warn_if_guid_collisions` (sync_engine) is the
+        standing detector, and on first run it found two more in the Slovene deck
+        — duplicate *cloze* notes, whose guid text is the cloze body with an empty
+        disambig. Grep `GUID_COLLISION` for the population and `RELINK_TRACE` when
+        a card's history looks discontinuous.
         """
         with self._get_conn() as conn:
             row = conn.execute("SELECT id, anki_note_id FROM collocations WHERE guid = ?", (guid,)).fetchone()

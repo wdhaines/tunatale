@@ -362,6 +362,47 @@ class AnkiSync:
         # FSRS state onto cards that were just recreated.
         self._recovered_directions: set[tuple[str, str]] = set()
 
+    def warn_if_guid_collisions(self) -> int:
+        """Log a WARNING per group of Anki notes that collapse to one TT guid.
+
+        A TT guid is ``(text, language, disambig_key)`` and TT stores the part of
+        speech as disambig, so two notes sharing the same ``(text, POS)`` map to
+        ONE collocation holding TWO candidate cards — nothing pins which one
+        ``anki_card_id`` follows, and it can silently alternate between them
+        (see ``db_sync.set_anki_ids``'s RELINK_TRACE). ``foran`` did exactly that
+        from 2026-07-14, splitting one word's review history across both cards
+        and leaving TT carrying a due date from the card it wasn't tracking; it
+        surfaced only as a phantom "new" card on 2026-08-02.
+
+        **The key must include the disambig.** POS homonyms — ``løfte``
+        noun/verb, ``vår`` noun/determinative, ``om`` conj/adv/prep — are
+        legitimate separate cards, correctly split by TT into separate pinned
+        collocations. A tripwire keyed on the bare surface form would flag all
+        17 in the Norwegian deck and be useless.
+
+        Cheap sync-time tripwire, not a correctness gate: it reports, never
+        blocks. Returns the number of colliding groups (0 = clean).
+        """
+        groups: dict[tuple[str, str], list[int]] = {}
+        for rec in self._reader.get_note_records():
+            key = (rec.l2_text.casefold(), rec.disambig_key.casefold())
+            groups.setdefault(key, []).append(rec.anki_note_id)
+
+        collisions = 0
+        for (text, disambig), note_ids in sorted(groups.items()):
+            if len(note_ids) > 1:
+                collisions += 1
+                _log.warning(
+                    "GUID_COLLISION text=%r disambig=%r nids=%s — these Anki notes share one TT"
+                    " guid, so one collocation has %d candidate cards and may alternate between"
+                    " them; grave the redundant note or give them distinct parts of speech",
+                    text,
+                    disambig,
+                    sorted(note_ids),
+                    len(note_ids),
+                )
+        return collisions
+
     def detect_and_reset_orphans(self) -> tuple[int, int]:
         """Reset TT pointers to Anki cards/notes that no longer exist.
 

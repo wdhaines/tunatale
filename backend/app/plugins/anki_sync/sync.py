@@ -209,6 +209,11 @@ async def run_full_sync(
     # Self-healing: reset TT rows pointing at Anki cards/notes that no longer
     # exist, so sync_create_new recreates them and sync_push force_fsrs the
     # rebuild. Must run BEFORE create_new and push to land in this same sync.
+    # Tripwire: Anki notes that collapse to one TT guid (same text + POS) leave a
+    # collocation with two candidate cards, free to alternate between them. Reports
+    # only, never blocks, and runs on dry-runs too — it is a read of the collection.
+    sync.warn_if_guid_collisions()
+
     sync.detect_and_reset_orphans()
 
     create_report = await sync.sync_create_new(
