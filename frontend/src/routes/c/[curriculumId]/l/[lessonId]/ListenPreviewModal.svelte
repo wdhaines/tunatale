@@ -302,9 +302,20 @@
 	// flag alone partitions them — no need to enumerate kinds.
 	let tailCandidates = $derived(candidates.filter((c) => c.will_create === false));
 
+	// How many tail rows the user has opted PAST the cap by grading them. A
+	// skip is the undo, not an opt-in, so it does not count. Drives the cut
+	// line's overage suffix; nothing else uses it (selectedCount already
+	// counts opt-ins, because an opted-in tail row carries a ratings entry).
+	let optedTailCount = $derived(
+		tailCandidates.filter((c) => {
+			const rating = ratings[candidateKey(c)];
+			return rating !== undefined && rating !== 'skip';
+		}).length,
+	);
+
 	// The gradeable set: every tracked (word/kp) row that is not well-known and
 	// not over budget, plus every create row the server will actually create.
-	// Tail rows are rendered separately and read-only.
+	// Tail rows are rendered separately below the cut line.
 	let liveCandidates = $derived([
 		...candidates.filter((c) => c.kind !== 'create' && !c.well_known && c.will_create !== false),
 		...candidates.filter((c) => c.kind === 'create' && c.will_create !== false),
@@ -323,6 +334,16 @@
 		).length,
 	);
 
+	// The cut line, as ONE string — declared here because it reads
+	// `liveIntroCount` above. The overage suffix appears only once the user has
+	// opted a row past the cap: they are exceeding a limit on purpose, so the UI
+	// says the number out loud rather than quietly moving the denominator, which
+	// stays the full introduction set either way.
+	let cutLineText = $derived(
+		`Introducing ${liveIntroCount} of ${liveIntroCount + tailCandidates.length} today — daily new-card limit` +
+			(optedTailCount > 0 ? ` (+${optedTailCount} over)` : ''),
+	);
+
 	let wellKnownCandidates = $derived(candidates.filter((c) => c.well_known));
 
 	// Builds the commit payload purely from local reads — never assigns into
@@ -333,24 +354,45 @@
 	// an exception: the backend skips a well-known lemma absent from
 	// word_ratings, so a graded well-known row MUST emit its explicit rating.
 	// ⚠️ Polarity is INVERTED for the tail: a create row absent from
-	// word_ratings is the backend's "good" → it creates the card. So a tail
-	// row must emit NOTHING — emitting "skip" would drop it from
-	// lemma_candidates and suppress the very promotion the tail displays.
+	// word_ratings is the backend's "good" → it creates the card. So an
+	// untouched tail row must emit NOTHING — the opt-in is the only thing that
+	// earns an entry, and it is carried by over_cap_words / over_cap_kps so the
+	// backend knows it was a deliberate choice past the daily cap. A tail row
+	// rated `skip` also emits nothing: it is the undo for a mis-tapped opt-in.
 	function buildRatings(): {
 		wordRatings: Record<string, WordRating>;
 		kpRatings: Record<string, WordRating>;
 		confirmedWords: string[];
 		confirmedKps: string[];
+		overCapWords: string[];
+		overCapKps: string[];
 	} {
 		const wordRatings: Record<string, WordRating> = {};
 		const kpRatings: Record<string, WordRating> = {};
 		const confirmedWords: string[] = [];
 		const confirmedKps: string[] = [];
+		const overCapWords: string[] = [];
+		const overCapKps: string[] = [];
 
 		const tailKeys = new Set(tailCandidates.map((c) => candidateKey(c)));
 		for (const c of candidates) {
 			const key = candidateKey(c);
-			if (tailKeys.has(key)) continue;
+			if (tailKeys.has(key)) {
+				// A tail row is opted in ONLY by a real grade. Untouched and
+				// skip both emit nothing at all — exactly as if never touched,
+				// which is what makes skip the route back to unset.
+				const rating = ratings[key];
+				if (rating !== undefined && rating !== 'skip') {
+					if (c.kind === 'kp') {
+						kpRatings[c.text] = rating;
+						overCapKps.push(c.text);
+					} else {
+						wordRatings[c.text] = rating;
+						overCapWords.push(c.text);
+					}
+				}
+				continue;
+			}
 			const rating = ratings[key] ?? 'good';
 			// Confirmation rides its own list rather than being inferred from
 			// presence in the ratings map: a well-known row has to appear there
@@ -371,14 +413,21 @@
 			}
 		}
 
-		return { wordRatings, kpRatings, confirmedWords, confirmedKps };
+		return { wordRatings, kpRatings, confirmedWords, confirmedKps, overCapWords, overCapKps };
 	}
 
 	async function doCommit() {
 		committing = true;
 		error = '';
 
-		const { wordRatings, kpRatings, confirmedWords, confirmedKps } = buildRatings();
+		const {
+			wordRatings,
+			kpRatings,
+			confirmedWords,
+			confirmedKps,
+			overCapWords,
+			overCapKps,
+		} = buildRatings();
 
 		try {
 			const result = await listenedStore.markListened(
@@ -387,6 +436,8 @@
 				kpRatings,
 				confirmedWords,
 				confirmedKps,
+				overCapWords,
+				overCapKps,
 			);
 			onDone(result);
 		} catch (e) {
@@ -426,6 +477,42 @@
 					<button onclick={skipAll} type="button">Skip All</button>
 				</div>
 
+				{#snippet gradeControl(c: ListenPreviewCandidate)}
+					{@const key = candidateKey(c)}
+					<div class="grade" role="group" aria-label={`Proposed grade for ${c.text}`}>
+						<!-- Skip is the opposite of grading, not a fifth grade, so it
+						     sits outside the welded segmented control. -->
+						<button
+							class="skip"
+							class:active={ratings[key] === 'skip'}
+							data-candidate={key}
+							data-grade="skip"
+							aria-pressed={ratings[key] === 'skip'}
+							onclick={() => setRating(key, 'skip')}
+							type="button"
+						>Skip</button>
+						<div class="grades">
+							{#each GRADES as g (g)}
+								{@const label = g[0].toUpperCase() + g.slice(1)}
+								{@const auto = ratings[key] === g && isAuto(key)}
+								<button
+									class={g}
+									class:active={ratings[key] === g}
+									class:auto
+									data-candidate={key}
+									data-grade={g}
+									aria-pressed={ratings[key] === g}
+									aria-label={auto
+										? `${label} for ${c.text} — auto-graded, tap to confirm`
+										: `${label} for ${c.text}`}
+									onclick={() => setRating(key, g)}
+									type="button"
+								>{label}</button>
+							{/each}
+						</div>
+					</div>
+				{/snippet}
+
 				{#snippet candidateRow(c: ListenPreviewCandidate)}
 					{@const key = candidateKey(c)}
 					<li class="candidate">
@@ -455,58 +542,28 @@
 							{dueLabel(c)}
 						</span>
 
-						<div class="grade" role="group" aria-label={`Proposed grade for ${c.text}`}>
-							<!-- Skip is the opposite of grading, not a fifth grade, so it
-							     sits outside the welded segmented control. -->
-							<button
-								class="skip"
-								class:active={ratings[key] === 'skip'}
-								data-candidate={key}
-								data-grade="skip"
-								aria-pressed={ratings[key] === 'skip'}
-								onclick={() => setRating(key, 'skip')}
-								type="button"
-							>Skip</button>
-							<div class="grades">
-								{#each GRADES as g (g)}
-									{@const label = g[0].toUpperCase() + g.slice(1)}
-									{@const auto = ratings[key] === g && isAuto(key)}
-									<button
-										class={g}
-										class:active={ratings[key] === g}
-										class:auto
-										data-candidate={key}
-										data-grade={g}
-										aria-pressed={ratings[key] === g}
-										aria-label={auto
-											? `${label} for ${c.text} — auto-graded, tap to confirm`
-											: `${label} for ${c.text}`}
-										onclick={() => setRating(key, g)}
-										type="button"
-									>{label}</button>
-								{/each}
-							</div>
-						</div>
+						{@render gradeControl(c)}
 					</li>
 				{/snippet}
 
 				{#snippet tailRow(c: ListenPreviewCandidate)}
 					{@const key = candidateKey(c)}
-					<!-- Read-only: the tail is what the NEXT listen will get. It shows
-					     text + gloss + "new" + a "next listen" tag — reusing
-					     candidateRow would render a grade control, and a tail row must
-					     not be gradeable. The tag puts the row's status on its own face;
-					     before 2026-08-03 that status lived only in a collapsed <details>
-					     summary, which is the hidden state this replaced. It is
-					     deliberately NOT a pre-checked Skip button: skip is a user
-					     decision that CONSUMES a creation slot (srs.py, `skipped_lemmas`),
-					     over-budget is a system state that consumes nothing. Rendering the
-					     second as the first would offer a control that cannot act — the
-					     commit loop breaks on rank index before it reaches these rows. -->
-					<li class="candidate tail">
+					{@const opted = ratings[key] !== undefined && ratings[key] !== 'skip'}
+					<!-- Held back by the budget, not by a choice — but gradeable now.
+					     The control is the opt-in affordance: it starts with NO rating
+					     set (the preview loader never seeds tail rows), and explicitly
+					     grading the row carries it past the daily new-card cap. The tag
+					     keeps the row's status on its own face. `.tail` stays on an
+					     opted-in row — it is partition identity, and removing it would
+					     re-create promote-on-uncheck through the back door — so
+					     `.tail:not(.opted)` is what carries the dimming. -->
+					<li class="candidate tail" class:opted={opted}>
 						<span class="text" lang={languageCode}>{c.text}</span>
 
 						<div class="sub" class:revealed={revealed.has(key)}>
+							{#if c.kind === 'kp'}
+								<span class="tag kp">key phrase</span>
+							{/if}
 							{#if c.translation}
 								<button
 									type="button"
@@ -524,9 +581,9 @@
 							{dueLabel(c)}
 						</span>
 
-						<!-- Occupies the grade column, so the row keeps the list's grid and
-						     the reason it is inert sits exactly where its control would be. -->
 						<span class="tag next-listen">next listen</span>
+
+						{@render gradeControl(c)}
 					</li>
 				{/snippet}
 
@@ -545,9 +602,13 @@
 					     the line points at the lever that actually moves it (the daily
 					     new-card cap) instead of implying a per-row control. -->
 					{#if tailCandidates.length > 0}
-						<li class="cut-line">
-							Introducing {liveIntroCount} of {liveIntroCount + tailCandidates.length} today — daily new-card limit
-						</li>
+						<!-- ONE interpolation, deliberately. Built as a string in the
+						     script rather than assembled inline with an `{#if}`, because
+						     Svelte trims the leading whitespace of an if-block body: the
+						     inline form `limit{#if …} (+N over){/if}` rendered
+						     "limit(+1 over)", with the space silently eaten. A single
+						     text node also keeps it matchable by exact text. -->
+						<li class="cut-line">{cutLineText}</li>
 						{#each tailCandidates as c (candidateKey(c))}
 							{@render tailRow(c)}
 						{/each}
@@ -913,23 +974,30 @@
 		color: var(--color-muted);
 		text-align: center;
 	}
-	/* Held back by the budget, not by a choice: dimmed and non-interactive, but
-	   never collapsed. Cursor stays default so the row does not invite a click
-	   it cannot honour — the gloss inside is the one exception, and sets its
-	   own pointer. */
-	.candidate.tail {
+	/* Held back by the budget, not by a choice: dimmed and non-interactive —
+	   until the user opts one in, when `.tail.opted` lifts the dim. Never
+	   collapsed. Cursor stays default so the row does not invite a click it
+	   cannot honour — the gloss inside is the one exception, and sets its own
+	   pointer. `.tail` stays on an opted-in row (partition identity); only the
+	   dimming moves to the `:not(.opted)` form. */
+	.candidate.tail:not(.opted) {
 		opacity: 0.62;
 		cursor: default;
 	}
-	.candidate.tail:hover {
+	.candidate.tail:not(.opted):hover {
 		background: transparent;
 	}
 	.tag.next-listen {
 		grid-column: 3;
-		grid-row: 1 / 3;
+		grid-row: 1;
 		align-self: center;
 		justify-self: start;
 		font-style: italic;
 		border: 1px dashed var(--color-border);
+	}
+	/* The status tag sits above the control in the grade column; the control
+	   drops to the second grid row so they never overlap. */
+	.candidate.tail .grade {
+		grid-row: 2;
 	}
 </style>

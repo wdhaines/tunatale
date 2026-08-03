@@ -32,6 +32,23 @@
  * a user decision that consumes a creation slot (`srs.py::mark_lesson_listened`,
  * `skipped_lemmas`), over-budget is a system state that consumes nothing, and
  * conflating them yields a control that either lies or silently does nothing.
+ *
+ * OVER-CAP OPT-IN 2026-08-03 (user decision, brief
+ * `bp-listen-over-cap-optin-2026-08.md`): a tail row is no longer *read-only*.
+ * It renders a grade control with NO rating pre-set, so that explicitly grading
+ * one row — and only that row — carries it past the daily new-card cap. That is
+ * a user-initiated limit increase (Anki's Custom Study → "Increase today's new
+ * card limit"), NOT a parity bug, and it is self-limiting: the overage feeds
+ * `count_new_created_today` / `count_new_introduced_today`, which drive the next
+ * listen's budget toward 0 on their own.
+ *
+ * This supersedes ONLY the read-only claim above. Everything else still holds
+ * and is still pinned here: the partition is static (nothing is promoted across
+ * the divider), and an UNTOUCHED tail row still emits nothing on commit — the
+ * polarity invariant, which matters more now, not less, since the row finally
+ * has a control the user could touch. `isAboveDivider` (below) explains why the
+ * old "has a grade control" proxy had to be replaced rather than deleted.
+ * New assertions live in `ListenPreviewModal.overCap.test.ts`.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
@@ -128,14 +145,37 @@ const tailTags = (container: HTMLElement) =>
     el.textContent?.trim(),
   );
 
-/** A row is LIVE iff it carries the grade control; a tail row is read-only. */
-const isLive = (container: HTMLElement, text: string) =>
-  container.querySelector(`button[data-candidate='create:${text}']`) !== null;
+/**
+ * A row is ABOVE THE DIVIDER iff it is not rendered as a tail row.
+ *
+ * ⚠️ CHANGED 2026-08-03 (over-cap opt-in), and the reason matters. This helper
+ * used to be `isLive`, defined as "carries a grade control" — which worked only
+ * as long as those two things were the same thing. They are not anymore: a tail
+ * row now renders a grade control with NO rating set, so that explicitly
+ * grading one row carries it past the daily cap (Anki's "Increase today's new
+ * card limit"). Control presence therefore stopped being a proxy for partition
+ * membership.
+ *
+ * The invariant every assertion below was actually guarding is the PARTITION —
+ * that nothing is ever promoted across the divider by a client-side action —
+ * so that is what it now tests directly. Nothing was weakened: the rows that
+ * had to be below the cut are still asserted to be below it, and "the tail
+ * carries no ACTIVE rating" is pinned separately in
+ * ListenPreviewModal.overCap.test.ts rather than being smuggled in via the
+ * absence of a button.
+ *
+ * `.tail` is partition identity and stays on an opted-in row; `.tail.opted`
+ * is what lifts the dimming. Keying this on `.tail` alone is deliberate.
+ */
+const isAboveDivider = (container: HTMLElement, text: string) =>
+  [...container.querySelectorAll("li.candidate")].some(
+    (li) => li.querySelector(".text")?.textContent === text && !li.classList.contains("tail"),
+  );
 
 // ── Tests ─────────────────────────────────────────────────────────────
 
 describe("ListenPreviewModal — over-budget creation tail", () => {
-  it("renders the tail read-only and INLINE — one flat list, no disclosure", async () => {
+  it("renders the tail below the divider and INLINE — one flat list, no disclosure", async () => {
     mockGetListenPreview.mockResolvedValue(previewWithTail());
 
     const { getByText, container } = render(ListenPreviewModal, {
@@ -144,12 +184,14 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
 
     await waitFor(() => getByText("kake"));
 
-    // Live rows are gradeable; tail rows are rendered but carry no control.
-    expect(isLive(container, "kake")).toBe(true);
-    expect(isLive(container, "melk")).toBe(true);
-    expect(isLive(container, "brød")).toBe(false);
-    expect(isLive(container, "smør")).toBe(false);
-    expect(isLive(container, "ost")).toBe(false);
+    // Live rows sit above the cut; tail rows are rendered inline below it.
+    // (Both are gradeable since the over-cap opt-in — the difference is the
+    // partition and the fact that a tail row starts with NO rating set.)
+    expect(isAboveDivider(container, "kake")).toBe(true);
+    expect(isAboveDivider(container, "melk")).toBe(true);
+    expect(isAboveDivider(container, "brød")).toBe(false);
+    expect(isAboveDivider(container, "smør")).toBe(false);
+    expect(isAboveDivider(container, "ost")).toBe(false);
 
     // Nothing is collapsed: the tail rows sit in the SAME <ul> as the live
     // rows. This is the whole point of the 2026-08-03 change — a <details>
@@ -201,14 +243,14 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     await waitFor(() => {
       expect(isActive(gradeBtn(container, "create:kake", "skip")!)).toBe(true);
     });
-    expect(isLive(container, "brød")).toBe(false);
-    expect(isLive(container, "smør")).toBe(false);
-    expect(isLive(container, "ost")).toBe(false);
+    expect(isAboveDivider(container, "brød")).toBe(false);
+    expect(isAboveDivider(container, "smør")).toBe(false);
+    expect(isAboveDivider(container, "ost")).toBe(false);
     expect(isTail(container, "brød")).toBe(true);
     expect(getByText("Introducing 2 of 5 today — daily new-card limit")).toBeTruthy();
 
     // The skipped row stays live and stays skipped — legible and reversible.
-    expect(isLive(container, "kake")).toBe(true);
+    expect(isAboveDivider(container, "kake")).toBe(true);
   });
 
   it("the footer count drops when a create is skipped, because nothing replaces it", async () => {
@@ -243,7 +285,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
 
     await waitFor(() => expect(getByText("Mark 2 as listened")).toBeTruthy());
     expect(getByText("Introducing 2 of 5 today — daily new-card limit")).toBeTruthy();
-    expect(isLive(container, "brød")).toBe(false);
+    expect(isAboveDivider(container, "brød")).toBe(false);
   });
 
   it("sends nothing for tail rows — not 'skip', not 'good'", async () => {
@@ -266,7 +308,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
       // is outside the budget window so naming it is inert, but emitting "skip"
       // would still be wrong — it asserts a decision the user never made about a
       // row they were never offered.
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], [], [], []);
     });
   });
 
@@ -285,7 +327,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     await waitFor(() => {
       // kake is named so the server consumes its slot without creating it.
       // melk stays default-good and is omitted. No tail row appears.
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { kake: "skip" }, {}, [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { kake: "skip" }, {}, [], [], [], []);
     });
   });
 
@@ -314,6 +356,8 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
         {},
         [],
         [],
+        [],
+        [],
       );
     });
   });
@@ -329,7 +373,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     await fireEvent.click(getByText("Grade All"));
 
     await waitFor(() => expect(getByText("Mark 2 as listened")).toBeTruthy());
-    expect(isLive(container, "brød")).toBe(false);
+    expect(isAboveDivider(container, "brød")).toBe(false);
     expect(getByText("Introducing 2 of 5 today — daily new-card limit")).toBeTruthy();
   });
 
@@ -345,8 +389,8 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
 
     await waitFor(() => getByText("brød"));
 
-    expect(isLive(container, "brød")).toBe(false);
-    expect(isLive(container, "smør")).toBe(false);
+    expect(isAboveDivider(container, "brød")).toBe(false);
+    expect(isAboveDivider(container, "smør")).toBe(false);
     expect(getByText("Introducing 0 of 2 today — daily new-card limit")).toBeTruthy();
     expect(getByText("Mark as listened")).toBeTruthy();
   });
@@ -362,8 +406,8 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
 
     await waitFor(() => getByText("kake"));
 
-    expect(isLive(container, "kake")).toBe(true);
-    expect(isLive(container, "melk")).toBe(true);
+    expect(isAboveDivider(container, "kake")).toBe(true);
+    expect(isAboveDivider(container, "melk")).toBe(true);
     expect(queryByText(/daily new-card limit/)).toBeNull();
     expect(container.querySelectorAll("li.candidate.tail")).toHaveLength(0);
   });

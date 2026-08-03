@@ -731,6 +731,54 @@ describe("TunaTaleAPI", () => {
       );
     });
 
+    it("markAsListened sends over_cap_* only when a row was opted past the cap", async () => {
+      // The two keys are OMITTED when empty rather than always posted, which is
+      // why the two tests above still assert a five-key body. That keeps an
+      // ordinary listen's request byte-identical to what it has always been —
+      // the backend defaults both to [], so an empty list carries no
+      // information. They appear only when the user deliberately graded an
+      // over-budget row, which is the whole point: the request says "this was
+      // asked for" exactly when it was.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            status: "ok",
+            created: 3,
+            staged: 0,
+            applied: 0,
+            remaining_candidates: 0,
+            listen_count: 1,
+          }),
+        ),
+      );
+
+      await api.markAsListened(
+        "lesson-1",
+        { hotel: "good" },
+        { "dober dan": "hard" },
+        [],
+        [],
+        ["hotel"],
+        ["dober dan"],
+      );
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/listen`,
+        expect.objectContaining({
+          body: JSON.stringify({
+            lesson_id: "lesson-1",
+            word_ratings: { hotel: "good" },
+            kp_ratings: { "dober dan": "hard" },
+            confirmed_words: [],
+            confirmed_kps: [],
+            over_cap_words: ["hotel"],
+            over_cap_kps: ["dober dan"],
+          }),
+        }),
+      );
+    });
+
     it("markAsListened throws on non-ok response", async () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail()));
 

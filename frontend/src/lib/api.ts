@@ -851,17 +851,28 @@ export class TunaTaleAPI {
     // well-known row must be listed for the backend to consider it at all.
     confirmedWords: string[] = [],
     confirmedKps: string[] = [],
+    // Rows the user opted PAST the daily new-card cap, by grading them in the
+    // preview. Same shape as confirmed_* — separate from the ratings maps
+    // because presence there is inverted for create rows (absent means the
+    // backend's default "good", which creates the card).
+    overCapWords: string[] = [],
+    overCapKps: string[] = [],
   ): Promise<ListenResponse> {
+    const body: Record<string, unknown> = {
+      lesson_id: lessonId,
+      word_ratings: wordRatings,
+      kp_ratings: kpRatings,
+      confirmed_words: confirmedWords,
+      confirmed_kps: confirmedKps,
+    };
+    // Empty arrays are omitted rather than always posted: the backend defaults
+    // both to [] anyway, and the untouched-list request is otherwise unchanged.
+    if (overCapWords.length > 0) body.over_cap_words = overCapWords;
+    if (overCapKps.length > 0) body.over_cap_kps = overCapKps;
     return this.request("/api/srs/listen", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        lesson_id: lessonId,
-        word_ratings: wordRatings,
-        kp_ratings: kpRatings,
-        confirmed_words: confirmedWords,
-        confirmed_kps: confirmedKps,
-      }),
+      body: JSON.stringify(body),
     });
   }
 

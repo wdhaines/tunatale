@@ -335,6 +335,8 @@ describe("ListenPreviewModal", () => {
         {},
         [],
         [],
+        [],
+        [],
       );
     });
   });
@@ -440,7 +442,7 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(btn);
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], [], [], []);
       expect(onDone).toHaveBeenCalledWith({
         status: "ok",
         created: 2,
@@ -478,7 +480,7 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { kava: "skip" }, {}, [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { kava: "skip" }, {}, [], [], [], []);
     });
   });
 
@@ -546,7 +548,7 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], [], [], []);
     });
   });
 
@@ -620,6 +622,8 @@ describe("ListenPreviewModal", () => {
         { voda: "easy" },
         [],
         ["voda"],
+        [],
+        [],
       );
     });
   });
@@ -649,7 +653,7 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], [], [], []);
     });
   });
 
@@ -684,6 +688,8 @@ describe("ListenPreviewModal", () => {
         {},
         ["prosim"],
         [],
+        [],
+        [],
       );
     });
   });
@@ -713,7 +719,15 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { kava: "hard" }, {}, ["kava"], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith(
+        "l1",
+        { kava: "hard" },
+        {},
+        ["kava"],
+        [],
+        [],
+        [],
+      );
     });
   });
 
@@ -748,6 +762,8 @@ describe("ListenPreviewModal", () => {
         { "na zdravje": "again" },
         [],
         ["na zdravje"],
+        [],
+        [],
       );
     });
   });
@@ -792,7 +808,7 @@ describe("ListenPreviewModal", () => {
 
     await waitFor(() => {
       // Restored to the default (good) → omitted from the payload.
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], [], [], []);
     });
   });
 
@@ -821,7 +837,15 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { prosim: "easy" }, {}, ["prosim"], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith(
+        "l1",
+        { prosim: "easy" },
+        {},
+        ["prosim"],
+        [],
+        [],
+        [],
+      );
     });
   });
 
@@ -871,7 +895,7 @@ describe("ListenPreviewModal", () => {
 
     await waitFor(() => {
       expect(mockMarkAsListened).toHaveBeenCalledTimes(1);
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], [], [], []);
       expect(onDone).toHaveBeenCalledTimes(1);
     });
   });
@@ -928,7 +952,7 @@ describe("ListenPreviewModal", () => {
 
     await waitFor(() => {
       expect(mockMarkAsListened).toHaveBeenCalledTimes(1);
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], [], [], []);
       expect(onDone).toHaveBeenCalledTimes(1);
     });
   });
@@ -1251,7 +1275,7 @@ describe("ListenPreviewModal", () => {
     await waitFor(() => {
       // Only prosim is in wordRatings (checked+good → omitted as default);
       // hvala (unchecked well-known) sends "skip" so the backend won't stage it.
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { hvala: "skip" }, {}, [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { hvala: "skip" }, {}, [], [], [], []);
     });
   });
 
@@ -1296,7 +1320,15 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 2 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { hvala: "good" }, {}, ["hvala"], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith(
+        "l1",
+        { hvala: "good" },
+        {},
+        ["hvala"],
+        [],
+        [],
+        [],
+      );
     });
   });
 
@@ -1841,6 +1873,8 @@ describe("ListenPreviewModal", () => {
           {},
           ["a", "b", "d"],
           [],
+          [],
+          [],
         );
       });
     });
@@ -1911,7 +1945,7 @@ describe("ListenPreviewModal", () => {
         // "prosim" keeps the default rating (so it is still omitted from the
         // ratings map) but must appear in confirmed_words — that split is the
         // whole contract.
-        expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], []);
+        expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], [], [], []);
       });
     });
 
@@ -1944,6 +1978,8 @@ describe("ListenPreviewModal", () => {
           { "dober dan": "easy" },
           ["prosim"],
           ["dober dan"],
+          [],
+          [],
         );
       });
     });
@@ -2024,10 +2060,17 @@ describe("ListenPreviewModal", () => {
 });
 
 describe("NEW-state rows and the shared introduction budget", () => {
-  it("puts an over-budget NEW-state row in the tail, not the gradeable list", async () => {
+  it("puts an over-budget NEW-state row in the tail, below the cut line", async () => {
     // Releasing a staged grade on a NEW-state card INTRODUCES it, spending
-    // Anki's daily new-card allowance — so rows past the budget must be
-    // read-only, exactly like over-budget create rows.
+    // Anki's daily new-card allowance — so rows past the budget sit below the
+    // cut, exactly like over-budget create rows.
+    //
+    // ⚠️ UPDATED 2026-08-03 (over-cap opt-in). This used to assert the tail row
+    // had NO grade button. It now has one, deliberately: that control is the
+    // affordance for exceeding the cap on purpose, one row at a time. What must
+    // still hold — and is what this test was really guarding — is that the row
+    // stays in the TAIL PARTITION and starts with no rating set, so nothing is
+    // introduced unless the user explicitly asks for it.
     mockGetListenPreview.mockResolvedValue({
       candidates: [
         newStateCandidate("hansen", { will_create: true }),
@@ -2045,7 +2088,12 @@ describe("NEW-state rows and the shared introduction budget", () => {
     // spend the same daily new-card allowance a creation does.
     expect(getByText("Introducing 1 of 2 today — daily new-card limit")).toBeTruthy();
     expect(gradeBtn(container, "word:hansen", "good")).toBeTruthy();
-    expect(gradeBtn(container, "word:lund", "good")).toBeNull();
+
+    const lundRow = [...container.querySelectorAll("li.candidate")].find(
+      (li) => li.querySelector(".text")?.textContent === "lund",
+    );
+    expect(lundRow?.classList.contains("tail")).toBe(true);
+    expect(gradeBtn(container, "word:lund", "good").getAttribute("aria-pressed")).toBe("false");
   });
 
   it("never names an over-budget NEW-state row in the commit payload", async () => {
@@ -2066,7 +2114,7 @@ describe("NEW-state rows and the shared introduction budget", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], [], [], []);
     });
   });
 });
