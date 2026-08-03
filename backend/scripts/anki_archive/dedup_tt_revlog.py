@@ -30,6 +30,7 @@ import sqlite3
 from pathlib import Path
 
 from app.config import settings
+from app.languages import resolve_db_path
 
 _WINDOW_MS = 5000
 
@@ -108,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="Report without deleting.")
     args = parser.parse_args(argv)
 
-    tt_db_path = Path(settings.database_url.removeprefix("sqlite:///"))
+    tt_db_path = resolve_db_path(settings.target_language, settings)
     result = dedup_tt_revlog(tt_db_path, dry_run=args.dry_run)
 
     mode = "DRY-RUN" if args.dry_run else "DELETED"

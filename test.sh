@@ -67,6 +67,9 @@ full_log="$ROOT/.git/tt-test-last.log"
   echo "=== Date today check ==="
   uv run python scripts/check_date_today.py
 
+  echo "=== Singular database_url check ==="
+  uv run python scripts/check_singular_database_url.py
+
   echo "=== Plugin import check ==="
   uv run python scripts/check_plugin_imports.py
 

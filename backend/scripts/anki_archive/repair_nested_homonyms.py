@@ -38,6 +38,7 @@ from typing import Any
 from app.anki.safety import safe_open
 from app.common.guid import compute_guid
 from app.config import settings
+from app.languages import resolve_db_path
 
 
 class DriftError(RuntimeError):
@@ -91,7 +92,7 @@ def repair_nested_homonyms(
     if anki_backup_dir is None:
         anki_backup_dir = settings.anki_backup_dir
     if tt_db_path is None:
-        tt_db_path = settings.database_url.replace("sqlite:///", "")
+        tt_db_path = str(resolve_db_path(settings.target_language, settings))
     if _manifest is None:
         _manifest = _MANIFEST
 

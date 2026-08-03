@@ -22,6 +22,7 @@
 !check_date_today.py
 !_checker_lib.py
 !check_openapi_snapshot.py
+!check_singular_database_url.py
 !dump_openapi.py
 !mutation_sweep_slicing.py
 !render_slicing_ab.py

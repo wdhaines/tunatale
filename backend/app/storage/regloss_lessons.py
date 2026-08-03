@@ -24,7 +24,7 @@ import json
 import logging
 import re
 
-from app.languages import get_language
+from app.languages import get_language, resolve_db_path
 from app.models.language import Language
 from app.models.lesson import Lesson, SectionType
 from app.srs.lemmatizer import Lemmatizer, get_lemmatizer, lemmatize_surfaces_in_context
@@ -172,7 +172,9 @@ async def _main() -> None:  # pragma: no cover — CLI wiring, run once against 
     from app.storage.store import ContentStore
 
     logging.basicConfig(level=logging.INFO)
-    store = ContentStore(settings.database_url.replace("sqlite:///", ""))
+    # Registry-resolved: the singular setting names one fixed language, so
+    # `--language no` would re-gloss the Slovene store.
+    store = ContentStore(str(resolve_db_path(lang_code, settings)))
     llm = LLMClient(groq_api_key=settings.groq_api_key, groq_model=settings.llm_model)
     try:
         count = await regloss_all(store, llm, get_lemmatizer(language.code), language)

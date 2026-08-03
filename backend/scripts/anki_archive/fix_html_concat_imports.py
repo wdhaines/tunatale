@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Literal
 
 from app.config import settings
+from app.languages import resolve_db_path
 
 _B_THEN_I_PATTERN = re.compile(
     r"^\s*<b>([^<]+)</b>\s*<br\s*/?>\s*<i>([^<]+)</i>",
@@ -126,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tt-db", type=Path, default=None, help="override TT database path")
     args = parser.parse_args(argv)
 
-    tt_path = args.tt_db or Path(settings.database_url.removeprefix("sqlite:///"))
+    tt_path = args.tt_db or resolve_db_path(settings.target_language, settings)
     anki_path = args.anki_db or (Path.home() / "Library/Application Support/Anki2/Will/collection.anki2")
 
     if not tt_path.exists():

@@ -48,6 +48,7 @@ from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
 from app.anki.sqlite_reader import find_deck_id
 from app.common.guid import compute_guid
 from app.config import settings
+from app.languages import resolve_db_path
 
 _BASIC_VOCAB_GLOSS = re.compile(
     r"^\s*<b>([^<]+)</b>\s*<br\s*/?>\s*<i>([^<]+)</i>",
@@ -275,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     anki_path = args.anki_db or settings.anki_collection_path
-    tt_path = args.tt_db or Path(settings.database_url.removeprefix("sqlite:///"))
+    tt_path = args.tt_db or resolve_db_path(settings.target_language, settings)
     deck_name = args.deck_name or settings.anki_deck_name
 
     if not anki_path.exists():

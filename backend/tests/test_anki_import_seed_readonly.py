@@ -324,6 +324,9 @@ class TestSettingsDefaults:
                 "anki_media_path": tmp_path / "no_media",
                 "anki_backup_dir": tmp_path / "bak",
                 "database_url": f"sqlite:///{tmp_path / 'tt.db'}",
+                # Empty plural map ⇒ resolve_db_path falls back to the singular
+                # setting, which is what "all defaults" means for this test.
+                "database_urls": {},
                 "media_dir": tmp_path / "media",
                 "anki_fallback_log": tmp_path / "fallback.log",
             },

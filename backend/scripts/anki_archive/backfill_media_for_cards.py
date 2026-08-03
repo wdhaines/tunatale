@@ -23,6 +23,7 @@ from app.anki.sync import OfflineWriter, _safe_stem, _store_tt_media
 from app.anki.sync_orchestrator import _ensure_tt_media_linked, _resolve_media_dir
 from app.api.anki import _build_media_fn
 from app.config import settings
+from app.languages import resolve_db_path
 from app.llm.client import LLMClient
 from app.srs.database import SRSDatabase
 
@@ -35,7 +36,7 @@ async def main() -> None:
     media_dir = _resolve_media_dir()
     print(f"media_dir = {media_dir}  (exists={media_dir.exists()})")
 
-    db = SRSDatabase(settings.database_url.removeprefix("sqlite:///"))
+    db = SRSDatabase(str(resolve_db_path(settings.target_language, settings)))
     llm = LLMClient(groq_api_key=settings.groq_api_key, groq_model=settings.llm_model)
     media_fn = _build_media_fn(llm, db)
     used_image_urls: set[str] = set()

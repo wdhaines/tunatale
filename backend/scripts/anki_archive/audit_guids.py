@@ -22,6 +22,7 @@ from pathlib import Path
 from app.anki.safety import safe_open
 from app.anki.sqlite_reader import extract_l2_from_fields, fetch_notes_for_deck, find_deck_id
 from app.config import settings
+from app.languages import resolve_db_path
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\(.+\)$")
 
@@ -84,7 +85,7 @@ def run_audit(
     if anki_backup_dir is None:
         anki_backup_dir = settings.anki_backup_dir
     if tunatale_db_path is None:
-        tunatale_db_path = settings.database_url.replace("sqlite:///", "")
+        tunatale_db_path = str(resolve_db_path(settings.target_language, settings))
 
     # Read Anki notes (read-only, with backup)
     with safe_open(anki_collection_path, backup_dir=anki_backup_dir, mode="ro") as ctx:

@@ -152,8 +152,9 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover
     args = parser.parse_args(argv)
 
     from app.config import settings
+    from app.languages import resolve_db_path
 
-    tt_path = args.tt_db or Path(settings.database_url.removeprefix("sqlite:///"))
+    tt_path = args.tt_db or resolve_db_path(settings.target_language, settings)
     if not tt_path.exists():
         print(f"TT database not found: {tt_path}", file=sys.stderr)
         return 1

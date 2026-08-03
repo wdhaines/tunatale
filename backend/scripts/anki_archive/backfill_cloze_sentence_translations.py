@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.config import settings
+from app.languages import resolve_db_path
 from app.models.lesson import extract_sentence_translations_from_translated
 from app.srs.database import SRSDatabase
 from app.srs.function_words import normalize_sentence_key, uncloze_text
@@ -184,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tt-db", type=Path, default=None, help="override TT database path")
     args = parser.parse_args(argv)
 
-    tt_path = args.tt_db or Path(settings.database_url.removeprefix("sqlite:///"))
+    tt_path = args.tt_db or resolve_db_path(settings.target_language, settings)
     if not tt_path.exists():
         print(f"TT database not found: {tt_path}", file=sys.stderr)
         return 1

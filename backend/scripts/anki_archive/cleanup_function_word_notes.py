@@ -32,6 +32,7 @@ from pathlib import Path
 
 from app.anki.sync import OfflineWriter
 from app.config import settings
+from app.languages import resolve_db_path
 from app.srs.function_words import make_cloze_text
 
 _GRAVE_KIND_CARD = 0
@@ -269,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     anki_path = args.anki_db or settings.anki_collection_path
-    tt_path = args.tt_db or Path(settings.database_url.removeprefix("sqlite:///"))
+    tt_path = args.tt_db or resolve_db_path(settings.target_language, settings)
     deck_name = args.deck_name or settings.anki_deck_name
 
     if not anki_path.exists():

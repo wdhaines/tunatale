@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib
 import pkgutil
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import app.plugins.languages as _plugins_pkg
@@ -21,7 +22,6 @@ from app.models.language import Language
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from app.audio.alignment import CharAligner
     from app.cards.vocab_notetype import VocabNotetype
@@ -529,3 +529,17 @@ def resolve_language_context(code: str | None, settings: Settings) -> LanguageCo
         lemmatizer_type=config.lemmatizer_type if config else "lowercase",
         vocab_notetype=config.vocab_notetype if config else None,
     )
+
+
+def resolve_db_path(code: str | None, settings: Settings) -> Path:
+    """Filesystem path of the TT database for *code*.
+
+    The sanctioned way to answer "which db does this language use?". Callers
+    that hand-roll it as ``settings.database_url.removeprefix("sqlite:///")``
+    get the SINGULAR setting instead — one fixed language regardless of *code* —
+    and the failure is silent: a query filtered by ``language_code`` simply
+    matches nothing. That is how ``grave_ignored_lemma_cards --language no``
+    reported "Nothing to grave" for a month while reading the Slovene db.
+    ``scripts/check_singular_database_url.py`` fails the gate on that shape.
+    """
+    return Path(resolve_language_context(code, settings).db_url.removeprefix("sqlite:///"))

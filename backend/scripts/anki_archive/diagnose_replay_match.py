@@ -13,6 +13,7 @@ from pathlib import Path
 from app.anki.replay_fsrs_from_revlog import _states_match
 from app.anki.safety import safe_open
 from app.config import settings
+from app.languages import resolve_db_path
 
 _TOLERANCE_T = 0.01  # stability & difficulty
 _TOLERANCE_DT = 86400  # ±1 day
@@ -35,7 +36,7 @@ def fmt_dt(s: str | None) -> str:
 
 
 def diagnose() -> dict:
-    tt_db = Path(settings.database_url.removeprefix("sqlite:///"))
+    tt_db = resolve_db_path(settings.target_language, settings)
     anki_path = Path(settings.anki_collection_path)
 
     from app.srs.database import SRSDatabase

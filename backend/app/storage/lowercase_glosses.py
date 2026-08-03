@@ -64,12 +64,16 @@ def _main() -> None:  # pragma: no cover — CLI wiring, run once
     import argparse
 
     parser = argparse.ArgumentParser(description="Lowercase token_glosses keys in all stored lessons.")
-    parser.parse_args()
+    parser.add_argument("--language", default=None, help="language code (default: settings.target_language)")
+    args = parser.parse_args()
 
     from app.config import settings
+    from app.languages import resolve_db_path
 
     logging.basicConfig(level=logging.INFO)
-    store = ContentStore(settings.database_url.replace("sqlite:///", ""))
+    # Registry-resolved: settings.database_url is the singular setting and names
+    # one fixed language, so this would always rewrite the same store.
+    store = ContentStore(str(resolve_db_path(args.language or settings.target_language, settings)))
     try:
         count = lowercase_glosses(store)
         logger.info("Lowercased token_glosses in %d lesson(s)", count)

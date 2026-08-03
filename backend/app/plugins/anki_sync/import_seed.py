@@ -17,7 +17,7 @@ from typing import Any
 
 from app.common.guid import compute_guid
 from app.config import settings
-from app.languages import card_surface_variants, get_deck_name, get_l2_css_class
+from app.languages import card_surface_variants, get_deck_name, get_l2_css_class, resolve_db_path
 from app.media.importer import compute_sha256, copy_media_file
 from app.models.srs_item import Direction, DirectionState
 from app.models.syntactic_unit import BackField, SyntacticUnit
@@ -244,7 +244,10 @@ def import_seed(
     if anki_backup_dir is None:
         anki_backup_dir = settings.anki_backup_dir
     if tunatale_db_path is None:
-        tunatale_db_path = settings.database_url.replace("sqlite:///", "")
+        # Registry-resolved, not settings.database_url: the singular setting names
+        # one fixed language, so importing the Norwegian deck would seed the
+        # Slovene db (and vice versa). language_code is already resolved above.
+        tunatale_db_path = str(resolve_db_path(language_code, settings))
     if media_dir is None:
         media_dir = settings.media_dir
     if fallback_log_path is None:

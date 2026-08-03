@@ -806,6 +806,10 @@ class TestReplayScript:
         )
         monkeypatch.setattr("app.config.settings.anki_collection_path", str(anki))
         monkeypatch.setattr("app.config.settings.database_url", f"sqlite:///{tt}")
+        # main() resolves its db through the registry now, which prefers the
+        # PLURAL map — conftest pins that to per-language tmp dbs, so without
+        # emptying it this reads a different (empty) db and finds no orphan.
+        monkeypatch.setattr("app.config.settings.database_urls", {})
 
         from app.plugins.anki_sync.replay_fsrs_from_revlog import main
 

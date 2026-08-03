@@ -273,9 +273,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Disable the SKIP_PRE_FSRS gate so SM-2-era directions classify as MATCH/REPAIR.",
     )
+    parser.add_argument(
+        "--language",
+        default=None,
+        help="language code whose TT db to replay (default: settings.target_language)",
+    )
     args = parser.parse_args(argv)
 
-    tt_db_path = Path(settings.database_url.removeprefix("sqlite:///"))
+    from app.languages import resolve_db_path
+
+    # Registry-resolved: settings.database_url is the singular setting, so a
+    # Norwegian replay would rebuild state from the Slovene db.
+    tt_db_path = resolve_db_path(args.language or settings.target_language, settings)
     anki_col_path = Path(settings.anki_collection_path)
 
     summary = replay_fsrs_from_revlog(

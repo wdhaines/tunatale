@@ -8,7 +8,7 @@ import logging
 
 from app.audio.cloze_tts import synthesize_cloze_audios
 from app.config import settings
-from app.languages import get_tts_voice
+from app.languages import get_tts_voice, resolve_db_path
 from app.srs.database import SRSDatabase
 
 logger = logging.getLogger(__name__)
@@ -17,14 +17,20 @@ logger = logging.getLogger(__name__)
 def backfill_cloze_tts(
     *,
     db_path: str | None = None,
+    language_code: str | None = None,
     dry_run: bool = False,
     limit: int | None = None,
 ) -> dict[str, int]:
     """Synthesize missing sentence + word audio for existing cloze collocations.
 
     Returns {'synthesized': N, 'skipped': M, 'total': T} counts.
+
+    With no explicit ``db_path``, the db is resolved for ``language_code``
+    through the registry. It used to default to ``settings.database_url``, the
+    singular setting, which names one fixed language regardless — so a backfill
+    aimed at Norwegian synthesized against the Slovene db.
     """
-    resolved_path = db_path or settings.database_url
+    resolved_path = db_path or str(resolve_db_path(language_code or settings.target_language, settings))
 
     db = SRSDatabase(resolved_path)
 

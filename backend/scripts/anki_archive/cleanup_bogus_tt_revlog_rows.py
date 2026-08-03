@@ -31,6 +31,7 @@ import sqlite3
 from pathlib import Path
 
 from app.config import settings
+from app.languages import resolve_db_path
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.verbose:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    tt_db_path = Path(settings.database_url.removeprefix("sqlite:///"))
+    tt_db_path = resolve_db_path(settings.target_language, settings)
     summary = cleanup_bogus_tt_revlog_rows(
         tt_db_path,
         dry_run=args.dry_run,

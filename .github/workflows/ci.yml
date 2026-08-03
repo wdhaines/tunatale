@@ -43,6 +43,9 @@ jobs:
       - name: Date today check
         run: uv run python scripts/check_date_today.py
 
+      - name: Singular database_url check
+        run: uv run python scripts/check_singular_database_url.py
+
       - name: Plugin import check
         run: uv run python scripts/check_plugin_imports.py
 

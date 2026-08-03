@@ -321,3 +321,58 @@ class TestGetSyllabifier:
     def test_slovene_syllabifier_actually_works(self):
         result = get_syllabifier("sl")("prosim")
         assert result == ["pro", "sim"]
+
+
+class TestResolveDbPath:
+    """The sanctioned way to turn a language code into a database path.
+
+    Every caller that needs "the TT db for this language" must come through
+    here. Hand-rolling it as `settings.database_url.removeprefix("sqlite:///")`
+    silently yields the SINGULAR setting — one fixed language regardless of the
+    code — which is how `grave_ignored_lemma_cards --language no` spent a month
+    querying the Slovene db and reporting "Nothing to grave"
+    (`scripts/check_singular_database_url.py` now fails the gate on that shape).
+    """
+
+    @staticmethod
+    def _settings(**over):
+        base = {
+            "database_urls": {},
+            "database_url": "sqlite:///./tunatale_sl.db",
+            "anki_deck_name": "1. Slovene",
+            "target_language": "sl",
+        }
+        base.update(over)
+        return SimpleNamespace(**base)
+
+    def test_configured_language_gets_its_own_path(self):
+        from pathlib import Path
+
+        from app.languages import resolve_db_path
+
+        s = self._settings(
+            database_urls={"sl": "sqlite:///./tunatale_sl.db", "no": "sqlite:///./tunatale_no.db"},
+        )
+
+        assert resolve_db_path("no", s) == Path("./tunatale_no.db")
+        assert resolve_db_path("sl", s) == Path("./tunatale_sl.db")
+
+    def test_unconfigured_code_falls_back_to_the_singular_default(self):
+        from pathlib import Path
+
+        from app.languages import resolve_db_path
+
+        s = self._settings(database_urls={})
+
+        assert resolve_db_path("no", s) == Path("./tunatale_sl.db")
+        assert resolve_db_path(None, s) == Path("./tunatale_sl.db")
+
+    def test_strips_only_the_sqlite_scheme(self):
+        """An absolute path keeps its leading slash: sqlite:////abs → /abs."""
+        from pathlib import Path
+
+        from app.languages import resolve_db_path
+
+        s = self._settings(database_urls={"no": "sqlite:////var/lib/tt_no.db"})
+
+        assert resolve_db_path("no", s) == Path("/var/lib/tt_no.db")

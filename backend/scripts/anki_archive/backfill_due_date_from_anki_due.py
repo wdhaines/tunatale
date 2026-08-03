@@ -28,6 +28,7 @@ from pathlib import Path
 from app.anki.safety import safe_open
 from app.anki.sqlite_reader import compute_due_at
 from app.config import settings
+from app.languages import resolve_db_path
 
 
 def repair_due_dates(tt_db_path: Path, anki_col_path: Path, *, dry_run: bool = False) -> dict:
@@ -85,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="Report counts without writing.")
     args = parser.parse_args(argv)
 
-    tt_db_path = Path(settings.database_url.removeprefix("sqlite:///"))
+    tt_db_path = resolve_db_path(settings.target_language, settings)
     anki_col_path = Path(settings.anki_collection_path)
 
     summary = repair_due_dates(tt_db_path, anki_col_path, dry_run=args.dry_run)

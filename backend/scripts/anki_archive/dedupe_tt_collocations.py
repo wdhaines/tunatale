@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.config import settings
+from app.languages import resolve_db_path
 
 
 @dataclass(frozen=True)
@@ -185,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tt-db", type=Path, default=None, help="override TT database path")
     args = parser.parse_args(argv)
 
-    tt_path = args.tt_db or Path(settings.database_url.removeprefix("sqlite:///"))
+    tt_path = args.tt_db or resolve_db_path(settings.target_language, settings)
     if not tt_path.exists():
         print(f"TT database not found: {tt_path}", file=sys.stderr)
         return 1

@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 from app.config import settings
+from app.languages import resolve_db_path
 
 
 def _get_conn(db_path: str) -> sqlite3.Connection:
@@ -83,7 +84,7 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", default=False, help="Print counts without writing")
     args = parser.parse_args()
 
-    db_url = settings.database_url
+    db_url = f"sqlite:///{resolve_db_path(settings.target_language, settings)}"
     if not db_url or db_url == "sqlite:///:memory:" or not db_url.startswith("sqlite:///"):
         print(f"SRS DB URL not configured or is :memory: ({db_url})", file=sys.stderr)
         return 1

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from app.anki.safety import safe_open
 from app.config import settings
+from app.languages import resolve_db_path
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    tt_db_path = Path(settings.database_url.removeprefix("sqlite:///"))
+    tt_db_path = resolve_db_path(settings.target_language, settings)
     anki_col_path = Path(settings.anki_collection_path)
 
     summary = bootstrap_tt_revlog(tt_db_path, anki_col_path, dry_run=args.dry_run)

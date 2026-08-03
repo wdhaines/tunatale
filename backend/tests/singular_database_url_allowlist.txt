@@ -1,0 +1,12 @@
+# Files sanctioned to read the SINGULAR `settings.database_url`.
+#
+# See scripts/check_singular_database_url.py for why every other read is a
+# silent wrong-language bug. Each entry below genuinely owns the setting;
+# adding a fourth is an architectural claim and needs sign-off.
+#
+# app/config.py   — defines the field.
+# app/languages.py— resolve_language_context, the fallback that gives it meaning.
+# app/main.py     — the single-language {target_language: database_url} map.
+app/config.py
+app/languages.py
+app/main.py
