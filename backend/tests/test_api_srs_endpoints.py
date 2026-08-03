@@ -659,11 +659,17 @@ class TestResolveGlossTranslation:
 
     def test_surface_fallback_when_lemma_missing(self):
         """Stanza lemmatizes 'snøen' → 'snø' but the LLM glossed the surface 'snøen';
-        the card is keyed by lemma, so fall back to the surface form."""
+        the card is keyed by lemma, so fall back to the surface form.
+
+        The resolved gloss also loses its article: the surface glossed was the
+        *definite* 'snøen', but the card's front is the indefinite lemma 'snø',
+        and "the snow" is 'snøen'. This fallback is exactly where the mismatch
+        entered — the gloss belongs to a different form than the headword.
+        """
         from app.api.srs import _resolve_gloss_translation
 
         got = _resolve_gloss_translation("snø", {"snøen": "the snow"}, {"snøen"}, "snøen", language_code="no")
-        assert got == "the snow"
+        assert got == "snow"
 
     def test_first_surface_preferred_over_other_surfaces(self):
         from app.api.srs import _resolve_gloss_translation

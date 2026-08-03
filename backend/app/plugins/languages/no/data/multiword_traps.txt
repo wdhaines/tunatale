@@ -1,0 +1,22 @@
+# Fixed two-word Norwegian expressions whose SECOND word must not be carded on
+# its own: in context it is not the word the lemmatizer thinks it is.
+#
+# The motivating case is "i går" (yesterday) — Stanza tags `går` as a standalone
+# NOUN, so TT minted a card fronted `går` glossed "go / walk", which is the verb
+# `gå`. Same shape for the other time adverbials.
+#
+# One pair per line, lowercase, space-separated. Comments and blank lines ignored.
+# Only the SECOND word is suppressed, and only when directly preceded by the
+# first — "Han går hjem" still cards `gå` normally.
+i går
+i dag
+i morgen
+i fjor
+i kveld
+i natt
+i stedet
+i hjel
+til sammen
+på nytt
+om igjen
+for øvrig

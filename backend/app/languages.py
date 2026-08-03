@@ -117,6 +117,14 @@ class LanguageConfig:
     # Slowed-word function for the slow-speed section (Norwegian morpheme pauses).
     # ``None`` when the language has no slow-word specialisation.
     slow_word_fn: Callable[[str], str] | None = None
+    # Predicate: does this L2 surface carry a definite-article suffix? Used to stop
+    # a generated card's gloss contradicting its headword (`morder` glossed "the
+    # murderer"). ``None`` for languages that do not mark definiteness by suffix —
+    # the gloss aligner is then a no-op, never a guess.
+    definite_form_fn: Callable[[str], bool] | None = None
+    # Fixed two-word expressions whose SECOND word must not be carded standalone
+    # ("i går" = yesterday, not the verb `gå`). Empty for languages with no list.
+    multiword_traps_fn: Callable[[], frozenset[tuple[str, str]]] | None = None
     # Character that separates alternate accepted spellings of ONE word on a card
     # front (Norwegian's ``mot, imot`` — both spellings of "against/towards").
     # ``None`` (the default) means the language has no such convention, so a card
@@ -376,6 +384,31 @@ def get_slow_word(code: str) -> Callable[[str], str] | None:
     discover()
     config = _CONFIGS.get(code)
     return config.slow_word_fn if config else None
+
+
+def get_definite_form_checker(code: str) -> Callable[[str], bool] | None:
+    """Return the language's definite-form predicate, or ``None`` if it has none.
+
+    ``None`` is the honest answer for a language that does not suffix its definite
+    article (Slovene) or is not an L2 (``en``); callers must treat it as "cannot
+    tell" and leave the gloss untouched rather than guessing.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    return config.definite_form_fn if config else None
+
+
+def get_multiword_traps(code: str) -> frozenset[tuple[str, str]]:
+    """Return the language's fixed two-word traps, or an empty set.
+
+    Empty is the correct default: suppressing a word needs positive evidence
+    that the language has such an expression, never a guess.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    if config is None or config.multiword_traps_fn is None:
+        return frozenset()
+    return config.multiword_traps_fn()
 
 
 def get_variant_separator(code: str) -> str | None:

@@ -71,9 +71,11 @@ from app.srs.function_words import (
     make_morphology_cloze_text,
     normalize_sentence_key,
 )
+from app.srs.gloss_definiteness import align_gloss_definiteness
 from app.srs.grade_undo import UndoNotAvailable, record_grade_snapshot, undo_last_grade
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, lemmatize_surfaces_in_context, model_version_for
 from app.srs.mastery import is_due_beyond_horizon, is_well_known
+from app.srs.multiword import is_trapped_occurrence
 from app.srs.queue_engine import _compute_live_main as _compute_live_main
 from app.srs.queue_engine import _fnv1a_64_i64 as _fnv1a_64_i64
 from app.srs.queue_engine import _merge_by_retrievability_ascending as _merge_by_retrievability_ascending
@@ -460,7 +462,11 @@ def _resolve_gloss_translation(
     for key in [lemma, first_surface.lower(), *sorted(s.lower() for s in surfaces)]:
         gloss = token_glosses.get(key)
         if gloss:
-            return gloss
+            # The LLM glosses a bare noun as if it were definite ("the murderer"
+            # for `morder`), so the card contradicted its own front. Drops the
+            # article only when the headword cannot carry one; a no-op for
+            # languages with no definiteness checker registered.
+            return align_gloss_definiteness(lemma, gloss, language_code)
     if not warn_on_missing:
         return ""
     _logger.warning(
@@ -685,7 +691,15 @@ def _analyze_lesson_words(lesson, db) -> _LessonWords:
         )
         for ta in analyze_sentence_cached(db, lemmatizer, phrase.text, lesson.language_code, model_version):
             words.surface_upos.setdefault(ta.surface.casefold(), ta.upos)
+        previous_surface = ""
         for surface, lemma in zip(surfaces, phrase_lemmas, strict=True):
+            # "i går" is *yesterday*; the lemmatizer reads the second token as a
+            # standalone NOUN and TT would card it as the verb `gå`. Suppress this
+            # occurrence only — the word is still cardable where it stands alone.
+            if is_trapped_occurrence(previous_surface, surface, lesson.language_code):
+                previous_surface = surface
+                continue
+            previous_surface = surface
             words.occurrences[lemma] += 1
             if lemma not in words.first_sentence:
                 words.first_sentence[lemma] = phrase.text
