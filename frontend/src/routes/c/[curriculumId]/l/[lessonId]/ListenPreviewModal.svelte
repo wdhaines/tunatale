@@ -46,6 +46,13 @@
 
 	let countdown = $state(10);
 	let countdownCancelled = $state(false);
+	// Set the moment the interval is created and never reset. The countdown
+	// line is RENDERED while this is true so cancelling the countdown empties
+	// the line instead of unmounting it — an unmount mid-pointerdown shifts the
+	// rows below it up (F-7), and the click that cancelled never reaches its
+	// row's grade button. Gated on this rather than always-rendered so pref
+	// "off" (never started) keeps the element absent.
+	let countdownStarted = $state(false);
 	// Deliberately NOT $state: this is a bare timer handle, never read from the
 	// template, and onDestroy(clearCountdownTimer) writes it after teardown —
 	// which is exactly why it must stay non-reactive (see onDestroy below).
@@ -157,6 +164,7 @@
 			const prefValue = listenCountdownPref.value;
 			if (prefValue !== 'off') {
 				countdown = parseInt(prefValue, 10);
+				countdownStarted = true;
 				countdownId = setInterval(() => {
 					countdown -= 1;
 					if (countdown <= 0) {
@@ -464,9 +472,13 @@
 		{:else}
 			<!-- F4: the countdown must be visible whenever it's running, including
 			     the zero-candidates case — otherwise it silently auto-commits with
-			     no on-screen indication anything is about to happen. -->
-			{#if !countdownCancelled && countdownId !== null}
-				<p class="countdown">Auto-marking in {countdown}s</p>
+			     no on-screen indication anything is about to happen.
+			     F-7: the line RESERVES its box for the whole modal once the
+			     countdown has started. Cancelling empties the text but keeps the
+			     element, so the pointerdown that cancelled cannot reflow the rows
+			     beneath the cursor (which would swallow the click's grade). -->
+			{#if countdownStarted}
+				<p class="countdown">{#if !countdownCancelled && countdownId !== null}Auto-marking in {countdown}s{/if}</p>
 			{/if}
 
 			{#if candidates.length === 0}
@@ -704,6 +716,11 @@
 		font-size: 0.8rem;
 		text-align: center;
 		margin: 0;
+		/* F-7: the element outlives cancellation, so an empty countdown must
+		   occupy the same box the populated one does — one line box. 1lh is the
+		   element's own line-height, so the empty and populated forms match to
+		   the pixel and cancelling cannot shift the rows below. */
+		min-height: 1lh;
 	}
 	.actions {
 		display: flex;

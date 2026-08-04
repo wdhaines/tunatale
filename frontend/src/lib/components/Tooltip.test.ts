@@ -771,6 +771,32 @@ describe("Tooltip", () => {
       return { tt, container };
     }
 
+    /** Hover-reveal (F-8) with a mocked tooltip rect — `open` stays false, like
+     * the real `@media (hover: hover)` reveal path. */
+    async function hoverWithRect(rect: { left: number; right: number } | null) {
+      const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+      const { container } = render(TooltipTest, {
+        props: { translation: "hello", word, childText: "hover-clamp" },
+      });
+      const tt = container.querySelector<HTMLElement>(".tt")!;
+      if (rect) {
+        tt.getBoundingClientRect = () =>
+          ({
+            ...rect,
+            top: 0,
+            bottom: 20,
+            width: rect.right - rect.left,
+            height: 20,
+            x: rect.left,
+            y: 0,
+            toJSON: () => ({}),
+          }) as DOMRect;
+      }
+      await fireEvent.pointerEnter(container.querySelector(".tt-wrap")!);
+      await tick();
+      return { tt, container };
+    }
+
     it("shifts right when the popover would clip the left viewport edge", async () => {
       vi.useFakeTimers();
       try {
@@ -796,6 +822,41 @@ describe("Tooltip", () => {
       vi.useFakeTimers();
       try {
         const { tt } = await openWithRect({ left: 100, right: 200 });
+        expect(tt.style.transform).toBe("translateX(calc(-50% + 0px))");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("shifts to clamp a HOVER-revealed popover even though open is false", async () => {
+      vi.useFakeTimers();
+      try {
+        // jsdom window.innerWidth is 1024; margin 8 → max right edge 1016.
+        const { tt } = await hoverWithRect({ left: 900, right: 1020 });
+        expect(tt.style.transform).toBe("translateX(calc(-50% + -4px))");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("applies no shift when a HOVER-revealed popover fits", async () => {
+      vi.useFakeTimers();
+      try {
+        const { tt } = await hoverWithRect({ left: 100, right: 200 });
+        expect(tt.style.transform).toBe("translateX(calc(-50% + 0px))");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("clears the clamp when the pointer leaves a hovered wrap", async () => {
+      vi.useFakeTimers();
+      try {
+        const { tt, container } = await hoverWithRect({ left: 900, right: 1020 });
+        expect(tt.style.transform).toBe("translateX(calc(-50% + -4px))");
+
+        await fireEvent.pointerLeave(container.querySelector(".tt-wrap")!);
+        await tick();
         expect(tt.style.transform).toBe("translateX(calc(-50% + 0px))");
       } finally {
         vi.useRealTimers();

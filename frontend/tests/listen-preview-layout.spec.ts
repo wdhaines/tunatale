@@ -367,3 +367,102 @@ test("listen preview: glosses are blurred until tapped, per row", async ({ page,
 
 	await expect(modal.locator(".gloss.blurred")).toHaveCount(blurredBefore - 1);
 });
+
+/**
+ * F-7 — cancelling the auto-mark countdown must not eat the click that cancelled it.
+ *
+ * Reported 2026-08-04 running the manual test plan's D3: "D3 canceled the text,
+ * but it made the cursor jump and the click I made to grade an item seemed to be
+ * swallowed."
+ *
+ * MECHANISM. Cancellation fires on `onpointerdown` (the overlay's
+ * `handleInteraction`), while the countdown line is *unmounted* rather than
+ * hidden:
+ *
+ *     {#if !countdownCancelled && countdownId !== null}
+ *         <p class="countdown">Auto-marking in {countdown}s</p>
+ *     {/if}
+ *
+ * So the `<p>` is removed synchronously **while the pointer is still down**, and
+ * every row below it shifts up by that line's height. A `click` event only fires
+ * on the nearest common ancestor of the pointerdown and pointerup targets — the
+ * content moved out from under the cursor in between, so the grade never
+ * registers. The reported "cursor jump" is the same reflow: the content moved,
+ * not the cursor.
+ *
+ * This must be an e2e test. jsdom performs no layout, so the reflow that causes
+ * the bug does not exist there and a vitest version would pass against the
+ * broken code.
+ *
+ * The two assertions are deliberately fix-agnostic — they pin the user-visible
+ * contract, not the mechanism:
+ *
+ *   1. the same click that cancels also applies its rating, and
+ *   2. cancelling shifts no geometry.
+ *
+ * Reserving the line's box (render it always, empty its text) satisfies both.
+ * Moving the trigger to pointerup/click satisfies NEITHER: the unmount still
+ * happens, just one event later, so the rows still shift. It is also the worse
+ * fix on its own terms — cancellation weakens, since a press that never
+ * completes would stop cancelling.
+ *
+ * ⚠️ WHICH ASSERTION IS CURRENTLY RED (measured 2026-08-04): only the geometry
+ * one. It fails deterministically — `260 -> 247`, a 13px shift, the countdown
+ * line's exact height. The `aria-pressed` assertion PASSES today, because
+ * Playwright's synthetic click warps the cursor and dispatches mousedown/mouseup
+ * at identical coordinates with no human timing, so it survives a 13px reflow
+ * that a real pointer near a row boundary does not. Keep it anyway: it is the
+ * user-visible symptom and the thing a regression would break first. Do NOT
+ * treat its passing as evidence the bug is absent, and do NOT "fix" the bug by
+ * satisfying it alone — the reflow is the defect.
+ */
+test("listen preview: cancelling the countdown neither swallows the click nor shifts the rows", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+	const cid = await curriculumId(request);
+
+	// Default is "off"; the countdown must be RUNNING or this tests nothing.
+	await page.addInitScript(() => localStorage.setItem("listenCountdown", "60"));
+	await page.setViewportSize(PHONE);
+
+	await page.goto(`/c/${cid}`);
+	await page.getByRole("button", { name: "Day 1" }).click();
+	await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({ timeout: 15000 });
+	await page.getByRole("button", { name: "Mark as Listened" }).click();
+
+	const modal = page.locator(".overlay .modal");
+	await expect(modal).toBeVisible({ timeout: 10000 });
+	await expect(modal.locator(".candidate").first()).toBeVisible({ timeout: 10000 });
+
+	// Guard against a vacuous pass: with no countdown on screen there is nothing
+	// to cancel, and every assertion below would hold trivially.
+	const countdownText = modal.getByText(/Auto-marking in \d+s/);
+	await expect(countdownText).toBeVisible({ timeout: 5000 });
+
+	// Rows default to "good", so "Hard" starts unpressed and is a clean target.
+	const hard = modal.locator('button[data-grade="hard"]').first();
+	await expect(hard).toHaveAttribute("aria-pressed", "false");
+
+	const before = await hard.boundingBox();
+	expect(before, "grade button has no box").not.toBeNull();
+
+	await hard.click();
+
+	// The countdown does stop — this half already worked and must keep working.
+	// Asserted on the TEXT, not on the element's presence, so a fix that keeps
+	// the element mounted to reserve its box still passes.
+	await expect(countdownText).toHaveCount(0);
+
+	// THE BUG: the click that cancelled the countdown must also have graded.
+	await expect(hard).toHaveAttribute("aria-pressed", "true");
+
+	// THE ROOT CAUSE: cancelling must not move anything.
+	const after = await hard.boundingBox();
+	expect(after, "grade button has no box after cancel").not.toBeNull();
+	expect(
+		Math.round(after!.y),
+		`row shifted ${Math.round(before!.y)} -> ${Math.round(after!.y)} when the countdown was cancelled`,
+	).toBe(Math.round(before!.y));
+});

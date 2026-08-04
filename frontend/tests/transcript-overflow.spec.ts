@@ -165,3 +165,118 @@ test("lesson page: Read mode never overflows horizontally", async ({ page, reque
 
 	expect(failures, failures.join("\n")).toEqual([]);
 });
+
+/**
+ * F-8 — the same invariant, but with a popover OPEN.
+ *
+ * The test above only ever measures CLOSED popovers. Its header says it asserts
+ * document scrollWidth "however the popovers are later positioned", which is the
+ * right instinct — but it never enters the open state, so it is vacuous for the
+ * open case. A user hit exactly that gap on 2026-08-04: "Word tooltips can
+ * trigger sideways scroll if they are towards the right side of the screen."
+ *
+ * ROOT CAUSE — there are THREE popover states, and only two are held in bounds:
+ *
+ *   1. closed        — `display: none`. Contributes no width. Fixed by 5c794d6,
+ *                      pinned by the test above.
+ *   2. click-opened  — `.tt-wrap.open > .tt`. `open === true`, so the JS
+ *                      edge-clamp `$effect` runs and nudges it via `shiftX`.
+ *   3. HOVER-REVEALED — `@media (hover: hover) { .tt-wrap:hover > .tt }`.
+ *                      Displayed at full opacity, but `open` is still FALSE.
+ *
+ * The clamp is gated on `open`:
+ *
+ *     $effect(() => { if (!open || !ttEl) { shiftX = 0; return; } … });
+ *
+ * so state 3 gets `shiftX = 0` — centred on its word (`left: 50%`,
+ * `translateX(-50%)`) with no clamp at all, up to 280px wide. A word near the
+ * right margin therefore overhangs the viewport whenever the pointer merely
+ * rests on it. That is desktop-only, because `@media (hover: hover)` is what
+ * opens the hole — matching the user's report exactly.
+ *
+ * Note this is NOT the scrollbar-width bug it first looks like. `window.innerWidth`
+ * vs `documentElement.clientWidth` would explain a few pixels; this explains up
+ * to ~140px, and it explains why the fix for the closed case did not help.
+ *
+ * This asserts the same document-level invariant as the closed test rather than
+ * any popover geometry: the fix is free to reposition, flip, or shrink the
+ * popover however it likes, so long as the page does not scroll sideways.
+ */
+test("lesson page: a HOVER-revealed tooltip near the right margin never overflows", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+	const { curriculumId } = await seed(request);
+
+	const failures: string[] = [];
+	// Phone widths plus desktop widths. The desktop ones are the important
+	// addition: they are where a vertical scrollbar exists, and the user's
+	// report was from a desktop browser.
+	for (const width of [390, 432, 800, 1280]) {
+		await page.setViewportSize({ width, height: 700 });
+		await page.goto(`/c/${curriculumId}`);
+		await page.getByRole("button", { name: "Day 1" }).click();
+		await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({
+			timeout: 15000,
+		});
+		await page.getByRole("button", { name: "Read", exact: true }).click();
+		await expect(page.locator(".tt-wrap").first()).toBeVisible({ timeout: 15000 });
+
+		// Words closest to the right margin are the ones whose popovers have to be
+		// clamped; a word mid-line passes trivially and would make this vacuous.
+		//
+		// Restricted to words that actually HAVE a popover (`.tt` is rendered only
+		// when Tooltip's `hasContent` holds — a bare untracked word with no gloss
+		// renders none). A contentless word cannot overflow anything.
+		//
+		// Sweeps the rightmost SEVERAL rather than only the single rightmost: which
+		// word lands nearest the margin depends on where the dialogue happens to
+		// wrap at each width, so a one-word probe passes or fails by luck of
+		// line-breaking. With a sweep, the assertion holds regardless.
+		const targets = await page.evaluate(() => {
+			return [...document.querySelectorAll(".tt-wrap")]
+				.map((el, i) => ({ i, right: el.getBoundingClientRect().right, w: el.getBoundingClientRect().width, has: !!el.querySelector(".tt") }))
+				.filter((t) => t.has && t.w > 0)
+				.sort((a, b) => b.right - a.right)
+				.slice(0, 7)
+				.map((t) => ({ index: t.i, right: Math.round(t.right) }));
+		});
+		expect(targets.length, "no words with popovers rendered").toBeGreaterThan(0);
+
+		for (const t of targets) {
+			const word = page.locator(".tt-wrap").nth(t.index);
+			await word.hover();
+			// Guard against measuring a popover that never appeared — that would
+			// pass for the same reason the closed-only test does. `.tt` is
+			// `display: none` until revealed, so this is a real check that the
+			// hover-reveal state was actually entered.
+			await expect(word.locator(".tt").first()).toBeVisible({ timeout: 5000 });
+
+			const r = await page.evaluate(() => {
+				const doc = document.documentElement;
+				const shown = [...document.querySelectorAll(".tt")].filter(
+					(el) => getComputedStyle(el).display !== "none",
+				);
+				const rect = shown[0]?.getBoundingClientRect();
+				return {
+					scrollW: doc.scrollWidth,
+					clientW: doc.clientWidth,
+					shownCount: shown.length,
+					tipRight: rect ? Math.round(rect.right) : null,
+					tipLeft: rect ? Math.round(rect.left) : null,
+				};
+			});
+			expect(r.shownCount, "no popover displayed — measurement would be vacuous").toBeGreaterThan(0);
+
+			if (r.scrollW > r.clientW)
+				failures.push(
+					`${width}px: page scrolls to ${r.scrollW} (viewport ${r.clientW}, overhang ${
+						r.scrollW - r.clientW
+					}); hovered word ends at ${t.right}, its popover spans ${r.tipLeft}..${r.tipRight}`,
+				);
+		}
+	}
+
+	expect(failures, failures.join("\n")).toEqual([]);
+});

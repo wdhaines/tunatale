@@ -987,6 +987,44 @@ describe("ListenPreviewModal", () => {
     expect(onDone).not.toHaveBeenCalled();
   });
 
+  it("F-7: cancelling keeps the countdown line mounted (empty) so the rows never shift", async () => {
+    // The unmount-vs-empty distinction is the whole bug: a cancelled countdown
+    // must leave the <p> in the DOM, text removed, reserving its box — an
+    // unmount while the pointer is down reflows the rows and swallows the
+    // click's grade.
+    vi.useFakeTimers();
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [createCandidate("kava")],
+    });
+    mockMarkAsListened.mockResolvedValue({
+      status: "ok",
+      created: 1,
+      staged: 0,
+      applied: 0,
+      remaining_candidates: 0,
+      listen_count: 1,
+    });
+    const onDone = vi.fn();
+
+    const { container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone },
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelector(".countdown")?.textContent).toContain("Auto-marking");
+
+    await fireEvent.click(gradeBtn(container, "create:kava", "hard"));
+
+    const line = container.querySelector(".countdown");
+    expect(line).not.toBeNull();
+    expect(line?.textContent ?? "").not.toContain("Auto-marking");
+    expect(mockMarkAsListened).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(mockMarkAsListened).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
   // F1/F8: pointerdown, focusin, and keydown must each independently cancel
   // the countdown — not just a checkbox click. A real Escape in a real
   // browser lands on document.activeElement, which must be inside the modal.

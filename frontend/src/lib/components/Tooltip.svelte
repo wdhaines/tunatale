@@ -62,6 +62,15 @@
 	let open = $state(false);
 	let wrapEl = $state<HTMLElement | null>(null);
 	let ttEl = $state<HTMLElement | null>(null);
+	// Hover-reveal tracking (F-8). The `@media (hover: hover)` CSS reveals the
+	// popover with `open` still false, so the edge-clamp gated on `open` alone
+	// never ran for a hovered word near the margin — a popover displayed at
+	// full opacity yet centred with no clamp. This mirrors the CSS `:hover`
+	// trigger in JS so the clamp runs whenever the popover is DISPLAYED, not
+	// only when it is click-opened. Touch devices fire pointerenter too, but
+	// there the popover stays `display: none`, so a zero-width rect leaves the
+	// clamp at no-op and the flag has no visible effect.
+	let hovered = $state(false);
 
 	// A *long-press* opens the popover (so a touch user can reach the per-word
 	// actions); a plain *tap* falls through to the word's own grade handler. This
@@ -96,6 +105,17 @@
 			clearTimeout(pressTimer);
 			pressTimer = null;
 		}
+	}
+
+	// Hover-reveal enters/exits. pointerleave also clears any pending long-press
+	// (the old inline `onpointerleave={cancelPress}` behaviour, folded in here).
+	function handlePointerEnter() {
+		hovered = true;
+	}
+
+	function handlePointerLeave() {
+		cancelPress();
+		hovered = false;
 	}
 
 	function handlePressMove(e: PointerEvent) {
@@ -145,11 +165,14 @@
 	});
 
 	// Keep the popover on-screen: when the centered position would clip at a
-	// viewport edge (narrow phone screens), nudge it horizontally on open.
+	// viewport edge (narrow phone screens), nudge it horizontally. Runs whenever
+	// the popover is DISPLAYED — click-opened (`open`) OR hover-revealed
+	// (`hovered`) — because the hover-revealed state is shown by CSS with `open`
+	// still false, and an un-clamped hovered popover is exactly the F-8 bug.
 	const EDGE_MARGIN_PX = 8;
 	let shiftX = $state(0);
 	$effect(() => {
-		if (!open || !ttEl) {
+		if ((!open && !hovered) || !ttEl) {
 			shiftX = 0;
 			return;
 		}
@@ -233,7 +256,8 @@
 	bind:this={wrapEl}
 	onpointerdown={startPress}
 	onpointerup={cancelPress}
-	onpointerleave={cancelPress}
+	onpointerenter={handlePointerEnter}
+	onpointerleave={handlePointerLeave}
 	onpointercancel={cancelPress}
 	onpointermove={handlePressMove}
 	oncontextmenu={handleContextMenu}
