@@ -649,18 +649,40 @@
 		justify-content: center;
 		z-index: 1000;
 	}
+	/* box-sizing is explicit because this app has NO global border-box reset.
+	   Under the default content-box, `width: 90%` + `max-width: 420px` sized the
+	   CONTENT box, so the real border-box was 50px wider (48 padding + 2 border);
+	   it exceeded the viewport at every phone width, flexbox shrank it to exactly
+	   the viewport, and the modal rendered edge-to-edge with zero gutters — and
+	   430px wide on a 430px screen, past its own max-width.
+
+	   470px = the old 420 content + 48 + 2, so desktop keeps the box it always
+	   had; only the phone arm moves. `min()` folds width and max-width into one
+	   declaration so the two can no longer disagree about which box they mean. */
 	.modal {
+		box-sizing: border-box;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
 		box-shadow: var(--shadow-md);
 		padding: 1.5rem;
-		max-width: 420px;
-		width: 90%;
+		width: min(94%, 470px);
 		max-height: 80vh;
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
+		/* Makes the row layout answer to the space the modal actually has, not to
+		   the viewport — and, as a side effect, removes the flex `min-width: auto`
+		   escape hatch that let content-based minimums push the box past 94%. */
+		container-type: inline-size;
+	}
+	/* Phone: buy the gutters back out of the horizontal padding instead of out of
+	   the rows. At 390px this leaves the row content 340.6px — within a pixel of
+	   the 340px it had when the modal was edge-to-edge. */
+	@media (max-width: 430px) {
+		.modal {
+			padding: 1.25rem 0.75rem;
+		}
 	}
 	h2 {
 		margin: 0;
@@ -999,5 +1021,41 @@
 	   drops to the second grid row so they never overlap. */
 	.candidate.tail .grade {
 		grid-row: 2;
+	}
+
+	/* Below the width where `1fr 3rem 11rem` stops leaving the word a readable
+	   column, the grade control drops to its own full-width line instead of the
+	   tracks squeezing until the modal outgrows the screen. 18rem, not 288px:
+	   the two fixed tracks are in `rem`, so an Android font-size setting scales
+	   the layout's hard minimum and the trigger has to scale with it (at 320px
+	   this restacks at a 17px root; the three-column form survives to 360px at
+	   the default 16). Header and rows are re-tracked together — they are
+	   separate grid containers and the pixel-alignment invariant documented
+	   above depends on their track lists staying identical.
+
+	   LAST in the sheet on purpose: a container query adds no specificity, so
+	   `.grade { grid-column: 3 }` above would otherwise win on source order. */
+	@container (max-width: 18rem) {
+		.list-head,
+		.candidate {
+			grid-template-columns: minmax(0, 1fr) 3rem;
+		}
+		/* Nothing occupies a third column any more, so the header must stop
+		   advertising one. */
+		.list-head span:last-child {
+			display: none;
+		}
+		.grade {
+			grid-column: 1 / -1;
+			grid-row: 3;
+		}
+		/* Row 3 belongs to the status tag on a tail row; the control follows it. */
+		.tag.next-listen {
+			grid-column: 1;
+			grid-row: 3;
+		}
+		.candidate.tail .grade {
+			grid-row: 4;
+		}
 	}
 </style>

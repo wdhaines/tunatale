@@ -168,6 +168,141 @@ test("listen preview: header and every row sit on identical column tracks", asyn
 	expect(report.bodyOverflow).toBe(0);
 });
 
+/**
+ * The modal must keep real side gutters, and it must keep them when the text
+ * scales. Both halves are load-bearing:
+ *
+ *  - Gutters: `.modal` was `content-box` (there is no global border-box reset),
+ *    so `width: 90%` / `max-width: 420px` described the CONTENT box and the
+ *    real border-box was +48px padding. Flexbox then shrank the modal to
+ *    exactly the viewport, so it rendered edge-to-edge at every phone width —
+ *    and 430px wide at a 430px viewport, past its own max-width.
+ *  - Text scale: the row grid's two fixed tracks (due + grade) are in `rem`, so
+ *    an Android font-size setting scales the layout's hard minimum. At 320px
+ *    with an 18px root the modal could not shrink far enough and spilled off
+ *    BOTH edges (measured: -3 → 323).
+ *
+ * The pre-existing guard above missed all of this because it measured one
+ * viewport at the default font and asserted `scrollWidth === clientWidth` —
+ * which an edge-to-edge modal satisfies. "No overflow" is not "has gutters".
+ */
+const GUTTER_MIN = 8;
+
+test("listen preview: the modal keeps gutters across phone widths and text sizes", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+
+	await page.setViewportSize(PHONE);
+	const modal = await openPreview(page, await curriculumId(request));
+
+	// [viewport width, root font px]. 16 is the browser default; 18–20 is what
+	// Android Chrome's font-size setting produces, and it scales `rem` tracks.
+	const CASES: [number, number][] = [
+		[320, 16],
+		[320, 18],
+		[360, 16],
+		[360, 20],
+		[390, 16],
+		[390, 20],
+		[430, 16],
+	];
+
+	const failures: string[] = [];
+	for (const [width, rootFont] of CASES) {
+		await page.setViewportSize({ width, height: 844 });
+		await page.evaluate((f) => {
+			document.documentElement.style.fontSize = `${f}px`;
+		}, rootFont);
+
+		const r = await modal.evaluate((m) => {
+			const doc = document.documentElement;
+			const rect = m.getBoundingClientRect();
+			const clippedLabels = [...m.querySelectorAll<HTMLElement>(".grade button")]
+				.filter((b) => b.scrollWidth > b.clientWidth + 1)
+				.map((b) => b.textContent?.trim());
+			return {
+				vw: doc.clientWidth,
+				left: rect.left,
+				right: rect.right,
+				width: rect.width,
+				modalOverflow: m.scrollWidth - m.clientWidth,
+				docOverflow: doc.scrollWidth - doc.clientWidth,
+				clipped: clippedLabels.length,
+				clippedSample: clippedLabels.slice(0, 3),
+			};
+		});
+
+		const tag = `${width}px @ ${rootFont}px root`;
+		if (r.left < GUTTER_MIN || r.vw - r.right < GUTTER_MIN)
+			failures.push(
+				`${tag}: gutters ${r.left.toFixed(1)}/${(r.vw - r.right).toFixed(1)} (modal ${r.width.toFixed(1)}px)`,
+			);
+		if (r.modalOverflow > 0) failures.push(`${tag}: modal scrolls sideways by ${r.modalOverflow}px`);
+		if (r.docOverflow > 0) failures.push(`${tag}: page scrolls sideways by ${r.docOverflow}px`);
+		if (r.clipped > 0)
+			failures.push(`${tag}: ${r.clipped} clipped grade label(s) ${JSON.stringify(r.clippedSample)}`);
+	}
+
+	await page.evaluate(() => {
+		document.documentElement.style.fontSize = "";
+	});
+
+	expect(failures, failures.join("\n")).toEqual([]);
+});
+
+/**
+ * Below the point where the three-column row stops fitting, the grade control
+ * drops to its own full-width line rather than squeezing the tracks until the
+ * modal outgrows the screen. The trigger is a container query in `rem`, so it
+ * follows the text size, not just the viewport — which is why this measures at
+ * a scaled root font rather than an implausibly narrow phone.
+ */
+test("listen preview: the grade control restacks instead of overflowing when space runs out", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+
+	await page.setViewportSize(PHONE);
+	const modal = await openPreview(page, await curriculumId(request));
+
+	await page.setViewportSize({ width: 320, height: 844 });
+	await page.evaluate(() => {
+		document.documentElement.style.fontSize = "20px";
+	});
+
+	const r = await modal.evaluate((m) => {
+		const row = m.querySelector(".candidate")!;
+		const rowRect = row.getBoundingClientRect();
+		const grade = row.querySelector(".grade")!.getBoundingClientRect();
+		const text = row.querySelector(".text")!.getBoundingClientRect();
+		const headCells = [...m.querySelectorAll(".list-head > *")].filter(
+			(c) => getComputedStyle(c).display !== "none",
+		);
+		return {
+			// Stacked: the control starts at the row's left edge (under the word),
+			// not in a third column beside it, and runs to the row's content edge.
+			gradeLeft: Math.round(grade.left),
+			textLeft: Math.round(text.left),
+			rowContentRight: Math.round(rowRect.right - parseFloat(getComputedStyle(row).paddingRight)),
+			gradeRight: Math.round(grade.right),
+			headCellCount: headCells.length,
+			headLabels: headCells.map((c) => c.textContent?.trim()),
+		};
+	});
+
+	await page.evaluate(() => {
+		document.documentElement.style.fontSize = "";
+	});
+
+	expect(r.gradeLeft).toBe(r.textLeft);
+	expect(r.gradeRight).toBe(r.rowContentRight);
+	// The header cannot keep advertising a column that no longer exists.
+	expect(r.headLabels).toEqual(["Word", "Due"]);
+});
+
 test("listen preview: words are never truncated and grade targets keep their floor", async ({
 	page,
 	request,
