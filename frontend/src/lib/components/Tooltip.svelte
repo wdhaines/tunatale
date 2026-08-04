@@ -356,6 +356,17 @@
 		opacity: 0;
 		pointer-events: none;
 		transition: opacity 0.1s;
+		/* `display: none`, not merely `opacity: 0`, and this is load-bearing. A
+		   transparent popover is still LAID OUT: up to 280px wide, centred on its
+		   word, and the viewport edge-clamp above only runs while one is open. So
+		   every closed popover on a word near the right margin overhung the
+		   viewport and pinned document.scrollWidth near 495px however narrow the
+		   screen was. Chromium on Android answers that overflow with shrink-to-fit
+		   — it zooms the page out to fit, the layout viewport becomes ~19% wider
+		   than the glass, and in a SPA that scale never resets. One Read view then
+		   made every later width (modals included) too wide for the screen.
+		   Guarded by tests/transcript-overflow.spec.ts. */
+		display: none;
 	}
 	/* Hover/focus reveal is a fine-pointer affordance only. On touch, a tap
 	   synthesizes hover AND focuses the tabindex word, which sticky-opened the
@@ -363,11 +374,13 @@
 	@media (hover: hover) {
 		.tt-wrap:hover > .tt,
 		.tt-wrap:focus-within > .tt {
+			display: block;
 			opacity: 1;
 			pointer-events: auto;
 		}
 	}
 	.tt-wrap.open > .tt {
+		display: block;
 		opacity: 1;
 		pointer-events: auto;
 	}
