@@ -850,6 +850,99 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(await findByText(/listen again to add more/i)).toBeTruthy();
   });
 
+  it("drops the listen confirmation when navigating to another lesson", async () => {
+    // The confirmation reports what THIS listen did. SvelteKit reuses this
+    // component across lesson→lesson navigation, so a `listenResult` left
+    // standing follows the user to the next day and reports the previous
+    // lesson's counts as if they were this one's.
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [
+        {
+          kind: "create",
+          text: "kava",
+          item_id: null,
+          grade_class: "create",
+          rating: "good",
+          translation: "",
+          progress: null,
+          well_known: false,
+          due_at: null,
+          will_create: true,
+        },
+      ],
+    });
+    mockMarkAsListened.mockResolvedValue({
+      status: "ok",
+      created: 0,
+      staged: 0,
+      applied: 1,
+      remaining_candidates: 10,
+      listen_count: 1,
+    });
+    mockGetTranscript.mockResolvedValue(transcript);
+    mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
+
+    const { findByText, getByText, queryByText, rerender } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    await fireEvent.click(getByText("Listen"));
+    await fireEvent.click(await findByText("Mark as Listened"));
+    await fireEvent.click(await findByText(/Mark \d+ as listened/));
+
+    expect(await findByText(/1 graded/)).toBeTruthy();
+    expect(await findByText(/10 remaining — listen again to add more/)).toBeTruthy();
+
+    const lessonB = { ...lesson, id: "l2", title: "Day 2: Fish", day: 2 };
+    await rerender({ data: { curriculum, lesson: lessonB, audio, transcript } });
+
+    await waitFor(() => {
+      expect(queryByText(/graded/)).toBeFalsy();
+      expect(queryByText(/listen again to add more/i)).toBeFalsy();
+    });
+  });
+
+  it("re-fetches the queue on lesson→lesson nav instead of keeping the previous count", async () => {
+    // queueCount/hasUnreviewedListen are the other half of the same leak, with
+    // a second cause: both lessons are listened, so `isListened` stays true
+    // across the navigation and an effect keyed on it alone never re-runs.
+    mockGetListens.mockResolvedValueOnce({
+      lessons: [
+        { lesson_id: "l1", listen_count: 1, last_listened_at: "2026-01-01T00:00:00Z" },
+        { lesson_id: "l2", listen_count: 1, last_listened_at: "2026-01-01T00:00:00Z" },
+      ],
+    });
+    await listenedStore.hydrate();
+    mockGetTranscript.mockResolvedValue(transcript);
+    let resolveB!: (v: { queue: unknown[]; has_unreviewed_listen: boolean }) => void;
+    mockFetchLessonReviewQueue
+      .mockResolvedValueOnce({
+        queue: [{ id: 1 }, { id: 2 }, { id: 3 }] as never,
+        has_unreviewed_listen: true,
+      })
+      .mockReturnValueOnce(
+        new Promise((r) => {
+          resolveB = r as never;
+        }) as never,
+      );
+
+    const { findByText, queryByText, rerender } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    expect(await findByText(/review 3 words/)).toBeTruthy();
+
+    const lessonB = { ...lesson, id: "l2", title: "Day 2: Fish", day: 2 };
+    await rerender({ data: { curriculum, lesson: lessonB, audio, transcript } });
+
+    // In flight: lesson A's answer must be off screen already.
+    await waitFor(() => {
+      expect(queryByText(/review 3 words/)).toBeFalsy();
+    });
+    expect(mockFetchLessonReviewQueue).toHaveBeenCalledWith("l2");
+
+    resolveB({ queue: [{ id: 9 }], has_unreviewed_listen: true });
+    expect(await findByText(/review 1 word/)).toBeTruthy();
+  });
+
   it("hides listen confirmation when error is set after commit via preview modal", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [

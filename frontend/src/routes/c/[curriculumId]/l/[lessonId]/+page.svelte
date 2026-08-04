@@ -38,6 +38,9 @@
 	let listenResult = $state<ListenResponse | null>(null);
 	let queueCount = $state(0);
 	let hasUnreviewedListen = $state(false);
+	// Which lesson the three above describe. Plain `let`, not $state: it is the
+	// follow-`data` effect's own bookkeeping and must not be a dependency of it.
+	let resultsLessonId: string | null = untrack(() => data.lesson.id);
 	let audioLoading = $state(false);
 	// Stays true from the Regenerate click until the pipeline lands the new lesson
 	// (navigate) or fails — NOT just for the brief regenerateDay request, so the
@@ -111,6 +114,19 @@
 		// A render started on the previous lesson must not leave the new lesson's
 		// Render button stuck on "Rendering…".
 		audioLoading = false;
+		// Everything the previous listen produced is scoped to the lesson it ran
+		// on. `listenResult` is the confirmation banner ("1 graded · 10 remaining
+		// — listen again to add more"), and queueCount/hasUnreviewedListen back
+		// the "Check your work" link; left standing, all three report day N-1's
+		// numbers on day N's page. Guarded on the id rather than reset on every
+		// `data` change: a same-lesson re-load (invalidate) would otherwise blank
+		// a queue count that the fetch effect below has no reason to re-fetch.
+		if (data.lesson.id !== resultsLessonId) {
+			resultsLessonId = data.lesson.id;
+			listenResult = null;
+			queueCount = 0;
+			hasUnreviewedListen = false;
+		}
 		const provided = data.transcript;
 		if (provided !== null) {
 			// Supplied by load (or passed directly in a test) — render it as-is.
@@ -336,8 +352,12 @@
 
 	// Fetch the review queue when the page loads with an already-listened lesson
 	// (so the "Check your work" link shows the right count from first paint).
+	// Depends on the lesson id, not just `isListened`: navigating between two
+	// already-listened lessons leaves that boolean at true, so a `$derived`
+	// equality check swallows the change and the queue is never re-fetched —
+	// the link then keeps the previous lesson's count.
 	$effect(() => {
-		if (isListened) fetchQueue();
+		if (listenedStore.has(data.lesson.id)) fetchQueue();
 	});
 
 	async function handleMarkListened() {
