@@ -826,7 +826,17 @@
 	.list-head,
 	.candidate {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) 3.25rem 11rem;
+		/* The Due track is 3.5rem = 56px against a 51.6px `learning` pill — the
+		   widest label this column can emit — leaving ~4.4px. It was 3.25rem
+		   (52px), which passed on 0.4px of headroom: green, oracle-guarded, and
+		   one font substitution away from failing (a fallback face on a device
+		   without ours, or a browser default bump). The track is deliberately
+		   FIXED rather than `auto` — an `auto` track resolves per-container and
+		   desynchronises the header from the rows, which is the bug
+		   `listen-preview-layout.spec.ts` exists for — so the fix is to size it
+		   for its content, never to make it elastic. Keep both arms in step:
+		   the container-query arm below carries the same value. */
+		grid-template-columns: minmax(0, 1fr) 3.5rem 11rem;
 		gap: 0.1rem 0.35rem;
 		padding: 0.35rem 0.15rem;
 	}
@@ -1117,7 +1127,9 @@
 	@container (max-width: 18rem) {
 		.list-head,
 		.candidate {
-			grid-template-columns: minmax(0, 1fr) 3.25rem;
+			/* Same 3.5rem as the three-column arm above — the pill is the same
+			   width whichever arm applies. */
+			grid-template-columns: minmax(0, 1fr) 3.5rem;
 		}
 		/* Nothing occupies a third column any more, so the header must stop
 		   advertising one. */
