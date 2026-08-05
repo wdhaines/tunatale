@@ -46,7 +46,7 @@
 
 	let countdown = $state(10);
 	let countdownCancelled = $state(false);
-	// The total the countdown started from — drives the draining fill's width.
+	// The total the countdown started from — drives the progress fill's width.
 	// 0 when the pref is "off" (never started), which keeps the fill empty.
 	let countdownTotal = $state(0);
 	// The timer handle. $state now, unlike the pre-option-C layout: the template
@@ -64,11 +64,18 @@
 	// its min-width (with `visibility: hidden`), so emptying the text cannot
 	// change the button's width (F-7, one row up).
 	let tickText = $derived(countdownRunning ? `${countdown}s` : '');
-	// Draining fill, 0–100. Driven by the existing 1-second interval, so it
-	// steps rather than animates (no transition; reduced-motion users get the
-	// same stepwise fill either way).
-	let pctRemaining = $derived(
-		countdownTotal > 0 ? Math.max(0, Math.min(100, (countdown / countdownTotal) * 100)) : 0,
+	// Progress fill, 0–100, driven by ELAPSED time — it grows left→right from
+	// 0% while the countdown runs (F-15a). Gated on countdownRunning, not just
+	// the counters: cancelCountdown resets neither countdown nor countdownTotal,
+	// so a width derived only from those two would freeze mid-fill on cancel;
+	// gated on the running flag it reads 0 the moment the countdown is
+	// cancelled (F-15b). Driven by the existing 1-second interval, so it steps
+	// rather than animates (no transition; reduced-motion users get the same
+	// stepwise fill either way).
+	let pctElapsed = $derived(
+		countdownRunning && countdownTotal > 0
+			? Math.max(0, Math.min(100, ((countdownTotal - countdown) / countdownTotal) * 100))
+			: 0,
 	);
 
 	let overlayEl: HTMLDivElement | undefined;
@@ -501,7 +508,7 @@
 					onclick={gradeAll}
 					type="button"
 				>
-					<span class="fill" style:width={`${pctRemaining}%`} aria-hidden="true"></span>
+					<span class="fill" style:width={`${pctElapsed}%`} aria-hidden="true"></span>
 					<span class="label">Grade All <span class="tick">{tickText}</span></span>
 				</button>
 				<button onclick={skipAll} type="button">Skip All</button>
@@ -751,7 +758,7 @@
 	   never `display: none`), so the button's box is pixel-identical whether
 	   the countdown is running, cancelled, or never armed — F-7's invariant.
 	   The fill is absolutely positioned behind the label so it animates the
-	   drain without ever moving text. */
+	   progress without ever moving text. */
 	.grade-all {
 		position: relative;
 		overflow: hidden;
