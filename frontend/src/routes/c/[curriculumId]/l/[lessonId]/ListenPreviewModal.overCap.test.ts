@@ -373,7 +373,7 @@ describe("ListenPreviewModal — opting past the daily new-card cap", () => {
     });
 
     await waitFor(() => getByText("kake"));
-    await fireEvent.click(getByText("Grade All"));
+    await fireEvent.click(container.querySelector<HTMLButtonElement>(".grade-all")!);
 
     await waitFor(() => expect(getByText("Mark 2 as listened")).toBeTruthy());
 

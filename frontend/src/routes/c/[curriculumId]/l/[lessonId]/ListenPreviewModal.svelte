@@ -46,18 +46,30 @@
 
 	let countdown = $state(10);
 	let countdownCancelled = $state(false);
-	// Set the moment the interval is created and never reset. The countdown
-	// line is RENDERED while this is true so cancelling the countdown empties
-	// the line instead of unmounting it — an unmount mid-pointerdown shifts the
-	// rows below it up (F-7), and the click that cancelled never reaches its
-	// row's grade button. Gated on this rather than always-rendered so pref
-	// "off" (never started) keeps the element absent.
-	let countdownStarted = $state(false);
-	// Deliberately NOT $state: this is a bare timer handle, never read from the
-	// template, and onDestroy(clearCountdownTimer) writes it after teardown —
-	// which is exactly why it must stay non-reactive (see onDestroy below).
-	// svelte-ignore non_reactive_update
-	let countdownId: ReturnType<typeof setTimeout> | null = null;
+	// The total the countdown started from — drives the draining fill's width.
+	// 0 when the pref is "off" (never started), which keeps the fill empty.
+	let countdownTotal = $state(0);
+	// The timer handle. $state now, unlike the pre-option-C layout: the template
+	// reads `countdownRunning`, which derives from countdownId, and a plain
+	// `let` would render that derived once and never flip it — the running→idle
+	// transition is exactly what the F-7 oracle asserts on. onDestroy
+	// (clearCountdownTimer) still nulls it after teardown; Svelte 5 has no
+	// post-unmount state-mutation warning.
+	let countdownId: ReturnType<typeof setTimeout> | null = $state(null);
+	// The countdown is "running" iff armed and not cancelled. The option-C
+	// button derives everything from this: the fill drains, the tick shows,
+	// `data-countdown` reads it, and the armed border/aria-label follow it.
+	let countdownRunning = $derived(!countdownCancelled && countdownId !== null);
+	// The seconds text. Empty when not running — the .tick box is held open by
+	// its min-width (with `visibility: hidden`), so emptying the text cannot
+	// change the button's width (F-7, one row up).
+	let tickText = $derived(countdownRunning ? `${countdown}s` : '');
+	// Draining fill, 0–100. Driven by the existing 1-second interval, so it
+	// steps rather than animates (no transition; reduced-motion users get the
+	// same stepwise fill either way).
+	let pctRemaining = $derived(
+		countdownTotal > 0 ? Math.max(0, Math.min(100, (countdown / countdownTotal) * 100)) : 0,
+	);
 
 	let overlayEl: HTMLDivElement | undefined;
 	// The programmatic overlayEl.focus() call below synchronously fires our own
@@ -164,7 +176,7 @@
 			const prefValue = listenCountdownPref.value;
 			if (prefValue !== 'off') {
 				countdown = parseInt(prefValue, 10);
-				countdownStarted = true;
+				countdownTotal = countdown;
 				countdownId = setInterval(() => {
 					countdown -= 1;
 					if (countdown <= 0) {
@@ -470,24 +482,34 @@
 		{:else if error}
 			<p class="error">{error}</p>
 		{:else}
-			<!-- F4: the countdown must be visible whenever it's running, including
-			     the zero-candidates case — otherwise it silently auto-commits with
-			     no on-screen indication anything is about to happen.
-			     F-7: the line RESERVES its box for the whole modal once the
-			     countdown has started. Cancelling empties the text but keeps the
-			     element, so the pointerdown that cancelled cannot reflow the rows
-			     beneath the cursor (which would swallow the click's grade). -->
-			{#if countdownStarted}
-				<p class="countdown">{#if !countdownCancelled && countdownId !== null}Auto-marking in {countdown}s{/if}</p>
-			{/if}
+			<!-- F4: the countdown is visible whenever it's running — including the
+			     zero-candidates case — so the auto-commit can never fire with no
+			     on-screen indication anything is about to happen. Option C (user
+			     choice) puts it ON the Grade All button: a draining fill plus a
+			     seconds tick. F-7's constraint is satisfied structurally: the tick
+			     stays mounted (its box held open by min-width, `visibility:
+			     hidden` when not running) and the fill is absolutely positioned, so
+			     the button's box is identical whether the countdown is running,
+			     cancelled, or was never started — nothing can reflow under a
+			     pointer that is still down. -->
+			<div class="actions">
+				<button
+					class="grade-all"
+					class:armed={countdownRunning}
+					data-countdown={countdownRunning ? 'running' : 'idle'}
+					aria-label={countdownRunning ? `Grade All — auto-grading in ${countdown} seconds` : undefined}
+					onclick={gradeAll}
+					type="button"
+				>
+					<span class="fill" style:width={`${pctRemaining}%`} aria-hidden="true"></span>
+					<span class="label">Grade All <span class="tick">{tickText}</span></span>
+				</button>
+				<button onclick={skipAll} type="button">Skip All</button>
+			</div>
 
 			{#if candidates.length === 0}
 				<p class="status">No new words to add.</p>
 			{:else}
-				<div class="actions">
-					<button onclick={gradeAll} type="button">Grade All</button>
-					<button onclick={skipAll} type="button">Skip All</button>
-				</div>
 
 				{#snippet gradeControl(c: ListenPreviewCandidate)}
 					{@const key = candidateKey(c)}
@@ -593,8 +615,6 @@
 							{dueLabel(c)}
 						</span>
 
-						<span class="tag next-listen">next listen</span>
-
 						{@render gradeControl(c)}
 					</li>
 				{/snippet}
@@ -621,11 +641,26 @@
 						     "limit(+1 over)", with the space silently eaten. A single
 						     text node also keeps it matchable by exact text. -->
 						<li class="cut-line">{cutLineText}</li>
-						{#each tailCandidates as c (candidateKey(c))}
-							{@render tailRow(c)}
-						{/each}
 					{/if}
 				</ul>
+
+				{#if tailCandidates.length > 0}
+					<!-- F-13: the tail collapses behind a disclosure mirroring the
+					     well-known group — one idiom for the modal, and one tap to
+					     reach the whole partition instead of a tag repeated on every
+					     row. The count is tailCandidates.length: the tail holds create
+					     rows AND NEW-state cards sharing the intro budget, so a create
+					     count would under-report it. Tail rows stay gradeable inside
+					     the group (the over-cap opt-in is per row and unchanged). -->
+					<details class="tail-group">
+						<summary>{tailCandidates.length} words for subsequent listens</summary>
+						<ul class="list">
+							{#each tailCandidates as c (candidateKey(c))}
+								{@render tailRow(c)}
+							{/each}
+						</ul>
+					</details>
+				{/if}
 
 				{#if wellKnownCandidates.length > 0}
 					<details class="well-known-group">
@@ -711,16 +746,44 @@
 		color: var(--color-danger);
 		font-size: 0.9rem;
 	}
-	.countdown {
-		color: var(--color-muted);
-		font-size: 0.8rem;
-		text-align: center;
-		margin: 0;
-		/* F-7: the element outlives cancellation, so an empty countdown must
-		   occupy the same box the populated one does — one line box. 1lh is the
-		   element's own line-height, so the empty and populated forms match to
-		   the pixel and cancelling cannot shift the rows below. */
-		min-height: 1lh;
+	/* Option C: the countdown lives ON the Grade All button. The tick box is
+	   always mounted and held open by min-width (empty → `visibility: hidden`,
+	   never `display: none`), so the button's box is pixel-identical whether
+	   the countdown is running, cancelled, or never armed — F-7's invariant.
+	   The fill is absolutely positioned behind the label so it animates the
+	   drain without ever moving text. */
+	.grade-all {
+		position: relative;
+		overflow: hidden;
+		font-weight: 600;
+	}
+	.grade-all .fill {
+		position: absolute;
+		inset: 0 auto 0 0;
+		background: color-mix(in srgb, var(--color-accent, #2f6fed) 18%, transparent);
+		pointer-events: none;
+	}
+	.grade-all .label {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.25rem;
+	}
+	.grade-all .tick {
+		/* One full "10s" is the widest text the tick ever shows; holding the box
+		   open to that width keeps the label rock-steady while it drains. */
+		min-width: 1.6em;
+		text-align: left;
+		font-variant-numeric: tabular-nums;
+		visibility: hidden;
+	}
+	.grade-all[data-countdown="running"] .tick {
+		visibility: visible;
+	}
+	.grade-all.armed {
+		border-color: var(--color-accent, #2f6fed);
+		box-shadow: 0 0 0 1px var(--color-accent, #2f6fed);
 	}
 	.actions {
 		display: flex;
@@ -756,7 +819,7 @@
 	.list-head,
 	.candidate {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) 3rem 11rem;
+		grid-template-columns: minmax(0, 1fr) 3.25rem 11rem;
 		gap: 0.1rem 0.35rem;
 		padding: 0.35rem 0.15rem;
 	}
@@ -1026,16 +1089,8 @@
 	.candidate.tail:not(.opted):hover {
 		background: transparent;
 	}
-	.tag.next-listen {
-		grid-column: 3;
-		grid-row: 1;
-		align-self: center;
-		justify-self: start;
-		font-style: italic;
-		border: 1px dashed var(--color-border);
-	}
-	/* The status tag sits above the control in the grade column; the control
-	   drops to the second grid row so they never overlap. */
+	/* The tail's over-cap opt-in control sits in the grade column's own grid
+	   row so it never collides with the fixed grade control. */
 	.candidate.tail .grade {
 		grid-row: 2;
 	}
@@ -1055,7 +1110,7 @@
 	@container (max-width: 18rem) {
 		.list-head,
 		.candidate {
-			grid-template-columns: minmax(0, 1fr) 3rem;
+			grid-template-columns: minmax(0, 1fr) 3.25rem;
 		}
 		/* Nothing occupies a third column any more, so the header must stop
 		   advertising one. */
@@ -1066,13 +1121,8 @@
 			grid-column: 1 / -1;
 			grid-row: 3;
 		}
-		/* Row 3 belongs to the status tag on a tail row; the control follows it. */
-		.tag.next-listen {
-			grid-column: 1;
-			grid-row: 3;
-		}
 		.candidate.tail .grade {
-			grid-row: 4;
+			grid-row: 3;
 		}
 	}
 </style>

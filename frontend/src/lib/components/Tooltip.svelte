@@ -164,6 +164,20 @@
 		return () => document.removeEventListener('pointerdown', handleOutside);
 	});
 
+	// The width of the AREA THE USER CAN SEE, not the layout viewport. On a
+	// coarse pointer (real phones, `@media (pointer: coarse)`), Chromium answers
+	// a popover that overflows the glass with shrink-to-fit: it inflates the
+	// layout viewport to fit the overflowing content, and `window.innerWidth`
+	// reports that INFLATED width (measured 486 on a 412px phone — the 74px
+	// overhang, verbatim). A clamp computed against 486 "contains" the popover
+	// at 470 while the page still scrolls 74px sideways (F-12). The visual
+	// viewport (`window.visualViewport.width`) and `documentElement.clientWidth`
+	// both stay at the true 412, so either measures what the user actually sees.
+	// jsdom has no layout: `visualViewport` is absent and `clientWidth` is 0,
+	// so the chain falls back to `innerWidth` (1024), keeping the unit tests'
+	// mocked-rect math identical.
+	const viewportWidth = () =>
+		window.visualViewport?.width ?? (document.documentElement.clientWidth || window.innerWidth);
 	// Keep the popover on-screen: when the centered position would clip at a
 	// viewport edge (narrow phone screens), nudge it horizontally. Runs whenever
 	// the popover is DISPLAYED — click-opened (`open`) OR hover-revealed
@@ -179,8 +193,8 @@
 		const rect = ttEl.getBoundingClientRect();
 		if (rect.left < EDGE_MARGIN_PX) {
 			shiftX = EDGE_MARGIN_PX - rect.left;
-		} else if (rect.right > window.innerWidth - EDGE_MARGIN_PX) {
-			shiftX = window.innerWidth - EDGE_MARGIN_PX - rect.right;
+		} else if (rect.right > viewportWidth() - EDGE_MARGIN_PX) {
+			shiftX = viewportWidth() - EDGE_MARGIN_PX - rect.right;
 		} else {
 			shiftX = 0;
 		}
