@@ -1860,15 +1860,12 @@ describe("ListenPreviewModal", () => {
     });
 
     it("a row that was never graded still comes back as Good", async () => {
-      // Well-known rows start on "skip" with no prior grade to remember.
+      // An ordinary row skipped by a direct per-row click carries no remembered
+      // grade, so Grade All must still restore it to "good" by default.
       mockGetListenPreview.mockResolvedValue({
         candidates: [
           wordCandidate("prosim", { grade_class: "due" }),
-          wordCandidate("hvala", {
-            grade_class: "ahead",
-            well_known: true,
-            due_at: "2126-01-01T04:00:00+00:00",
-          }),
+          wordCandidate("hvala", { grade_class: "due" }),
         ],
       });
 
@@ -1877,6 +1874,7 @@ describe("ListenPreviewModal", () => {
       });
 
       await waitFor(() => getByText("prosim"));
+      await fireEvent.click(gradeBtn(container, "word:hvala", "skip"));
       await fireEvent.click(container.querySelector<HTMLButtonElement>(".grade-all")!);
 
       expect(isActive(gradeBtn(container, "word:hvala", "good"))).toBe(true);
@@ -2054,7 +2052,7 @@ describe("ListenPreviewModal", () => {
 
       await waitFor(() => getByText("prosim"));
       await fireEvent.click(container.querySelector<HTMLButtonElement>(".grade-all")!);
-      await fireEvent.click(getByText("Mark 2 as listened"));
+      await fireEvent.click(getByText("Mark 1 as listened"));
 
       await waitFor(() => {
         const call = mockMarkAsListened.mock.calls.at(-1)!;

@@ -232,10 +232,11 @@
 	}
 
 	// Restores each skipped row to the grade it last held, falling back to
-	// "good" for a row that never carried one (a well-known row, which starts
-	// skipped). Rows already on a real grade are untouched. Iterates every
-	// candidate EXCEPT tail rows: a well-known row is still a live decision,
-	// but a display-only tail row must not be pulled above the divider.
+	// "good" for a row that never carried one. Rows already on a real grade
+	// are untouched. Iterates every candidate EXCEPT tail rows and well-known
+	// rows: the known group is opt-in per row only, so a bulk action must
+	// never pull a well-known row out of 'skip' (F-3), just as a display-only
+	// tail row must not be pulled above the divider.
 	function gradeAll() {
 		handleInteraction();
 		const rts: Record<string, WordRating> = { ...ratings };
@@ -243,6 +244,7 @@
 		for (const c of candidates) {
 			const key = candidateKey(c);
 			if (tailKeys.has(key)) continue;
+			if (c.well_known) continue;
 			if (rts[key] === 'skip') rts[key] = rememberedGrade[key] ?? 'good';
 		}
 		ratings = rts;
