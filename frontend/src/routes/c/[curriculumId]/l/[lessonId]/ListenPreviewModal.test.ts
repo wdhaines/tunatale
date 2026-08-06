@@ -129,6 +129,21 @@ const gradeBtn = (container: HTMLElement, key: string, grade: string) =>
 
 const isActive = (b: HTMLButtonElement) => b.classList.contains("active");
 
+/**
+ * F-20: the summary row's segments, as [number, label] pairs in render order —
+ * the cut line's meaning, restated above the list. Reads the rendered TEXT so
+ * the assertion stays on the content, not the classes.
+ */
+const segments = (container: HTMLElement): [string, string][] => {
+  const row = container.querySelector(".partition");
+  if (!row) return [];
+  return [...row.querySelectorAll(":scope > *")].map((seg) => {
+    const n = seg.querySelector(".n")?.textContent?.trim() ?? "";
+    const l = seg.querySelector(".l")?.textContent?.trim() ?? "";
+    return [n, l];
+  });
+};
+
 // jsdom rewrites inline colours into rgb()/rgba() form, so a raw hsl() or hex
 // string never appears in the serialized style attribute. Normalize the
 // expected value the same way rather than hardcoding the converted output —
@@ -2100,7 +2115,7 @@ describe("ListenPreviewModal", () => {
 });
 
 describe("NEW-state rows and the shared introduction budget", () => {
-  it("puts an over-budget NEW-state row in the tail, below the cut line", async () => {
+  it("puts an over-budget NEW-state row in the tail partition", async () => {
     // Releasing a staged grade on a NEW-state card INTRODUCES it, spending
     // Anki's daily new-card allowance — so rows past the budget sit below the
     // cut, exactly like over-budget create rows.
@@ -2123,10 +2138,15 @@ describe("NEW-state rows and the shared introduction budget", () => {
     });
 
     await waitFor(() => getByText("hansen"));
-    // A NEW-state row counts as an introduction on both sides of the cut line:
-    // 1 live of 2 total. It is held back, not skipped — releasing it would
-    // spend the same daily new-card allowance a creation does.
-    expect(getByText("Introducing 1 of 2 today — daily new-card limit")).toBeTruthy();
+    // A NEW-state row counts as an introduction on both sides of the cut: the
+    // summary's "now" segment reads 1 (hansen) and "later" 1 (lund). It is held
+    // back, not skipped — releasing it would spend the same daily new-card
+    // allowance a creation does.
+    expect(segments(container)).toEqual([
+      ["1", "now"],
+      ["1", "later"],
+      ["0", "known"],
+    ]);
     expect(gradeBtn(container, "word:hansen", "good")).toBeTruthy();
 
     const lundRow = [...container.querySelectorAll("li.candidate")].find(

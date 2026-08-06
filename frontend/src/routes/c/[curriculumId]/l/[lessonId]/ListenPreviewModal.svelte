@@ -332,9 +332,10 @@
 	let tailCandidates = $derived(candidates.filter((c) => c.will_create === false));
 
 	// How many tail rows the user has opted PAST the cap by grading them. A
-	// skip is the undo, not an opt-in, so it does not count. Drives the cut
-	// line's overage suffix; nothing else uses it (selectedCount already
-	// counts opt-ins, because an opted-in tail row carries a ratings entry).
+	// skip is the undo, not an opt-in, so it does not count. The opted rows
+	// move the summary's "now"/"later" counts and drive the over-cap caption
+	// (selectedCount already counts opt-ins, because an opted-in tail row
+	// carries a ratings entry).
 	let optedTailCount = $derived(
 		tailCandidates.filter((c) => {
 			const rating = ratings[candidateKey(c)];
@@ -344,15 +345,16 @@
 
 	// The gradeable set: every tracked (word/kp) row that is not well-known and
 	// not over budget, plus every create row the server will actually create.
-	// Tail rows are rendered separately below the cut line.
+	// Tail rows are rendered separately inside the tail disclosure.
 	let liveCandidates = $derived([
 		...candidates.filter((c) => c.kind !== 'create' && !c.well_known && c.will_create !== false),
 		...candidates.filter((c) => c.kind === 'create' && c.will_create !== false),
 	]);
 
-	// Numerator of the cut line. An "introduction" is any row that spends the
-	// shared daily new-card allowance: a create row (new card) or a NEW-state
-	// row (existing card, never introduced). Tracked non-new rows carry
+	// The "now" segment of the summary (the cut line's numerator, restated). An
+	// "introduction" is any row that spends the shared daily new-card
+	// allowance: a create row (new card) or a NEW-state row (existing card,
+	// never introduced). Tracked non-new rows carry
 	// `will_create` defaulted true and must NOT be counted — they are reviews,
 	// and folding them in would inflate the total against a budget they never
 	// draw on. The denominator is this plus the tail, since every tail row is
@@ -361,16 +363,6 @@
 		candidates.filter(
 			(c) => (c.kind === 'create' || c.grade_class === 'new') && c.will_create !== false,
 		).length,
-	);
-
-	// The cut line, as ONE string — declared here because it reads
-	// `liveIntroCount` above. The overage suffix appears only once the user has
-	// opted a row past the cap: they are exceeding a limit on purpose, so the UI
-	// says the number out loud rather than quietly moving the denominator, which
-	// stays the full introduction set either way.
-	let cutLineText = $derived(
-		`Introducing ${liveIntroCount} of ${liveIntroCount + tailCandidates.length} today — daily new-card limit` +
-			(optedTailCount > 0 ? ` (+${optedTailCount} over)` : ''),
 	);
 
 	let wellKnownCandidates = $derived(candidates.filter((c) => c.well_known));
@@ -628,6 +620,27 @@
 					</li>
 				{/snippet}
 
+				<!-- F-20: the cut line, restated as a three-count summary above the
+				     list (replacing the <li class="cut-line"> that used to render
+				     after every row it explained). It describes the introduction
+				     budget plus the known group — the three counts deliberately do
+				     NOT sum to the row count; ordinary due/ahead rows belong to no
+				     segment. `now` is the live introductions plus whatever was
+				     opted PAST the cap, so the opt-in's consequence lands in the
+				     right segment instead of quietly vanishing with the line. -->
+				<div class="partition">
+					<span class="seg now"><span class="n">{liveIntroCount + optedTailCount}</span><span class="l">now</span></span>
+					<span class="seg"><span class="n">{tailCandidates.length - optedTailCount}</span><span class="l">later</span></span>
+					<span class="seg"><span class="n">{wellKnownCandidates.length}</span><span class="l">known</span></span>
+				</div>
+				{#if optedTailCount > 0}
+					<!-- The over-cap opt-in keeps its voice: opted rows ARE being
+					     introduced now, so the counts above moved with them, and the
+					     caption says the overage out loud rather than quietly moving
+					     the denominator. Renders ONLY when something was opted in. -->
+					<p class="over-cap-caption">+{optedTailCount} past today's limit</p>
+				{/if}
+
 				<div class="list-head" aria-hidden="true">
 					<span>Word</span><span>Due</span><span>Proposed grade</span>
 				</div>
@@ -636,21 +649,6 @@
 					{#each liveCandidates as c (candidateKey(c))}
 						{@render candidateRow(c)}
 					{/each}
-
-					<!-- The cut is stated, not hidden. It was a collapsed <details>
-					     until 2026-08-03; a disclosure reads as "there is a decision
-					     behind here", and there is not one. Naming the limit that drew
-					     the line points at the lever that actually moves it (the daily
-					     new-card cap) instead of implying a per-row control. -->
-					{#if tailCandidates.length > 0}
-						<!-- ONE interpolation, deliberately. Built as a string in the
-						     script rather than assembled inline with an `{#if}`, because
-						     Svelte trims the leading whitespace of an if-block body: the
-						     inline form `limit{#if …} (+N over){/if}` rendered
-						     "limit(+1 over)", with the space silently eaten. A single
-						     text node also keeps it matchable by exact text. -->
-						<li class="cut-line">{cutLineText}</li>
-					{/if}
 				</ul>
 
 				{#if tailCandidates.length > 0}
@@ -661,7 +659,7 @@
 					     rows AND NEW-state cards sharing the intro budget, so a create
 					     count would under-report it. Tail rows stay gradeable inside
 					     the group (the over-cap opt-in is per row and unchanged). -->
-					<details class="tail-group">
+					<details class="tail-group disclosure-group">
 						<summary>{tailCandidates.length} words for subsequent listens</summary>
 						<ul class="list">
 							{#each tailCandidates as c (candidateKey(c))}
@@ -672,7 +670,7 @@
 				{/if}
 
 				{#if wellKnownCandidates.length > 0}
-					<details class="well-known-group">
+					<details class="well-known-group disclosure-group">
 						<!-- "known", matching the lesson stats line's bucket. The API field
 					     is still `well_known`; only the label changed. -->
 					<summary>{wellKnownCandidates.length} known word{wellKnownCandidates.length !== 1 ? 's' : ''}</summary>
@@ -1073,27 +1071,49 @@
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
 	}
-	.well-known-group {
+	/* F-16: BOTH disclosures (the tail group and the well-known group) carry
+	   this ONE shared class. They are the same idiom — a partition that
+	   collapses behind a counting disclosure — and one shared rule set is what
+	   keeps them from drifting into different treatments again. This is
+	   deliberate where the original defect was an omission: the tail group
+	   mirrored the well-known group in markup, but never received the styling,
+	   so it rendered as a default <details>. */
+	.disclosure-group {
 		border-top: 1px solid var(--color-border);
 		padding-top: 0.5rem;
 		margin-top: 0.25rem;
 	}
-	.well-known-group summary {
+	.disclosure-group summary {
 		font-size: 0.8rem;
 		color: var(--color-muted);
 		cursor: pointer;
 		padding: 0.25rem 0;
 	}
-	/* The divider IS the cut line — it carries the border rather than sitting
-	   next to one, so there is exactly one horizontal rule at the boundary and
-	   it is the one with the explanation on it. */
-	.cut-line {
-		border-top: 1px solid var(--color-border);
-		margin-top: 0.35rem;
-		padding: 0.5rem 0.15rem 0.35rem;
+	/* F-20: the three-count summary that replaced the cut line — the loudest
+	   thing on the sheet, so the number reads and the label recedes. */
+	.partition {
+		display: flex;
+		gap: 1rem;
+		padding: 0.25rem 0 0.4rem;
+	}
+	.seg {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.3rem;
+	}
+	.seg .n {
+		font-size: 0.9rem;
+		font-weight: 600;
+		line-height: 1;
+	}
+	.seg .l {
 		font-size: 0.7rem;
 		color: var(--color-muted);
-		text-align: center;
+	}
+	.over-cap-caption {
+		margin: 0 0 0.35rem;
+		font-size: 0.7rem;
+		color: var(--color-warning);
 	}
 	/* Held back by the budget, not by a choice: dimmed and non-interactive —
 	   until the user opts one in, when `.tail.opted` lifts the dim. Never

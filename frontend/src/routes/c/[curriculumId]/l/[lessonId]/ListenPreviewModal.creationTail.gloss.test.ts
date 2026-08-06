@@ -60,7 +60,9 @@ describe("ListenPreviewModal — over-budget creation tail gloss", () => {
       props: { lessonId: "l1", onDone: vi.fn() },
     });
 
-    await waitFor(() => getByText("Introducing 1 of 2 today — daily new-card limit"));
+    // F-20: the cut line is gone, so the load is signalled by the tail row
+    // itself rather than by the "Introducing … limit" line this used to wait on.
+    await waitFor(() => getByText("brød"));
 
     const gloss = container.querySelector("li.candidate.tail .gloss") as HTMLButtonElement | null;
     expect(gloss).toBeTruthy();
