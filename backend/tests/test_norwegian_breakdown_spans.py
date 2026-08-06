@@ -47,6 +47,7 @@ _CORPUS_PHRASES: list[str] = [
     "bokklubb",
     "hadde",
     "de lyver",
+    "oppklart",
 ]
 
 
@@ -79,6 +80,16 @@ class TestFlatSyllables:
         assert pieces is not None
         assert pieces == ["plas", "sen"]
         assert "".join(pieces) == "plassen"
+
+    def test_vowelless_inflection_rides_its_stem(self):
+        """A compound whose inflection is a bare consonant yields no bare piece.
+
+        segment_compound("oppklart") is ["opp", "klar", "t"]; the buildup used to
+        flatten that verbatim, so span (2,3) was a lone "t" — a chunk sliced out
+        of the whole-word render at a CTC-peaky stop. Pieces stay speakable.
+        """
+        assert flat_syllables("oppklart") == ["opp", "klart"]
+        assert flat_syllables("velkommen") == ["vel", "kom", "men"]
 
     def test_corpus_words_all_rejoin(self):
         """Every phrase in the test corpus must produce rejoining syllables."""

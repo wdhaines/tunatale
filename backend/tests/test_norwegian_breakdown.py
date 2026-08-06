@@ -17,6 +17,7 @@ edited to match code. Key design decisions they pin:
 """
 
 from app.plugins.languages.no.norwegian_breakdown import (
+    _NORWEGIAN_VOWELS,
     _is_content_stem,
     _load_ranked_lexicon,
     _segment_surface,
@@ -27,6 +28,12 @@ from app.plugins.languages.no.norwegian_breakdown import (
     slow_norwegian_word,
     syllabify_morpheme,
 )
+
+
+def _has_vowel(chunk: str) -> bool:
+    """True if *chunk* is speakable on its own (contains a syllable nucleus)."""
+    return bool(set(chunk) & _NORWEGIAN_VOWELS)
+
 
 # -- Lexicon loader --------------------------------------------------------
 
@@ -303,6 +310,33 @@ def test_breakdown_busstasjon_s_overlap():
         assert "sss" not in item, f"triple-s join leaked into {item!r}"
 
 
+def test_breakdown_oppklart_no_orphan_consonant():
+    """The -t of a compound past participle never becomes its own chunk.
+
+    segment_compound peels ``t`` as a morpheme (``opp|klar|t``), which is right
+    morphologically and wrong as a *chunk*: the buildup spoke a bare ``t``,
+    whose audio is a CTC-sliced consonant burst out of the whole-word render.
+    Day 7's "en sak som aldri ble oppklart" shipped it. The ending rides its
+    stem instead: ``opp | klart``.
+    """
+    bd = build_norwegian_breakdown("oppklart")
+    assert "klart" in bd
+    for item in bd:
+        assert _has_vowel(item), f"vowel-less chunk {item!r} in breakdown {bd}"
+
+
+def test_breakdown_vowelless_inflection_class_never_orphans():
+    """The whole -t/-n class, not just the word that surfaced the bug."""
+    for word in ("planlagt", "åpenbart", "innført", "velkommen", "president"):
+        for item in build_norwegian_breakdown(word):
+            assert _has_vowel(item), f"vowel-less chunk {item!r} in breakdown of {word!r}"
+
+
+def test_segment_compound_still_peels_the_inflection():
+    """The fix lives in the buildup, not the morphology — segmentation is unchanged."""
+    assert segment_compound("oppklart") == ["opp", "klar", "t"]
+
+
 def test_segment_compound_fjellandskap_s_overlap():
     """'fjellandskap' splits at the ll-boundary: surface ['fjel', 'landskap']."""
     assert segment_compound("fjellandskap") == ["fjel", "landskap"]
@@ -410,6 +444,23 @@ def test_syllabify_morpheme_finne_not_over_peeled():
 
 def test_syllabify_morpheme_no_geminate_informasjon():
     assert syllabify_morpheme("informasjon") == ["in", "for", "ma", "sjon"]
+
+
+def test_syllabify_morpheme_vowelless_inflection_rides_previous_group():
+    """A vowel-less inflection (-n, -t) is not a syllable and never stands alone.
+
+    begynnelsen is begynn|else|n morphologically, but ``n`` alone is
+    unpronounceable — and its audio is a slice of a whole-word render, so the
+    learner gets a consonant fragment. The ending rides the suffix group it
+    belongs to instead.
+    """
+    assert syllabify_morpheme("begynnelsen") == ["be", "gynn", "elsen"]
+    assert syllabify_morpheme("ledelsen") == ["led", "elsen"]
+
+
+def test_syllabify_morpheme_syllabic_inflection_still_its_own_group():
+    """The merge is scoped to vowel-less endings: -en keeps its own group."""
+    assert syllabify_morpheme("forskningen") == ["forsk", "ning", "en"]
 
 
 def test_syllabify_morpheme_team_loanword():

@@ -535,6 +535,27 @@ def _syllabify_with_prefix(word: str) -> list[str] | None:
     return None
 
 
+def _fold_vowelless_inflection(pieces: list[str]) -> list[str]:
+    """Fold a vowel-less inflection piece into the piece before it.
+
+    A chunk with no syllable nucleus (-n, -t) cannot stand alone — its audio is
+    a CTC-sliced consonant burst cut out of a whole-word render. A vowel-less
+    inflection rides the piece it follows (``else`` + ``n`` -> ``elsen``); an
+    inflection containing a vowel (-en, -et, -er, -e, -a, -ene, -ne) is its own
+    syllable and keeps its slot. Only *inflection* pieces fold, so a
+    linking-carrying group like ``ns`` in forbrytelsens (for·bryt·else·ns) is
+    not an inflection and stays put. The merge is concatenation, so
+    ``"".join(...)`` still reproduces the word exactly.
+    """
+    folded: list[str] = []
+    for piece in pieces:
+        if folded and piece in _INFLECTIONS and not set(piece) & _NORWEGIAN_VOWELS:
+            folded[-1] += piece
+        else:
+            folded.append(piece)
+    return folded
+
+
 def syllabify_morpheme(part: str) -> list[str]:
     """Syllabify a single morpheme, honoring derivational-suffix boundaries.
 
@@ -585,7 +606,7 @@ def syllabify_morpheme(part: str) -> list[str]:
     if linking and suffix_groups:
         suffix_groups[-1] += linking
 
-    return stem_syllables + suffix_groups
+    return _fold_vowelless_inflection(stem_syllables + suffix_groups)
 
 
 def _compound_buildup_units(morphemes: list[str]) -> list[tuple[str, list[str]]]:
@@ -606,7 +627,7 @@ def _compound_buildup_units(morphemes: list[str]) -> list[tuple[str, list[str]]]
     for idx, part in enumerate(parts):
         if inflection is not None and idx == len(parts) - 1:
             stem = part[: -len(inflection)]
-            pieces = syllabify_morpheme(stem) + [inflection]
+            pieces = _fold_vowelless_inflection(syllabify_morpheme(stem) + [inflection])
         else:
             pieces = syllabify_morpheme(part)
         units.append((part, pieces))
