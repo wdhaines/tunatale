@@ -510,6 +510,39 @@ def test_syllabify_morpheme_misjon_not_prefix_split():
     assert syllabify_morpheme("misjon") == ["mi", "sjon"]
 
 
+def test_is_content_stem_rejects_vowelless_candidate():
+    """A content stem has a nucleus — the frequency list contains junk that doesn't.
+
+    ``lsk`` (rank 7702) and ``stk`` (rank 3420) are real entries in
+    no_wordlist.txt: OCR/abbreviation noise, not words. Both clear the rank gate
+    and the 3-char floor, so without this guard they formed bogus splits —
+    ``moralsk`` -> ``mora|lsk``, ``brystkreft`` -> ``bry|stk|ref|t``.
+    """
+    ranks = _load_ranked_lexicon()
+    assert "lsk" in ranks, "fixture assumption: the junk entry is in the wordlist"
+    assert "stk" in ranks, "fixture assumption: the junk entry is in the wordlist"
+    assert not _is_content_stem("lsk", ranks)
+    assert not _is_content_stem("stk", ranks)
+
+
+def test_segment_compound_rejects_vowelless_parts():
+    """The bogus splits collapse; the genuine compound underneath surfaces."""
+    assert segment_compound("moralsk") == ["moralsk"]
+    assert segment_compound("forelske") == ["for", "elske"]
+    assert segment_compound("brystkreft") == ["bryst", "kreft"]
+
+
+def test_syllabify_morpheme_derivational_peel_needs_a_vowel_left_behind():
+    """-ing must not peel off spring: the remainder ``spr`` has no nucleus.
+
+    The 3-char floor in _strip_derivational_suffixes counts characters, which
+    ``spr`` passes. A morpheme needs a vowel, not a length.
+    """
+    assert syllabify_morpheme("spring") == ["spring"]
+    assert syllabify_morpheme("springer") == ["sprin", "ger"]
+    assert syllabify_morpheme("springe") == ["sprin", "ge"]
+
+
 def test_segment_compound_forbrytelsens_lexicalized_whole():
     """forbrytelse is a lexeme; the rank guard can't catch its over-split
     (for|bry|tel|s|ens), so it's a human-ratified whole → for·bry·tel·sens."""
@@ -517,10 +550,15 @@ def test_segment_compound_forbrytelsens_lexicalized_whole():
 
 
 def test_syllabify_morpheme_forbrytelsens():
-    """syllabify_morpheme already decomposes this correctly by morpheme
-    (for·bryt·else·ns); the only bug was segment_compound routing it to the
-    compound path as junk for|bry|tels|ens. Guards the morpheme output."""
-    assert syllabify_morpheme("forbrytelsens") == ["for", "bryt", "else", "ns"]
+    """Morpheme decomposition for·bryt·else·ns, with the genitive riding its group.
+
+    The original golden here was ``["for", "bryt", "else", "ns"]`` — correct by
+    morpheme, wrong as a chunk: ``ns`` has no nucleus, and a chunk is something
+    the learner hears in isolation, sliced out of a whole-word render. The
+    morpheme boundary is still honoured (else|ns is why the ``s`` is a genitive
+    and not part of the stem); it just no longer gets its own audio.
+    """
+    assert syllabify_morpheme("forbrytelsens") == ["for", "bryt", "elsens"]
 
 
 # -- _spoken_syllable ----------------------------------------------------

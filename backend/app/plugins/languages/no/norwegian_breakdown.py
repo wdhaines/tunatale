@@ -238,6 +238,8 @@ def _is_content_stem(word: str, ranks: dict[str, int], *, initial: bool = True) 
     when *not* word-initial — their closed-class reading causes spurious splits,
     but they are legitimate compound stems at the start of a word.
     """
+    if not set(word) & _NORWEGIAN_VOWELS:
+        return False
     if len(word) < _MIN_STEM_LEN or word in _DERIVATIONAL_SUFFIX_SET:
         return False
     if word in _CLOSED_CLASS_STEMS:
@@ -263,7 +265,11 @@ def _strip_derivational_suffixes(word: str) -> tuple[str, list[str]]:
     while True:
         matched = False
         for sfx in _DERIVATIONAL_SUFFIXES:
-            if remaining.endswith(sfx) and len(remaining) - len(sfx) >= _MIN_STEM_LEN:
+            if (
+                remaining.endswith(sfx)
+                and len(remaining) - len(sfx) >= _MIN_STEM_LEN
+                and set(remaining[: -len(sfx)]) & _NORWEGIAN_VOWELS
+            ):
                 found.append(sfx)
                 remaining = remaining[: -len(sfx)]
                 matched = True
@@ -535,21 +541,21 @@ def _syllabify_with_prefix(word: str) -> list[str] | None:
     return None
 
 
-def _fold_vowelless_inflection(pieces: list[str]) -> list[str]:
-    """Fold a vowel-less inflection piece into the piece before it.
+def _fold_vowelless_pieces(pieces: list[str]) -> list[str]:
+    """Fold any vowel-less piece into the piece before it.
 
-    A chunk with no syllable nucleus (-n, -t) cannot stand alone — its audio is
-    a CTC-sliced consonant burst cut out of a whole-word render. A vowel-less
-    inflection rides the piece it follows (``else`` + ``n`` -> ``elsen``); an
-    inflection containing a vowel (-en, -et, -er, -e, -a, -ene, -ne) is its own
-    syllable and keeps its slot. Only *inflection* pieces fold, so a
-    linking-carrying group like ``ns`` in forbrytelsens (for·bryt·else·ns) is
-    not an inflection and stays put. The merge is concatenation, so
-    ``"".join(...)`` still reproduces the word exactly.
+    A chunk with no syllable nucleus (-n, -t, -ns) cannot stand alone — its
+    audio is a CTC-sliced consonant burst cut out of a whole-word render. A
+    vowel-less piece rides the piece it follows (``else`` + ``ns`` ->
+    ``elsens``, ``else`` + ``n`` -> ``elsen``); a piece containing a vowel
+    (-en, -et, -er, -e, -a, -ene, -ne) is its own syllable and keeps its slot.
+    Parts A and B guarantee every stem has a nucleus, so the only vowel-less
+    pieces here are suffix groups — precisely what should fold. The merge is
+    concatenation, so ``"".join(...)`` still reproduces the word exactly.
     """
     folded: list[str] = []
     for piece in pieces:
-        if folded and piece in _INFLECTIONS and not set(piece) & _NORWEGIAN_VOWELS:
+        if folded and not set(piece) & _NORWEGIAN_VOWELS:
             folded[-1] += piece
         else:
             folded.append(piece)
@@ -606,7 +612,7 @@ def syllabify_morpheme(part: str) -> list[str]:
     if linking and suffix_groups:
         suffix_groups[-1] += linking
 
-    return _fold_vowelless_inflection(stem_syllables + suffix_groups)
+    return _fold_vowelless_pieces(stem_syllables + suffix_groups)
 
 
 def _compound_buildup_units(morphemes: list[str]) -> list[tuple[str, list[str]]]:
@@ -627,7 +633,7 @@ def _compound_buildup_units(morphemes: list[str]) -> list[tuple[str, list[str]]]
     for idx, part in enumerate(parts):
         if inflection is not None and idx == len(parts) - 1:
             stem = part[: -len(inflection)]
-            pieces = _fold_vowelless_inflection(syllabify_morpheme(stem) + [inflection])
+            pieces = _fold_vowelless_pieces(syllabify_morpheme(stem) + [inflection])
         else:
             pieces = syllabify_morpheme(part)
         units.append((part, pieces))

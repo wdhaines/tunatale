@@ -20,9 +20,11 @@ import pytest
 
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.plugins.languages.no.norwegian_breakdown import (
+    _NORWEGIAN_VOWELS,
     build_norwegian_breakdown,
     build_norwegian_breakdown_spans,
     flat_syllables,
+    load_no_lexicon,
 )
 
 # ---- Every phrase that build_norwegian_breakdown is called with in the
@@ -90,6 +92,24 @@ class TestFlatSyllables:
         """
         assert flat_syllables("oppklart") == ["opp", "klart"]
         assert flat_syllables("velkommen") == ["vel", "kom", "men"]
+
+    def test_no_wordlist_entry_yields_an_unspeakable_chunk(self):
+        """The invariant, over all 50k wordlist entries: every piece has a nucleus.
+
+        A multi-piece split whose pieces don't all contain a vowel puts a bare
+        consonant in front of the learner — as text, and as a CTC-sliced burst
+        of audio. A *single*-piece result is exempt: a vowel-less acronym (nrk,
+        sms, http) is a whole word, not a fragment of one.
+        """
+        offenders = []
+        for word in load_no_lexicon():
+            if len(word) < 3:
+                continue
+            pieces = flat_syllables(word)
+            assert pieces is not None, f"flat_syllables({word!r}) does not rejoin"
+            if len(pieces) > 1 and any(not set(p) & _NORWEGIAN_VOWELS for p in pieces):
+                offenders.append((word, pieces))
+        assert offenders == [], f"{len(offenders)} unspeakable chunks, e.g. {offenders[:5]}"
 
     def test_corpus_words_all_rejoin(self):
         """Every phrase in the test corpus must produce rejoining syllables."""
