@@ -137,6 +137,35 @@ def refine_splice(samples: np.ndarray, rate: int, idx: int) -> int:
     return snap_negative_zero(samples, quietest * hop, rate)
 
 
+def tail_length(sw: SlicedWord, j: int, tail_pad: int) -> int:
+    """Samples of following audio a chunk ending at syllable ``j`` carries.
+
+    The diagnostic half of ``raw_span``'s tail: ``raw_span`` cuts exactly this
+    many samples past the boundary (and ramps them to zero), and the per-chunk
+    report reads THIS function so a tool reporting what the renderer cuts can
+    never drift from the renderer. ``tail_pad`` is the caller's floor in samples.
+
+    Returns ``0`` for a final chunk (``j >= len(sw.syllables)``) — there is no
+    following audio to carry.
+
+    The arithmetic, in words: the tail may run as far past the boundary as the
+    measured distance to the next vowel's onset allows, capped at
+    ``_MAX_HEADROOM_MS``, plus a fixed ``_VOWEL_OVERLAP_MS`` into that vowel —
+    the onset consonant and its formant transition are what stop the chunk
+    sounding truncated, and the following vowel dies away as a natural offset.
+    ``_MAX_TAIL_MS`` only ever binds against a caller floor larger than the
+    measurement (a computed tail never reaches it); it guards the caller, not
+    the measurement. Every constant is ear-tuned — see the module docstring.
+    """
+    if j >= len(sw.syllables):
+        return 0
+    end = sw.bounds[j]
+    limit = sw.onset_ends[j - 1] if j - 1 < len(sw.onset_ends) else end
+    headroom = min(max(0, limit - end), int(_MAX_HEADROOM_MS / 1000.0 * sw.rate))
+    headroom += int(_VOWEL_OVERLAP_MS / 1000.0 * sw.rate)
+    return int(np.clip(headroom, tail_pad, _MAX_TAIL_MS / 1000.0 * sw.rate))
+
+
 def raw_span(sw: SlicedWord, i: int, j: int, head_pad: int, tail_pad: int) -> np.ndarray:
     """Unfaded audio for ``syllables[i:j]``, padded asymmetrically at interior cuts.
 
@@ -165,13 +194,8 @@ def raw_span(sw: SlicedWord, i: int, j: int, head_pad: int, tail_pad: int) -> np
     """
     start = sw.bounds[i] - (head_pad if i > 0 else 0)
     end = sw.bounds[j]
-    tail = 0
-    if j < len(sw.syllables):
-        limit = sw.onset_ends[j - 1] if j - 1 < len(sw.onset_ends) else end
-        headroom = min(max(0, limit - end), int(_MAX_HEADROOM_MS / 1000.0 * sw.rate))
-        headroom += int(_VOWEL_OVERLAP_MS / 1000.0 * sw.rate)
-        tail = int(np.clip(headroom, tail_pad, _MAX_TAIL_MS / 1000.0 * sw.rate))
-        end += tail
+    tail = tail_length(sw, j, tail_pad)
+    end += tail
 
     span = sw.samples[max(0, start) : min(len(sw.samples), end)].copy()
 
