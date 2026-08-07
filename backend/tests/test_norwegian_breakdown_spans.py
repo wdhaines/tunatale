@@ -20,11 +20,14 @@ import pytest
 
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.plugins.languages.no.norwegian_breakdown import (
+    _INFLECTIONS,
     _NORWEGIAN_VOWELS,
+    _compound_buildup_units,
     build_norwegian_breakdown,
     build_norwegian_breakdown_spans,
     flat_syllables,
     load_no_lexicon,
+    segment_compound,
 )
 
 # ---- Every phrase that build_norwegian_breakdown is called with in the
@@ -110,6 +113,84 @@ class TestFlatSyllables:
             if len(pieces) > 1 and any(not set(p) & _NORWEGIAN_VOWELS for p in pieces):
                 offenders.append((word, pieces))
         assert offenders == [], f"{len(offenders)} unspeakable chunks, e.g. {offenders[:5]}"
+
+    def test_vowel_only_inflection_never_stranded_inside_a_morpheme(self):
+        """The invariant, over all 50k entries: a vowel-only inflection is never
+        stranded behind a consonant-final piece **of its own morpheme**.
+
+        for·klar·e would put a bare-nucleus chunk (``e``) in front of the
+        learner — text, and audio sliced out of the whole-word render with no
+        onset to cut on, bleeding into a "short re". The stem's final consonant
+        rides onto it instead (for·kla·re).
+
+        Scoped to *within a morpheme* deliberately. The fold runs per buildup
+        unit, and it must: ``_compound_buildup_units`` yields ``(surface,
+        pieces)`` pairs whose pieces rejoin to their surface, and both span
+        builders rely on that. Moving a character across a seam would break the
+        pairing and desync the text from the audio spans.
+
+        What survives at a seam is not the same defect. In ``genetiske`` the
+        spurious split ``gen|etisk|e`` makes the bare ``e`` the *first syllable
+        of a middle part*, not an inflection — it only looks like one because
+        ``"e" in _INFLECTIONS`` is a string test. Folding there would corrupt the
+        morpheme boundary. The real fix for those is in ``segment_compound``,
+        which should not have split the word; that is out of scope here, so this
+        test pins them as seam-only rather than pretending they are gone.
+        """
+        stranded = []
+        for word in load_no_lexicon():
+            if len(word) < 3:
+                continue
+            pieces = flat_syllables(word)
+            assert pieces is not None, f"flat_syllables({word!r}) does not rejoin"
+            morphemes = segment_compound(word)
+            # Piece indices that begin a buildup unit — the seams the fold cannot
+            # and must not cross.
+            seam_starts = set()
+            if len(morphemes) >= 2:
+                idx = 0
+                for _, unit_pieces in _compound_buildup_units(morphemes):
+                    seam_starts.add(idx)
+                    idx += len(unit_pieces)
+            for i in range(1, len(pieces)):
+                if (
+                    set(pieces[i]) <= _NORWEGIAN_VOWELS
+                    and pieces[i] in _INFLECTIONS
+                    and pieces[i - 1][-1] not in _NORWEGIAN_VOWELS
+                    and i not in seam_starts
+                ):
+                    stranded.append((word, pieces))
+        assert stranded == [], f"{len(stranded)} vowel-only inflections stranded inside a morpheme, e.g. {stranded[:5]}"
+
+    def test_non_inflection_all_vowel_pieces_untouched(self):
+        """All-vowel pieces that are NOT inflections keep their slots.
+
+        arbeids·u·ke, and·øy·a, alle·manns·ei·e: a vowel-only piece at a
+        compound seam has a consonant to its right only because a morpheme
+        boundary between two content stems sits there — moving it would cross
+        that boundary. The fold must leave all 167 such pieces (in 166 words)
+        exactly alone, so an over-broad fix goes red here.
+        """
+        offenders = []
+        words = set()
+        for word in load_no_lexicon():
+            if len(word) < 3:
+                continue
+            pieces = flat_syllables(word)
+            assert pieces is not None, f"flat_syllables({word!r}) does not rejoin"
+            for i in range(1, len(pieces)):
+                piece = pieces[i]
+                if (
+                    set(piece) <= _NORWEGIAN_VOWELS
+                    and piece not in _INFLECTIONS
+                    and pieces[i - 1][-1] not in _NORWEGIAN_VOWELS
+                ):
+                    offenders.append((word, pieces))
+                    words.add(word)
+        assert len(offenders) == 167, (
+            f"{len(offenders)} non-inflection all-vowel pieces (expected 167), e.g. {offenders[:5]}"
+        )
+        assert len(words) == 166, f"{len(words)} distinct words (expected 166), e.g. {sorted(words)[:5]}"
 
     def test_corpus_words_all_rejoin(self):
         """Every phrase in the test corpus must produce rejoining syllables."""

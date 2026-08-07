@@ -18,11 +18,13 @@ edited to match code. Key design decisions they pin:
 
 from app.plugins.languages.no.norwegian_breakdown import (
     _NORWEGIAN_VOWELS,
+    _fold_vowel_only_inflections,
     _is_content_stem,
     _load_ranked_lexicon,
     _segment_surface,
     _spoken_syllable,
     build_norwegian_breakdown,
+    flat_syllables,
     load_no_lexicon,
     segment_compound,
     slow_norwegian_word,
@@ -559,6 +561,75 @@ def test_syllabify_morpheme_forbrytelsens():
     and not part of the stem); it just no longer gets its own audio.
     """
     assert syllabify_morpheme("forbrytelsens") == ["for", "bryt", "elsens"]
+
+
+# -- _fold_vowel_only_inflections -----------------------------------------
+
+
+def test_fold_vowel_only_inflection_takes_stems_final_consonant():
+    """A vowel-only inflection takes exactly one onset from its stem.
+
+    for·klar·e -> for·kla·re: a bare-nucleus chunk has no consonant to slice
+    on, so the stem's final consonant rides onto the inflection. One consonant,
+    not the maximal onset — reproducing the raw syllabifier's V-CV split
+    (``syllabify_norwegian_word("forklare")`` is already for·kla·re).
+    """
+    assert _fold_vowel_only_inflections(["klar", "e"]) == ["kla", "re"]
+    assert _fold_vowel_only_inflections(["be", "stemt", "e"]) == ["be", "stem", "te"]
+
+
+def test_fold_vowel_only_inflection_merges_rather_than_stranding_an_all_vowel_stem():
+    """When moving would leave an all-vowel stem, merge the pair instead.
+
+    ``air`` + ``e``: taking the ``r`` across gives ``ai`` + ``re`` — which
+    manufactures a bare-nucleus chunk (``ai``) one slot earlier, the very thing
+    this fold removes. Merging yields ``aire`` and the defect disappears
+    outright: mil·li·on·aire, not mil·li·on·ai·re.
+    """
+    assert _fold_vowel_only_inflections(["air", "e"]) == ["aire"]
+    assert _fold_vowel_only_inflections(["eid", "e"]) == ["eide"]
+    # The ordinary move is unaffected — ``kla`` is not all-vowel.
+    assert _fold_vowel_only_inflections(["klar", "e"]) == ["kla", "re"]
+
+
+def test_fold_vowel_only_inflection_refuses_to_empty_single_character_previous():
+    """A single-character previous piece cannot give up its only consonant."""
+    assert _fold_vowel_only_inflections(["r", "e"]) == ["r", "e"]
+
+
+def test_fold_vowel_only_inflection_leaves_non_inflection_all_vowel_piece():
+    """An all-vowel piece that is not an inflection stays at its compound seam.
+
+    Moving a consonant there would cross a morpheme boundary between two
+    content stems (arbeids·u·ke).
+    """
+    assert _fold_vowel_only_inflections(["klar", "u", "ke"]) == ["klar", "u", "ke"]
+
+
+def test_fold_vowel_only_inflection_requires_consonant_final_previous():
+    """Hiatus: a vowel-final previous piece has no consonant to move.
+
+    no·e stays split (or does not — a product decision the brief leaves alone);
+    the fold simply must not invent an onset.
+    """
+    assert _fold_vowel_only_inflections(["no", "e"]) == ["no", "e"]
+
+
+def test_flat_syllables_vowel_only_inflection_takes_stems_final_consonant():
+    """Worked literals: the fold end-to-end through flat_syllables.
+
+    ``adelige`` and ``alvorlige``: the ``-lig`` derivational suffix loses its
+    final ``g`` to the inflection. Intended and approved — the morpheme
+    boundary stays honoured in analysis, it just stops dictating chunk edges.
+    """
+    assert flat_syllables("forklare") == ["for", "kla", "re"]
+    assert flat_syllables("allmenne") == ["all", "men", "ne"]
+    assert flat_syllables("allerede") == ["al", "le", "re", "de"]
+    assert flat_syllables("akerselva") == ["a", "kers", "el", "va"]
+    assert flat_syllables("adelige") == ["a", "de", "li", "ge"]
+    assert flat_syllables("aldersbestemte") == ["al", "ders", "be", "stem", "te"]
+    assert flat_syllables("anerkjente") == ["a", "ner", "kjen", "te"]
+    assert flat_syllables("alvorlige") == ["al", "vor", "li", "ge"]
 
 
 # -- _spoken_syllable ----------------------------------------------------
