@@ -41,15 +41,33 @@ def _snapshot(src: Path, dest: Path) -> None:
         src_conn.close()
 
 
+# SQLite leaves these next to a DB file. A snapshot grows them the moment
+# anything opens it (a restore check, an ad-hoc sqlite3 read), so they must be
+# pruned with — and only with — the snapshot they belong to.
+_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+
+
 def _prune(backup_dir: Path, stem: str, keep: int) -> None:
     """Keep the ``keep`` most recent ``{stem}.*.db`` snapshots; unlink older ones.
 
     ISO date filenames sort chronologically, so lexical sort == oldest-first.
     Scoped to ``stem`` so pruning one language never touches another's snapshots.
+
+    Sidecars are swept by *name*, not by walking the pruned snapshots: an
+    interrupted writer can leave a ``-wal``/``-shm`` whose ``.db`` is already
+    gone, and such an orphan is unreachable from the snapshot list forever
+    (2026-07-16…21 accumulated exactly that way in the real backup dir). A
+    sidecar survives only if its base snapshot is one we are keeping — deleting
+    a live ``-wal`` under a retained snapshot would truncate its data.
     """
     snapshots = sorted(backup_dir.glob(f"{stem}.*.db"))
+    kept = {p.name for p in snapshots[-keep:]}
     for old in snapshots[:-keep]:
         old.unlink()
+    for suffix in _SIDECAR_SUFFIXES:
+        for sidecar in backup_dir.glob(f"{stem}.*.db{suffix}"):
+            if sidecar.name.removesuffix(suffix) not in kept:
+                sidecar.unlink()
 
 
 def rotate_db_backups(
