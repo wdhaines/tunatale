@@ -168,6 +168,141 @@ test("listen preview: header and every row sit on identical column tracks", asyn
 	expect(report.bodyOverflow).toBe(0);
 });
 
+/**
+ * The modal must keep real side gutters, and it must keep them when the text
+ * scales. Both halves are load-bearing:
+ *
+ *  - Gutters: `.modal` was `content-box` (there is no global border-box reset),
+ *    so `width: 90%` / `max-width: 420px` described the CONTENT box and the
+ *    real border-box was +48px padding. Flexbox then shrank the modal to
+ *    exactly the viewport, so it rendered edge-to-edge at every phone width —
+ *    and 430px wide at a 430px viewport, past its own max-width.
+ *  - Text scale: the row grid's two fixed tracks (due + grade) are in `rem`, so
+ *    an Android font-size setting scales the layout's hard minimum. At 320px
+ *    with an 18px root the modal could not shrink far enough and spilled off
+ *    BOTH edges (measured: -3 → 323).
+ *
+ * The pre-existing guard above missed all of this because it measured one
+ * viewport at the default font and asserted `scrollWidth === clientWidth` —
+ * which an edge-to-edge modal satisfies. "No overflow" is not "has gutters".
+ */
+const GUTTER_MIN = 8;
+
+test("listen preview: the modal keeps gutters across phone widths and text sizes", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+
+	await page.setViewportSize(PHONE);
+	const modal = await openPreview(page, await curriculumId(request));
+
+	// [viewport width, root font px]. 16 is the browser default; 18–20 is what
+	// Android Chrome's font-size setting produces, and it scales `rem` tracks.
+	const CASES: [number, number][] = [
+		[320, 16],
+		[320, 18],
+		[360, 16],
+		[360, 20],
+		[390, 16],
+		[390, 20],
+		[430, 16],
+	];
+
+	const failures: string[] = [];
+	for (const [width, rootFont] of CASES) {
+		await page.setViewportSize({ width, height: 844 });
+		await page.evaluate((f) => {
+			document.documentElement.style.fontSize = `${f}px`;
+		}, rootFont);
+
+		const r = await modal.evaluate((m) => {
+			const doc = document.documentElement;
+			const rect = m.getBoundingClientRect();
+			const clippedLabels = [...m.querySelectorAll<HTMLElement>(".grade button")]
+				.filter((b) => b.scrollWidth > b.clientWidth + 1)
+				.map((b) => b.textContent?.trim());
+			return {
+				vw: doc.clientWidth,
+				left: rect.left,
+				right: rect.right,
+				width: rect.width,
+				modalOverflow: m.scrollWidth - m.clientWidth,
+				docOverflow: doc.scrollWidth - doc.clientWidth,
+				clipped: clippedLabels.length,
+				clippedSample: clippedLabels.slice(0, 3),
+			};
+		});
+
+		const tag = `${width}px @ ${rootFont}px root`;
+		if (r.left < GUTTER_MIN || r.vw - r.right < GUTTER_MIN)
+			failures.push(
+				`${tag}: gutters ${r.left.toFixed(1)}/${(r.vw - r.right).toFixed(1)} (modal ${r.width.toFixed(1)}px)`,
+			);
+		if (r.modalOverflow > 0) failures.push(`${tag}: modal scrolls sideways by ${r.modalOverflow}px`);
+		if (r.docOverflow > 0) failures.push(`${tag}: page scrolls sideways by ${r.docOverflow}px`);
+		if (r.clipped > 0)
+			failures.push(`${tag}: ${r.clipped} clipped grade label(s) ${JSON.stringify(r.clippedSample)}`);
+	}
+
+	await page.evaluate(() => {
+		document.documentElement.style.fontSize = "";
+	});
+
+	expect(failures, failures.join("\n")).toEqual([]);
+});
+
+/**
+ * Below the point where the three-column row stops fitting, the grade control
+ * drops to its own full-width line rather than squeezing the tracks until the
+ * modal outgrows the screen. The trigger is a container query in `rem`, so it
+ * follows the text size, not just the viewport — which is why this measures at
+ * a scaled root font rather than an implausibly narrow phone.
+ */
+test("listen preview: the grade control restacks instead of overflowing when space runs out", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+
+	await page.setViewportSize(PHONE);
+	const modal = await openPreview(page, await curriculumId(request));
+
+	await page.setViewportSize({ width: 320, height: 844 });
+	await page.evaluate(() => {
+		document.documentElement.style.fontSize = "20px";
+	});
+
+	const r = await modal.evaluate((m) => {
+		const row = m.querySelector(".candidate")!;
+		const rowRect = row.getBoundingClientRect();
+		const grade = row.querySelector(".grade")!.getBoundingClientRect();
+		const text = row.querySelector(".text")!.getBoundingClientRect();
+		const headCells = [...m.querySelectorAll(".list-head > *")].filter(
+			(c) => getComputedStyle(c).display !== "none",
+		);
+		return {
+			// Stacked: the control starts at the row's left edge (under the word),
+			// not in a third column beside it, and runs to the row's content edge.
+			gradeLeft: Math.round(grade.left),
+			textLeft: Math.round(text.left),
+			rowContentRight: Math.round(rowRect.right - parseFloat(getComputedStyle(row).paddingRight)),
+			gradeRight: Math.round(grade.right),
+			headCellCount: headCells.length,
+			headLabels: headCells.map((c) => c.textContent?.trim()),
+		};
+	});
+
+	await page.evaluate(() => {
+		document.documentElement.style.fontSize = "";
+	});
+
+	expect(r.gradeLeft).toBe(r.textLeft);
+	expect(r.gradeRight).toBe(r.rowContentRight);
+	// The header cannot keep advertising a column that no longer exists.
+	expect(r.headLabels).toEqual(["Word", "Due"]);
+});
+
 test("listen preview: words are never truncated and grade targets keep their floor", async ({
 	page,
 	request,
@@ -231,4 +366,315 @@ test("listen preview: glosses are blurred until tapped, per row", async ({ page,
 	await glosses.first().click();
 
 	await expect(modal.locator(".gloss.blurred")).toHaveCount(blurredBefore - 1);
+});
+
+/**
+ * F-7 — cancelling the auto-mark countdown must not eat the click that cancelled it.
+ *
+ * Reported 2026-08-04 running the manual test plan's D3: "D3 canceled the text,
+ * but it made the cursor jump and the click I made to grade an item seemed to be
+ * swallowed."
+ *
+ * MECHANISM. Cancellation fires on `onpointerdown` (the overlay's
+ * `handleInteraction`), while the countdown line is *unmounted* rather than
+ * hidden:
+ *
+ *     {#if !countdownCancelled && countdownId !== null}
+ *         <p class="countdown">Auto-marking in {countdown}s</p>
+ *     {/if}
+ *
+ * So the `<p>` is removed synchronously **while the pointer is still down**, and
+ * every row below it shifts up by that line's height. A `click` event only fires
+ * on the nearest common ancestor of the pointerdown and pointerup targets — the
+ * content moved out from under the cursor in between, so the grade never
+ * registers. The reported "cursor jump" is the same reflow: the content moved,
+ * not the cursor.
+ *
+ * This must be an e2e test. jsdom performs no layout, so the reflow that causes
+ * the bug does not exist there and a vitest version would pass against the
+ * broken code.
+ *
+ * The two assertions are deliberately fix-agnostic — they pin the user-visible
+ * contract, not the mechanism:
+ *
+ *   1. the same click that cancels also applies its rating, and
+ *   2. cancelling shifts no geometry.
+ *
+ * Reserving the line's box (render it always, empty its text) satisfies both.
+ * Moving the trigger to pointerup/click satisfies NEITHER: the unmount still
+ * happens, just one event later, so the rows still shift. It is also the worse
+ * fix on its own terms — cancellation weakens, since a press that never
+ * completes would stop cancelling.
+ *
+ * ⚠️ WHICH ASSERTION IS CURRENTLY RED (measured 2026-08-04): only the geometry
+ * one. It fails deterministically — `260 -> 247`, a 13px shift, the countdown
+ * line's exact height. The `aria-pressed` assertion PASSES today, because
+ * Playwright's synthetic click warps the cursor and dispatches mousedown/mouseup
+ * at identical coordinates with no human timing, so it survives a 13px reflow
+ * that a real pointer near a row boundary does not. Keep it anyway: it is the
+ * user-visible symptom and the thing a regression would break first. Do NOT
+ * treat its passing as evidence the bug is absent, and do NOT "fix" the bug by
+ * satisfying it alone — the reflow is the defect.
+ */
+test("listen preview: cancelling the countdown neither swallows the click nor shifts the rows", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+	const cid = await curriculumId(request);
+
+	// Default is "off"; the countdown must be RUNNING or this tests nothing.
+	await page.addInitScript(() => localStorage.setItem("listenCountdown", "60"));
+	await page.setViewportSize(PHONE);
+
+	await page.goto(`/c/${cid}`);
+	await page.getByRole("button", { name: "Day 1" }).click();
+	await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({ timeout: 15000 });
+	await page.getByRole("button", { name: "Mark as Listened" }).click();
+
+	const modal = page.locator(".overlay .modal");
+	await expect(modal).toBeVisible({ timeout: 10000 });
+	await expect(modal.locator(".candidate").first()).toBeVisible({ timeout: 10000 });
+
+	// Guard against a vacuous pass: with no countdown on screen there is nothing
+	// to cancel, and every assertion below would hold trivially.
+	//
+	// Asserted on a STATE HOOK, not on the countdown's text. Under the option-C
+	// placement the seconds live in a span that stays MOUNTED (with
+	// `visibility: hidden`) after cancelling, so the button's width cannot change
+	// — and `toHaveCount(0)` counts hidden elements, so a text locator would fail
+	// here for a reason that has nothing to do with the countdown still running.
+	// The tempting "fix" for that failure is to weaken this test. Don't.
+	const gradeAll = modal.getByRole("button", { name: /Grade All/ });
+	await expect(gradeAll).toHaveAttribute("data-countdown", "running", { timeout: 5000 });
+
+	// Rows default to "good", so "Hard" starts unpressed and is a clean target.
+	const hard = modal.locator('button[data-grade="hard"]').first();
+	await expect(hard).toHaveAttribute("aria-pressed", "false");
+
+	const before = await hard.boundingBox();
+	expect(before, "grade button has no box").not.toBeNull();
+
+	await hard.click();
+
+	// The countdown does stop — this half already worked and must keep working.
+	// Same state hook as the guard above, for the same reason.
+	await expect(gradeAll).toHaveAttribute("data-countdown", "idle");
+
+	// THE BUG: the click that cancelled the countdown must also have graded.
+	await expect(hard).toHaveAttribute("aria-pressed", "true");
+
+	// THE ROOT CAUSE: cancelling must not move anything.
+	const after = await hard.boundingBox();
+	expect(after, "grade button has no box after cancel").not.toBeNull();
+	expect(
+		Math.round(after!.y),
+		`row shifted ${Math.round(before!.y)} -> ${Math.round(after!.y)} when the countdown was cancelled`,
+	).toBe(Math.round(before!.y));
+});
+
+/**
+ * F-9 / F-10 — the auto-grade countdown lives ON the Grade All button.
+ *
+ * Placement chosen by the user from a four-option mock set (option C). It
+ * replaces the centred `<p class="countdown">` line, whose reserved box —
+ * `min-height: 1lh`, kept mounted so cancelling could not reflow the rows —
+ * left visible dead space between the heading and the actions once the text
+ * cleared. Moving the timer out of the modal's vertical flow removes the gap
+ * AND satisfies F-7's constraint structurally rather than by holding a box open.
+ *
+ * WHY THE GEOMETRY ASSERTION IS THE LOAD-BEARING ONE. F-7 was a reflow bug:
+ * cancellation fires on `pointerdown`, so anything whose geometry changes at
+ * that moment moves content under a pointer that is still down, and the `click`
+ * never lands. Option C moves the timer INTO `.actions`, one row above the
+ * list — so a label that reads "Grade All 12s" while running and "Grade All"
+ * after cancelling reintroduces F-7 one row higher. The seconds must therefore
+ * occupy a fixed-width slot that survives cancellation.
+ *
+ * Fails today on the first assertion: there is no `data-countdown` attribute.
+ */
+test("listen preview: the countdown rides Grade All and never resizes it", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+	const cid = await curriculumId(request);
+
+	// 10s, NOT 60s — and this is the whole point of the width half of this test.
+	// The tick renders `${countdown}s`, so the only place its STRING LENGTH
+	// changes is the 10 -> 9 boundary (3 chars -> 2). Sampling 60 -> 59 compares
+	// two 3-character strings and cannot see a missing `min-width` at all:
+	// verified by drill 2026-08-04, where deleting `.tick { min-width }` left the
+	// 60s version of this test GREEN. Ten seconds is also comfortably longer than
+	// the ~3s this test needs before it cancels, so the countdown cannot fire.
+	await page.addInitScript(() => localStorage.setItem("listenCountdown", "10"));
+	await page.setViewportSize(PHONE);
+
+	await page.goto(`/c/${cid}`);
+	await page.getByRole("button", { name: "Day 1" }).click();
+	await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({ timeout: 15000 });
+	await page.getByRole("button", { name: "Mark as Listened" }).click();
+
+	const modal = page.locator(".overlay .modal");
+	await expect(modal).toBeVisible({ timeout: 10000 });
+	await expect(modal.locator(".candidate").first()).toBeVisible({ timeout: 10000 });
+
+	const gradeAll = modal.getByRole("button", { name: /Grade All/ });
+	const tick = modal.locator(".grade-all .tick");
+
+	// 1. The timer is ON the button, and the button says so in its accessible
+	//    name — a purely visual tick would leave a screen-reader user with no
+	//    indication that the deck is about to be graded for them.
+	await expect(gradeAll).toHaveAttribute("data-countdown", "running", { timeout: 5000 });
+	await expect(gradeAll).toHaveAccessibleName(/auto-grading/i);
+	await expect(gradeAll).not.toHaveAccessibleName(/auto-marking/i);
+
+	// 2. The old centred line is gone entirely — that element and its reserved
+	//    box ARE the gap this change exists to remove.
+	await expect(modal.locator("p.countdown")).toHaveCount(0);
+
+	// 3. Geometry is stable ACROSS THE 10 -> 9 BOUNDARY, where the tick's text
+	//    goes from 3 characters to 2. Without a fixed-width slot the button
+	//    narrows here, one row above the list, which is F-7 again.
+	await expect(tick).toHaveText("10s", { timeout: 5000 });
+	const running = await gradeAll.boundingBox();
+	expect(running, "Grade All has no box").not.toBeNull();
+
+	// Vacuity guard: if the tick never reached "9s" the width comparison below
+	// spans no boundary and proves nothing — the exact way the 60s version of
+	// this test passed with `min-width` deleted.
+	await expect(tick).toHaveText("9s", { timeout: 5000 });
+	const stillRunning = await gradeAll.boundingBox();
+	expect(
+		stillRunning,
+		`Grade All resized as the countdown ticked: ${JSON.stringify(running)} -> ${JSON.stringify(stillRunning)}`,
+	).toEqual(running);
+
+	// 4. And stable across cancellation — the F-7 constraint, one row up.
+	await modal.locator("h2").click();
+	await expect(gradeAll).toHaveAttribute("data-countdown", "idle");
+	const cancelled = await gradeAll.boundingBox();
+	expect(
+		cancelled,
+		`Grade All resized when the countdown was cancelled: ${JSON.stringify(running)} -> ${JSON.stringify(cancelled)}`,
+	).toEqual(running);
+});
+
+/**
+ * F-13's oracle is the UNIT test, not an e2e test — deliberately, and this note
+ * exists so nobody "restores" the e2e one.
+ *
+ * An e2e version was written and had to be withdrawn: it asserted the tail
+ * disclosure's summary (`N words for subsequent listens`), but this file's
+ * fixture produces **9 candidates and ZERO tail rows** (probed 2026-08-04). With
+ * nothing over budget the component correctly renders no disclosure at all, so
+ * the test could never go green — it was red because the fixture had no tail,
+ * which looks identical to red because the feature is missing. An oracle that
+ * cannot pass is worse than no oracle: it reads as a real failure forever.
+ *
+ * The real guard is
+ * `ListenPreviewModal.creationTail.test.ts::"renders the tail below the divider
+ * and collapsed behind one counting disclosure"`, which mocks a 3-row tail and
+ * asserts the summary as an EXACT string, plus `.tag.next-listen` count 0 and
+ * the live/tail row split. Restoring an e2e version means first seeding this
+ * fixture past the daily new-card cap so a tail actually exists.
+ */
+
+/**
+ * The `learning` due pill must not touch the Skip button.
+ *
+ * User: "the learning items' badge is flush with skip … I think when the badge
+ * was 'learn' instead of 'learning' it worked." Correct, including the cause:
+ * the Due column is a FIXED `3rem` track with a `0.35rem` gap, and at the tag's
+ * `0.66rem` scale `learning` renders wider than the track, so the pill overruns
+ * its own column and eats the whole gap.
+ *
+ * ⚠️ The fix must NOT make the track `auto`. Fixed tracks are deliberate — an
+ * `auto` track resolves against its own container's content, so a row with a
+ * narrow "new" pill computed different columns than one with "today" and
+ * nothing lined up with the header. That is the bug the top of this file
+ * exists for.
+ *
+ * The label is INJECTED rather than waited for. `dueLabel()` emits a closed set
+ * of labels and `learning` is its widest; seeding a real learning card would
+ * make this test depend on scheduler state that has nothing to do with the
+ * track width. Injecting the worst case tests the invariant directly: the Due
+ * track fits the longest label the component can emit.
+ */
+test("listen preview: the Due track fits the widest label it can emit", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+	const cid = await curriculumId(request);
+	await page.setViewportSize(PHONE);
+	const modal = await openPreview(page, cid);
+	await expect(modal.locator(".candidate").first()).toBeVisible();
+
+	// [viewport, root font px]. Only three-column cases: below the
+	// `@container (max-width: 18rem)` breakpoint the grade control restacks onto
+	// its own row, Skip sits on a different line, and "the gap between the pill
+	// and Skip" stops meaning anything (measured there as -273 and -331, which
+	// would read as a catastrophic pass/fail either way). Root font is varied
+	// because Android's font-size setting scales the `rem` tracks — that is the
+	// axis the user is on.
+	const CASES: [number, number][] = [
+		[360, 16],
+		[390, 16],
+		[390, 18],
+		[412, 18],
+	];
+
+	const failures: string[] = [];
+	for (const [width, root] of CASES) {
+		await page.setViewportSize({ width, height: 844 });
+		await page.evaluate((px) => {
+			document.documentElement.style.fontSize = `${px}px`;
+		}, root);
+
+		const m = await page.evaluate(() => {
+			const rows = [...document.querySelectorAll(".candidate")];
+			let pillW = 0;
+			let gap = Infinity;
+			let measured = 0;
+			let tracks = 0;
+			for (const row of rows) {
+				const pill = row.querySelector(".tag.day") as HTMLElement | null;
+				const skip = row.querySelector(".skip") as HTMLElement | null;
+				if (!pill || !skip) continue;
+				// `learning` is the widest label dueLabel() can emit. Injected rather
+				// than waited for: seeding a real learning card would make this
+				// depend on scheduler state that has nothing to do with track width.
+				pill.textContent = "learning";
+				const p = pill.getBoundingClientRect();
+				const sk = skip.getBoundingClientRect();
+				const cols = getComputedStyle(row).gridTemplateColumns.split(" ");
+				tracks = cols.length;
+				pillW = Math.max(pillW, Math.round(p.width * 10) / 10);
+				// Same visual row only — the restacked arm puts Skip on a lower line.
+				if (Math.abs(sk.top - p.top) < 5)
+					gap = Math.min(gap, Math.round((sk.left - p.right) * 10) / 10);
+				measured++;
+			}
+			const dueTrack = Math.round(parseFloat(getComputedStyle(rows[0]).gridTemplateColumns.split(" ")[1]) * 10) / 10;
+			return { pillW, gap, measured, tracks, dueTrack };
+		});
+
+		const tag = `${width}px @ ${root}px root`;
+		if (m.measured === 0) failures.push(`${tag}: no row had both a due pill and a Skip button`);
+		if (m.tracks !== 3) failures.push(`${tag}: expected the three-column layout, got ${m.tracks} tracks`);
+		// THE invariant. The Due track is deliberately FIXED (an `auto` track
+		// resolves per-container and desynchronises the header from the rows —
+		// the bug the top of this file exists for), so the fix is to size the
+		// track for its content, not to make it elastic.
+		if (m.pillW > m.dueTrack)
+			failures.push(
+				`${tag}: the "learning" pill is ${m.pillW}px in a ${m.dueTrack}px Due track — it overruns its own column by ${Math.round((m.pillW - m.dueTrack) * 10) / 10}px and eats the 0.35rem gap`,
+			);
+		// The user-visible symptom: the pill ends up flush against Skip.
+		if (m.gap < 4)
+			failures.push(`${tag}: only ${m.gap}px between the due pill and Skip`);
+	}
+
+	expect(failures, failures.join("\n")).toEqual([]);
 });

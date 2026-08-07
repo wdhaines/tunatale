@@ -27,6 +27,7 @@ from app.audio.slicing import (
     raw_span,
     refine_splice,
     snap_negative_zero,
+    tail_length,
     time_stretch,
 )
 
@@ -158,6 +159,41 @@ class TestRawSpanTailLength:
         sw = _two_syllable(headroom_ms=0.0)
         span = raw_span(sw, 0, 1, head_pad=0, tail_pad=_ms(150.0))
         assert len(span) - sw.bounds[1] == _ms(150.0)
+
+
+class TestTailLength:
+    """``tail_length`` is what the diagnostics read; it must BE what raw_span cuts.
+
+    The tail formula previously lived inline in ``raw_span``, so any tool that
+    wanted to report it had to re-implement the arithmetic — and a re-implementation
+    silently drifts. Extracting it makes drift impossible, but only if these tests
+    hold the two implementations together.
+    """
+
+    def test_reports_exactly_the_tail_raw_span_cuts(self):
+        """The anti-drift guard: the reported number IS the audio that gets carried."""
+        pad = _ms(20.0)
+        for headroom_ms in (0.0, 50.0, 150.0):
+            sw = _two_syllable(headroom_ms=headroom_ms)
+            span = raw_span(sw, 0, 1, head_pad=0, tail_pad=pad)
+            assert len(span) - sw.bounds[1] == tail_length(sw, 1, pad), (
+                f"tail_length disagrees with raw_span at headroom={headroom_ms}ms"
+            )
+
+    def test_final_chunk_carries_no_tail(self):
+        sw = _two_syllable(headroom_ms=50.0)
+        assert tail_length(sw, len(sw.syllables), _ms(20.0)) == 0
+
+    def test_a_zero_measurement_falls_through_to_the_floor(self):
+        """A vowel-initial next syllable puts onset_ends ON the cut.
+
+        derive_syllable_bounds sets the ceiling to the next VOWEL's start, so when
+        the next syllable has no onset consonant that ceiling is the cut itself —
+        the headroom is 0 by construction, not by observation, and the caller's
+        floor decides the whole tail.
+        """
+        sw = _two_syllable(headroom_ms=0.0)
+        assert tail_length(sw, 1, _ms(80.0)) == _ms(80.0)
 
 
 class TestRawSpan:

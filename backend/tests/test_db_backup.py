@@ -124,6 +124,82 @@ def test_prune_is_per_stem(tmp_path: Path) -> None:
     ]
 
 
+def test_prune_removes_sidecars_alongside_their_snapshot(tmp_path: Path) -> None:
+    """A pruned snapshot must take its -wal/-shm/-journal with it.
+
+    Anything that opens a snapshot in WAL mode (a restore check, an ad-hoc
+    sqlite3 read) leaves sidecars next to it. The sweep globbed `*.db` only, so
+    it unlinked the snapshot and left the sidecars behind forever — observed as
+    2026-07-16…21 orphans in the real ~/.tunatale/db-backups.
+    """
+    src = tmp_path / "tunatale_sl.db"
+    _make_db(src, "x")
+    backup_dir = tmp_path / "db-backups"
+    backup_dir.mkdir()
+    old = backup_dir / "tunatale_sl.2026-07-08.db"
+    old.write_bytes(b"old")
+    for suffix in ("-wal", "-shm", "-journal"):
+        (backup_dir / f"{old.name}{suffix}").write_bytes(b"side")
+
+    rotate_db_backups([src], backup_dir, keep_days=1, today=date(2026, 7, 14))
+
+    assert sorted(p.name for p in backup_dir.iterdir()) == ["tunatale_sl.2026-07-14.db"]
+
+
+def test_prune_sweeps_orphaned_sidecars(tmp_path: Path) -> None:
+    """Sidecars whose snapshot is already gone are swept too.
+
+    Without this the pre-existing orphans stay forever: their `.db` no longer
+    exists, so no future prune pass would ever reach them.
+    """
+    src = tmp_path / "tunatale_sl.db"
+    _make_db(src, "x")
+    backup_dir = tmp_path / "db-backups"
+    backup_dir.mkdir()
+    for suffix in ("-wal", "-shm"):
+        (backup_dir / f"tunatale_sl.2026-07-16.db{suffix}").write_bytes(b"orphan")
+
+    rotate_db_backups([src], backup_dir, keep_days=5, today=date(2026, 7, 14))
+
+    assert sorted(p.name for p in backup_dir.iterdir()) == ["tunatale_sl.2026-07-14.db"]
+
+
+def test_prune_keeps_sidecars_of_retained_snapshots(tmp_path: Path) -> None:
+    """The sweep must not reach into a snapshot it is keeping.
+
+    A live -wal holds committed pages not yet checkpointed into the .db; deleting
+    it under a retained snapshot would silently truncate that snapshot's data.
+    """
+    src = tmp_path / "tunatale_sl.db"
+    _make_db(src, "x")
+    backup_dir = tmp_path / "db-backups"
+    backup_dir.mkdir()
+    kept = backup_dir / "tunatale_sl.2026-07-13.db"
+    kept.write_bytes(b"kept")
+    (backup_dir / f"{kept.name}-wal").write_bytes(b"live-pages")
+
+    rotate_db_backups([src], backup_dir, keep_days=5, today=date(2026, 7, 14))
+
+    assert sorted(p.name for p in backup_dir.iterdir()) == [
+        "tunatale_sl.2026-07-13.db",
+        "tunatale_sl.2026-07-13.db-wal",
+        "tunatale_sl.2026-07-14.db",
+    ]
+
+
+def test_prune_sidecar_sweep_is_per_stem(tmp_path: Path) -> None:
+    """One language's sweep must not touch another's sidecars."""
+    sl = tmp_path / "tunatale_sl.db"
+    _make_db(sl, "sl")
+    backup_dir = tmp_path / "db-backups"
+    backup_dir.mkdir()
+    (backup_dir / "tunatale_no.2026-07-16.db-wal").write_bytes(b"other-language")
+
+    rotate_db_backups([sl], backup_dir, keep_days=5, today=date(2026, 7, 14))
+
+    assert (backup_dir / "tunatale_no.2026-07-16.db-wal").exists()
+
+
 def test_corrupt_source_logged_and_others_continue(tmp_path: Path, caplog) -> None:
     corrupt = tmp_path / "tunatale_sl.db"
     corrupt.write_bytes(b"this is not a sqlite database at all, but non-empty")

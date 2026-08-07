@@ -49,6 +49,17 @@
  * has a control the user could touch. `isAboveDivider` (below) explains why the
  * old "has a grade control" proxy had to be replaced rather than deleted.
  * New assertions live in `ListenPreviewModal.overCap.test.ts`.
+ *
+ * PRESENTATION CHANGE 2026-08-04 (F-13, brief
+ * `bp-listen-preview-polish-2026-08.md` §4b): the inline tail REVERSES back
+ * into ONE progressive disclosure, `details.tail-group`, whose summary counts
+ * every tail row — `{N} words for subsequent listens`. The per-row
+ * `next listen` tag is deleted. **Only presentation assertions moved again.**
+ * Every semantic invariant is still pinned here and unchanged: the partition is
+ * static, skip consumes its slot, and an untouched tail row emits nothing.
+ * `details.tail-group` mirrors the well-known-words disclosure; the summary
+ * count is `tailCandidates.length` (create rows AND NEW-state cards share the
+ * intro budget, so a create-only count under-reports it).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
@@ -134,16 +145,30 @@ const gradeBtn = (container: HTMLElement, key: string, grade: string) =>
 
 const isActive = (b: HTMLButtonElement) => b.classList.contains("active");
 
-/** A tail row is dimmed, inline, and wears the "next listen" tag. */
+/** A tail row is dimmed and wears the over-cap opt-in control. */
 const isTail = (container: HTMLElement, text: string) =>
   [...container.querySelectorAll("li.candidate.tail")].some(
     (li) => li.querySelector(".text")?.textContent === text,
   );
 
-const tailTags = (container: HTMLElement) =>
-  [...container.querySelectorAll("li.candidate.tail .tag.next-listen")].map((el) =>
-    el.textContent?.trim(),
-  );
+/** The tail disclosure's summary text — counts every tail row. */
+const tailSummary = (container: HTMLElement) =>
+  container.querySelector<HTMLElement>("details.tail-group summary")?.textContent?.trim();
+
+/**
+ * F-20: the summary row's segments, as [number, label] pairs in render order —
+ * the cut line's meaning, restated above the list. Reads the rendered TEXT so
+ * the assertion stays on the content, not the classes.
+ */
+const segments = (container: HTMLElement): [string, string][] => {
+  const row = container.querySelector(".partition");
+  if (!row) return [];
+  return [...row.querySelectorAll(":scope > *")].map((seg) => {
+    const n = seg.querySelector(".n")?.textContent?.trim() ?? "";
+    const l = seg.querySelector(".l")?.textContent?.trim() ?? "";
+    return [n, l];
+  });
+};
 
 /**
  * A row is ABOVE THE DIVIDER iff it is not rendered as a tail row.
@@ -175,7 +200,7 @@ const isAboveDivider = (container: HTMLElement, text: string) =>
 // ── Tests ─────────────────────────────────────────────────────────────
 
 describe("ListenPreviewModal — over-budget creation tail", () => {
-  it("renders the tail below the divider and INLINE — one flat list, no disclosure", async () => {
+  it("renders the tail below the divider and collapsed behind one counting disclosure", async () => {
     mockGetListenPreview.mockResolvedValue(previewWithTail());
 
     const { getByText, container } = render(ListenPreviewModal, {
@@ -184,7 +209,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
 
     await waitFor(() => getByText("kake"));
 
-    // Live rows sit above the cut; tail rows are rendered inline below it.
+    // Live rows sit above the cut; tail rows are the partition below it.
     // (Both are gradeable since the over-cap opt-in — the difference is the
     // partition and the fact that a tail row starts with NO rating set.)
     expect(isAboveDivider(container, "kake")).toBe(true);
@@ -193,38 +218,52 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     expect(isAboveDivider(container, "smør")).toBe(false);
     expect(isAboveDivider(container, "ost")).toBe(false);
 
-    // Nothing is collapsed: the tail rows sit in the SAME <ul> as the live
-    // rows. This is the whole point of the 2026-08-03 change — a <details>
-    // the user must open is a hidden state.
-    expect(container.querySelector("details.tail-group")).toBeNull();
-    expect(container.querySelector(".tail-group")).toBeNull();
+    // F-13: the tail collapses behind ONE disclosure mirroring the well-known
+    // group. The summary counts EVERY tail row — `tailCandidates.length`, not
+    // a create-only count (NEW-state cards share the intro budget).
+    const group = container.querySelector("details.tail-group");
+    expect(group).not.toBeNull();
+    expect(tailSummary(container)).toBe("3 words for subsequent listens");
+    expect(container.querySelectorAll(".tag.next-listen")).toHaveLength(0);
 
+    // The main list holds the live rows; the tail rows live in the disclosure.
     const lists = container.querySelectorAll("ul.list");
     const rows = [...lists[0].querySelectorAll("li.candidate")].map(
       (li) => li.querySelector(".text")?.textContent,
     );
-    expect(rows).toEqual(["kake", "melk", "brød", "smør", "ost"]);
+    expect(rows).toEqual(["kake", "melk"]);
 
-    // Each held-back row says so on its own face, rather than being counted
-    // in a summary the user has to expand to decode.
+    const tailRows = [...group!.querySelectorAll("li.candidate")].map(
+      (li) => li.querySelector(".text")?.textContent,
+    );
+    expect(tailRows).toEqual(["brød", "smør", "ost"]);
+
+    // Partition identity survives the move.
     expect(isTail(container, "brød")).toBe(true);
     expect(isTail(container, "ost")).toBe(true);
     expect(isTail(container, "kake")).toBe(false);
-    expect(tailTags(container)).toEqual(["next listen", "next listen", "next listen"]);
   });
 
   it("states the cut instead of hiding it", async () => {
+    // F-20: the cut line's meaning moved into the three-count summary. The
+    // partition states the introduction budget (2 now) and its tail (3 later)
+    // explicitly — the same fact the old "Introducing 2 of 5 today" line held.
     mockGetListenPreview.mockResolvedValue(previewWithTail());
 
-    const { getByText, queryByText } = render(ListenPreviewModal, {
+    const { getByText, queryByText, container } = render(ListenPreviewModal, {
       props: { lessonId: "l1", onDone: vi.fn() },
     });
 
     await waitFor(() => getByText("kake"));
 
     // 2 live introductions of 5 total; the reason is named, not implied.
-    expect(getByText("Introducing 2 of 5 today — daily new-card limit")).toBeTruthy();
-    // The old disclosure summary is gone for good.
+    expect(segments(container)).toEqual([
+      ["2", "now"],
+      ["3", "later"],
+      ["0", "known"],
+    ]);
+    // The F-13 summary counts tail rows; the old "N more — next listen" line
+    // is gone for good (and the new summary is pinned in the test above).
     expect(queryByText(/more — next listen/)).toBeNull();
   });
 
@@ -247,7 +286,13 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     expect(isAboveDivider(container, "smør")).toBe(false);
     expect(isAboveDivider(container, "ost")).toBe(false);
     expect(isTail(container, "brød")).toBe(true);
-    expect(getByText("Introducing 2 of 5 today — daily new-card limit")).toBeTruthy();
+    // The summary is server state too: a skip changes no count, so "now" stays
+    // at the live introductions and "later" at the tail.
+    expect(segments(container)).toEqual([
+      ["2", "now"],
+      ["3", "later"],
+      ["0", "known"],
+    ]);
 
     // The skipped row stays live and stays skipped — legible and reversible.
     expect(isAboveDivider(container, "kake")).toBe(true);
@@ -284,7 +329,12 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     await fireEvent.click(gradeBtn(container, "create:kake", "good")!);
 
     await waitFor(() => expect(getByText("Mark 2 as listened")).toBeTruthy());
-    expect(getByText("Introducing 2 of 5 today — daily new-card limit")).toBeTruthy();
+    // Unchanged by the re-grade: still 2 live introductions, 3 in the tail.
+    expect(segments(container)).toEqual([
+      ["2", "now"],
+      ["3", "later"],
+      ["0", "known"],
+    ]);
     expect(isAboveDivider(container, "brød")).toBe(false);
   });
 
@@ -335,7 +385,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     mockGetListenPreview.mockResolvedValue(previewWithTail());
     mockMarkAsListened.mockResolvedValue(listenResult);
 
-    const { getByText } = render(ListenPreviewModal, {
+    const { getByText, container } = render(ListenPreviewModal, {
       props: { lessonId: "l1", onDone: vi.fn() },
     });
 
@@ -344,8 +394,12 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
 
     // Zero live creates remain, and the tail is untouched by the bulk action.
     await waitFor(() => expect(getByText("Mark as listened")).toBeTruthy());
-    // The cut line is server state: skipping live rows does not move it.
-    expect(getByText("Introducing 2 of 5 today — daily new-card limit")).toBeTruthy();
+    // The summary is server state: skipping live rows does not move it.
+    expect(segments(container)).toEqual([
+      ["2", "now"],
+      ["3", "later"],
+      ["0", "known"],
+    ]);
 
     await fireEvent.click(getByText("Mark as listened"));
 
@@ -370,11 +424,16 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     });
 
     await waitFor(() => getByText("kake"));
-    await fireEvent.click(getByText("Grade All"));
+    await fireEvent.click(container.querySelector<HTMLButtonElement>(".grade-all")!);
 
     await waitFor(() => expect(getByText("Mark 2 as listened")).toBeTruthy());
     expect(isAboveDivider(container, "brød")).toBe(false);
-    expect(getByText("Introducing 2 of 5 today — daily new-card limit")).toBeTruthy();
+    // Grade All is not an opt-in either: the summary stays 2 now / 3 later.
+    expect(segments(container)).toEqual([
+      ["2", "now"],
+      ["3", "later"],
+      ["0", "known"],
+    ]);
   });
 
   it("a zero budget puts every create in the tail and grades none", async () => {
@@ -391,16 +450,20 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
 
     expect(isAboveDivider(container, "brød")).toBe(false);
     expect(isAboveDivider(container, "smør")).toBe(false);
-    expect(getByText("Introducing 0 of 2 today — daily new-card limit")).toBeTruthy();
+    expect(segments(container)).toEqual([
+      ["0", "now"],
+      ["2", "later"],
+      ["0", "known"],
+    ]);
     expect(getByText("Mark as listened")).toBeTruthy();
   });
 
-  it("shows no cut line when the budget covers everything", async () => {
+  it("shows no tail disclosure when the budget covers everything", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [createCandidate("kake", true), createCandidate("melk", true)],
     });
 
-    const { getByText, queryByText, container } = render(ListenPreviewModal, {
+    const { getByText, container } = render(ListenPreviewModal, {
       props: { lessonId: "l1", onDone: vi.fn() },
     });
 
@@ -408,7 +471,19 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
 
     expect(isAboveDivider(container, "kake")).toBe(true);
     expect(isAboveDivider(container, "melk")).toBe(true);
-    expect(queryByText(/daily new-card limit/)).toBeNull();
+    // With nothing over budget there is no tail disclosure at all — the "later"
+    // segment of the summary carries the zero instead of a hidden partition.
+    expect(container.querySelector("details.tail-group")).toBeNull();
     expect(container.querySelectorAll("li.candidate.tail")).toHaveLength(0);
+    // …and the summary must SAY the zero. This is the only test in the suite
+    // exercising an empty tail, so without it nothing pins that the partition
+    // still renders — and renders "0", not blank — when the budget covers
+    // everything. Restored during the F-20 audit: translating this test's old
+    // cut-line assertion to the disclosure left this input class unpinned.
+    expect(segments(container)).toEqual([
+      ["2", "now"],
+      ["0", "later"],
+      ["0", "known"],
+    ]);
   });
 });

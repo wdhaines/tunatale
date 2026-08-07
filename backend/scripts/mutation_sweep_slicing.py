@@ -59,19 +59,19 @@ MUTANTS: list[tuple[str, str, str]] = [
         "    quietest = int(f_lo + np.argmax(env[f_lo:f_hi]))",
     ),
     (
-        "raw_span: drop vowel overlap (+0 not +40ms)",
-        "        headroom += int(_VOWEL_OVERLAP_MS / 1000.0 * sw.rate)",
-        "        headroom += 0",
+        "tail_length: drop vowel overlap (+0 not +40ms)",
+        "    headroom += int(_VOWEL_OVERLAP_MS / 1000.0 * sw.rate)",
+        "    headroom += 0",
     ),
     (
-        "raw_span: drop headroom cap (100ms)",
-        "        headroom = min(max(0, limit - end), int(_MAX_HEADROOM_MS / 1000.0 * sw.rate))",
-        "        headroom = max(0, limit - end)",
+        "tail_length: drop headroom cap (100ms)",
+        "    headroom = min(max(0, limit - end), int(_MAX_HEADROOM_MS / 1000.0 * sw.rate))",
+        "    headroom = max(0, limit - end)",
     ),
     (
-        "raw_span: drop tail ceiling (220ms)",
-        "        tail = int(np.clip(headroom, tail_pad, _MAX_TAIL_MS / 1000.0 * sw.rate))",
-        "        tail = int(max(headroom, tail_pad))",
+        "tail_length: drop tail ceiling (220ms)",
+        "    return int(np.clip(headroom, tail_pad, _MAX_TAIL_MS / 1000.0 * sw.rate))",
+        "    return int(max(headroom, tail_pad))",
     ),
     (
         "raw_span: invert tail ramp (fade-in not fade-out)",

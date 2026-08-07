@@ -238,6 +238,8 @@ def _is_content_stem(word: str, ranks: dict[str, int], *, initial: bool = True) 
     when *not* word-initial — their closed-class reading causes spurious splits,
     but they are legitimate compound stems at the start of a word.
     """
+    if not set(word) & _NORWEGIAN_VOWELS:
+        return False
     if len(word) < _MIN_STEM_LEN or word in _DERIVATIONAL_SUFFIX_SET:
         return False
     if word in _CLOSED_CLASS_STEMS:
@@ -263,7 +265,11 @@ def _strip_derivational_suffixes(word: str) -> tuple[str, list[str]]:
     while True:
         matched = False
         for sfx in _DERIVATIONAL_SUFFIXES:
-            if remaining.endswith(sfx) and len(remaining) - len(sfx) >= _MIN_STEM_LEN:
+            if (
+                remaining.endswith(sfx)
+                and len(remaining) - len(sfx) >= _MIN_STEM_LEN
+                and set(remaining[: -len(sfx)]) & _NORWEGIAN_VOWELS
+            ):
                 found.append(sfx)
                 remaining = remaining[: -len(sfx)]
                 matched = True
@@ -535,6 +541,70 @@ def _syllabify_with_prefix(word: str) -> list[str] | None:
     return None
 
 
+def _fold_vowelless_pieces(pieces: list[str]) -> list[str]:
+    """Fold any vowel-less piece into the piece before it.
+
+    A chunk with no syllable nucleus (-n, -t, -ns) cannot stand alone — its
+    audio is a CTC-sliced consonant burst cut out of a whole-word render. A
+    vowel-less piece rides the piece it follows (``else`` + ``ns`` ->
+    ``elsens``, ``else`` + ``n`` -> ``elsen``); a piece containing a vowel
+    (-en, -et, -er, -e, -a, -ene, -ne) is its own syllable and keeps its slot.
+    Parts A and B guarantee every stem has a nucleus, so the only vowel-less
+    pieces here are suffix groups — precisely what should fold. The merge is
+    concatenation, so ``"".join(...)`` still reproduces the word exactly.
+    """
+    folded: list[str] = []
+    for piece in pieces:
+        if folded and not set(piece) & _NORWEGIAN_VOWELS:
+            folded[-1] += piece
+        else:
+            folded.append(piece)
+    return folded
+
+
+def _fold_vowel_only_inflections(pieces: list[str]) -> list[str]:
+    """Move one stem-final consonant onto a vowel-only inflection.
+
+    A chunk is something the learner hears in isolation, sliced out of a
+    whole-word render. A vowel-only inflection (``forklare``'s ``e``) has no
+    consonant onset, so the slicer has nothing to cut on and the audio bleeds
+    (the learner hears a "short re"). Exactly one consonant — the previous
+    piece's last character — rides onto the inflection, reproducing the raw
+    syllabifier's V-CV split (for·kla·re). One, not the maximal onset: the raw
+    syllabifier does the same for a single-consonant cluster.
+
+    Gated so only a genuine bare-nucleus inflection moves: the piece must be
+    all vowels AND an inflection, the previous piece must end in a consonant,
+    and that previous piece must be longer than one character (so it cannot be
+    emptied). All-vowel pieces at compound seams (arbeids·u·ke, and·øy·a) are
+    NOT inflections and stay untouched — moving a consonant there would cross a
+    morpheme boundary between two content stems. The merge is a char move, so
+    ``"".join(...)`` still reproduces the word exactly.
+    """
+    folded: list[str] = []
+    for piece in pieces:
+        if (
+            folded
+            and set(piece) <= _NORWEGIAN_VOWELS
+            and piece in _INFLECTIONS
+            and folded[-1][-1] not in _NORWEGIAN_VOWELS
+            and len(folded[-1]) > 1
+        ):
+            stem = folded[-1]
+            if set(stem[:-1]) <= _NORWEGIAN_VOWELS:
+                # Moving the consonant would strand an all-vowel stem — exactly
+                # the bare-nucleus chunk this fold exists to remove, just one
+                # slot earlier (air + e -> ai + re manufactures ``ai``). Merge
+                # the whole pair instead: mil·li·on·aire, not mil·li·on·ai·re.
+                folded[-1] = stem + piece
+            else:
+                folded[-1] = stem[:-1]
+                folded.append(stem[-1] + piece)
+        else:
+            folded.append(piece)
+    return folded
+
+
 def syllabify_morpheme(part: str) -> list[str]:
     """Syllabify a single morpheme, honoring derivational-suffix boundaries.
 
@@ -585,7 +655,7 @@ def syllabify_morpheme(part: str) -> list[str]:
     if linking and suffix_groups:
         suffix_groups[-1] += linking
 
-    return stem_syllables + suffix_groups
+    return _fold_vowel_only_inflections(_fold_vowelless_pieces(stem_syllables + suffix_groups))
 
 
 def _compound_buildup_units(morphemes: list[str]) -> list[tuple[str, list[str]]]:
@@ -606,7 +676,7 @@ def _compound_buildup_units(morphemes: list[str]) -> list[tuple[str, list[str]]]
     for idx, part in enumerate(parts):
         if inflection is not None and idx == len(parts) - 1:
             stem = part[: -len(inflection)]
-            pieces = syllabify_morpheme(stem) + [inflection]
+            pieces = _fold_vowel_only_inflections(_fold_vowelless_pieces(syllabify_morpheme(stem) + [inflection]))
         else:
             pieces = syllabify_morpheme(part)
         units.append((part, pieces))

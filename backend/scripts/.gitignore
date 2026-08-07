@@ -26,6 +26,7 @@
 !dump_openapi.py
 !mutation_sweep_slicing.py
 !render_slicing_ab.py
+!slice_report.py
 !bp_watchdog.py
 !__init__.py
 !.gitignore

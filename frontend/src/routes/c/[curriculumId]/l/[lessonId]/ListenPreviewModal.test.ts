@@ -129,6 +129,21 @@ const gradeBtn = (container: HTMLElement, key: string, grade: string) =>
 
 const isActive = (b: HTMLButtonElement) => b.classList.contains("active");
 
+/**
+ * F-20: the summary row's segments, as [number, label] pairs in render order —
+ * the cut line's meaning, restated above the list. Reads the rendered TEXT so
+ * the assertion stays on the content, not the classes.
+ */
+const segments = (container: HTMLElement): [string, string][] => {
+  const row = container.querySelector(".partition");
+  if (!row) return [];
+  return [...row.querySelectorAll(":scope > *")].map((seg) => {
+    const n = seg.querySelector(".n")?.textContent?.trim() ?? "";
+    const l = seg.querySelector(".l")?.textContent?.trim() ?? "";
+    return [n, l];
+  });
+};
+
 // jsdom rewrites inline colours into rgb()/rgba() form, so a raw hsl() or hex
 // string never appears in the serialized style attribute. Normalize the
 // expected value the same way rather than hardcoding the converted output —
@@ -851,7 +866,7 @@ describe("ListenPreviewModal", () => {
 
   // ── countdown: visibility, decrement, zero-candidates auto-commit ──────
 
-  it("shows a decrementing 'Auto-marking' countdown while running", async () => {
+  it("shows a decrementing 'Auto-grading' countdown tick while running", async () => {
     vi.useFakeTimers();
     mockGetListenPreview.mockResolvedValue({
       candidates: [createCandidate("kava")],
@@ -863,12 +878,11 @@ describe("ListenPreviewModal", () => {
 
     await vi.advanceTimersByTimeAsync(0);
 
-    const countdownText = () => container.querySelector(".countdown")?.textContent ?? "";
-    expect(countdownText()).toContain("Auto-marking");
-    expect(countdownText()).toContain("10");
+    const tick = () => container.querySelector(".grade-all .tick")?.textContent ?? "";
+    expect(tick()).toContain("10");
 
     await vi.advanceTimersByTimeAsync(1000);
-    expect(countdownText()).toContain("9");
+    expect(tick()).toContain("9");
   });
 
   it("F4: the countdown is visible even with zero candidates, and it auto-commits an empty listen", async () => {
@@ -889,7 +903,7 @@ describe("ListenPreviewModal", () => {
     });
 
     await vi.advanceTimersByTimeAsync(0);
-    expect(container.querySelector(".countdown")?.textContent ?? "").toContain("Auto-marking");
+    expect(container.querySelector(".grade-all .tick")?.textContent ?? "").toContain("10");
 
     await vi.advanceTimersByTimeAsync(10_000);
 
@@ -983,6 +997,46 @@ describe("ListenPreviewModal", () => {
 
     await vi.advanceTimersByTimeAsync(15_000);
 
+    expect(mockMarkAsListened).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("F-7: cancelling keeps the tick mounted (empty) so the button never resizes", async () => {
+    // The unmount-vs-empty distinction is the whole bug: a cancelled countdown
+    // must leave the tick element in the DOM, text removed, its box still held
+    // open by min-width — an unmount while the pointer is down reflows the rows
+    // and swallows the click's grade.
+    vi.useFakeTimers();
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [createCandidate("kava")],
+    });
+    mockMarkAsListened.mockResolvedValue({
+      status: "ok",
+      created: 1,
+      staged: 0,
+      applied: 0,
+      remaining_candidates: 0,
+      listen_count: 1,
+    });
+    const onDone = vi.fn();
+
+    const { container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone },
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(container.querySelector(".grade-all .tick")?.textContent).toContain("10");
+
+    await fireEvent.click(gradeBtn(container, "create:kava", "hard"));
+
+    const button = container.querySelector<HTMLElement>(".grade-all");
+    const tick = container.querySelector(".grade-all .tick");
+    expect(button?.dataset.countdown).toBe("idle");
+    expect(tick).not.toBeNull();
+    expect(tick?.textContent ?? "").toBe("");
+    expect(mockMarkAsListened).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(15_000);
     expect(mockMarkAsListened).not.toHaveBeenCalled();
     expect(onDone).not.toHaveBeenCalled();
   });
@@ -1481,7 +1535,10 @@ describe("ListenPreviewModal", () => {
     });
 
     await waitFor(() => {
-      expect(container.querySelector(".countdown")).toBeNull();
+      const button = container.querySelector<HTMLElement>(".grade-all");
+      expect(button?.dataset.countdown).toBe("idle");
+      expect(button?.getAttribute("aria-label")).toBeNull();
+      expect(container.querySelector(".grade-all .tick")?.textContent ?? "").toBe("");
     });
 
     // Advance well past any countdown — should never commit
@@ -1511,7 +1568,7 @@ describe("ListenPreviewModal", () => {
     });
 
     await waitFor(() => {
-      expect(container.querySelector(".countdown")?.textContent).toContain("30");
+      expect(container.querySelector(".grade-all .tick")?.textContent).toContain("30");
     });
 
     await vi.advanceTimersByTimeAsync(30_000);
@@ -1761,7 +1818,7 @@ describe("ListenPreviewModal", () => {
       await waitFor(() => getByText("a"));
       await gradeEachDifferently(container);
 
-      await fireEvent.click(getByText("Grade All"));
+      await fireEvent.click(container.querySelector<HTMLButtonElement>(".grade-all")!);
 
       expect(activeGrades(container)).toEqual(["again", "hard", "good", "easy"]);
     });
@@ -1779,7 +1836,7 @@ describe("ListenPreviewModal", () => {
       await fireEvent.click(getByText("Skip All"));
       expect(activeGrades(container)).toEqual(["skip", "skip", "skip", "skip"]);
 
-      await fireEvent.click(getByText("Grade All"));
+      await fireEvent.click(container.querySelector<HTMLButtonElement>(".grade-all")!);
       expect(activeGrades(container)).toEqual(["again", "hard", "good", "easy"]);
     });
 
@@ -1795,7 +1852,7 @@ describe("ListenPreviewModal", () => {
 
       for (let i = 0; i < 3; i++) {
         await fireEvent.click(getByText("Skip All"));
-        await fireEvent.click(getByText("Grade All"));
+        await fireEvent.click(container.querySelector<HTMLButtonElement>(".grade-all")!);
       }
 
       expect(activeGrades(container)).toEqual(["again", "hard", "good", "easy"]);
@@ -1812,21 +1869,18 @@ describe("ListenPreviewModal", () => {
       await fireEvent.click(gradeBtn(container, "word:a", "hard"));
       await fireEvent.click(gradeBtn(container, "word:a", "skip"));
 
-      await fireEvent.click(getByText("Grade All"));
+      await fireEvent.click(container.querySelector<HTMLButtonElement>(".grade-all")!);
 
       expect(activeGrades(container)[0]).toBe("hard");
     });
 
     it("a row that was never graded still comes back as Good", async () => {
-      // Well-known rows start on "skip" with no prior grade to remember.
+      // An ordinary row skipped by a direct per-row click carries no remembered
+      // grade, so Grade All must still restore it to "good" by default.
       mockGetListenPreview.mockResolvedValue({
         candidates: [
           wordCandidate("prosim", { grade_class: "due" }),
-          wordCandidate("hvala", {
-            grade_class: "ahead",
-            well_known: true,
-            due_at: "2126-01-01T04:00:00+00:00",
-          }),
+          wordCandidate("hvala", { grade_class: "due" }),
         ],
       });
 
@@ -1835,7 +1889,8 @@ describe("ListenPreviewModal", () => {
       });
 
       await waitFor(() => getByText("prosim"));
-      await fireEvent.click(getByText("Grade All"));
+      await fireEvent.click(gradeBtn(container, "word:hvala", "skip"));
+      await fireEvent.click(container.querySelector<HTMLButtonElement>(".grade-all")!);
 
       expect(isActive(gradeBtn(container, "word:hvala", "good"))).toBe(true);
     });
@@ -1859,7 +1914,7 @@ describe("ListenPreviewModal", () => {
       await waitFor(() => getByText("a"));
       await gradeEachDifferently(container);
       await fireEvent.click(getByText("Skip All"));
-      await fireEvent.click(getByText("Grade All"));
+      await fireEvent.click(container.querySelector<HTMLButtonElement>(".grade-all")!);
       await fireEvent.click(getByText("Mark 4 as listened"));
 
       await waitFor(() => {
@@ -2011,8 +2066,8 @@ describe("ListenPreviewModal", () => {
       });
 
       await waitFor(() => getByText("prosim"));
-      await fireEvent.click(getByText("Grade All"));
-      await fireEvent.click(getByText("Mark 2 as listened"));
+      await fireEvent.click(container.querySelector<HTMLButtonElement>(".grade-all")!);
+      await fireEvent.click(getByText("Mark 1 as listened"));
 
       await waitFor(() => {
         const call = mockMarkAsListened.mock.calls.at(-1)!;
@@ -2036,7 +2091,7 @@ describe("ListenPreviewModal", () => {
       await fireEvent.click(gradeBtn(container, "word:prosim", "hard"));
 
       await fireEvent.click(getByText("Skip All"));
-      await fireEvent.click(getByText("Grade All"));
+      await fireEvent.click(container.querySelector<HTMLButtonElement>(".grade-all")!);
 
       const hard = gradeBtn(container, "word:prosim", "hard");
       expect(hard.classList.contains("active")).toBe(true);
@@ -2060,7 +2115,7 @@ describe("ListenPreviewModal", () => {
 });
 
 describe("NEW-state rows and the shared introduction budget", () => {
-  it("puts an over-budget NEW-state row in the tail, below the cut line", async () => {
+  it("puts an over-budget NEW-state row in the tail partition", async () => {
     // Releasing a staged grade on a NEW-state card INTRODUCES it, spending
     // Anki's daily new-card allowance — so rows past the budget sit below the
     // cut, exactly like over-budget create rows.
@@ -2083,10 +2138,15 @@ describe("NEW-state rows and the shared introduction budget", () => {
     });
 
     await waitFor(() => getByText("hansen"));
-    // A NEW-state row counts as an introduction on both sides of the cut line:
-    // 1 live of 2 total. It is held back, not skipped — releasing it would
-    // spend the same daily new-card allowance a creation does.
-    expect(getByText("Introducing 1 of 2 today — daily new-card limit")).toBeTruthy();
+    // A NEW-state row counts as an introduction on both sides of the cut: the
+    // summary's "now" segment reads 1 (hansen) and "later" 1 (lund). It is held
+    // back, not skipped — releasing it would spend the same daily new-card
+    // allowance a creation does.
+    expect(segments(container)).toEqual([
+      ["1", "now"],
+      ["1", "later"],
+      ["0", "known"],
+    ]);
     expect(gradeBtn(container, "word:hansen", "good")).toBeTruthy();
 
     const lundRow = [...container.querySelectorAll("li.candidate")].find(

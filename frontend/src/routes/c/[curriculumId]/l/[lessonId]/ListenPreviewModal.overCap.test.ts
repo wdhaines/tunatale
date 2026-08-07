@@ -140,6 +140,21 @@ const rowFor = (container: HTMLElement, text: string) =>
     (li) => li.querySelector(".text")?.textContent === text,
   );
 
+/**
+ * F-20: the summary row's segments, as [number, label] pairs in render order —
+ * the cut line's meaning, restated above the list. Reads the rendered TEXT so
+ * the assertion stays on the content, not the classes.
+ */
+const segments = (container: HTMLElement): [string, string][] => {
+  const row = container.querySelector(".partition");
+  if (!row) return [];
+  return [...row.querySelectorAll(":scope > *")].map((seg) => {
+    const n = seg.querySelector(".n")?.textContent?.trim() ?? "";
+    const l = seg.querySelector(".l")?.textContent?.trim() ?? "";
+    return [n, l];
+  });
+};
+
 // ── Tests ─────────────────────────────────────────────────────────────
 
 describe("ListenPreviewModal — opting past the daily new-card cap", () => {
@@ -340,7 +355,8 @@ describe("ListenPreviewModal — opting past the daily new-card cap", () => {
 
   it("states the overage out loud once a row is opted in", async () => {
     // The user is exceeding a limit on purpose; the UI says the number rather
-    // than quietly moving the denominator.
+    // than quietly moving the denominator. F-20 moved that voice from the cut
+    // line's "(+N over)" suffix to the caption beneath the summary row.
     mockGetListenPreview.mockResolvedValue(previewWithTail());
 
     const { getByText, container } = render(ListenPreviewModal, {
@@ -348,18 +364,18 @@ describe("ListenPreviewModal — opting past the daily new-card cap", () => {
     });
 
     await waitFor(() => getByText("kake"));
-    expect(getByText("Introducing 2 of 5 today — daily new-card limit")).toBeTruthy();
+    expect(container.textContent).not.toContain("past today's limit");
 
     await fireEvent.click(gradeBtn(container, "create:brød", "good")!);
 
     await waitFor(() => {
-      expect(getByText("Introducing 2 of 5 today — daily new-card limit (+1 over)")).toBeTruthy();
+      expect(container.textContent).toContain("+1 past today's limit");
     });
 
     await fireEvent.click(gradeBtn(container, "create:ost", "good")!);
 
     await waitFor(() => {
-      expect(getByText("Introducing 2 of 5 today — daily new-card limit (+2 over)")).toBeTruthy();
+      expect(container.textContent).toContain("+2 past today's limit");
     });
   });
 
@@ -373,7 +389,7 @@ describe("ListenPreviewModal — opting past the daily new-card cap", () => {
     });
 
     await waitFor(() => getByText("kake"));
-    await fireEvent.click(getByText("Grade All"));
+    await fireEvent.click(container.querySelector<HTMLButtonElement>(".grade-all")!);
 
     await waitFor(() => expect(getByText("Mark 2 as listened")).toBeTruthy());
 
@@ -383,7 +399,12 @@ describe("ListenPreviewModal — opting past the daily new-card cap", () => {
       }
       expect(rowFor(container, text)!.classList.contains("opted")).toBe(false);
     }
-    expect(getByText("Introducing 2 of 5 today — daily new-card limit")).toBeTruthy();
+    // Grade All is not an opt-in: the summary still reads 2 now / 3 later.
+    expect(segments(container)).toEqual([
+      ["2", "now"],
+      ["3", "later"],
+      ["0", "known"],
+    ]);
 
     await fireEvent.click(getByText("Mark 2 as listened"));
 

@@ -17,16 +17,25 @@ edited to match code. Key design decisions they pin:
 """
 
 from app.plugins.languages.no.norwegian_breakdown import (
+    _NORWEGIAN_VOWELS,
+    _fold_vowel_only_inflections,
     _is_content_stem,
     _load_ranked_lexicon,
     _segment_surface,
     _spoken_syllable,
     build_norwegian_breakdown,
+    flat_syllables,
     load_no_lexicon,
     segment_compound,
     slow_norwegian_word,
     syllabify_morpheme,
 )
+
+
+def _has_vowel(chunk: str) -> bool:
+    """True if *chunk* is speakable on its own (contains a syllable nucleus)."""
+    return bool(set(chunk) & _NORWEGIAN_VOWELS)
+
 
 # -- Lexicon loader --------------------------------------------------------
 
@@ -303,6 +312,33 @@ def test_breakdown_busstasjon_s_overlap():
         assert "sss" not in item, f"triple-s join leaked into {item!r}"
 
 
+def test_breakdown_oppklart_no_orphan_consonant():
+    """The -t of a compound past participle never becomes its own chunk.
+
+    segment_compound peels ``t`` as a morpheme (``opp|klar|t``), which is right
+    morphologically and wrong as a *chunk*: the buildup spoke a bare ``t``,
+    whose audio is a CTC-sliced consonant burst out of the whole-word render.
+    Day 7's "en sak som aldri ble oppklart" shipped it. The ending rides its
+    stem instead: ``opp | klart``.
+    """
+    bd = build_norwegian_breakdown("oppklart")
+    assert "klart" in bd
+    for item in bd:
+        assert _has_vowel(item), f"vowel-less chunk {item!r} in breakdown {bd}"
+
+
+def test_breakdown_vowelless_inflection_class_never_orphans():
+    """The whole -t/-n class, not just the word that surfaced the bug."""
+    for word in ("planlagt", "åpenbart", "innført", "velkommen", "president"):
+        for item in build_norwegian_breakdown(word):
+            assert _has_vowel(item), f"vowel-less chunk {item!r} in breakdown of {word!r}"
+
+
+def test_segment_compound_still_peels_the_inflection():
+    """The fix lives in the buildup, not the morphology — segmentation is unchanged."""
+    assert segment_compound("oppklart") == ["opp", "klar", "t"]
+
+
 def test_segment_compound_fjellandskap_s_overlap():
     """'fjellandskap' splits at the ll-boundary: surface ['fjel', 'landskap']."""
     assert segment_compound("fjellandskap") == ["fjel", "landskap"]
@@ -412,6 +448,23 @@ def test_syllabify_morpheme_no_geminate_informasjon():
     assert syllabify_morpheme("informasjon") == ["in", "for", "ma", "sjon"]
 
 
+def test_syllabify_morpheme_vowelless_inflection_rides_previous_group():
+    """A vowel-less inflection (-n, -t) is not a syllable and never stands alone.
+
+    begynnelsen is begynn|else|n morphologically, but ``n`` alone is
+    unpronounceable — and its audio is a slice of a whole-word render, so the
+    learner gets a consonant fragment. The ending rides the suffix group it
+    belongs to instead.
+    """
+    assert syllabify_morpheme("begynnelsen") == ["be", "gynn", "elsen"]
+    assert syllabify_morpheme("ledelsen") == ["led", "elsen"]
+
+
+def test_syllabify_morpheme_syllabic_inflection_still_its_own_group():
+    """The merge is scoped to vowel-less endings: -en keeps its own group."""
+    assert syllabify_morpheme("forskningen") == ["forsk", "ning", "en"]
+
+
 def test_syllabify_morpheme_team_loanword():
     assert syllabify_morpheme("team") == ["team"]
 
@@ -459,6 +512,39 @@ def test_syllabify_morpheme_misjon_not_prefix_split():
     assert syllabify_morpheme("misjon") == ["mi", "sjon"]
 
 
+def test_is_content_stem_rejects_vowelless_candidate():
+    """A content stem has a nucleus — the frequency list contains junk that doesn't.
+
+    ``lsk`` (rank 7702) and ``stk`` (rank 3420) are real entries in
+    no_wordlist.txt: OCR/abbreviation noise, not words. Both clear the rank gate
+    and the 3-char floor, so without this guard they formed bogus splits —
+    ``moralsk`` -> ``mora|lsk``, ``brystkreft`` -> ``bry|stk|ref|t``.
+    """
+    ranks = _load_ranked_lexicon()
+    assert "lsk" in ranks, "fixture assumption: the junk entry is in the wordlist"
+    assert "stk" in ranks, "fixture assumption: the junk entry is in the wordlist"
+    assert not _is_content_stem("lsk", ranks)
+    assert not _is_content_stem("stk", ranks)
+
+
+def test_segment_compound_rejects_vowelless_parts():
+    """The bogus splits collapse; the genuine compound underneath surfaces."""
+    assert segment_compound("moralsk") == ["moralsk"]
+    assert segment_compound("forelske") == ["for", "elske"]
+    assert segment_compound("brystkreft") == ["bryst", "kreft"]
+
+
+def test_syllabify_morpheme_derivational_peel_needs_a_vowel_left_behind():
+    """-ing must not peel off spring: the remainder ``spr`` has no nucleus.
+
+    The 3-char floor in _strip_derivational_suffixes counts characters, which
+    ``spr`` passes. A morpheme needs a vowel, not a length.
+    """
+    assert syllabify_morpheme("spring") == ["spring"]
+    assert syllabify_morpheme("springer") == ["sprin", "ger"]
+    assert syllabify_morpheme("springe") == ["sprin", "ge"]
+
+
 def test_segment_compound_forbrytelsens_lexicalized_whole():
     """forbrytelse is a lexeme; the rank guard can't catch its over-split
     (for|bry|tel|s|ens), so it's a human-ratified whole → for·bry·tel·sens."""
@@ -466,10 +552,84 @@ def test_segment_compound_forbrytelsens_lexicalized_whole():
 
 
 def test_syllabify_morpheme_forbrytelsens():
-    """syllabify_morpheme already decomposes this correctly by morpheme
-    (for·bryt·else·ns); the only bug was segment_compound routing it to the
-    compound path as junk for|bry|tels|ens. Guards the morpheme output."""
-    assert syllabify_morpheme("forbrytelsens") == ["for", "bryt", "else", "ns"]
+    """Morpheme decomposition for·bryt·else·ns, with the genitive riding its group.
+
+    The original golden here was ``["for", "bryt", "else", "ns"]`` — correct by
+    morpheme, wrong as a chunk: ``ns`` has no nucleus, and a chunk is something
+    the learner hears in isolation, sliced out of a whole-word render. The
+    morpheme boundary is still honoured (else|ns is why the ``s`` is a genitive
+    and not part of the stem); it just no longer gets its own audio.
+    """
+    assert syllabify_morpheme("forbrytelsens") == ["for", "bryt", "elsens"]
+
+
+# -- _fold_vowel_only_inflections -----------------------------------------
+
+
+def test_fold_vowel_only_inflection_takes_stems_final_consonant():
+    """A vowel-only inflection takes exactly one onset from its stem.
+
+    for·klar·e -> for·kla·re: a bare-nucleus chunk has no consonant to slice
+    on, so the stem's final consonant rides onto the inflection. One consonant,
+    not the maximal onset — reproducing the raw syllabifier's V-CV split
+    (``syllabify_norwegian_word("forklare")`` is already for·kla·re).
+    """
+    assert _fold_vowel_only_inflections(["klar", "e"]) == ["kla", "re"]
+    assert _fold_vowel_only_inflections(["be", "stemt", "e"]) == ["be", "stem", "te"]
+
+
+def test_fold_vowel_only_inflection_merges_rather_than_stranding_an_all_vowel_stem():
+    """When moving would leave an all-vowel stem, merge the pair instead.
+
+    ``air`` + ``e``: taking the ``r`` across gives ``ai`` + ``re`` — which
+    manufactures a bare-nucleus chunk (``ai``) one slot earlier, the very thing
+    this fold removes. Merging yields ``aire`` and the defect disappears
+    outright: mil·li·on·aire, not mil·li·on·ai·re.
+    """
+    assert _fold_vowel_only_inflections(["air", "e"]) == ["aire"]
+    assert _fold_vowel_only_inflections(["eid", "e"]) == ["eide"]
+    # The ordinary move is unaffected — ``kla`` is not all-vowel.
+    assert _fold_vowel_only_inflections(["klar", "e"]) == ["kla", "re"]
+
+
+def test_fold_vowel_only_inflection_refuses_to_empty_single_character_previous():
+    """A single-character previous piece cannot give up its only consonant."""
+    assert _fold_vowel_only_inflections(["r", "e"]) == ["r", "e"]
+
+
+def test_fold_vowel_only_inflection_leaves_non_inflection_all_vowel_piece():
+    """An all-vowel piece that is not an inflection stays at its compound seam.
+
+    Moving a consonant there would cross a morpheme boundary between two
+    content stems (arbeids·u·ke).
+    """
+    assert _fold_vowel_only_inflections(["klar", "u", "ke"]) == ["klar", "u", "ke"]
+
+
+def test_fold_vowel_only_inflection_requires_consonant_final_previous():
+    """Hiatus: a vowel-final previous piece has no consonant to move.
+
+    no·e stays split (or does not — a product decision the brief leaves alone);
+    the fold simply must not invent an onset.
+    """
+    assert _fold_vowel_only_inflections(["no", "e"]) == ["no", "e"]
+
+
+def test_flat_syllables_vowel_only_inflection_takes_stems_final_consonant():
+    """Worked literals: the fold end-to-end through flat_syllables.
+
+    ``adelige`` and ``alvorlige``: the ``-lig`` derivational suffix loses its
+    final ``g`` to the inflection. Intended and approved — the morpheme
+    boundary stays honoured in analysis, it just stops dictating chunk edges.
+    """
+    assert flat_syllables("forklare") == ["for", "kla", "re"]
+    assert flat_syllables("allmenne") == ["all", "men", "ne"]
+    assert flat_syllables("allerede") == ["al", "le", "re", "de"]
+    assert flat_syllables("akerselva") == ["a", "kers", "el", "va"]
+    assert flat_syllables("adelige") == ["a", "de", "li", "ge"]
+    assert flat_syllables("aldersbestemte") == ["al", "ders", "be", "stem", "te"]
+    assert flat_syllables("anerkjente") == ["a", "ner", "kjen", "te"]
+    assert flat_syllables("alvorlige") == ["al", "vor", "li", "ge"]
 
 
 # -- _spoken_syllable ----------------------------------------------------

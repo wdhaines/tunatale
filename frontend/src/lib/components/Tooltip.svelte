@@ -62,6 +62,15 @@
 	let open = $state(false);
 	let wrapEl = $state<HTMLElement | null>(null);
 	let ttEl = $state<HTMLElement | null>(null);
+	// Hover-reveal tracking (F-8). The `@media (hover: hover)` CSS reveals the
+	// popover with `open` still false, so the edge-clamp gated on `open` alone
+	// never ran for a hovered word near the margin — a popover displayed at
+	// full opacity yet centred with no clamp. This mirrors the CSS `:hover`
+	// trigger in JS so the clamp runs whenever the popover is DISPLAYED, not
+	// only when it is click-opened. Touch devices fire pointerenter too, but
+	// there the popover stays `display: none`, so a zero-width rect leaves the
+	// clamp at no-op and the flag has no visible effect.
+	let hovered = $state(false);
 
 	// A *long-press* opens the popover (so a touch user can reach the per-word
 	// actions); a plain *tap* falls through to the word's own grade handler. This
@@ -96,6 +105,17 @@
 			clearTimeout(pressTimer);
 			pressTimer = null;
 		}
+	}
+
+	// Hover-reveal enters/exits. pointerleave also clears any pending long-press
+	// (the old inline `onpointerleave={cancelPress}` behaviour, folded in here).
+	function handlePointerEnter() {
+		hovered = true;
+	}
+
+	function handlePointerLeave() {
+		cancelPress();
+		hovered = false;
 	}
 
 	function handlePressMove(e: PointerEvent) {
@@ -144,20 +164,37 @@
 		return () => document.removeEventListener('pointerdown', handleOutside);
 	});
 
+	// The width of the AREA THE USER CAN SEE, not the layout viewport. On a
+	// coarse pointer (real phones, `@media (pointer: coarse)`), Chromium answers
+	// a popover that overflows the glass with shrink-to-fit: it inflates the
+	// layout viewport to fit the overflowing content, and `window.innerWidth`
+	// reports that INFLATED width (measured 486 on a 412px phone — the 74px
+	// overhang, verbatim). A clamp computed against 486 "contains" the popover
+	// at 470 while the page still scrolls 74px sideways (F-12). The visual
+	// viewport (`window.visualViewport.width`) and `documentElement.clientWidth`
+	// both stay at the true 412, so either measures what the user actually sees.
+	// jsdom has no layout: `visualViewport` is absent and `clientWidth` is 0,
+	// so the chain falls back to `innerWidth` (1024), keeping the unit tests'
+	// mocked-rect math identical.
+	const viewportWidth = () =>
+		window.visualViewport?.width ?? (document.documentElement.clientWidth || window.innerWidth);
 	// Keep the popover on-screen: when the centered position would clip at a
-	// viewport edge (narrow phone screens), nudge it horizontally on open.
+	// viewport edge (narrow phone screens), nudge it horizontally. Runs whenever
+	// the popover is DISPLAYED — click-opened (`open`) OR hover-revealed
+	// (`hovered`) — because the hover-revealed state is shown by CSS with `open`
+	// still false, and an un-clamped hovered popover is exactly the F-8 bug.
 	const EDGE_MARGIN_PX = 8;
 	let shiftX = $state(0);
 	$effect(() => {
-		if (!open || !ttEl) {
+		if ((!open && !hovered) || !ttEl) {
 			shiftX = 0;
 			return;
 		}
 		const rect = ttEl.getBoundingClientRect();
 		if (rect.left < EDGE_MARGIN_PX) {
 			shiftX = EDGE_MARGIN_PX - rect.left;
-		} else if (rect.right > window.innerWidth - EDGE_MARGIN_PX) {
-			shiftX = window.innerWidth - EDGE_MARGIN_PX - rect.right;
+		} else if (rect.right > viewportWidth() - EDGE_MARGIN_PX) {
+			shiftX = viewportWidth() - EDGE_MARGIN_PX - rect.right;
 		} else {
 			shiftX = 0;
 		}
@@ -233,7 +270,8 @@
 	bind:this={wrapEl}
 	onpointerdown={startPress}
 	onpointerup={cancelPress}
-	onpointerleave={cancelPress}
+	onpointerenter={handlePointerEnter}
+	onpointerleave={handlePointerLeave}
 	onpointercancel={cancelPress}
 	onpointermove={handlePressMove}
 	oncontextmenu={handleContextMenu}
@@ -356,6 +394,17 @@
 		opacity: 0;
 		pointer-events: none;
 		transition: opacity 0.1s;
+		/* `display: none`, not merely `opacity: 0`, and this is load-bearing. A
+		   transparent popover is still LAID OUT: up to 280px wide, centred on its
+		   word, and the viewport edge-clamp above only runs while one is open. So
+		   every closed popover on a word near the right margin overhung the
+		   viewport and pinned document.scrollWidth near 495px however narrow the
+		   screen was. Chromium on Android answers that overflow with shrink-to-fit
+		   — it zooms the page out to fit, the layout viewport becomes ~19% wider
+		   than the glass, and in a SPA that scale never resets. One Read view then
+		   made every later width (modals included) too wide for the screen.
+		   Guarded by tests/transcript-overflow.spec.ts. */
+		display: none;
 	}
 	/* Hover/focus reveal is a fine-pointer affordance only. On touch, a tap
 	   synthesizes hover AND focuses the tabindex word, which sticky-opened the
@@ -363,11 +412,13 @@
 	@media (hover: hover) {
 		.tt-wrap:hover > .tt,
 		.tt-wrap:focus-within > .tt {
+			display: block;
 			opacity: 1;
 			pointer-events: auto;
 		}
 	}
 	.tt-wrap.open > .tt {
+		display: block;
 		opacity: 1;
 		pointer-events: auto;
 	}

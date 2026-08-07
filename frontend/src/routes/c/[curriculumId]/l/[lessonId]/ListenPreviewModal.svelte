@@ -46,11 +46,37 @@
 
 	let countdown = $state(10);
 	let countdownCancelled = $state(false);
-	// Deliberately NOT $state: this is a bare timer handle, never read from the
-	// template, and onDestroy(clearCountdownTimer) writes it after teardown —
-	// which is exactly why it must stay non-reactive (see onDestroy below).
-	// svelte-ignore non_reactive_update
-	let countdownId: ReturnType<typeof setTimeout> | null = null;
+	// The total the countdown started from — drives the progress fill's width.
+	// 0 when the pref is "off" (never started), which keeps the fill empty.
+	let countdownTotal = $state(0);
+	// The timer handle. $state now, unlike the pre-option-C layout: the template
+	// reads `countdownRunning`, which derives from countdownId, and a plain
+	// `let` would render that derived once and never flip it — the running→idle
+	// transition is exactly what the F-7 oracle asserts on. onDestroy
+	// (clearCountdownTimer) still nulls it after teardown; Svelte 5 has no
+	// post-unmount state-mutation warning.
+	let countdownId: ReturnType<typeof setTimeout> | null = $state(null);
+	// The countdown is "running" iff armed and not cancelled. The option-C
+	// button derives everything from this: the fill drains, the tick shows,
+	// `data-countdown` reads it, and the armed border/aria-label follow it.
+	let countdownRunning = $derived(!countdownCancelled && countdownId !== null);
+	// The seconds text. Empty when not running — the .tick box is held open by
+	// its min-width (with `visibility: hidden`), so emptying the text cannot
+	// change the button's width (F-7, one row up).
+	let tickText = $derived(countdownRunning ? `${countdown}s` : '');
+	// Progress fill, 0–100, driven by ELAPSED time — it grows left→right from
+	// 0% while the countdown runs (F-15a). Gated on countdownRunning, not just
+	// the counters: cancelCountdown resets neither countdown nor countdownTotal,
+	// so a width derived only from those two would freeze mid-fill on cancel;
+	// gated on the running flag it reads 0 the moment the countdown is
+	// cancelled (F-15b). Driven by the existing 1-second interval, so it steps
+	// rather than animates (no transition; reduced-motion users get the same
+	// stepwise fill either way).
+	let pctElapsed = $derived(
+		countdownRunning && countdownTotal > 0
+			? Math.max(0, Math.min(100, ((countdownTotal - countdown) / countdownTotal) * 100))
+			: 0,
+	);
 
 	let overlayEl: HTMLDivElement | undefined;
 	// The programmatic overlayEl.focus() call below synchronously fires our own
@@ -157,6 +183,7 @@
 			const prefValue = listenCountdownPref.value;
 			if (prefValue !== 'off') {
 				countdown = parseInt(prefValue, 10);
+				countdownTotal = countdown;
 				countdownId = setInterval(() => {
 					countdown -= 1;
 					if (countdown <= 0) {
@@ -205,10 +232,11 @@
 	}
 
 	// Restores each skipped row to the grade it last held, falling back to
-	// "good" for a row that never carried one (a well-known row, which starts
-	// skipped). Rows already on a real grade are untouched. Iterates every
-	// candidate EXCEPT tail rows: a well-known row is still a live decision,
-	// but a display-only tail row must not be pulled above the divider.
+	// "good" for a row that never carried one. Rows already on a real grade
+	// are untouched. Iterates every candidate EXCEPT tail rows and well-known
+	// rows: the known group is opt-in per row only, so a bulk action must
+	// never pull a well-known row out of 'skip' (F-3), just as a display-only
+	// tail row must not be pulled above the divider.
 	function gradeAll() {
 		handleInteraction();
 		const rts: Record<string, WordRating> = { ...ratings };
@@ -216,6 +244,7 @@
 		for (const c of candidates) {
 			const key = candidateKey(c);
 			if (tailKeys.has(key)) continue;
+			if (c.well_known) continue;
 			if (rts[key] === 'skip') rts[key] = rememberedGrade[key] ?? 'good';
 		}
 		ratings = rts;
@@ -303,9 +332,10 @@
 	let tailCandidates = $derived(candidates.filter((c) => c.will_create === false));
 
 	// How many tail rows the user has opted PAST the cap by grading them. A
-	// skip is the undo, not an opt-in, so it does not count. Drives the cut
-	// line's overage suffix; nothing else uses it (selectedCount already
-	// counts opt-ins, because an opted-in tail row carries a ratings entry).
+	// skip is the undo, not an opt-in, so it does not count. The opted rows
+	// move the summary's "now"/"later" counts and drive the over-cap caption
+	// (selectedCount already counts opt-ins, because an opted-in tail row
+	// carries a ratings entry).
 	let optedTailCount = $derived(
 		tailCandidates.filter((c) => {
 			const rating = ratings[candidateKey(c)];
@@ -315,15 +345,16 @@
 
 	// The gradeable set: every tracked (word/kp) row that is not well-known and
 	// not over budget, plus every create row the server will actually create.
-	// Tail rows are rendered separately below the cut line.
+	// Tail rows are rendered separately inside the tail disclosure.
 	let liveCandidates = $derived([
 		...candidates.filter((c) => c.kind !== 'create' && !c.well_known && c.will_create !== false),
 		...candidates.filter((c) => c.kind === 'create' && c.will_create !== false),
 	]);
 
-	// Numerator of the cut line. An "introduction" is any row that spends the
-	// shared daily new-card allowance: a create row (new card) or a NEW-state
-	// row (existing card, never introduced). Tracked non-new rows carry
+	// The "now" segment of the summary (the cut line's numerator, restated). An
+	// "introduction" is any row that spends the shared daily new-card
+	// allowance: a create row (new card) or a NEW-state row (existing card,
+	// never introduced). Tracked non-new rows carry
 	// `will_create` defaulted true and must NOT be counted — they are reviews,
 	// and folding them in would inflate the total against a budget they never
 	// draw on. The denominator is this plus the tail, since every tail row is
@@ -332,16 +363,6 @@
 		candidates.filter(
 			(c) => (c.kind === 'create' || c.grade_class === 'new') && c.will_create !== false,
 		).length,
-	);
-
-	// The cut line, as ONE string — declared here because it reads
-	// `liveIntroCount` above. The overage suffix appears only once the user has
-	// opted a row past the cap: they are exceeding a limit on purpose, so the UI
-	// says the number out loud rather than quietly moving the denominator, which
-	// stays the full introduction set either way.
-	let cutLineText = $derived(
-		`Introducing ${liveIntroCount} of ${liveIntroCount + tailCandidates.length} today — daily new-card limit` +
-			(optedTailCount > 0 ? ` (+${optedTailCount} over)` : ''),
 	);
 
 	let wellKnownCandidates = $derived(candidates.filter((c) => c.well_known));
@@ -462,20 +483,34 @@
 		{:else if error}
 			<p class="error">{error}</p>
 		{:else}
-			<!-- F4: the countdown must be visible whenever it's running, including
-			     the zero-candidates case — otherwise it silently auto-commits with
-			     no on-screen indication anything is about to happen. -->
-			{#if !countdownCancelled && countdownId !== null}
-				<p class="countdown">Auto-marking in {countdown}s</p>
-			{/if}
+			<!-- F4: the countdown is visible whenever it's running — including the
+			     zero-candidates case — so the auto-commit can never fire with no
+			     on-screen indication anything is about to happen. Option C (user
+			     choice) puts it ON the Grade All button: a draining fill plus a
+			     seconds tick. F-7's constraint is satisfied structurally: the tick
+			     stays mounted (its box held open by min-width, `visibility:
+			     hidden` when not running) and the fill is absolutely positioned, so
+			     the button's box is identical whether the countdown is running,
+			     cancelled, or was never started — nothing can reflow under a
+			     pointer that is still down. -->
+			<div class="actions">
+				<button
+					class="grade-all"
+					class:armed={countdownRunning}
+					data-countdown={countdownRunning ? 'running' : 'idle'}
+					aria-label={countdownRunning ? `Grade All — auto-grading in ${countdown} seconds` : undefined}
+					onclick={gradeAll}
+					type="button"
+				>
+					<span class="fill" style:width={`${pctElapsed}%`} aria-hidden="true"></span>
+					<span class="label">Grade All <span class="tick">{tickText}</span></span>
+				</button>
+				<button onclick={skipAll} type="button">Skip All</button>
+			</div>
 
 			{#if candidates.length === 0}
 				<p class="status">No new words to add.</p>
 			{:else}
-				<div class="actions">
-					<button onclick={gradeAll} type="button">Grade All</button>
-					<button onclick={skipAll} type="button">Skip All</button>
-				</div>
 
 				{#snippet gradeControl(c: ListenPreviewCandidate)}
 					{@const key = candidateKey(c)}
@@ -581,11 +616,30 @@
 							{dueLabel(c)}
 						</span>
 
-						<span class="tag next-listen">next listen</span>
-
 						{@render gradeControl(c)}
 					</li>
 				{/snippet}
+
+				<!-- F-20: the cut line, restated as a three-count summary above the
+				     list (replacing the <li class="cut-line"> that used to render
+				     after every row it explained). It describes the introduction
+				     budget plus the known group — the three counts deliberately do
+				     NOT sum to the row count; ordinary due/ahead rows belong to no
+				     segment. `now` is the live introductions plus whatever was
+				     opted PAST the cap, so the opt-in's consequence lands in the
+				     right segment instead of quietly vanishing with the line. -->
+				<div class="partition">
+					<span class="seg now"><span class="n">{liveIntroCount + optedTailCount}</span><span class="l">now</span></span>
+					<span class="seg"><span class="n">{tailCandidates.length - optedTailCount}</span><span class="l">later</span></span>
+					<span class="seg"><span class="n">{wellKnownCandidates.length}</span><span class="l">known</span></span>
+				</div>
+				{#if optedTailCount > 0}
+					<!-- The over-cap opt-in keeps its voice: opted rows ARE being
+					     introduced now, so the counts above moved with them, and the
+					     caption says the overage out loud rather than quietly moving
+					     the denominator. Renders ONLY when something was opted in. -->
+					<p class="over-cap-caption">+{optedTailCount} past today's limit</p>
+				{/if}
 
 				<div class="list-head" aria-hidden="true">
 					<span>Word</span><span>Due</span><span>Proposed grade</span>
@@ -595,28 +649,28 @@
 					{#each liveCandidates as c (candidateKey(c))}
 						{@render candidateRow(c)}
 					{/each}
-
-					<!-- The cut is stated, not hidden. It was a collapsed <details>
-					     until 2026-08-03; a disclosure reads as "there is a decision
-					     behind here", and there is not one. Naming the limit that drew
-					     the line points at the lever that actually moves it (the daily
-					     new-card cap) instead of implying a per-row control. -->
-					{#if tailCandidates.length > 0}
-						<!-- ONE interpolation, deliberately. Built as a string in the
-						     script rather than assembled inline with an `{#if}`, because
-						     Svelte trims the leading whitespace of an if-block body: the
-						     inline form `limit{#if …} (+N over){/if}` rendered
-						     "limit(+1 over)", with the space silently eaten. A single
-						     text node also keeps it matchable by exact text. -->
-						<li class="cut-line">{cutLineText}</li>
-						{#each tailCandidates as c (candidateKey(c))}
-							{@render tailRow(c)}
-						{/each}
-					{/if}
 				</ul>
 
+				{#if tailCandidates.length > 0}
+					<!-- F-13: the tail collapses behind a disclosure mirroring the
+					     well-known group — one idiom for the modal, and one tap to
+					     reach the whole partition instead of a tag repeated on every
+					     row. The count is tailCandidates.length: the tail holds create
+					     rows AND NEW-state cards sharing the intro budget, so a create
+					     count would under-report it. Tail rows stay gradeable inside
+					     the group (the over-cap opt-in is per row and unchanged). -->
+					<details class="tail-group disclosure-group">
+						<summary>{tailCandidates.length} words for subsequent listens</summary>
+						<ul class="list">
+							{#each tailCandidates as c (candidateKey(c))}
+								{@render tailRow(c)}
+							{/each}
+						</ul>
+					</details>
+				{/if}
+
 				{#if wellKnownCandidates.length > 0}
-					<details class="well-known-group">
+					<details class="well-known-group disclosure-group">
 						<!-- "known", matching the lesson stats line's bucket. The API field
 					     is still `well_known`; only the label changed. -->
 					<summary>{wellKnownCandidates.length} known word{wellKnownCandidates.length !== 1 ? 's' : ''}</summary>
@@ -649,18 +703,40 @@
 		justify-content: center;
 		z-index: 1000;
 	}
+	/* box-sizing is explicit because this app has NO global border-box reset.
+	   Under the default content-box, `width: 90%` + `max-width: 420px` sized the
+	   CONTENT box, so the real border-box was 50px wider (48 padding + 2 border);
+	   it exceeded the viewport at every phone width, flexbox shrank it to exactly
+	   the viewport, and the modal rendered edge-to-edge with zero gutters — and
+	   430px wide on a 430px screen, past its own max-width.
+
+	   470px = the old 420 content + 48 + 2, so desktop keeps the box it always
+	   had; only the phone arm moves. `min()` folds width and max-width into one
+	   declaration so the two can no longer disagree about which box they mean. */
 	.modal {
+		box-sizing: border-box;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
 		box-shadow: var(--shadow-md);
 		padding: 1.5rem;
-		max-width: 420px;
-		width: 90%;
+		width: min(94%, 470px);
 		max-height: 80vh;
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
+		/* Makes the row layout answer to the space the modal actually has, not to
+		   the viewport — and, as a side effect, removes the flex `min-width: auto`
+		   escape hatch that let content-based minimums push the box past 94%. */
+		container-type: inline-size;
+	}
+	/* Phone: buy the gutters back out of the horizontal padding instead of out of
+	   the rows. At 390px this leaves the row content 340.6px — within a pixel of
+	   the 340px it had when the modal was edge-to-edge. */
+	@media (max-width: 430px) {
+		.modal {
+			padding: 1.25rem 0.75rem;
+		}
 	}
 	h2 {
 		margin: 0;
@@ -677,11 +753,44 @@
 		color: var(--color-danger);
 		font-size: 0.9rem;
 	}
-	.countdown {
-		color: var(--color-muted);
-		font-size: 0.8rem;
-		text-align: center;
-		margin: 0;
+	/* Option C: the countdown lives ON the Grade All button. The tick box is
+	   always mounted and held open by min-width (empty → `visibility: hidden`,
+	   never `display: none`), so the button's box is pixel-identical whether
+	   the countdown is running, cancelled, or never armed — F-7's invariant.
+	   The fill is absolutely positioned behind the label so it animates the
+	   progress without ever moving text. */
+	.grade-all {
+		position: relative;
+		overflow: hidden;
+		font-weight: 600;
+	}
+	.grade-all .fill {
+		position: absolute;
+		inset: 0 auto 0 0;
+		background: color-mix(in srgb, var(--color-accent, #2f6fed) 18%, transparent);
+		pointer-events: none;
+	}
+	.grade-all .label {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.25rem;
+	}
+	.grade-all .tick {
+		/* One full "10s" is the widest text the tick ever shows; holding the box
+		   open to that width keeps the label rock-steady while it drains. */
+		min-width: 1.6em;
+		text-align: left;
+		font-variant-numeric: tabular-nums;
+		visibility: hidden;
+	}
+	.grade-all[data-countdown="running"] .tick {
+		visibility: visible;
+	}
+	.grade-all.armed {
+		border-color: var(--color-accent, #2f6fed);
+		box-shadow: 0 0 0 1px var(--color-accent, #2f6fed);
 	}
 	.actions {
 		display: flex;
@@ -717,7 +826,17 @@
 	.list-head,
 	.candidate {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) 3rem 11rem;
+		/* The Due track is 3.5rem = 56px against a 51.6px `learning` pill — the
+		   widest label this column can emit — leaving ~4.4px. It was 3.25rem
+		   (52px), which passed on 0.4px of headroom: green, oracle-guarded, and
+		   one font substitution away from failing (a fallback face on a device
+		   without ours, or a browser default bump). The track is deliberately
+		   FIXED rather than `auto` — an `auto` track resolves per-container and
+		   desynchronises the header from the rows, which is the bug
+		   `listen-preview-layout.spec.ts` exists for — so the fix is to size it
+		   for its content, never to make it elastic. Keep both arms in step:
+		   the container-query arm below carries the same value. */
+		grid-template-columns: minmax(0, 1fr) 3.5rem 11rem;
 		gap: 0.1rem 0.35rem;
 		padding: 0.35rem 0.15rem;
 	}
@@ -952,27 +1071,49 @@
 		color: var(--color-text);
 		border: 1px solid var(--color-border);
 	}
-	.well-known-group {
+	/* F-16: BOTH disclosures (the tail group and the well-known group) carry
+	   this ONE shared class. They are the same idiom — a partition that
+	   collapses behind a counting disclosure — and one shared rule set is what
+	   keeps them from drifting into different treatments again. This is
+	   deliberate where the original defect was an omission: the tail group
+	   mirrored the well-known group in markup, but never received the styling,
+	   so it rendered as a default <details>. */
+	.disclosure-group {
 		border-top: 1px solid var(--color-border);
 		padding-top: 0.5rem;
 		margin-top: 0.25rem;
 	}
-	.well-known-group summary {
+	.disclosure-group summary {
 		font-size: 0.8rem;
 		color: var(--color-muted);
 		cursor: pointer;
 		padding: 0.25rem 0;
 	}
-	/* The divider IS the cut line — it carries the border rather than sitting
-	   next to one, so there is exactly one horizontal rule at the boundary and
-	   it is the one with the explanation on it. */
-	.cut-line {
-		border-top: 1px solid var(--color-border);
-		margin-top: 0.35rem;
-		padding: 0.5rem 0.15rem 0.35rem;
+	/* F-20: the three-count summary that replaced the cut line — the loudest
+	   thing on the sheet, so the number reads and the label recedes. */
+	.partition {
+		display: flex;
+		gap: 1rem;
+		padding: 0.25rem 0 0.4rem;
+	}
+	.seg {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.3rem;
+	}
+	.seg .n {
+		font-size: 0.9rem;
+		font-weight: 600;
+		line-height: 1;
+	}
+	.seg .l {
 		font-size: 0.7rem;
 		color: var(--color-muted);
-		text-align: center;
+	}
+	.over-cap-caption {
+		margin: 0 0 0.35rem;
+		font-size: 0.7rem;
+		color: var(--color-warning);
 	}
 	/* Held back by the budget, not by a choice: dimmed and non-interactive —
 	   until the user opts one in, when `.tail.opted` lifts the dim. Never
@@ -987,17 +1128,42 @@
 	.candidate.tail:not(.opted):hover {
 		background: transparent;
 	}
-	.tag.next-listen {
-		grid-column: 3;
-		grid-row: 1;
-		align-self: center;
-		justify-self: start;
-		font-style: italic;
-		border: 1px dashed var(--color-border);
-	}
-	/* The status tag sits above the control in the grade column; the control
-	   drops to the second grid row so they never overlap. */
+	/* The tail's over-cap opt-in control sits in the grade column's own grid
+	   row so it never collides with the fixed grade control. */
 	.candidate.tail .grade {
 		grid-row: 2;
+	}
+
+	/* Below the width where `1fr 3rem 11rem` stops leaving the word a readable
+	   column, the grade control drops to its own full-width line instead of the
+	   tracks squeezing until the modal outgrows the screen. 18rem, not 288px:
+	   the two fixed tracks are in `rem`, so an Android font-size setting scales
+	   the layout's hard minimum and the trigger has to scale with it (at 320px
+	   this restacks at a 17px root; the three-column form survives to 360px at
+	   the default 16). Header and rows are re-tracked together — they are
+	   separate grid containers and the pixel-alignment invariant documented
+	   above depends on their track lists staying identical.
+
+	   LAST in the sheet on purpose: a container query adds no specificity, so
+	   `.grade { grid-column: 3 }` above would otherwise win on source order. */
+	@container (max-width: 18rem) {
+		.list-head,
+		.candidate {
+			/* Same 3.5rem as the three-column arm above — the pill is the same
+			   width whichever arm applies. */
+			grid-template-columns: minmax(0, 1fr) 3.5rem;
+		}
+		/* Nothing occupies a third column any more, so the header must stop
+		   advertising one. */
+		.list-head span:last-child {
+			display: none;
+		}
+		.grade {
+			grid-column: 1 / -1;
+			grid-row: 3;
+		}
+		.candidate.tail .grade {
+			grid-row: 3;
+		}
 	}
 </style>
