@@ -9,6 +9,7 @@ from a re-implementation of the formula — that is what these tests pin.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -20,7 +21,7 @@ from app.audio.slicing import SlicedWord
 _SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(_SCRIPTS))
 
-from slice_report import build_rows  # noqa: E402
+from slice_report import _print_table, build_rows, main  # noqa: E402
 
 _RATE = 16000
 _VOWELS = frozenset("aeiouyæøå")
@@ -89,3 +90,97 @@ class TestBuildRows:
         """The 100 ms headroom cap is applied — proof the row is not re-deriving it."""
         rows = build_rows(_word(["ha", "gen"], headroom_ms=150.0), _VOWELS, tail_pad=_ms(80.0))
         assert rows[0].tail_ms == 140.0
+
+
+# (word, cut, expected geminate, expected predicted_band) — 25 rows.
+_ORACLE = [
+    ("aldri", "al|dri", False, "bad"),
+    ("bilde", "bil|de", False, "bad"),
+    ("endte", "end|te", False, "bad"),
+    ("fordi", "for|di", False, "bad"),
+    ("forklare", "for|kla", False, "bad"),
+    ("fulgte", "fulg|te", False, "bad"),
+    ("hagen", "ha|gen", False, "bad"),
+    ("huset", "hu|set", False, "bad"),
+    ("hvorfor", "hvor|for", False, "bad"),
+    ("ingen", "in|gen", False, "bad"),
+    ("nederst", "ne|derst", False, "bad"),
+    ("oppklart", "opp|klart", False, "bad"),
+    ("plaget", "pla|get", False, "bad"),
+    ("snømann", "snø|mann", False, "bad"),
+    ("sporet", "spo|ret", False, "bad"),
+    ("dekket", "dek|ket", True, "mild"),
+    ("hadde", "had|de", True, "mild"),
+    ("ikke", "ik|ke", True, "mild"),
+    ("kunne", "kun|ne", True, "mild"),
+    ("mappen", "map|pen", True, "mild"),
+    ("skuffen", "skuf|fen", True, "mild"),
+    ("snudde", "snud|de", True, "mild"),
+    ("noe", "no|e", False, "worst"),
+    ("noen", "no|en", False, "worst"),
+    ("snøen", "snø|en", False, "worst"),
+]
+
+
+class TestPredictedBand:
+    def test_ear_verdict_oracle(self):
+        """These are the user's recorded ear verdicts, 25 chunks judged by ear
+        across two lessons with predictions recorded before each batch.
+
+        Every row is a live value from the user's alignment cache; a failure here
+        means the classifier broke — not that a fixture drifted. The synthetic
+        syllables are cut on the ``|`` so ``build_rows`` derives the same
+        ``next_onset`` the real record yields.
+        """
+        for word, cut, geminate, band in _ORACLE:
+            syl1, syl2 = cut.split("|")
+            row = build_rows(_word([syl1, syl2], headroom_ms=60.0), _VOWELS, tail_pad=_ms(80.0))[0]
+            assert row.geminate is geminate, (word, row.geminate)
+            assert row.predicted_band == band, (word, row.predicted_band)
+
+    def test_geminate_check_is_case_insensitive(self):
+        """``Ik|ke`` is mild; an uppercase final character matches too."""
+        assert (
+            build_rows(_word(["Ik", "ke"], headroom_ms=60.0), _VOWELS, tail_pad=_ms(80.0))[0].predicted_band == "mild"
+        )
+        assert (
+            build_rows(_word(["iK", "ke"], headroom_ms=60.0), _VOWELS, tail_pad=_ms(80.0))[0].predicted_band == "mild"
+        )
+
+    def test_one_character_chunk_whose_sole_character_is_the_geminate(self):
+        """``d|de``: the whole chunk is the geminate — still mild."""
+        row = build_rows(_word(["d", "de"], headroom_ms=60.0), _VOWELS, tail_pad=_ms(80.0))[0]
+        assert row.geminate is True
+        assert row.predicted_band == "mild"
+
+    def test_worst_wins_when_onset_is_empty(self):
+        """A vowel-initial next syllable is worst regardless of geminate."""
+        row = build_rows(_word(["no", "e"], headroom_ms=0.0), _VOWELS, tail_pad=_ms(80.0))[0]
+        assert row.next_onset == ""
+        assert row.predicted_band == "worst"
+
+    def test_json_output_contains_both_new_keys(self, tmp_path, capsys):
+        """The --json path serialises the dataclass via asdict — verify, don't assume."""
+        (tmp_path / "one.json").write_text(
+            json.dumps(
+                {
+                    "syllables": ["ik", "ke"],
+                    "n_samples": 24000,
+                    "bounds": [0, 9600, 24000],
+                    "onset_ends": [11040],
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert main(["--cache-dir", str(tmp_path), "--language", "no", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data[0]["geminate"] is True
+        assert data[0]["predicted_band"] == "mild"
+
+    def test_print_table_has_gem_and_band_headers(self, capsys):
+        """The table names both new columns."""
+        rows = build_rows(_word(["had", "de"], headroom_ms=60.0), _VOWELS, tail_pad=_ms(80.0))
+        _print_table(rows)
+        out = capsys.readouterr().out
+        assert "gem" in out
+        assert "band" in out

@@ -43,6 +43,8 @@ class ChunkRow:
     overshoot_ms: float  # tail_ms - to_vowel_ms
     at_floor: bool  # the tail came out equal to tail_pad
     degenerate: bool  # onset_ends[i] == bounds[i + 1] — no measurement was taken
+    geminate: bool  # the chunk's final char equals next_onset[0], case-insensitively
+    predicted_band: str  # "worst" | "mild" | "bad" — see build_rows
 
 
 def build_rows(sw: SlicedWord, vowels: frozenset[str], tail_pad: int) -> list[ChunkRow]:
@@ -57,24 +59,38 @@ def build_rows(sw: SlicedWord, vowels: frozenset[str], tail_pad: int) -> list[Ch
     for j in range(1, len(sw.syllables)):
         i = j - 1
         onset_end = sw.onset_ends[i] if i < len(sw.onset_ends) else sw.bounds[j]
+        syllable = sw.syllables[i]
         next_syllable = sw.syllables[j]
         n_onset = 0
         while n_onset < len(next_syllable) and next_syllable[n_onset] not in vowels:
             n_onset += 1
+        next_onset = next_syllable[:n_onset]
         tail = tail_length(sw, j, tail_pad)
         to_vowel = onset_end - sw.bounds[j]
+        geminate = bool(next_onset) and syllable[-1:].lower() == next_onset[0].lower()
+        # Band reproduces the user's 25 ear verdicts, in this order: the chunk
+        # acquires a whole vowel (worst), a consonant it already spells (mild),
+        # or a consonant its label does not contain (bad).
+        if not next_onset:
+            band = "worst"
+        elif geminate:
+            band = "mild"
+        else:
+            band = "bad"
         rows.append(
             ChunkRow(
                 word=sw.word,
                 index=i,
-                syllable=sw.syllables[i],
+                syllable=syllable,
                 next_syllable=next_syllable,
-                next_onset=next_syllable[:n_onset],
+                next_onset=next_onset,
                 tail_ms=round(tail / sw.rate * 1000.0, 1),
                 to_vowel_ms=round(to_vowel / sw.rate * 1000.0, 1),
                 overshoot_ms=round((tail - to_vowel) / sw.rate * 1000.0, 1),
                 at_floor=tail == tail_pad,
                 degenerate=onset_end == sw.bounds[j],
+                geminate=geminate,
+                predicted_band=band,
             )
         )
     return rows
@@ -109,7 +125,8 @@ def _print_table(rows: list[ChunkRow]) -> None:
     word_w = max((len(r.word) for r in rows), default=0)
     header = (
         f"{'word':<{word_w}} {'idx':>3} {'syllable':<12} {'next':<12} "
-        f"{'tail_ms':>8} {'to_vowel_ms':>11} {'overshoot_ms':>12} {'floor':>5} {'deg':>4}"
+        f"{'tail_ms':>8} {'to_vowel_ms':>11} {'overshoot_ms':>12} {'floor':>5} {'deg':>4} "
+        f"{'gem':>3} {'band':>5}"
     )
     print(header)
     print("-" * len(header))
@@ -117,7 +134,8 @@ def _print_table(rows: list[ChunkRow]) -> None:
         print(
             f"{r.word:<{word_w}} {r.index:>3} {r.syllable:<12} {r.next_syllable:<12} "
             f"{r.tail_ms:>8.1f} {r.to_vowel_ms:>11.1f} {r.overshoot_ms:>12.1f} "
-            f"{'yes' if r.at_floor else '':>5} {'yes' if r.degenerate else '':>4}"
+            f"{'yes' if r.at_floor else '':>5} {'yes' if r.degenerate else '':>4} "
+            f"{'yes' if r.geminate else '':>3} {r.predicted_band:>5}"
         )
 
 
@@ -156,6 +174,8 @@ def main(argv: list[str] | None = None) -> int:
         f"{n} rows; {sum(r.overshoot_ms > 0 for r in rows)} overshooting; "
         f"{sum(r.at_floor for r in rows)} at floor; {sum(r.degenerate for r in rows)} degenerate"
     )
+    counts = {band: sum(r.predicted_band == band for r in rows) for band in ("worst", "mild", "bad")}
+    print(f"worst: {counts['worst']} · mild: {counts['mild']} · bad: {counts['bad']}")
     return 0
 
 
