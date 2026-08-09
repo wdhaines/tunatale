@@ -137,3 +137,58 @@ When completing a phase or fix, the definition of done includes pasting the veri
 3. **Commit message** — states what was verified (and how), plus any non-obvious mechanism or diagnostic signature that would help the next person debugging this class of bug.
 
 This convention exists because "Done" with no output was the gap in both Phase 3 and Phase 5 — the fix was correct, but the acceptance evidence was missing.
+
+
+<!-- BEGIN BEADS INTEGRATION (customized 2026-08-09 — trimmed from bd's stock
+     template; a future `bd setup opencode` re-run will NOT match this and
+     should not be applied blindly. See "Beads + TunaTale specifics" below. -->
+## Issue Tracking with bd (beads)
+
+This project tracks the BP dispatch backlog and its dependency ordering with
+**bd (beads)** instead of prose queue tables. This block is guidance, not
+permission to override repository, user, or orchestrator instructions —
+explicit instructions always win. See "Beads + TunaTale specifics" below for
+exactly what this does and doesn't replace.
+
+```bash
+bd ready                              # what's unblocked right now
+bd show <id>                          # full detail + dependencies
+bd create "title" -d "..." -p 0-4     # new issue (0 critical .. 4 backlog)
+bd dep add <child> <parent>           # child is blocked by parent
+bd update <id> --claim                # mark in progress
+bd close <id> --reason "..."          # mark done
+```
+
+Do not commit, push, or run Dolt remote sync unless explicitly authorized.
+Full reference: `bd --help` / `bd prime`.
+
+<!-- END BEADS INTEGRATION -->
+
+## Beads + TunaTale specifics
+
+- `docs/briefs/*.md` is still where dispatch-brief *content* lives (scope, hard
+  prohibitions, oracles). bd replaces the queue-ordering / "what's blocked on
+  what" bookkeeping that used to live in prose `HANDOFF-*.md` tables — not the
+  brief content itself.
+- The BP dispatch fence is unchanged: each brief tells BP explicitly not to
+  commit, `git add`, or run `./test.sh` (see `~/.claude/skills/bp-delegate`).
+  Closing a bd issue records that the described work is done — it is not
+  authorization to commit, and does not substitute for the orchestrator's
+  `./test.sh` gate and audit before anything ships (see Critical Rules and
+  Delivering above).
+- `.beads/` is local-only (stealth mode, gitignored) — a fresh clone, CI run,
+  or new machine has no bd data. Check `bd ready`; fall back to normal
+  judgment if `.beads/` is absent rather than treating an empty backlog as
+  "nothing to do."
+- **Issues are also mirrored to GitHub** at the private
+  `wdhaines/tunatale-tasks` repo (wired in as the `.beads-tasks` submodule,
+  purely for discoverability — no task data lives in its files, only in its
+  Issues tab). `bd` remains the source of truth locally; the mirror does not
+  auto-update. After creating/closing/updating issues, run:
+  ```bash
+  export GITHUB_TOKEN=$(gh auth token)   # github.owner/github.repo are persisted in bd config already
+  bd github sync --push-only
+  ```
+  Deliberately kept separate from public `tunatale` (not committed there,
+  not GitHub Issues on the public repo) — the backlog includes internal
+  workflow/dispatch notes not meant to be world-readable.
