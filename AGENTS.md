@@ -159,7 +159,14 @@ bd update <id> --claim                       # mark in progress
 bd close <id> --reason "..."                 # mark done
 ```
 
-Do not commit, push, or run Dolt remote sync unless explicitly authorized.
+**Beads sync is standing-authorized — just run it, do not ask** (2026-08-10).
+After any `bd create` / `close` / `dep add` batch, run `./.beads-tasks/sync.sh`
+as a matter of course. It only ever touches the private tasks repo, and the
+alternative is a backlog that lives on one disk. An earlier version of this line
+lumped sync in with code commits, so every session stopped to ask permission for
+what is really just the tail of a bd edit.
+
+Committing and pushing **this** repo's code still needs authorization.
 Full reference: `bd --help` / `bd prime`.
 
 **Two confirmed bd bugs, hands-on-verified, both filed upstream — do not
