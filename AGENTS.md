@@ -194,10 +194,9 @@ rediscover these blind:**
   judgment if `.beads/` is absent rather than treating an empty backlog as
   "nothing to do."
 - **Issues are also mirrored to GitHub** at the private
-  `wdhaines/tunatale-tasks` repo (wired in as the `.beads-tasks` submodule,
-  purely for discoverability — no task data lives in its files, only in its
-  Issues tab). `bd` remains the source of truth locally; the mirror does not
-  auto-update. After creating/closing/updating issues, run:
+  `wdhaines/tunatale-tasks` repo (wired in as the `.beads-tasks` submodule).
+  `bd` remains the source of truth locally; the mirror does not auto-update.
+  After creating/closing/updating issues, run:
   ```bash
   export GITHUB_TOKEN=$(gh auth token)   # github.owner/github.repo are persisted in bd config already
   bd github sync --push-only
@@ -215,3 +214,21 @@ rediscover these blind:**
   the stragglers directly: `gh issue close <n> --repo
   wdhaines/tunatale-tasks`. (gastownhall/beads#5486 — check its status
   before assuming this is still broken.)
+- **The submodule also holds real content now**, not just a GitHub Issues
+  pointer: three active `docs/briefs/*.md` docs (genre-prefixed
+  `brief-`/`findings-`/`testplan-`, moved there 2026-08-10 because
+  `docs/briefs/` is entirely gitignored — zero version history, single
+  local copy, no recovery path) and `bd-export.jsonl`, a periodic
+  `bd export` snapshot. The GitHub Issues sync above only carries
+  title/description/status/labels — it does **not** carry dependency
+  edges, which is the actual value bd adds over a flat issue list. The
+  JSONL export does. Re-run after any `bd create`/`close`/`dep add` batch:
+  ```bash
+  bd export -o .beads-tasks/bd-export.jsonl
+  cd .beads-tasks && git add bd-export.jsonl && git commit -m "..." && git push
+  ```
+  Deliberately not a full Dolt-native backup (`bd backup`/DoltHub) — that
+  needs either a public DoltHub repo (free tier has no private option) or
+  a new paid service, and would be a 4th location instead of consolidating
+  into the one already wired up. This trades full commit-by-commit Dolt
+  history for something readable, git-diffable, and private.
