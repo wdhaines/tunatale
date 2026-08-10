@@ -179,9 +179,12 @@ rediscover these blind:**
 
 ## Beads + TunaTale specifics
 
-**`docs/briefs/` no longer exists** (retired 2026-08-10). It was entirely
+**`docs/briefs/` is retired from the workflow** (2026-08-10). It was entirely
 gitignored: no history, one copy, no recovery path. Dispatch material now lives
-in the `.beads-tasks` submodule, and the queue ordering lives in bd.
+in the `.beads-tasks` submodule, and the queue ordering lives in bd. A gitignored
+local safety copy remains, rebuilt from bd + the submodule and kept until the new
+setup proves out — see `docs/briefs/README.md`. It holds no unique content; do
+not author anything new there.
 
 - **After any `bd create` / `close` / `dep add` batch, run
   `./.beads-tasks/sync.sh`.** That is the whole ritual — it exports, commits,
