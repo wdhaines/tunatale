@@ -187,10 +187,24 @@ setup proves out — see `docs/briefs/README.md`. It holds no unique content; do
 not author anything new there.
 
 - **After any `bd create` / `close` / `dep add` batch, run
-  `./.beads-tasks/sync.sh`.** That is the whole ritual — it exports, commits,
-  pushes, and refreshes the GitHub view. `.beads/` is stealth-mode and its Dolt
-  backups are on the same disk, so `bd-export.jsonl` is the only off-machine copy
-  of the backlog.
+  `./.beads-tasks/sync.sh`.** That is the whole ritual — it pushes the Dolt store,
+  exports, commits, pushes, and refreshes the GitHub view. `.beads/` is
+  stealth-mode and its Dolt backups are on the same disk, so nothing leaves this
+  machine until that script runs.
+- **The backlog syncs git-natively as of 2026-08-10** (`tunatale-pjb`). The store
+  travels as the hidden ref `refs/dolt/data` on the **private** tunatale-tasks
+  repo — full Dolt history, not a snapshot. `bd-export.jsonl` is now a *secondary*
+  human-diffable copy, kept as a fallback; `bd export --help` states outright it
+  "is not a full database backup". Restore from the Dolt ref, not the JSONL.
+  - **The Dolt remote is deliberately NOT this repo's origin.** `.beads/` sits at
+    the parent root whose origin is the PUBLIC repo; bd's Dolt remote is an
+    independent URL, pointed at the private one. **A hidden ref is unlisted, not
+    private** — anything on a public remote is world-fetchable. `sync.sh` refuses
+    to push if the remote ever stops containing `tunatale-tasks`; do not "fix"
+    that guard by relaxing it.
+  - Ordinary use needs no new commands: `bd dolt push` / `bd dolt pull` are
+    wrapped by `sync.sh`. Stealth mode (`no-git-ops: true`) stays on and does not
+    block explicit pushes.
 - **Method vs work.** `.beads-tasks/DISPATCH-PREAMBLE.md` holds everything
   binding on *every* delegated run (fence, prohibitions, escalation, report
   contract). A bd issue holds only what is true of *that* task — scope,
@@ -213,12 +227,21 @@ not author anything new there.
 - **Closing a bd issue is not authorization to commit.** It records that the
   described work is done. The orchestrator's `./test.sh` gate and audit still
   stand between that and anything shipping (see Critical Rules and Delivering).
-- **`.beads/` is local-only** — a fresh clone, CI run, or new machine has no bd
-  data. If `.beads/` is absent, fall back to normal judgment rather than reading
-  an empty backlog as "nothing to do."
+- **A fresh clone has no bd data — run `./beads-bootstrap.sh` to get it.** One
+  command; verified end-to-end on 2026-08-10 (16 open, both dependency edges).
+  This is needed because a default `git clone` fetches only `refs/heads/*` and
+  `refs/tags/*`, so the hidden data ref never comes along, and bd's own
+  auto-detection looks at *this* repo's origin — the wrong repo, on purpose.
+  The script supplies the missing pointer and calls `bd bootstrap`.
+  - It needs read access to the private tasks repo. Without it the clone step
+    fails, which is expected, not a bug.
+  - **An empty backlog after bootstrap is a red flag, not "nothing to do."** The
+    script exits non-zero on 0 open issues for exactly that reason. If `.beads/`
+    is simply absent and you cannot bootstrap, fall back to normal judgment.
 - **The GitHub Issues tab is a read-only view**, not a second source of truth. It
   carries title/description/status/labels and **no dependency edges** — the edges
-  are the reason this project uses bd at all, and only `bd-export.jsonl` has them.
+  are the reason this project uses bd at all, and only the Dolt ref and
+  `bd-export.jsonl` have them.
   The view is allowed to lag; a known bd bug (gastownhall/beads#5486) means a
   local `closed` does not always reach an already-pushed issue. `sync.sh` reports
   the count difference and moves on. If a stale row bothers you:
