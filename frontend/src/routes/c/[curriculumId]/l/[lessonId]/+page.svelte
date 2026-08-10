@@ -18,6 +18,7 @@
 	import ListenPreviewModal from './ListenPreviewModal.svelte';
 	import { lessonMastery, masteryColor } from '$lib/mastery';
 	import Tooltip from '$lib/components/Tooltip.svelte';
+	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
 	import type { WordRating } from '$lib/api';
 	import type { PageData } from './$types';
 
@@ -176,7 +177,7 @@
 	}
 
 	async function handleRegenerate() {
-		const confirmed = window.confirm(
+		const confirmed = await confirmDialog(
 			`Regenerate Day ${dayPosition}? This creates a new version of the dialogue using the ` +
 				`current generation prompt. Your existing cards are kept; new vocabulary and ` +
 				`morphology drills are added on the next listen + sync.`
@@ -519,7 +520,10 @@
 			// so confirm before discarding the schedule. Other states are label-only.
 			if (
 				state === 'new' &&
-				!confirm('Reset this word? It will be forgotten in Anki too and re-learned from scratch.')
+				!(await confirmDialog(
+					'Reset this word? It will be forgotten in Anki too and re-learned from scratch.',
+					{ destructive: true }
+				))
 			) {
 				return;
 			}

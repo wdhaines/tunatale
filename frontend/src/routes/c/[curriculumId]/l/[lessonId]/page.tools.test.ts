@@ -7,7 +7,7 @@
  * the shared $lib/api / pipeline mock factories and fixtures.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, fireEvent, waitFor } from "@testing-library/svelte";
+import { render, fireEvent, waitFor, screen } from "@testing-library/svelte";
 
 const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
@@ -419,12 +419,6 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
   });
 
   describe("regenerate button", () => {
-    let confirmSpy: ReturnType<typeof vi.spyOn>;
-
-    afterEach(() => {
-      confirmSpy?.mockRestore();
-    });
-
     /** Build a one-day pipeline status for day 1 with the given overrides. */
     function dayStatus(overrides: Record<string, unknown>) {
       return {
@@ -452,7 +446,6 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     });
 
     it("routes regeneration through the pipeline and navigates once the new lesson is ready", async () => {
-      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       mockRegenerateDay.mockResolvedValue({ status: "queued" });
       (pipelineStore as any).status = dayStatus({
         state: "ready",
@@ -464,6 +457,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       await fireEvent.click(getByText("Regenerate Day 1"));
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
       await waitFor(() => {
         expect(mockRegenerateDay).toHaveBeenCalledWith("cid-1", 1, "WIDER");
@@ -472,19 +466,17 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     });
 
     it("does nothing when the confirmation is cancelled", async () => {
-      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-
       const { getByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       await fireEvent.click(getByText("Regenerate Day 1"));
+      await fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
 
       expect(mockRegenerateDay).not.toHaveBeenCalled();
       expect(mockGoto).not.toHaveBeenCalled();
     });
 
     it("does not navigate while the day is still generating", async () => {
-      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       mockRegenerateDay.mockResolvedValue({ status: "queued" });
       (pipelineStore as any).status = dayStatus({ state: "generating", lesson_id: null });
 
@@ -492,13 +484,13 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       await fireEvent.click(getByText("Regenerate Day 1"));
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
       await waitFor(() => expect(mockRegenerateDay).toHaveBeenCalled());
       expect(mockGoto).not.toHaveBeenCalled();
     });
 
     it("does not navigate when the ready lesson id equals the current lesson", async () => {
-      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       mockRegenerateDay.mockResolvedValue({ status: "queued" });
       (pipelineStore as any).status = dayStatus({
         state: "ready",
@@ -510,13 +502,13 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       await fireEvent.click(getByText("Regenerate Day 1"));
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
       await waitFor(() => expect(mockRegenerateDay).toHaveBeenCalled());
       expect(mockGoto).not.toHaveBeenCalled();
     });
 
     it("does not navigate when the ready record has no lesson id", async () => {
-      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       mockRegenerateDay.mockResolvedValue({ status: "queued" });
       (pipelineStore as any).status = dayStatus({
         state: "ready",
@@ -528,13 +520,13 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       await fireEvent.click(getByText("Regenerate Day 1"));
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
       await waitFor(() => expect(mockRegenerateDay).toHaveBeenCalled());
       expect(mockGoto).not.toHaveBeenCalled();
     });
 
     it("does not navigate when there is no pipeline record for the day", async () => {
-      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       mockRegenerateDay.mockResolvedValue({ status: "queued" });
       (pipelineStore as any).status = { active: true, days: [] };
 
@@ -542,19 +534,20 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       await fireEvent.click(getByText("Regenerate Day 1"));
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
       await waitFor(() => expect(mockRegenerateDay).toHaveBeenCalled());
       expect(mockGoto).not.toHaveBeenCalled();
     });
 
     it("shows an error and re-enables the button when the regenerate request fails", async () => {
-      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       mockRegenerateDay.mockRejectedValue(new Error("regenerate failed"));
 
       const { getByText, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       await fireEvent.click(getByText("Regenerate Day 1"));
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
       expect(await findByText("regenerate failed")).toBeTruthy();
       expect(mockGoto).not.toHaveBeenCalled();
@@ -563,19 +556,18 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     });
 
     it("shows a stringified error when the regenerate request throws a non-Error", async () => {
-      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       mockRegenerateDay.mockRejectedValue("plain regen error");
 
       const { getByText, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       await fireEvent.click(getByText("Regenerate Day 1"));
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
       expect(await findByText("plain regen error")).toBeTruthy();
     });
 
     it("clears the regenerating flag when the day fails", async () => {
-      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       mockRegenerateDay.mockResolvedValue({ status: "queued" });
       (pipelineStore as any).status = dayStatus({
         active: false,
@@ -588,6 +580,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       await fireEvent.click(getByText("Regenerate Day 1"));
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
       // Follow-effect resets the flag on failure → button re-enabled, no nav.
       await waitFor(() => expect(mockRegenerateDay).toHaveBeenCalled());
@@ -597,12 +590,6 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
   });
 
   describe("regenerate status line", () => {
-    let confirmSpy: ReturnType<typeof vi.spyOn>;
-
-    afterEach(() => {
-      confirmSpy?.mockRestore();
-    });
-
     function dayStatus(overrides: Record<string, unknown>) {
       return {
         active: true,
@@ -622,7 +609,6 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     }
 
     it("shows a colored state pill and the rate-limit detail while regenerating", async () => {
-      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       mockRegenerateDay.mockResolvedValue({ status: "queued" });
       (pipelineStore as any).status = dayStatus({
         state: "rendering",
@@ -633,6 +619,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       await fireEvent.click(getByText("Regenerate Day 1"));
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
       const status = await findByTestId("regen-status");
       // State renders as a styled pill (not bare text), message alongside it.
@@ -645,7 +632,6 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     });
 
     it("shows the state pill with no detail line when there is no detail while regenerating", async () => {
-      confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       mockRegenerateDay.mockResolvedValue({ status: "queued" });
       (pipelineStore as any).status = dayStatus({ state: "generating", detail: null });
 
@@ -653,6 +639,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript } },
       });
       await fireEvent.click(getByText("Regenerate Day 1"));
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
       const status = await findByTestId("regen-status");
       expect(status.querySelector(".pipeline-state")?.textContent).toBe("generating");

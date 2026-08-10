@@ -7,7 +7,7 @@
  * the shared $lib/api / pipeline mock factories and fixtures.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent, waitFor } from "@testing-library/svelte";
+import { render, fireEvent, waitFor, screen } from "@testing-library/svelte";
 
 const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
@@ -1616,34 +1616,30 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     it("Reset button asks for confirmation, then forgets in Anki when confirmed", async () => {
       const t = makeInflectableTranscript();
       mockSetSRSItemState.mockResolvedValue({} as never);
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       const { findByRole } = renderInflectable(t);
 
       await fireEvent.click(await findByRole("button", { name: "Reset" }));
+      expect(await screen.findByText(/forgotten in Anki too/)).toBeTruthy();
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
       await waitFor(() => {
         expect(mockSetSRSItemState).toHaveBeenCalledWith(7, "new");
       });
-      expect(confirmSpy).toHaveBeenCalledTimes(1);
-      expect(confirmSpy.mock.calls[0][0]).toMatch(/Anki/);
-      confirmSpy.mockRestore();
     });
 
     it("Reset button does nothing when confirmation is cancelled", async () => {
       const t = makeInflectableTranscript();
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
       const { findByRole } = renderInflectable(t);
 
       await fireEvent.click(await findByRole("button", { name: "Reset" }));
+      await fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
 
       expect(mockSetSRSItemState).not.toHaveBeenCalled();
-      confirmSpy.mockRestore();
     });
 
     it("Known button does not prompt for confirmation", async () => {
       const t = makeInflectableTranscript();
       mockSetSRSItemState.mockResolvedValue({} as never);
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       const { findByRole } = renderInflectable(t);
 
       await fireEvent.click(await findByRole("button", { name: "Known" }));
@@ -1651,8 +1647,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await waitFor(() => {
         expect(mockSetSRSItemState).toHaveBeenCalledWith(7, "known");
       });
-      expect(confirmSpy).not.toHaveBeenCalled();
-      confirmSpy.mockRestore();
+      // A non-'new' state must take the no-prompt path: the dialog never mounts.
+      expect(screen.queryByRole("button", { name: "Confirm" })).toBeNull();
     });
 
     it("Un-ignore button (suspended word) calls suspendSRSItem with id and false", async () => {
