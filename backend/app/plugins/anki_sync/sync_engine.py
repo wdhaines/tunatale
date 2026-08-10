@@ -1173,6 +1173,9 @@ class AnkiSync:
                     # The cloze front (Anki "Text" field) is the clozed sentence.
                     fields["Text"] = item.syntactic_unit.source_sentence or ""
             else:
+                if "text" in dirty_set:
+                    l2_field = self._writer.get_l2_field_for_note(anki_note_id)
+                    fields[l2_field] = item.syntactic_unit.text
                 if "translation" in dirty_set:
                     fields["English"] = item.syntactic_unit.translation
                 if "source_sentence" in dirty_set:
@@ -1190,12 +1193,13 @@ class AnkiSync:
                     if img and not dry_run:
                         _copy_tt_media_to_anki(self._writer, img)
             if not fields:
-                # A cloze note has no Image field, so a stray "image" flag would
-                # never produce a field here and would pin dirty_fields across
-                # every future sync (the create/push cycle never clears it).
-                # Drop just that flag so the row goes clean.
-                if "image" in dirty_set and not dry_run:
-                    self._db.set_dirty_fields(guid, ",".join(sorted(dirty_set - {"image"})))
+                # A cloze note has no Image field and no bare L2 field, so stray
+                # "image"/"text" flags would never produce a field here and would
+                # pin dirty_fields across every future sync (the create/push cycle
+                # never clears them). Drop just those flags so the row goes clean.
+                stray = dirty_set & {"image", "text"}
+                if stray and not dry_run:
+                    self._db.set_dirty_fields(guid, ",".join(sorted(dirty_set - stray)))
                 continue
             if not dry_run:
                 self._writer.update_note_fields(anki_note_id, fields)

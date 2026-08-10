@@ -135,6 +135,103 @@ class TestCreateBaseCard:
         coll = api_app_state.get_collocation_by_guid(compute_guid("pokazati", "sl", ""))
         assert coll.syntactic_unit.translation == "I will show"
 
+    async def test_norwegian_verb_base_card_prepends_infinitive_marker(self, api_app_state, monkeypatch):
+        """A Norwegian VERB base card fronts as "å " + lemma (deck convention)."""
+        import app.api.srs as srs_mod
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_analysis("lyver", "lyve", upos="VERB")
+        monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "lyver",
+                    "lemma": "lyve",
+                    "sentence": "Jeg lyver",
+                    "language_code": "no",
+                    "translation": "I lie",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["item"]["text"] == "å lyve"
+        coll = api_app_state.get_collocation_by_guid(compute_guid("å lyve", "no", ""))
+        assert coll is not None
+        assert coll.syntactic_unit.text == "å lyve"
+        assert coll.syntactic_unit.card_type == "vocab"
+
+    async def test_norwegian_verb_base_card_media_fetch_uses_bare_lemma(self, api_app_state, monkeypatch):
+        """The Forvo/Pixabay fetch stays keyed on the bare lemma, not "å " + lemma."""
+        import app.api.srs as srs_mod
+        from app.cards.media import vocab_media
+        from app.cards.media.pipeline import MediaResult
+        from app.config import settings
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_analysis("lyver", "lyve", upos="VERB")
+        monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
+        monkeypatch.setattr(settings, "pixabay_api_key", "test-key")
+        fetched: list[str] = []
+
+        async def _query(_word, _english, **_kw):
+            return "a clear depiction"
+
+        async def _fetch(word, _english, **_kw):
+            fetched.append(word)
+            return MediaResult(audio_bytes=b"A", audio_source="forvo", image_bytes=b"I", image_ext="jpg")
+
+        monkeypatch.setattr(vocab_media, "generate_image_query", _query)
+        monkeypatch.setattr(vocab_media, "fetch_card_media", _fetch)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "lyver",
+                    "lemma": "lyve",
+                    "sentence": "Jeg lyver",
+                    "language_code": "no",
+                    "translation": "I lie",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["item"]["text"] == "å lyve"
+        assert fetched == ["lyve"]
+        coll = api_app_state.get_collocation_by_guid(compute_guid("å lyve", "no", ""))
+        assert coll.syntactic_unit.text == "å lyve"
+
+    async def test_norwegian_non_verb_base_card_stays_unprefixed(self, api_app_state, monkeypatch):
+        """A Norwegian NOUN base card keeps its bare lemma front."""
+        import app.api.srs as srs_mod
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_analysis("Huset", "hus", upos="NOUN")
+        monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "huset",
+                    "lemma": "hus",
+                    "sentence": "Huset er stort",
+                    "language_code": "no",
+                    "translation": "the house",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["item"]["text"] == "hus"
+        coll = api_app_state.get_collocation_by_guid(compute_guid("hus", "no", ""))
+        assert coll is not None
+        assert coll.syntactic_unit.text == "hus"
+
     async def test_base_card_response_keys_match_model(self, api_app_state):
         """Oracle for the response_model flip (openapi ledger batch 7)."""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

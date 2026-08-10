@@ -6,6 +6,7 @@
 	import QueueStatsWidget from '$lib/components/QueueStatsWidget.svelte';
 	import type { ReviewQueueItem } from '$lib/api';
 	import DrillCard from '$lib/components/DrillCard.svelte';
+	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 	import { syncStore } from '$lib/stores/sync.svelte';
 
@@ -140,7 +141,7 @@
 	}
 
 	async function syncPending() {
-		if (!confirm(`Commit ${pendingCount} provisional grade${pendingCount === 1 ? '' : 's'}?`)) {
+		if (!(await confirmDialog(`Commit ${pendingCount} provisional grade${pendingCount === 1 ? '' : 's'}?`))) {
 			return;
 		}
 		syncingPending = true;

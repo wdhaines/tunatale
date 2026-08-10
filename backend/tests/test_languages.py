@@ -7,7 +7,9 @@ import pytest
 from app.languages import (
     LanguageContext,
     card_surface_variants,
+    format_vocab_headword,
     get_deck_name,
+    get_infinitive_marker,
     get_language,
     get_morphology_profile,
     get_preprocessor,
@@ -75,6 +77,39 @@ class TestCardSurfaceVariants:
 
     def test_unknown_code_has_no_morphology_profile(self):
         assert get_morphology_profile("zz") is None
+
+
+class TestInfinitiveMarker:
+    """The å infinitive marker on Norwegian verb vocab-card headwords.
+
+    Matches the reference convention of the user's Anki deck (every verb note's
+    ``Article="å"``, rendered "å dekke"); TT-minted cards carry the marker in the
+    L2 field itself since TT's own notetype has no separate article field.
+    """
+
+    def test_norwegian_infinitive_marker_is_aa(self):
+        assert get_infinitive_marker("no") == "å"
+
+    def test_slovene_has_no_infinitive_marker(self):
+        assert get_infinitive_marker("sl") is None
+
+    def test_unknown_code_has_no_infinitive_marker(self):
+        assert get_infinitive_marker("zz") is None
+
+    def test_norwegian_verb_gets_infinitive_marker(self):
+        assert format_vocab_headword("lyve", "VERB", "no") == "å lyve"
+
+    def test_norwegian_non_verb_unchanged(self):
+        assert format_vocab_headword("hus", "NOUN", "no") == "hus"
+
+    def test_norwegian_unknown_upos_unchanged(self):
+        assert format_vocab_headword("hus", None, "no") == "hus"
+
+    def test_slovene_verb_unchanged(self):
+        assert format_vocab_headword("biti", "VERB", "sl") == "biti"
+
+    def test_unknown_code_verb_unchanged(self):
+        assert format_vocab_headword("foo", "VERB", "zz") == "foo"
 
 
 class TestKnownLanguageCodes:

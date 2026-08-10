@@ -130,6 +130,11 @@ class LanguageConfig:
     # ``None`` (the default) means the language has no such convention, so a card
     # front is always a single surface form. See ``card_surface_variants``.
     variant_separator: str | None = None
+    # Infinitive-marker word prepended to a VERB headword when minting a TT vocab
+    # card ("å" + lemma → "å lyve", matching the convention already used across
+    # the user's Anki collection). None (the default) means the language has no
+    # such marker and a verb's headword is just its bare lemma.
+    infinitive_marker: str | None = None
     # Per-language authenticity rules injected into the story system prompt.
     # Loaded from the plugin's ``data/style.md`` at import time; empty string
     # when the language has no style file (``en``).
@@ -424,6 +429,29 @@ def get_variant_separator(code: str) -> str | None:
     discover()
     config = _CONFIGS.get(code)
     return config.variant_separator if config else None
+
+
+def get_infinitive_marker(code: str) -> str | None:
+    """The infinitive-marker word prepended to a VERB headword for *code*, or
+    ``None`` when the language has no such marker.
+
+    Unknown codes → ``None``. Norwegian uses ``"å"``; every other wired
+    language returns ``None``.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    return config.infinitive_marker if config else None
+
+
+def format_vocab_headword(lemma: str, upos: str | None, code: str) -> str:
+    """Format *lemma* as it should appear on a TT-minted vocab card front.
+
+    Prepends the language's infinitive marker (see ``get_infinitive_marker``)
+    when *upos* is ``"VERB"`` and the language has one registered; otherwise
+    returns *lemma* unchanged.
+    """
+    marker = get_infinitive_marker(code) if upos == "VERB" else None
+    return f"{marker} {lemma}" if marker else lemma
 
 
 def get_style_notes(code: str) -> str:

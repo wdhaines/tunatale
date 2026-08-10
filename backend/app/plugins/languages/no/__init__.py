@@ -44,6 +44,7 @@ register(
         multiword_traps_fn=trapped_pairs,
         slow_word_fn=slow_norwegian_word,
         variant_separator=",",
+        infinitive_marker="å",
         syllabifier_fn=syllabify_norwegian_word,
         planner_example=PlannerExample(
             language_code="no",

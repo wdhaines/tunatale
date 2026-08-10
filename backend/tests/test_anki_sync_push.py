@@ -423,6 +423,15 @@ class TestOfflineWriter:
         assert parts[0] == "snakker"  # L2 field (index 0) — would raise under the old Slovene roster
         assert parts[5] == "Jeg snakker norsk."  # Note field (index 5)
 
+    def test_get_l2_field_for_note_unknown_note_raises(self):
+        import pytest
+
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn)
+        writer = OfflineWriter(conn)
+        with pytest.raises(ValueError, match="Note 99999 not found"):
+            writer.get_l2_field_for_note(99999)
+
     def test_suspend_sets_queue_minus_one_and_usn_minus_one(self):
         conn = _make_anki_full_db()
         _seed_note_and_cards(conn)
@@ -807,6 +816,98 @@ class TestSyncPush:
         call = next(c for c in writer.calls if c[0] == "update_note_fields")
         assert call[1] == 8801
         assert call[2]["Note"] == "Koliko časa imaš?"
+        assert db.get_dirty_fields(guid) == ""
+
+    def test_dirty_text_writes_note_l2_field_and_clears(self):
+        """A text-only dirty flag (set via update_collocation_fields) writes the
+        edited headword into the note's own L2/sort field, clears dirty_fields,
+        and stamps usn=-1 + a bumped mod (per .claude/rules/anki-sync.md)."""
+        db = _make_tt_db()
+        guid, note_id, *_ = _add_banka_with_anki_ids(db)
+        coll_id = db.get_collocation_id_by_guid(guid)
+        db.update_collocation_fields(coll_id, text="banka2", translation="bank")
+        new_guid = db.get_collocation_by_id(coll_id)[1].guid
+        assert db.get_dirty_fields(new_guid) == "text"
+
+        anki_conn = _make_anki_full_db()
+        _seed_note_and_cards(anki_conn, note_id=note_id)
+        anki_conn.execute("UPDATE col SET usn = 7")
+        anki_conn.commit()
+        writer = OfflineWriter(anki_conn)
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        row = anki_conn.execute("SELECT flds, usn, mod FROM notes WHERE id = ?", (note_id,)).fetchone()
+        parts = row["flds"].split("\x1f")
+        assert parts[0] == "banka2"  # L2/sort field (ord 0) now holds the edited headword
+        assert parts[1] == "bank"
+        assert row["usn"] == -1
+        assert row["mod"] > 100  # bumped past the seed value
+        col = anki_conn.execute("SELECT usn FROM col").fetchone()
+        assert col["usn"] == 7  # Layer 61: col.usn anchor preserved
+        assert db.get_dirty_fields(new_guid) == ""
+
+    def test_dirty_text_on_cloze_is_discarded_not_pushed(self):
+        """A text-dirty flag on a cloze unit must not try to write a nonexistent
+        L2 field (its front is the clozed sentence, already handled by the
+        source_sentence → Text branch). The not-applicable guard drops the stray
+        flag so dirty_fields clears cleanly and Text/Back Extra stay untouched."""
+        db = _make_tt_db()
+        unit = SyntacticUnit(
+            text="vsak",
+            translation="every",
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma="vsak",
+            card_type="cloze",
+            source_sentence="{{c1::Odprto}} je vsak dan",
+        )
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation_by_lemma("vsak")
+        guid = item.guid
+        note_id = 7777
+        db.set_anki_ids(guid, note_id, {Direction.PRODUCTION: 70001})
+        db.set_dirty_fields(guid, "text")
+
+        anki_conn = _make_anki_full_db()
+        anki_conn.execute(
+            "CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)"
+        )
+        anki_conn.execute(
+            "CREATE TABLE fields (ntid INTEGER, ord INTEGER, name TEXT, config BLOB, PRIMARY KEY (ntid, ord))"
+        )
+        anki_conn.execute("INSERT INTO notetypes VALUES (100, 'Cloze', 0, 0, x'')")
+        anki_conn.execute("INSERT INTO fields VALUES (100, 0, 'Text', x''), (100, 1, 'Back Extra', x'')")
+        anki_conn.commit()
+        _seed_note_and_cards(
+            anki_conn,
+            note_id=note_id,
+            mid=100,
+            flds=("{{c1::Odprto}} je vsak dan", "<i>every</i>"),
+        )
+
+        writer = OfflineWriter(anki_conn)
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        parts = anki_conn.execute("SELECT flds FROM notes WHERE id = ?", (note_id,)).fetchone()["flds"].split("\x1f")
+        assert parts == ["{{c1::Odprto}} je vsak dan", "<i>every</i>"]  # Text / Back Extra untouched
+        assert db.get_dirty_fields(guid) == ""
+
+    def test_dirty_text_plus_translation_writes_both_fields_in_one_call(self):
+        """text+translation dirty in one sync_push produces a single
+        update_note_fields call carrying both the L2 field and the English field."""
+        db = _make_tt_db()
+        guid, *_ = _add_banka_with_anki_ids(db)
+        db.set_dirty_fields(guid, "text,translation")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        calls = [c for c in writer.calls if c[0] == "update_note_fields"]
+        assert len(calls) == 1
+        fields = calls[0][2]
+        assert fields["Slovene"] == "banka"
+        assert fields["English"] == "bank"
         assert db.get_dirty_fields(guid) == ""
 
     def test_dirty_source_sentence_pushes_cloze_text_field(self):
@@ -1323,10 +1424,10 @@ class TestSyncPush:
         assert writer.calls == []
 
     def test_unknown_dirty_field_is_skipped(self):
-        """dirty_fields='text' (unrecognised) produces no note update."""
+        """dirty_fields='direction' (unrecognised) produces no note update."""
         db = _make_tt_db()
         guid, *_ = _add_banka_with_anki_ids(db)
-        db.set_dirty_fields(guid, "text")
+        db.set_dirty_fields(guid, "direction")
 
         writer = FakeWriter()
         report = AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()

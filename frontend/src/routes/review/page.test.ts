@@ -17,9 +17,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, screen } from "@testing-library/svelte";
 import ReviewPage from "./+page.svelte";
 
-// Mock onMount from svelte - must be before component import
-vi.mock("svelte", () => {
+// Mock onMount from svelte - must be before component import. The mock spreads
+// the real module so ConfirmDialog's module script can still import mount/unmount.
+vi.mock("svelte", async () => {
+  const actual = await vi.importActual<typeof import("svelte")>("svelte");
   return {
+    ...actual,
     onMount: vi.fn((fn: () => void) => fn()),
   };
 });
@@ -930,7 +933,6 @@ describe("review/+page.svelte", () => {
     });
 
     it("Sync it button calls commitPending (atomic) and refreshes queue", async () => {
-      vi.stubGlobal("confirm", () => true);
       const itemA = makeReviewQueueItem({
         id: 10,
         text: "kava",
@@ -956,6 +958,10 @@ describe("review/+page.svelte", () => {
 
       await fireEvent.click(syncBtn);
 
+      const dialog = await screen.findByRole("alertdialog");
+      expect(dialog).toBeTruthy();
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
       await vi.waitFor(() => {
         expect(mockCommitPending).toHaveBeenCalledWith("lesson-abc");
       });
@@ -963,11 +969,10 @@ describe("review/+page.svelte", () => {
 
     // F2: "Sync it" is the only irreversible action in the flow (writes FSRS
     // state + revlog + dirty_fsrs for every pending card, no undo) — it must
-    // be gated behind a confirm(), same idiom as cards/+page.svelte's
+    // be gated behind a confirmation dialog, same idiom as cards/+page.svelte's
     // deleteItem/resetItem/bulkDelete.
 
     it("Sync it does nothing when the user cancels the confirm dialog", async () => {
-      vi.stubGlobal("confirm", () => false);
       const item = makeReviewQueueItem({
         id: 12,
         text: "hvala",
@@ -980,14 +985,19 @@ describe("review/+page.svelte", () => {
       const syncBtn = await findByText("Accept all");
       await fireEvent.click(syncBtn);
 
+      const dialog = await screen.findByRole("alertdialog");
+      expect(dialog).toBeTruthy();
+      // Escape is the alertdialog's standard cancel.
+      await fireEvent.keyDown(await screen.findByRole("button", { name: "Cancel" }), {
+        key: "Escape",
+      });
+
       // Give any accidental async work a chance to run before asserting absence.
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(mockCommitPending).not.toHaveBeenCalled();
     });
 
     it("Sync it confirm message names the pending count", async () => {
-      const confirmSpy = vi.fn(() => false);
-      vi.stubGlobal("confirm", confirmSpy);
       const itemA = makeReviewQueueItem({
         id: 13,
         text: "sonce",
@@ -1009,11 +1019,22 @@ describe("review/+page.svelte", () => {
       const syncBtn = await findByText("Accept all");
       await fireEvent.click(syncBtn);
 
-      expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("2"));
+      const dialog = await screen.findByRole("alertdialog");
+      expect(dialog.textContent).toContain("2");
+
+      // Clicking the Cancel BUTTON specifically — distinct from the sibling
+      // test's Escape-key path. Neither vitest coverage nor a naive re-read of
+      // "8/8 converted tests pass" catches a Cancel button whose onclick stops
+      // dismissing with `false`: the handler still executes (so v8 counts the
+      // line as covered), but nothing was asserting its effect. Orchestrator
+      // audit, 2026-08-09: sabotage-drilled by flipping the Cancel button's
+      // dismiss(false) to dismiss(true) — this assertion is what caught it.
+      await fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(mockCommitPending).not.toHaveBeenCalled();
     });
 
     it("Sync it commits when the user confirms", async () => {
-      vi.stubGlobal("confirm", () => true);
       const item = makeReviewQueueItem({
         id: 15,
         text: "voda",
@@ -1029,6 +1050,8 @@ describe("review/+page.svelte", () => {
       const syncBtn = await findByText("Accept all");
       await fireEvent.click(syncBtn);
 
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
       await vi.waitFor(() => {
         expect(mockCommitPending).toHaveBeenCalledWith("lesson-abc");
       });
@@ -1040,7 +1063,6 @@ describe("review/+page.svelte", () => {
     // stays true forever.
 
     it("marks the lesson reviewed exactly once after Sync it drains the queue", async () => {
-      vi.stubGlobal("confirm", () => true);
       const item = makeReviewQueueItem({
         id: 16,
         text: "kruh",
@@ -1056,6 +1078,8 @@ describe("review/+page.svelte", () => {
       const syncBtn = await findByText("Accept all");
       await fireEvent.click(syncBtn);
 
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
       await vi.waitFor(() => {
         expect(mockMarkLessonReviewed).toHaveBeenCalledTimes(1);
         expect(mockMarkLessonReviewed).toHaveBeenCalledWith("lesson-abc");
@@ -1063,7 +1087,6 @@ describe("review/+page.svelte", () => {
     });
 
     it("does not mark the lesson reviewed when Sync it leaves cards in the queue", async () => {
-      vi.stubGlobal("confirm", () => true);
       const itemA = makeReviewQueueItem({
         id: 17,
         text: "sir",
@@ -1084,6 +1107,8 @@ describe("review/+page.svelte", () => {
       const { findByText } = render(ReviewPage);
       const syncBtn = await findByText("Accept all");
       await fireEvent.click(syncBtn);
+
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
       await vi.waitFor(() => {
         expect(mockCommitPending).toHaveBeenCalled();
@@ -1108,7 +1133,6 @@ describe("review/+page.svelte", () => {
     });
 
     it("Sync it shows error when commitPending fails", async () => {
-      vi.stubGlobal("confirm", () => true);
       const item = makeReviewQueueItem({
         id: 30,
         text: "voda",
@@ -1123,11 +1147,12 @@ describe("review/+page.svelte", () => {
       const syncBtn = await findByText("Accept all");
       await fireEvent.click(syncBtn);
 
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
       expect(await findByText("sync boom")).toBeTruthy();
     });
 
     it("Sync it shows stringified non-Error when commitPending rejects", async () => {
-      vi.stubGlobal("confirm", () => true);
       const item = makeReviewQueueItem({
         id: 31,
         text: "kruh",
@@ -1142,7 +1167,118 @@ describe("review/+page.svelte", () => {
       const syncBtn = await findByText("Accept all");
       await fireEvent.click(syncBtn);
 
+      await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
       expect(await findByText("plain sync error")).toBeTruthy();
+    });
+
+    // Orchestrator audit, 2026-08-09: this repo's coverage gate is per-file and
+    // failed after F-6a — ConfirmDialog's Tab-key focus trap (onKeydown, lines
+    // ~68-78) had no test at all. The brief that shipped ConfirmDialog never
+    // pinned the coverage-gate command, only a single targeted vitest file —
+    // a brief bug, not a BP mistake. Exercises both wrap directions with the
+    // dialog's two real focusable elements (Cancel = first, Confirm = last).
+    it("Tab from the last button wraps focus to the first; Shift+Tab from the first wraps to the last", async () => {
+      const item = makeReviewQueueItem({
+        id: 32,
+        text: "sonce",
+        direction: "recognition",
+        pending_rating: "good",
+      });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
+
+      const { findByText } = render(ReviewPage);
+      const syncBtn = await findByText("Accept all");
+      await fireEvent.click(syncBtn);
+
+      const cancelBtn = await screen.findByRole("button", { name: "Cancel" });
+      const confirmBtn = await screen.findByRole("button", { name: "Confirm" });
+
+      // Not asserting the onMount-focus default here: this suite mocks `svelte`'s
+      // onMount to run synchronously (see the vi.mock at the top of this file),
+      // which fires before `bind:this={cancelEl}` is assigned in this harness —
+      // a test-mock timing artifact, not real component behavior. Each wrap
+      // check below sets focus explicitly instead of depending on it.
+      confirmBtn.focus();
+      expect(document.activeElement).toBe(confirmBtn);
+      await fireEvent.keyDown(confirmBtn, { key: "Tab" });
+      expect(document.activeElement).toBe(cancelBtn);
+
+      cancelBtn.focus();
+      expect(document.activeElement).toBe(cancelBtn);
+      await fireEvent.keyDown(cancelBtn, { key: "Tab", shiftKey: true });
+      expect(document.activeElement).toBe(confirmBtn);
+
+      // A key that is neither Escape nor Tab must be a no-op — the dialog
+      // stays open and focus does not move. Covers onKeydown's early return
+      // for e.key !== 'Tab'.
+      await fireEvent.keyDown(confirmBtn, { key: "a" });
+      expect(document.activeElement).toBe(confirmBtn);
+      expect(screen.queryByRole("alertdialog")).toBeTruthy();
+
+      // Dismiss so this test does not leak an open dialog into the next one.
+      await fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    });
+
+    it("Tab does nothing when both buttons are disabled (no focusable elements)", async () => {
+      const item = makeReviewQueueItem({
+        id: 33,
+        text: "kruh",
+        direction: "recognition",
+        pending_rating: "good",
+      });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
+
+      const { findByText } = render(ReviewPage);
+      const syncBtn = await findByText("Accept all");
+      await fireEvent.click(syncBtn);
+
+      const cancelBtn = (await screen.findByRole("button", {
+        name: "Cancel",
+      })) as HTMLButtonElement;
+      const confirmBtn = (await screen.findByRole("button", {
+        name: "Confirm",
+      })) as HTMLButtonElement;
+
+      // Disabling both buttons makes the focus-trap's own selector
+      // ("button:not([disabled]), ...") match nothing — covers the
+      // `focusable.length === 0` early return, a real defensive path (e.g. a
+      // future call site disabling actions mid-commit), not a contrived state.
+      cancelBtn.disabled = true;
+      confirmBtn.disabled = true;
+      cancelBtn.focus();
+
+      await fireEvent.keyDown(cancelBtn, { key: "Tab" });
+      // No throw, no crash — the guard returned early, nothing else to assert.
+
+      cancelBtn.disabled = false;
+      confirmBtn.disabled = false;
+      await fireEvent.click(confirmBtn);
+    });
+
+    it("clicking the overlay backdrop (not the modal) dismisses without committing", async () => {
+      const item = makeReviewQueueItem({
+        id: 34,
+        text: "voda",
+        direction: "recognition",
+        pending_rating: "good",
+      });
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
+
+      const { findByText } = render(ReviewPage);
+      const syncBtn = await findByText("Accept all");
+      await fireEvent.click(syncBtn);
+
+      const overlay = await screen.findByRole("alertdialog");
+      // Click the overlay itself, not a descendant — the handler only fires
+      // dismiss(false) when e.target === e.currentTarget (a click that lands
+      // ON the backdrop, not bubbled up from a child). fireEvent.click on the
+      // overlay element directly reproduces that.
+      await fireEvent.click(overlay);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+      expect(mockCommitPending).not.toHaveBeenCalled();
     });
 
     it("fetchLessonReviewQueue rejecting (e.g. 404) lands in the error state", async () => {

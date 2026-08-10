@@ -291,19 +291,17 @@
 	}
 
 	/* ─────────────────────────  Global base  ───────────────────────── */
-	/* `overflow-x: clip` on the ROOT (not `hidden`): a tooltip popover opening
-	   at a position that would overhang a phone's glass makes Chromium's mobile
-	   emulation inflate the layout viewport to fit the overflow (measured 486 on
-	   a 412px screen) — and that transient inflation lingers past the reveal,
-	   leaving the page scrollable sideways with a phantom scrollWidth (F-12).
-	   Clipping the root stops the layout viewport from ever expanding. `clip`
-	   deliberately NOT `hidden`: `hidden` would make html/body a scroll
-	   container, which breaks the sticky `.global-nav` (and swallows programmatic
-	   scroll). `clip` clips without establishing a scrollport, so vertical page
-	   scroll and sticky positioning are unaffected. */
+	/* The `overflow-x: clip` that guarded against the tooltip-popover layout
+	   viewport inflation (F-12) no longer lives on the root — it moved to the
+	   transcript container (`.transcript-wrapper` in Transcript.svelte), where
+	   the overflow actually occurs. App-wide clipping would silently clip any
+	   horizontal overflow anywhere, so it's scoped instead. `clip`, deliberately
+	   NOT `hidden`: `hidden` would make the element a scroll container, which
+	   breaks the sticky `.global-nav` (and swallows programmatic scroll). `clip`
+	   clips without establishing a scrollport, so vertical page scroll and
+	   sticky positioning are unaffected. */
 	:global(html) {
 		background: var(--color-bg);
-		overflow-x: clip;
 	}
 	:global(body) {
 		margin: 0;
@@ -311,7 +309,6 @@
 		background: var(--color-bg);
 		color: var(--color-text);
 		-webkit-font-smoothing: antialiased;
-		overflow-x: clip;
 	}
 	:global(button),
 	:global(input),

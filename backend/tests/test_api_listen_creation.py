@@ -295,6 +295,98 @@ class TestListenStagedCreation:
         assert data["created"] == 1
         assert db.count_collocations() == 1
 
+    async def test_norwegian_verb_lemma_gets_infinitive_marker(self, monkeypatch):
+        """A Norwegian VERB creation candidate fronts as "å " + lemma."""
+        import app.api.srs as srs_mod
+        from app.srs.lemmatizer import TokenAnalysis
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_sentence(
+            "Jeg lyver",
+            [
+                TokenAnalysis(surface="Jeg", lemma="jeg", upos="PRON"),
+                TokenAnalysis(surface="lyver", lemma="lyve", upos="VERB"),
+            ],
+        )
+        monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
+
+        db = self._setup(self._lesson(["Jeg lyver"], language_code="no"))
+        db.set_anki_state_cache("daily_new_cap", "10")
+
+        data = await self._listen()
+
+        assert data["created"] == 2
+        coll = db.get_collocation_by_lemma("lyve")
+        assert coll is not None
+        assert coll.syntactic_unit.text == "å lyve"
+        assert coll.syntactic_unit.card_type == "vocab"
+
+    async def test_norwegian_verb_media_fetch_uses_bare_lemma(self, monkeypatch):
+        """The Forvo/Pixabay fetch in the listen path stays keyed on the bare lemma."""
+        import app.api.srs as srs_mod
+        from app.cards.media import vocab_media
+        from app.cards.media.pipeline import MediaResult
+        from app.config import settings
+        from app.srs.lemmatizer import TokenAnalysis
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_sentence(
+            "Jeg lyver",
+            [
+                TokenAnalysis(surface="Jeg", lemma="jeg", upos="PRON"),
+                TokenAnalysis(surface="lyver", lemma="lyve", upos="VERB"),
+            ],
+        )
+        monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
+        monkeypatch.setattr(settings, "pixabay_api_key", "test-key")
+        fetched: list[str] = []
+
+        async def _query(_word, _english, **_kw):
+            return "a clear depiction"
+
+        async def _fetch(word, _english, **_kw):
+            fetched.append(word)
+            return MediaResult(audio_bytes=b"A", audio_source="forvo", image_bytes=b"I", image_ext="jpg")
+
+        monkeypatch.setattr(vocab_media, "generate_image_query", _query)
+        monkeypatch.setattr(vocab_media, "fetch_card_media", _fetch)
+
+        db = self._setup(self._lesson(["Jeg lyver"], language_code="no"))
+        db.set_anki_state_cache("daily_new_cap", "10")
+
+        data = await self._listen()
+
+        assert data["created"] == 2
+        assert fetched == ["lyve"]
+        coll = db.get_collocation_by_lemma("lyve")
+        assert coll is not None
+        assert coll.syntactic_unit.text == "å lyve"
+
+    async def test_norwegian_non_verb_lemma_stays_bare(self, monkeypatch):
+        """A Norwegian NOUN creation candidate keeps its bare lemma front."""
+        import app.api.srs as srs_mod
+        from app.srs.lemmatizer import TokenAnalysis
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_sentence(
+            "Kaffe",
+            [TokenAnalysis(surface="Kaffe", lemma="kaffe", upos="NOUN")],
+        )
+        monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
+
+        db = self._setup(self._lesson(["Kaffe"], language_code="no"))
+        db.set_anki_state_cache("daily_new_cap", "10")
+
+        data = await self._listen()
+
+        assert data["created"] == 1
+        coll = db.get_collocation_by_lemma("kaffe")
+        assert coll is not None
+        assert coll.syntactic_unit.text == "kaffe"
+
 
 class TestListenReviewCap:
     """Staging: /listen stages all eligible cards — no listen-time review budget cap."""

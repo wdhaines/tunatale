@@ -57,7 +57,7 @@ from app.api.models import (
 from app.audio.cloze_tts import synthesize_cloze_audios
 from app.common.guid import compute_guid
 from app.config import settings
-from app.languages import get_tts_voice, get_wordfreq_lang, known_language_codes
+from app.languages import format_vocab_headword, get_tts_voice, get_wordfreq_lang, known_language_codes
 from app.llm.translate import generate_word_gloss, translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -232,7 +232,14 @@ def _triples_to_dicts(db, triples: list[tuple[int, SRSItem, str]]) -> list[dict]
 
 
 async def _generate_add_time_media(
-    db, llm, coll_id: int, unit: SyntacticUnit, *, language_code: str, used_image_urls: set[str] | None = None
+    db,
+    llm,
+    coll_id: int,
+    unit: SyntacticUnit,
+    *,
+    language_code: str,
+    used_image_urls: set[str] | None = None,
+    media_word: str | None = None,
 ) -> None:
     """Fetch image + word audio for a freshly-created vocab card, inline.
 
@@ -242,16 +249,22 @@ async def _generate_add_time_media(
     ``generate_vocab_media`` no-ops when no Pixabay key is configured. Best-effort:
     never raises, so a media hiccup can't fail card creation. ``sync_create_new``
     reuses whatever this stores rather than re-fetching.
+
+    ``media_word`` decouples "what to fetch media for" from "what the card
+    displays": a Norwegian verb card fronts as ``"å lyve"`` but Forvo/Pixabay are
+    indexed by the bare lemma, so callers pass ``media_word=lemma``. ``None``
+    falls back to ``unit.text`` (today's behavior for every pre-existing caller).
     """
     if unit.card_type == "cloze":
         return
     from app.cards.media.vocab_media import generate_vocab_media
     from app.config import settings
 
+    word = media_word if media_word is not None else unit.text
     await generate_vocab_media(
         db,
         coll_id,
-        unit.text,
+        word,
         unit.translation,
         llm=llm,
         pixabay_key=settings.pixabay_api_key,
@@ -1117,6 +1130,16 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         is_func = is_function_word_for(
             lemma, lemma_to_surfaces.get(lemma, set()), lesson.language_code, surface_to_upos
         )
+        upos_for_lemma = None
+        if not is_func:
+            upos_for_lemma = next(
+                (
+                    surface_to_upos.get(s.casefold())
+                    for s in lemma_to_surfaces.get(lemma, set())
+                    if s.casefold() in surface_to_upos
+                ),
+                None,
+            )
         sent = lemma_to_sentence.get(lemma, "")
         # Cloze rows blank the surface as it appeared, not the dictionary lemma:
         # the lemmatizer may map an inflected surface to a different lemma (classla
@@ -1124,7 +1147,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         # sync's idempotent make_cloze_text passes it through. (Phase 2b.)
         stored_sentence = make_cloze_text(lemma_to_first_surface.get(lemma, lemma), sent) if is_func else sent
         unit = SyntacticUnit(
-            text=lemma,
+            text=format_vocab_headword(lemma, upos_for_lemma, lesson.language_code) if not is_func else lemma,
             translation=_resolve_gloss_translation(
                 lemma,
                 token_glosses,
@@ -1157,7 +1180,13 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         else:
             new_id, _ = db.get_collocation_by_lemma_with_id(lemma)
             await _generate_add_time_media(
-                db, llm, new_id, unit, language_code=lesson.language_code, used_image_urls=used_image_urls
+                db,
+                llm,
+                new_id,
+                unit,
+                language_code=lesson.language_code,
+                used_image_urls=used_image_urls,
+                media_word=lemma,
             )
         created_count += 1
     remaining_candidates = len(ranked) - created_count
@@ -1957,6 +1986,7 @@ async def _persist_new_card(
     audio_sentence: str = "",
     audio_word: str = "",
     llm=None,
+    media_word: str | None = None,
 ) -> dict:
     """Add a NEW collocation and return its ``{id, was_created, item}`` dict.
 
@@ -1964,7 +1994,10 @@ async def _persist_new_card(
     ``/inflection-clozes``): insert (idempotent by guid), look the id back up,
     best-effort synthesize cloze audio when ``synthesize`` and the row is newly
     created, then serialize. ``audio_sentence`` is the *raw* sentence (never the
-    pre-clozed ``source_sentence``) and ``audio_word`` the surface to voice. For a
+    pre-clozed ``source_sentence``) and ``audio_word`` the surface to voice.
+    ``media_word`` is forwarded to ``_generate_add_time_media`` as the word to
+    fetch image/audio for — ``None`` (the default) falls back to ``unit.text``,
+    so the /inflection-clozes caller needs no change. For a
     newly-created *vocab* base card, fetch image + word audio inline so it's
     complete in /review without a sync (no-op for cloze / missing Pixabay key).
     """
@@ -1981,7 +2014,7 @@ async def _persist_new_card(
             _logger.warning("Failed to synthesize cloze audio for %r", unit.text)
 
     if was_created:
-        await _generate_add_time_media(db, llm, coll_id, unit, language_code=language_code)
+        await _generate_add_time_media(db, llm, coll_id, unit, language_code=language_code, media_word=media_word)
 
     result = db.get_collocation_by_id(coll_id)
     if result is None:  # pragma: no cover — defensive; id came from get_collocation_id_by_guid
@@ -2060,7 +2093,7 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
                 translation = gloss
 
     unit = SyntacticUnit(
-        text=lemma,
+        text=format_vocab_headword(lemma, upos, lang) if card_type == "vocab" else lemma,
         translation=translation,
         word_count=1,
         difficulty=1,
@@ -2077,6 +2110,7 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
         audio_sentence=body.sentence,
         audio_word=body.surface,
         llm=getattr(request.app.state, "llm", None),
+        media_word=lemma,
     )
 
 
