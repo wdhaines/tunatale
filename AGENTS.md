@@ -270,13 +270,38 @@ not author anything new there.
   local `closed` does not always reach an already-pushed issue. `sync.sh` reports
   the count difference and moves on. If a stale row bothers you:
   `gh issue close <n> --repo wdhaines/tunatale-tasks`. Never restore from it.
-- **The submodule pointer is advisory.** `.gitmodules` sets `branch = main`;
-  refresh with `git submodule update --remote .beads-tasks`. Pinning a task
-  tracker to a code commit buys nothing — you always want its tip — so routine
-  pointer-bump commits are not worth making. `ignore = all` is set so the
-  permanent pointer drift stays out of `git status`; without it every status
-  shows ` M .beads-tasks` and a `git add -A` sweeps a meaningless bump into an
-  unrelated commit. Drift is still visible on demand via `git submodule status`.
+- **The submodule pointer rides code commits — never its own** (revised
+  2026-08-10). `.gitmodules` sets `branch = main`; refresh with
+  `git submodule update --remote .beads-tasks`.
+
+  **The rule: when you make a code commit, stage `.beads-tasks` with it.**
+  Never make a pointer-only commit — a bump that needs its own `./test.sh` run
+  costs more than the staleness it fixes.
+
+  The reasoning is asymmetric between the two kinds of bd change, and that
+  asymmetry is the point:
+  - **A closure means code shipped**, so there is always a commit for it to ride.
+  - **An addition has no code event**, so demanding one would be arbitrary. It
+    drifts until the next commit, which is fine.
+
+  ⚠️ **Closures land at most ONE commit late, and that is inherent.** A close
+  cites the hash of the commit that shipped it (`--reason "Shipped in b8a8a50"`),
+  so the commit must exist *before* the close — the close cannot be inside it.
+  Closing first would lose the hash; amending afterwards is forbidden. So the
+  pointer carrying a closure rides the *next* code commit. Do not try to
+  engineer this away.
+
+  `ignore = all` stays set: it keeps the between-commit drift out of
+  `git status`, so a `git add -A` cannot sweep a meaningless bump into an
+  unrelated commit. Check drift on demand with `git submodule status` — a
+  leading `+` means behind, a space means current.
+
+  **Why this replaced "the pointer is advisory, never bump it":** that rule was
+  correct about correctness (the backlog was always fully synced) and wrong
+  about legibility. Browsing `.beads-tasks` on the public repo showed a stale
+  tree, which read as "the sync did not run" — it cost a real round of
+  confusion on 2026-08-10 before the sync was confirmed healthy. Staleness that
+  is indistinguishable from breakage is not free, even when nothing is broken.
 - **Why a submodule and not a sibling clone:** the BP fence blocks reads outside
   the project directory, and a path outside it does not error — it ends the run
   at exit 0 with zero files changed. Dispatch docs must be reachable at a path
