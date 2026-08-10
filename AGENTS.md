@@ -151,16 +151,29 @@ explicit instructions always win. See "Beads + TunaTale specifics" below for
 exactly what this does and doesn't replace.
 
 ```bash
-bd ready                              # what's unblocked right now
-bd show <id>                          # full detail + dependencies
-bd create "title" -d "..." -p 0-4     # new issue (0 critical .. 4 backlog)
-bd dep add <child> <parent>           # child is blocked by parent
-bd update <id> --claim                # mark in progress
-bd close <id> --reason "..."          # mark done
+bd ready                                     # what's unblocked right now
+bd show <id> --json | jq -r '.[0].description'  # full detail — NEVER plain `bd show` for technical content, see below
+bd create "title" -d "..." -p 0-4            # new issue (0 critical .. 4 backlog)
+bd dep add <child> <parent>                  # child is blocked by parent — see below, this direction is easy to get backwards
+bd update <id> --claim                       # mark in progress
+bd close <id> --reason "..."                 # mark done
 ```
 
 Do not commit, push, or run Dolt remote sync unless explicitly authorized.
 Full reference: `bd --help` / `bd prime`.
+
+**Two confirmed bd bugs, hands-on-verified, both filed upstream — do not
+rediscover these blind:**
+- Plain `bd show <id>` (no `--json`) mangles technical content — it has
+  stripped fenced code blocks and garbled generics like `Promise<boolean>`
+  into `Promise****`. The underlying stored data is intact; only the
+  pretty-printer is broken. Always use `bd show <id> --json | jq -r
+  '.[0].description'` instead. (gastownhall/beads#5495)
+- `bd dep add <child> <parent>` and `bd create --deps blocks:<id>` are
+  inverses in a way that's easy to get backwards: `--deps blocks:X` means
+  "this new issue blocks X," not "is blocked by X." Verify any dependency
+  edge with `bd show <id> --json` right after wiring it — a wrong direction
+  shows up as `bd ready`'s unblocked count moving the wrong way.
 
 <!-- END BEADS INTEGRATION -->
 
@@ -192,3 +205,13 @@ Full reference: `bd --help` / `bd prime`.
   Deliberately kept separate from public `tunatale` (not committed there,
   not GitHub Issues on the public repo) — the backlog includes internal
   workflow/dispatch notes not meant to be world-readable.
+  ⚠️ **Confirmed bd bug, reproduced twice: a local `closed` status does not
+  reliably propagate to an already-pushed GitHub issue.** `bd github sync
+  --push-only` reports nothing to do (its own diff logic believes the issue
+  is already in sync) while GitHub still shows it open. Do not trust the
+  sync command's silence as proof of a correct sync — after running it,
+  spot-check open/closed counts on both sides (`bd list --status open` vs
+  `gh issue list --repo wdhaines/tunatale-tasks`). If they disagree, close
+  the stragglers directly: `gh issue close <n> --repo
+  wdhaines/tunatale-tasks`. (gastownhall/beads#5486 — check its status
+  before assuming this is still broken.)
