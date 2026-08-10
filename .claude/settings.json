@@ -29,6 +29,16 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "m=\"$CLAUDE_PROJECT_DIR/.beads-tasks/mail.sh\"; if [ -x \"$m\" ]; then u=$(\"$m\" unread 2>/dev/null); [ -n \"$u\" ] && printf \"Unread agent mail (read with ./.beads-tasks/mail.sh read <id>):\\n%s\\n\" \"$u\"; fi; exit 0"
+          }
+        ]
+      }
     ]
   }
 }

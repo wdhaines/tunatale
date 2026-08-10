@@ -205,6 +205,23 @@ not author anything new there.
   - Ordinary use needs no new commands: `bd dolt push` / `bd dolt pull` are
     wrapped by `sync.sh`. Stealth mode (`no-git-ops: true`) stays on and does not
     block explicit pushes.
+- **Agent mail lives in bd** (`./.beads-tasks/mail.sh`), for talking to another
+  Claude session working this repo. Borrowed from Gas City, where mail is
+  literally beads with `type=message`.
+  ```bash
+  ./.beads-tasks/mail.sh inbox            # unread addressed to you
+  ./.beads-tasks/mail.sh read <id>        # print it, mark read
+  MAIL_ID=orch ./.beads-tasks/mail.sh send peer "subject" "body"
+  ```
+  `unread == open`, `read == closed`, addressing is a `to-*` label. Message beads
+  are excluded from `bd list` / `bd ready` / `GRAPH.md`, and `sync.sh` filters
+  them out of the GitHub mirror — verified, they cannot be mistaken for backlog.
+  A `SessionStart` hook surfaces unread mail automatically; without it a session
+  never looks, which is exactly what happened on 2026-08-10 (a peer completed a
+  whole stage with two messages waiting).
+  ⚠️ **Mail is NOT in `bd-export.jsonl` and NOT in the Dolt push** — it is the one
+  thing here with no off-machine copy. Anything that must survive belongs in an
+  issue, not a message.
 - **Method vs work.** `.beads-tasks/DISPATCH-PREAMBLE.md` holds everything
   binding on *every* delegated run (fence, prohibitions, escalation, report
   contract). A bd issue holds only what is true of *that* task — scope,
