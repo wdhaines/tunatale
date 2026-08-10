@@ -1,0 +1,3 @@
+[submodule ".beads-tasks"]
+	path = .beads-tasks
+	url = https://github.com/wdhaines/tunatale-tasks.git
