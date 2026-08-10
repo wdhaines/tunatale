@@ -19,6 +19,35 @@
 
 Multi-step plans are ordered by dependency. Never implement step N+1 until step N's tests are green.
 
+## ⚠️ Run the control before you write the finding
+
+**When a probe disagrees with a design, that is evidence about the probe until a
+control says otherwise.** Before reporting "X is broken", run the same command
+against something whose answer you already know. If the control also fails, the
+probe is broken and the finding is noise.
+
+This is cheap and it is not optional. **Five times on 2026-08-10 a plausible
+command produced a clean-looking wrong answer**, and four were nearly written up
+as findings about someone else's work:
+
+| probe | what it "showed" | the actual cause |
+|---|---|---|
+| `playwright --repeat-each=6` | a 50%-broken test on `main` | the spec is non-idempotent; repeats start from a dirty shared DB |
+| `.dependencies[].depends_on_id` on `bd show --json` | a malformed `discovered-from` edge | `bd show` uses a different JSON shape than `bd list`/`bd export` |
+| `bd init` + `bd dolt pull` | the backup restores **zero** issues | wrong command — `bd bootstrap` is the one that clones a remote |
+| `bd bootstrap` in a public-repo clone | recovery is impossible | our `refs/dolt/data` is deliberately on the *private* remote |
+| `bd list --type message` on a restored store | mail survives the Dolt push | `types.custom` is not restored, so the filter matches nothing |
+
+The controls that caught them: running the flake probe at `HEAD~1` too (same
+rate ⇒ measuring the harness, not the change), querying a known-good bead
+beside the suspect one, and — the decisive one — noticing that a `bd show`
+lookup failed for a bead that *definitely* existed, which exposed an unrelated
+`beads.role` misconfiguration rather than missing data.
+
+**The tell is a clean negative.** Zero results, `null`, an empty list — these
+are what both "genuinely absent" and "wrong query" look like. A control
+distinguishes them; re-reading your own command does not.
+
 ## ⚠️ The red commit cannot exist here — do not ask for one
 
 Red-green-refactor is about the *working tree*, not about commits. **A commit
