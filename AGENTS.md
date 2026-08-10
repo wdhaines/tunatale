@@ -196,7 +196,15 @@ not author anything new there.
   contract). A bd issue holds only what is true of *that* task — scope,
   read-first list, oracles as literals, pinned commands. Do not restate the
   preamble inside an issue; two copies drift and the one the executor read is
-  the one you did not edit. `tunatale-0wk` is the reference shape.
+  the one you did not edit.
+- **Short work inline, long briefs as files.** A screenful goes in the issue
+  description. Anything longer, or carrying a big oracle table, goes in
+  `.beads-tasks/briefs/` with the issue holding scope + a `Source:` pointer +
+  the decisive oracles — **never both**. `tunatale-0wk` is the reference shape.
+  Authoring in throwaway `docs/briefs/*.md` scratch is fine; what killed the old
+  setup was gitignored *permanence*, not files. Editing a bd description has no
+  `git diff`, so a contradiction introduced mid-edit is invisible — that cost is
+  what sets the threshold (one shipped in a live brief on 2026-08-10).
 - **Longer supporting docs** — findings, test plans, session handoffs — live in
   `.beads-tasks/briefs/`, genre-prefixed (`brief-`, `findings-`, `testplan-`,
   `handoff-`, `design-`). Issues cite them as `Source: <path> § <section>`,
