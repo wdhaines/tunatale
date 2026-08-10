@@ -351,20 +351,6 @@
 		...candidates.filter((c) => c.kind === 'create' && c.will_create !== false),
 	]);
 
-	// The "now" segment of the summary (the cut line's numerator, restated). An
-	// "introduction" is any row that spends the shared daily new-card
-	// allowance: a create row (new card) or a NEW-state row (existing card,
-	// never introduced). Tracked non-new rows carry
-	// `will_create` defaulted true and must NOT be counted — they are reviews,
-	// and folding them in would inflate the total against a budget they never
-	// draw on. The denominator is this plus the tail, since every tail row is
-	// by construction one of those two kinds.
-	let liveIntroCount = $derived(
-		candidates.filter(
-			(c) => (c.kind === 'create' || c.grade_class === 'new') && c.will_create !== false,
-		).length,
-	);
-
 	let wellKnownCandidates = $derived(candidates.filter((c) => c.well_known));
 
 	// Builds the commit payload purely from local reads — never assigns into
@@ -620,16 +606,20 @@
 					</li>
 				{/snippet}
 
-				<!-- F-20: the cut line, restated as a three-count summary above the
-				     list (replacing the <li class="cut-line"> that used to render
-				     after every row it explained). It describes the introduction
-				     budget plus the known group — the three counts deliberately do
-				     NOT sum to the row count; ordinary due/ahead rows belong to no
-				     segment. `now` is the live introductions plus whatever was
-				     opted PAST the cap, so the opt-in's consequence lands in the
-				     right segment instead of quietly vanishing with the line. -->
+				<!-- F-20 (revised 2026-08-09, user request): a three-count summary
+				     above the list (replacing the <li class="cut-line"> that used to
+				     render after every row it explained). `now` is everything that
+				     will actually be graded/created when this listen is committed —
+				     liveCandidates (every rendered, gradeable row) plus whatever tail
+				     rows were opted PAST the cap. `known` and `later` stay separate:
+				     well-known rows are not graded by default, and an un-opted tail
+				     row is explicitly NOT happening now — that is what makes it
+				     "later". The three counts sum to the row count exactly when there
+				     is no opted-tail overlap accounting to do (now + later + known ==
+				     total), unlike the original narrower "introduction budget only"
+				     definition this replaced. -->
 				<div class="partition">
-					<span class="seg now"><span class="n">{liveIntroCount + optedTailCount}</span><span class="l">now</span></span>
+					<span class="seg now"><span class="n">{liveCandidates.length + optedTailCount}</span><span class="l">now</span></span>
 					<span class="seg"><span class="n">{tailCandidates.length - optedTailCount}</span><span class="l">later</span></span>
 					<span class="seg"><span class="n">{wellKnownCandidates.length}</span><span class="l">known</span></span>
 				</div>

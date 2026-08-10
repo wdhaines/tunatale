@@ -117,12 +117,15 @@ const knownRow = (text: string): ListenPreviewCandidate => ({
 
 /**
  * Deliberately asymmetric so a transposed pair of counts cannot pass:
- *   now = 3   (2 live creates + 1 live NEW-state)
+ *   now = 5   (2 live creates + 1 live NEW-state + 2 ordinary due rows)
  *   later = 2 (2 tail creates)
  *   known = 3 (3 well-known rows)
- * The 2 ordinary due rows belong to NO segment — the summary describes the
- * introduction budget plus the known group, exactly as the cut line it replaces
- * did. Do not "fix" the numbers to sum to the row count.
+ * Revised 2026-08-09 (user request): `now` counts every row that will
+ * actually be graded/created when this listen is committed — liveCandidates,
+ * not just the introduction-budget subset. The 2 ordinary due rows now DO
+ * belong to `now`; only well-known rows (excluded from grading by default)
+ * and the un-opted tail (explicitly not happening now) stay out of it. 5 + 2
+ * + 3 sums to the fixture's 10 rows exactly.
  */
 const preview = () => ({
   candidates: [
@@ -174,7 +177,7 @@ describe("F-20 — the three-count summary replaces the cut line", () => {
     // and only an exact-string assertion caught it. A regex or a function
     // matcher would have let it through.
     expect(segments(container)).toEqual([
-      ["3", "now"],
+      ["5", "now"],
       ["2", "later"],
       ["3", "known"],
     ]);
@@ -245,7 +248,7 @@ describe("F-20 — the over-cap opt-in keeps its voice", () => {
     await fireEvent.click(gradeBtn(container, "create:smelte", "good"));
 
     expect(segments(container)).toEqual([
-      ["4", "now"],
+      ["6", "now"],
       ["1", "later"],
       ["3", "known"],
     ]);
@@ -279,7 +282,7 @@ describe("F-20 — the over-cap opt-in keeps its voice", () => {
     await fireEvent.click(gradeBtn(container, "create:smelte", "skip"));
 
     expect(segments(container)).toEqual([
-      ["3", "now"],
+      ["5", "now"],
       ["2", "later"],
       ["3", "known"],
     ]);
