@@ -678,3 +678,103 @@ test("listen preview: the Due track fits the widest label it can emit", async ({
 
 	expect(failures, failures.join("\n")).toEqual([]);
 });
+
+/**
+ * The Grade All tick box is reserved for the countdown's whole lifetime — F-7's
+ * constraint, that nothing may reflow under a pointer still down. But when the
+ * countdown preference is OFF the reservation is dead weight: the countdown can
+ * never run, so the invisible 1.6em box is never once used, and it pushes the
+ * visible "Grade All" words permanently off-centre inside their button.
+ *
+ * The reservation must be gated on the PREFERENCE, not on `countdownRunning`.
+ * The pref cannot change while the modal is open, so the box is stable for the
+ * modal's entire lifetime and F-7 survives; only the pref-off case — where the
+ * box would never be used — loses it.
+ *
+ * The oracle is the GLYPH rect, not the `.label` box: the button centres
+ * `.label` regardless, so the box can be centred while its text sits left of
+ * centre. The text node's own range is what must land on the button's centre.
+ */
+async function labelGlyphCentre(gradeAll: import("@playwright/test").Locator) {
+	return await gradeAll.evaluate((el) => {
+		const label = el.querySelector(".label") as HTMLElement;
+		const tn = Array.from(label.childNodes).find(
+			(n) => n.nodeType === Node.TEXT_NODE && n.textContent!.trim().length > 0,
+		) as Text;
+		const r = document.createRange();
+		r.setStart(tn, 0);
+		r.setEnd(tn, tn.textContent!.trimEnd().length);
+		const g = r.getBoundingClientRect();
+		const b = el.getBoundingClientRect();
+		return { glyphCentre: g.left + g.width / 2, buttonCentre: b.left + b.width / 2, glyphLeft: g.left };
+	});
+}
+
+test("listen preview: with the countdown pref off, Grade All's label is truly centred", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+	const cid = await curriculumId(request);
+
+	await page.addInitScript(() => localStorage.setItem("listenCountdown", "off"));
+	await page.setViewportSize(PHONE);
+	await page.goto(`/c/${cid}`);
+	await page.getByRole("button", { name: "Day 1" }).click();
+	await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({ timeout: 15000 });
+	await page.getByRole("button", { name: "Mark as Listened" }).click();
+
+	const modal = page.locator(".overlay .modal");
+	await expect(modal).toBeVisible({ timeout: 10000 });
+	await expect(modal.locator(".candidate").first()).toBeVisible({ timeout: 10000 });
+	const gradeAll = modal.getByRole("button", { name: /Grade All/ });
+
+	// Vacuity guard: with the pref off the countdown must not be running, or
+	// this measurement could be reading a state this test's setup ruled out.
+	await expect(gradeAll).toHaveAttribute("data-countdown", "idle");
+
+	const { glyphCentre, buttonCentre } = await labelGlyphCentre(gradeAll);
+	expect(
+		Math.abs(glyphCentre - buttonCentre),
+		`glyph centre ${glyphCentre.toFixed(2)} vs button centre ${buttonCentre.toFixed(2)}`,
+	).toBeLessThanOrEqual(1.5);
+});
+
+test("listen preview: with the countdown pref on, cancelling still shifts no glyph (F-7)", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+	const cid = await curriculumId(request);
+
+	await page.addInitScript(() => localStorage.setItem("listenCountdown", "60"));
+	await page.setViewportSize(PHONE);
+	await page.goto(`/c/${cid}`);
+	await page.getByRole("button", { name: "Day 1" }).click();
+	await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({ timeout: 15000 });
+	await page.getByRole("button", { name: "Mark as Listened" }).click();
+
+	const modal = page.locator(".overlay .modal");
+	await expect(modal).toBeVisible({ timeout: 10000 });
+	await expect(modal.locator(".candidate").first()).toBeVisible({ timeout: 10000 });
+	const gradeAll = modal.getByRole("button", { name: /Grade All/ });
+
+	// Guard against a vacuous pass: the countdown must be running before there
+	// is anything to cancel.
+	await expect(gradeAll).toHaveAttribute("data-countdown", "running", { timeout: 5000 });
+
+	const running = await labelGlyphCentre(gradeAll);
+
+	// The same click that cancels the countdown also grades the row (F-7's
+	// contract) — and cancelling must not move the "Grade All" glyph, because
+	// the reserved tick box survives the running→idle transition.
+	const hard = modal.locator('button[data-grade="hard"]').first();
+	await hard.click();
+	await expect(gradeAll).toHaveAttribute("data-countdown", "idle");
+
+	const idle = await labelGlyphCentre(gradeAll);
+	expect(
+		Math.abs(idle.glyphLeft - running.glyphLeft),
+		`glyph moved ${running.glyphLeft.toFixed(2)} -> ${idle.glyphLeft.toFixed(2)} on cancel`,
+	).toBeLessThanOrEqual(0.5);
+});

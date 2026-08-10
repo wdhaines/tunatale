@@ -484,6 +484,7 @@
 					class="grade-all"
 					class:armed={countdownRunning}
 					data-countdown={countdownRunning ? 'running' : 'idle'}
+					data-countdown-pref={listenCountdownPref.value}
 					aria-label={countdownRunning ? `Grade All — auto-grading in ${countdown} seconds` : undefined}
 					onclick={gradeAll}
 					type="button"
@@ -768,15 +769,27 @@
 		gap: 0.25rem;
 	}
 	.grade-all .tick {
-		/* One full "10s" is the widest text the tick ever shows; holding the box
-		   open to that width keeps the label rock-steady while it drains. */
-		min-width: 1.6em;
+		/* Sized for the largest tick the pref can produce — "60s" at pref "60",
+		   the widest of the 10/30/60 the pref offers. Holding the box open to
+		   that width keeps the label rock-steady while it drains and across
+		   cancellation (F-7); the stale "one full 10s is the widest" premise
+		   hid the 30s/60s overflow for two releases. */
+		min-width: 2.2em;
 		text-align: left;
 		font-variant-numeric: tabular-nums;
 		visibility: hidden;
 	}
 	.grade-all[data-countdown="running"] .tick {
 		visibility: visible;
+	}
+	/* Pref off → the countdown can never run, so the reserved box is dead
+	   weight that pushes the visible words permanently off-centre. Dropped via
+	   display:none gated on the PREF, never on countdownRunning: the pref
+	   cannot change while the modal is open, so the box is stable for the
+	   modal's entire lifetime and nothing reflows under a pointer still down
+	   (F-7). */
+	.grade-all[data-countdown-pref="off"] .tick {
+		display: none;
 	}
 	.grade-all.armed {
 		border-color: var(--color-accent, #2f6fed);
