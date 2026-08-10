@@ -1,7 +1,7 @@
 """Frequency-informed ranking of listen creation candidates (the D2 seam swap).
 
 ⚠️ **ORCHESTRATOR-AUTHORED ORACLE. DO NOT EDIT WHILE IMPLEMENTING.**
-Brief: `docs/briefs/bp-frequency-ranking-2026-07.md`. This file is authored
+Brief: bd `tunatale-bth` (closed). This file is authored
 ahead of the implementation on purpose, per that brief's 2026-07-31 SPLIT note:
 ranking order is NEW semantics, and an executor who writes both the behaviour
 and its test can only prove the two agree with each other. If an assertion here

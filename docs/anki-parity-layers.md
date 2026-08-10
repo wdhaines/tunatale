@@ -1633,7 +1633,7 @@ A secondary fidelity bug: `build_revlog_row` wrote `factor=0` for all TT-native 
 
 **Not a mirror fix.** Every other Layer closes a gap between TT and Anki; this one opens one on purpose, so it is recorded here to stop a future session "fixing" it back.
 
-**Why.** Under the pending-bucket model (`docs/briefs/bp-listen-pending-bucket-2026-07.md`) a listen STAGES provisional grades into the TT-only `pending_listen_grades` table instead of applying them. FSRS, the revlog, `dirty_fsrs` and sync see nothing. But the card is now provisionally handled and is served in the lesson "Check your work" queue — so leaving it in the main review flow too would have the user grade the same card twice, which is exactly what the staging model exists to prevent.
+**Why.** Under the pending-bucket model (bd `tunatale-3ue`, closed) a listen STAGES provisional grades into the TT-only `pending_listen_grades` table instead of applying them. FSRS, the revlog, `dirty_fsrs` and sync see nothing. But the card is now provisionally handled and is served in the lesson "Check your work" queue — so leaving it in the main review flow too would have the user grade the same card twice, which is exactly what the staging model exists to prevent.
 
 **The divergence.** TT's review badge sits **BELOW** Anki's by the pending count until the user releases them. Anki has no notion of a pending listen grade, so it keeps counting those cards as due. Same family as the documented `promote_to_learning` listen-first addition (`.claude/rules/anki-queue-parity.md` §"learning" caveat). It is self-healing: applying a pending grade clears the row and the card returns to the pool, so the gap closes as the user works through Check-your-work, and closes completely on "Sync it".
 

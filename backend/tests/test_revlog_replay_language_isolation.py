@@ -2,7 +2,7 @@
 
 Sibling of ``test_queue_stats_language_isolation.py``, which is a locked oracle
 for the two *live* db-less call sites. This file pins the third one that brief
-(``docs/briefs/done/deferred-ledger-work-2026-07.md``) deliberately left out of
+(bd ``tunatale-1by``, closed) deliberately left out of
 scope:
 
     ``db_revlog.rebuild_from_revlog`` still calls ``schedule()`` without

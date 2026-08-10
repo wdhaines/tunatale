@@ -74,5 +74,9 @@ backend/media/
 backend/output/
 frontend/test-results/
 
-# Agent handoff briefs — session-scoped working docs, never committed
+# docs/briefs/ — retired from the workflow 2026-08-10; dispatch docs now live in
+# the .beads-tasks submodule (version-controlled, off-machine). What remains is a
+# gitignored local safety copy, rebuilt from bd + the submodule, kept until the
+# new setup proves out. See docs/briefs/README.md. Do not author new content
+# there: gitignored means no history, one copy, no recovery path.
 docs/briefs/

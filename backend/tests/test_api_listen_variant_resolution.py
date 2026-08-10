@@ -1,6 +1,6 @@
 """Fable-authored guardrail tests: listen/queue must resolve variant cards.
 
-Contract file for `docs/briefs/bp-ui-feedback-2026-07.md` (resolution-drift
+Contract file for bd `tunatale-87f` (closed) (resolution-drift
 item). RED against HEAD: the transcript resolves comma-variant imported cards
 ('mot, imot' — `transcript.py::_build_variant_index`, registry-driven via
 `get_variant_separator`/`card_surface_variants`), but `/listen` and the

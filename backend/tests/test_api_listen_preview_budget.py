@@ -9,7 +9,7 @@ delivery. Add separate tests for any extra coverage you need."). These tests
 exercise the budget/ranking behavior layered on top of that contract.
 
 ⚠️ REWRITTEN 2026-07-31 by the orchestrator for the creation-tail brief
-(`docs/briefs/bp-listen-preview-creation-budget-ux-2026-07.md`). The previous
+(bd `tunatale-tsq`, closed). The previous
 version asserted the OLD contract, where over-budget lemmas were absent from the
 response entirely (`creates == []`, `len(creates) == 3`). Under Option B every
 untracked lemma is returned in rank order and `will_create` distinguishes the

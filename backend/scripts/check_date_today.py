@@ -18,7 +18,7 @@ enforcement were removed (2026-07-30) rather than carried unexercised — any hi
 is now a failure. There is deliberately no escape hatch: tier 1 has no known
 false positives, and this composite is always wrong in the Anki-day domain.
 
-Brief: ``docs/briefs/bp-ledger-stage5-date-today.md``.
+Brief: bd ``tunatale-my0`` (closed).
 """
 
 from __future__ import annotations

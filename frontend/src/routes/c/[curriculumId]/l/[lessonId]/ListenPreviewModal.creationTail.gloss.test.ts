@@ -6,7 +6,7 @@
  * stays a live control (blur until tapped), so the reveal path must carry
  * coverage of its own.
  *
- * Brief: docs/briefs/bp-listen-preview-creation-budget-ux-2026-07.md (Option B).
+ * Brief: bd tunatale-tsq (closed), Option B.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
