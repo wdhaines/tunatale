@@ -4,6 +4,7 @@
 	import type { SRSItemDetail, SRSListParams, QueueStats } from '$lib/api';
 	import { syncStore } from '$lib/stores/sync.svelte';
 	import ImageEditModal from '$lib/components/ImageEditModal.svelte';
+	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
 
 	const PAGE_SIZE = 50;
 
@@ -164,7 +165,7 @@
 	}
 
 	async function deleteItem(id: number) {
-		if (!confirm('Delete this item?')) return;
+		if (!(await confirmDialog('Delete this item?', { destructive: true }))) return;
 		try {
 			await api.deleteSRSItem(id);
 			await loadItems();
@@ -174,7 +175,7 @@
 	}
 
 	async function resetItem(id: number) {
-		if (!confirm('Reset this item? It will be forgotten in Anki too and re-learned from scratch.')) return;
+		if (!(await confirmDialog('Reset this item? It will be forgotten in Anki too and re-learned from scratch.', { destructive: true }))) return;
 		try {
 			await api.resetSRSItem(id);
 			await loadItems();
@@ -194,7 +195,7 @@
 	}
 
 	async function bulkDelete() {
-		if (!confirm(`Delete ${selected.size} selected items?`)) return;
+		if (!(await confirmDialog(`Delete ${selected.size} selected items?`, { destructive: true }))) return;
 		try {
 			await api.bulkDeleteSRSItems([...selected]);
 			selected = new Set();

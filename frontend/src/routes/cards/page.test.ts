@@ -2,7 +2,7 @@
  * Component tests for the /cards +page.svelte route.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, fireEvent, waitFor } from "@testing-library/svelte";
+import { render, fireEvent, waitFor, screen } from "@testing-library/svelte";
 import CardsPage from "./+page.svelte";
 
 /** Open the row-actions overflow menu for the row whose text is `itemText`. */
@@ -263,7 +263,6 @@ describe("cards/+page.svelte", () => {
       total: 2,
     });
     mockBulkDelete.mockResolvedValue({ deleted: 2 });
-    vi.stubGlobal("confirm", () => true);
 
     const { findAllByRole, findByText } = render(CardsPage);
     await findByText("a");
@@ -277,16 +276,17 @@ describe("cards/+page.svelte", () => {
     const bulkBtn = await findByText(/Delete selected/);
     await fireEvent.click(bulkBtn);
 
+    await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
     await waitFor(() => {
       expect(mockBulkDelete).toHaveBeenCalledWith([1, 2]);
     });
   });
 
-  it("clicking Delete with confirm stubbed calls deleteSRSItem", async () => {
+  it("clicking Delete confirms the dialog and calls deleteSRSItem", async () => {
     const item = makeSRSItemDetail({ id: 7, text: "lep" });
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockDelete.mockResolvedValue({ status: "deleted" });
-    vi.stubGlobal("confirm", () => true);
 
     const { findByText, findByLabelText } = render(CardsPage);
     await findByText("lep");
@@ -294,6 +294,8 @@ describe("cards/+page.svelte", () => {
     await openRowMenu(findByLabelText, "lep");
     const deleteBtn = await findByText("Delete");
     await fireEvent.click(deleteBtn);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
     await waitFor(() => {
       expect(mockDelete).toHaveBeenCalledWith(7);
@@ -317,11 +319,10 @@ describe("cards/+page.svelte", () => {
     });
   });
 
-  it("clicking Reset with confirm stubbed calls resetSRSItem", async () => {
+  it("clicking Reset confirms the dialog and calls resetSRSItem", async () => {
     const item = makeSRSItemDetail({ id: 11, text: "kava", state: "review" });
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockReset.mockResolvedValue({ ...item, state: "new", reps: 0 });
-    vi.stubGlobal("confirm", () => true);
 
     const { findByText, findByLabelText } = render(CardsPage);
     await findByText("kava");
@@ -329,6 +330,8 @@ describe("cards/+page.svelte", () => {
     await openRowMenu(findByLabelText, "kava");
     const resetBtn = await findByText("Reset");
     await fireEvent.click(resetBtn);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
     await waitFor(() => {
       expect(mockReset).toHaveBeenCalledWith(11);
@@ -339,13 +342,13 @@ describe("cards/+page.svelte", () => {
     const item = makeSRSItemDetail({ id: 11, text: "kava", state: "review" });
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockReset.mockRejectedValue(new Error("reset failed"));
-    vi.stubGlobal("confirm", () => true);
 
     const { findByText, findByLabelText } = render(CardsPage);
     await findByText("kava");
 
     await openRowMenu(findByLabelText, "kava");
     await fireEvent.click(await findByText("Reset"));
+    await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
     expect(await findByText("reset failed")).toBeTruthy();
   });
@@ -421,13 +424,13 @@ describe("cards/+page.svelte", () => {
     const item = makeSRSItemDetail({ id: 16, text: "sir" });
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockDelete.mockRejectedValue("plain delete error");
-    vi.stubGlobal("confirm", () => true);
 
     const { findByText, findByLabelText } = render(CardsPage);
     await findByText("sir");
 
     await openRowMenu(findByLabelText, "sir");
     await fireEvent.click(await findByText("Delete"));
+    await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
     expect(await findByText("plain delete error")).toBeTruthy();
   });
@@ -462,7 +465,6 @@ describe("cards/+page.svelte", () => {
     const item = makeSRSItemDetail({ id: 22, text: "sol" });
     mockList.mockResolvedValue({ items: [item], total: 1 });
     mockDelete.mockRejectedValue(new Error("delete failed (Error instance)"));
-    vi.stubGlobal("confirm", () => true);
 
     const { findByText, findByLabelText } = render(CardsPage);
     await findByText("sol");
@@ -470,46 +472,47 @@ describe("cards/+page.svelte", () => {
     await openRowMenu(findByLabelText, "sol");
     await fireEvent.click(await findByText("Delete"));
 
+    await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
     expect(await findByText("delete failed (Error instance)")).toBeTruthy();
   });
 
-  it("Delete does nothing when user cancels the confirm dialog", async () => {
-    // Covers `if (!confirm('Delete this item?')) return;` early-return in deleteItem.
+  it("Delete does nothing when the user cancels the confirm dialog", async () => {
+    // Covers the early-return in deleteItem when the dialog's Cancel is chosen.
     const item = makeSRSItemDetail({ id: 30, text: "mleko" });
     mockList.mockResolvedValue({ items: [item], total: 1 });
-    vi.stubGlobal("confirm", () => false);
 
     const { findByText, findByLabelText } = render(CardsPage);
     await findByText("mleko");
 
     await openRowMenu(findByLabelText, "mleko");
     await fireEvent.click(await findByText("Delete"));
+    await fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     await flushMicrotasks();
 
     expect(mockDelete).not.toHaveBeenCalled();
   });
 
-  it("Reset does nothing when user cancels the confirm dialog", async () => {
-    // Covers `if (!confirm('Reset this item to new state?')) return;` in resetItem.
+  it("Reset does nothing when the user cancels the confirm dialog", async () => {
+    // Covers the early-return in resetItem when the dialog's Cancel is chosen.
     const item = makeSRSItemDetail({ id: 31, text: "čaj", state: "review" });
     mockList.mockResolvedValue({ items: [item], total: 1 });
-    vi.stubGlobal("confirm", () => false);
 
     const { findByText, findByLabelText } = render(CardsPage);
     await findByText("čaj");
 
     await openRowMenu(findByLabelText, "čaj");
     await fireEvent.click(await findByText("Reset"));
+    await fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     await flushMicrotasks();
 
     expect(mockReset).not.toHaveBeenCalled();
   });
 
-  it("Bulk delete does nothing when user cancels the confirm dialog", async () => {
-    // Covers `if (!confirm(...)) return;` early-return in bulkDelete.
+  it("Bulk delete does nothing when the user cancels the confirm dialog", async () => {
+    // Covers the early-return in bulkDelete when the dialog's Cancel is chosen.
     const item = makeSRSItemDetail({ id: 32, text: "kruh" });
     mockList.mockResolvedValue({ items: [item], total: 1 });
-    vi.stubGlobal("confirm", () => false);
 
     const { findAllByRole, findByText } = render(CardsPage);
     await findByText("kruh");
@@ -519,6 +522,7 @@ describe("cards/+page.svelte", () => {
     await fireEvent.click(checkboxes[1]);
 
     await fireEvent.click(await findByText(/Delete selected/));
+    await fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     await flushMicrotasks();
 
     expect(mockBulkDelete).not.toHaveBeenCalled();
@@ -634,7 +638,6 @@ describe("cards/+page.svelte", () => {
       total: 2,
     });
     mockBulkDelete.mockRejectedValue(new Error("bulk delete failed"));
-    vi.stubGlobal("confirm", () => true);
 
     const { findAllByRole, findByText } = render(CardsPage);
     await findByText("a");
@@ -645,6 +648,7 @@ describe("cards/+page.svelte", () => {
     await fireEvent.click(checkboxes[2]);
 
     await fireEvent.click(await findByText(/Delete selected/));
+    await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
     expect(await findByText("bulk delete failed")).toBeTruthy();
   });
