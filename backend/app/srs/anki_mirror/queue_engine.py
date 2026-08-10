@@ -250,16 +250,12 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     due = _merge_by_retrievability_ascending(due_rec, due_prod, today, col_crt=col_crt, params=params)
     if bury_review:
         due = [t for t in due if t[0] not in buried]
-    # TT-only: a listen stages a provisional grade without applying it. The card
-    # is served in the lesson "Check your work" queue instead, so keep it out of
-    # the main flow rather than have the user grade it twice. Unconditional —
-    # this is not a bury, so it does not ride on `bury_review`. Removing them
-    # here (before the cap slice) also means a pending card does not consume a
-    # review slot; the budget is charged when the grade is actually applied.
-    # Mirrors `count_review_due_collocations`' pending clause, so badge and
-    # served queue stay equal.
-    pending = db.pending_grade_ids()
-    due = [t for t in due if t[0] not in pending]
+    # F-14 (2026-08-05): a staged listen grade no longer filters its card out of
+    # `due`. It is provisional, not applied, so the card is genuinely still due —
+    # Anki counts and serves it, and now so does TT. Grading it here clears the
+    # pending row (`drill_feedback`), which is what makes the double-grade the
+    # old filter guarded against impossible. The card therefore also charges the
+    # review budget below, like any other due card.
 
     # Layer 32: fetch the FULL per-direction new pool, not a quota-based overfetch.
     # The bug was that a small per-direction limit truncates one direction before
@@ -285,12 +281,7 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     nonlearning_due = [t for t in due if t[1].directions[t[3]].state not in (SRSState.LEARNING, SRSState.RELEARNING)]
     nonlearning_new = [t for t in new_combined if t[0] not in learning_collocation_ids]
 
-    # Pending collocations seed the seen-set even though they were filtered out of
-    # `due` above: Anki WOULD have gathered that review card, and its NEW sibling
-    # must stay buried on account of it. Without this the pending exclusion would
-    # leak into Layer 64's new-card arithmetic and surface a new card the badge
-    # (`count_new_available_collocations`, deliberately untouched) still hides.
-    seen_collocation_ids: set[int] = set(learning_collocation_ids) | pending
+    seen_collocation_ids: set[int] = set(learning_collocation_ids)
 
     def _bury(cards, when):
         survivors = []

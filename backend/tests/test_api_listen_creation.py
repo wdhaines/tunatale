@@ -588,15 +588,20 @@ class TestListenReviewCap:
         for key in ("new", "learning", "review"):
             assert badges_after[key] == badges_before[key]
 
-    async def test_staging_charges_nothing_but_hides_the_staged_cards(self):
-        """Staging completes no reviews, yet empties the review pool (stage 3).
+    async def test_staging_charges_nothing_and_hides_nothing(self):
+        """Staging completes no reviews, and no longer empties the review pool.
 
-        Two separate facts, and the distinction is the whole model: FSRS is
-        untouched (``count_reviews_completed_today`` stays 0, no budget charged),
-        but the staged cards leave the due pool and the badge, because they are
-        now served by "Check your work" instead. Anki, which has no notion of a
-        pending grade, keeps counting all 4 — the documented divergence, which
-        resolves as each card is applied.
+        Two separate facts, and the distinction is still the whole model — but
+        F-14 (2026-08-05) changed the second one. FSRS is untouched
+        (``count_reviews_completed_today`` stays 0, no budget *spent*), and the
+        staged cards now REMAIN in the due pool and the badge, because a
+        provisional grade is not an applied one. This used to assert 0 on both
+        counts: staging emptied the pool, and TT's review count sat below Anki's
+        by the pending count (Layer 81). That divergence is retired — Anki counts
+        all 4 and so does TT.
+
+        The badge still reads 2 rather than 4, and that is the review CAP doing
+        its ordinary job (``daily_review_cap`` is 2 here), not the staging.
         """
         from datetime import timedelta
 
@@ -633,15 +638,15 @@ class TestListenReviewCap:
         assert data["staged"] == 5  # all eligible (4 due + 1 ahead)
 
         graded_due = db.count_reviews_completed_today(anki_today())
-        assert graded_due == 0  # nothing applied — no FSRS movement, no budget charged
-        # ...but all 4 due cards are now pending, so they leave the review pool.
-        assert db.count_review_due_collocations(anki_today()) == 0
-        assert (await self._queue_stats())["review"] == 0
+        assert graded_due == 0  # nothing applied — no FSRS movement, no budget spent
+        # ...and all 4 due cards stay in the review pool (F-14).
+        assert db.count_review_due_collocations(anki_today()) == 4
+        assert (await self._queue_stats())["review"] == 2, "capped at daily_review_cap, not emptied by staging"
 
-        # Releasing one puts it straight back in the pool the badge counts.
+        # Releasing one changes nothing — it was never withheld to begin with.
         released = db.get_collocation_id_by_guid(db.get_collocation("banka").guid)
         db.clear_pending_grade(released, Direction.RECOGNITION.value)
-        assert db.count_review_due_collocations(anki_today()) == 1
+        assert db.count_review_due_collocations(anki_today()) == 4
 
     async def test_all_staged_cards_surface_in_lesson_review_queue(self):
         """All staged cards (no cap) remain due in FSRS and appear in Check your work."""
