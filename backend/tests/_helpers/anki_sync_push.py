@@ -24,6 +24,10 @@ class FakeWriter:
     def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
         self.calls.append(("update_note_fields", note_id, fields))
 
+    def get_l2_field_for_note(self, note_id: int) -> str:
+        self.calls.append(("get_l2_field_for_note", note_id))
+        return "Slovene"
+
     def suspend(self, card_ids: list[int]) -> None:
         self.calls.append(("suspend", list(card_ids)))
 

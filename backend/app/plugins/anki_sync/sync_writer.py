@@ -74,6 +74,18 @@ class OfflineWriter:
             return [r["name"] for r in rows]
         return list(SLOVENE_VOCAB.field_names)
 
+    def get_l2_field_for_note(self, note_id: int) -> str:
+        """Return the ord-0 (sort/L2) field name for *note_id*'s own notetype.
+
+        Unlike ``get_sort_field_name(model_name)``, this resolves the notetype
+        from the note itself — the caller doesn't need to know or thread through
+        which language/model a specific note belongs to.
+        """
+        row = self._conn.execute("SELECT mid FROM notes WHERE id = ?", (note_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"Note {note_id} not found")
+        return self._field_names_for_mid(row["mid"])[0]
+
     def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
         row = self._conn.execute("SELECT flds, mid FROM notes WHERE id = ?", (note_id,)).fetchone()
         if row is None:
