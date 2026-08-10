@@ -681,6 +681,7 @@
 	.transcript-wrapper {
 		margin-top: 1.25rem;
 		position: relative;
+		overflow-x: clip;
 	}
 	.transcript-section {
 		margin-bottom: 1.25rem;
