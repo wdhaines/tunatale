@@ -2,3 +2,4 @@
 	path = .beads-tasks
 	url = https://github.com/wdhaines/tunatale-tasks.git
 	branch = main
+	ignore = all

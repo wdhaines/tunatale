@@ -215,7 +215,10 @@ in the `.beads-tasks` submodule, and the queue ordering lives in bd.
 - **The submodule pointer is advisory.** `.gitmodules` sets `branch = main`;
   refresh with `git submodule update --remote .beads-tasks`. Pinning a task
   tracker to a code commit buys nothing — you always want its tip — so routine
-  pointer-bump commits are not worth making.
+  pointer-bump commits are not worth making. `ignore = all` is set so the
+  permanent pointer drift stays out of `git status`; without it every status
+  shows ` M .beads-tasks` and a `git add -A` sweeps a meaningless bump into an
+  unrelated commit. Drift is still visible on demand via `git submodule status`.
 - **Why a submodule and not a sibling clone:** the BP fence blocks reads outside
   the project directory, and a path outside it does not error — it ends the run
   at exit 0 with zero files changed. Dispatch docs must be reachable at a path
