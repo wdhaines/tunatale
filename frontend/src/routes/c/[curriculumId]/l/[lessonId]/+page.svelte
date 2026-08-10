@@ -1073,7 +1073,11 @@
 	}
 	.player-card {
 		position: sticky;
-		/* Above transcript content + tooltips (z 10), below the global nav (z 50). */
+		/* Above transcript content, below word tooltips (z 30) and the global nav
+		   (z 50). The tooltips used to sit UNDER this card at z 10 — deliberately,
+		   per an earlier version of this comment — and that was wrong: a popover the
+		   user long-pressed a specific word to summon is useless occluded, while this
+		   card is persistent and always reachable (F-21). */
 		z-index: 20;
 		display: flex;
 		flex-direction: column;

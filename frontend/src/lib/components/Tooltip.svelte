@@ -256,9 +256,25 @@
 	const showGrade = $derived(Boolean(gradeLabel && onGrade));
 	const showDrillIn = $derived(Boolean(onDrillIn));
 
-	const hasActions = $derived(
-		showGrade || showDrillIn || showCreateInflection || showIgnore || showIgnoreCardless || showUnignore || showUnignoreCardless || showMarkKnown || showUnmarkKnown || showResetNew
+	// Counted, not just OR-ed, because the action row's LAYOUT depends on how many
+	// there are: four or more never fit one line at the coarse-pointer button size
+	// (F-17), so they lay out as a two-column grid instead of a wrapping row.
+	const actionCount = $derived(
+		[
+			showGrade,
+			showDrillIn,
+			showCreateInflection,
+			showIgnore,
+			showIgnoreCardless,
+			showUnignore,
+			showUnignoreCardless,
+			showMarkKnown,
+			showUnmarkKnown,
+			showResetNew
+		].filter(Boolean).length
 	);
+
+	const hasActions = $derived(actionCount > 0);
 
 	const hasContent = $derived(!suppressed && Boolean(translation || masteryLabel || dueLabel || hasActions));
 </script>
@@ -291,7 +307,7 @@
 			{#if masteryLabel}<span class="tt-mastery">{masteryLabel}</span>{/if}
 			{#if dueLabel}<span class="tt-state tt-state-{word?.is_due ? 'due' : 'not-due'}">{dueLabel}</span>{/if}
 			{#if hasActions}
-				<span class="tt-actions">
+				<span class="tt-actions" class:tt-actions-grid={actionCount > 3}>
 					{#if showGrade}
 						<button
 							type="button"
@@ -390,7 +406,15 @@
 		width: max-content;
 		max-width: min(280px, calc(100vw - 16px));
 		white-space: normal;
-		z-index: 10;
+		/* Above the sticky player card (z 20), below the global nav (z 50). F-21:
+		   this was 10, so the player occluded a popover opened on any word scrolled
+		   under it. A tooltip is a transient overlay the user summoned by pointing at
+		   one specific word, and it is worthless if the thing it explains is hidden;
+		   the player is persistent chrome and is always reachable. Pinned by
+		   tests/tooltip-popover.spec.ts, which asserts elementFromPoint inside the
+		   overlap rather than this number — a stacking context on any ancestor would
+		   make the number correct and inert. */
+		z-index: 30;
 		opacity: 0;
 		pointer-events: none;
 		transition: opacity 0.1s;
@@ -448,6 +472,33 @@
 		flex-wrap: wrap;
 		gap: 4px;
 		margin-top: 4px;
+	}
+	/* F-17. Four actions do not fit one line: measured on a 412px Pixel 7, the
+	   `learning`-state set (Got it ✓ / Ignore / Known / Reset) needs 301px against
+	   this popover's 280px content box. flex-wrap fills greedily, so it packed
+	   three across and orphaned `Reset` alone on a 63px second line — a quarter of
+	   the width above it, which is what the phone report was about.
+
+	   A two-column grid lays the same buttons out evenly (2x2) at no extra height.
+	   Note this makes the popover NARROWER, not wider: `.tt` is `width: max-content`,
+	   and the grid's max-content is two columns rather than four. Widening the cap
+	   instead was rejected — it re-enters the shrink-to-fit incident's neighbourhood
+	   (see the `display: none` comment above), and it cannot hold anyway, since the
+	   row's width follows label text that changes with the word's state. */
+	.tt-actions-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+	}
+	/* An odd last button spans both columns rather than sitting in a half-width
+	   cell with a hole beside it — the 5-action case (an inflectable word adds
+	   "Create inflection card") would otherwise reproduce F-17 one row lower. */
+	.tt-actions-grid > :last-child:nth-child(odd) {
+		grid-column: 1 / -1;
+	}
+	/* Cells are equal fractions, so a label wider than half the popover ("Create
+	   inflection card") has to wrap inside its cell instead of overflowing it. */
+	.tt-actions-grid > .tt-btn {
+		white-space: normal;
 	}
 	.tt-btn {
 		font-size: 11px;
