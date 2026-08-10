@@ -179,56 +179,46 @@ rediscover these blind:**
 
 ## Beads + TunaTale specifics
 
-- `docs/briefs/*.md` is still where dispatch-brief *content* lives (scope, hard
-  prohibitions, oracles). bd replaces the queue-ordering / "what's blocked on
-  what" bookkeeping that used to live in prose `HANDOFF-*.md` tables — not the
-  brief content itself.
-- The BP dispatch fence is unchanged: each brief tells BP explicitly not to
-  commit, `git add`, or run `./test.sh` (see `~/.claude/skills/bp-delegate`).
-  Closing a bd issue records that the described work is done — it is not
-  authorization to commit, and does not substitute for the orchestrator's
-  `./test.sh` gate and audit before anything ships (see Critical Rules and
-  Delivering above).
-- `.beads/` is local-only (stealth mode, gitignored) — a fresh clone, CI run,
-  or new machine has no bd data. Check `bd ready`; fall back to normal
-  judgment if `.beads/` is absent rather than treating an empty backlog as
-  "nothing to do."
-- **Issues are also mirrored to GitHub** at the private
-  `wdhaines/tunatale-tasks` repo (wired in as the `.beads-tasks` submodule).
-  `bd` remains the source of truth locally; the mirror does not auto-update.
-  After creating/closing/updating issues, run:
-  ```bash
-  export GITHUB_TOKEN=$(gh auth token)   # github.owner/github.repo are persisted in bd config already
-  bd github sync --push-only
-  ```
-  Deliberately kept separate from public `tunatale` (not committed there,
-  not GitHub Issues on the public repo) — the backlog includes internal
-  workflow/dispatch notes not meant to be world-readable.
-  ⚠️ **Confirmed bd bug, reproduced twice: a local `closed` status does not
-  reliably propagate to an already-pushed GitHub issue.** `bd github sync
-  --push-only` reports nothing to do (its own diff logic believes the issue
-  is already in sync) while GitHub still shows it open. Do not trust the
-  sync command's silence as proof of a correct sync — after running it,
-  spot-check open/closed counts on both sides (`bd list --status open` vs
-  `gh issue list --repo wdhaines/tunatale-tasks`). If they disagree, close
-  the stragglers directly: `gh issue close <n> --repo
-  wdhaines/tunatale-tasks`. (gastownhall/beads#5486 — check its status
-  before assuming this is still broken.)
-- **The submodule also holds real content now**, not just a GitHub Issues
-  pointer: three active `docs/briefs/*.md` docs (genre-prefixed
-  `brief-`/`findings-`/`testplan-`, moved there 2026-08-10 because
-  `docs/briefs/` is entirely gitignored — zero version history, single
-  local copy, no recovery path) and `bd-export.jsonl`, a periodic
-  `bd export` snapshot. The GitHub Issues sync above only carries
-  title/description/status/labels — it does **not** carry dependency
-  edges, which is the actual value bd adds over a flat issue list. The
-  JSONL export does. Re-run after any `bd create`/`close`/`dep add` batch:
-  ```bash
-  bd export -o .beads-tasks/bd-export.jsonl
-  cd .beads-tasks && git add bd-export.jsonl && git commit -m "..." && git push
-  ```
-  Deliberately not a full Dolt-native backup (`bd backup`/DoltHub) — that
-  needs either a public DoltHub repo (free tier has no private option) or
-  a new paid service, and would be a 4th location instead of consolidating
-  into the one already wired up. This trades full commit-by-commit Dolt
-  history for something readable, git-diffable, and private.
+**`docs/briefs/` no longer exists** (retired 2026-08-10). It was entirely
+gitignored: no history, one copy, no recovery path. Dispatch material now lives
+in the `.beads-tasks` submodule, and the queue ordering lives in bd.
+
+- **After any `bd create` / `close` / `dep add` batch, run
+  `./.beads-tasks/sync.sh`.** That is the whole ritual — it exports, commits,
+  pushes, and refreshes the GitHub view. `.beads/` is stealth-mode and its Dolt
+  backups are on the same disk, so `bd-export.jsonl` is the only off-machine copy
+  of the backlog.
+- **Method vs work.** `.beads-tasks/DISPATCH-PREAMBLE.md` holds everything
+  binding on *every* delegated run (fence, prohibitions, escalation, report
+  contract). A bd issue holds only what is true of *that* task — scope,
+  read-first list, oracles as literals, pinned commands. Do not restate the
+  preamble inside an issue; two copies drift and the one the executor read is
+  the one you did not edit. `tunatale-0wk` is the reference shape.
+- **Longer supporting docs** — findings, test plans, session handoffs — live in
+  `.beads-tasks/briefs/`, genre-prefixed (`brief-`, `findings-`, `testplan-`,
+  `handoff-`, `design-`). Issues cite them as `Source: <path> § <section>`,
+  anchored by section, never by line number. `.beads-tasks/archive/` holds docs
+  whose work has shipped and which exist nowhere else.
+- **Closing a bd issue is not authorization to commit.** It records that the
+  described work is done. The orchestrator's `./test.sh` gate and audit still
+  stand between that and anything shipping (see Critical Rules and Delivering).
+- **`.beads/` is local-only** — a fresh clone, CI run, or new machine has no bd
+  data. If `.beads/` is absent, fall back to normal judgment rather than reading
+  an empty backlog as "nothing to do."
+- **The GitHub Issues tab is a read-only view**, not a second source of truth. It
+  carries title/description/status/labels and **no dependency edges** — the edges
+  are the reason this project uses bd at all, and only `bd-export.jsonl` has them.
+  The view is allowed to lag; a known bd bug (gastownhall/beads#5486) means a
+  local `closed` does not always reach an already-pushed issue. `sync.sh` reports
+  the count difference and moves on. If a stale row bothers you:
+  `gh issue close <n> --repo wdhaines/tunatale-tasks`. Never restore from it.
+- **The submodule pointer is advisory.** `.gitmodules` sets `branch = main`;
+  refresh with `git submodule update --remote .beads-tasks`. Pinning a task
+  tracker to a code commit buys nothing — you always want its tip — so routine
+  pointer-bump commits are not worth making.
+- **Why a submodule and not a sibling clone:** the BP fence blocks reads outside
+  the project directory, and a path outside it does not error — it ends the run
+  at exit 0 with zero files changed. Dispatch docs must be reachable at a path
+  *inside* the checkout. The submodule is private (the main repo is public and
+  the backlog holds internal workflow notes); `git submodule update --init` 403s
+  for anyone else, which is expected and breaks nothing.
