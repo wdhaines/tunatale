@@ -121,6 +121,7 @@ Most `.claude/rules/*.md` carry `paths:` frontmatter — Claude Code auto-loads 
   built for, reached from a different direction. The commit gate is the backstop
   (it prompts when no fingerprint matches the tree) — do not click past that
   prompt.
+- **Submodule-pointer auto-stage** (PreToolUse): `.claude/hooks/stage_submodule_pointer.py` stages `.beads-tasks` onto any `git commit` that already carries other content, so the "pointer rides code commits" rule needs no reader. Guards (all fail open — it can never block a commit): initialised submodule, actually drifted, HEAD contained in a remote-tracking branch, not `--dry-run`, and something else already going in. **It is order-independent with the commit gate**: `ignore = all` keeps the gitlink out of `git diff HEAD --name-only`, which is what the gate fingerprints, so staging it cannot invalidate a green `./test.sh` (verified 2026-08-10 — byte-identical fingerprint before and after).
 - **Coverage-artifact cleanup** (SessionEnd): deletes `backend/**/*.py,cover` and `backend/coverage.json` (pytest `--cov` leftovers; also gitignored).
 
 ## Critical Rules
@@ -274,9 +275,21 @@ not author anything new there.
   2026-08-10). `.gitmodules` sets `branch = main`; refresh with
   `git submodule update --remote .beads-tasks`.
 
-  **The rule: when you make a code commit, stage `.beads-tasks` with it.**
-  Never make a pointer-only commit — a bump that needs its own `./test.sh` run
-  costs more than the staleness it fixes.
+  **This is automated — there is nothing to remember.** A `PreToolUse` hook
+  (`.claude/hooks/stage_submodule_pointer.py`) stages `.beads-tasks` onto any
+  `git commit` in this repo that already carries other content. It never
+  manufactures a pointer-only commit — a bump that needs its own `./test.sh` run
+  costs more than the staleness it fixes — and it declines to stage a submodule
+  SHA that is not yet on the remote, which would hand every other clone a pointer
+  it cannot fetch. Every guard fails open; the hook cannot block a commit.
+
+  **Why not "the pointer always tracks HEAD":** git cannot express it. A
+  submodule is stored as a literal commit SHA (a gitlink) in the parent's tree,
+  and a commit must name an immutable tree — `branch = main` is only an input to
+  `git submodule update --remote`, never a recorded tracking mode. If it *did*
+  track a branch, checking out an old parent commit would hand you today's
+  backlog instead of the backlog as of that commit. Auto-staging is the closest
+  achievable thing: the pointer equals the submodule's HEAD at commit time.
 
   The reasoning is asymmetric between the two kinds of bd change, and that
   asymmetry is the point:
@@ -293,8 +306,11 @@ not author anything new there.
 
   `ignore = all` stays set: it keeps the between-commit drift out of
   `git status`, so a `git add -A` cannot sweep a meaningless bump into an
-  unrelated commit. Check drift on demand with `git submodule status` — a
-  leading `+` means behind, a space means current.
+  unrelated commit — only the hook's explicit pathspec stages it. Check drift on
+  demand with `git submodule status` — a leading `+` means behind, a space means
+  current. ⚠️ `ignore = all` also hides the gitlink from `git diff` and
+  `git status` **even when it is staged**; pass `--ignore-submodules=none` to see
+  it, or you will conclude the staging silently failed when it did not.
 
   **Why this replaced "the pointer is advisory, never bump it":** that rule was
   correct about correctness (the backlog was always fully synced) and wrong
