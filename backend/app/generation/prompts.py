@@ -73,7 +73,7 @@ Respond with ONLY a JSON object matching this schema (no markdown fences, no pre
     }}
   ],
   "dialogue_glosses": [
-    {{"word": "lowercased_word", "translation": "English translation"}}
+    {{"word": "lowercased_word", "translation": "English translation", "base": "bare dictionary form, VERBS ONLY"}}
   ]{morphology_schema}
 }}
 
@@ -83,6 +83,11 @@ proper names, interjections, and all other words. If a word appears in any dialo
 in any scene, it must have a gloss entry. No exceptions. Give each word's lowercase form
 and a concise English translation. This enables word-level hover translations
 in the learning UI.
+
+The "base" key is OPTIONAL and VERBS ONLY: the bare English dictionary form with no
+leading "to" (e.g. "show", not "to show" — matching the word-gloss convention), used
+when the card fronts the infinitive. Non-verbs and any entry with no dictionary form
+must OMIT it entirely.
 
 {morphology_block}
 

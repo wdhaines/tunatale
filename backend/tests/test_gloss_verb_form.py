@@ -123,6 +123,79 @@ class TestVerbGlossAppliedAtCreation:
         )
         assert out == "a building"
 
+    def test_generator_base_form_is_preferred_over_the_aligner(self):
+        """Part A: an LLM-authored base form beats the rules when present.
+
+        The aligner's wordfreq floor provably cannot be perfect (real words and
+        corpus noise interleave — see gloss_verb_form._WORD_FLOOR), so where the
+        generator supplied a base form, use it verbatim.
+        """
+        from app.api.srs import _resolve_gloss_translation
+
+        out = _resolve_gloss_translation(
+            "svømme",
+            {"svømmer": "is swimming"},
+            {"svømmer"},
+            "svømmer",
+            language_code="no",
+            surface_upos={"svømmer": "VERB"},
+            verb_base_glosses={"svømme": "swim"},
+            warn_on_missing=False,
+        )
+        # The aligner alone cannot reach this: `swim` (1.62e-05) sits below the
+        # membership floor, so "is swimming" passes through untouched.
+        assert out == "swim"
+
+    def test_falls_back_to_the_aligner_when_the_map_lacks_the_lemma(self):
+        """Every lesson generated before Part A has no map — the fallback is
+        what repairs them, and it must not be bypassed or removed."""
+        from app.api.srs import _resolve_gloss_translation
+
+        out = _resolve_gloss_translation(
+            "lyve",
+            {"lyver": "is lying"},
+            {"lyver"},
+            "lyver",
+            language_code="no",
+            surface_upos={"lyver": "VERB"},
+            verb_base_glosses={},
+            warn_on_missing=False,
+        )
+        assert out == "lie"
+
+    def test_map_keyed_for_a_different_verb_also_falls_back(self):
+        """A non-empty map that simply has no entry for THIS verb is the same
+        situation as no map at all — the lookup misses and the aligner runs."""
+        from app.api.srs import _resolve_gloss_translation
+
+        out = _resolve_gloss_translation(
+            "lyve",
+            {"lyver": "is lying"},
+            {"lyver"},
+            "lyver",
+            language_code="no",
+            surface_upos={"lyver": "VERB"},
+            verb_base_glosses={"gå": "go"},
+            warn_on_missing=False,
+        )
+        assert out == "lie"
+
+    def test_map_is_ignored_for_a_non_verb_headword(self):
+        """The map is verb-only; a NOUN must not be rewritten by a stray key."""
+        from app.api.srs import _resolve_gloss_translation
+
+        out = _resolve_gloss_translation(
+            "bygning",
+            {"bygningen": "a building"},
+            {"bygningen"},
+            "bygningen",
+            language_code="no",
+            surface_upos={"bygningen": "NOUN"},
+            verb_base_glosses={"bygning": "build"},
+            warn_on_missing=False,
+        )
+        assert out == "a building"
+
     def test_noun_definiteness_alignment_still_runs(self):
         """Regression guard: adding the verb branch must not displace the noun
         one. `morder` is indefinite, so the leading article still goes."""
@@ -138,3 +211,58 @@ class TestVerbGlossAppliedAtCreation:
             warn_on_missing=False,
         )
         assert out == "murderer"
+
+
+class TestGeneratorEmitsVerbBaseGlosses:
+    """Part A's generation half: the LLM's base form reaches lesson metadata.
+
+    `token_glosses` is NOT changed — it also feeds the transcript, where the
+    conjugated gloss is the correct rendering. The base forms go in a separate,
+    verb-only map beside it.
+    """
+
+    def _story(self, glosses):
+        return {
+            "title": "Test",
+            "scenes": [
+                {
+                    "label": "At the Café",
+                    "lines": [{"speaker": "female-1", "text": "Noen lyver.", "translation": "Someone is lying."}],
+                }
+            ],
+            "dialogue_glosses": glosses,
+            "morphology_focus": [],
+        }
+
+    def test_verb_base_form_lands_in_its_own_metadata_map(self):
+        from app.generation.story import build_lesson_from_story
+        from app.languages import get_language
+
+        lesson = build_lesson_from_story(
+            self._story([{"word": "lyver", "translation": "is lying", "base": "lie"}]),
+            language=get_language("no"),
+        )
+        meta = lesson.generation_metadata
+        assert meta["verb_base_glosses"].get("lyver") == "lie"
+        # The transcript's map keeps the in-context gloss, untouched.
+        assert meta["token_glosses"]["lyver"] == "is lying"
+
+    def test_entries_without_a_base_contribute_nothing(self):
+        """Nouns and any entry the LLM left bare must not enter the map."""
+        from app.generation.story import build_lesson_from_story
+        from app.languages import get_language
+
+        lesson = build_lesson_from_story(
+            self._story([{"word": "noen", "translation": "someone"}]),
+            language=get_language("no"),
+        )
+        assert lesson.generation_metadata["verb_base_glosses"] == {}
+
+    def test_old_lessons_without_the_key_still_load(self):
+        """Backward compatibility: metadata written before Part A has no such
+        key, and every consumer must treat that as an empty map, not a crash."""
+        from app.generation.story import build_lesson_from_story
+        from app.languages import get_language
+
+        lesson = build_lesson_from_story(self._story([]), language=get_language("no"))
+        assert lesson.generation_metadata.get("verb_base_glosses", {}) == {}

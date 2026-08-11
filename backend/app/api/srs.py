@@ -474,6 +474,29 @@ def _headword_upos(
     return None
 
 
+def _lookup_verb_base_gloss(
+    verb_base_glosses: dict[str, str] | None,
+    lemma: str,
+    first_surface: str,
+    surfaces: set[str],
+) -> str | None:
+    """Look up a VERB's base-form gloss in the lesson's verb-only map.
+
+    Mirrors ``_resolve_gloss_translation``'s key order against ``token_glosses``
+    (lemma first, then the first surface, then any other surface) because the
+    map is keyed with the same surface-key + lemma-fallback shape. ``None`` —
+    no map at all, or no entry for this verb — means "fall back to the
+    aligner", never a partial pass-through.
+    """
+    if not verb_base_glosses:
+        return None
+    for key in (lemma, first_surface.lower(), *(s.lower() for s in sorted(surfaces))):
+        base = verb_base_glosses.get(key)
+        if base:
+            return base
+    return None
+
+
 def _resolve_gloss_translation(
     lemma: str,
     token_glosses: dict[str, str],
@@ -483,6 +506,7 @@ def _resolve_gloss_translation(
     language_code: str,
     warn_on_missing: bool = True,
     surface_upos: dict[str, str] | None = None,
+    verb_base_glosses: dict[str, str] | None = None,
 ) -> str:
     """Resolve a token's English translation from the lesson's gloss map.
 
@@ -503,6 +527,13 @@ def _resolve_gloss_translation(
     back cannot contradict its infinitive front. ``surface_upos=None`` (no
     analyzer) skips the verb branch entirely.
 
+    *verb_base_glosses* is the generation-time map of VERB base forms (the
+    lesson's ``verb_base_glosses`` metadata; empty/None for lessons generated
+    before it existed). For a VERB headword it is preferred verbatim over the
+    aligner — an LLM-authored base form has no wordfreq ceiling — and the
+    aligner is the fallback when the map has no entry, so old lessons are
+    repaired rather than passed through.
+
     ``warn_on_missing=False`` for read-only callers. The listen preview resolves
     the same glosses to display them, but it creates nothing and re-runs every
     time the modal opens — warning there would repeat indefinitely and claim a
@@ -517,7 +548,8 @@ def _resolve_gloss_translation(
             # languages with no definiteness checker registered.
             gloss = align_gloss_definiteness(lemma, gloss, language_code)
             if surface_upos is not None and _headword_upos(lemma, first_surface, surfaces, surface_upos) == "VERB":
-                gloss = align_gloss_verb_form(gloss)
+                base = _lookup_verb_base_gloss(verb_base_glosses, lemma, first_surface, surfaces)
+                gloss = base if base is not None else align_gloss_verb_form(gloss)
             return gloss
     if not warn_on_missing:
         return ""
@@ -912,6 +944,10 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     derived_st = extract_sentence_translations_from_translated(lesson)
     for k, v in derived_st.items():
         sentence_translations.setdefault(k, v)
+    # VERB base-form glosses (Part A): lessons generated before it existed have
+    # no key — treat as an empty map, so _resolve_gloss_translation falls back
+    # to the aligner for them. Never a crash.
+    verb_base_glosses: dict[str, str] = lesson.generation_metadata.get("verb_base_glosses", {})
 
     # Lemma analysis shared verbatim with /lesson/{id}/review-queue — the
     # blocking (classla) pass runs on a worker thread so the event loop
@@ -1270,6 +1306,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 first_surface,
                 language_code=lesson.language_code,
                 surface_upos=surface_to_upos,
+                verb_base_glosses=verb_base_glosses,
             ),
             word_count=1,
             difficulty=1,
@@ -1836,6 +1873,7 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
     # opposed to a second lookup here) is what makes the previewed gloss and the
     # stored gloss identical by construction rather than by coincidence.
     token_glosses: dict[str, str] = (lesson.generation_metadata or {}).get("token_glosses", {})
+    verb_base_glosses: dict[str, str] = (lesson.generation_metadata or {}).get("verb_base_glosses", {})
     creates = [
         {
             "kind": "create",
@@ -1851,6 +1889,7 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
                 language_code=lesson.language_code,
                 warn_on_missing=False,
                 surface_upos=words.surface_upos,
+                verb_base_glosses=verb_base_glosses,
             ),
             "progress": None,
             # A create is the most-wanted row in the list; it is never deferred.

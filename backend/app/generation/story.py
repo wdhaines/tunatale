@@ -240,6 +240,22 @@ def build_lesson_from_story(data: dict, language: Language) -> Lesson:
             # (e.g. "biti" → "you will" from whichever surface came first).
             token_glosses.setdefault(lemma, translation)
 
+    # A separate, VERB-only map of base-form glosses (the LLM's optional "base"
+    # key, e.g. `lyver` → "lie"), kept beside token_glosses on purpose: the
+    # transcript's map needs the *in-context* conjugated gloss while the card,
+    # whose front is the infinitive, needs the bare dictionary form. Same
+    # surface-key + lemma-fallback shape as token_glosses so the resolution in
+    # api/srs.py can look up either.
+    verb_base_glosses: dict[str, str] = {}
+    for g in glosses:
+        raw_key = g.get("word") or g.get("lemma", "")
+        base = g.get("base", "")
+        if raw_key and base:
+            key = raw_key.lower()
+            lemma = surface_lemma.get(key, key)
+            verb_base_glosses[key] = base
+            verb_base_glosses.setdefault(lemma, base)
+
     missing = [s for s in surface_lemma if s not in glossed_surfaces]
     if missing:
         _missing_log(missing, language.code)
@@ -260,6 +276,7 @@ def build_lesson_from_story(data: dict, language: Language) -> Lesson:
         key_phrases=kp_infos,
         generation_metadata={
             "token_glosses": token_glosses,
+            "verb_base_glosses": verb_base_glosses,
             "sentence_translations": sentence_translations,
             "morphology_focus": data.get("morphology_focus", []),
             # Exact Story-JSON source (docs/lesson-authoring.md decision #4):
