@@ -80,6 +80,7 @@ from app.srs.function_words import (
     normalize_sentence_key,
 )
 from app.srs.gloss_definiteness import align_gloss_definiteness
+from app.srs.gloss_verb_form import align_gloss_verb_form
 from app.srs.grade_undo import UndoNotAvailable, record_grade_snapshot, undo_last_grade
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, lemmatize_surfaces_in_context, model_version_for
 from app.srs.mastery import is_due_beyond_horizon, is_well_known
@@ -454,6 +455,25 @@ async def serve_media(filename: str):
     return FileResponse(file_path)
 
 
+def _headword_upos(
+    lemma: str,
+    first_surface: str,
+    surfaces: set[str],
+    surface_upos: dict[str, str],
+) -> str | None:
+    """The headword's UPOS from the surface→UPOS map, or None.
+
+    The map is keyed by surface, so the lemma itself may be absent (classla
+    ``sem`` → ``biti``); walk lemma then surfaces in gloss-lookup priority order
+    so the upos and the gloss agree on which form they describe.
+    """
+    for key in (lemma.casefold(), first_surface.casefold(), *(s.casefold() for s in sorted(surfaces))):
+        upos = surface_upos.get(key)
+        if upos:
+            return upos
+    return None
+
+
 def _resolve_gloss_translation(
     lemma: str,
     token_glosses: dict[str, str],
@@ -462,6 +482,7 @@ def _resolve_gloss_translation(
     *,
     language_code: str,
     warn_on_missing: bool = True,
+    surface_upos: dict[str, str] | None = None,
 ) -> str:
     """Resolve a token's English translation from the lesson's gloss map.
 
@@ -475,6 +496,13 @@ def _resolve_gloss_translation(
     ``går``, but the LLM only glossed ``gå`` + the multiword ``i går``) is
     visible instead of shipping a blank card.
 
+    The UPOS is derived here too (from *surface_upos*), never at a call site:
+    the create path and the listen preview must resolve the SAME gloss for the
+    SAME headword, and a VERB headword gets its gloss reduced to the bare
+    dictionary form (``lyver`` → "is lying" but ``lyve`` → "lie") so the card's
+    back cannot contradict its infinitive front. ``surface_upos=None`` (no
+    analyzer) skips the verb branch entirely.
+
     ``warn_on_missing=False`` for read-only callers. The listen preview resolves
     the same glosses to display them, but it creates nothing and re-runs every
     time the modal opens — warning there would repeat indefinitely and claim a
@@ -487,7 +515,10 @@ def _resolve_gloss_translation(
             # for `morder`), so the card contradicted its own front. Drops the
             # article only when the headword cannot carry one; a no-op for
             # languages with no definiteness checker registered.
-            return align_gloss_definiteness(lemma, gloss, language_code)
+            gloss = align_gloss_definiteness(lemma, gloss, language_code)
+            if surface_upos is not None and _headword_upos(lemma, first_surface, surfaces, surface_upos) == "VERB":
+                gloss = align_gloss_verb_form(gloss)
+            return gloss
     if not warn_on_missing:
         return ""
     _logger.warning(
@@ -1238,6 +1269,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 lemma_to_surfaces.get(lemma, set()),
                 first_surface,
                 language_code=lesson.language_code,
+                surface_upos=surface_to_upos,
             ),
             word_count=1,
             difficulty=1,
@@ -1818,6 +1850,7 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
                 words.first_surface.get(lemma, lemma),
                 language_code=lesson.language_code,
                 warn_on_missing=False,
+                surface_upos=words.surface_upos,
             ),
             "progress": None,
             # A create is the most-wanted row in the list; it is never deferred.
