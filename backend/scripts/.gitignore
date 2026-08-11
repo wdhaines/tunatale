@@ -35,3 +35,4 @@
 !anki_archive/
 !anki_archive/grave_duplicate_notes.py
 !anki_archive/reanchor_crossed_collocation.py
+!anki_archive/backfill_card_quality_no.py
