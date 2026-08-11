@@ -30,11 +30,17 @@
  * ── The wording, and why it is not "next time" ────────────────────────
  *
  * User: "not all the words may show up exactly next time; it may take multiple
- * listens." Correct, and the scheduler proves it: `_allocate_new_state_budget`
- * prices NEW-state rows first and hands creation `max(0, budget - charged)`, so
- * a lesson whose NEW backlog is at or above the cap yields a creation budget of
+ * listens." Correct, and the scheduler still proves it, though not the way this
+ * comment first described. It used to read: `_allocate_new_state_budget` prices
+ * NEW-state rows first and hands creation `max(0, budget - charged)`, so a
+ * lesson whose NEW backlog is at or above the cap yields a creation budget of
  * ZERO for as many listens as that holds — measured across two separate days.
- * `later` promises no schedule. That is the whole point of the word.
+ * That starvation was F-2, and `_allocate_intro_pool` replaced it: one budget,
+ * one pool, both kinds ranked together on corpus frequency. What survives is
+ * the part `later` depends on — the budget is still a hard cap, so a lesson
+ * with more candidates than the cap needs several listens either way, and which
+ * rows come up next depends on frequency rather than arrival order. `later`
+ * promises no schedule. That is the whole point of the word.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";

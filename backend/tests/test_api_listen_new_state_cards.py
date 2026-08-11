@@ -165,39 +165,15 @@ class TestGradeClass:
         assert _release_review_kind(_dir(SRSState.NEW)) is None
 
 
-class TestBudgetAllocator:
-    """`_allocate_new_state_budget` — the shared introduction budget."""
-
-    def test_free_rows_cost_nothing_and_come_first(self):
-        from app.api.srs import _allocate_new_state_budget
-
-        live, tail, remaining = _allocate_new_state_budget([("a", True), ("b", True)], 0)
-        assert live == ["a", "b"]
-        assert tail == []
-        assert remaining == 0
-
-    def test_charged_rows_consume_budget_and_overflow_to_tail(self):
-        from app.api.srs import _allocate_new_state_budget
-
-        live, tail, remaining = _allocate_new_state_budget([("a", False), ("b", False), ("c", False)], 2)
-        assert live == ["a", "b"]
-        assert tail == ["c"]
-        assert remaining == 0
-
-    def test_leftover_budget_is_returned_for_creations(self):
-        from app.api.srs import _allocate_new_state_budget
-
-        live, tail, remaining = _allocate_new_state_budget([("a", False)], 3)
-        assert live == ["a"]
-        assert tail == []
-        assert remaining == 2
-
-    def test_free_rows_ordered_ahead_of_charged_rows(self):
-        from app.api.srs import _allocate_new_state_budget
-
-        live, tail, _ = _allocate_new_state_budget([("charged", False), ("free", True)], 1)
-        assert live == ["free", "charged"]
-        assert tail == []
+# `TestBudgetAllocator` lived here and unit-tested `_allocate_new_state_budget`
+# (free-rows-first, charged rows overflow to the tail, remainder returned for
+# creation). F-2 replaced that helper with `_allocate_intro_pool`, which ranks
+# NEW-state rows and creation candidates in ONE pool and so has no "remainder"
+# to return. Every behaviour those four tests pinned is re-pinned against the
+# new helper in `test_api_listen_one_ranking_pool.py::TestAllocateIntroPool` —
+# including the two rules that survived the merge unchanged ("created today is
+# free" and key phrases never being frequency-ranked). Deleted rather than
+# ported so there is one allocator oracle, not two that can disagree.
 
 
 class TestCreatedInWindow:
@@ -319,22 +295,42 @@ class TestSharedIntroductionBudget:
         await _post_listen({"lesson_id": "lesson-1"})
         assert _pending_texts(db) == {"banka"}
 
-    async def test_new_state_takes_precedence_over_creation(self):
-        """Cards already in the deck get finished before more are added."""
-        db = _setup_lesson("Banka riba")
+    async def test_a_commoner_creation_candidate_now_outranks_a_new_state_row(self):
+        """⚠️ This test asserted the OPPOSITE until F-2 (2026-08-04).
+
+        It used to be `test_new_state_takes_precedence_over_creation`, pinning
+        "cards already in the deck get finished before more are added". The user
+        retired that rule: NEW-state rows and creation candidates now compete in
+        ONE pool ranked by corpus frequency, so a commoner untracked lemma takes
+        the slot from a rarer carded-but-never-introduced one.
+
+        The fixture had to change with it. The old one was "Banka riba", where
+        banka (zipf 4.39) is commoner than riba (4.14) — under one pool banka
+        wins on frequency, so the old assertions would still have passed while
+        testing nothing. `delo` (5.85) beats `banka` and makes the inversion
+        real.
+
+        Full coverage of the one-pool semantics is in
+        `test_api_listen_one_ranking_pool.py`; this stays here so a reader of
+        the shared-budget file is not left with a retired rule.
+        """
+        db = _setup_lesson("Banka delo")
         _set_new_cap(db, 1)
-        _seed_new_state(db, "banka", created_days_ago=3)  # carded, NEW
-        # "riba" is untracked → a creation candidate competing for the budget.
+        _seed_new_state(db, "banka", created_days_ago=3)  # carded, NEW, zipf 4.39
+        # "delo" is untracked → a creation candidate, zipf 5.85, and it wins.
 
         cands = (await _preview())["candidates"]
         banka = next(c for c in cands if c["text"] == "banka")
+        delo = next(c for c in cands if c["text"] == "delo")
         assert banka["grade_class"] == "new"
-        assert banka["will_create"] is True
-        assert all(c["will_create"] is False for c in cands if c["grade_class"] == "create")
+        assert banka["will_create"] is False, "the rarer NEW-state row lost the slot"
+        assert delo["grade_class"] == "create"
+        assert delo["will_create"] is True
 
         before = {r[0] for r in _all_texts(db)}
         await _post_listen({"lesson_id": "lesson-1"})
-        assert {r[0] for r in _all_texts(db)} == before, "no card should have been created"
+        assert {r[0] for r in _all_texts(db)} - before == {"delo"}, "the create landed, and only it"
+        assert _pending_texts(db) == set(), "the NEW-state row was in the tail, so nothing was staged"
 
 
 def _all_texts(db):

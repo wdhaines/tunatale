@@ -939,14 +939,21 @@ export interface paths {
      * Get Listen Preview
      * @description Read-only classification of what a listen would stage for a lesson.
      *
-     *     The ``create`` rows are every untracked lemma, ranked by
-     *     ``_rank_listen_candidates`` and flagged with ``will_create`` against the
-     *     same per-listen creation budget ``mark_lesson_listened`` uses
-     *     (``resolve_daily_new_cap`` minus today's introductions and still-NEW
+     *     The ``create`` rows are every untracked lemma, flagged with ``will_create``
+     *     against the same per-listen introduction budget ``mark_lesson_listened``
+     *     uses (``resolve_daily_new_cap`` minus today's introductions and still-NEW
      *     same-day creations): rows within budget are True (live), the over-budget
      *     tail is False. Without the flag the preview and the commit disagree — a
      *     same-day re-listen has ~0 budget left and would create nothing even though
      *     the preview showed every untracked lemma as checked.
+     *
+     *     Creations do **not** get their own budget. ``_allocate_intro_pool`` ranks
+     *     them in ONE pool with the NEW-state rows, by corpus frequency across both
+     *     kinds (F-2), so a common untracked lemma can outrank a rarer card that is
+     *     already in the deck. Cards created earlier today are free and always live;
+     *     NEW-state key phrases lead the charged order and are never
+     *     frequency-ranked (a phrase is OOV, so ranking it would sink every key
+     *     phrase below every word).
      *
      *     Tracked word/kp candidates are unchanged: creations first, then tracked by
      *     mastery ascending (least-known first). Strictly read-only — no pending
@@ -956,12 +963,15 @@ export interface paths {
      *
      *     Array order (frontend contract): create rows come first, in rank order,
      *     live rows (``will_create`` True) before tail rows (``will_create`` False);
-     *     then the tracked rows sorted as today. Do not reorder or interleave. The
-     *     preview and commit agree because both pass the SAME ``zipf`` callable
-     *     (resolved once per request via ``_zipf_for``) into
-     *     ``_rank_listen_candidates`` — removing a live create promotes the
-     *     next-ranked tail row without reordering the rest, so the first N still-
-     *     checked create rows are exactly what ``mark_lesson_listened`` will create.
+     *     then the tracked rows sorted as today. Do not reorder or interleave. Live
+     *     creates stay a prefix of the create list even though the pool interleaves
+     *     the two kinds, because the live cut is a prefix of the ranked pool and the
+     *     creates keep their relative order inside it. The preview and commit agree
+     *     because both make the SAME ``_allocate_intro_pool`` call with the same
+     *     ``zipf`` callable (resolved once per request via ``_zipf_for``) — removing
+     *     a live create promotes the next-ranked tail row without reordering the
+     *     rest, so the first N still-checked create rows are exactly what
+     *     ``mark_lesson_listened`` will create.
      */
     get: operations["get_listen_preview_api_srs_lesson__lesson_id__listen_preview_get"];
     put?: never;
@@ -1009,7 +1019,7 @@ export interface paths {
      *     ``_listen_grade_class`` returns ``"new"`` for a NEW-state direction, so a
      *     listen stages carded-but-never-introduced words), but only up to the shared
      *     introduction budget — releasing such a row *introduces* the card, spending
-     *     Anki's daily new-card allowance, so ``_allocate_new_state_budget`` caps how
+     *     Anki's daily new-card allowance, so ``_allocate_intro_pool`` caps how
      *     many a single listen can arm. A cloze still can never appear: staging is
      *     RECOGNITION-only and cloze is production-only. Release by any path —
      *     per-card grade, ``commit-pending``, or an Anki-side grade arriving via

@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import timedelta
 from pathlib import Path
 from typing import NamedTuple
@@ -531,7 +531,7 @@ def _listen_grade_class(
     ``None`` (not eligible).  A NEW-state direction classifies as ``"new"``:
     the card exists but has never been introduced, and hearing the word is
     allowed to introduce it (subject to the shared introduction budget — see
-    ``_allocate_new_state_budget``).  ``last_review`` gates ONLY the once-per-day window
+    ``_allocate_intro_pool``).  ``last_review`` gates ONLY the once-per-day window
     (already-graded-today returns ``None`` for both due and ahead); a missing
     or legacy non-datetime ``last_review`` means "not graded today" and falls
     through to the dueness check.  The REVIEW-state dueness boundary matches
@@ -596,31 +596,73 @@ def _created_in_window(
     return today_start <= stamp.astimezone(datetime.UTC) < today_end
 
 
-def _allocate_new_state_budget[T](
-    rows: list[tuple[T, bool]],
+def _allocate_intro_pool[T](
+    new_state_rows: list[tuple[T, bool, str, bool]],
+    creation_lemmas: list[str],
     budget: int,
-) -> tuple[list[T], list[T], int]:
-    """Split NEW-state candidates into (live, over-budget tail, budget left).
+    *,
+    zipf: Callable[[str], float] | None = None,
+    occurrences: Mapping[str, int],
+) -> tuple[list[T], list[T], list[str], list[str]]:
+    """Allocate ONE introduction budget across NEW-state rows AND creations.
 
-    ``rows`` is ``(payload, created_today)`` in candidate order. Releasing a
-    staged grade on a NEW-state card *introduces* it, so introductions and
-    creations draw on ONE shared budget — otherwise a lesson with 40 NEW-state
-    words would introduce 40 cards in a single listen.
+    Returns ``(live_new, tail_new, ranked_creates, live_creates)``.
+    ``new_state_rows`` is ``(payload, created_today, text, is_key_phrase)`` in
+    lesson order; ``creation_lemmas`` is the untracked lemmas.
 
-    Two rules make the accounting honest:
+    Releasing a staged grade on a NEW-state card *introduces* it, so
+    introductions and creations draw on one budget — otherwise a lesson with 40
+    NEW-state words would introduce 40 cards in a single listen.
+
+    **The two kinds compete on corpus frequency in a single ranked pool** (F-2,
+    user decision 2026-08-04). The predecessor ``_allocate_new_state_budget``
+    allocated NEW-state rows *first* and returned the remainder for creation,
+    which with >= cap NEW-state rows is always 0 — so a creation candidate could
+    never outrank a NEW-state row however common it was, and the frequency
+    ranking shipped in ``9e42b83`` was dead code against real lesson data. That
+    also means the old docstring's rule, "cards already in the deck get finished
+    before more are added", is **deliberately abandoned**: frequency alone
+    decides. The two kinds are not equal in cost (a create writes a collocation
+    row and fetches media; a NEW-state row only stamps ``introduced_at``) and
+    the decision is that this does not matter — do not reintroduce a weighting.
+
+    Two rules survive the merge, both load-bearing:
 
     * A card **created today is free**. It already holds a slot via
       ``count_new_created_today``, which is subtracted when the budget is
-      computed; charging it again would double-count the same card.
-    * Free rows are ordered ahead of charged rows, and NEW-state rows are
-      allocated before creations, so **cards already in the deck get finished
-      before more are added**.
+      computed; charging it again would double-count the same card. Free rows
+      never enter the pool and are live regardless of frequency.
+    * **Key phrases are never frequency-ranked.** ``_rank_listen_candidates``
+      has always held them ahead of the lemmas in lesson order — they are the
+      lesson's pedagogical core. A multi-word phrase is OOV in wordfreq (zipf
+      0.0), so ranking it in the pool would sink every key phrase below every
+      word and they would stop being introduced at all. Charged key phrases
+      lead the charged order instead; only NEW-state *words* join the pool.
 
-    The returned budget remainder is what creation may still spend.
+    Ranking goes through ``_rank_listen_candidates`` rather than a second sort
+    here, so the pool and the creation list cannot drift apart. Callers must
+    pass the SAME ``zipf`` object to both call sites (resolve once per request
+    via ``_zipf_for``) or preview and commit diverge — the 6a5c718 bug class.
     """
-    free = [payload for payload, created_today in rows if created_today]
-    charged = [payload for payload, created_today in rows if not created_today]
-    return free + charged[:budget], charged[budget:], max(0, budget - len(charged))
+    free = [row for row in new_state_rows if row[1]]
+    charged_kps = [row for row in new_state_rows if not row[1] and row[3]]
+    charged_words = [row for row in new_state_rows if not row[1] and not row[3]]
+
+    # One pool. A lemma cannot be both untracked (a create) and carded-and-NEW,
+    # so text -> entry is a bijection and the rank order maps back cleanly.
+    pooled: dict[str, tuple[bool, object]] = {row[2]: (True, row[0]) for row in charged_words}
+    pooled.update({lemma: (False, lemma) for lemma in creation_lemmas})
+    ranked_pool = _rank_listen_candidates([], list(pooled), occurrences, zipf=zipf)
+
+    charged: list[tuple[bool, object]] = [(True, row[0]) for row in charged_kps]
+    charged += [pooled[text] for _kind, text in ranked_pool]
+
+    live_charged, tail_charged = charged[:budget], charged[budget:]
+    live_new = [row[0] for row in free] + [value for is_new, value in live_charged if is_new]
+    tail_new = [value for is_new, value in tail_charged if is_new]
+    ranked_creates = [text for _kind, text in ranked_pool if not pooled[text][0]]
+    live_creates = [value for is_new, value in live_charged if not is_new]
+    return live_new, tail_new, ranked_creates, live_creates
 
 
 def _bump_grade_clock(last_ms: int) -> tuple[datetime.datetime, int]:
@@ -910,7 +952,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # no text, and each loop already knows whether it is looking at a word or a
     # key phrase, so matching there makes it structurally impossible to honour a
     # key phrase named in `over_cap_words`.
-    new_state_pending: list[tuple[tuple[int, str, bool, bool], bool]] = []
+    new_state_pending: list[tuple[tuple[int, str, bool, bool], bool, str, bool]] = []
     lemma_candidates: list[str] = []
     # Lemmas the user rated "skip" this listen. They stay in `lemma_candidates`
     # (so they hold their rank position) but the staged-creation loop below
@@ -1019,6 +1061,8 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                     (
                         (listen_coll_id, rating_str, lemma in confirmed_words, lemma in over_cap_words),
                         _created_in_window(db.get_created_at_by_guid(existing.guid), today_start, today_end),
+                        lemma,
+                        False,
                     )
                 )
                 continue
@@ -1074,6 +1118,8 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 (
                     (kp_coll_id, rating_str, kp.phrase in confirmed_kps, kp.phrase in over_cap_kps),
                     _created_in_window(db.get_created_at_by_guid(existing.guid), today_start, today_end),
+                    kp.phrase,
+                    True,
                 )
             )
             continue
@@ -1095,16 +1141,19 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # No persisted cursor: each listen recomputes lesson-word-set minus tracked
     # cards and takes the top of the ranking; cards created by this listen are
     # "existing" for the next one.
-    # ── Shared introduction budget: NEW-state rows first, then creations ──
-    # Mirrors get_listen_preview exactly; whatever budget survives the
-    # introductions is what creation may spend.
-    live_new, tail_new, creation_budget = _allocate_new_state_budget(new_state_pending, intro_budget)
+    # ── One introduction budget, one ranking pool ─────────────────────────
+    # NEW-state rows and creation candidates compete on corpus frequency
+    # together (F-2). Mirrors get_listen_preview exactly: same call, same
+    # arguments, the same `zipf` object resolved once per request.
+    live_new, tail_new, ranked, live_creates = _allocate_intro_pool(
+        new_state_pending, lemma_candidates, intro_budget, zipf=zipf, occurrences=lemma_occurrences
+    )
     # Opting in a tail NEW-state row stages it exactly as a live one is — the
     # two lists differ only in that the allocation cut `tail_new` at the shared
-    # introduction budget. The creation budget is deliberately NOT re-reduced
-    # for opt-ins: the allocation already priced these rows, and shrinking
-    # creation_budget here would let the opt-in slide the live/tail divider
-    # (promote-on-uncheck, rejected 2026-07-31).
+    # introduction budget. The live-create set is deliberately NOT re-reduced
+    # for opt-ins: the allocation already priced these rows, and shrinking it
+    # here would let the opt-in slide the live/tail divider (promote-on-uncheck,
+    # rejected 2026-07-31).
     opted_in_tail = [row for row in tail_new if row[3]]
     for _coll_id, _rating, _confirmed, _over_cap in live_new + opted_in_tail:
         if _rating == "skip":
@@ -1115,14 +1164,14 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             db.stage_pending_grade(body.lesson_id, _coll_id, Direction.RECOGNITION.value, _rating, "new")
             staged_count += 1
 
-    ranked = _rank_listen_candidates([], lemma_candidates, lemma_occurrences, zipf=zipf)
-    for i, (_kind, cand) in enumerate(ranked):
+    live_create_set = set(live_creates)
+    for cand in ranked:
         # Over-budget rows are skipped (a gated `continue`, not a `break`) so
         # an opted-in tail lemma ranked BELOW the first over-budget row is still
         # reached. A name is honoured only here, while iterating real ranked
         # candidates — an unknown or in-budget lemma matches nothing and
         # creates nothing, structurally (no standalone validation pass).
-        if i >= creation_budget and cand not in over_cap_words:
+        if cand not in live_create_set and cand not in over_cap_words:
             continue
         if cand in skipped_lemmas:
             continue  # slot consumed, nothing created — no promotion
@@ -1284,7 +1333,7 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     ``_listen_grade_class`` returns ``"new"`` for a NEW-state direction, so a
     listen stages carded-but-never-introduced words), but only up to the shared
     introduction budget — releasing such a row *introduces* the card, spending
-    Anki's daily new-card allowance, so ``_allocate_new_state_budget`` caps how
+    Anki's daily new-card allowance, so ``_allocate_intro_pool`` caps how
     many a single listen can arm. A cloze still can never appear: staging is
     RECOGNITION-only and cloze is production-only. Release by any path —
     per-card grade, ``commit-pending``, or an Anki-side grade arriving via
@@ -1469,14 +1518,21 @@ async def commit_pending_grades(lesson_id: str, request: Request) -> CommitPendi
 async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewResponse:
     """Read-only classification of what a listen would stage for a lesson.
 
-    The ``create`` rows are every untracked lemma, ranked by
-    ``_rank_listen_candidates`` and flagged with ``will_create`` against the
-    same per-listen creation budget ``mark_lesson_listened`` uses
-    (``resolve_daily_new_cap`` minus today's introductions and still-NEW
+    The ``create`` rows are every untracked lemma, flagged with ``will_create``
+    against the same per-listen introduction budget ``mark_lesson_listened``
+    uses (``resolve_daily_new_cap`` minus today's introductions and still-NEW
     same-day creations): rows within budget are True (live), the over-budget
     tail is False. Without the flag the preview and the commit disagree — a
     same-day re-listen has ~0 budget left and would create nothing even though
     the preview showed every untracked lemma as checked.
+
+    Creations do **not** get their own budget. ``_allocate_intro_pool`` ranks
+    them in ONE pool with the NEW-state rows, by corpus frequency across both
+    kinds (F-2), so a common untracked lemma can outrank a rarer card that is
+    already in the deck. Cards created earlier today are free and always live;
+    NEW-state key phrases lead the charged order and are never
+    frequency-ranked (a phrase is OOV, so ranking it would sink every key
+    phrase below every word).
 
     Tracked word/kp candidates are unchanged: creations first, then tracked by
     mastery ascending (least-known first). Strictly read-only — no pending
@@ -1486,12 +1542,15 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
 
     Array order (frontend contract): create rows come first, in rank order,
     live rows (``will_create`` True) before tail rows (``will_create`` False);
-    then the tracked rows sorted as today. Do not reorder or interleave. The
-    preview and commit agree because both pass the SAME ``zipf`` callable
-    (resolved once per request via ``_zipf_for``) into
-    ``_rank_listen_candidates`` — removing a live create promotes the
-    next-ranked tail row without reordering the rest, so the first N still-
-    checked create rows are exactly what ``mark_lesson_listened`` will create.
+    then the tracked rows sorted as today. Do not reorder or interleave. Live
+    creates stay a prefix of the create list even though the pool interleaves
+    the two kinds, because the live cut is a prefix of the ranked pool and the
+    creates keep their relative order inside it. The preview and commit agree
+    because both make the SAME ``_allocate_intro_pool`` call with the same
+    ``zipf`` callable (resolved once per request via ``_zipf_for``) — removing
+    a live create promotes the next-ranked tail row without reordering the
+    rest, so the first N still-checked create rows are exactly what
+    ``mark_lesson_listened`` will create.
     """
     store = request.state.content_store
     lesson = store.get_lesson(lesson_id)
@@ -1523,10 +1582,11 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
 
     candidates: list[dict] = []
     lemma_candidates: list[str] = []
-    # (row, created_today) for every NEW-state candidate, in candidate order.
-    # Held back from `candidates` until the shared introduction budget is
-    # allocated below, which is what stamps their `will_create`.
-    new_state_rows: list[tuple[dict, bool]] = []
+    # (row, created_today, ranking text, is_key_phrase) for every NEW-state
+    # candidate, in candidate order. Held back from `candidates` until the
+    # shared introduction budget is allocated below, which is what stamps their
+    # `will_create`.
+    new_state_rows: list[tuple[dict, bool, str, bool]] = []
 
     # ── Word-level candidates (tracked + untracked) ─────────────────────
     for lemma in words.first_sentence:
@@ -1586,7 +1646,12 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
             }
             if grade_cls == "new":
                 new_state_rows.append(
-                    (row, _created_in_window(db.get_created_at_by_guid(existing.guid), today_start, today_end))
+                    (
+                        row,
+                        _created_in_window(db.get_created_at_by_guid(existing.guid), today_start, today_end),
+                        lemma,
+                        False,
+                    )
                 )
             else:
                 candidates.append(row)
@@ -1632,7 +1697,12 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
         # in the commit a row the preview never budgeted.
         if grade_cls == "new":
             new_state_rows.append(
-                (kp_row, _created_in_window(db.get_created_at_by_guid(item.guid), today_start, today_end))
+                (
+                    kp_row,
+                    _created_in_window(db.get_created_at_by_guid(item.guid), today_start, today_end),
+                    kp.phrase,
+                    True,
+                )
             )
         else:
             candidates.append(kp_row)
@@ -1641,10 +1711,12 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
     # mark_lesson_listened's staged-creation loop exactly, D2/D3) ──────────
     new_cap, _ = resolve_daily_new_cap(db)
     intro_budget = max(0, new_cap - db.count_new_introduced_today(today) - db.count_new_created_today(today))
-    # ONE budget covers introductions and creations. NEW-state rows are
-    # allocated first (finish the deck's existing cards before adding more);
-    # whatever survives is what creation may still spend.
-    live_new, tail_new, creation_budget = _allocate_new_state_budget(new_state_rows, intro_budget)
+    # ONE budget AND one ranking pool: NEW-state rows and creation candidates
+    # compete on corpus frequency together (F-2). Same call, same arguments as
+    # mark_lesson_listened — that is what keeps preview and commit in step.
+    live_new, tail_new, ranked, live_creates = _allocate_intro_pool(
+        new_state_rows, lemma_candidates, intro_budget, zipf=zipf, occurrences=words.occurrences
+    )
     for _row in live_new:
         _row["will_create"] = True
     for _row in tail_new:
@@ -1653,7 +1725,7 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
         _row["will_create"] = False
     candidates.extend(live_new)
     candidates.extend(tail_new)
-    ranked = _rank_listen_candidates([], lemma_candidates, words.occurrences, zipf=zipf)
+    live_create_set = set(live_creates)
     # A create row has no card yet, so there is no stored translation to read —
     # the gloss comes from the lesson's own map, resolved through the SAME
     # helper mark_lesson_listened uses when it creates the card. Reusing it (as
@@ -1677,11 +1749,11 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
             ),
             "progress": None,
             "well_known": False,
-            "will_create": i < creation_budget,
+            "will_create": lemma in live_create_set,
             "due_at": None,
             "_group_rank": -1,
         }
-        for i, (_kind, lemma) in enumerate(ranked)
+        for lemma in ranked
     ]
 
     # ── Ordering: creations first, then tracked by group (learning → due →
