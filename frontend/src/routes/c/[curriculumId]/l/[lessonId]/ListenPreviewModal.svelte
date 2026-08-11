@@ -160,15 +160,20 @@
 		try {
 			const preview = await api.getListenPreview(lessonId);
 			candidates = preview.candidates;
-			// Default: everything "good" — except well-known rows, which start
-			// "skip" (and collapsed inside the disclosure). Over-budget create
+			// Default: everything "good" — except DEFERRED rows (known or
+			// learning), which start "skip" and collapsed inside their group.
+			// One `deferred_reason` test rather than one per population: these
+			// rows invert the meaning of absence from word_ratings, and the
+			// inversion is stated once here and once in buildRatings. Adding a
+			// third category must not add a third pair of branches.
+			// Over-budget create
 			// rows get NO entry at all: for a create, absent from word_ratings
 			// means the backend defaults to "good" and CREATES the card, so
 			// seeding a tail row would create a card the budget does not cover.
 			const rts: Record<string, WordRating> = {};
 			for (const c of candidates) {
 				const key = candidateKey(c);
-				if (c.well_known) {
+				if (c.deferred_reason) {
 					rts[key] = 'skip';
 				} else if (c.will_create === false) {
 					// Tail rows (outside the shared introduction budget) get NO entry
@@ -245,7 +250,10 @@
 		for (const c of candidates) {
 			const key = candidateKey(c);
 			if (tailKeys.has(key)) continue;
-			if (c.well_known) continue;
+			// A bulk action is not an opt-in. A deferred row leaves its group
+			// only by a per-row grade — that is what "opt-in" means, and it is
+			// the same rule for known and learning rows.
+			if (c.deferred_reason) continue;
 			if (rts[key] === 'skip') rts[key] = rememberedGrade[key] ?? 'good';
 		}
 		ratings = rts;
@@ -332,7 +340,7 @@
 		// here because this flow has already stopped asking about the card;
 		// quoting a work-in-progress number would contradict the row's own
 		// "known" grouping in the disclosure below.
-		if (c.well_known) return 'known';
+		if (c.deferred_reason === 'known') return 'known';
 		// `progress: null` IS the server's "no mastery to report" signal — it
 		// stamps null on NEW-state rows and a real float on every other tracked
 		// row. Testing the null rather than `grade_class === 'new'` keeps this
@@ -366,15 +374,21 @@
 		}).length,
 	);
 
-	// The gradeable set: every tracked (word/kp) row that is not well-known and
+	// The gradeable set: every tracked (word/kp) row that is not deferred and
 	// not over budget, plus every create row the server will actually create.
-	// Tail rows are rendered separately inside the tail disclosure.
+	// Tail and deferred rows are rendered separately inside their disclosures.
 	let liveCandidates = $derived([
-		...candidates.filter((c) => c.kind !== 'create' && !c.well_known && c.will_create !== false),
+		...candidates.filter((c) => c.kind !== 'create' && !c.deferred_reason && c.will_create !== false),
 		...candidates.filter((c) => c.kind === 'create' && c.will_create !== false),
 	]);
 
-	let wellKnownCandidates = $derived(candidates.filter((c) => c.well_known));
+	// One collapsed group per deferred reason. They stay SEPARATE rather than
+	// merging into one "deferred" group: "known" means the flow has stopped
+	// asking, "learning" means it is asking on a schedule a listen must not
+	// pre-empt. Same treatment, different reasons — and the user reads the
+	// reason off the group's own summary line.
+	let learningCandidates = $derived(candidates.filter((c) => c.deferred_reason === 'learning'));
+	let wellKnownCandidates = $derived(candidates.filter((c) => c.deferred_reason === 'known'));
 
 	// Builds the commit payload purely from local reads — never assigns into
 	// the $state map (that was the F5 bug: mutating `ratings[c.text] = 'skip'`
@@ -425,16 +439,23 @@
 			}
 			const rating = ratings[key] ?? 'good';
 			// Confirmation rides its own list rather than being inferred from
-			// presence in the ratings map: a well-known row has to appear there
+			// presence in the ratings map: a deferred row has to appear there
 			// for the backend to consider it at all, so "present" cannot also
 			// mean "reviewed". A skipped row is graded by nobody, so it is never
 			// confirmed.
 			if (rating !== 'skip' && confirmed.has(key)) {
 				(c.kind === 'kp' ? confirmedKps : confirmedWords).push(c.text);
 			}
-			const isWellKnown = c.well_known === true;
+			// ⚠️ The inverted-polarity edge, stated once. For a DEFERRED row
+			// (known or learning) the backend skips anything absent from
+			// word_ratings, so an opted-in "good" must be sent EXPLICITLY —
+			// omitting it as "the default" would silently discard the grade.
+			// For every other row "good" IS the default and sending it is
+			// redundant. Keyed off deferred_reason so the two populations
+			// cannot drift apart.
+			const isDeferred = c.deferred_reason != null;
 			const value: WordRating | null =
-				rating === 'skip' ? 'skip' : isWellKnown || rating !== 'good' ? rating : null;
+				rating === 'skip' ? 'skip' : isDeferred || rating !== 'good' ? rating : null;
 			if (value === null) continue;
 			if (c.kind === 'kp') {
 				kpRatings[c.text] = value;
@@ -660,6 +681,14 @@
 				<div class="partition">
 					<span class="seg now"><span class="n">{liveCandidates.length + optedTailCount}</span><span class="l">now</span></span>
 					<span class="seg"><span class="n">{tailCandidates.length - optedTailCount}</span><span class="l">later</span></span>
+					<!-- Renders only when it has content, so a deck with nothing
+					     mid-acquisition keeps the three-count line F-20 shipped.
+					     Without it the counts would stop summing to the row count
+					     the moment a learning card appeared — the partition's whole
+					     claim is that every row is in exactly one of these buckets. -->
+					{#if learningCandidates.length > 0}
+						<span class="seg"><span class="n">{learningCandidates.length}</span><span class="l">learning</span></span>
+					{/if}
 					<span class="seg"><span class="n">{wellKnownCandidates.length}</span><span class="l">known</span></span>
 				</div>
 				{#if optedTailCount > 0}
@@ -693,6 +722,23 @@
 						<ul class="list">
 							{#each tailCandidates as c (candidateKey(c))}
 								{@render tailRow(c)}
+							{/each}
+						</ul>
+					</details>
+				{/if}
+
+				{#if learningCandidates.length > 0}
+					<!-- F-5: mid-acquisition cards get the known group's treatment,
+					     not the known group itself. `hage` was introduced at 10:09,
+					     due at 10:20, and a listen rated it "good" in between — the
+					     learning step exists to test recall at a specific interval
+					     and a listen is not that test. Visible, skipped by default,
+					     opt-in per row. -->
+					<details class="learning-group disclosure-group">
+						<summary>{learningCandidates.length} learning word{learningCandidates.length !== 1 ? 's' : ''}</summary>
+						<ul class="list">
+							{#each learningCandidates as c (candidateKey(c))}
+								{@render candidateRow(c)}
 							{/each}
 						</ul>
 					</details>

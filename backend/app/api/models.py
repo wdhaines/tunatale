@@ -46,6 +46,21 @@ class ListenPreviewCandidate(BaseModel):
     rating: Literal["again", "hard", "good", "easy", "skip"]
     translation: str
     progress: float | None
+    # Why a listen defers this row instead of staging it by default: "known"
+    # (scheduled past the listen horizon) or "learning" (mid-acquisition — the
+    # step exists to test recall at a specific interval and a listen is not
+    # that test). Both render as a collapsed group, rated `skip` by default and
+    # stageable only by an explicit per-row grade.
+    #
+    # ONE field rather than a boolean per population on purpose. These rows
+    # invert the polarity of every other row — absent from `word_ratings` means
+    # *skip* here and *good* everywhere else — and a second ad-hoc copy of an
+    # inverted rule is how the third one gets written wrong. The next deferred
+    # category costs a value, not a code path.
+    deferred_reason: Literal["known", "learning"] | None = None
+    # DERIVED from `deferred_reason`, kept because existing clients read it.
+    # Never maintain the two in parallel: two fields that can disagree is the
+    # failure the single-field shape exists to prevent.
     well_known: bool = False
     # True for every row this listen will actually act on; False for rows past
     # the shared introduction budget, which the modal renders as a read-only

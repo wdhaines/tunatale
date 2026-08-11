@@ -1694,6 +1694,21 @@
       "ListenPreviewCandidate": {
         "description": "One row of GET /lesson/{id}/listen-preview's response.",
         "properties": {
+          "deferred_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "known",
+                  "learning"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deferred Reason"
+          },
           "due_at": {
             "anyOf": [
               {

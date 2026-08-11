@@ -93,6 +93,7 @@ const knownCandidate = (text: string): ListenPreviewCandidate => ({
   rating: "good" as const,
   translation: "",
   progress: 0.95,
+  deferred_reason: "known",
   well_known: true,
   due_at: "2126-01-01T04:00:00+00:00",
   will_create: true,

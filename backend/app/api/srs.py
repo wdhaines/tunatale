@@ -10,7 +10,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping
 from datetime import timedelta
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import anyio
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -556,6 +556,35 @@ def _listen_grade_class(
     return "ahead"
 
 
+def _listen_deferred_reason(
+    rec: DirectionState,
+    grade_cls: str,
+    today: datetime.date,
+    horizon: int,
+) -> Literal["known", "learning"] | None:
+    """Why a listen defers this row instead of staging it by default.
+
+    Returns ``"known"``, ``"learning"``, or ``None``. A deferred row is still
+    fully visible in the preview — it is rated ``skip`` by default and staged
+    only when the client sends an explicit rating for it. That is the opt-in
+    the well-known population has always used; ``"learning"`` joins it under
+    the 2026-08-04 decision, because the learning step exists to test recall at
+    a specific interval and a listen is not that test (``hage`` was introduced
+    at 10:09, due at 10:20, and rated "good" by a listen in between).
+
+    ONE function, called by BOTH the preview (which stamps the reason) and both
+    commit loops (which skip on it). The preview and the commit disagreeing
+    about which rows a listen acts on is the ``6a5c718`` bug class; sharing the
+    predicate makes them agree by construction instead of by review. The
+    learning arm needs no horizon or due-date clause — state alone decides.
+    """
+    if grade_cls == "learning":
+        return "learning"
+    if grade_cls == "ahead" and is_well_known(rec, today, horizon):
+        return "known"
+    return None
+
+
 def _release_review_kind(prev_dir: DirectionState) -> int | None:
     """Anki's review-ahead kind (3) for a card being released from the pending bucket.
 
@@ -1033,18 +1062,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             grade_cls = _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc)
             if grade_cls is None:
                 continue
-            # Well-known opt-in: if the row is well-known and the user
-            # didn't explicitly rate it, skip — don't stage silently.
-            _due_str = (
-                (rec.due_at.isoformat() if isinstance(rec.due_at, datetime.datetime) else str(rec.due_at))
-                if rec.due_at is not None
-                else None
-            )
+            # Deferred opt-in: a known or learning row is never staged silently.
+            # Membership in word_ratings is the opt-in — an explicit "skip" is
+            # still a skip, handled by the shared rating check below.
             if (
-                grade_cls == "ahead"
-                and _due_str is not None
-                and _due_str > end_of_day_utc
-                and _is_due_beyond_horizon(rec.due_at, today, settings.listen_due_horizon_days)
+                _listen_deferred_reason(rec, grade_cls, today, settings.listen_due_horizon_days) is not None
                 and lemma not in body.word_ratings
             ):
                 continue
@@ -1095,17 +1117,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         grade_cls = _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc)
         if grade_cls is None:
             continue
-        # Well-known opt-in — mirrors the word loop above.
-        _kp_due_str = (
-            (rec.due_at.isoformat() if isinstance(rec.due_at, datetime.datetime) else str(rec.due_at))
-            if rec.due_at is not None
-            else None
-        )
+        # Deferred opt-in — the SAME predicate as the word loop above. This
+        # loop having its own hand-rolled copy is what 9af858e recorded going
+        # wrong; sharing the function is what stops it recurring.
         if (
-            grade_cls == "ahead"
-            and _kp_due_str is not None
-            and _kp_due_str > end_of_day_utc
-            and _is_due_beyond_horizon(rec.due_at, today, settings.listen_due_horizon_days)
+            _listen_deferred_reason(rec, grade_cls, today, settings.listen_due_horizon_days) is not None
             and kp.phrase not in body.kp_ratings
         ):
             continue
@@ -1660,11 +1676,10 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
                 if rec.due_at is not None
                 else None
             )
-            # Well-known: "ahead" and due beyond the horizon. The state/NULL
-            # -due carve-outs live in is_well_known (shared with the transcript,
-            # which renders the same words as "known"); "ahead" adds the
-            # not-graded-today gate this list also needs.
-            well_known_flag = grade_cls == "ahead" and is_well_known(rec, today, horizon)
+            # Why (if at all) a listen defers this row — the SAME predicate
+            # mark_lesson_listened skips on, so preview and commit cannot
+            # disagree about it. `well_known` is derived, never computed twice.
+            deferred = _listen_deferred_reason(rec, grade_cls, today, horizon)
             row = {
                 "kind": "word",
                 "text": lemma,
@@ -1676,7 +1691,8 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
                 # it in the unknown colour like a create row, rather than a
                 # misleading red-for-0%.
                 "progress": None if grade_cls == "new" else progress,
-                "well_known": well_known_flag,
+                "deferred_reason": deferred,
+                "well_known": deferred == "known",
                 "due_at": None if grade_cls == "new" else due_at_str,
                 "_group_rank": _GROUP_RANK.get(grade_cls, 3),
             }
@@ -1714,7 +1730,7 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
             if rec.due_at is not None
             else None
         )
-        well_known_flag = grade_cls == "ahead" and is_well_known(rec, today, horizon)
+        deferred = _listen_deferred_reason(rec, grade_cls, today, horizon)
         kp_row = {
             "kind": "kp",
             "text": kp.phrase,
@@ -1723,7 +1739,8 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
             "rating": "good",
             "translation": item.syntactic_unit.translation or kp.translation or "",
             "progress": None if grade_cls == "new" else progress,
-            "well_known": well_known_flag,
+            "deferred_reason": deferred,
+            "well_known": deferred == "known",
             "due_at": None if grade_cls == "new" else due_at_str,
             "_group_rank": _GROUP_RANK.get(grade_cls, 3),
         }
@@ -1784,6 +1801,8 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
                 warn_on_missing=False,
             ),
             "progress": None,
+            # A create is the most-wanted row in the list; it is never deferred.
+            "deferred_reason": None,
             "well_known": False,
             "will_create": lemma in live_create_set,
             "due_at": None,

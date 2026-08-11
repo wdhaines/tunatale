@@ -183,11 +183,14 @@ class TestListenStagesInsteadOfGrading:
         assert _snapshot(db, "banka") == before
 
     async def test_learning_card_stages_with_grade_class_learning(self):
+        # Opted in explicitly since F-5 (a listen defers learning rows by
+        # default). What this pins is the grade_class STAMPED on the pending
+        # row, which is unaffected by how the row was opted in.
         db = _setup(_lesson(["banka"]))
         _seed(db, "banka", klass="learning")
         before = _snapshot(db, "banka")
 
-        data = await _listen()
+        data = await _listen(word_ratings={"banka": "good"})
 
         rows = db.get_pending_grades(LESSON_ID)
         assert len(rows) == 1

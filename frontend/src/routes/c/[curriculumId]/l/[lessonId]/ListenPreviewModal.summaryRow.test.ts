@@ -116,6 +116,7 @@ const knownRow = (text: string): ListenPreviewCandidate => ({
   kind: "word",
   text,
   grade_class: "ahead",
+  deferred_reason: "known",
   well_known: true,
   progress: 0.95,
   due_at: "2126-01-01T04:00:00+00:00",

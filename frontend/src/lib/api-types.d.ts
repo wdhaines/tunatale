@@ -2116,6 +2116,8 @@ export interface components {
      * @description One row of GET /lesson/{id}/listen-preview's response.
      */
     ListenPreviewCandidate: {
+      /** Deferred Reason */
+      deferred_reason?: ("known" | "learning") | null;
       /** Due At */
       due_at?: string | null;
       /**

@@ -77,12 +77,22 @@ const createCandidate = (text: string) => ({
   will_create: true,
 });
 
+/** An ordinary gradeable row — what most tests in this file mean by "a row".
+ *
+ *  ⚠️ The default `grade_class` was `"learning"` until F-5 (2026-08-04). That
+ *  was fine while learning rows were ordinary; it is not now, because a
+ *  learning row is DEFERRED — collapsed into its own group and rated skip by
+ *  default. Every test here that says `wordCandidate("x")` means "an ordinary
+ *  row I can grade", so the default moved to `"due"` to keep meaning that.
+ *  Tests that specifically want a deferred row pass `deferred_reason`.
+ */
 const wordCandidate = (
   text: string,
   opts?: {
     grade_class?: "create" | "new" | "learning" | "due" | "ahead";
     translation?: string;
     progress?: number | null;
+    deferred_reason?: "known" | "learning" | null;
     well_known?: boolean;
     due_at?: string | null;
     will_create?: boolean;
@@ -91,10 +101,11 @@ const wordCandidate = (
   kind: "word" as const,
   text,
   item_id: 42,
-  grade_class: opts?.grade_class ?? ("learning" as const),
+  grade_class: opts?.grade_class ?? ("due" as const),
   rating: "good" as const,
   translation: opts?.translation ?? "",
   progress: opts?.progress === undefined ? 0.3 : opts.progress,
+  deferred_reason: opts?.deferred_reason ?? null,
   well_known: opts?.well_known ?? false,
   due_at: opts?.due_at ?? null,
   will_create: opts?.will_create ?? true,
@@ -1244,6 +1255,7 @@ describe("ListenPreviewModal", () => {
         wordCandidate("prosim", { grade_class: "due" }),
         wordCandidate("hvala", {
           grade_class: "ahead",
+          deferred_reason: "known",
           well_known: true,
           due_at: "2126-01-01T04:00:00+00:00",
         }),
@@ -1277,6 +1289,7 @@ describe("ListenPreviewModal", () => {
         wordCandidate("prosim", { grade_class: "due" }),
         wordCandidate("hvala", {
           grade_class: "ahead",
+          deferred_reason: "known",
           well_known: true,
           due_at: "2126-01-01T04:00:00+00:00",
         }),
@@ -1305,6 +1318,7 @@ describe("ListenPreviewModal", () => {
         wordCandidate("prosim", { grade_class: "due" }),
         wordCandidate("hvala", {
           grade_class: "ahead",
+          deferred_reason: "known",
           well_known: true,
           due_at: "2126-01-01T04:00:00+00:00",
         }),
@@ -1341,6 +1355,7 @@ describe("ListenPreviewModal", () => {
         wordCandidate("prosim", { grade_class: "due" }),
         wordCandidate("hvala", {
           grade_class: "ahead",
+          deferred_reason: "known",
           well_known: true,
           due_at: "2126-01-01T04:00:00+00:00",
         }),
@@ -2047,6 +2062,7 @@ describe("ListenPreviewModal", () => {
           wordCandidate("prosim", { grade_class: "due" }),
           wordCandidate("hvala", {
             grade_class: "ahead",
+            deferred_reason: "known",
             well_known: true,
             due_at: "2126-01-01T04:00:00+00:00",
           }),

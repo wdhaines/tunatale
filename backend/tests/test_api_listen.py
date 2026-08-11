@@ -254,7 +254,13 @@ class TestListenClozeIntegration:
         assert item.directions[Direction.RECOGNITION].reps == 0
 
     async def test_listen_stages_recognition_when_learning(self):
-        """Pre-existing vocab with recognition state=LEARNING → stage, don't grade, production unchanged."""
+        """Pre-existing vocab with recognition state=LEARNING → stage, don't grade, production unchanged.
+
+        The learning row is opted in explicitly (F-5, 2026-08-04): a listen no
+        longer auto-stages a mid-acquisition card. The opt-in is incidental to
+        what this test is about — that staging does not GRADE, and that it
+        never touches the production direction.
+        """
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -271,7 +277,10 @@ class TestListenClozeIntegration:
         rec_before = rec.reps
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post(
+                "/api/srs/listen",
+                json={"lesson_id": "lesson-1", "word_ratings": {"banka": "good"}},
+            )
         assert response.status_code == 200
         data = response.json()
 
@@ -546,7 +555,12 @@ class TestListenClozeIntegration:
     # ── Key-phrase auto-grade tests ──────────────────────────────────────
 
     async def test_listen_stages_key_phrase_when_recognition_learning(self):
-        """Pre-existing KP with rec state=LEARNING → stage, production untouched."""
+        """Pre-existing KP with rec state=LEARNING → stage, production untouched.
+
+        Opted in via kp_ratings (F-5): the KP loop defers a learning row by
+        default, exactly like the word loop. What this test pins is that the
+        KP staging path does not grade.
+        """
         from app.models.syntactic_unit import SyntacticUnit
         from app.storage.store import ContentStore
 
@@ -566,7 +580,10 @@ class TestListenClozeIntegration:
         db.update_collocation(item)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post(
+                "/api/srs/listen",
+                json={"lesson_id": "lesson-1", "kp_ratings": {"dober dan": "good"}},
+            )
         assert response.status_code == 200
         data = response.json()
 

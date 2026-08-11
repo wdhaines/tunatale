@@ -53,6 +53,7 @@ class TestListenPreviewContract:
             "rating",
             "translation",
             "progress",
+            "deferred_reason",
             "well_known",
             "will_create",
             "due_at",

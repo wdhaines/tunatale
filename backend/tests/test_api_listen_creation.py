@@ -75,9 +75,12 @@ class TestListenStagedCreation:
         app.state.content_store = store
         return db
 
-    async def _listen(self):
+    async def _listen(self, **ratings):
+        # `ratings` carries word_ratings / kp_ratings through. Needed since F-5:
+        # known and learning rows are deferred unless explicitly rated, so a
+        # test whose subject happens to be a learning card must opt it in.
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1", **ratings})
         assert resp.status_code == 200
         return resp.json()
 
@@ -169,7 +172,10 @@ class TestListenStagedCreation:
 
         db.set_anki_state_cache("daily_new_cap", "0")
 
-        data = await self._listen()
+        # Opted in explicitly (F-5): the subject here is that a zero CREATION
+        # budget does not suppress staging of an already-tracked card, not the
+        # default rating of a learning row.
+        data = await self._listen(kp_ratings={"dober dan": "good"})
 
         assert data["created"] == 0
         assert data["staged"] == 1
@@ -418,9 +424,12 @@ class TestListenReviewCap:
         app.state.content_store = store
         return db
 
-    async def _listen(self):
+    async def _listen(self, **ratings):
+        # `ratings` carries word_ratings / kp_ratings through. Needed since F-5:
+        # known and learning rows are deferred unless explicitly rated, so a
+        # test whose subject happens to be a learning card must opt it in.
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1", **ratings})
         assert resp.status_code == 200
         return resp.json()
 
@@ -495,7 +504,13 @@ class TestListenReviewCap:
             assert pg["grade_class"] == "ahead"
 
     async def test_learning_card_stages_when_budget_zero(self):
-        """LEARNING-state cards are staged even when budget is 0."""
+        """LEARNING-state cards are staged even when budget is 0.
+
+        The subject is the BUDGET: a learning card is not an introduction, so a
+        zero new-card and zero review cap must not suppress it. Since F-5 the
+        row is opted in explicitly — the default is now skip, which would make
+        this test pass for the wrong reason.
+        """
         db = self._setup(self._lesson(["banka"]))
         db.set_anki_state_cache("daily_new_cap", "0")
 
@@ -511,7 +526,7 @@ class TestListenReviewCap:
 
         db.set_anki_state_cache("daily_review_cap", "0")
 
-        data = await self._listen()
+        data = await self._listen(word_ratings={"banka": "good"})
 
         assert data["staged"] == 1
         item = db.get_collocation("banka")
