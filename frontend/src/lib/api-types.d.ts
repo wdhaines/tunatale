@@ -955,8 +955,10 @@ export interface paths {
      *     frequency-ranked (a phrase is OOV, so ranking it would sink every key
      *     phrase below every word).
      *
-     *     Tracked word/kp candidates are unchanged: creations first, then tracked by
-     *     mastery ascending (least-known first). Strictly read-only — no pending
+     *     Tracked word/kp candidates follow the creations, grouped (new → learning →
+     *     due → ahead) and then ordered by ``_tracked_sort_key``: ripening time for
+     *     the learning group, due DAY then mastery ascending (least-known first) for
+     *     the two review groups. Strictly read-only — no pending
      *     writes, no card creation, no side effects beyond the
      *     ``_analyze_lesson_words`` lemma-cache warm-up. The response informs the
      *     frontend preview modal without committing anything.
@@ -968,10 +970,12 @@ export interface paths {
      *     the two kinds, because the live cut is a prefix of the ranked pool and the
      *     creates keep their relative order inside it. The preview and commit agree
      *     because both make the SAME ``_allocate_intro_pool`` call with the same
-     *     ``zipf`` callable (resolved once per request via ``_zipf_for``) — removing
-     *     a live create promotes the next-ranked tail row without reordering the
-     *     rest, so the first N still-checked create rows are exactly what
-     *     ``mark_lesson_listened`` will create.
+     *     ``zipf`` callable (resolved once per request via ``_zipf_for``), so the
+     *     first N live create rows are exactly what ``mark_lesson_listened`` will
+     *     create. Un-checking one does NOT promote the next-ranked tail row: a skip
+     *     consumes its slot server-side (``1535071``), which is why ``will_create``
+     *     is a static flag on the response rather than something the frontend
+     *     re-derives from the current ratings.
      */
     get: operations["get_listen_preview_api_srs_lesson__lesson_id__listen_preview_get"];
     put?: never;

@@ -1514,6 +1514,38 @@ async def commit_pending_grades(lesson_id: str, request: Request) -> CommitPendi
     return {"status": "ok", "applied": applied}
 
 
+def _tracked_sort_key(c: dict) -> tuple[int, str, float]:
+    """Within-group order for the listen preview's tracked rows (F-4).
+
+    Group rank stays primary. The secondary key differs by group because the
+    two groups carry different information in ``due_at``:
+
+    * **learning / relearning** (rank 0) — ``due_at`` at FULL precision, the
+      ripening order. These cards come up in minutes and carry real sub-day
+      times, so truncating them to a day would order ripening cards by
+      something else entirely. Their mastery is uninformative anyway
+      (``component_mastery`` pins every in-steps component at a fixed floor).
+    * **due / ahead** (ranks 1 and 2) — the due DAY, then mastery ascending
+      (least-known first), which is what the docstring always promised and what
+      the red→green colour ramp is showing. Day-truncation costs nothing here
+      because a REVIEW ``due_at`` is date-encoded at 04:00 UTC already
+      (``rollover.py::due_at_rollover_utc``) — which is precisely why the old
+      ``(rank, due_at)`` key left all same-day cards EXACTLY tied and fell back
+      to lesson-appearance order, i.e. to no order at all.
+
+    NEW-state rows (rank -1) carry ``due_at: None`` and ``progress: None``, so
+    they all tie and the stable sort preserves the introduction pool's
+    frequency ranking (F-2). Do not give them a tie-break — the pool order is
+    the contract ``mark_lesson_listened`` mirrors.
+    """
+    rank = c["_group_rank"]
+    due = c["due_at"] or "￿"
+    if rank <= 0:
+        return (rank, due, 0.0)
+    progress = c["progress"]
+    return (rank, due[:10], progress if progress is not None else 0.0)
+
+
 @router.get("/lesson/{lesson_id}/listen-preview", status_code=200)
 async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewResponse:
     """Read-only classification of what a listen would stage for a lesson.
@@ -1534,8 +1566,10 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
     frequency-ranked (a phrase is OOV, so ranking it would sink every key
     phrase below every word).
 
-    Tracked word/kp candidates are unchanged: creations first, then tracked by
-    mastery ascending (least-known first). Strictly read-only — no pending
+    Tracked word/kp candidates follow the creations, grouped (new → learning →
+    due → ahead) and then ordered by ``_tracked_sort_key``: ripening time for
+    the learning group, due DAY then mastery ascending (least-known first) for
+    the two review groups. Strictly read-only — no pending
     writes, no card creation, no side effects beyond the
     ``_analyze_lesson_words`` lemma-cache warm-up. The response informs the
     frontend preview modal without committing anything.
@@ -1547,10 +1581,12 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
     the two kinds, because the live cut is a prefix of the ranked pool and the
     creates keep their relative order inside it. The preview and commit agree
     because both make the SAME ``_allocate_intro_pool`` call with the same
-    ``zipf`` callable (resolved once per request via ``_zipf_for``) — removing
-    a live create promotes the next-ranked tail row without reordering the
-    rest, so the first N still-checked create rows are exactly what
-    ``mark_lesson_listened`` will create.
+    ``zipf`` callable (resolved once per request via ``_zipf_for``), so the
+    first N live create rows are exactly what ``mark_lesson_listened`` will
+    create. Un-checking one does NOT promote the next-ranked tail row: a skip
+    consumes its slot server-side (``1535071``), which is why ``will_create``
+    is a static flag on the response rather than something the frontend
+    re-derives from the current ratings.
     """
     store = request.state.content_store
     lesson = store.get_lesson(lesson_id)
@@ -1756,10 +1792,10 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
         for lemma in ranked
     ]
 
-    # ── Ordering: creations first, then tracked by group (learning → due →
-    # ahead), due_at ascending within each group, stable sort. ─────────────
+    # ── Ordering: creations first, then tracked by group, then per
+    # _tracked_sort_key within the group. Stable sort. ─────────────────────
     tracked = candidates
-    tracked.sort(key=lambda c: (c["_group_rank"], c["due_at"] or "\uffff"))
+    tracked.sort(key=_tracked_sort_key)
     # Strip internal sort key before returning
     for c in creates + tracked:
         c.pop("_group_rank", None)

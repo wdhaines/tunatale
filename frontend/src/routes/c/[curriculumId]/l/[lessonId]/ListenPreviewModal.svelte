@@ -5,6 +5,7 @@
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import { listenCountdownPref } from '$lib/stores/listenCountdownPref.svelte';
 	import { masteryBackgroundColor, masteryColor } from '$lib/mastery';
+	import Tooltip from '$lib/components/Tooltip.svelte';
 
 	let {
 		lessonId,
@@ -319,6 +320,28 @@
 		return `color: ${masteryColor(p)}; background: ${masteryBackgroundColor(p)};`;
 	}
 
+	// The hue above is the ONLY mastery channel on the row, and a continuous
+	// ramp is not readable to a number — 37% and 42% are the same colour to the
+	// eye. The hover names it (F-4). Vocabulary mirrors WordSpan's
+	// `masteryLabel` deliberately, including its well-known carve-out: the user
+	// asked for "the exact redness like I have on the hover on the transcript",
+	// so the two surfaces must not describe the same card with different words.
+	function masteryLabel(c: ListenPreviewCandidate): string {
+		if (c.kind === 'create') return 'not tracked';
+		// Scheduled past the listen horizon. WordSpan suppresses the percentage
+		// here because this flow has already stopped asking about the card;
+		// quoting a work-in-progress number would contradict the row's own
+		// "known" grouping in the disclosure below.
+		if (c.well_known) return 'known';
+		// `progress: null` IS the server's "no mastery to report" signal — it
+		// stamps null on NEW-state rows and a real float on every other tracked
+		// row. Testing the null rather than `grade_class === 'new'` keeps this
+		// total over the payload's own type instead of leaving a fallback arm
+		// that the contract makes unreachable.
+		if (c.progress == null) return 'not started';
+		return `${Math.round(c.progress * 100)}%`;
+	}
+
 	// ── Over-budget creation tail ──────────────────────────────────────────
 	// A skip no longer frees its slot for promotion (the server consumes the
 	// slot instead — see mark_lesson_listened), so `will_create` is correct no
@@ -499,6 +522,25 @@
 				<p class="status">No new words to add.</p>
 			{:else}
 
+				<!-- One tag, both row kinds. It used to be written out twice, and the
+				     two copies had already drifted (only the live one carried
+				     `.overdue`) — harmlessly, since `isOverdue` is false for every
+				     row the tail can hold, but that is luck, not a contract.
+				     F-16's rule: the shared thing lives in one place. -->
+				{#snippet dayTag(c: ListenPreviewCandidate)}
+					<!-- The grid placement lives on this wrapper, NOT on `.tag.day`:
+					     Tooltip's own `.tt-wrap` sits between them, so the tag is no
+					     longer the grid item. `listen-preview-layout.spec.ts` measures
+					     this cell's left edge against the header's to the pixel. -->
+					<span class="day-cell">
+						<Tooltip masteryLabel={masteryLabel(c)}>
+							<span class="tag day" class:overdue={isOverdue(c)} style={dueStyle(c)}>
+								{dueLabel(c)}
+							</span>
+						</Tooltip>
+					</span>
+				{/snippet}
+
 				{#snippet gradeControl(c: ListenPreviewCandidate)}
 					{@const key = candidateKey(c)}
 					<div class="grade" role="group" aria-label={`Proposed grade for ${c.text}`}>
@@ -560,9 +602,7 @@
 							{/if}
 						</div>
 
-						<span class="tag day" class:overdue={isOverdue(c)} style={dueStyle(c)}>
-							{dueLabel(c)}
-						</span>
+						{@render dayTag(c)}
 
 						{@render gradeControl(c)}
 					</li>
@@ -599,9 +639,7 @@
 							{/if}
 						</div>
 
-						<span class="tag day" style={dueStyle(c)}>
-							{dueLabel(c)}
-						</span>
+						{@render dayTag(c)}
 
 						{@render gradeControl(c)}
 					</li>
@@ -934,7 +972,12 @@
 		font-variant-numeric: tabular-nums;
 		color: var(--color-muted);
 	}
-	.tag.day {
+	/* The Due cell. Since F-4 the tag hangs inside a Tooltip, so the grid item
+	   is this wrapper and the tag is two levels down — the placement has to
+	   live here or the tag falls back to auto-placement and lands in the wrong
+	   column. `justify-self: start` still sizes the cell to the tag, so the
+	   tag's own left edge is unchanged (what the layout spec measures). */
+	.day-cell {
 		grid-column: 2;
 		grid-row: 1 / 3;
 		align-self: center;
