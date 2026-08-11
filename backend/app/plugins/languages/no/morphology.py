@@ -20,6 +20,8 @@ no-hardcoded-language-logic rule.
 
 from __future__ import annotations
 
+from app.plugins.languages.no.norwegian_breakdown import _load_ranked_lexicon
+
 # Longest first: -ene must win over -en, and -et over -t.
 _DEFINITE_SUFFIXES: tuple[str, ...] = ("ene", "ane", "et", "en", "a")
 
@@ -30,6 +32,53 @@ _DEFINITE_SUFFIXES: tuple[str, ...] = ("ene", "ane", "et", "en", "a")
 # too short to be a noun — and indeed `set` is not a word, it is the truncated
 # lemma Stanza returned for `Setet`).
 _MIN_STEM = 2
+
+# A lemma is only trusted as a real word when it ranks inside the top 40k of
+# the bundled 50k wordlist. Real inflected→lemma relations (morder=17102,
+# jordbær=7550, set=6184) sit far under the floor; Stanza's truncated fragments
+# sit at the noise tail (trø=49800), with a clean empty gap between. The floor
+# mirrors _MAX_STEM_RANK's argument (norwegian_breakdown.py): a frequency floor
+# in the gap separates real words from junk with no hand-maintained blocklist.
+_MAX_PLAUSIBLE_RANK = 40000
+
+
+def is_lemma_plausible(surface: str, lemma: str) -> bool:
+    """True when *lemma* is a plausible headword for *surface*.
+
+    Stanza occasionally strips an inflectional ending that isn't there and
+    returns a fragment that is a prefix of the surface (`trøtt` → `trø`). The
+    shape to suspect is a full trailing doubled-consonant drop: Norwegian
+    inflections append (`stor` → `store`) and the neuter -t merely doubles the
+    final consonant (`søtt` → `søt`), so a whole pair vanishing is rare — the
+    legitimate `nytt` → `ny` is the exception. A full-pair drop is therefore
+    accepted only when the lemma is itself a common word (rank ≤
+    ``_MAX_PLAUSIBLE_RANK``): that separates the real `nytt` → `ny` (rank 195)
+    from the fragment `trøtt` → `trø` (rank 49800).
+
+    Deliberately narrow outside that signature: a lemma that is not a truncation
+    of the surface is always accepted. Neither error is free, so the rule fires
+    only where the evidence is strong. Rejecting makes callers key the card on
+    the surface as it appeared, so a false *positive* mints a card for a
+    non-word, while a false *negative* mints one on an inflected form (`trøtt`
+    rather than a dictionary headword) — wrong shape, but a real word from the
+    sentence, and recoverable by editing the card. Note this is NOT "leave
+    today's behaviour alone": today's behaviour is the lemma, so a rejection
+    always changes the headword.
+
+    Consequence worth stating plainly: truncations that do NOT take the
+    doubled-consonant shape still get through. `setet` → `set` is the known
+    example, and it is out of scope by decision, not oversight — see
+    tunatale-s7f.2.
+    """
+    w = lemma.casefold()
+    s = surface.casefold()
+    if w == s or not s.startswith(w) or len(s) - len(w) < 2:
+        return True
+    tail = s[len(w) :]
+    if tail[0] != tail[1]:
+        return True
+    rank = _load_ranked_lexicon().get(w)
+    return rank is not None and rank <= _MAX_PLAUSIBLE_RANK
 
 
 def is_definite_form(word: str) -> bool:

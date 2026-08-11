@@ -79,6 +79,103 @@ class TestIsDefiniteForm:
             assert is_definite_form(word) is False
 
 
+class TestIsLemmaPlausible:
+    """The `trø` bug: stanza stripped `-tt` off the adjective `trøtt` ("tired")
+    and returned `trø`, an unrelated verb ("to tread"), so the card taught
+    `trø` = "tired". The gloss was right; the *headword* was a different word.
+
+    The guard only fires on the truncation signature (a full trailing
+    doubled-consonant drop) and then only when the lemma is not a common word —
+    conservative, because a false accept teaches the wrong word outright while
+    a false reject just keeps the inflected surface (mildly worse, still a real
+    word from the sentence).
+    """
+
+    @pytest.mark.parametrize(
+        ("surface", "lemma"),
+        [
+            ("morderen", "morder"),
+            ("nabolaget", "nabolag"),
+            ("åpnet", "åpne"),
+            # The neuter -t doubles the final consonant, so a full pair drop is
+            # legitimate when the lemma is a common word — this is exactly the
+            # shape of the `trø` bug, and the common-word gate is what separates
+            # them (ny=195, blå=1180 vs trø=49800).
+            ("nytt", "ny"),
+            ("blått", "blå"),
+            # Suppletive: the lemma is not a substring of the surface at all.
+            # These are the discriminating rows — a naive "lemma must be a
+            # prefix of the surface" rule accepts trøtt→trø and rejects both of
+            # these, i.e. exactly backwards.
+            ("gikk", "gå"),
+            ("eldre", "gammel"),
+        ],
+    )
+    def test_accepts_genuine_lemmatization(self, surface, lemma):
+        from app.plugins.languages.no.morphology import is_lemma_plausible
+
+        assert is_lemma_plausible(surface, lemma) is True
+
+    def test_rejects_the_tro_truncation(self):
+        """The reported bug: `trø` sits at rank 49800 in the bundled wordlist —
+        the noise tail — so the doubled-pair drop fails the common-word gate."""
+        from app.plugins.languages.no.morphology import is_lemma_plausible
+
+        assert is_lemma_plausible("trøtt", "trø") is False
+
+    def test_rejects_a_fragment_absent_from_the_wordlist(self):
+        """A doubled-pair drop whose lemma the bundled wordlist does not know
+        at all (rank is None) is equally untrustworthy — reject it."""
+        from app.plugins.languages.no.morphology import is_lemma_plausible
+
+        assert is_lemma_plausible("zqtt", "zq") is False
+
+    def test_identical_surface_and_lemma_is_always_plausible(self):
+        """An uninflected word must never be rejected — there is no truncation
+        to suspect, whatever the corpus says."""
+        from app.plugins.languages.no.morphology import is_lemma_plausible
+
+        assert is_lemma_plausible("morder", "morder") is True
+
+    def test_known_limitation_setet_is_not_caught(self):
+        """`setet` → `set` is OUT of scope, and this pins that it stays out.
+
+        `setet→set` and `nabolaget→nabolag` strip the same valid `-et`, so no
+        string rule separates them, and the bundled wordlist does not either:
+        `set` ranks 6184 — inside the accept band — because the frequency corpus
+        it is built from is English-contaminated (the borrowed noun `set` shows
+        up constantly in subtitles), not because it is a genuine Norwegian word.
+        Catching it needs a validated cross-language guard; the naive form
+        false-rejects 8 of 14 common loanwords (`film`, `data`, `service`…).
+
+        This test documents the boundary. If a future change makes it pass,
+        that is good news — update the test and the issue rather than reverting.
+        """
+        from app.plugins.languages.no.morphology import is_lemma_plausible
+
+        assert is_lemma_plausible("setet", "set") is True
+
+
+class TestLemmaPlausibleRegistry:
+    def test_norwegian_exposes_a_checker(self):
+        from app.languages import get_lemma_plausible
+
+        checker = get_lemma_plausible("no")
+        assert checker is not None
+        assert checker("trøtt", "trø") is False
+
+    @pytest.mark.parametrize("code", ["sl", "en", "zz"])
+    def test_languages_without_a_checker_are_a_no_op(self, code):
+        """Slovene registers none, so callers must degrade to today's behaviour.
+
+        Core reaches this only through the registry — it must never branch on
+        the language itself, per the no-hardcoded-language-logic rule.
+        """
+        from app.languages import get_lemma_plausible
+
+        assert get_lemma_plausible(code) is None
+
+
 class TestAlignGlossDefiniteness:
     """The reported bug: gloss says "the" but the headword carries no -en/-et."""
 

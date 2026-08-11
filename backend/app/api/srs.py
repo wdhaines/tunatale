@@ -60,6 +60,7 @@ from app.config import settings
 from app.languages import (
     format_vocab_headword,
     get_gender_article,
+    get_lemma_plausible,
     get_tts_voice,
     get_wordfreq_lang,
     known_language_codes,
@@ -1187,6 +1188,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             staged_count += 1
 
     live_create_set = set(live_creates)
+    # Resolved once per request: the lemma-plausibility predicate (or None —
+    # "cannot tell", keep the lemma as-is).
+    lemma_plausible = get_lemma_plausible(lesson.language_code)
     for cand in ranked:
         # Over-budget rows are skipped (a gated `continue`, not a `break`) so
         # an opted-in tail lemma ranked BELOW the first over-budget row is still
@@ -1217,26 +1221,35 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         # "sem" → "biti") that isn't in the sentence. Store the cloze pre-built;
         # sync's idempotent make_cloze_text passes it through. (Phase 2b.)
         stored_sentence = make_cloze_text(lemma_to_first_surface.get(lemma, lemma), sent) if is_func else sent
+        # Stanza can return a truncated fragment as the lemma (`trøtt` → `trø`).
+        # When the fragment fails the language's plausibility check, key the card
+        # on the surface as it appeared instead — the headword stays a real word,
+        # and the surface key means the next listen resolves the same card rather
+        # than spawning a duplicate (a `trø` lookup falls back to the `trøtt` row).
+        first_surface = lemma_to_first_surface.get(lemma, lemma)
+        card_lemma = lemma
+        if not is_func and lemma_plausible is not None and not lemma_plausible(first_surface, lemma):
+            card_lemma = first_surface.casefold()
         unit = SyntacticUnit(
-            text=format_vocab_headword(lemma, upos_for_lemma, lesson.language_code) if not is_func else lemma,
+            text=format_vocab_headword(card_lemma, upos_for_lemma, lesson.language_code) if not is_func else lemma,
             translation=_resolve_gloss_translation(
                 lemma,
                 token_glosses,
                 lemma_to_surfaces.get(lemma, set()),
-                lemma_to_first_surface.get(lemma, lemma),
+                first_surface,
                 language_code=lesson.language_code,
             ),
             word_count=1,
             difficulty=1,
             source="llm",
-            lemma=lemma,
+            lemma=card_lemma,
             card_type="cloze" if is_func else "vocab",
             source_sentence=stored_sentence,
             source_sentence_translation=sentence_translations.get(sent, ""),
         )
         db.add_collocation(unit, language_code=lesson.language_code)
         if is_func:
-            coll = db.get_collocation_by_lemma_with_id(lemma)
+            coll = db.get_collocation_by_lemma_with_id(card_lemma)
             new_id, _ = coll
             try:
                 await synthesize_cloze_audios(
@@ -1249,7 +1262,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
             except Exception:
                 _logger.warning("Failed to synthesize cloze audio for %r", lemma)
         else:
-            new_id, _ = db.get_collocation_by_lemma_with_id(lemma)
+            new_id, _ = db.get_collocation_by_lemma_with_id(card_lemma)
             await _generate_add_time_media(
                 db,
                 llm,
@@ -1257,7 +1270,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 unit,
                 language_code=lesson.language_code,
                 used_image_urls=used_image_urls,
-                media_word=lemma,
+                media_word=card_lemma,
             )
         created_count += 1
     remaining_candidates = len(ranked) - created_count
@@ -2227,13 +2240,21 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
             if gloss:
                 translation = gloss
 
+    # Stanza can return a truncated fragment as the lemma (`trøtt` → `trø`). When
+    # the fragment fails the language's plausibility check, front the card with the
+    # surface as it appeared — the headword stays a real word, never a skipped card.
+    lemma_plausible = get_lemma_plausible(lang)
+    headword = lemma
+    if card_type == "vocab" and lemma_plausible is not None and not lemma_plausible(body.surface, lemma):
+        headword = body.surface.casefold()
+
     unit = SyntacticUnit(
-        text=format_vocab_headword(lemma, upos, lang) if card_type == "vocab" else lemma,
+        text=format_vocab_headword(headword, upos, lang) if card_type == "vocab" else lemma,
         translation=translation,
         word_count=1,
         difficulty=1,
         source="user",
-        lemma=lemma,
+        lemma=headword,
         card_type=card_type,
         source_sentence=source_sentence,
         article=get_gender_article(lang, gender) if upos == "NOUN" else "",
@@ -2246,7 +2267,7 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
         audio_sentence=body.sentence,
         audio_word=body.surface,
         llm=getattr(request.app.state, "llm", None),
-        media_word=lemma,
+        media_word=headword,
     )
 
 

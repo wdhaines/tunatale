@@ -122,6 +122,11 @@ class LanguageConfig:
     # murderer"). ``None`` for languages that do not mark definiteness by suffix —
     # the gloss aligner is then a no-op, never a guess.
     definite_form_fn: Callable[[str], bool] | None = None
+    # Predicate: is the lemmatizer's lemma a plausible headword for the surface it
+    # was produced from? Used to stop a truncated lemma fragment (`trøtt` → `trø`)
+    # from becoming a card front that teaches a non-word. ``None`` means "cannot
+    # tell" — callers keep the lemma as-is, never a guess.
+    lemma_plausible_fn: Callable[[str, str], bool] | None = None
     # Fixed two-word expressions whose SECOND word must not be carded standalone
     # ("i går" = yesterday, not the verb `gå`). Empty for languages with no list.
     multiword_traps_fn: Callable[[], frozenset[tuple[str, str]]] | None = None
@@ -410,6 +415,18 @@ def get_definite_form_checker(code: str) -> Callable[[str], bool] | None:
     discover()
     config = _CONFIGS.get(code)
     return config.definite_form_fn if config else None
+
+
+def get_lemma_plausible(code: str) -> Callable[[str, str], bool] | None:
+    """Return the language's lemma-plausibility predicate, or ``None`` if it has none.
+
+    ``None`` is the honest answer for a language with no registered predicate
+    (Slovene, ``en``); callers must treat it as "cannot tell" and keep the
+    lemmatizer's lemma as the headword rather than guessing at a fallback.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    return config.lemma_plausible_fn if config else None
 
 
 def get_multiword_traps(code: str) -> frozenset[tuple[str, str]]:

@@ -693,3 +693,69 @@ class TestListenReviewCap:
         assert resp.status_code == 200
         texts = {q["text"] for q in resp.json()["queue"]}
         assert {"banka", "center", "hotel"} <= texts
+
+
+class TestLemmaPlausibilityBulkPath:
+    """End-to-end wiring of the lemma-plausibility guard on the BULK creation
+    path (POST /api/srs/listen, source='llm') — the path that produced the
+    reported `trø` bug.
+
+    Stanza lemmatizes `trøtt` (adjective, "tired") to `trø` (an unrelated verb,
+    "to tread"). The gloss is right for the surface; the HEADWORD would teach
+    the wrong word. On rejection the headword falls back to the surface as it
+    appeared — never a skipped card.
+    """
+
+    def _setup(self, phrase_text):
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="no",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text=phrase_text, voice_id="female-1", language_code="no", role="female-1"),
+                    ],
+                )
+            ],
+            key_phrases=[],
+        )
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+        return db
+
+    async def _listen(self):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        assert resp.status_code == 200
+        return resp.json()
+
+    async def test_creation_falls_back_to_the_surface(self, monkeypatch):
+        import app.api.srs as srs_mod
+        from app.srs.lemmatizer import TokenAnalysis
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_sentence(
+            "Trøtt",
+            [TokenAnalysis(surface="Trøtt", lemma="trø", upos="ADJ", case="", number="", person="", gender="")],
+        )
+        monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
+
+        db = self._setup("Trøtt")
+
+        data = await self._listen()
+
+        assert data["created"] == 1
+        coll = db.get_collocation_by_lemma("trøtt")
+        assert coll is not None
+        assert coll.syntactic_unit.text == "trøtt"
+        assert coll.syntactic_unit.lemma == "trøtt"
+        assert coll.syntactic_unit.source == "llm"
+        assert db.get_collocation_by_lemma("trø") is None

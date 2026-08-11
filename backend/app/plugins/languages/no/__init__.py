@@ -6,7 +6,7 @@ from app.cards.vocab_notetype import NORWEGIAN_VOCAB
 from app.languages import AlignmentConfig, LanguageConfig, PlannerExample, register
 from app.models.language import NARRATOR_VOICE, Language
 from app.plugins.languages.no.alignment import MODEL_ID, NORWEGIAN_VOWELS, create_aligner
-from app.plugins.languages.no.morphology import is_definite_form
+from app.plugins.languages.no.morphology import is_definite_form, is_lemma_plausible
 from app.plugins.languages.no.multiword import trapped_pairs
 from app.plugins.languages.no.norwegian_breakdown import (
     build_norwegian_breakdown_spans,
@@ -41,6 +41,7 @@ register(
         vocab_notetype=NORWEGIAN_VOCAB,
         lemmatizer_type="stanza",
         definite_form_fn=is_definite_form,
+        lemma_plausible_fn=is_lemma_plausible,
         multiword_traps_fn=trapped_pairs,
         slow_word_fn=slow_norwegian_word,
         variant_separator=",",

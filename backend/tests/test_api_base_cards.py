@@ -595,3 +595,38 @@ class TestCreateBaseCard:
         matching = [q for q in queue_resp.json()["queue"] if q["text"] == "kava"]
         assert len(matching) >= 1
         assert matching[0]["state"] == "new"
+
+    async def test_truncated_lemma_falls_back_to_surface(self, api_app_state, monkeypatch):
+        """Stanza's truncated lemma (trøtt → trø) is rejected as the headword;
+        the card fronts with the surface as it appeared — never a card for a non-word."""
+        import app.api.srs as srs_mod
+        from app.srs.lemmatizer import TokenAnalysis
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_sentence(
+            "Trøtt",
+            [TokenAnalysis(surface="Trøtt", lemma="trø", upos="ADJ", case="", number="", person="", gender="")],
+        )
+        monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "Trøtt",
+                    "lemma": "trø",
+                    "sentence": "Trøtt",
+                    "language_code": "no",
+                    "translation": "tired",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["item"]["text"] == "trøtt"
+        coll = api_app_state.get_collocation_by_guid(compute_guid("trøtt", "no", ""))
+        assert coll is not None
+        assert coll.syntactic_unit.text == "trøtt"
+        assert coll.syntactic_unit.lemma == "trøtt"
+        assert coll.syntactic_unit.translation == "tired"
+        assert api_app_state.get_collocation_by_guid(compute_guid("trø", "no", "")) is None
