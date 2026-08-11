@@ -135,6 +135,12 @@ class LanguageConfig:
     # the user's Anki collection). None (the default) means the language has no
     # such marker and a verb's headword is just its bare lemma.
     infinitive_marker: str | None = None
+    # Gender → indefinite-article map for NOUN headwords when minting a TT vocab
+    # card ("Masc" → "en morder", like the imported deck fronts). None (the
+    # default) means the language has no articles and a noun's headword is its
+    # bare lemma. Display-only: the article never enters ``text``, which feeds
+    # the card GUID.
+    gender_articles: dict[str, str] | None = None
     # Per-language authenticity rules injected into the story system prompt.
     # Loaded from the plugin's ``data/style.md`` at import time; empty string
     # when the language has no style file (``en``).
@@ -441,6 +447,21 @@ def get_infinitive_marker(code: str) -> str | None:
     discover()
     config = _CONFIGS.get(code)
     return config.infinitive_marker if config else None
+
+
+def get_gender_article(code: str, gender: str) -> str:
+    """The indefinite article for a NOUN headword of *gender* in *code*, or
+    ``""`` when the language has no such map.
+
+    Empty is the correct default: an unknown language, an unregistered gender,
+    or a blank gender all mean "no article", and never a guess. The caller gates
+    on ``upos == "NOUN"`` — verbs keep their ``infinitive_marker`` path.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    if config is None or config.gender_articles is None or not gender:
+        return ""
+    return config.gender_articles.get(gender, "")
 
 
 def format_vocab_headword(lemma: str, upos: str | None, code: str) -> str:

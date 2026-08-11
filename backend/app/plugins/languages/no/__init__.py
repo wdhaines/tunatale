@@ -45,6 +45,7 @@ register(
         slow_word_fn=slow_norwegian_word,
         variant_separator=",",
         infinitive_marker="å",
+        gender_articles={"Masc": "en", "Fem": "ei/en", "Neut": "et"},
         syllabifier_fn=syllabify_norwegian_word,
         planner_example=PlannerExample(
             language_code="no",

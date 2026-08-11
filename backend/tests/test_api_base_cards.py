@@ -292,6 +292,116 @@ class TestCreateBaseCard:
         assert "clozes-only" in detail or "no base card" in detail
         assert api_app_state.get_collocation_by_guid(compute_guid("biti", "sl", "")) is None
 
+    @pytest.mark.parametrize(
+        ("lemma", "surface", "gender", "expected_article"),
+        [
+            ("morder", "morderen", "Masc", "en"),
+            ("alibi", "alibi", "Neut", "et"),
+            ("jente", "jenta", "Fem", "ei/en"),
+            # Stanza leaves gender blank on some nouns (23 of the cached ones,
+            # mostly proper nouns). No gender ⇒ no guess.
+            ("bergen", "Bergen", "", ""),
+        ],
+    )
+    async def test_norwegian_noun_base_card_gets_its_gender_article(
+        self, api_app_state, monkeypatch, lemma, surface, gender, expected_article
+    ):
+        """A TT-minted noun fronts with its article, like the imported deck's do.
+
+        The gender is already computed and already cached — ``TokenAnalysis``
+        carries it and ``create_base_card`` already reads ``ta.upos`` off the
+        same object. This is the reported ``morder`` bug: 0 of 24 TT-minted rows
+        carried an article against 2039 of 2990 imported ones.
+
+        Fem maps to ``ei/en`` rather than ``ei`` because that is what the source
+        deck writes (313 rows), so minted and imported cards render alike.
+        """
+        import app.api.srs as srs_mod
+
+        stub = StubLemmatizer()
+        stub.set_analysis(surface, lemma, upos="NOUN", gender=gender)
+        monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": surface,
+                    "lemma": lemma,
+                    "sentence": f"{surface} her",
+                    "language_code": "no",
+                    "translation": "x",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["item"]["article"] == expected_article
+        coll = api_app_state.get_collocation_by_guid(compute_guid(lemma, "no", ""))
+        assert coll is not None
+        assert coll.syntactic_unit.article == expected_article
+        # The headword itself must stay bare: text feeds compute_guid, so baking
+        # the article in would change the card's identity and orphan its Anki
+        # note. The article is display-only.
+        assert coll.syntactic_unit.text == lemma
+
+    async def test_norwegian_verb_base_card_gets_no_article(self, api_app_state, monkeypatch):
+        """Verbs keep their marker in ``text`` via format_vocab_headword.
+
+        The imported deck puts the verb marker in the same Article field it uses
+        for noun gender (615 rows of ``å``), which invites merging the two
+        mechanisms. Don't: ``å fryse``'s GUID already includes the marker, so
+        moving it would re-identify every existing verb card.
+        """
+        _stub_verb(monkeypatch, "fryser", "fryse")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "fryser",
+                    "lemma": "fryse",
+                    "sentence": "Han fryser",
+                    "language_code": "no",
+                    "translation": "freeze",
+                },
+            )
+
+        assert resp.status_code == 200
+        coll = api_app_state.get_collocation_by_guid(compute_guid("å fryse", "no", ""))
+        assert coll is not None
+        assert coll.syntactic_unit.text == "å fryse"
+        assert coll.syntactic_unit.article == ""
+
+    async def test_language_without_a_gender_article_map_is_a_no_op(self, api_app_state, monkeypatch):
+        """Slovene registers no map, so a NOUN with a gender still gets ``""``.
+
+        Slovene has no articles at all. The registry lookup must degrade to
+        empty rather than inventing one, per the no-hardcoded-language-logic
+        rule — core never branches on the language itself.
+        """
+        import app.api.srs as srs_mod
+
+        stub = StubLemmatizer()
+        stub.set_analysis("vodo", "voda", upos="NOUN", gender="Fem")
+        monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "vodo",
+                    "lemma": "voda",
+                    "sentence": "Pijem vodo",
+                    "language_code": "sl",
+                    "translation": "water",
+                },
+            )
+
+        assert resp.status_code == 200
+        coll = api_app_state.get_collocation_by_guid(compute_guid("voda", "sl", ""))
+        assert coll is not None
+        assert coll.syntactic_unit.article == ""
+
     async def test_function_word_creates_cloze_base(self, api_app_state):
         """A function word (surface==lemma) → production-only cloze base."""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

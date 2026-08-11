@@ -57,7 +57,13 @@ from app.api.models import (
 from app.audio.cloze_tts import synthesize_cloze_audios
 from app.common.guid import compute_guid
 from app.config import settings
-from app.languages import format_vocab_headword, get_tts_voice, get_wordfreq_lang, known_language_codes
+from app.languages import (
+    format_vocab_headword,
+    get_gender_article,
+    get_tts_voice,
+    get_wordfreq_lang,
+    known_language_codes,
+)
 from app.llm.translate import generate_word_gloss, translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -2194,7 +2200,9 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     lemmatizer = get_lemmatizer(lang)
     mv = model_version_for(lemmatizer)
     analyses = await anyio.to_thread.run_sync(analyze_sentence_cached, db, lemmatizer, body.sentence, lang, mv)
-    upos = next((ta.upos for ta in analyses if ta.surface.casefold() == body.surface.casefold()), None)
+    analysis = next((ta for ta in analyses if ta.surface.casefold() == body.surface.casefold()), None)
+    upos = analysis.upos if analysis else None
+    gender = analysis.gender if analysis else ""
     # Check both lemma and surface with the surface's upos (a single-word click).
     upos_map = {lemma.casefold(): upos, body.surface.casefold(): upos} if upos else None
     is_func = is_function_word_for(lemma, {lemma, body.surface}, lang, upos_map)
@@ -2228,6 +2236,7 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
         lemma=lemma,
         card_type=card_type,
         source_sentence=source_sentence,
+        article=get_gender_article(lang, gender) if upos == "NOUN" else "",
     )
     return await _persist_new_card(
         db,
