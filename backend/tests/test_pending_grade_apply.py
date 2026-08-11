@@ -102,7 +102,7 @@ class TestApplyReleasesPending:
         await _grade(cid)
 
         assert db.get_pending_grade(cid, Direction.RECOGNITION.value) is None
-        assert db.pending_grade_ids() == set()
+        assert db.count_pending_grades(LESSON_ID) == 0
 
     async def test_the_corrected_rating_wins_not_the_provisional_one(self, db):
         """The provisional Good was never real, so an Again here is just a first

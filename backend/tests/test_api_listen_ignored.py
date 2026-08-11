@@ -143,7 +143,7 @@ class TestCardedIgnoredLemmaPreviewCommitParity:
 
         await _post_listen({"lesson_id": "lesson-1"})
         # ...and the commit stages exactly the row the preview offered.
-        assert anna_id in db.pending_grade_ids()
+        assert db.get_pending_grade(anna_id, Direction.RECOGNITION.value) is not None
         # Control: the non-ignored card-less sibling still gets created.
         assert db.get_collocation_by_lemma("boris") is not None
 

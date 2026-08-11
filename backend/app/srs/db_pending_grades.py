@@ -50,12 +50,6 @@ class DbPendingGradesMixin:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def pending_grade_ids(self) -> set[int]:
-        """Return set of all collocation_ids that have a pending grade (any lesson)."""
-        with self._get_conn() as conn:
-            rows = conn.execute("SELECT DISTINCT collocation_id FROM pending_listen_grades").fetchall()
-        return {r[0] for r in rows}
-
     def get_pending_grade(self, collocation_id: int, direction: str) -> dict | None:
         """Return a single pending grade row, or None."""
         with self._get_conn() as conn:

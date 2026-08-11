@@ -62,8 +62,8 @@ def test_public_method_count_pinned() -> None:
     # +count_new_created_today (staged-listen creation budget)
     # +record_review, latest_review_at (lesson_reviews)
     # +has_counting_review_today (budget-neutral Check-your-work re-grade)
-    # +stage_pending_grade, get_pending_grades, pending_grade_ids, get_pending_grade,
+    # +stage_pending_grade, get_pending_grades, get_pending_grade,
     #  clear_pending_grade, count_pending_grades (pending-listen-grades mixin)
     # +clear_pending_grade_by_guid (sync_pull clears by guid, not row id)
     # +clear_pending_grades_for_lesson (a listen resets its own bucket, then stages fresh)
-    assert count == 124
+    assert count == 123

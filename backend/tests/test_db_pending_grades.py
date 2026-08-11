@@ -73,22 +73,6 @@ class TestGetPendingGrade:
         assert db.get_pending_grade(1, "production") is None
 
 
-class TestPendingGradeIds:
-    def test_empty(self, db):
-        assert db.pending_grade_ids() == set()
-
-    def test_returns_all_collocation_ids(self, db):
-        db.stage_pending_grade("l1", 1, "recognition", "good", "due")
-        db.stage_pending_grade("l1", 2, "production", "good", "due")
-        db.stage_pending_grade("l2", 3, "recognition", "hard", "ahead")
-        assert db.pending_grade_ids() == {1, 2, 3}
-
-    def test_deduplicates(self, db):
-        db.stage_pending_grade("l1", 1, "recognition", "good", "due")
-        db.stage_pending_grade("l1", 1, "production", "good", "due")
-        assert db.pending_grade_ids() == {1}
-
-
 class TestClearPendingGrade:
     def test_clears_existing(self, db):
         db.stage_pending_grade("l1", 1, "recognition", "good", "due")

@@ -111,7 +111,7 @@ class TestCommitPending:
         await _commit()
 
         assert db.get_collocation("banka").directions[Direction.RECOGNITION].dirty_fsrs is True
-        assert db.pending_grade_ids() == set()
+        assert db.count_pending_grades(LESSON_ID) == 0
 
     async def test_an_ahead_card_records_kind_3(self, db):
         cid = _seed(db, "banka", ahead=True)
@@ -181,7 +181,7 @@ class TestCommitPending:
         assert status == 200
         assert data["applied"] == 1
         assert db.get_pending_grades(LESSON_ID) == []
-        assert db.pending_grade_ids() == set()
+        assert db.get_pending_grade(doomed, Direction.RECOGNITION.value) is None
 
     async def test_a_committed_card_can_still_be_regraded_afterwards(self, db):
         """The post-"Sync it" tail: re-reviewing a released card is an ordinary
