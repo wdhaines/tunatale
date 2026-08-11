@@ -112,8 +112,8 @@ class OfflineReader:
                 note_text = extract_cloze_note(back_extra)
                 l2_text = extract_l2_from_fields(note.fields, self._l2_css_class)
                 disambig_key = ""
-                article = ""
-                extras: tuple[BackField, ...] = ()
+                article = None
+                extras: tuple[BackField, ...] | None = None
             else:
                 profile_result = extract_via_profile(note, self._l2_css_class)
                 if profile_result is not None:
@@ -122,8 +122,8 @@ class OfflineReader:
                     l2_text = extract_l2_from_fields(note.fields, self._l2_css_class)
                     translation = extract_translation(note.fields[1]) if len(note.fields) > 1 else ""
                     disambig_key = extract_disambig_from_fields(note.fields)
-                    article = ""
-                    extras = ()
+                    article = None
+                    extras = None
                 note_text = ""
             card_records = [
                 CardRecord(

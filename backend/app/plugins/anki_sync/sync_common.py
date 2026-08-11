@@ -81,8 +81,8 @@ class NoteRecord:
     mod: int
     cards: list[CardRecord]
     sentence_translation: str = ""
-    article: str = ""
-    extras: tuple[BackField, ...] = field(default_factory=tuple)
+    article: str | None = ""
+    extras: tuple[BackField, ...] | None = field(default_factory=tuple)
     is_cloze: bool = False
 
 

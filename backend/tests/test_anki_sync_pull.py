@@ -123,6 +123,23 @@ class TestOfflineReader:
         conn.close()
         assert len(records) == 5
 
+    def test_unprofiled_notetype_reports_article_and_extras_as_no_opinion(self, fake_anki_db):
+        """A notetype with no profile must report ``None``, not ``""``/``()``.
+
+        The Slovene deck deliberately has no ``field_map`` profile, so it takes
+        the heuristic branch — the same branch every TT-minted note lands on,
+        since ``NORWEGIAN_VOCAB`` has no Article field either. Reporting an empty
+        *value* there tells the pull-side heal "Anki says blank", which is a
+        claim a notetype without the field cannot make. ``None`` means "no
+        opinion" and is what stops the heal from overwriting local data.
+        """
+        conn = sqlite3.connect(str(fake_anki_db))
+        records = OfflineReader(conn, "0. Slovene", language_code="sl").get_note_records()
+        conn.close()
+        assert records, "fixture must yield notes for this to prove anything"
+        assert all(r.article is None for r in records)
+        assert all(r.extras is None for r in records)
+
     def test_extracts_l2_text_and_translation(self, fake_anki_db):
         conn = sqlite3.connect(str(fake_anki_db))
         records = OfflineReader(conn, "0. Slovene", language_code="sl").get_note_records()
@@ -489,6 +506,71 @@ class TestSyncPull:
 
         assert report.notes_updated == 0
         assert db.get_collocation_by_guid(guid).syntactic_unit.article == "en"
+
+    def test_sync_pull_leaves_article_alone_when_anki_has_no_article_field(self):
+        """``article=None`` means "this notetype has no Article field" — not "blank".
+
+        The heal treats article as Anki-sourced and lets Anki win, but only the
+        imported deck's notetype declares an Article field (``field_map``'s sole
+        profile). Every note TT mints itself lands on ``NORWEGIAN_VOCAB``, which
+        has no such field, so a reader that reports ``""`` there is asserting
+        "Anki says blank" about a notetype that cannot say anything. That blanks
+        a locally-derived article on the next pull — the user watches the article
+        appear and then silently vanish, with no conflict recorded.
+
+        ``None`` is the "no opinion" signal and must round-trip untouched.
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        db.set_anki_ids(guid, note_id=9001, card_ids={Direction.RECOGNITION: 90010})
+        db.set_article(db.get_collocation_id_by_guid(guid), "en")
+
+        cards = [make_card_record(anki_card_id=90010, ord=0, queue=2, reps=3, stability=5.0, difficulty=4.5)]
+        records = [make_note_record(anki_guid=guid, cards=cards, article=None)]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.notes_updated == 0
+        assert db.get_collocation_by_guid(guid).syntactic_unit.article == "en"
+
+    def test_sync_pull_blank_article_field_still_wins_over_local(self):
+        """A profile notetype whose Article field IS blank stays authoritative.
+
+        The discriminating case for the fix above: ``None`` (no field) must not
+        write, but ``""`` (field present, genuinely empty) must — otherwise
+        clearing an article in Anki could never propagate to TT.
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        db.set_anki_ids(guid, note_id=9001, card_ids={Direction.RECOGNITION: 90010})
+        db.set_article(db.get_collocation_id_by_guid(guid), "en")
+
+        cards = [make_card_record(anki_card_id=90010, ord=0, queue=2, reps=3, stability=5.0, difficulty=4.5)]
+        records = [make_note_record(anki_guid=guid, cards=cards, article="")]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.notes_updated == 1
+        assert db.get_collocation_by_guid(guid).syntactic_unit.article == ""
+
+    def test_sync_pull_leaves_extras_alone_when_anki_has_no_extras_fields(self):
+        """``extras=None`` is the same "no opinion" signal as ``article=None``.
+
+        Extras sit in the identical heal block and carry the identical defect:
+        a notetype with no rich back-of-card fields reports ``()``, which reads
+        as "Anki says empty" and wipes locally-held extras.
+        """
+        from app.models.syntactic_unit import BackField
+
+        existing = (BackField(label="IPA", html="/bɑŋkɑ/", tier="summary"),)
+        db = _make_tt_db()
+        guid = _add_banka(db, extras=existing)
+        db.set_anki_ids(guid, note_id=9001, card_ids={Direction.RECOGNITION: 90010})
+
+        cards = [make_card_record(anki_card_id=90010, ord=0, queue=2, reps=3, stability=5.0, difficulty=4.5)]
+        records = [make_note_record(anki_guid=guid, cards=cards, extras=None)]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.notes_updated == 0
+        assert db.get_collocation_by_guid(guid).syntactic_unit.extras == existing
 
     def test_sync_pull_backfills_extras_from_anki(self):
         """Anki's rich back-of-card fields heal onto the existing TT row.

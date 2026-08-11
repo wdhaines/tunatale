@@ -1431,6 +1431,58 @@ class TestReverseImportLayer22:
         assert rec_dir.stability == 5.0
         assert rec_dir.reps == 3
 
+    async def test_reverse_import_collapses_no_opinion_to_the_creation_default(self):
+        """A profile-less note reverse-imports as ``""``/``()``, not ``None``.
+
+        The reader reports ``None`` for a notetype that declares no Article or
+        rich-back fields, so the heal can tell "Anki has no such field" from
+        "Anki's field is blank". Reverse-import is a CREATE, not a heal — there
+        is no local value to protect — and both columns are NOT NULL, so the
+        sentinel has to collapse here or the insert raises IntegrityError.
+
+        Untested until now because the pull-side ``FakeReader`` returns no
+        records, so no ``None`` ever reached this constructor.
+        """
+        db = _make_db()
+        reader = _ReverseFakeReader(
+            [
+                NoteRecord(
+                    anki_note_id=1002,
+                    anki_guid="test-guid-no-opinion",
+                    l2_text="zrak",
+                    translation="air",
+                    note="",
+                    disambig_key="",
+                    mod=0,
+                    article=None,
+                    extras=None,
+                    cards=[
+                        CardRecord(
+                            anki_card_id=90020,
+                            ord=0,
+                            queue=2,
+                            reps=1,
+                            lapses=0,
+                            stability=3.0,
+                            difficulty=4.0,
+                            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+                            anki_due=10,
+                            anki_card_mod=100,
+                        ),
+                    ],
+                ),
+            ]
+        )
+        report = await AnkiSync(db=db, _reader=reader, _writer=_ReverseFakeWriter()).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        assert report.notes_created_from_anki == 1
+        item = db.get_collocation("zrak")
+        assert item is not None
+        assert item.syntactic_unit.article == ""
+        assert item.syntactic_unit.extras == ()
+
     async def test_reverse_import_uses_active_language_not_hardcoded_sl(self, monkeypatch):
         """Anki→TT ingest tags created collocations with settings.target_language,
         not a hardcoded 'sl'. Regression: a Norwegian sync crashed with

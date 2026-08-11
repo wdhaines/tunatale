@@ -289,6 +289,11 @@ def import_seed(
             # Notetypes with a field-role profile (e.g. Norwegian's 17-field deck)
             # read L2/translation/disambig by field name; everything else (the
             # Slovene decks) falls back to the positional/HTML heuristics.
+            # NOT the `None` "no opinion" sentinel the reader uses: this value
+            # flows into a SyntacticUnit and then a NOT NULL column, because
+            # import_seed CREATES rows rather than healing them. There is no
+            # local value here for Anki to overwrite, so "no opinion" is not a
+            # state that can arise.
             article = ""
             extras: tuple[BackField, ...] = ()
             profile_result = extract_via_profile(note, l2_css_class)

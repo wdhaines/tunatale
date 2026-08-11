@@ -808,7 +808,9 @@ class AnkiSync:
             # Extras (rich back-of-card fields) are likewise Anki-sourced and
             # display-only; heal when they differ, backfilling existing rows on
             # the first sync after the feature shipped. Pass the serialized JSON.
-            extras_update = serialize_extras(rec.extras) if rec.extras != local_extras else None
+            extras_update = (
+                serialize_extras(rec.extras) if rec.extras is not None and rec.extras != local_extras else None
+            )
             new_dirty_fields = dirty_set.copy()
 
             if rec.translation != local_translation:
@@ -1560,8 +1562,14 @@ class AnkiSync:
                 source="anki",
                 frequency=0,
                 disambig_key=rec.disambig_key,
-                article=rec.article,
-                extras=rec.extras,
+                # Collapse the reader's "no opinion" None to the creation
+                # default. This is a CREATE, not a heal: there is no local value
+                # for Anki to decline to overwrite, and both columns are NOT
+                # NULL. The None sentinel is meaningful only in the heal block
+                # above, where it distinguishes "Anki has no such field" from
+                # "Anki's field is blank".
+                article=rec.article or "",
+                extras=rec.extras or (),
                 lemma=rec.l2_text.lower() if word_count == 1 else None,
                 source_sentence=rec.note,
                 source_sentence_translation=rec.sentence_translation,
