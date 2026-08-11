@@ -18,10 +18,18 @@ class DbPendingGradesMixin:
         rating: str,
         grade_class: str | None = None,
     ) -> None:
-        """INSERT or UPSERT one pending grade row per (collocation_id, direction).
+        """INSERT or UPSERT one pending grade row per (lesson_id, collocation_id, direction).
 
         Rating: "again"|"hard"|"good"|"easy".
         grade_class: "due"|"ahead"|"learning" at stage time (nullable).
+
+        🚨 Keyed per LESSON — the insert half of a deliberate asymmetry with the
+        card-scoped deletes below. Two lessons in one curriculum share most of
+        their vocabulary, and before v42 this conflict target was global
+        ``(collocation_id, direction)`` with ``lesson_id = excluded.lesson_id`` in
+        the DO UPDATE, so listening to day-4 silently moved day-5's shared rows
+        into day-4's bucket (measured: 145 → 85). A word may now sit staged in
+        several lessons at once; that is legal and expected.
         """
         now = datetime.now(UTC).isoformat()
         with self._get_conn() as conn:
@@ -29,8 +37,7 @@ class DbPendingGradesMixin:
                 """INSERT INTO pending_listen_grades
                    (lesson_id, collocation_id, direction, rating, grade_class, created_at)
                    VALUES (?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(collocation_id, direction) DO UPDATE SET
-                       lesson_id = excluded.lesson_id,
+                   ON CONFLICT(lesson_id, collocation_id, direction) DO UPDATE SET
                        rating = excluded.rating,
                        grade_class = excluded.grade_class,
                        created_at = excluded.created_at""",
@@ -51,7 +58,13 @@ class DbPendingGradesMixin:
         return [dict(r) for r in rows]
 
     def get_pending_grade(self, collocation_id: int, direction: str) -> dict | None:
-        """Return a single pending grade row, or None."""
+        """Return one pending row for this card from any lesson, or None.
+
+        An existence probe, which is all its single caller wants ("is this grade a
+        release of staged state?"). Since v42 a card may be staged under several
+        lessons with different ratings, so WHICH row comes back is arbitrary —
+        don't read ``rating``/``lesson_id``/``grade_class`` off it.
+        """
         with self._get_conn() as conn:
             row = conn.execute(
                 """SELECT id, lesson_id, collocation_id, direction, rating, grade_class, created_at
@@ -62,7 +75,19 @@ class DbPendingGradesMixin:
         return dict(row) if row else None
 
     def clear_pending_grade(self, collocation_id: int, direction: str) -> None:
-        """Delete a pending grade row."""
+        """Delete this card's pending row from EVERY lesson's bucket.
+
+        🚨 Card-scoped on purpose. Do NOT add ``lesson_id`` to this WHERE clause
+        to "match" the per-lesson insert key — that single edit is the whole risk
+        of the v42 change. Grading a word means it no longer needs reviewing, so
+        it must leave every bucket at once; scoping the delete would leave the
+        other lesson's Check-your-work armed for a card already graded, and would
+        let a word re-open the bucket of a lesson that had drained to zero. The
+        insert/delete asymmetry IS the invariant, not an oversight.
+
+        Removal-only is what makes it safe: nothing but listening to a lesson can
+        add a row, so a drained lesson stays drained.
+        """
         with self._get_conn() as conn:
             conn.execute(
                 "DELETE FROM pending_listen_grades WHERE collocation_id = ? AND direction = ?",

@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from app.srs.migrations import CURRENT_VERSION, migrate
+from app.srs.migrations import CURRENT_VERSION, _set_version, migrate
 
 
 def _make_v1_conn() -> sqlite3.Connection:
@@ -74,7 +74,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 41
+        assert CURRENT_VERSION == 42
 
     def test_migrates_v40_to_v41_creates_pending_listen_grades_table(self, tmp_path):
         from app.srs.migrations import _set_version, migrate_v40_to_v41
@@ -2310,7 +2310,7 @@ class TestMigrateV37ToV38:
     """Tests for v37→v38 (lesson_listens table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 41
+        assert CURRENT_VERSION == 42
 
     def test_v37_to_v38_creates_lesson_listens_table_and_index(self):
         from app.srs.migrations import migrate_v37_to_v38
@@ -2353,7 +2353,7 @@ class TestMigrateV37ToV38:
         try:
             tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "lesson_listens" in tables
-            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 41
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 42
         finally:
             db.close()
 
@@ -2380,7 +2380,7 @@ class TestMigrateV38ToV39:
     """Tests for v38→v39 (lesson_reviews table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 41
+        assert CURRENT_VERSION == 42
 
     def test_v38_to_v39_creates_lesson_reviews_table_and_index(self):
         from app.srs.migrations import migrate_v38_to_v39
@@ -2423,7 +2423,7 @@ class TestMigrateV38ToV39:
         try:
             tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "lesson_reviews" in tables
-            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 41
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 42
         finally:
             db.close()
 
@@ -2440,7 +2440,7 @@ class TestMigrateV38ToV39:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         assert "lesson_listens" in tables
         assert "lesson_reviews" in tables
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 41
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 42
 
 
 class TestMigrationDriverAtomicity:
@@ -2558,3 +2558,118 @@ class TestMigrationDriverAtomicity:
                 assert probe.execute("PRAGMA user_version").fetchone()[0] == CURRENT_VERSION
             finally:
                 probe.close()
+
+
+class TestMigrateV41ToV42:
+    """F-23: `pending_listen_grades` gains `lesson_id` in its uniqueness key.
+
+    SQLite cannot alter a UNIQUE constraint in place, so this is a table rebuild
+    over live user data — 144 rows were staged on day-5 when the change was
+    written.
+    """
+
+    def _v41_conn(self, tmp_path) -> sqlite3.Connection:
+        from app.srs.migrations import migrate_v40_to_v41
+
+        conn = sqlite3.connect(str(tmp_path / "plg.db"))
+        conn.row_factory = sqlite3.Row
+        _set_version(conn, 40)
+        migrate_v40_to_v41(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 41
+        return conn
+
+    def test_staged_rows_survive_the_rebuild(self, tmp_path):
+        """The whole risk of a CREATE/copy/DROP/RENAME is losing the payload."""
+        from app.srs.migrations import migrate_v41_to_v42
+
+        conn = self._v41_conn(tmp_path)
+        for cid in range(1, 145):
+            conn.execute(
+                """INSERT INTO pending_listen_grades
+                   (lesson_id, collocation_id, direction, rating, grade_class, created_at)
+                   VALUES ('day-5', ?, 'recognition', 'good', 'due', '2026-08-05T00:00:00+00:00')""",
+                (cid,),
+            )
+        conn.commit()
+        before = [tuple(r) for r in conn.execute("SELECT * FROM pending_listen_grades ORDER BY id")]
+
+        migrate_v41_to_v42(conn)
+
+        after = [tuple(r) for r in conn.execute("SELECT * FROM pending_listen_grades ORDER BY id")]
+        assert after == before, "the rebuild must preserve every column of every staged row"
+        assert len(after) == 144
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 42
+
+    def test_the_same_card_may_now_be_staged_under_two_lessons(self, tmp_path):
+        """The point of the change. Pre-v42 the second INSERT hit the global
+        UNIQUE and the upsert re-parented the row to day-4."""
+        from app.srs.migrations import migrate_v41_to_v42
+
+        conn = self._v41_conn(tmp_path)
+        migrate_v41_to_v42(conn)
+
+        for lesson in ("day-5", "day-4"):
+            conn.execute(
+                """INSERT INTO pending_listen_grades
+                   (lesson_id, collocation_id, direction, rating, grade_class, created_at)
+                   VALUES (?, 9, 'recognition', 'good', 'due', '2026-08-11T00:00:00+00:00')""",
+                (lesson,),
+            )
+        conn.commit()
+
+        assert conn.execute("SELECT COUNT(*) FROM pending_listen_grades WHERE collocation_id = 9").fetchone()[0] == 2
+
+    def test_the_new_key_still_rejects_a_duplicate_within_one_lesson(self, tmp_path):
+        """Weakening the key must not make it vacuous — a re-stage inside one
+        lesson still has exactly one row to conflict with."""
+        from app.srs.migrations import migrate_v41_to_v42
+
+        conn = self._v41_conn(tmp_path)
+        migrate_v41_to_v42(conn)
+
+        conn.execute(
+            """INSERT INTO pending_listen_grades
+               (lesson_id, collocation_id, direction, rating, grade_class, created_at)
+               VALUES ('day-5', 9, 'recognition', 'good', 'due', '2026-08-11T00:00:00+00:00')"""
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                """INSERT INTO pending_listen_grades
+                   (lesson_id, collocation_id, direction, rating, grade_class, created_at)
+                   VALUES ('day-5', 9, 'recognition', 'again', 'due', '2026-08-11T00:00:00+00:00')"""
+            )
+
+    def test_the_lesson_index_survives(self, tmp_path):
+        """`get_pending_grades` / `count_pending_grades` are lesson-scoped reads;
+        a DROP TABLE takes the index with it."""
+        from app.srs.migrations import migrate_v41_to_v42
+
+        conn = self._v41_conn(tmp_path)
+        migrate_v41_to_v42(conn)
+
+        indexes = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='pending_listen_grades'"
+            )
+        }
+        assert "idx_pending_listen_grades_lesson_id" in indexes
+
+    def test_rerun_is_a_no_op(self, tmp_path):
+        """Every migration in this file tolerates a re-run; a rebuild that didn't
+        would drop the rebuilt table's rows on the second pass."""
+        from app.srs.migrations import migrate_v41_to_v42
+
+        conn = self._v41_conn(tmp_path)
+        conn.execute(
+            """INSERT INTO pending_listen_grades
+               (lesson_id, collocation_id, direction, rating, grade_class, created_at)
+               VALUES ('day-5', 9, 'recognition', 'good', 'due', '2026-08-11T00:00:00+00:00')"""
+        )
+        conn.commit()
+        migrate_v41_to_v42(conn)
+
+        migrate_v41_to_v42(conn)
+
+        assert conn.execute("SELECT COUNT(*) FROM pending_listen_grades").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 42

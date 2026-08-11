@@ -16,7 +16,7 @@ from app.srs.function_words import format_morphology_hint
 
 _logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 41
+CURRENT_VERSION = 42
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -1231,6 +1231,64 @@ def migrate_v40_to_v41(conn: sqlite3.Connection) -> None:
     _set_version(conn, 41)
 
 
+def migrate_v41_to_v42(conn: sqlite3.Connection) -> None:
+    """Make the pending-listen bucket per-lesson: add ``lesson_id`` to the key.
+
+    v41's key was global — ``UNIQUE(collocation_id, direction)`` — and
+    ``stage_pending_grade``'s upsert set ``lesson_id = excluded.lesson_id``, so a
+    listen on one lesson silently re-parented every card it shared with another.
+    Measured 2026-08-05: one ordinary listen on day-4 took day-5's "Check your
+    work" bucket from 145 rows to 85, moving 60 rows across, with nothing in the
+    UI to say a number had changed.
+
+    SQLite can't alter a UNIQUE constraint in place, so this is the v34→v35
+    table-rebuild pattern — minus its ``PRAGMA foreign_keys`` dance, which this
+    table doesn't need: ``collocation_id`` is a bare INTEGER with no REFERENCES.
+
+    No de-duplication pass is needed on the copy. The new key is strictly WEAKER
+    than the old one, so every row that satisfied ``UNIQUE(collocation_id,
+    direction)`` also satisfies ``UNIQUE(lesson_id, collocation_id, direction)``
+    — a live row cannot conflict.
+
+    🚨 The matching DELETE scope is deliberately NOT changed. See
+    ``DbPendingGradesMixin.clear_pending_grade`` for why making it lesson-scoped
+    "for consistency" reintroduces the bug this migration fixes.
+    """
+    existing_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='pending_listen_grades'"
+    ).fetchone()[0]
+    if "UNIQUE(lesson_id, collocation_id, direction)" in existing_sql:  # already rebuilt (idempotent re-run)
+        _set_version(conn, 42)
+        return
+
+    conn.execute("DROP TABLE IF EXISTS _plg_v42")
+    conn.execute("""
+        CREATE TABLE _plg_v42 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lesson_id TEXT NOT NULL,
+            collocation_id INTEGER NOT NULL,
+            direction TEXT NOT NULL,
+            rating TEXT NOT NULL,
+            grade_class TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(lesson_id, collocation_id, direction)
+        )
+    """)
+    conn.execute("""
+        INSERT INTO _plg_v42 (id, lesson_id, collocation_id, direction, rating, grade_class, created_at)
+        SELECT id, lesson_id, collocation_id, direction, rating, grade_class, created_at
+        FROM pending_listen_grades
+    """)
+    conn.execute("DROP INDEX IF EXISTS idx_pending_listen_grades_lesson_id")
+    conn.execute("DROP TABLE pending_listen_grades")
+    conn.execute("ALTER TABLE _plg_v42 RENAME TO pending_listen_grades")
+    # The (lesson_id, …) UNIQUE index now serves lesson-scoped reads as a prefix
+    # match, but keep the dedicated index: it is narrower, and dropping it would
+    # silently re-plan get_pending_grades / count_pending_grades.
+    conn.execute("CREATE INDEX idx_pending_listen_grades_lesson_id ON pending_listen_grades(lesson_id)")
+    _set_version(conn, 42)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -1273,6 +1331,7 @@ _MIGRATIONS = {
     38: migrate_v38_to_v39,
     39: migrate_v39_to_v40,
     40: migrate_v40_to_v41,
+    41: migrate_v41_to_v42,
 }
 
 
