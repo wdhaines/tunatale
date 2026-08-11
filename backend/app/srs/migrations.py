@@ -1277,17 +1277,56 @@ _MIGRATIONS = {
 
 
 def migrate(conn: sqlite3.Connection) -> None:
-    """Run every pending migration in order, each inside its own transaction."""
-    while True:
+    """Run every pending migration in order, each inside its own transaction.
+
+    ``BEGIN IMMEDIATE`` — rather than the deferred transaction sqlite3 would open
+    on its own — is what makes both halves of that sentence true:
+
+    - *Atomicity.* sqlite3 opens a transaction implicitly only for DML, so
+      ``conn.in_transaction`` is still False after an ``ALTER TABLE``. A DDL-only
+      migration would otherwise auto-commit statement by statement, and one that
+      raised part-way would leave its earlier statements applied — the retry then
+      dies on the statement that did land.
+    - *Exclusivity.* Reading ``PRAGMA user_version`` and running the migration
+      must be one unit. Two processes opening the same file (``app.main``'s
+      lifespan opens every DB in ``DATABASE_URLS``, so a second backend migrates
+      the first one's file too) would otherwise both pass the same version check
+      and both run migration N, and the loser dies on ``duplicate column name``
+      / ``table ... already exists``. Taking the write lock up front is also what
+      lets the loser *wait*: upgrading a deferred read transaction to a write
+      returns BUSY immediately, and ``busy_timeout`` does not apply to that case.
+
+    The loser blocks on the lock, then re-reads the bumped version and skips the
+    migration the winner just applied, so the two cooperate through the chain.
+
+    The version check below is deliberately OUTSIDE that lock. Almost every call
+    has nothing to do, and taking a write lock just to discover that would make
+    merely *opening* an up-to-date database fail whenever anything else held the
+    write lock — which breaks read-mostly openers like
+    ``replay_fsrs_from_revlog``'s "backend appears live" guard.
+    """
+    while _get_version(conn) < CURRENT_VERSION:
+        _apply_next_pending_migration(conn)
+
+
+def _apply_next_pending_migration(conn: sqlite3.Connection) -> None:
+    """Apply exactly one pending migration, holding the write lock throughout.
+
+    Does nothing if the version has already advanced — the second half of the
+    double-check. A process that lost the ``BEGIN IMMEDIATE`` race re-reads the
+    version its winner just bumped and declines to re-run that migration.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
         version = _get_version(conn)
         if version >= CURRENT_VERSION:
+            conn.rollback()
             return
         migration = _MIGRATIONS.get(version)
         if migration is None:
             raise RuntimeError(f"No migration registered for version {version}")
-        try:
-            migration(conn)
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
+        migration(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise

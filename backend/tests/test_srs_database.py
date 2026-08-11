@@ -3995,6 +3995,41 @@ class TestConnectionPragmas:
         finally:
             db.close()
 
+    def test_opening_a_db_someone_else_is_writing_does_not_raise(self, tmp_path):
+        """`PRAGMA journal_mode = WAL` needs a brief exclusive lock and — unlike
+        ordinary statements — does NOT honour busy_timeout: it returns SQLITE_BUSY
+        the instant another connection is mid-write.
+
+        Two backends opening the same file therefore used to kill the loser at
+        startup with 'database is locked' before it ever reached a migration.
+        Losing the race is harmless — WAL is a property of the file, so the
+        winner's setting is the one that counts.
+        """
+        import sqlite3 as _sqlite3
+
+        from app.srs.db_base import _configure_connection
+
+        path = str(tmp_path / "contended.db")
+        holder = _sqlite3.connect(path)
+        holder.execute("CREATE TABLE t(x)")
+        holder.commit()
+        # BEGIN IMMEDIATE, not EXCLUSIVE: a RESERVED lock still lets readers in,
+        # which is what the real race looks like — both openers read the mode
+        # fine, then both try to upgrade and one loses. BEGIN EXCLUSIVE would
+        # block the read too, a strictly harsher case than two backends starting.
+        holder.execute("BEGIN IMMEDIATE")
+        holder.execute("INSERT INTO t VALUES (1)")
+        try:
+            other = _sqlite3.connect(path)
+            try:
+                _configure_connection(other)
+                assert other.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+            finally:
+                other.close()
+        finally:
+            holder.rollback()
+            holder.close()
+
 
 class TestGetImageFilenames:
     """Tests for DbMediaMixin.get_image_filenames (batched lookup)."""

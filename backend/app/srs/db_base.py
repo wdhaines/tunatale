@@ -8,7 +8,7 @@ column/state constants, and the row->model mappers every concern mixin uses.
 from __future__ import annotations
 
 import sqlite3
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -142,6 +142,11 @@ _NEW_RESET_SET = (
 _LEARNING_STATES = ("learning", "relearning")
 
 
+# Journal modes that need no write: ``wal`` is already what we want, and
+# ``memory`` is what a ``:memory:`` connection reports — it cannot become WAL.
+_JOURNAL_MODES_TO_KEEP = ("wal", "memory")
+
+
 def _configure_connection(conn: sqlite3.Connection) -> None:
     """Apply the standard pragmas to a fresh SQLite connection.
 
@@ -154,10 +159,25 @@ def _configure_connection(conn: sqlite3.Connection) -> None:
       snapshot without blocking on the writer, so a slow sync (a big first
       import plus the optimize's divergence writes) doesn't lock out the UI.
       A no-op on ``:memory:`` connections (stays ``memory``).
+
+    Setting the journal mode is the one statement here that can fail. It needs a
+    brief exclusive lock and, unlike ordinary statements, does NOT honour
+    ``busy_timeout`` — it returns SQLITE_BUSY the instant another connection is
+    mid-write. Since the mode is a property of the *file*, not the connection,
+    both the "already set" and the "someone else is setting it" cases mean the
+    work is done or being done by somebody: read first, and treat a lost race as
+    success. Getting this wrong killed the loser of a two-process open before it
+    reached a migration.
     """
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 5000")
-    conn.execute("PRAGMA journal_mode = WAL")
+    if conn.execute("PRAGMA journal_mode").fetchone()[0].lower() not in _JOURNAL_MODES_TO_KEEP:
+        # Suppressed because losing the race is a success for our purposes. Worst
+        # case this connection runs under the file's existing journal mode, which
+        # is correct, just less concurrent — and every other statement honours
+        # busy_timeout, so nothing downstream is at risk.
+        with suppress(sqlite3.OperationalError):
+            conn.execute("PRAGMA journal_mode = WAL")
 
 
 class SRSDatabaseBase:

@@ -1,6 +1,7 @@
 """Tests for versioned SRS database migrations."""
 
 import sqlite3
+import threading
 from datetime import date
 
 import pytest
@@ -2440,3 +2441,120 @@ class TestMigrateV38ToV39:
         assert "lesson_listens" in tables
         assert "lesson_reviews" in tables
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 41
+
+
+class TestMigrationDriverAtomicity:
+    """`migrate()`'s contract: each migration runs inside its own transaction.
+
+    Python's sqlite3 does NOT open a transaction for DDL — `in_transaction` is
+    False after an `ALTER TABLE` (verified on 3.14.2 / SQLite 3.50.4). So without
+    an explicit `BEGIN IMMEDIATE`, a DDL-only migration auto-commits statement by
+    statement and the docstring's promise does not hold: a failure part-way leaves
+    the earlier statements applied, and two processes can both pass the same
+    `PRAGMA user_version` check and both run the same migration.
+    """
+
+    def test_a_migration_that_raises_part_way_applies_nothing(self, monkeypatch):
+        """A half-applied DDL migration is worse than a failed one: the retry
+        then dies on the statement that DID land ('duplicate column name')."""
+        from app.srs import migrations as m
+
+        def _half_failing(conn: sqlite3.Connection) -> None:
+            conn.execute("ALTER TABLE collocations ADD COLUMN landed_first INTEGER NOT NULL DEFAULT 0")
+            raise RuntimeError("migration blew up after its first statement")
+
+        conn = _make_v1_conn()
+        migrate(conn)
+        monkeypatch.setitem(m._MIGRATIONS, CURRENT_VERSION, _half_failing)
+        monkeypatch.setattr(m, "CURRENT_VERSION", CURRENT_VERSION + 1)
+
+        with pytest.raises(RuntimeError, match="blew up"):
+            migrate(conn)
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocations)")}
+        assert "landed_first" not in cols, "the failed migration left a committed partial schema"
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_VERSION
+
+    def test_losing_the_lock_race_declines_to_rerun_the_winners_migration(self):
+        """The second half of the double-check, exercised directly.
+
+        In the wild this is the loser of `BEGIN IMMEDIATE` waking up after the
+        winner committed: it re-reads the bumped version under the lock and must
+        return rather than re-run a migration that has already been applied.
+        Calling it on an up-to-date connection reaches the same branch without
+        needing two threads to interleave a particular way.
+        """
+        from app.srs.migrations import _apply_next_pending_migration
+
+        conn = _make_v1_conn()
+        migrate(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_VERSION
+
+        _apply_next_pending_migration(conn)
+
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_VERSION
+        assert not conn.in_transaction, "the declined attempt must release its write lock"
+
+    def test_migrate_does_not_take_a_write_lock_when_up_to_date(self, tmp_path):
+        """Opening an up-to-date DB must not need the write lock.
+
+        `replay_fsrs_from_revlog` detects a live backend by trying to write and
+        reporting 'Backend appears live'. If merely constructing SRSDatabase took
+        a write lock, that guard would instead die with a bare 'database is
+        locked' from inside migrate().
+        """
+        from app.srs.database import SRSDatabase
+
+        path = str(tmp_path / "uptodate.db")
+        SRSDatabase(path)
+
+        blocker = sqlite3.connect(path)
+        blocker.execute("PRAGMA busy_timeout = 0")
+        blocker.execute("BEGIN IMMEDIATE")
+        try:
+            SRSDatabase(path)
+        finally:
+            blocker.rollback()
+            blocker.close()
+
+    def test_two_connections_migrating_one_file_both_succeed(self, tmp_path):
+        """Two backends opening the same DB with migrations pending.
+
+        app.main's lifespan opens EVERY database named in DATABASE_URLS, so a
+        second backend process migrates the first one's file too. Both used to
+        read the same stale `user_version` and run the same migration; the loser
+        died with 'duplicate column name: last_review_time_ms', 'no such column:
+        due_date', or 'table _collocations_v3 already exists'.
+
+        Rounds, not one shot: the collision is timing-dependent (measured 7/8 with
+        real processes), so a single round can pass by luck even unfixed.
+        """
+        from app.srs.database import SRSDatabase
+
+        def _open(target: str, gate: threading.Barrier, sink: list[BaseException]) -> None:
+            """Params, not closure: a nested function capturing the loop's
+            variables trips ruff B023 (late binding)."""
+            try:
+                gate.wait(timeout=10)
+                SRSDatabase(target)
+            except BaseException as exc:
+                sink.append(exc)
+
+        for round_ in range(8):
+            path = str(tmp_path / f"round{round_}.db")
+            barrier = threading.Barrier(2)
+            failures: list[BaseException] = []
+
+            threads = [threading.Thread(target=_open, args=(path, barrier, failures)) for _ in range(2)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=30)
+
+            assert not failures, f"round {round_}: concurrent migration failed with {failures!r}"
+
+            probe = sqlite3.connect(path)
+            try:
+                assert probe.execute("PRAGMA user_version").fetchone()[0] == CURRENT_VERSION
+            finally:
+                probe.close()
