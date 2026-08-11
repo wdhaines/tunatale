@@ -1,5 +1,14 @@
 import { test, expect } from '@playwright/test';
-import { backendAvailable, seedSRSItems } from './helpers';
+import { backendAvailable, resetSRSItems, seedSRSItems } from './helpers';
+
+// This spec suspends 'eden' and does not restore it, and /cards paginates at 50
+// sorted by text — so both the suspend state and 'eden' being on page 1 depend on
+// what ran before. Wipe first to restore the precondition. Without this, a repeat
+// run re-enters with 'eden' already suspended and the Suspend/Unsuspend assertions
+// invert (verified: --repeat-each=3 fails 1 of 3 pre-fix).
+test.beforeEach(async ({ request }) => {
+	if (await backendAvailable(request)) await resetSRSItems(request);
+});
 
 test('cards: search filters list, suspend toggles state', async ({ page, request }) => {
 	test.skip(!(await backendAvailable(request)), 'Backend not available');
