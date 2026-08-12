@@ -47,8 +47,17 @@ def _snapshot(src: Path, dest: Path) -> None:
 _SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 
 
+# Matches ONLY the ``{stem}.YYYY-MM-DD.db`` names ``rotate_db_backups`` writes.
+# A bare ``{stem}.*.db`` would also match the pre-migration snapshots
+# (``{stem}.pre-v41.db``) — and since 'p' sorts after any ISO date, such a
+# snapshot would be mistaken for the newest daily backup: it would survive
+# pruning itself while evicting a real one. Rotation must be unable to reach
+# them, whatever directory they are pointed at.
+_DATE_GLOB = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
+
+
 def _prune(backup_dir: Path, stem: str, keep: int) -> None:
-    """Keep the ``keep`` most recent ``{stem}.*.db`` snapshots; unlink older ones.
+    """Keep the ``keep`` most recent daily ``{stem}.{date}.db`` snapshots; unlink older ones.
 
     ISO date filenames sort chronologically, so lexical sort == oldest-first.
     Scoped to ``stem`` so pruning one language never touches another's snapshots.
@@ -60,12 +69,12 @@ def _prune(backup_dir: Path, stem: str, keep: int) -> None:
     sidecar survives only if its base snapshot is one we are keeping — deleting
     a live ``-wal`` under a retained snapshot would truncate its data.
     """
-    snapshots = sorted(backup_dir.glob(f"{stem}.*.db"))
+    snapshots = sorted(backup_dir.glob(f"{stem}.{_DATE_GLOB}.db"))
     kept = {p.name for p in snapshots[-keep:]}
     for old in snapshots[:-keep]:
         old.unlink()
     for suffix in _SIDECAR_SUFFIXES:
-        for sidecar in backup_dir.glob(f"{stem}.*.db{suffix}"):
+        for sidecar in backup_dir.glob(f"{stem}.{_DATE_GLOB}.db{suffix}"):
             if sidecar.name.removesuffix(suffix) not in kept:
                 sidecar.unlink()
 
@@ -108,3 +117,36 @@ def rotate_db_backups(
         except (OSError, sqlite3.Error) as exc:
             logger.warning("db-backup: failed for %s: %s", src, exc)
     return written
+
+
+def snapshot_before_migration(src: Path | str, backup_dir: Path, *, from_version: int) -> Path:
+    """Snapshot ``src`` into ``{backup_dir}/{stem}.pre-v{from_version}.db``.
+
+    Called from ``migrations.migrate`` when — and only when — there is a pending
+    migration, so this fires on a deploy that advances the schema, not on every
+    boot. It differs from ``rotate_db_backups`` in the two ways that matter:
+
+    - **It never rotates.** The rolling daily snapshots keep 5 days; the one
+      snapshot that makes a schema rollback possible must outlive that window,
+      because you find out you need it long after the deploy. Nothing in this
+      module deletes these files (``_prune`` is scoped to date-shaped names).
+    - **It raises.** ``rotate_db_backups`` swallows every error so a backup
+      hiccup can't block startup. Here the opposite is correct: failing to
+      snapshot and then migrating anyway destroys the only copy of the
+      pre-migration state, which is precisely the outcome this exists to
+      prevent. A loud failure to boot beats a silent one-way door.
+
+    Tagged with the version being migrated FROM, so the name says which build
+    can still open it — and at most one snapshot per schema version is ever
+    written. The first one wins: a migration that failed half-way and left the
+    DB mutated must not overwrite the good copy on the retry.
+    """
+    src = Path(src)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    dest = backup_dir / f"{src.stem}.pre-v{from_version}.db"
+    if dest.exists():
+        logger.info("pre-migration snapshot already exists, keeping the earlier copy: %s", dest)
+        return dest
+    _snapshot(src, dest)
+    logger.info("pre-migration snapshot of schema v%d written to %s", from_version, dest)
+    return dest

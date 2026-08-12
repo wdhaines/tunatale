@@ -159,3 +159,150 @@ against a remote restore. The drill is deliberately storage-agnostic so that
 step changes only `--snapshot-dir`.
 
 The encryption key must not live only on the machine being backed up.
+
+## Schema rollback
+
+### Image rollback is not schema rollback
+
+"Roll back to a previous SHA in one command" is true of the image and false of
+the data. Starting a build runs `app/srs/migrations.py::migrate` against the
+existing volume, so a deploy that advances the schema and is then rolled back
+leaves a **newer schema under older code** — a different and worse failure than
+the one being rolled back from. The schema only ever moves forward: `migrate`'s
+loop is `while version < CURRENT_VERSION`, and there are no down-migrations.
+
+Two mechanisms close that gap.
+
+**1. A pre-migration snapshot.** Before the first pending migration runs,
+`migrate` copies the database to
+`{migration_backup_dir}/{stem}.pre-v{N}.db`, where `N` is the version being
+left behind — so the filename says which build can still open it. Written via
+the same online-backup API as the rolling snapshots (`db_backup.py::_snapshot`),
+so the file is self-contained; a restore copies the `.db` alone and ignores any
+`-wal`/`-shm` beside it.
+
+Three properties are deliberate and each has a test in
+`backend/tests/test_pre_migration_backup.py`:
+
+- **It never rotates.** `migration_backup_dir` defaults to
+  `~/.tunatale/pre-migration-backups`, separate from the rolling
+  `~/.tunatale/db-backups`, which keeps only `db_backup_keep_days` (5). You
+  find out you need a pre-migration snapshot long after that window. Pruning is
+  additionally scoped to date-shaped filenames, so co-locating the two
+  directories would still be safe.
+- **The first snapshot of a version wins.** A migration that fails half-way
+  leaves the DB mutated; the retry re-enters at the same version and must not
+  copy the damaged file over the good one.
+- **A failure to snapshot aborts the migration.** This is the opposite of
+  `rotate_db_backups`, which swallows every error so a backup hiccup cannot
+  block startup. Here, migrating without a snapshot would destroy the only copy
+  of the pre-migration state — the precise outcome the mechanism exists to
+  prevent. Since it only fires when a migration is actually pending, the
+  availability cost is bounded to deploys that change the schema.
+
+**2. A refusal to run older code against a newer DB.** `migrate` raises
+`SchemaTooNewError` when `PRAGMA user_version` exceeds the build's
+`CURRENT_VERSION`, naming both versions and the snapshot that would fix it.
+Refusing to start beats a silent mixed-state boot.
+
+Check it *before* swapping, so a bad rollback declines instead of crash-looping:
+
+```bash
+cd backend && uv run python scripts/check_schema_compat.py
+# exit 0 = safe to start; 1 = a DB is ahead of this build; 2 = a named DB is missing
+```
+
+The script imports the same comparison the runtime guard uses rather than
+reimplementing it, and reads `PRAGMA user_version` straight off the files — it
+needs nothing running.
+
+### Which migrations are reversible
+
+**Reversible**, below, means: after the migration has run, an older build (one
+whose `CURRENT_VERSION` is the pre-migration number) can be pointed back at the
+*same file* — after resetting `PRAGMA user_version` — without losing data it
+knew about. It does **not** mean a down-migration exists; none does.
+
+Three classes:
+
+- **Additive** — new column, table, or index only. The older build ignores it.
+  Reversible.
+- **Backfill** — writes rows, but only where the target was `NULL` or empty. No
+  pre-existing value is destroyed, so nothing is lost; it is not *mechanically*
+  undoable, because nothing records which rows were blank.
+- **Destructive** — drops, deletes, or overwrites pre-existing values, or
+  rebuilds a table. **Not reversible: the pre-migration snapshot IS the
+  rollback.**
+
+26 of the 42 are additive, 3 are backfills, and 13 are destructive.
+
+| From → to | Class | What it does |
+|---|---|---|
+| v0 → v1 | Additive | `collocations.lemma` + index |
+| v1 → v2 | **Destructive** | Splits FSRS state into `collocation_directions`; rebuilds `collocations`; drops `_collocations_v1`; synthesizes a production direction per row |
+| v2 → v3 | **Destructive** | Rewrites `collocations.text` (strips the `(suffix)` into a new `disambig_key`) and recomputes every guid. The original `text` values do not survive |
+| v3 → v4 | **Destructive** | Rebuilds `collocation_directions` / `media` / `collocation_tags` to repair FK targets. Every row is copied — no data loss — but the pre-repair tables are dropped |
+| v4 → v5 | Additive | `last_rating` |
+| v5 → v6 | Additive | `anki_due` |
+| v6 → v7 | Additive | `grammar`, `note` |
+| v7 → v8 | Additive | `source_sentence`, `source_lesson_id`, `source_line_index` |
+| v8 → v9 | **Destructive** | `DROP TABLE pending_revlog` (+ index). Unused at the time, but the drop is unconditional |
+| v9 → v10 | Additive | `last_review_time_ms` |
+| v10 → v11 | Additive | `left`, `due_at` |
+| v11 → v12 | **Destructive** | Nulls `last_review` on `state='new' AND reps=0` rows. The prior timestamps are gone |
+| v12 → v13 | Additive | `prior_state`, `prior_left`, `prior_stability` |
+| v13 → v14 | Additive | `anki_card_mod` |
+| v14 → v15 | Backfill | `lemma = LOWER(text)` for single-word rows, `WHERE lemma IS NULL` |
+| v15 → v16 | **Destructive** | Deletes phantom direction rows (the `_build_directions` auto-fill residue) |
+| v16 → v17 | Additive | Index on `collocations.created_at` |
+| v17 → v18 | Additive | `introduced_at` + index |
+| v18 → v19 | Additive | `card_type` |
+| v19 → v20 | Additive | `bury_kind`; its backfill writes only into that new column |
+| v20 → v21 | Additive | `sentence_translation` |
+| v21 → v22 | **Destructive** | Rebuilds `media` to drop the `kind` CHECK. All rows copied; old table dropped |
+| v22 → v23 | **Destructive** | Appends `audio` to `collocations.dirty_fields` on matching rows — including non-empty ones |
+| v23 → v24 | Backfill | Fills `due_at` from `due_date`, `WHERE due_at IS NULL`. `due_date` still exists at this version |
+| v24 → v25 | **Destructive** | Drops `collocation_directions.due_date`. The clearest one-way door in the chain |
+| v25 → v26 | Additive | `tt_revlog` table |
+| v26 → v27 | Additive | `stability_replayed`, `fsrs_difficulty_replayed` |
+| v27 → v28 | Additive | `lemma_key` |
+| v28 → v29 | Backfill | Fills `grammar` for inflection clozes, `WHERE grammar IS NULL OR grammar = ''` |
+| v29 → v30 | Additive | `ignored_lemmas` table |
+| v30 → v31 | Additive | `known_prior_state`, `known_prior_stability`, `known_prior_due_at`, `fsrs_force_next` |
+| v31 → v32 | **Destructive** | Drops `stability_replayed` / `fsrs_difficulty_replayed` |
+| v32 → v33 | Additive | `article` |
+| v33 → v34 | Additive | `extras` |
+| v34 → v35 | **Destructive** | Rebuilds `collocation_directions` to add CHECK domains, and nulls out-of-domain `prior_state` / `bury_kind` |
+| v35 → v36 | **Destructive** | Overwrites `word_count` to 1 for comma-separated spelling-variant fronts |
+| v36 → v37 | Additive | `media.mtime_ns` + index on `collocations.anki_note_id` |
+| v37 → v38 | Additive | `lesson_listens` table |
+| v38 → v39 | Additive | `lesson_reviews` table |
+| v39 → v40 | Additive | `tt_revlog.budget_neutral` |
+| v40 → v41 | Additive | `pending_listen_grades` table |
+| v41 → v42 | **Destructive** | Rebuilds `pending_listen_grades` to widen the UNIQUE key to `(lesson_id, collocation_id, direction)` |
+
+`test_pre_migration_backup.py::TestReversibilityIsDocumented` fails if a new
+migration lands without a row here, so the table cannot silently fall behind
+`CURRENT_VERSION`.
+
+### Restoring
+
+```bash
+# 1. Refuse-check the build you are rolling back to.
+cd backend && uv run python scripts/check_schema_compat.py
+
+# 2. If it refuses, restore the snapshot it names. Stop the app first.
+cp ~/.tunatale/pre-migration-backups/tunatale_sl.pre-v41.db backend/tunatale_sl.db
+
+# 3. Re-check: it should now report ok (or "pending", if you rolled forward again).
+uv run python scripts/check_schema_compat.py
+```
+
+Copy the `.db` alone — see *Snapshots are self-contained* above.
+
+**What this costs.** Restoring a pre-migration snapshot discards every write
+made since that migration ran. For a destructive migration there is no better
+option; for an additive one you do not need the snapshot at all — reset
+`PRAGMA user_version` to the older build's number and the only thing lost is
+whatever the new column held. Reach for the snapshot when the table above says
+**Destructive**.

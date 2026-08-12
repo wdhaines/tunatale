@@ -198,7 +198,12 @@ class SRSDatabaseBase:
     def __exit__(self, *_) -> None:
         self.close()
 
-    def __init__(self, db_path: str = ":memory:") -> None:
+    def __init__(self, db_path: str = ":memory:", *, pre_migration_backup_dir: Path | None = None) -> None:
+        # Where to park a snapshot of the schema a pending migration is about to
+        # leave behind. Supplied by app.main's lifespan from settings; None
+        # everywhere else (tests, CLI one-offs), which skips the snapshot.
+        self._pre_migration_backup_dir = pre_migration_backup_dir
+        self._path: str | None = None
         self._in_memory = db_path == ":memory:"
         if self._in_memory:
             self._conn = sqlite3.connect(":memory:", check_same_thread=False)
@@ -220,7 +225,11 @@ class SRSDatabaseBase:
         conn.execute(_CREATE_COLLOCATIONS_V0)
         conn.execute(_CREATE_VIOLATIONS)
         conn.commit()
-        migrate(conn)
+        migrate(
+            conn,
+            db_path=self._path,
+            pre_migration_backup_dir=self._pre_migration_backup_dir,
+        )
         conn.execute(_CREATE_SYNC_CONFLICTS)
         conn.execute(_CREATE_ANKI_STATE_CACHE)
         conn.execute(_CREATE_LEMMA_ANALYSIS_CACHE)

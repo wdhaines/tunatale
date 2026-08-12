@@ -67,6 +67,11 @@ def _settings_overrides(monkeypatch, tmp_path):
     # Startup DB-backup rotation writes here; pin to tmp so the suite never
     # snapshots into the real ~/.tunatale/db-backups.
     monkeypatch.setattr(settings, "db_backup_dir", tmp_path / "db-backups")
+    # Same exposure, worse consequence: pre-migration snapshots are NEVER pruned,
+    # so anything the suite wrote into the real ~/.tunatale would accumulate
+    # forever. The v0-bootstrap skip means an ordinary run writes nothing, but a
+    # test that seeds a populated DB and then drives app.main's lifespan would.
+    monkeypatch.setattr(settings, "migration_backup_dir", tmp_path / "pre-migration-backups")
     monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'tunatale.db'}")
     # The PLURAL map, pinned for the same reason as the singular one above and then
     # some. `resolve_language_context(code, settings)` prefers `database_urls[code]`

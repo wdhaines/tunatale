@@ -10,13 +10,28 @@ import logging
 import re
 import sqlite3
 from datetime import date
+from pathlib import Path
 
 from app.common.guid import compute_guid
 from app.srs.function_words import format_morphology_hint
+from app.storage.db_backup import snapshot_before_migration
 
 _logger = logging.getLogger(__name__)
 
 CURRENT_VERSION = 42
+
+
+class SchemaTooNewError(RuntimeError):
+    """The database's schema is newer than this build knows how to read.
+
+    Raised instead of booting, because the alternative is worse than not
+    starting. ``migrate``'s loop is one-directional (``while version <
+    CURRENT_VERSION``), so an older build against a newer DB used to sail
+    straight past it and serve requests against columns and constraints it was
+    never written for. Image rollback is not schema rollback — this is the
+    mechanism that says so out loud.
+    """
+
 
 # Default 4am UTC for new cards / cards without a valid due_at
 _DEFAULT_DUE_AT = "04:00:00+00:00"
@@ -1335,7 +1350,42 @@ _MIGRATIONS = {
 }
 
 
-def migrate(conn: sqlite3.Connection) -> None:
+def _has_anything_to_lose(conn: sqlite3.Connection) -> bool:
+    """Does this database hold data a migration could destroy?
+
+    A freshly bootstrapped file runs the whole v0 → CURRENT_VERSION chain with
+    no rows in it, and snapshotting that preserves nothing while littering a
+    directory nothing ever prunes. An established deployment that a user has
+    simply not added cards to yet is the same case, and skipping it is equally
+    correct — the snapshot exists to protect data, so no data means no snapshot.
+
+    ``collocations`` is the right table to ask: it is the v0 base schema's only
+    content table, and every other table in the chain hangs off it.
+    """
+    if not _table_exists(conn, "collocations"):
+        return False
+    return conn.execute("SELECT EXISTS(SELECT 1 FROM collocations)").fetchone()[0] == 1
+
+
+def _schema_too_new_message(version: int, db_path: Path | str | None) -> str:
+    stem = Path(db_path).stem if db_path is not None else "<db>"
+    return (
+        f"Database schema is v{version} but this build only understands "
+        f"v{CURRENT_VERSION} — the code is OLDER than the database. Refusing to "
+        f"start rather than run a newer schema under older code. Either roll the "
+        f"code forward to a build with CURRENT_VERSION >= {version}, or restore "
+        f"the pre-migration snapshot '{stem}.pre-v{CURRENT_VERSION}.db' that was "
+        f"taken before the schema advanced past v{CURRENT_VERSION} (see "
+        f"docs/deployment.md, Schema rollback)."
+    )
+
+
+def migrate(
+    conn: sqlite3.Connection,
+    *,
+    db_path: Path | str | None = None,
+    pre_migration_backup_dir: Path | None = None,
+) -> None:
     """Run every pending migration in order, each inside its own transaction.
 
     ``BEGIN IMMEDIATE`` — rather than the deferred transaction sqlite3 would open
@@ -1363,7 +1413,22 @@ def migrate(conn: sqlite3.Connection) -> None:
     merely *opening* an up-to-date database fail whenever anything else held the
     write lock — which breaks read-mostly openers like
     ``replay_fsrs_from_revlog``'s "backend appears live" guard.
+
+    ``db_path`` + ``pre_migration_backup_dir`` (supplied by the app edge, by
+    neither in-memory nor unit-test callers) enable the pre-migration snapshot.
+    It is taken once, before the first migration body runs and outside the
+    write lock, so a migration that dies part-way still leaves it behind — the
+    case it most needs to cover. Both arguments are needed: an in-memory DB has
+    a configured directory but no file to copy. A database with no rows is
+    skipped — see ``_has_anything_to_lose``.
     """
+    version = _get_version(conn)
+    if version > CURRENT_VERSION:
+        raise SchemaTooNewError(_schema_too_new_message(version, db_path))
+    if version == CURRENT_VERSION:
+        return
+    if db_path is not None and pre_migration_backup_dir is not None and _has_anything_to_lose(conn):
+        snapshot_before_migration(db_path, pre_migration_backup_dir, from_version=version)
     while _get_version(conn) < CURRENT_VERSION:
         _apply_next_pending_migration(conn)
 

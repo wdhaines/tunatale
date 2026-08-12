@@ -159,7 +159,7 @@ async def lifespan(app: FastAPI):
     languages = {}
     for code, url in db_map.items():
         path = url.removeprefix("sqlite:///")
-        srs_dbs[code] = SRSDatabase(path)
+        srs_dbs[code] = SRSDatabase(path, pre_migration_backup_dir=settings.migration_backup_dir)
         content_stores[code] = ContentStore(path)
         languages[code] = get_language(code)
 

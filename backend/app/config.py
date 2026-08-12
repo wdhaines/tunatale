@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     # it); the N most recent daily snapshots are kept. <= 0 disables.
     db_backup_dir: Path = Path("~/.tunatale/db-backups").expanduser()
     db_backup_keep_days: int = 5
+    # Pre-migration snapshots, one per schema version ever left behind. A
+    # SEPARATE directory from db_backup_dir on purpose: those rotate after
+    # db_backup_keep_days, and the snapshot that makes a schema rollback
+    # possible has to outlive that window — you learn you need it long after
+    # the deploy. Never pruned; see app/storage/db_backup.py.
+    migration_backup_dir: Path = Path("~/.tunatale/pre-migration-backups").expanduser()
     media_dir: Path = Path("./media")
     anki_fallback_log: Path = Path("~/.tunatale/logs/anki-fallback.log").expanduser()
     # Durable per-sync soak log: every non-dry sync (CLI or API) appends a
