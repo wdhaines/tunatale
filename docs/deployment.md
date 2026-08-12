@@ -146,10 +146,38 @@ reproduces the source warts and all — but each is worth fixing.
    nothing enforces these at write time. Identical row-for-row in live and
    restored, so pre-existing.
 
-3. **One dangling media reference in `tunatale_sl.db`** — row 723
-   (collocation 373, `skodelica`) points at `img_cup.jpg`, which is not on disk;
-   `img_cup_a7577283.jpg` is. A hash-suffixed rename left this row behind. It is
-   the only one of 1379 Slovene media rows that fails checksum verification.
+3. ~~**One dangling media reference in `tunatale_sl.db`**~~ — **FIXED
+   2026-08-12.** Row 723 (collocation 373, `skodelica`) pointed at
+   `img_cup.jpg`, which was absent from `backend/media`, and it was the only one
+   of 1379 Slovene media rows failing checksum verification.
+
+   **The original diagnosis here was wrong and is worth recording, because the
+   wrong one implied a much worse fix.** It read the co-located
+   `img_cup_a7577283.jpg` as the same image after a hash-suffixed rename, which
+   would have made the repair "repoint the row at the new name" — silently
+   swapping the image on a card, and orphaning the `<img src="img_cup.jpg">`
+   that `sync_engine.py` had already written into the Anki note.
+
+   The suffix is not a rename tag. `cards/media/vocab_media.py` builds
+   `{stem}_{sha256(data)[:8]}.{ext}`, so it is a *content* hash — and
+   `a7577283…` is that file's own digest, not `8cf43f1d…`, the digest row 723
+   recorded. They are two different pictures of a mug, both fetched under
+   different naming schemes.
+
+   The actual state was simpler and entirely recoverable: **`img_cup.jpg` still
+   existed in Anki's `collection.media`, byte-identical to the recorded
+   sha256.** TT's media tree had lost a file Anki still held. The fix was to
+   copy it back — no database write, no Anki write, no hash change, nothing to
+   re-sync. Verified: 1379/1379 Slovene media rows now match, live and restored.
+
+   The generalisable lesson: **when a media row and a media file disagree, check
+   Anki's media folder before concluding anything is lost.** It is a second
+   copy of every file TT has ever pushed, and it is not covered by any of the
+   reasoning about what is "regenerable".
+
+   (`img_cup_a7577283.jpg` remains in `backend/media` with no `media` row
+   pointing at it. Harmless, and left alone — an orphan file costs 26 KB, while
+   deleting a file some Anki note might reference costs an image.)
 
 ## Off-box backups — restic into Backblaze B2
 
@@ -289,13 +317,30 @@ Verified on the restored copy:
   (`reading-sn-mannen-022a5dc3`, created `2026-08-02 01:22:20`) were **identical**
   to the live server queried the same minute
 
-The drill exits **non-zero**, on one line: Slovene media `1378/1379 matched, 1
-missing (img_cup.jpg)`. That is Known gap #3 above — a dangling row that a
-hash-suffixed rename left behind, present identically in the live database. A
-faithful restore is supposed to reproduce it. Do not "fix" the backup over it;
-fix the row. It does mean this drill cannot currently be wired to a monitor as a
-pass/fail signal without either repairing that row or teaching the drill about
-accepted pre-existing gaps.
+The first run of this drill exited **non-zero** on one line — Slovene media
+`1378/1379 matched, 1 missing (img_cup.jpg)`, i.e. Known gap #3 above, faithfully
+reproduced from the live tree. That file was recovered from Anki's
+`collection.media` (see gap #3 for why that was the right fix and the plausible
+wrong one), and the drill was re-run end to end against a fresh backup and a
+fresh restore:
+
+| Step | Wall clock | Detail |
+|---|---|---|
+| `backup` #2 (incremental) | **7.5 s** | one new 45 KB file; everything else deduplicated |
+| `restore` | 29.4 s | 7587 files/dirs, 403.9 MiB, 26 s of it transfer |
+| Drill | 42.5 s | DBs 0.02 s, trees 2.65 s, checksums 0.22 s, 48 decodes 38.83 s |
+
+`=== DRILL PASSED ===`, exit 0, with Slovene media at **1379/1379 matched, 0
+missing, 0 mismatched** and every other check unchanged.
+
+Two things that run tells you beyond the fix itself. The incremental backup cost
+**7.5 s against 32.7 s** for the initial one, so a daily job is cheap and the
+free tier is nowhere near binding. And because the drill now exits 0 on this
+data, it is usable as a monitor's pass/fail signal — a scheduled job can gate on
+it directly, with no allowance list of accepted pre-existing failures.
+
+The `[note] 41 pre-existing FK orphan row(s)` line is deliberately a note and not
+a failure (gap #2); it does not affect the exit code.
 
 ### Not done yet
 
