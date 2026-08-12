@@ -1,39 +1,35 @@
-# Ad-hoc / one-shot scripts are local-only; only the checker + package marker
-# (and this file) are tracked. Moved here from the root .gitignore
-# ("backend/scripts/*"): ruff's gitignore-respecting walker (the `ignore`
-# crate) misapplied that root-level glob to the app/ and tests/ walks when run
-# from backend/, silently shrinking lint+format discovery to 4 files
-# ("N files already formatted" with tiny N is the tell). A per-directory
-# .gitignore only ever applies to walks inside scripts/, so git semantics are
-# unchanged and ruff discovery is correct everywhere.
-# (anki_archive/ predates the ignore rule and stays tracked; tracked files
-# override gitignore. It remains outside ruff scope, same as CI today.)
+# Scratch is opt-IN, not tracking.
 #
-# But "tracked files override gitignore" only protects files that were ALREADY
-# tracked when `*` landed — a NEW anki_archive script is swallowed silently.
-# Twice now a commit added a tracked test importing an untracked script
-# (1029ab1, 6b8f225), which passes ./test.sh locally (the file is on disk) and
-# fails CI at import on a fresh checkout with ModuleNotFoundError. Any
-# anki_archive script a tracked test imports must be negated here.
-*
-!check_mock_boundaries.py
-!check_language_literals.py
-!check_plugin_imports.py
-!check_date_today.py
-!_checker_lib.py
-!check_openapi_snapshot.py
-!check_singular_database_url.py
-!check_prod_env.py
-!dump_openapi.py
-!mutation_sweep_slicing.py
-!render_slicing_ab.py
-!slice_report.py
-!bp_watchdog.py
-!__init__.py
-!.gitignore
-# anki_archive/ must be re-included for git to descend into it at all; `*` still
-# excludes its contents, so only the scripts negated below are tracked.
-!anki_archive/
-!anki_archive/grave_duplicate_notes.py
-!anki_archive/reanchor_crossed_collocation.py
-!anki_archive/backfill_card_quality_no.py
+# Everything in scripts/ is tracked by default; only scripts/local/ is ignored.
+# Put throwaway spikes, one-shot backfills and experiments there. Anything that
+# a test imports, that ./test.sh or CI invokes, or that anyone is expected to
+# run twice is load-bearing and belongs at the top level, where git and ruff
+# both see it.
+#
+# ── why this file exists at all ───────────────────────────────────────────────
+# It is NOT here to hide scripts. It replaced the root-level glob
+# "backend/scripts/*", which ruff's gitignore-respecting walker (the `ignore`
+# crate) misapplied to the app/ and tests/ walks when run from backend/,
+# silently shrinking lint+format discovery to 4 files. ("N files already
+# formatted" with a tiny N is the tell — the count should be in the low
+# hundreds and growing.) A per-directory .gitignore only ever applies to walks
+# inside scripts/, so ruff discovery stays correct everywhere. Keep the rule
+# here; do not move it back to the root.
+#
+# ── why it inverted (2026-08-12) ──────────────────────────────────────────────
+# This file used to be `*` plus a negation per tracked script. That default was
+# backwards: forgetting a negation made a script untracked AND silently skipped
+# by ruff, and neither absence is visible in `git status` — an ignored file
+# looks exactly like a file that isn't there.
+#
+# It shipped the same CI failure twice (1029ab1, 6b8f225): a commit added a
+# tracked test importing an untracked script, which passes ./test.sh locally
+# (the file is on disk) and fails CI at import on a fresh checkout with
+# ModuleNotFoundError. The allowlist also could not protect anki_archive/ —
+# "tracked files override gitignore" only covers files already tracked when `*`
+# landed, so a NEW archive script was swallowed silently.
+#
+# Under the inverted rule both failures are structurally impossible: a new
+# script shows up as untracked in `git status`, and forgetting to move a
+# throwaway into local/ costs a lint pass, not a green-locally/red-in-CI commit.
+local/

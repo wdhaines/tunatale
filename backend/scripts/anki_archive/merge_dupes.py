@@ -34,7 +34,6 @@ from typing import Any, Literal
 from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
 from app.anki.safety import safe_open
 from app.anki.sqlite_reader import AnkiNote, fetch_notes_for_deck, find_deck_id
-from scripts.anki_archive.sqlite_writer import check_anki_web_sync_active
 from app.config import settings
 from scripts.anki_archive.notetype_builders import (
     SLOVENE_VOCAB_CSS,
@@ -44,6 +43,7 @@ from scripts.anki_archive.notetype_builders import (
     slovene_vocab_fields,
     slovene_vocab_templates,
 )
+from scripts.anki_archive.sqlite_writer import check_anki_web_sync_active
 
 _Direction = Literal["recognition", "production", "unknown"]
 

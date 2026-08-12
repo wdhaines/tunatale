@@ -26,12 +26,12 @@ from typing import Any
 from app.anki.notetype import SLOVENE_VOCAB_NOTETYPE_NAME
 from app.anki.safety import safe_open
 from app.anki.sqlite_reader import find_deck_id
+from app.config import settings
 from scripts.anki_archive.sqlite_writer import (
     apply_guid_backfill,
     check_anki_web_sync_active,
     plan_guid_backfill,
 )
-from app.config import settings
 
 _SUFFIX_RE = re.compile(r"^(.+?)\s\((.+)\)$")
 
