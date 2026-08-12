@@ -23,6 +23,7 @@
 !_checker_lib.py
 !check_openapi_snapshot.py
 !check_singular_database_url.py
+!check_prod_env.py
 !dump_openapi.py
 !mutation_sweep_slicing.py
 !render_slicing_ab.py

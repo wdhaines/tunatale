@@ -20,6 +20,10 @@ env/
 .env
 .env.*
 !.env.example
+# Placeholders only, same as .env.example. `.env.*` swallowed it silently, and
+# a template nobody can clone is worse than none — ./test.sh validates this one
+# via scripts/check_prod_env.py, so a missing file fails the gate.
+!.env.prod.example
 
 # SSL certs (local dev only)
 certs/

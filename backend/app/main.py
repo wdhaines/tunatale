@@ -18,7 +18,7 @@ from app.audio.edge_tts import EdgeTTSService  # noqa: E402
 from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
 from app.audio.renderer import LessonRenderer  # noqa: E402
 from app.audio.slicer import build_slicers  # noqa: E402
-from app.config import settings  # noqa: E402
+from app.config import prod_profile_problems, settings  # noqa: E402
 from app.generation.pipeline import LessonPipeline  # noqa: E402
 from app.generation.planner import CurriculumPlanner  # noqa: E402
 from app.generation.story import StoryGenerator  # noqa: E402
@@ -98,10 +98,27 @@ def _language_db_map() -> dict[str, str]:
     return {settings.target_language: settings.database_url}
 
 
+def _assert_prod_profile() -> None:
+    """Refuse to boot a misconfigured production process.
+
+    Armed only by ``TT_ENV=prod``; a dev or Tailscale boot never reaches the
+    checks. It RAISES rather than warns because the failures it catches all
+    produce a server that looks healthy — a ``mock`` LLM serves recorded
+    replies, an unauthenticated API answers every request cheerfully — so a log
+    line at startup is a log line nobody reads until the damage is done.
+    """
+    if settings.tt_env != "prod":
+        return
+    problems = prod_profile_problems(settings)
+    if problems:
+        raise RuntimeError("Refusing to start with TT_ENV=prod:\n  - " + "\n  - ".join(problems))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.languages import discover
 
+    _assert_prod_profile()
     discover()
 
     activity_log = ActivityLog()
@@ -216,13 +233,36 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="TunaTale", version="0.1.0", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+def cors_kwargs() -> dict:
+    """CORS configuration, read from settings rather than hardcoded.
+
+    Replaces ``allow_origins=["*"] + allow_credentials=True`` on an app with no
+    authentication — under which any page the browser loaded could read and
+    write TunaTale data over localhost or the tailnet.
+
+    Methods and headers are enumerated too, not just origins. The two headers
+    are load-bearing and a lockdown that drops them is a broken deploy, not a
+    safe one: ``X-TT-Language`` is how the frontend selects its language, and
+    ``Range`` is how the audio player seeks (neither is CORS-safelisted, so
+    both must be named).
+    """
+    kwargs: dict = {
+        "allow_origins": list(settings.cors_origins),
+        "allow_credentials": True,
+        "allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "X-TT-Language", "Range"],
+        "expose_headers": ["Content-Range", "Accept-Ranges", "Content-Length"],
+    }
+    # Only when set: Starlette compiles whatever it receives, and re.compile("")
+    # matches EVERY origin — passing the empty default through would silently
+    # restore the wildcard this function exists to remove.
+    if settings.cors_allow_origin_regex:
+        kwargs["allow_origin_regex"] = settings.cors_allow_origin_regex
+    return kwargs
+
+
+app.add_middleware(CORSMiddleware, **cors_kwargs())
 
 
 @app.middleware("http")

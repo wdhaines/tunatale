@@ -42,6 +42,13 @@ export default defineConfig({
 				// loads the lowercase `lemmatizer_type` from .env, and on case-sensitive
 				// Unix an uppercase `LEMMATIZER_TYPE` is a *different* key that .env wins over.
 				lemmatizer_type: 'lowercase',
+				// The e2e frontend is on :5174, not the :5173 the default allowlist
+				// names, so cors-lockdown.spec.ts would otherwise have no ALLOWED
+				// case to pair its refusal against — and a lone refusal proves
+				// nothing (a dead port refuses too). Listing exactly one origin also
+				// makes the spec's control real: 127.0.0.1:5174 is the same server
+				// under a spelling this list does not cover.
+				CORS_ORIGINS: '["http://localhost:5174"]',
 				// Pin the target language to Slovene: the e2e curriculum/story flows are
 				// backed by Slovene LLM cassettes. A developer's .env with TARGET_LANGUAGE=no
 				// (running TT as Norwegian) would otherwise generate a Norwegian prompt with

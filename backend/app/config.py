@@ -122,6 +122,70 @@ class Settings(BaseSettings):
     # state itself does not survive a sync.
     listen_due_horizon_days: int = 365
 
+    # ── Deployment profile ───────────────────────────────────────────────────
+    # "" (or "dev") is the local/Tailscale setup and changes nothing. "prod"
+    # arms the startup guard in main.py::lifespan, which REFUSES to boot rather
+    # than serve a misconfigured deployment. See prod_profile_problems below.
+    tt_env: str = ""
+
+    # Browser origins allowed to call the API cross-origin.
+    #
+    # This is deliberately NOT a wildcard. The app has no authentication, so
+    # `allow_origins=["*"]` (what shipped until this setting existed) meant any
+    # page loaded in any browser that could reach the server — localhost, or the
+    # MagicDNS name from a tailnet device — could read and write TunaTale data.
+    #
+    # The normal flows never need these entries at all: the browser talks only to
+    # Vite on :5173, which proxies /api to :8000 server-side (frontend/vite.config.ts),
+    # and a production build is served same-origin behind Caddy. They exist for
+    # direct-to-:8000 use (the /docs "Try it out" console, a curl-alike in a page).
+    # ⚠️ pydantic parses a list field from JSON, not CSV: CORS_ORIGINS=["https://x"].
+    cors_origins: list[str] = ["http://localhost:5173", "https://localhost:5173"]
+    # For origins that can't be enumerated — a MagicDNS name is per-tailnet, so it
+    # belongs in a scoped pattern rather than in a literal nobody will update:
+    #   CORS_ALLOW_ORIGIN_REGEX=^https://[a-z0-9-]+\.[a-z0-9-]+\.ts\.net:5173$
+    # Empty = unset. It must never reach Starlette as "", which compiles to a
+    # regex matching every origin — main.py::cors_kwargs drops it.
+    cors_allow_origin_regex: str = ""
+
+    # Phase 1 gives these teeth (require_user, server-side sessions). They land
+    # here as an inert default-False so the prod guard can assert on them now,
+    # rather than gating a live CORS fix behind the whole auth phase.
+    auth_enabled: bool = False
+    session_secret: str = ""
+
+
+def prod_profile_problems(s: Settings) -> list[str]:
+    """Everything wrong with *s* as a production profile, as human sentences.
+
+    Pure and profile-agnostic: it does NOT consult ``tt_env``, so both callers
+    can decide for themselves when the rules apply — ``main.py`` arms it only on
+    ``TT_ENV=prod``, while ``scripts/check_prod_env.py`` applies it to a file
+    that claims to be one. Returns every problem at once; a deploy that fails
+    one restart per mistake is a deploy nobody finishes.
+    """
+    problems: list[str] = []
+    if s.llm_mode != "live":
+        problems.append(
+            f"llm_mode is {s.llm_mode!r}, not 'live' — the app would serve recorded"
+            " cassette replies and look healthy doing it (set LLM_MODE=live)"
+        )
+    if not s.auth_enabled:
+        problems.append(
+            "auth_enabled is False — the API would be open to anyone who can reach it (set AUTH_ENABLED=true)"
+        )
+    if not s.session_secret:
+        problems.append("session_secret is unset — sessions cannot be signed (set SESSION_SECRET)")
+    if "*" in s.cors_origins:
+        problems.append("cors_origins contains '*' — a wildcard origin on a credentialed API (set an explicit list)")
+    if s.cors_allow_origin_regex.strip() in {".*", "^.*$", ".+"}:
+        problems.append("cors_allow_origin_regex matches every origin — scope it to the hosts you actually serve")
+    if not s.cors_origins and not s.cors_allow_origin_regex:
+        problems.append(
+            "cors_origins is empty and no cors_allow_origin_regex is set — no browser client could reach the API"
+        )
+    return problems
+
 
 settings = Settings()
 

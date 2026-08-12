@@ -76,6 +76,9 @@ full_log="$ROOT/.git/tt-test-last.log"
   echo "=== OpenAPI snapshot check ==="
   uv run python scripts/check_openapi_snapshot.py
 
+  echo "=== Prod env profile check ==="
+  uv run python scripts/check_prod_env.py
+
   echo "=== Tests ==="
   # -n auto parallelizes across CPU cores; pytest-cov combines per-worker
   # coverage so the 100% gate still applies to the full run.
