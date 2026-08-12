@@ -250,15 +250,65 @@ uv run python scripts/restore_drill.py \
 restic restores into the target under each source's absolute path, which is why
 the three flags carry that prefix.
 
+### Drill results — 2026-08-12, restored from B2
+
+Performed against `b2:tunatale-backups:tunatale`, the first real upload. Same
+machine, same drill script, same day as the local-snapshot drill above — so the
+two tables are directly comparable.
+
+| Step | Wall clock | Detail |
+|---|---|---|
+| `backup` (upload) | 32.7 s | 7576 files, 403.8 MiB read, **266.8 MiB stored** after compression |
+| `check` (repository) | 2 s | `no errors were found` |
+| `restore` (download) | 32.8 s | 7586 files/dirs, 403.8 MiB, 28 s of it transfer |
+| Drill on the restored tree | 44.4 s | DBs 0.01 s, trees 3.00 s, 6001 checksums 0.29 s, 48 full decodes 40.23 s |
+| **Total, bucket → verified** | **≈ 77 s** | |
+
+**The download did not dominate.** Phase 1 predicted the transfer would be the
+RTO's main term; measured, it is 28 s against 40 s of audio decoding. At 403 MiB
+this is a sub-two-minute recovery on a home connection — the number the
+provisioning runbook should state, with the caveat that it is bandwidth-bound
+and a datacenter restore will differ in whichever direction that box's link does.
+
+Compression is worth noting for capacity planning: 403.8 MiB of sources occupy
+266.8 MiB in the repository, so the 10 GB free tier holds roughly 38 full copies
+before deduplication is even counted. Retention is not close to binding.
+
+Verified on the restored copy:
+
+- `integrity_check` — `ok` on both DBs
+- row counts **identical to the local drill**: Norwegian 37253 rows across 17
+  tables (3014 collocations, 3033 directions, 24184 `tt_revlog`, 6001 media, 6
+  lessons, 1 curriculum); Slovene 20636 rows across 17 tables
+- 6001/6001 Norwegian media files matched their recorded sha256
+- 48/48 lesson audio files decoded end to end across 6 lessons (7.4 h), 0 decode
+  errors, 0 caption overruns
+- Booted the app on port 8099 against the restored DB. `/api/srs/stats`
+  `{"total":3014,"due_today":94}`, `/api/srs/queue-stats`
+  `{"new":3,"learning":0,"review":95,...}` and the curriculum list
+  (`reading-sn-mannen-022a5dc3`, created `2026-08-02 01:22:20`) were **identical**
+  to the live server queried the same minute
+
+The drill exits **non-zero**, on one line: Slovene media `1378/1379 matched, 1
+missing (img_cup.jpg)`. That is Known gap #3 above — a dangling row that a
+hash-suffixed rename left behind, present identically in the live database. A
+faithful restore is supposed to reproduce it. Do not "fix" the backup over it;
+fix the row. It does mean this drill cannot currently be wired to a monitor as a
+pass/fail signal without either repairing that row or teaching the drill about
+accepted pre-existing gaps.
+
 ### Not done yet
 
 Scheduling. The job runs on demand today; a `launchd` agent with loud failure
 reporting is deferred to the monitoring work, and until it lands **nothing runs
-this for you**.
+this for you**. That is the single largest remaining hole: a backup you have to
+remember is one you will stop taking.
 
-The remote half of the drill — restoring from B2 rather than from local
-snapshots, and the wall-clock download time that dominates the RTO — is
-recorded below once performed.
+Also unproven off this machine: the restore has only ever been performed on the
+Mac that made the backup. Restoring onto a *different* box — the actual disaster
+scenario — additionally requires the passphrase from the password manager, which
+is precisely the step this arrangement is designed around and the one that has
+not been exercised.
 
 ## Schema rollback
 
