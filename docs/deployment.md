@@ -151,14 +151,114 @@ reproduces the source warts and all — but each is worth fixing.
    `img_cup_a7577283.jpg` is. A hash-suffixed rename left this row behind. It is
    the only one of 1379 Slovene media rows that fails checksum verification.
 
+## Off-box backups — restic into Backblaze B2
+
+`scripts/backup_offbox.py` is the second line of defence: the rolling snapshots
+above protect against application bugs, this protects against losing the
+machine. It is a thin driver around [restic](https://restic.net), chosen over an
+`rclone` mirror because restic's repository is content-addressed and versioned —
+a mirror propagates a corruption or a deletion to the remote on its next run,
+which is the failure this project has already had twice.
+
+### What it ships, and why not the rolling snapshots
+
+Sources are a **fresh** snapshot of each configured language DB, plus
+`backend/media` and `backend/output`.
+
+It deliberately does **not** back up `~/.tunatale/db-backups`. Those are written
+at most once per calendar day, earliest-wins — a rule that exists so an
+afternoon wipe cannot clobber the morning's good copy, and that is exactly wrong
+for an off-box job: it would upload this morning's database tonight and report
+success. `stage_db_snapshots` takes its own consistent snapshot at backup time
+into `~/.tunatale/offbox-staging`, and restic's own snapshot history supplies
+the time depth the rolling directory was providing.
+
+Staging is swept on every run, so it is fenced twice against the one-typo
+disaster of pointing `--staging` at `backend/` or at the rolling snapshot
+directory: an ownership marker (`.tt-offbox-staging`) that a non-empty
+unmarked directory will not get, and a name filter that only ever considers
+`{stem}.{YYYY-MM-DD}.db`.
+
+### Secrets
+
+Three Keychain items, read at run time; nothing lives in the repo or in `.env`:
+
+| Service | Account | Value |
+|---|---|---|
+| `tunatale-restic` | `repo-password` | restic repository passphrase |
+| `tunatale-b2` | `key-id` | B2 `applicationKeyId` |
+| `tunatale-b2` | `app-key` | B2 `applicationKey` |
+
+```bash
+openssl rand -base64 32 | pbcopy          # then paste into the password manager FIRST
+security add-generic-password -s tunatale-restic -a repo-password -w
+security add-generic-password -s tunatale-b2     -a key-id        -w
+security add-generic-password -s tunatale-b2     -a app-key       -w
+```
+
+The bare `-w` makes `security` prompt, so no secret reaches shell history. A
+missing item is reported with the exact `add-generic-password` line that fixes
+it — an unattended job's stderr is the only user interface it has.
+
+⚠️ **The passphrase must not live only on the machine being backed up.** The
+Keychain copy exists so the job can run unattended; the durable copy lives in
+the password manager. A restic repository whose passphrase is lost is
+indistinguishable from no backup at all — there is no recovery path, by design.
+
+The B2 application key needs `listBuckets`, `listFiles`, `readFiles`,
+`writeFiles` and `deleteFiles`. A key missing `deleteFiles` works fine until
+`forget --prune` runs weeks later. Set the bucket's lifecycle rule to **keep
+only the last version**: restic never rewrites a file in place, so B2 versioning
+buys nothing and quietly accumulates against the 10 GB free tier.
+
+### Running it
+
+```bash
+cd backend
+export TT_B2_BUCKET=<bucket>                       # or pass --bucket
+
+uv run python scripts/backup_offbox.py init        # once, creates the repository
+uv run python scripts/backup_offbox.py backup
+uv run python scripts/backup_offbox.py snapshots
+uv run python scripts/backup_offbox.py check       # repository integrity
+uv run python scripts/backup_offbox.py restore --target ~/restore
+```
+
+`backup` validates every source **before** staging and before anything reaches
+restic. Restic treats a vanished path as a warning and exits 3 having backed up
+the rest; a silent partial backup is the failure this whole section exists to
+prevent, so a missing tree refuses the run outright. Retention afterwards is
+`--keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune`, and a `forget`
+failure still fails the job even though the upload succeeded.
+
+Every failure prints a `BACKUP FAILED` banner and exits non-zero.
+
+### Verifying a remote backup
+
+The restore drill is storage-agnostic on purpose — point it at what restic gave
+back:
+
+```bash
+uv run python scripts/backup_offbox.py restore --target /tmp/b2-restore
+uv run python scripts/restore_drill.py \
+  --snapshot-dir /tmp/b2-restore/Users/<you>/.tunatale/offbox-staging \
+  --media-src    /tmp/b2-restore/<repo>/backend/media \
+  --output-src   /tmp/b2-restore/<repo>/backend/output \
+  --scratch      /tmp/restore-drill
+```
+
+restic restores into the target under each source's absolute path, which is why
+the three flags carry that prefix.
+
 ### Not done yet
 
-Off-box storage (Phase 2) — creating the bucket, choosing where the encryption
-key lives, pointing a scheduled job at it, and re-running the drill above
-against a remote restore. The drill is deliberately storage-agnostic so that
-step changes only `--snapshot-dir`.
+Scheduling. The job runs on demand today; a `launchd` agent with loud failure
+reporting is deferred to the monitoring work, and until it lands **nothing runs
+this for you**.
 
-The encryption key must not live only on the machine being backed up.
+The remote half of the drill — restoring from B2 rather than from local
+snapshots, and the wall-clock download time that dominates the RTO — is
+recorded below once performed.
 
 ## Schema rollback
 
