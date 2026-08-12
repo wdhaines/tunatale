@@ -201,6 +201,38 @@ def _default_db_paths() -> list[Path]:
     return [resolve_db_path(code, settings) for code in codes]
 
 
+def notify_failure(message: str) -> None:
+    """Post a desktop notification. Best-effort: never raises, never blocks.
+
+    This is the *delivery* half of loud failure, and the reason the scheduled
+    job is worth trusting. A non-zero exit and a `BACKUP FAILED` line satisfy an
+    operator who is reading the log; nobody reads the log. The documented way
+    this whole mechanism dies is silently, months before anyone needs a restore.
+
+    Deliberately failure-only — an alert that fires every night is an alert that
+    stops being read, which is the same silence by a different route.
+    """
+    # AppleScript string literal: backslashes first, then quotes, or the
+    # escaping of the quotes gets re-escaped.
+    safe = message.replace("\\", "\\\\").replace('"', '\\"')
+    _run(
+        ["osascript", "-e", f'display notification "{safe}" with title "TunaTale backup FAILED"'],
+        capture_output=True,
+        text=True,
+    )
+
+
+def _fail(message: str, *, notify: bool) -> int:
+    """Print the banner, optionally raise the desktop alert, return non-zero.
+
+    One helper so a new failure path cannot accidentally be the quiet one.
+    """
+    print(f"BACKUP FAILED: {message}")
+    if notify:
+        notify_failure(message)
+    return 1
+
+
 # ── subcommands ───────────────────────────────────────────────────────────────
 
 
@@ -233,16 +265,14 @@ def _cmd_backup(args, env) -> int:
     # to prevent, so a missing tree refuses to run at all.
     missing = [str(p) for p in [*db_paths, media, output] if not p.exists()]
     if missing:
-        print(f"BACKUP FAILED: missing sources (refusing to upload a partial set): {', '.join(missing)}")
-        return 1
+        return _fail(f"missing sources (refusing to upload a partial set): {', '.join(missing)}", notify=args.notify)
 
     try:
         snapshots = stage_db_snapshots(db_paths, staging)
     except (OSError, RuntimeError, ValueError, sqlite3.DatabaseError) as exc:
         # Same banner as every other failure: an operator scanning a log should
         # not have to tell a refusal apart from a traceback.
-        print(f"BACKUP FAILED: cannot stage a DB snapshot: {exc}")
-        return 1
+        return _fail(f"cannot stage a DB snapshot: {exc}", notify=args.notify)
 
     print(f"staged {len(snapshots)} fresh DB snapshot(s) to {staging}")
     # Only the repository, never the environment: this stdout is a log that
@@ -252,8 +282,7 @@ def _cmd_backup(args, env) -> int:
 
     cmd = ["restic", "backup", str(staging), str(media), str(output)]
     if _run(cmd, env=env).returncode != 0:
-        print("BACKUP FAILED: restic backup returned non-zero")
-        return 1
+        return _fail("restic backup returned non-zero", notify=args.notify)
 
     # Retention runs AFTER the upload, so the new snapshot is never pruned while
     # still uploading. A forget failure must not undo the backup, but it must
@@ -261,8 +290,7 @@ def _cmd_backup(args, env) -> int:
     # tier, and nothing else is watching.
     forget = ["restic", "forget", *_RETENTION]
     if _run(forget, env=env).returncode != 0:
-        print("BACKUP FAILED: restic forget --prune returned non-zero (the upload itself succeeded)")
-        return 1
+        return _fail("restic forget --prune returned non-zero (the upload itself succeeded)", notify=args.notify)
     return 0
 
 
@@ -310,6 +338,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_STAGING,
         help="staging dir for fresh DB snapshots (default: ~/.tunatale/offbox-staging)",
     )
+    p_backup.add_argument(
+        "--notify",
+        action="store_true",
+        help="post a desktop notification on failure (for the scheduled job; off for interactive runs)",
+    )
     p_backup.set_defaults(handler=_cmd_backup)
 
     return parser
@@ -324,11 +357,18 @@ def main(argv: list[str] | None = None) -> int:
         print("backup_offbox: no bucket given — pass --bucket or set TT_B2_BUCKET", file=sys.stderr)
         return 2
 
+    # `getattr`: only `backup` carries --notify; the read-only subcommands are
+    # run by hand, where a desktop alert would be noise.
+    notify = getattr(args, "notify", False)
     try:
         env = restic_env(bucket, args.repo_path, base=dict(os.environ))
         return args.handler(args, env)
     except MissingSecret as exc:
+        # The most likely real-world failure of the scheduled job: a Keychain
+        # item that stopped resolving. It must not be the one silent path.
         print(f"backup_offbox: {exc}", file=sys.stderr)
+        if notify:
+            notify_failure("a Keychain item could not be read — see the backup log")
         return 1
 
 

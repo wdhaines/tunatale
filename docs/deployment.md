@@ -342,18 +342,82 @@ it directly, with no allowance list of accepted pre-existing failures.
 The `[note] 41 pre-existing FK orphan row(s)` line is deliberately a note and not
 a failure (gap #2); it does not affect the exit code.
 
+### Scheduling — the LaunchAgent
+
+```bash
+cd backend
+uv run python scripts/install_backup_agent.py --bucket tunatale-backups
+uv run python scripts/install_backup_agent.py --bucket X --dry-run   # inspect the plist
+uv run python scripts/install_backup_agent.py --uninstall
+```
+
+Installed as `com.tunatale.backup`, daily at 03:30 local, logging to
+`~/.tunatale/logs/backup.log`. Check it with `launchctl list | grep tunatale` —
+the second column is the **last exit status**, so `0` means the most recent run
+succeeded and `1` means it did not.
+
+**launchd, not cron.** The laptop is asleep at 03:30. cron silently skips the
+window and never catches up; `StartCalendarInterval` fires the job when the
+machine next wakes.
+
+**Everything the plist carries, it carries because a LaunchAgent inherits
+nothing.** Measured with a throwaway probe agent (2026-08-12) rather than
+assumed:
+
+| What the agent gets | Consequence |
+|---|---|
+| `PATH=/usr/bin:/bin:/usr/sbin:/sbin` | Neither `uv` (`~/.local/bin`) nor `restic` (`/opt/homebrew/bin`) is on it. The plist calls `uv` by absolute path and puts both directories on `PATH`. |
+| No environment at all | `TT_B2_BUCKET` is written into the plist's `EnvironmentVariables`. |
+| Keychain: **works** | `security find-generic-password` returns 0 unattended — a generic-password item's default ACL trusts `/usr/bin/security`, and the agent invokes that same binary. This was the main thing feared and it is a non-issue. |
+
+Tool paths are resolved with `shutil.which` at install time, never hardcoded
+(Homebrew differs between Apple silicon and Intel), and a missing tool
+**refuses to install**. An agent that cannot run is worse than no agent: the
+calendar entry makes the job look covered.
+
+`RunAtLoad` is `False`, so installing does not fire a backup and verifying the
+install is not a destructive act. To run one on demand:
+`launchctl kickstart -w gui/$UID/com.tunatale.backup`.
+
+No credential is in the plist — it is a world-readable file in the home
+directory. Everything comes from the Keychain at run time.
+
+### Verified 2026-08-12, and what is still unverified
+
+Run through the agent, not by hand — that distinction is the whole point:
+
+- ✅ **Success path.** Kickstarted the agent; it staged both DB snapshots,
+  uploaded, pruned an expired snapshot, and launchd recorded exit status `0`.
+- ✅ **Failure detection.** Reinstalled against a nonexistent bucket,
+  kickstarted: `Fatal: unable to open repository … 401`, `BACKUP FAILED: restic
+  backup returned non-zero`, launchd recorded exit status **`1`**. Then
+  reinstalled correctly and re-ran to `0`.
+- ✅ **Agent environment.** Bucket and both Keychain items resolve unattended.
+
+⚠️ **UNVERIFIED — notification delivery.** The failure run called `osascript
+display notification`, but nobody was at the screen to see whether a banner
+appeared. macOS drops these silently when the calling app lacks notification
+permission, and `osascript` exiting 0 does not prove a banner rendered. Confirm
+with:
+
+```bash
+osascript -e 'display notification "delivery test" with title "TunaTale backup FAILED"'
+```
+
+If nothing appears, the fix is notification permission, not the backup — but
+until someone looks, **the loud-failure path is only loud as far as the log.**
+
+⚠️ **UNVERIFIED — the sleep/wake catch-up.** The reason for choosing launchd
+over cron is untested here: nobody has yet closed the lid across 03:30 and
+confirmed the run fired on wake. It is documented launchd behaviour, not a
+measurement.
+
 ### Not done yet
 
-Scheduling. The job runs on demand today; a `launchd` agent with loud failure
-reporting is deferred to the monitoring work, and until it lands **nothing runs
-this for you**. That is the single largest remaining hole: a backup you have to
-remember is one you will stop taking.
-
-Also unproven off this machine: the restore has only ever been performed on the
-Mac that made the backup. Restoring onto a *different* box — the actual disaster
-scenario — additionally requires the passphrase from the password manager, which
-is precisely the step this arrangement is designed around and the one that has
-not been exercised.
+The restore has only ever been performed on the Mac that made the backup.
+Restoring onto a *different* box — the actual disaster scenario — additionally
+requires the passphrase out of the password manager, which is precisely the step
+this arrangement is designed around and the one thing never exercised.
 
 ## Schema rollback
 

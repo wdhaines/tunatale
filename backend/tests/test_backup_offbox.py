@@ -498,6 +498,88 @@ class TestBackupCommand:
         assert any("backup" in c for c in calls), "the upload itself must still have been attempted"
 
 
+class TestFailureNotification:
+    """`--notify` is the delivery half of loud failure.
+
+    A scheduled backup's non-zero exit goes into a log nobody opens; that is the
+    documented way this whole mechanism dies quietly. These tests pin that a
+    failure reaches the desktop, that a success does NOT (an alert that fires
+    nightly stops being read), and that the alert never carries a secret.
+    """
+
+    def _run_backup(self, tmp_path, monkeypatch, *, notify: bool, restic_rc: int):
+        calls: list[list[str]] = []
+
+        def run(cmd, *args, **kwargs):
+            calls.append(list(cmd))
+            rc = restic_rc if cmd[0] == "restic" else 0
+            return subprocess.CompletedProcess(cmd, rc, stdout="", stderr="")
+
+        monkeypatch.setattr("backup_offbox._run", run)
+        src = tmp_path / "tunatale_no.db"
+        _make_db(src)
+        (tmp_path / "media").mkdir()
+        (tmp_path / "output").mkdir()
+        argv = [
+            "backup",
+            "--bucket",
+            "b",
+            "--db",
+            str(src),
+            "--media-src",
+            str(tmp_path / "media"),
+            "--output-src",
+            str(tmp_path / "output"),
+            "--staging",
+            str(tmp_path / "staging"),
+        ]
+        if notify:
+            argv.append("--notify")
+        return main(argv), calls
+
+    def test_a_failure_reaches_the_desktop(self, tmp_path, secrets, monkeypatch):
+        rc, calls = self._run_backup(tmp_path, monkeypatch, notify=True, restic_rc=1)
+        assert rc != 0
+        notify = next(c for c in calls if c[0] == "osascript")
+        assert "display notification" in " ".join(notify)
+        assert "TunaTale" in " ".join(notify)
+
+    def test_a_success_is_silent(self, tmp_path, secrets, monkeypatch):
+        """A nightly alert that always fires is an alert nobody reads."""
+        rc, calls = self._run_backup(tmp_path, monkeypatch, notify=True, restic_rc=0)
+        assert rc == 0
+        assert not any(c[0] == "osascript" for c in calls)
+
+    def test_without_the_flag_nothing_is_posted(self, tmp_path, secrets, monkeypatch):
+        """Interactive runs must not pop desktop alerts."""
+        rc, calls = self._run_backup(tmp_path, monkeypatch, notify=False, restic_rc=1)
+        assert rc != 0
+        assert not any(c[0] == "osascript" for c in calls)
+
+    def test_the_notification_carries_no_secret(self, tmp_path, secrets, monkeypatch):
+        _, calls = self._run_backup(tmp_path, monkeypatch, notify=True, restic_rc=1)
+        text = " ".join(" ".join(c) for c in calls if c[0] == "osascript")
+        assert "s3cr3t-passphrase" not in text
+        assert "APPKEY456" not in text
+        assert "KEYID123" not in text
+
+    def test_a_missing_secret_also_notifies(self, tmp_path, monkeypatch, capsys):
+        """The most likely real failure is a Keychain item that stopped
+        resolving — it must not be the one path that stays silent."""
+        calls: list[list[str]] = []
+
+        def run(cmd, *args, **kwargs):
+            calls.append(list(cmd))
+            rc = 44 if cmd[0] == "security" else 0
+            return subprocess.CompletedProcess(cmd, rc, stdout="", stderr="")
+
+        monkeypatch.setattr("backup_offbox._run", run)
+        rc = main(["backup", "--bucket", "b", "--notify"])
+        assert rc != 0
+        assert any(c[0] == "osascript" for c in calls)
+        assert "security add-generic-password" in capsys.readouterr().err
+
+
 class TestOtherCommands:
     def test_init_creates_the_repository(self, secrets, monkeypatch):
         run = FakeRun(0)
