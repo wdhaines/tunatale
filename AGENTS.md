@@ -230,6 +230,26 @@ not author anything new there.
   ⚠️ **Mail is NOT in `bd-export.jsonl` and NOT in the Dolt push** — it is the one
   thing here with no off-machine copy. Anything that must survive belongs in an
   issue, not a message.
+- **Related issues get an epic — do not leave siblings loose at the top level**
+  (2026-08-12). When one investigation or theme produces **more than two** issues,
+  create an `--type epic` and hang them off it with `--parent`. Retrofit it the
+  moment you notice you are creating the third; `bd update <id> --parent <epic>`
+  reparents an existing issue, so there is no cost to doing it late and no excuse
+  for not doing it at all.
+
+  Why it is a rule and not a preference: `bd ready` sorts by priority across the
+  WHOLE backlog, so loose siblings scatter — three P2s from one theme land in
+  three different places, separated by unrelated P1s, and the reader has no way
+  to see they are one piece of work. The epic is also the only place the
+  *through-line* can live; a child issue can state its own scope but not why the
+  set exists. `tunatale-vnf` is the reference shape: five children, and the
+  paragraph explaining that the suite has grown by accretion and never shrunk is
+  in the epic, stated once, rather than copy-pasted into five descriptions where
+  it would drift.
+
+  The epic carries the theme, the ordering rationale, and anything explicitly
+  OUT of scope (the cheapest place to stop a well-meaning executor from
+  "helpfully" widening the work). It does not restate the children.
 - **Method vs work.** `.beads-tasks/DISPATCH-PREAMBLE.md` holds everything
   binding on *every* delegated run (fence, prohibitions, escalation, report
   contract). A bd issue holds only what is true of *that* task — scope,
