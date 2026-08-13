@@ -34,9 +34,11 @@ from .query_llm import generate_image_query
 
 logger = logging.getLogger(__name__)
 
-# backend/media — the frontend serves this dir at /api/srs/media/{filename}.
-# Mirrors app.plugins.anki_sync.sync._MEDIA_DIR (vocab_media.py is one level deeper).
-_MEDIA_DIR = Path(__file__).parent.parent.parent.parent / "media"
+# The frontend serves this dir at /api/srs/media/{filename}. One setting shared
+# with app.api.srs / app.plugins.anki_sync.sync / app.audio.cloze_tts — these were
+# four independent __file__ walks (parent x3 and x4, from different depths) that
+# all happened to land on backend/media. See Settings.media_dir.
+_MEDIA_DIR = settings.media_dir
 
 
 def safe_stem(word: str, prefix: str) -> str:

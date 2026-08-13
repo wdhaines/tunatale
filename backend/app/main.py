@@ -195,7 +195,9 @@ async def lifespan(app: FastAPI):
         delivery_bitrate=settings.audio_delivery_bitrate,
         slicers=slicers,
     )
-    app.state.audio_dir = _BACKEND_DIR / "output/audio"
+    # A setting since Deploy P0.1, so a container can put audio on its data
+    # volume. The default reproduces the former `_BACKEND_DIR / "output/audio"`.
+    app.state.audio_dir = settings.audio_dir
 
     pipeline = LessonPipeline(
         story_generator=app.state.story_generator,

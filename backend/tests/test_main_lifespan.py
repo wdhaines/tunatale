@@ -63,6 +63,29 @@ async def test_lifespan_wires_usage_ledger(tmp_path, monkeypatch):
         assert UsageLedger(tmp_path / "llm_usage.log").tokens_used(200_000, now=1_000.0) == 10
 
 
+async def test_lifespan_audio_dir_follows_the_setting(tmp_path, monkeypatch):
+    """Lesson audio is relocatable — app.state.audio_dir comes from the setting.
+
+    Deploy P0.1: this was a hardcoded ``_BACKEND_DIR / "output/audio"`` with no
+    setting behind it, so a container or a restore drill had no supported way to
+    point lesson audio at another tree. The pipeline is wired from the same
+    attribute, so asserting both pins the whole path, not just app.state.
+    """
+    from app.config import settings
+    from app.main import lifespan
+
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setattr(settings, "llm_mode", "mock")
+    restored_audio = tmp_path / "restored" / "audio"
+    monkeypatch.setattr(settings, "audio_dir", restored_audio)
+
+    test_app = FastAPI()
+
+    async with lifespan(test_app):
+        assert test_app.state.audio_dir == restored_audio
+        assert test_app.state.pipeline._audio_dir == restored_audio
+
+
 async def test_lifespan_live_mode_uses_raw_client(tmp_path, monkeypatch):
     """In live mode, lifespan uses an unwrapped LLMClient."""
     from app.config import settings

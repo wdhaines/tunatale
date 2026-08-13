@@ -4,6 +4,11 @@ from pathlib import Path
 
 from app.config import Settings
 
+# Derived from this test file's own location, NOT imported from app.config — an
+# oracle that reuses the implementation's own anchor would pass no matter where
+# that anchor pointed.
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
 
 def test_settings_defaults(monkeypatch, tmp_path):
     for var in ("GROQ_API_KEY", "DATABASE_URL", "LLM_MODE", "LLM_MODEL"):
@@ -51,6 +56,7 @@ def test_anki_settings_defaults(monkeypatch, tmp_path):
         "ANKI_DECK_NAME",
         "ANKI_BACKUP_DIR",
         "MEDIA_DIR",
+        "AUDIO_DIR",
         "ANKI_FALLBACK_LOG",
     ):
         monkeypatch.delenv(var, raising=False)
@@ -60,7 +66,11 @@ def test_anki_settings_defaults(monkeypatch, tmp_path):
     assert s.anki_media_path == Path("~/Library/Application Support/Anki2/Will/collection.media").expanduser()
     assert s.anki_deck_name == "1. Slovene"
     assert s.anki_backup_dir == Path("~/.tunatale/anki-backups").expanduser()
-    assert s.media_dir == Path("./media")
+    # Absolute, not the former CWD-relative Path("./media"). This assertion runs
+    # under monkeypatch.chdir(tmp_path), so it goes red if the default ever
+    # follows the process CWD again — the import/serve divergence of Deploy P0.1.
+    assert s.media_dir == BACKEND_DIR / "media"
+    assert s.audio_dir == BACKEND_DIR / "output/audio"
     assert s.anki_fallback_log == Path("~/.tunatale/logs/anki-fallback.log").expanduser()
 
 

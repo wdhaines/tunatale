@@ -9,7 +9,6 @@ import re
 from collections import Counter
 from collections.abc import Callable, Mapping
 from datetime import timedelta
-from pathlib import Path
 from typing import Literal, NamedTuple
 
 import anyio
@@ -122,7 +121,10 @@ def _balancer_add(balancer: object | None, *, card_id: int | None, note_id: int 
 
 
 router = APIRouter(prefix="/api/srs", tags=["srs"])
-_MEDIA_DIR = Path(__file__).parent.parent.parent / "media"
+# Resolved from the setting, not from __file__, so the serve side cannot drift
+# from the import side (media/importer.py) — see Settings.media_dir. Read at
+# import, matching the ~/.tunatale expanduser pattern: env is set before launch.
+_MEDIA_DIR = settings.media_dir
 
 # The lemmatizer is resolved per-request from the content's language_code, never a
 # process-wide singleton — multi-language mode (settings.database_urls) serves both

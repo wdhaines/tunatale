@@ -4,6 +4,12 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# The installed backend package root (``backend/``), used to anchor mutable-path
+# defaults that must NOT follow the process CWD. Deploy P0.1: a container, a
+# systemd unit, or a restore drill starts somewhere other than ``backend/``, and
+# a CWD-relative default silently splits the writer from the reader.
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -62,7 +68,21 @@ class Settings(BaseSettings):
     # possible has to outlive that window — you learn you need it long after
     # the deploy. Never pruned; see app/storage/db_backup.py.
     migration_backup_dir: Path = Path("~/.tunatale/pre-migration-backups").expanduser()
-    media_dir: Path = Path("./media")
+    # TT's canonical media dir, served at /api/srs/media/{filename} and written
+    # by the import side (media/importer.py, anki_sync/import_seed.py) and the
+    # add-time vocab path. ONE setting on purpose: this used to be a CWD-relative
+    # ``./media`` on the import side while four separate module constants walked
+    # __file__ upward on the serve side. They coincided only under the dev CWD.
+    # Demonstrated 2026-08-12: with MEDIA_DIR pointed at a restored tree, the
+    # media route still served the original bytes from backend/media.
+    #
+    # Pydantic env overrides do NOT expanduser — ``MEDIA_DIR=~/foo`` is a literal
+    # "~". Use absolute paths in env (the container does).
+    media_dir: Path = _BACKEND_DIR / "media"
+    # Rendered lesson audio. Was not a setting at all before Deploy P0.1 —
+    # main.py::lifespan hardcoded ``_BACKEND_DIR / "output/audio"``, which this
+    # default reproduces exactly, so a dev with no env change sees no difference.
+    audio_dir: Path = _BACKEND_DIR / "output/audio"
     anki_fallback_log: Path = Path("~/.tunatale/logs/anki-fallback.log").expanduser()
     # Durable per-sync soak log: every non-dry sync (CLI or API) appends a
     # SYNC_SOAK heartbeat + one RECOMPUTE_DIVERGENCE line per divergence.

@@ -8,12 +8,17 @@ from pathlib import Path
 
 from app.cards.media.tts import generate_tts_audio
 from app.cards.media.vocab_media import safe_stem
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 _SENTENCE_PREFIX = "tts_sentence_"
 
-_MEDIA_DIR = Path(__file__).parent.parent.parent / "media"
+# The fourth copy of this constant. Now the same setting the other three read —
+# see Settings.media_dir. Note conftest.py pins the other three by name and never
+# pinned this one, so before Deploy P0.1 this module could write to the real
+# backend/media during a test run.
+_MEDIA_DIR = settings.media_dir
 
 
 async def synthesize_cloze_audios(

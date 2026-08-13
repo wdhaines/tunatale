@@ -14,6 +14,7 @@ from pathlib import Path
 
 from app.cards.media.vocab_media import safe_stem as _safe_stem  # noqa: F401 — re-export (archive scripts, cloze_tts)
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media  # noqa: F401 — re-export (archive scripts)
+from app.config import settings
 
 # Phase 9 split: leaf helpers live in sync_common / sync_reader; imported here both
 # for use by the remaining sync code AND as the stable re-export surface (tests +
@@ -84,9 +85,10 @@ from app.srs.database import SRSDatabase
 _log = logging.getLogger(__name__)
 
 
-# app/plugins/anki_sync/ is one level deeper than the pre-Stage-4 app/anki/,
-# hence the extra .parent to still land on backend/media.
-_MEDIA_DIR = Path(__file__).parent.parent.parent.parent / "media"
+# TT's media dir, from the setting rather than a __file__ walk — see
+# Settings.media_dir. (Was `.parent` x4: one level deeper than the pre-Stage-4
+# app/anki/, hence the extra one, which is exactly the fragility this removes.)
+_MEDIA_DIR = settings.media_dir
 
 
 def _copy_tt_media_to_anki(writer: OfflineWriter, filename: str) -> None:
