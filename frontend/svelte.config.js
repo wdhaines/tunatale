@@ -1,4 +1,4 @@
-import adapter from '@sveltejs/adapter-auto';
+import adapter from '@sveltejs/adapter-static';
 import { relative, sep } from 'node:path';
 
 /** @type {import('@sveltejs/kit').Config} */
@@ -14,10 +14,19 @@ const config = {
 		}
 	},
 	kit: {
-		// adapter-auto only supports some environments, see https://svelte.dev/docs/kit/adapter-auto for a list.
-		// If your environment is not supported, or you settled on a specific environment, switch out the adapter.
-		// See https://svelte.dev/docs/kit/adapters for more information about adapters.
-		adapter: adapter()
+		// adapter-static: production is a plain static bundle served by any file
+		// server — no Node SSR process to run, supervise, or keep patched. See
+		// `.beads-tasks/briefs/design-production-deployment-2026-08.md` § Phase 0.
+		//
+		// `fallback: 'index.html'` makes this an SPA rather than a prerendered
+		// site: nothing is prerendered (SvelteKit's `prerender` default is false
+		// and no route opts in), so every path is served the same shell and the
+		// client router takes over. That is already how the app behaves — the
+		// three data routes declare `export const ssr = false` and `$lib/api.ts`
+		// speaks to relative `/api/...` paths — so no route needed rewriting.
+		//
+		// The host must serve `index.html` for unknown paths or deep links 404.
+		adapter: adapter({ fallback: 'index.html' })
 	}
 };
 
