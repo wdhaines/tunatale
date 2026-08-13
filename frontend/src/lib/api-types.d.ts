@@ -1666,6 +1666,8 @@ export interface components {
       sections: unknown[];
       /** Title */
       title: string;
+      /** Warnings */
+      warnings: string[];
     };
     /** GenerationModeRequest */
     GenerationModeRequest: {

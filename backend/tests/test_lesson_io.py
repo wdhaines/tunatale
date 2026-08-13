@@ -388,13 +388,24 @@ class TestSpeakerWarnings:
     def test_known_speakers_are_silent(self, language):
         assert speaker_warnings(_story(), language) == []
 
-    def test_unknown_speaker_warns_with_fallback_note(self, language):
+    def test_unknown_speaker_warns_naming_the_real_fallback_voice(self, language):
+        """The warning must name the voice actually substituted, not the narrator.
+
+        ``section_builder._resolve_voice`` falls back to the map's ``female-1``,
+        reaching the narrator only if ``female-1`` is itself absent — which it
+        never is for a configured language. The old text promised a narrator
+        (English, obviously wrong, caught by ear at once) while the code
+        delivered the target-language female lead, which sounds entirely
+        plausible and is therefore never noticed. A warning that describes a
+        loud failure during a quiet one is worse than no warning.
+        """
         story = _story()
         story["scenes"][0]["lines"][0]["speaker"] = "male-9"
         warnings = speaker_warnings(story, language)
         assert len(warnings) == 1
         assert "male-9" in warnings[0]
-        assert "narrator" in warnings[0]
+        assert "female-1" in warnings[0]
+        assert "narrator" not in warnings[0]
 
     def test_duplicate_unknown_speaker_warns_once(self, language):
         story = _story()

@@ -353,6 +353,7 @@ class GenerateStoryResponse(BaseModel):
     id: str
     title: str
     sections: list
+    warnings: list[str]
 
 
 class GetStoryPromptResponse(BaseModel):

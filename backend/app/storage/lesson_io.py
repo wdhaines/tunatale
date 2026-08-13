@@ -70,7 +70,17 @@ def validate_story(story: object) -> None:
 
 
 def speaker_warnings(story: dict, language: Language) -> list[str]:
-    """Warn once per speaker missing from the voice map (silent narrator fallback)."""
+    """Warn once per speaker missing from the voice map.
+
+    The message names the voice that is actually substituted.
+    ``section_builder._resolve_voice`` falls back to the map's ``female-1``,
+    reaching the narrator only if ``female-1`` is itself absent — which it never
+    is for a configured language. The earlier wording promised the narrator: an
+    English voice a listener catches instantly. What the code delivers is the
+    target-language female lead, which sounds like an ordinary speaker and so is
+    never noticed. A warning that describes a loud failure during a quiet one is
+    worse than none.
+    """
     known = set(language.tts_voice_map)
     unknown: list[str] = []
     for scene in story.get("scenes", []):
@@ -79,7 +89,8 @@ def speaker_warnings(story: dict, language: Language) -> list[str]:
             if speaker not in known and speaker not in unknown:
                 unknown.append(speaker)
     return [
-        f"speaker '{s}' is not in the {language.code} voice map; its lines will use the narrator voice" for s in unknown
+        f"speaker '{s}' is not in the {language.code} voice map; its lines fall back to the 'female-1' voice"
+        for s in unknown
     ]
 
 

@@ -23,6 +23,7 @@ from app.generation.ids import mint_id
 from app.generation.json_parsing import parse_json_object
 from app.generation.story import StoryGenerationError, build_story_prompts
 from app.llm.client import LLMError
+from app.models.language import Language
 from app.models.lesson import Lesson, SectionType
 from app.models.strategy import ContentStrategy
 from app.srs.database import SRSDatabase
@@ -36,6 +37,22 @@ router = APIRouter(prefix="/api/story", tags=["generation"])
 # Strong refs to fire-and-forget pre-warm tasks: the event loop only keeps a
 # weak reference, so an un-anchored task can be garbage-collected mid-flight.
 _background_tasks: set[asyncio.Task] = set()
+
+
+def _logged_speaker_warnings(story: dict | None, language: Language) -> list[str]:
+    """Speaker warnings, mirrored to the server log.
+
+    Returning them in a 201 body is not delivery — nothing reads the body of a
+    successful generate in normal use, so an unmapped speaker was effectively
+    invisible on the path that produces most lessons.
+
+    ``story`` is ``None`` for lessons stored before the exact Story-JSON source
+    was persisted in ``generation_metadata``; those carry no speakers to check.
+    """
+    warnings = speaker_warnings(story, language) if story else []
+    for warning in warnings:
+        _logger.warning("%s", warning)
+    return warnings
 
 
 async def _prewarm_lesson(lesson: Lesson, srs_db: SRSDatabase) -> None:
@@ -126,7 +143,12 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
         pipeline.enqueue(request.state.language_code, body.curriculum_id, body.day, "render")
 
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
-    return {"id": lesson_id, "title": lesson.title, "sections": sections}
+    return {
+        "id": lesson_id,
+        "title": lesson.title,
+        "sections": sections,
+        "warnings": _logged_speaker_warnings(lesson.generation_metadata.get("story"), language),
+    }
 
 
 @router.post("/import", status_code=201, response_model=ImportStoryResponse)
@@ -173,7 +195,7 @@ async def import_story(body: ImportLessonRequest, request: Request):
         "id": lesson_id,
         "title": lesson.title,
         "sections": sections,
-        "warnings": speaker_warnings(story, language),
+        "warnings": _logged_speaker_warnings(story, language),
     }
 
 

@@ -617,12 +617,20 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
           "id",
           "title",
-          "sections"
+          "sections",
+          "warnings"
         ],
         "title": "GenerateStoryResponse",
         "type": "object"
