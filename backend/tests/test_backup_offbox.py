@@ -90,6 +90,29 @@ class FakeRun:
         return [c for c, _ in self.calls]
 
 
+@pytest.fixture(autouse=True)
+def _no_writes_to_the_real_home(tmp_path_factory, monkeypatch):
+    """Redirect every real filesystem target away from ``~/.tunatale``.
+
+    ⚠️ This exists because the tests DID escape into the user's home directory.
+    ``TestFailureNotification`` patched ``_run`` (so no `open`/`osascript`
+    actually fired) but NOT ``FAILURE_MARKER`` — so each full-suite run wrote a
+    genuine-looking `~/.tunatale/BACKUP-FAILED.txt` claiming the nightly backup
+    had failed. Caught 2026-08-12 by an end-of-session state check that found a
+    failure marker sitting beside a launchd exit status of 0.
+
+    A test suite that plants false alarms in the operator's alerting channel is
+    worse than one that skips the assertion: the marker is only useful while it
+    is trusted, and it took one contradiction to stop trusting it.
+
+    Autouse and module-wide on purpose — an opt-in fixture is one a new test
+    forgets, which is precisely how this happened.
+    """
+    home = tmp_path_factory.mktemp("fake-home")
+    monkeypatch.setattr("backup_offbox.FAILURE_MARKER", home / "BACKUP-FAILED.txt")
+    monkeypatch.setattr("backup_offbox.DEFAULT_STAGING", home / "offbox-staging")
+
+
 @pytest.fixture
 def secrets(monkeypatch):
     """Keychain lookups resolve, without touching the real Keychain.
