@@ -453,7 +453,15 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Health */
+    /**
+     * Health
+     * @description Verify the real dependencies, so a green light means the app can serve.
+     *
+     *     Returns 503 when anything fails rather than 200-with-an-unhealthy-body: the
+     *     container healthcheck, the uptime monitor and the cutover checklist all read
+     *     the status code natively, and a consumer that forgot to parse the body would
+     *     otherwise fail *open* — the exact class of bug this replaced.
+     */
     get: operations["health_api_health_get"];
     put?: never;
     post?: never;
@@ -1728,8 +1736,16 @@ export interface components {
     /**
      * HealthResponse
      * @description Response of GET /api/health.
+     *
+     *     ``checks`` maps a fixed dependency name to ``"ok"``/``"fail"``. Status only —
+     *     the route is unauthenticated, so no paths, versions, counts or language names
+     *     go in here. See ``app/api/health.py`` for why the names are aggregated.
      */
     HealthResponse: {
+      /** Checks */
+      checks: {
+        [key: string]: string;
+      };
       /** Status */
       status: string;
     };

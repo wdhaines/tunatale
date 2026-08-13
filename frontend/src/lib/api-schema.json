@@ -775,15 +775,23 @@
         "type": "object"
       },
       "HealthResponse": {
-        "description": "Response of GET /api/health.",
+        "description": "Response of GET /api/health.\n\n``checks`` maps a fixed dependency name to ``\"ok\"``/``\"fail\"``. Status only \u2014\nthe route is unauthenticated, so no paths, versions, counts or language names\ngo in here. See ``app/api/health.py`` for why the names are aggregated.",
         "properties": {
+          "checks": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Checks",
+            "type": "object"
+          },
           "status": {
             "title": "Status",
             "type": "string"
           }
         },
         "required": [
-          "status"
+          "status",
+          "checks"
         ],
         "title": "HealthResponse",
         "type": "object"
@@ -4958,6 +4966,7 @@
     },
     "/api/health": {
       "get": {
+        "description": "Verify the real dependencies, so a green light means the app can serve.\n\nReturns 503 when anything fails rather than 200-with-an-unhealthy-body: the\ncontainer healthcheck, the uptime monitor and the cutover checklist all read\nthe status code natively, and a consumer that forgot to parse the body would\notherwise fail *open* \u2014 the exact class of bug this replaced.",
         "operationId": "health_api_health_get",
         "responses": {
           "200": {

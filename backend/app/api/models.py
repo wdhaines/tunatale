@@ -248,9 +248,15 @@ class CreateBaseCardRequest(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """Response of GET /api/health."""
+    """Response of GET /api/health.
+
+    ``checks`` maps a fixed dependency name to ``"ok"``/``"fail"``. Status only —
+    the route is unauthenticated, so no paths, versions, counts or language names
+    go in here. See ``app/api/health.py`` for why the names are aggregated.
+    """
 
     status: str
+    checks: dict[str, str]
 
 
 class StatusResponse(BaseModel):

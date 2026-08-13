@@ -25,18 +25,35 @@ from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 class TestHealth:
     """Tests for the /api/health endpoint."""
 
-    async def test_health_returns_ok(self):
+    async def test_health_reports_unhealthy_without_dependencies(self):
+        """No lifespan here, so app.state has no connections — that must read red.
+
+        Previously this asserted a flat ``{"status": "ok"}``, which the endpoint
+        returned unconditionally. An app with nothing wired up cannot serve, and
+        reporting it healthy is the failure mode the dependency checks removed.
+        Deliberately says nothing about audio_dir/media_dir: those resolve to
+        ambient paths that exist locally and not in CI.
+        """
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/health")
-        assert response.status_code == 200
-        assert response.json() == {"status": "ok"}
+        assert response.status_code == 503
+        body = response.json()
+        assert body["status"] == "unhealthy"
+        assert body["checks"]["database"] == "fail"
+        assert body["checks"]["content_store"] == "fail"
 
     async def test_health_response_keys_match_model_exactly(self):
         """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/health")
-        assert set(response.json().keys()) == {"status"}
-        assert set(HealthResponse.model_fields) == {"status"}
+        assert set(response.json().keys()) == {"status", "checks"}
+        assert set(HealthResponse.model_fields) == {"status", "checks"}
+        assert set(response.json()["checks"]) == {
+            "database",
+            "content_store",
+            "audio_dir",
+            "media_dir",
+        }
 
 
 class TestCurriculumEndpoints:

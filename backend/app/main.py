@@ -10,9 +10,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, Request  # noqa: E402
+from fastapi import FastAPI, Request, Response  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
+from app.api.health import STATUS_OK, check_health  # noqa: E402
 from app.api.models import HealthResponse, LanguagesResponse  # noqa: E402
 from app.audio.edge_tts import EdgeTTSService  # noqa: E402
 from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
@@ -331,9 +332,39 @@ app.include_router(admin.router)
 app.include_router(llm_api.router)
 
 
+def _state_dependencies(plural: str, singular: str) -> list:
+    """Every configured instance, preferring the plural map, else the singular.
+
+    Mirrors the fallback the ``languages`` handler uses: multi-language
+    deployments set ``app.state.<plural>`` in the lifespan, while tests that
+    seed state directly set only ``app.state.<singular>``. Values only — the
+    keys are language codes and must not reach the response.
+    """
+    many = getattr(app.state, plural, None)
+    if many:
+        return list(many.values())
+    one = getattr(app.state, singular, None)
+    return [] if one is None else [one]
+
+
 @app.get("/api/health", response_model=HealthResponse)
-async def health():
-    return {"status": "ok"}
+async def health(response: Response):
+    """Verify the real dependencies, so a green light means the app can serve.
+
+    Returns 503 when anything fails rather than 200-with-an-unhealthy-body: the
+    container healthcheck, the uptime monitor and the cutover checklist all read
+    the status code natively, and a consumer that forgot to parse the body would
+    otherwise fail *open* — the exact class of bug this replaced.
+    """
+    status, checks = await check_health(
+        srs_dbs=_state_dependencies("srs_dbs", "srs_db"),
+        content_stores=_state_dependencies("content_stores", "content_store"),
+        audio_dir=settings.audio_dir,
+        media_dir=settings.media_dir,
+    )
+    if status != STATUS_OK:
+        response.status_code = 503
+    return {"status": status, "checks": checks}
 
 
 @app.get("/api/languages", response_model=LanguagesResponse)
