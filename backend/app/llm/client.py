@@ -61,6 +61,10 @@ class LLMError(Exception):
         self.attempts = attempts or []
 
 
+class LLMQuotaExceededError(LLMError):
+    """TT's own day-budget refusal — no request was sent."""
+
+
 class LLMClient:
     def __init__(
         self,
@@ -76,6 +80,8 @@ class LLMClient:
         fallback_client: LLMClient | None = None,
         usage_ledger=None,
         allow_fallback: bool = False,
+        tokens_per_day_limit: int = 200_000,
+        requests_per_day_limit: int = 1_000,
     ) -> None:
         self.groq_api_key = groq_api_key
         self.groq_model = groq_model
@@ -107,6 +113,8 @@ class LLMClient:
         self.last_rate_limits: dict | None = None
         self.last_429: dict | None = None
         self.usage_ledger = usage_ledger
+        self.tokens_per_day_limit = tokens_per_day_limit
+        self.requests_per_day_limit = requests_per_day_limit
         # Health tracking — consecutive Groq failures and last error detail.
         self.consecutive_primary_failures: int = 0
         self.last_primary_error: dict | None = None
@@ -173,8 +181,14 @@ class LLMClient:
         system_prompt: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        *,
+        now: float | None = None,
     ) -> str:
-        """Try Groq, then fallback_client, then Ollama; raise LLMError if all fail."""
+        """Try Groq, then fallback_client, then Ollama; raise LLMError if all fail.
+
+        ``now`` feeds ONLY the day-budget refusal (so tests can pin an absolute
+        instant); pacing and 429 timestamps always use the real clock.
+        """
         if not self.groq_api_key:
             raise LLMError("No GROQ_API_KEY configured")
 
@@ -182,7 +196,11 @@ class LLMClient:
 
         try:
             return await self._call_groq(
-                prompt, system_prompt=system_prompt, temperature=temperature, max_tokens=max_tokens
+                prompt,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                now=now,
             )
         except LLMError as e:
             attempts.extend(e.attempts)
@@ -226,6 +244,7 @@ class LLMClient:
         system_prompt: str | None,
         temperature: float,
         max_tokens: int,
+        now: float | None = None,
     ) -> str:
         headers = {
             "Authorization": f"Bearer {self.groq_api_key}",
@@ -247,6 +266,25 @@ class LLMClient:
                 body["max_completion_tokens"] = max_tokens
         else:
             body["max_tokens"] = max_tokens
+
+        if self.usage_ledger is not None:
+            status = self.usage_ledger.budget(
+                tokens_limit=self.tokens_per_day_limit,
+                requests_limit=self.requests_per_day_limit,
+                now=now,
+            )
+            if status.exceeded:
+                if status.exceeded == "tokens per day":
+                    used, limit = status.tokens_used, status.tokens_limit
+                else:
+                    used, limit = status.requests_used, status.requests_limit
+                hours, minutes = divmod(int(status.reset_in_s), 3600)
+                # Deliberately avoids the "rate-limited"/"Ollama" substrings the
+                # pipeline backoff retries on: a day-budget wall cannot be retried.
+                raise LLMQuotaExceededError(
+                    f"Daily Groq budget exhausted: {status.exceeded} "
+                    f"({used:,} of {limit:,}); full budget restored in {hours}h{minutes}m"
+                )
 
         async with httpx.AsyncClient(timeout=self.timeout) as http:
             for attempt in range(self.max_retries_429 + 1):
@@ -301,6 +339,8 @@ class LLMClient:
                     self.last_rate_limits = rl_snapshot
 
                 if response.status_code == 429:
+                    if self.usage_ledger is not None:
+                        self.usage_ledger.record(0)
                     retry_after_raw = response.headers.get("retry-after", "2")
                     try:
                         retry_after = float(retry_after_raw)
@@ -337,6 +377,8 @@ class LLMClient:
                     raise LLMError(msg, [self._make_attempt("groq", self.groq_model, 429, msg, latency_ms)])
 
                 if not response.is_success:
+                    if self.usage_ledger is not None:
+                        self.usage_ledger.record(0)
                     msg = f"Groq returned HTTP {response.status_code}"
                     try:
                         body_text = response.text
@@ -377,6 +419,10 @@ class LLMClient:
                     # 2xx with an unexpected body (non-JSON, missing keys, null
                     # content) must raise LLMError, not escape as a decode/key
                     # error, so the fallback chain engages.
+                    if self.usage_ledger is not None:
+                        # The response arrived, so Groq counted it against RPD —
+                        # unparseable to us is still spent.
+                        self.usage_ledger.record(0)
                     msg = "Groq returned malformed response body"
                     self._fire_callback(
                         provider="groq",
@@ -394,8 +440,8 @@ class LLMClient:
                 self.last_finish_reason = data["choices"][0].get("finish_reason")
                 self.last_usage = data.get("usage") or {}
                 total_tokens = self.last_usage.get("total_tokens")
-                if self.usage_ledger is not None and isinstance(total_tokens, int):
-                    self.usage_ledger.record(total_tokens)
+                if self.usage_ledger is not None:
+                    self.usage_ledger.record(total_tokens if isinstance(total_tokens, int) else 0)
                 if self.last_finish_reason == "length":
                     logger.warning(
                         "Groq response truncated at the completion-token cap (finish_reason=length, cap=%s)",

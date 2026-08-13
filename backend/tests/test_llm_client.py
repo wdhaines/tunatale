@@ -452,7 +452,7 @@ class TestRateLimitSnapshot:
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(200, json=resp))
             await client.complete("q")
-        assert ledger.tokens_used_last_24h() == 15
+        assert ledger.tokens_used(200_000) == 15
 
     async def test_no_usage_in_response_records_nothing(self, tmp_path):
         from app.llm.usage_ledger import UsageLedger
@@ -462,7 +462,8 @@ class TestRateLimitSnapshot:
         with respx.mock:
             respx.post(GROQ_API_URL).mock(return_value=Response(200, json=_make_groq_response("ok")))
             await client.complete("q")
-        assert ledger.tokens_used_last_24h() == 0
+        assert ledger.tokens_used(200_000) == 0
+        assert ledger.requests_used(1_000) == 1
 
     async def test_probe_refreshes_snapshot(self, client):
         with respx.mock:

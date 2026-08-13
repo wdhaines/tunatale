@@ -2578,11 +2578,19 @@ export interface components {
       model: string | null;
       /** Provider */
       provider: string;
+      /** Requests Day Reset In S */
+      requests_day_reset_in_s: number | null;
+      /** Requests Per Day Limit */
+      requests_per_day_limit: number;
+      /** Requests Used Day */
+      requests_used_day: number | null;
       snapshot: components["schemas"]["RateLimitSnapshot"] | null;
+      /** Tokens Day Reset In S */
+      tokens_day_reset_in_s: number | null;
       /** Tokens Per Day Limit */
       tokens_per_day_limit: number;
-      /** Tokens Used 24H */
-      tokens_used_24h: number | null;
+      /** Tokens Used Day */
+      tokens_used_day: number | null;
     };
     /**
      * RefreshMediaResponse

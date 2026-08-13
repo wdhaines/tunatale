@@ -1582,8 +1582,12 @@ describe("TunaTaleAPI", () => {
           tokens_reset_in_s: 0.5,
         },
         last_429: null,
-        tokens_used_24h: 73,
-        tokens_per_day_limit: 100000,
+        tokens_used_day: 73,
+        tokens_per_day_limit: 200000,
+        tokens_day_reset_in_s: 85320,
+        requests_used_day: 3,
+        requests_per_day_limit: 1000,
+        requests_day_reset_in_s: 85320,
       };
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(payload)));
 
@@ -1609,8 +1613,12 @@ describe("TunaTaleAPI", () => {
         llm_mode: "live",
         snapshot: null,
         last_429: null,
-        tokens_used_24h: null,
-        tokens_per_day_limit: 100000,
+        tokens_used_day: null,
+        tokens_per_day_limit: 200000,
+        tokens_day_reset_in_s: null,
+        requests_used_day: null,
+        requests_per_day_limit: 1000,
+        requests_day_reset_in_s: null,
       };
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(payload)));
 

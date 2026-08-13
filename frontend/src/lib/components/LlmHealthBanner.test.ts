@@ -25,8 +25,12 @@ const STATUS = {
   llm_mode: "live",
   snapshot: null,
   last_429: null,
-  tokens_used_24h: null,
-  tokens_per_day_limit: 100000,
+  tokens_used_day: null,
+  tokens_per_day_limit: 200000,
+  tokens_day_reset_in_s: null,
+  requests_used_day: null,
+  requests_per_day_limit: 1000,
+  requests_day_reset_in_s: null,
 };
 
 beforeEach(() => {

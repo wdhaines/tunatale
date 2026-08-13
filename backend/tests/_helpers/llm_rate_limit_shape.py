@@ -12,8 +12,12 @@ RATE_LIMIT_STATUS_KEYS = {
     "llm_mode",
     "snapshot",
     "last_429",
-    "tokens_used_24h",
+    "tokens_used_day",
     "tokens_per_day_limit",
+    "tokens_day_reset_in_s",
+    "requests_used_day",
+    "requests_per_day_limit",
+    "requests_day_reset_in_s",
 }
 
 RATE_LIMIT_SNAPSHOT_KEYS = {

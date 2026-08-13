@@ -409,8 +409,12 @@ export interface RateLimitStatus {
   llm_mode: string;
   snapshot: RateLimitSnapshot | null;
   last_429: RateLimitLast429 | null;
-  tokens_used_24h: number | null;
+  tokens_used_day: number | null;
   tokens_per_day_limit: number | null;
+  tokens_day_reset_in_s: number | null;
+  requests_used_day: number | null;
+  requests_per_day_limit: number | null;
+  requests_day_reset_in_s: number | null;
 }
 
 export interface LlmHealthLastError {

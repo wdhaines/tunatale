@@ -2814,6 +2814,32 @@
             "title": "Provider",
             "type": "string"
           },
+          "requests_day_reset_in_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requests Day Reset In S"
+          },
+          "requests_per_day_limit": {
+            "title": "Requests Per Day Limit",
+            "type": "integer"
+          },
+          "requests_used_day": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requests Used Day"
+          },
           "snapshot": {
             "anyOf": [
               {
@@ -2824,11 +2850,22 @@
               }
             ]
           },
+          "tokens_day_reset_in_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Day Reset In S"
+          },
           "tokens_per_day_limit": {
             "title": "Tokens Per Day Limit",
             "type": "integer"
           },
-          "tokens_used_24h": {
+          "tokens_used_day": {
             "anyOf": [
               {
                 "type": "integer"
@@ -2837,7 +2874,7 @@
                 "type": "null"
               }
             ],
-            "title": "Tokens Used 24H"
+            "title": "Tokens Used Day"
           }
         },
         "required": [
@@ -2846,8 +2883,12 @@
           "llm_mode",
           "snapshot",
           "last_429",
-          "tokens_used_24h",
-          "tokens_per_day_limit"
+          "tokens_used_day",
+          "tokens_per_day_limit",
+          "tokens_day_reset_in_s",
+          "requests_used_day",
+          "requests_per_day_limit",
+          "requests_day_reset_in_s"
         ],
         "title": "RateLimitStatusResponse",
         "type": "object"

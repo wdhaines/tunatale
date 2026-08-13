@@ -801,8 +801,12 @@ class RateLimitStatusResponse(BaseModel):
     llm_mode: str
     snapshot: RateLimitSnapshot | None
     last_429: Last429 | None
-    tokens_used_24h: int | None
+    tokens_used_day: int | None
     tokens_per_day_limit: int
+    tokens_day_reset_in_s: float | None
+    requests_used_day: int | None
+    requests_per_day_limit: int
+    requests_day_reset_in_s: float | None
 
 
 # ── Batch 7: curriculum listing/detail/progress/source + pipeline + image

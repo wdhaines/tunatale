@@ -68,14 +68,22 @@
 	);
 
 	const dailyPct = $derived(
-		status?.tokens_used_24h != null && status?.tokens_per_day_limit != null
-			? status.tokens_used_24h / status.tokens_per_day_limit
+		status?.tokens_used_day != null && status?.tokens_per_day_limit != null
+			? status.tokens_used_day / status.tokens_per_day_limit
+			: null,
+	);
+
+	const requestsPct = $derived(
+		status?.requests_used_day != null && status?.requests_per_day_limit != null
+			? status.requests_used_day / status.requests_per_day_limit
 			: null,
 	);
 
 	const isWarning = $derived(
 		!is429Active &&
-			((tokensPct != null && tokensPct < 0.2) || (dailyPct != null && dailyPct > 0.8)),
+			((tokensPct != null && tokensPct < 0.2) ||
+				(dailyPct != null && dailyPct > 0.8) ||
+				(requestsPct != null && requestsPct > 0.8)),
 	);
 
 	const ageElapsed = $derived(
@@ -95,13 +103,19 @@
 					(requestsResetIn != null ? ` (resets in ${Math.round(requestsResetIn / 60)}m)` : ''),
 			);
 		}
-		if (s.tokens_used_24h != null && s.tokens_per_day_limit != null) {
+		if (s.tokens_used_day != null && s.tokens_per_day_limit != null) {
 			parts.push(
-				`~${formatCompactNumber(s.tokens_used_24h)} of ${formatCompactNumber(s.tokens_per_day_limit)} tokens today`,
+				`~${formatCompactNumber(s.tokens_used_day)} of ${formatCompactNumber(s.tokens_per_day_limit)} tokens today`,
+			);
+		}
+		if (s.requests_used_day != null && s.requests_per_day_limit != null) {
+			parts.push(
+				`~${formatCompactNumber(s.requests_used_day)} of ${formatCompactNumber(s.requests_per_day_limit)} requests today`,
 			);
 		}
 		if (s.model) parts.push(`Model: ${s.model}`);
 		if (ageElapsed != null) parts.push(`As of ${ageElapsed}s ago`);
+		parts.push('Limits are org-wide and per-model');
 		return parts.join(' · ');
 	});
 

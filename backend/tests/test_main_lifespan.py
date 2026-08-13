@@ -60,7 +60,7 @@ async def test_lifespan_wires_usage_ledger(tmp_path, monkeypatch):
         real = test_app.state.llm._real_client
         assert isinstance(real.usage_ledger, UsageLedger)
         real.usage_ledger.record(10, now=1_000.0)
-        assert UsageLedger(tmp_path / "llm_usage.log").tokens_used_last_24h(now=1_000.0) == 10
+        assert UsageLedger(tmp_path / "llm_usage.log").tokens_used(200_000, now=1_000.0) == 10
 
 
 async def test_lifespan_live_mode_uses_raw_client(tmp_path, monkeypatch):

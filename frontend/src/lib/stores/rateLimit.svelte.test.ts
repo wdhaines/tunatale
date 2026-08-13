@@ -24,8 +24,12 @@ const STATUS: RateLimitStatus = {
     tokens_reset_in_s: 0.5,
   },
   last_429: null,
-  tokens_used_24h: 73,
-  tokens_per_day_limit: 100000,
+  tokens_used_day: 73,
+  tokens_per_day_limit: 200000,
+  tokens_day_reset_in_s: 85320,
+  requests_used_day: 3,
+  requests_per_day_limit: 1000,
+  requests_day_reset_in_s: 85320,
 };
 
 const NO_SNAPSHOT_STATUS: RateLimitStatus = {
@@ -34,8 +38,12 @@ const NO_SNAPSHOT_STATUS: RateLimitStatus = {
   llm_mode: "live",
   snapshot: null,
   last_429: null,
-  tokens_used_24h: 73,
-  tokens_per_day_limit: 100000,
+  tokens_used_day: 73,
+  tokens_per_day_limit: 200000,
+  tokens_day_reset_in_s: 85320,
+  requests_used_day: 3,
+  requests_per_day_limit: 1000,
+  requests_day_reset_in_s: 85320,
 };
 
 const MOCK_MODE_STATUS: RateLimitStatus = {
@@ -44,8 +52,12 @@ const MOCK_MODE_STATUS: RateLimitStatus = {
   llm_mode: "mock",
   snapshot: null,
   last_429: null,
-  tokens_used_24h: 73,
-  tokens_per_day_limit: 100000,
+  tokens_used_day: 73,
+  tokens_per_day_limit: 200000,
+  tokens_day_reset_in_s: 85320,
+  requests_used_day: 3,
+  requests_per_day_limit: 1000,
+  requests_day_reset_in_s: 85320,
 };
 
 interface RateLimitStore {

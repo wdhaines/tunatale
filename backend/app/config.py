@@ -26,10 +26,14 @@ class Settings(BaseSettings):
     # budget on reasoning. Free-tier TPM is 8000; WIDER story gen fits, DEEPER (bigger
     # prompt) can approach the ceiling.
     llm_model: str = "openai/gpt-oss-120b"
-    # Groq free-tier daily token cap for gpt-oss-120b — the binding limit, but it
+    # Groq free-tier daily caps for gpt-oss-120b — the binding limits, but TPD
     # appears in no response header, so TT tallies its own spend (UsageLedger) and
-    # the rate-limit UI compares against this number.
-    groq_tokens_per_day_limit: int = 100_000
+    # the rate-limit UI compares against these numbers. Both are ORGANIZATION-level
+    # and PER-MODEL: a second API key buys no extra budget, and changing llm_model
+    # changes every number. RPD matters because a burst of tiny completions can
+    # hit the request ceiling while the token budget still reads healthy.
+    groq_tokens_per_day_limit: int = 200_000
+    groq_requests_per_day_limit: int = 1_000
     # Ollama/secondary fallback when Groq fails; default off — failures fail loudly.
     llm_allow_fallback: bool = False
     llm_usage_ledger_path: Path = Path("~/.tunatale/llm_usage.log").expanduser()

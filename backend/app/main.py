@@ -129,6 +129,8 @@ async def lifespan(app: FastAPI):
         usage_ledger=UsageLedger(settings.llm_usage_ledger_path),
         on_call=activity_log.record_llm_call,
         allow_fallback=settings.llm_allow_fallback,
+        tokens_per_day_limit=settings.groq_tokens_per_day_limit,
+        requests_per_day_limit=settings.groq_requests_per_day_limit,
     )
     _BACKEND_DIR = Path(__file__).parent.parent
     cassette_path = _BACKEND_DIR / "tests/cassettes/e2e.json"

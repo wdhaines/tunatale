@@ -24,7 +24,7 @@ from app.generation.planner import (
 )
 from app.languages import get_language
 from app.llm.activity import ActivityLog
-from app.llm.client import LLMError
+from app.llm.client import LLMError, LLMQuotaExceededError
 from app.main import app
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.storage.store import ContentStore
@@ -71,9 +71,12 @@ class LLMErrorPlanner:
 
     message: str = "Groq returned HTTP 413"
     calls: list[dict] = field(default_factory=list)
+    quota: bool = False
 
     async def turn(self, *, curriculum, user_message, batch_size, learner_snapshot, language):
         self.calls.append({"user_message": user_message})
+        if self.quota:
+            raise LLMQuotaExceededError(self.message)
         raise LLMError(self.message)
 
 
@@ -308,6 +311,31 @@ class TestPlanTurn:
 
         assert response.status_code == 502
         assert "413" in response.json()["detail"]
+        saved = store.get_curriculum("trip").metadata["planner"]
+        assert saved["chat"] == [{"role": "user", "content": "old"}]
+        assert saved["proposed"] is None
+
+    async def test_quota_refusal_is_429_and_nothing_persisted(self):
+        """Day-budget refusal from planner.turn → 429, not the neighbouring 502.
+
+        Mirrors test_generate_story_quota_refusal_is_429 in test_llm_quota_refusal.py:
+        nothing upstream failed — TT declined to call because the day budget is
+        exhausted, so a retryable 502 would be a lie and a 500 a traceback.
+        """
+        curriculum = _planned_curriculum(chat=[{"role": "user", "content": "old"}])
+        planner = LLMErrorPlanner(
+            message=("Daily Groq budget exhausted: tokens per day (200,000 of 200,000); full budget restored in 24h0m"),
+            quota=True,
+        )
+        store = _setup(curriculum, planner)
+
+        async with _client() as client:
+            response = await client.post("/api/curriculum/trip/plan/turn", json={"message": "plan"})
+
+        assert response.status_code == 429
+        detail = response.json()["detail"]
+        assert "tokens per day" in detail
+        assert "24h" in detail
         saved = store.get_curriculum("trip").metadata["planner"]
         assert saved["chat"] == [{"role": "user", "content": "old"}]
         assert saved["proposed"] is None

@@ -1,8 +1,9 @@
 """LLM rate-limit visibility endpoints.
 
 GET /api/llm/rate-limit — the Groq quota state captured passively from the most
-recent call's response headers, plus TT's own 24h token tally (Groq's daily
-token cap has no header). Times are relative (age_s, *_reset_in_s, retry_in_s),
+recent call's response headers, plus TT's own day-budget ledger (tokens AND
+requests/day; the daily ceilings have no header, so the ledger is the only
+thing that knows them). Times are relative (age_s, *_reset_in_s, retry_in_s),
 computed server-side so the frontend can count down without clock-skew issues.
 
 POST /api/llm/rate-limit/probe — fire a 1-token Groq request purely to refresh
@@ -60,14 +61,32 @@ def _status_payload(client) -> dict:
         }
 
     ledger = getattr(client, "usage_ledger", None)
+    if ledger is not None:
+        budget = ledger.budget(
+            tokens_limit=settings.groq_tokens_per_day_limit,
+            requests_limit=settings.groq_requests_per_day_limit,
+        )
+        tokens_used_day = budget.tokens_used
+        tokens_day_reset_in_s = budget.tokens_reset_in_s
+        requests_used_day = budget.requests_used
+        requests_day_reset_in_s = budget.requests_reset_in_s
+    else:
+        tokens_used_day = None
+        tokens_day_reset_in_s = None
+        requests_used_day = None
+        requests_day_reset_in_s = None
     return {
         "provider": "groq",
         "model": getattr(client, "groq_model", None),
         "llm_mode": settings.llm_mode,
         "snapshot": out_snapshot,
         "last_429": out_429,
-        "tokens_used_24h": ledger.tokens_used_last_24h() if ledger is not None else None,
+        "tokens_used_day": tokens_used_day,
         "tokens_per_day_limit": settings.groq_tokens_per_day_limit,
+        "tokens_day_reset_in_s": tokens_day_reset_in_s,
+        "requests_used_day": requests_used_day,
+        "requests_per_day_limit": settings.groq_requests_per_day_limit,
+        "requests_day_reset_in_s": requests_day_reset_in_s,
     }
 
 

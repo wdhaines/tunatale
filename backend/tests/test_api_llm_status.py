@@ -48,7 +48,8 @@ class TestRateLimitStatus:
         body = await _get_status()
         assert body["snapshot"] is None
         assert body["last_429"] is None
-        assert body["tokens_used_24h"] is None  # no ledger wired
+        assert body["tokens_used_day"] is None  # no ledger wired
+        assert body["requests_used_day"] is None  # no ledger wired
         assert body["model"] == "openai/gpt-oss-120b"
         assert body["tokens_per_day_limit"] > 0
 
@@ -104,11 +105,11 @@ class TestRateLimitStatus:
         app.state.llm = client
         assert (await _get_status())["last_429"]["retry_in_s"] == 0
 
-    async def test_tokens_used_24h_from_ledger(self, tmp_path):
+    async def test_tokens_used_day_from_ledger(self, tmp_path):
         ledger = UsageLedger(tmp_path / "usage.log")
         ledger.record(1234)
         app.state.llm = LLMClient(groq_api_key="test-key", usage_ledger=ledger)
-        assert (await _get_status())["tokens_used_24h"] == 1234
+        assert (await _get_status())["tokens_used_day"] == 1234
 
     async def test_unwraps_cassette_client(self, tmp_path):
         import json as jsonlib

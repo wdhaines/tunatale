@@ -22,7 +22,7 @@ from app.api.models import (
 from app.generation.ids import mint_id
 from app.generation.json_parsing import parse_json_object
 from app.generation.story import StoryGenerationError, build_story_prompts
-from app.llm.client import LLMError
+from app.llm.client import LLMError, LLMQuotaExceededError
 from app.models.language import Language
 from app.models.lesson import Lesson, SectionType
 from app.models.strategy import ContentStrategy
@@ -118,6 +118,11 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
     except StoryGenerationError as e:
         # Malformed LLM output — nothing persisted; the user retries.
         raise HTTPException(status_code=502, detail=str(e)) from e
+    except LLMQuotaExceededError as e:
+        # 429, not the neighbouring 502: nothing upstream failed — TT declined
+        # to call because the day budget is exhausted. A 502 would read as "the
+        # provider failed" and trigger retries that cannot succeed.
+        raise HTTPException(status_code=429, detail=str(e)) from e
     except LLMError as e:
         # Opt-in fallback: complete() now raises a bare 429/HTTP error instead of
         # degrading to Ollama. Map to 502 (mirror plan_turn's PlannerError handling)

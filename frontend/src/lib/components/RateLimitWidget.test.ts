@@ -30,8 +30,12 @@ const STATUS_WITH_SNAPSHOT = {
     tokens_reset_in_s: 30,
   },
   last_429: null,
-  tokens_used_24h: 73,
-  tokens_per_day_limit: 100000,
+  tokens_used_day: 73,
+  tokens_per_day_limit: 200000,
+  tokens_day_reset_in_s: 85700,
+  requests_used_day: 3,
+  requests_per_day_limit: 1000,
+  requests_day_reset_in_s: 85320,
 };
 
 beforeEach(() => {
@@ -101,8 +105,12 @@ describe("RateLimitWidget", () => {
         llm_mode: "mock",
         snapshot: null,
         last_429: null,
-        tokens_used_24h: null,
-        tokens_per_day_limit: 100000,
+        tokens_used_day: null,
+        tokens_per_day_limit: 200000,
+        tokens_day_reset_in_s: null,
+        requests_used_day: null,
+        requests_per_day_limit: 1000,
+        requests_day_reset_in_s: null,
       });
     });
 
@@ -130,8 +138,12 @@ describe("RateLimitWidget", () => {
           tokens_reset_in_s: null,
         },
         last_429: null,
-        tokens_used_24h: null,
-        tokens_per_day_limit: 100000,
+        tokens_used_day: null,
+        tokens_per_day_limit: 200000,
+        tokens_day_reset_in_s: null,
+        requests_used_day: null,
+        requests_per_day_limit: 1000,
+        requests_day_reset_in_s: null,
       });
     });
 
@@ -200,8 +212,12 @@ describe("RateLimitWidget", () => {
           tokens_reset_in_s: 30,
         },
         last_429: null,
-        tokens_used_24h: 73,
-        tokens_per_day_limit: 100000,
+        tokens_used_day: 73,
+        tokens_per_day_limit: 200000,
+        tokens_day_reset_in_s: 85320,
+        requests_used_day: 3,
+        requests_per_day_limit: 1000,
+        requests_day_reset_in_s: 85320,
       });
     });
 
@@ -229,12 +245,48 @@ describe("RateLimitWidget", () => {
           tokens_reset_in_s: 30,
         },
         last_429: null,
-        tokens_used_24h: 85000,
-        tokens_per_day_limit: 100000,
+        tokens_used_day: 170000,
+        tokens_per_day_limit: 200000,
+        tokens_day_reset_in_s: 25920,
+        requests_used_day: 40,
+        requests_per_day_limit: 1000,
+        requests_day_reset_in_s: 0,
       });
     });
 
     it("applies warning class when daily usage > 80%", () => {
+      const { container } = render(RateLimitWidget);
+      const chip = container.querySelector(".llm-chip");
+      expect(chip?.classList.contains("warning")).toBe(true);
+    });
+  });
+
+  describe("warning state (high requests/day usage)", () => {
+    beforeEach(() => {
+      rateLimitStore.set({
+        provider: "groq",
+        model: "openai/gpt-oss-120b",
+        llm_mode: "live",
+        snapshot: {
+          age_s: 10,
+          requests_limit: 1000,
+          requests_remaining: 999,
+          requests_reset_in_s: 86400,
+          tokens_limit: 8000,
+          tokens_remaining: 7000,
+          tokens_reset_in_s: 30,
+        },
+        last_429: null,
+        tokens_used_day: 73,
+        tokens_per_day_limit: 200000,
+        tokens_day_reset_in_s: 85320,
+        requests_used_day: 900,
+        requests_per_day_limit: 1000,
+        requests_day_reset_in_s: 8640,
+      });
+    });
+
+    it("applies warning class when requests/day is over 80% while tokens/day is near zero", () => {
       const { container } = render(RateLimitWidget);
       const chip = container.querySelector(".llm-chip");
       expect(chip?.classList.contains("warning")).toBe(true);
@@ -257,8 +309,12 @@ describe("RateLimitWidget", () => {
           tokens_reset_in_s: 60,
         },
         last_429: { ago_s: 5, retry_in_s: 25 },
-        tokens_used_24h: 73,
-        tokens_per_day_limit: 100000,
+        tokens_used_day: 73,
+        tokens_per_day_limit: 200000,
+        tokens_day_reset_in_s: 85320,
+        requests_used_day: 3,
+        requests_per_day_limit: 1000,
+        requests_day_reset_in_s: 85320,
       });
     });
 
@@ -286,8 +342,12 @@ describe("RateLimitWidget", () => {
         llm_mode: "live",
         snapshot: null,
         last_429: null,
-        tokens_used_24h: null,
-        tokens_per_day_limit: 100000,
+        tokens_used_day: null,
+        tokens_per_day_limit: 200000,
+        tokens_day_reset_in_s: null,
+        requests_used_day: null,
+        requests_per_day_limit: 1000,
+        requests_day_reset_in_s: null,
       });
     });
 
@@ -314,8 +374,12 @@ describe("RateLimitWidget", () => {
           tokens_reset_in_s: 30,
         },
         last_429: { ago_s: 30, retry_in_s: 0 },
-        tokens_used_24h: 73,
-        tokens_per_day_limit: 100000,
+        tokens_used_day: 73,
+        tokens_per_day_limit: 200000,
+        tokens_day_reset_in_s: 85320,
+        requests_used_day: 3,
+        requests_per_day_limit: 1000,
+        requests_day_reset_in_s: 85320,
       });
     });
 
