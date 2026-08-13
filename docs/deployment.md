@@ -388,24 +388,53 @@ Run through the agent, not by hand — that distinction is the whole point:
 
 - ✅ **Success path.** Kickstarted the agent; it staged both DB snapshots,
   uploaded, pruned an expired snapshot, and launchd recorded exit status `0`.
-- ✅ **Failure detection.** Reinstalled against a nonexistent bucket,
-  kickstarted: `Fatal: unable to open repository … 401`, `BACKUP FAILED: restic
-  backup returned non-zero`, launchd recorded exit status **`1`**. Then
-  reinstalled correctly and re-ran to `0`.
+- ✅ **Failure detection AND delivery.** Reinstalled against a nonexistent
+  bucket, kickstarted: `Fatal: unable to open repository … 401`, `BACKUP
+  FAILED: restic backup returned non-zero`, launchd exit status **`1`**, the
+  marker file written, and TextEdit opened showing it. Then reinstalled
+  correctly and re-ran: exit `0` and the marker deleted.
 - ✅ **Agent environment.** Bucket and both Keychain items resolve unattended.
 
-⚠️ **UNVERIFIED — notification delivery.** The failure run called `osascript
-display notification`, but nobody was at the screen to see whether a banner
-appeared. macOS drops these silently when the calling app lacks notification
-permission, and `osascript` exiting 0 does not prove a banner rendered. Confirm
-with:
+### ⚠️ Desktop notifications DO NOT WORK here — do not rely on them
 
-```bash
-osascript -e 'display notification "delivery test" with title "TunaTale backup FAILED"'
-```
+Tested with a human watching the screen, 2026-08-12. `osascript display
+notification` **returned 0 and no banner appeared**, from a terminal *and* from
+the LaunchAgent. Not Focus mode (no Focus DB, no legacy DND flag,
+NotificationCenter running) — macOS drops notifications silently when the
+calling process lacks notification permission, and the permission database is
+TCC-protected so a job cannot even tell.
 
-If nothing appears, the fix is notification permission, not the backup — but
-until someone looks, **the loud-failure path is only loud as far as the log.**
+This is the worst possible shape for an alerting mechanism: **it reports
+success while doing nothing**, and it is grantable and revocable outside the
+program.
+
+It is also the wrong mechanism regardless. The job runs at 03:30. A transient
+banner posted while you are asleep is collected and gone by morning, so even a
+working notification would not reliably reach you.
+
+**So the load-bearing signal is a file, not a banner:**
+`~/.tunatale/BACKUP-FAILED.txt`, written on any failure with the timestamp, the
+cause, and the commands to investigate. It is then handed to `open`, which
+launches the default app — launching an app needs no permission. A window still
+sitting there in the morning beats a 3am notification.
+
+The marker **persists until a backup actually succeeds**; the next successful
+run deletes it, unconditionally and regardless of `--notify`, because a signal
+that stays red after the problem is fixed is one you learn to ignore.
+
+The `osascript` call is kept as a free bonus for whenever permission is granted.
+Nothing depends on it.
+
+Verified end to end through the agent:
+
+| | |
+|---|---|
+| forced failure | marker written, **TextEdit opened with it**, launchd exit `1` |
+| next success | marker deleted, launchd exit `0` |
+
+The TextEdit window was confirmed **by a human watching the screen**, not merely
+by a zero exit code — which is the whole distinction that sank the notification
+path an hour earlier.
 
 ⚠️ **UNVERIFIED — the sleep/wake catch-up.** The reason for choosing launchd
 over cron is untested here: nobody has yet closed the lid across 03:30 and

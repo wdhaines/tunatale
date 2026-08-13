@@ -36,12 +36,13 @@ Exit code is non-zero on any failure so it can be a cron gate.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import sqlite3
 import subprocess
 import sys
 from collections.abc import Iterable
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from app.config import settings
@@ -60,6 +61,10 @@ _RETENTION = ["--keep-daily", "7", "--keep-weekly", "4", "--keep-monthly", "6", 
 _REDACTED = "<redacted>"
 # Written into a staging directory to mark it as this script's to sweep.
 _MARKER = ".tt-offbox-staging"
+# The durable failure signal. Persists until a backup succeeds — unlike a
+# desktop notification, nothing can silently switch a file off.
+FAILURE_MARKER = Path("~/.tunatale/BACKUP-FAILED.txt").expanduser()
+LOG_HINT = "~/.tunatale/logs/backup.log (when run by the LaunchAgent)"
 
 
 class MissingSecret(Exception):
@@ -202,24 +207,50 @@ def _default_db_paths() -> list[Path]:
 
 
 def notify_failure(message: str) -> None:
-    """Post a desktop notification. Best-effort: never raises, never blocks.
+    """Make a failure impossible to miss. Best-effort: never raises.
 
-    This is the *delivery* half of loud failure, and the reason the scheduled
-    job is worth trusting. A non-zero exit and a `BACKUP FAILED` line satisfy an
-    operator who is reading the log; nobody reads the log. The documented way
-    this whole mechanism dies is silently, months before anyone needs a restore.
+    **A desktop notification is the wrong primary signal here, and this project
+    measured that rather than assuming it.** On 2026-08-12 ``osascript display
+    notification`` returned 0 from both a terminal and the LaunchAgent and
+    NEITHER banner appeared — macOS drops them silently when the calling process
+    lacks notification permission, which is grantable, revocable, and invisible
+    from inside the job. A signal that can be switched off without telling you
+    cannot be the thing standing between you and undetected data loss.
 
-    Deliberately failure-only — an alert that fires every night is an alert that
-    stops being read, which is the same silence by a different route.
+    It is also the wrong *mechanism*: the job runs at 03:30, and a transient
+    banner posted while you are asleep is collected and gone by morning.
+
+    So the load-bearing signal is a FILE that persists until a backup actually
+    succeeds, opened in the default app (launching an app needs no permission).
+    A window still sitting there in the morning beats a 3am banner. The
+    notification is kept as a free bonus for whenever permission is granted.
     """
+    stamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    try:
+        FAILURE_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        FAILURE_MARKER.write_text(
+            f"TunaTale off-box backup FAILED\n\n  when:  {stamp}\n  why:   {message}\n"
+            f"  log:   {LOG_HINT}\n\n"
+            "This file persists until a backup succeeds. Investigate, then run:\n"
+            "  cd backend && uv run python scripts/backup_offbox.py backup\n"
+            "  launchctl list | grep tunatale   # column 2 is the last exit status\n"
+        )
+        # Launching an app requires no permission, unlike posting a notification.
+        _run(["open", str(FAILURE_MARKER)], capture_output=True, text=True)
+    except OSError:
+        # Reporting a failure must never itself fail the job. The non-zero exit
+        # and the BACKUP FAILED line are the floor; this runs after them.
+        pass
+
     # AppleScript string literal: backslashes first, then quotes, or the
     # escaping of the quotes gets re-escaped.
     safe = message.replace("\\", "\\\\").replace('"', '\\"')
-    _run(
-        ["osascript", "-e", f'display notification "{safe}" with title "TunaTale backup FAILED"'],
-        capture_output=True,
-        text=True,
-    )
+    with contextlib.suppress(OSError):
+        _run(
+            ["osascript", "-e", f'display notification "{safe}" with title "TunaTale backup FAILED"'],
+            capture_output=True,
+            text=True,
+        )
 
 
 def _fail(message: str, *, notify: bool) -> int:
@@ -291,6 +322,11 @@ def _cmd_backup(args, env) -> int:
     forget = ["restic", "forget", *_RETENTION]
     if _run(forget, env=env).returncode != 0:
         return _fail("restic forget --prune returned non-zero (the upload itself succeeded)", notify=args.notify)
+
+    # Clear the durable marker: a signal that stays red after the problem is
+    # fixed is one you learn to ignore. Unconditional, not gated on --notify —
+    # a successful manual backup means the data IS off-box, whoever ran it.
+    FAILURE_MARKER.unlink(missing_ok=True)
     return 0
 
 

@@ -24,6 +24,7 @@ Real SQLite throughout. The only mock is the process boundary — `security` and
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import subprocess
 import sys
@@ -44,6 +45,7 @@ from backup_offbox import (  # noqa: E402
     MissingSecret,
     keychain_secret,
     main,
+    notify_failure,
     redacted,
     restic_env,
     stage_db_snapshots,
@@ -578,6 +580,126 @@ class TestFailureNotification:
         assert rc != 0
         assert any(c[0] == "osascript" for c in calls)
         assert "security add-generic-password" in capsys.readouterr().err
+
+
+class TestDurableFailureMarker:
+    """A notification is the wrong primary signal and this project proved it.
+
+    Measured 2026-08-12: `osascript display notification` returned 0 from both a
+    terminal and the LaunchAgent, and NEITHER banner appeared — macOS drops them
+    silently when the calling process lacks notification permission, which is
+    grantable, revocable, and invisible from inside the job.
+
+    Worse, the mechanism is wrong even when it works: the job runs at 03:30. A
+    transient banner posted while you are asleep is collected and gone. So the
+    load-bearing signal is a FILE that persists until a backup actually
+    succeeds, and the notification is downgraded to a bonus.
+    """
+
+    @pytest.fixture
+    def marker(self, tmp_path, monkeypatch):
+        path = tmp_path / "BACKUP-FAILED.txt"
+        monkeypatch.setattr("backup_offbox.FAILURE_MARKER", path)
+        return path
+
+    def test_a_failure_leaves_a_marker_naming_the_cause(self, marker, monkeypatch):
+        monkeypatch.setattr("backup_offbox._run", FakeRun(0))
+        notify_failure("restic backup returned non-zero")
+        assert marker.exists()
+        assert "restic backup returned non-zero" in marker.read_text()
+
+    def test_the_marker_says_when(self, marker, monkeypatch):
+        """'The backup is broken' is much less useful than 'since when' — that
+        is what tells you how many days of work are unprotected."""
+        monkeypatch.setattr("backup_offbox._run", FakeRun(0))
+        notify_failure("boom")
+        assert re.search(r"\d{4}-\d{2}-\d{2}", marker.read_text())
+
+    def test_the_marker_is_opened_so_it_is_seen(self, marker, monkeypatch):
+        """Launching an app needs no permission, unlike posting a notification.
+        A window that is still there in the morning beats a 3am banner."""
+        run = FakeRun(0)
+        monkeypatch.setattr("backup_offbox._run", run)
+        notify_failure("boom")
+        assert any(c[0] == "open" and str(marker) in c for c in run.argvs)
+
+    def test_the_notification_is_still_attempted(self, marker, monkeypatch):
+        """Kept as a bonus: free, and it works the moment permission is granted."""
+        run = FakeRun(0)
+        monkeypatch.setattr("backup_offbox._run", run)
+        notify_failure("boom")
+        assert any(c[0] == "osascript" for c in run.argvs)
+
+    def test_the_marker_carries_no_secret(self, tmp_path, secrets, marker, monkeypatch):
+        run = FakeRun(0)
+        monkeypatch.setattr("backup_offbox._run", run)
+        src = tmp_path / "tunatale_no.db"
+        _make_db(src)
+        (tmp_path / "media").mkdir()
+        (tmp_path / "output").mkdir()
+        monkeypatch.setattr(
+            "backup_offbox._run", lambda cmd, *a, **k: subprocess.CompletedProcess(cmd, 1 if cmd[0] == "restic" else 0)
+        )
+        main(
+            [
+                "backup",
+                "--bucket",
+                "b",
+                "--db",
+                str(src),
+                "--media-src",
+                str(tmp_path / "media"),
+                "--output-src",
+                str(tmp_path / "output"),
+                "--staging",
+                str(tmp_path / "staging"),
+                "--notify",
+            ]
+        )
+        text = marker.read_text()
+        for secret in ("s3cr3t-passphrase", "APPKEY456", "KEYID123"):
+            assert secret not in text
+
+    def test_a_successful_backup_clears_a_stale_marker(self, tmp_path, secrets, marker, monkeypatch):
+        """Otherwise the warning outlives the problem, and a signal that stays
+        red after it is fixed is one you learn to ignore."""
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("failed last night")
+        monkeypatch.setattr("backup_offbox._run", FakeRun(0))
+        src = tmp_path / "tunatale_no.db"
+        _make_db(src)
+        (tmp_path / "media").mkdir()
+        (tmp_path / "output").mkdir()
+
+        rc = main(
+            [
+                "backup",
+                "--bucket",
+                "b",
+                "--db",
+                str(src),
+                "--media-src",
+                str(tmp_path / "media"),
+                "--output-src",
+                str(tmp_path / "output"),
+                "--staging",
+                str(tmp_path / "staging"),
+            ]
+        )
+
+        assert rc == 0
+        assert not marker.exists()
+
+    def test_notify_never_raises(self, marker, monkeypatch):
+        """Reporting a failure must not itself fail the job — the exit code and
+        the log are the floor, and this runs after them."""
+
+        def boom(cmd, *a, **k):
+            raise OSError("no such binary")
+
+        monkeypatch.setattr("backup_offbox._run", boom)
+        monkeypatch.setattr("backup_offbox.FAILURE_MARKER", Path("/nonexistent-dir/x/marker.txt"))
+        notify_failure("boom")  # must not raise
 
 
 class TestOtherCommands:
