@@ -92,11 +92,23 @@ class FakeRun:
 
 @pytest.fixture
 def secrets(monkeypatch):
-    """Keychain lookups resolve, without touching the real Keychain."""
+    """Keychain lookups resolve, without touching the real Keychain.
+
+    ⚠️ These values are spelled `not-a-real-…-test-fixture` ON PURPOSE. The
+    earlier, more realistic-looking fakes (`s3cr3t-passphrase`, `APPKEY456`)
+    tripped GitGuardian's Generic Password detector on commit 7423712 — and the
+    line it flagged was the assertion that secrets DO NOT leak into the failure
+    marker. No real credential was ever committed (verified against the live
+    Keychain across `git log -p --all`: zero hits).
+
+    Do not "improve" these back into realistic-looking secrets. A scanner that
+    cries wolf on test fixtures is a scanner whose next alert gets ignored, and
+    that alert might be the real one.
+    """
     values = {
-        (SERVICE_B2, ACCOUNT_KEY_ID): "KEYID123",
-        (SERVICE_B2, ACCOUNT_APP_KEY): "APPKEY456",
-        (SERVICE_RESTIC, ACCOUNT_REPO_PASSWORD): "s3cr3t-passphrase",
+        (SERVICE_B2, ACCOUNT_KEY_ID): "not-a-real-b2-key-id-test-fixture",
+        (SERVICE_B2, ACCOUNT_APP_KEY): "not-a-real-b2-app-key-test-fixture",
+        (SERVICE_RESTIC, ACCOUNT_REPO_PASSWORD): "not-a-real-passphrase-test-fixture",
     }
     monkeypatch.setattr("backup_offbox.keychain_secret", lambda service, account: values[(service, account)])
     return values
@@ -107,8 +119,8 @@ def secrets(monkeypatch):
 
 class TestKeychainSecret:
     def test_returns_the_password_without_its_trailing_newline(self, monkeypatch):
-        monkeypatch.setattr("backup_offbox._run", FakeRun(0, stdout="hunter2\n"))
-        assert keychain_secret("svc", "acct") == "hunter2"
+        monkeypatch.setattr("backup_offbox._run", FakeRun(0, stdout="not-a-real-password-test-fixture\n"))
+        assert keychain_secret("svc", "acct") == "not-a-real-password-test-fixture"
 
     def test_missing_item_raises_with_the_command_that_fixes_it(self, monkeypatch):
         monkeypatch.setattr("backup_offbox._run", FakeRun(44))
@@ -133,9 +145,9 @@ class TestResticEnv:
     def test_builds_the_b2_repository_url_and_carries_all_four_credentials(self, secrets):
         env = restic_env("my-bucket", "tunatale", base={"PATH": "/usr/bin"})
         assert env["RESTIC_REPOSITORY"] == "b2:my-bucket:tunatale"
-        assert env["RESTIC_PASSWORD"] == "s3cr3t-passphrase"
-        assert env["B2_ACCOUNT_ID"] == "KEYID123"
-        assert env["B2_ACCOUNT_KEY"] == "APPKEY456"
+        assert env["RESTIC_PASSWORD"] == "not-a-real-passphrase-test-fixture"
+        assert env["B2_ACCOUNT_ID"] == "not-a-real-b2-key-id-test-fixture"
+        assert env["B2_ACCOUNT_KEY"] == "not-a-real-b2-app-key-test-fixture"
         assert env["PATH"] == "/usr/bin", "must extend the caller's environment, not replace it"
 
     def test_secrets_are_not_written_back_into_the_process_environment(self, secrets, monkeypatch):
@@ -149,15 +161,15 @@ class TestResticEnv:
 class TestRedaction:
     def test_every_secret_value_is_masked(self):
         env = {
-            "RESTIC_PASSWORD": "s3cr3t-passphrase",
-            "B2_ACCOUNT_KEY": "APPKEY456",
-            "B2_ACCOUNT_ID": "KEYID123",
+            "RESTIC_PASSWORD": "not-a-real-passphrase-test-fixture",
+            "B2_ACCOUNT_KEY": "not-a-real-b2-app-key-test-fixture",
+            "B2_ACCOUNT_ID": "not-a-real-b2-key-id-test-fixture",
             "RESTIC_REPOSITORY": "b2:my-bucket:tunatale",
         }
         shown = redacted(env)
-        assert "s3cr3t-passphrase" not in str(shown)
-        assert "APPKEY456" not in str(shown)
-        assert "KEYID123" not in str(shown)
+        assert "not-a-real-passphrase-test-fixture" not in str(shown)
+        assert "not-a-real-b2-app-key-test-fixture" not in str(shown)
+        assert "not-a-real-b2-key-id-test-fixture" not in str(shown)
         # The repository is not a secret and is the one thing worth seeing.
         assert shown["RESTIC_REPOSITORY"] == "b2:my-bucket:tunatale"
 
@@ -561,9 +573,9 @@ class TestFailureNotification:
     def test_the_notification_carries_no_secret(self, tmp_path, secrets, monkeypatch):
         _, calls = self._run_backup(tmp_path, monkeypatch, notify=True, restic_rc=1)
         text = " ".join(" ".join(c) for c in calls if c[0] == "osascript")
-        assert "s3cr3t-passphrase" not in text
-        assert "APPKEY456" not in text
-        assert "KEYID123" not in text
+        assert "not-a-real-passphrase-test-fixture" not in text
+        assert "not-a-real-b2-app-key-test-fixture" not in text
+        assert "not-a-real-b2-key-id-test-fixture" not in text
 
     def test_a_missing_secret_also_notifies(self, tmp_path, monkeypatch, capsys):
         """The most likely real failure is a Keychain item that stopped
@@ -657,7 +669,11 @@ class TestDurableFailureMarker:
             ]
         )
         text = marker.read_text()
-        for secret in ("s3cr3t-passphrase", "APPKEY456", "KEYID123"):
+        for secret in (
+            "not-a-real-passphrase-test-fixture",
+            "not-a-real-b2-app-key-test-fixture",
+            "not-a-real-b2-key-id-test-fixture",
+        ):
             assert secret not in text
 
     def test_a_successful_backup_clears_a_stale_marker(self, tmp_path, secrets, marker, monkeypatch):
