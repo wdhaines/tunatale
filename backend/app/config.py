@@ -122,6 +122,16 @@ class Settings(BaseSettings):
 
     anki_model_name: str = ""
     pixabay_api_key: str = ""
+    # Azure Speech (TTS). Replaces the unofficial Edge Read Aloud endpoint that
+    # `edge-tts` talks to — same underlying neural voices, but an official API with
+    # terms and a support channel. F0 (free tier) allows 500K chars/month and
+    # THROTTLES at the cap rather than billing over it.
+    # Both default EMPTY on purpose: a region default would let a missing .env still
+    # produce a well-formed call to the wrong datacenter, so the call site must fail
+    # loudly instead. Region is the machine-readable form ("eastus"), not "East US" —
+    # it is interpolated straight into the endpoint host.
+    azure_speech_key: str = ""
+    azure_speech_region: str = ""
     # Global lemmatizer gate: "lowercase" (default) forces the deterministic
     # lowercase engine for EVERY language (the CI/test pin, and how a deployment
     # disables the heavy PyTorch pipelines). Any other value ("classla", "stanza",

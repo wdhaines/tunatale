@@ -94,3 +94,27 @@ def test_anki_model_and_pixabay_from_env(monkeypatch):
     s = Settings()
     assert s.anki_model_name == "Slovene Vocabulary"
     assert s.pixabay_api_key == "pixabay-key-xyz"
+
+
+def test_azure_speech_defaults_empty(monkeypatch, tmp_path):
+    """Azure Speech credentials default empty — no region is silently assumed.
+
+    A non-empty region default would let a missing/misconfigured .env still
+    produce a well-formed call to the wrong datacenter; empty forces the
+    call site to fail loudly instead.
+    """
+    for var in ("AZURE_SPEECH_KEY", "AZURE_SPEECH_REGION"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.chdir(tmp_path)
+    s = Settings(_env_file=None)
+    assert s.azure_speech_key == ""
+    assert s.azure_speech_region == ""
+
+
+def test_azure_speech_from_env(monkeypatch):
+    """Azure Speech key and region load from env vars."""
+    monkeypatch.setenv("AZURE_SPEECH_KEY", "azure-key-xyz")
+    monkeypatch.setenv("AZURE_SPEECH_REGION", "eastus")
+    s = Settings()
+    assert s.azure_speech_key == "azure-key-xyz"
+    assert s.azure_speech_region == "eastus"
