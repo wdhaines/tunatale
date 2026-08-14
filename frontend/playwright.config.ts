@@ -124,6 +124,19 @@ export default defineConfig({
 	projects: [
 		{
 			name: 'chromium',
+			// channel: 'chromium' selects the FULL browser. Without it Playwright
+			// resolves headless runs to `chrome-headless-shell`, which took
+			// `Received signal 11 SEGV_MAPERR` on the runner during the coarse-pointer
+			// project's browser.newContext — killing the browser and taking the rest
+			// of the run with it (4 failed, 30 skipped, 1 did not run).
+			//
+			// Set unconditionally, NOT behind `process.env.CI`. An env-forked browser
+			// would mean local and CI test different binaries, which is precisely the
+			// divergence this change exists to remove — and the retries field next
+			// door is what a CI-only fork decays into: config nobody has ever seen run.
+			// `playwright install chromium` provides both binaries, so this costs no
+			// extra download.
+			channel: 'chromium',
 			use: { ...devices['Desktop Chrome'] }
 		}
 	]

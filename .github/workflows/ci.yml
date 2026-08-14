@@ -27,6 +27,30 @@ on:
 env:
   TZ: UTC
 
+# ⚠️ Every install step is a plain `uv sync --all-groups`, and the `--no-group
+# slovene --no-group norwegian --no-group alignment` flags that used to follow it
+# were DELETED on 2026-08-14 because they did nothing (tunatale-as5).
+#
+# They looked like they made CI lean, and `tunatale-as5` was filed on the belief
+# that they did — that CI ran without classla/stanza/torch/transformers, so the
+# syllable-slicing paths were never exercised for real. Measured, that is false:
+# `pyproject.toml` sets `[tool.uv] default-groups = ['dev','slovene','norwegian',
+# 'alignment']`, and a bare `uv run` re-syncs the environment to the DEFAULT
+# groups before running anything. So the very next step put all of it back.
+#
+# Proven, not reasoned: after running CI's exact former sync into a throwaway
+# env, `find_spec` reported transformers=False torch=False; one bare `uv run`
+# then printed `Installed 37 packages` and the same probe reported True/True,
+# with `alignment_installed()` flipping to True. The live confirmation is in the
+# `e2e` job's own log — the app boots and prints `Syllable slicing enabled for:
+# no`, which is guarded by `if slicers:` and therefore cannot print on the empty
+# dict the flags were believed to produce.
+#
+# Net effect of the flags: an extra partial install per job, then a full one.
+# They cost time and bought nothing. If you ever want CI to genuinely run lean,
+# the flags are not the lever — `default-groups` or `--no-sync` is, and that
+# would create a real local/CI divergence to document. See
+# `.claude/rules/testing.md` § "What a green gate means".
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -49,7 +73,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment
+        run: uv sync --all-groups
 
       - name: Lint
         run: uv run ruff check app tests scripts
@@ -146,7 +170,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment
+        run: uv sync --all-groups
 
       - name: Test at ${{ matrix.tz }}
         run: uv run pytest -n auto --no-cov
@@ -210,7 +234,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment
+        run: uv sync --all-groups
 
       # Etc/GMT signs are INVERTED (Etc/GMT-9 is UTC+9), hence the negation.
       # The local-hour assertion is not ceremony: without it a bad offset would
@@ -311,10 +335,32 @@ jobs:
 
       - name: Install backend dependencies
         working-directory: backend
-        run: uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment
+        run: uv sync --all-groups
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+
+      # `GET /api/health` probes audio_dir and media_dir by creating and removing
+      # a real file in each (os.access answers from permission bits and would
+      # report success on a read-only mount). Both default under backend/ —
+      # `media/` and `output/audio/` — and BOTH ARE GITIGNORED WITH ZERO TRACKED
+      # FILES, so they exist on every developer's disk and in no fresh checkout.
+      #
+      # Without this step the backend boots fine and answers 503, which failed
+      # three specs on this job's first run: the two smoke health checks and
+      # `cors-lockdown`, whose allowlisted-origin case asserts 200 and got 503.
+      # That is a genuine environment-parity defect, not test noise — the local
+      # gate passed only because of untracked local state, and nothing could see
+      # it while Playwright ran on laptops only.
+      #
+      # Provisioning here rather than auto-creating them at startup is deliberate:
+      # a mkdir in the app's lifespan would happily create a plain directory where
+      # a volume failed to mount, turning the exact "unmounted volume reads green"
+      # bug that `app/api/health.py` documents it exists to prevent back into a
+      # silent pass. A deployment must provision these; so must CI. The open
+      # question of who does that for a real deploy is `tunatale-kbb.7`.
+      - name: Provision the gitignored content directories
+        run: mkdir -p backend/media backend/output/audio
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -362,7 +408,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment
+        run: uv sync --all-groups
 
       - name: Warm anki subprocess env
         run: uv run --isolated --no-project --python 3.14 --with anki==26.5 python -c "import anki"
@@ -389,7 +435,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment
+        run: uv sync --all-groups
 
       - name: Warm anki subprocess env
         run: uv run --isolated --no-project --python 3.14 --with anki==26.5 python -c "import anki"

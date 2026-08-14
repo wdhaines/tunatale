@@ -59,23 +59,47 @@ above true rather than aspirational, and it is maintained by hand:
 
 **Local-only: nothing.** Keep it that way.
 
-### The dependency-group split is deliberate, not an oversight
+### There is no dependency-group split — the flags that implied one were fake
 
-Local installs all groups; CI runs `--no-group slovene --no-group norwegian
---no-group alignment`. So `build_slicers` wires a real Norwegian syllable slicer
-locally (`Syllable slicing enabled for: no` in every local run) and an empty dict
-in CI, where those paths are exercised only by `find_spec`-monkeypatched unit
-tests.
+**Both gates install the same packages.** This was believed to be a real
+divergence (and `tunatale-as5` was filed saying so): CI's install steps read
+`uv sync --all-groups --no-group slovene --no-group norwegian --no-group
+alignment`, so CI supposedly ran without classla/stanza/torch/transformers and
+never exercised syllable slicing for real.
 
-**This is a chosen trade, not a gap nobody noticed** (2026-08-14): installing the
-lemmatizer/alignment groups in CI means a ~1.2 GB model download on six jobs per
-push, and the paths in question are covered locally on every commit. **Owner: the
-local gate.** The consequence to accept is that a break confined to real-slicer
-behaviour surfaces on a developer's machine, never on a push — so when touching
-`build_slicers` or a syllabifier, the local run is the gate that matters and a
-green CI proves nothing about it.
+**Measured 2026-08-14, that is false, and the flags were deleted.**
+`pyproject.toml` sets `[tool.uv] default-groups = ['dev','slovene','norwegian',
+'alignment']`, and a bare `uv run` re-syncs to the DEFAULT groups before running
+anything — so the step after the install put every excluded package straight
+back. The control, run into a throwaway env:
 
-⚠️ Two smaller divergences that are NOT bugs, so nobody re-files them:
+```
+uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment
+  → transformers: False   torch: False
+uv run python -c ...
+  → Installed 37 packages in 475ms
+  → transformers: True    torch: True    alignment_installed(): True
+```
+
+The live confirmation is in CI's own `e2e` log: the app prints `Syllable slicing
+enabled for: no`, a line guarded by `if slicers:` that cannot appear on the empty
+dict the flags were believed to produce.
+
+**The lesson generalises past this instance:** an install-step flag is not
+evidence about the environment a test ran in. `uv run` will re-sync underneath
+it. If you ever want CI to genuinely run lean, `default-groups` or `--no-sync` is
+the lever — and that would create a real divergence needing an owner, which this
+never had.
+
+⚠️ Three smaller divergences that are NOT bugs, so nobody re-files them:
+- **The gitignored content directories.** `backend/media/` and
+  `backend/output/audio/` have zero tracked files, so they exist on every
+  developer's disk and in no fresh checkout — and `GET /api/health` probes both
+  by writing a real file, answering 503 when they are absent. CI provisions them
+  explicitly (`mkdir -p`) rather than the app creating them at startup: a mkdir in
+  the lifespan would create a plain directory where a volume failed to mount,
+  which is the "unmounted volume reads green" bug `app/api/health.py` exists to
+  prevent. Deployments must provision them too — `tunatale-kbb.7`.
 - **Coverage measures different sets.** Local folds `--run-oracle` into the covered pytest run; CI's `backend` job omits it and a separate `oracle-parity` job runs those tests `--no-cov`. Both reach 100%, so CI's is the *stricter* claim (100% without oracle tests contributing). Fine under "CI authoritative".
 - **ffmpeg** is installed on `backend`, the hostile jobs and `e2e`, but not on `oracle-parity` / `peer-sync` — they never touch the audio pipeline.
 
