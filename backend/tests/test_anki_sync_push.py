@@ -76,11 +76,12 @@ class TestLocalToday4am:
     """_local_today_4am returns the most recent 4 AM rollover."""
 
     def test_after_4am_returns_today(self):
-        after = datetime(2026, 5, 15, 10, 0, 0, tzinfo=UTC)
+        # Naive = local wall-clock; see rollover._local_now (tunatale-vnf.5).
+        after = datetime(2026, 5, 15, 10, 0, 0)
         assert _local_today_4am(after).day == 15
 
     def test_before_4am_returns_yesterday(self):
-        before = datetime(2026, 5, 15, 3, 0, 0, tzinfo=UTC)
+        before = datetime(2026, 5, 15, 3, 0, 0)
         assert _local_today_4am(before).day == 14
 
 
