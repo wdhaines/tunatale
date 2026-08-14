@@ -19,9 +19,11 @@ on:
   pull_request:
 
 # Pinned workflow-wide, to the SAME value test.sh pins, so a future job cannot
-# silently reintroduce the divergence by forgetting it. See test.sh for why;
-# `backend-hostile-tz` deliberately overrides this and is the only job that
-# should. Reproducibility comes from the pin, tolerance from that job.
+# silently reintroduce the divergence by forgetting it. See test.sh for why.
+# Exactly TWO jobs deliberately override it, and they are the only ones that
+# should: `backend-hostile-tz` (varies the OFFSET) and `backend-hostile-hour`
+# (varies the local CLOCK). Reproducibility comes from the pin, tolerance from
+# those two — and they are orthogonal, so neither substitutes for the other.
 env:
   TZ: UTC
 
@@ -100,6 +102,22 @@ jobs:
   # wall-clock assumption — look for a fixture doing date arithmetic across
   # ANKI_ROLLOVER_HOUR before suspecting product code.
   #
+  # ⚠️ THE EXTREMES ARE NOT A MAXIMAL PROBE, and assuming they were hid a real
+  # bug. `test_unbury_idempotent_across_midnight_same_anki_day` expressed two
+  # LOCAL wall-clock times as UTC literals 3 hours apart; a 4 AM local rollover
+  # falls between them only at UTC+2, +3 and +4, so it failed hard at CEST,
+  # Moscow and Gulf offsets while passing at BOTH extremes this matrix probes
+  # (found 2026-08-14 by a full 27-offset sweep, fixed in the same commit).
+  # A mid-range band is invisible to an endpoints-only matrix. Do not widen this
+  # matrix reflexively — a full sweep is a local command, not a CI job — but do
+  # not read "green here" as "green everywhere" either. The sweep, ~8 min:
+  #
+  #   cd backend
+  #   for o in $(seq -14 12); do
+  #     [ "$o" -ge 0 ] && z="Etc/GMT+$o" || z="Etc/GMT-$(( -o ))"
+  #     echo "$z $(TZ=$z uv run pytest -n auto --no-cov -q 2>&1 | tail -1)"
+  #   done
+  #
   # Separate job (not a matrix dimension on `backend`) so it runs in parallel
   # and adds no wall-clock time; --no-cov because `backend` already owns the
   # coverage gate; this job exists to answer one question only.
@@ -134,6 +152,87 @@ jobs:
         run: uv run pytest -n auto --no-cov
         env:
           TZ: ${{ matrix.tz }}
+
+  # Runs the backend suite at a deliberately hostile HOUR — the axis no other
+  # gate covers. `backend-hostile-tz` varies the offset; this varies the local
+  # clock, and they are orthogonal.
+  #
+  # THE TRICK: the danger band is a LOCAL wall-clock band, so a timezone can put
+  # us inside it on demand. A fixture that stamps `last_review` / `introduced_at`
+  # / `revlog.id` relative to `datetime.now()` can straddle ANKI_ROLLOVER_HOUR
+  # and land in the previous Anki day — but only in [04:00, 05:00) local, one
+  # hour a day. Rather than wait for that hour, we compute the offset that makes
+  # it be that hour right now: whole-hour zones span UTC-12..UTC+14, so for any
+  # UTC hour there is always a zone whose local time is 04:xx.
+  #
+  # This is `tunatale-vnf.7` option 2 with its own stated weakness removed. A
+  # `schedule:` trigger at ~04:30 UTC would also hit the band, but it finds bugs
+  # late and off the PR that caused them; this runs on every push, on the diff
+  # that introduced the bug, and adds no wall-clock time (parallel, --no-cov).
+  #
+  # Pinning TZ=UTC everywhere made this WORSE, not better: every gate now shares
+  # ONE global danger band instead of differing local ones that might have
+  # disagreed and exposed each other. Before this job, the vnf.6 flake was
+  # catchable by the whole CI fleet for 1 hour in 24; now it is caught every run.
+  #
+  # ⚠️ The computed zone necessarily varies with the UTC hour (offset +14..-12
+  # across a day), so this job also samples the OFFSET axis — meaning a bug that
+  # is offset-specific rather than hour-specific can make it red at some hours
+  # and green at others. That is not flakiness to paper over; it is the same
+  # class of finding. Verified clean at filing time: the suite passes at all 24
+  # local hours, all 27 whole-hour offsets, and 6 fractional-offset zones.
+  #
+  # ⚠️ CI-only, like `backend-hostile-tz` — ./test.sh does not run it, because a
+  # second full suite would double the local gate. Gate parity is `tunatale-as5`.
+  #
+  # If this goes red while `backend` is green, suspect a fixture doing date
+  # arithmetic across ANKI_ROLLOVER_HOUR before suspecting product code. The
+  # signature is an off-by-one-day count (`got 1, expected 2`).
+  backend-hostile-hour:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9 alias exists)
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment
+
+      # Etc/GMT signs are INVERTED (Etc/GMT-9 is UTC+9), hence the negation.
+      # The local-hour assertion is not ceremony: without it a bad offset would
+      # silently run the suite at an ordinary hour and report a meaningless
+      # green, which is worse than no job at all.
+      - name: Resolve a timezone whose local time is inside [04:00, 05:00)
+        run: |
+          set -euo pipefail
+          utc_hour=$(date -u +%-H)
+          offset=$(( (4 - utc_hour + 24) % 24 ))
+          [ "$offset" -gt 14 ] && offset=$(( offset - 24 ))
+          if [ "$offset" -ge 0 ]; then tz="Etc/GMT-$offset"; else tz="Etc/GMT+$(( -offset ))"; fi
+          local_hour=$(TZ="$tz" date +%-H)
+          echo "UTC hour $utc_hour -> offset $offset -> $tz -> local hour $local_hour"
+          if [ "$local_hour" -ne 4 ]; then
+            echo "::error::Resolved $tz gives local hour $local_hour, expected 4 — the probe is broken, not the suite."
+            exit 1
+          fi
+          echo "HOSTILE_TZ=$tz" >> "$GITHUB_ENV"
+
+      - name: Test at the rollover hour
+        run: TZ="$HOSTILE_TZ" uv run pytest -n auto --no-cov
 
   frontend:
     runs-on: ubuntu-latest

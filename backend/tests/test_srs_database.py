@@ -1329,7 +1329,15 @@ class TestUnburyIfNeeded:
         from app.srs.anki_mirror.rollover import anki_today
 
         # "now" = 23:00 on day D-1 — sets cached day to Anki day D.
-        first_now = datetime(2026, 5, 7, 23, 0, tzinfo=UTC)
+        # NAIVE on purpose: the rollover is a LOCAL wall-clock concept, and
+        # `_local_now` reads naive input as local. Stamping these `tzinfo=UTC`
+        # made the pair mean "23:00 UTC" and "02:00 UTC", which `_local_now`
+        # CONVERTS to local — so at UTC+2..+4 a 4 AM local rollover falls inside
+        # the 3-hour gap and the two instants land in different Anki days. That
+        # is a hard failure at CEST/Moscow/Gulf offsets, invisible to the
+        # hostile-TZ job because it probes only the extremes (UTC+14, UTC-12),
+        # and invisible to TZ=UTC everywhere else (tunatale-vnf.7).
+        first_now = datetime(2026, 5, 7, 23, 0)
         today_d = anki_today(first_now)
 
         srs_db.add_collocation(_unit("midnight_crossing", "x"), language_code="sl")
@@ -1342,7 +1350,8 @@ class TestUnburyIfNeeded:
         self._bury_direction(srs_db, "midnight_crossing", Direction.RECOGNITION, reps=2)
 
         # "now" = 02:00 on day D — SAME Anki day D (before 4 AM rollover).
-        second_now = datetime(2026, 5, 8, 2, 0, tzinfo=UTC)
+        # Naive for the same reason as `first_now` above.
+        second_now = datetime(2026, 5, 8, 2, 0)
         today_d_same = anki_today(second_now)
         assert today_d_same == today_d, "same Anki day before rollover"
 
