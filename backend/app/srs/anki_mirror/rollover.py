@@ -24,6 +24,37 @@ from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from app.config import ANKI_ROLLOVER_HOUR
 
 
+def _local_now(now: datetime | None) -> datetime:
+    """Normalize *now* into the local zone — the ONE definition both entry points use.
+
+    The rollover is a LOCAL wall-clock concept: it is a property of the user's
+    machine, not of whichever zone a caller happened to express an instant in.
+    So an aware ``now`` is CONVERTED here rather than being allowed to supply its
+    own arithmetic zone, and two datetimes naming the same instant give the same
+    Anki day.
+
+    ⚠️ This exists because the two entry points used to normalize differently.
+    ``anki_day_bounds_utc_dt`` converted to local; ``local_today_rollover``
+    promoted only NAIVE input and otherwise kept ``now.tzinfo``. Handed the same
+    UTC-aware ``now`` they disagreed about which Anki day it was — the day label
+    from one clock, the window from the other — which is latent in production
+    (every real call site passes ``now=None``) and produced a real test bug at
+    UTC+5 and beyond (tunatale-3oz). Sharing one helper is the fix: they can
+    disagree only if someone stops calling it.
+
+    ⚠️ Use bare ``.astimezone()``, NOT ``.astimezone(datetime.now().astimezone().tzinfo)``.
+    The latter is what ``anki_day_bounds_utc_dt`` used to do, and it snapshots
+    *today's* UTC offset into a fixed-offset object — applying it to a date in
+    another DST regime is then off by an hour. Bare ``.astimezone()`` consults
+    the system zone database and resolves the offset for the instant in
+    question, correctly for both naive input (read as local wall-clock) and
+    aware input (converted). Swapping to the snapshot form moved
+    ``test_anki_today_flips_at_rollover`` by a day across the EST/EDT boundary,
+    which is how this was caught.
+    """
+    return (now or datetime.now()).astimezone()
+
+
 def _most_recent_rollover(anchor_day: date, now: datetime, tz: tzinfo | None) -> datetime:
     """The rollover moment on *anchor_day* in *tz*, shifted back one day if *now* precedes it."""
     candidate = datetime.combine(anchor_day, time(ANKI_ROLLOVER_HOUR), tzinfo=tz)
@@ -38,12 +69,12 @@ def local_today_rollover(now: datetime | None = None) -> datetime:
     Mirrors Anki's day-cutoff concept — entries with a revlog.id before this
     timestamp are "before today" for the purpose of counting introductions.
     Returns the most recent rollover (yesterday's if before it today).
-    Accepts an optional *now* override for testability; naive *now* is
-    promoted to the system-local zone, aware *now* keeps its own tz.
+    Accepts an optional *now* override for testability. Naive *now* is read as
+    local wall-clock; aware *now* is CONVERTED to local rather than supplying
+    its own arithmetic zone — see :func:`_local_now` for why that distinction
+    was a bug rather than a preference.
     """
-    now = now or datetime.now()
-    if now.tzinfo is None:
-        now = now.astimezone()
+    now = _local_now(now)
     return _most_recent_rollover(now.date(), now, now.tzinfo)
 
 
@@ -61,9 +92,8 @@ def anki_day_bounds_utc_dt(today: date, now: datetime | None = None) -> tuple[da
     the `[midnight, rollover)` window that Anki still treats as graded yesterday
     (the 66-vs-73 review-badge divergence, 2026-06-02).
     """
-    local_tz = datetime.now().astimezone().tzinfo
-    now = (now or datetime.now(local_tz)).astimezone(local_tz)
-    day_start = _most_recent_rollover(today, now, local_tz)
+    now = _local_now(now)
+    day_start = _most_recent_rollover(today, now, now.tzinfo)
     start_utc = day_start.astimezone(UTC)
     return start_utc, start_utc + timedelta(days=1)
 

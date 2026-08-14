@@ -903,7 +903,11 @@ class TestIsDue:
         from app.srs.anki_mirror.rollover import anki_today
 
         # "now" = 02:00 — before 4 AM rollover.
-        frozen_now = datetime(2026, 5, 8, 2, 0, tzinfo=UTC)
+        # NAIVE = local wall-clock. The rollover is a local concept, so an aware
+        # `now` is converted to local rather than supplying its own arithmetic
+        # zone (rollover._local_now, tunatale-vnf.5). Written as tzinfo=UTC these
+        # asserted UTC-day arithmetic and broke past UTC+5.
+        frozen_now = datetime(2026, 5, 8, 2, 0)
         today = anki_today(frozen_now)  # still May 7 (yesterday)
         assert today == date(2026, 5, 7)
 

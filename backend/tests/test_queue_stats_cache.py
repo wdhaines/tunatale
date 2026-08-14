@@ -940,13 +940,17 @@ class TestSessionMainQueueCache:
         db = SRSDatabase(":memory:")
 
         # "now" = 23:00 on day D-1 → Anki day = D.
-        first_now = datetime(2026, 5, 7, 23, 0, tzinfo=UTC)
+        # NAIVE = local wall-clock. The rollover is a local concept, so an aware
+        # `now` is converted to local rather than supplying its own arithmetic
+        # zone (rollover._local_now, tunatale-vnf.5). Written as tzinfo=UTC these
+        # asserted UTC-day arithmetic and broke past UTC+5.
+        first_now = datetime(2026, 5, 7, 23, 0)
         today_d = anki_today(first_now)
         items_d = [(1001, "recognition"), (1002, "production")]
         set_session_main_queue(db, today_d, items_d)
 
         # "now" = 02:00 on day D → same Anki day D.
-        second_now = datetime(2026, 5, 8, 2, 0, tzinfo=UTC)
+        second_now = datetime(2026, 5, 8, 2, 0)
         today_d_same = anki_today(second_now)
         assert today_d_same == today_d, "same Anki day before rollover"
 
