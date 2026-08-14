@@ -115,6 +115,12 @@ def _settings_overrides(monkeypatch, tmp_path):
     # empty so generation no-ops by default; tests that exercise it set the key
     # and inject the fetch/query functions (see test_vocab_media_endpoints.py).
     monkeypatch.setattr(settings, "pixabay_api_key", "")
+    # Third provider, same trap: the Forvo fetcher now reads a key from settings
+    # and calls apifree.forvo.com. A developer's real .env would put live
+    # requests against the 500/day free ceiling into the suite. Pinned empty so
+    # an unpinned call returns NO_API_KEY instead of reaching the network; tests
+    # that exercise the client pass an explicit key (see test_anki_media_forvo.py).
+    monkeypatch.setattr(settings, "forvo_api_key", "")
     # Same trap as pixabay above, one provider along: a developer's real .env
     # carries a live AZURE_SPEECH_KEY, and tts_provider defaults to "azure". Any
     # test that reached a real synthesize() would bill the F0 quota and hit the

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -13,16 +14,22 @@ import anyio
 from app.languages import get_tts_voice
 
 from .choose_llm import choose_image_hit
-from .forvo import fetch_forvo_audio
+from .forvo import ForvoOutcome, fetch_forvo_pronunciation
 from .normalize import normalize_audio
 from .pixabay import PixabaySearch, _tag_overlap, best_hit, build_query, download_hit, search_pixabay
 from .tts import generate_tts_audio
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class MediaResult:
     audio_bytes: bytes | None = None
     audio_source: str | None = None
+    # Why Forvo did or did not supply the audio, mirroring image_status below.
+    # Falling back to TTS is normal when nobody has recorded a word and alarming
+    # when the API is unreachable; without this the two are the same card.
+    audio_status: str | None = None
     image_bytes: bytes | None = None
     image_ext: str | None = None
     image_url: str | None = None
@@ -80,7 +87,7 @@ async def fetch_card_media(
       * ``""``   — skip the image entirely (abstract word, no depiction).
       * non-empty — sent to Pixabay verbatim as a sense-disambiguated query.
     """
-    forvo_fn = _forvo_fn or fetch_forvo_audio
+    forvo_fn = _forvo_fn or fetch_forvo_pronunciation
     tts_fn = _tts_fn or generate_tts_audio
     search_fn = _search_fn or search_pixabay
     download_fn = _download_fn or download_hit
@@ -99,13 +106,27 @@ async def fetch_card_media(
     # Forvo / normalize are synchronous (httpx.Client, ffmpeg
     # subprocess) — offload to a worker thread so a slow fetch doesn't block
     # the event loop and stall every other in-flight request.
-    audio = await anyio.to_thread.run_sync(
+    forvo = await anyio.to_thread.run_sync(
         partial(forvo_fn, word, language_code=language_code, http_client=http_client)
     )
-    if audio is not None:
+    result.audio_status = str(forvo.outcome)
+    if forvo.outcome is ForvoOutcome.FOUND:
         result.audio_source = "forvo"
-        result.audio_bytes = audio
+        result.audio_bytes = forvo.audio
     else:
+        # The TTS fallback is identical either way, but the REASON is not, and
+        # this is the call site the fetcher's outcome type exists to serve. A
+        # word nobody has recorded is routine; a fetcher that cannot reach Forvo
+        # silently turns every card into a TTS card and used to look the same.
+        if forvo.is_failure:
+            logger.warning(
+                "Forvo unavailable for %r (%s: %s) — falling back to TTS",
+                word,
+                forvo.outcome,
+                forvo.detail,
+            )
+        else:
+            logger.debug("No Forvo recording for %r — using TTS", word)
         audio = await tts_fn(word, voice=voice)
         if audio is not None:
             result.audio_source = "tts"

@@ -122,6 +122,13 @@ class Settings(BaseSettings):
 
     anki_model_name: str = ""
     pixabay_api_key: str = ""
+    # Forvo (vocabulary pronunciations), official API. Replaces an HTML scraper.
+    # Free plan: 500 requests/day, and its attribution / non-commercial /
+    # share-alike terms are only cleared for SINGLE-USER use — see
+    # tunatale-kbb.1.2 before putting a second account on this.
+    # Defaults empty: absent, the fetcher logs and degrades to TTS rather than
+    # failing a card-add, so tests need this pinned empty to stay off the wire.
+    forvo_api_key: str = ""
     # Which TTS adapter renders audio: "azure" (official Azure Speech, the
     # default) or "edge" (the unofficial Edge Read Aloud endpoint, retained as an
     # explicit escape hatch and retired by tunatale-i69). The switch is a human

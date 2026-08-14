@@ -2,8 +2,25 @@
 
 from __future__ import annotations
 
+import logging
+
+from app.cards.media.forvo import ForvoOutcome, ForvoResult
 from app.cards.media.pipeline import MediaResult, fetch_card_media
 from app.cards.media.pixabay import PixabaySearch
+
+
+def _forvo(audio: bytes | None) -> ForvoResult:
+    """Wrap the old bytes|None knob in the outcome type the pipeline now consumes.
+
+    Kept as a translation helper so these tests keep expressing "Forvo returned
+    audio / returned nothing" — the pipeline behaviours they cover are unchanged
+    by the API port. Tests that care about WHICH failure occurred build a
+    ForvoResult directly (see TestForvoOutcomeVisibility).
+    """
+    if audio is None:
+        return ForvoResult(ForvoOutcome.NO_PRONUNCIATION)
+    return ForvoResult(ForvoOutcome.FOUND, audio=audio)
+
 
 # ── Fakes ──────────────────────────────────────────────────────────────────────
 
@@ -25,7 +42,7 @@ def _make_fakes(
     """Return (forvo_fn, tts_fn, search_fn, download_fn, normalize_fn) configured fakes."""
 
     def fake_forvo(word, *, language_code="sl", http_client=None):
-        return forvo_returns
+        return _forvo(forvo_returns)
 
     async def fake_tts(text, *, voice=None):
         return tts_returns
@@ -50,6 +67,7 @@ class TestMediaResult:
         r = MediaResult()
         assert r.audio_bytes is None
         assert r.audio_source is None
+        assert r.audio_status is None
         assert r.image_bytes is None
         assert r.image_ext is None
         assert r.image_url is None
@@ -68,7 +86,7 @@ class TestLanguageThreading:
         captured_voice: list[str | None] = []
 
         def fake_forvo(word, *, language_code="sl", http_client=None):
-            return None  # force TTS fallback
+            return _forvo(None)  # force TTS fallback
 
         async def recording_tts(text, *, voice=None):
             captured_voice.append(voice)
@@ -91,7 +109,7 @@ class TestLanguageThreading:
 
         def recording_forvo(word, *, language_code="sl", http_client=None):
             captured_lang.append(language_code)
-            return b"forvo_mp3"
+            return _forvo(b"forvo_mp3")
 
         async def fake_tts(text, *, voice=None):
             return None
@@ -122,7 +140,7 @@ class TestLanguageThreading:
             pixabay_key="key",
             language_code="no",
             tts_voice="custom-voice",
-            _forvo_fn=lambda *a, **k: None,
+            _forvo_fn=lambda *a, **k: _forvo(None),
             _tts_fn=recording_tts,
             _search_fn=lambda q, **k: PixabaySearch(hits=[], status="no_results"),
             _download_fn=lambda h, **k: None,
@@ -989,7 +1007,7 @@ class TestFetchCardMedia:
 
         def slow_forvo(word, *, language_code="sl", http_client=None):
             time.sleep(0.2)
-            return b"audio"
+            return _forvo(b"audio")
 
         _, tts_fn, search_fn, dl_fn, norm_fn = _make_fakes()
         task = asyncio.create_task(ticker())
@@ -1007,3 +1025,90 @@ class TestFetchCardMedia:
         ticks_during = ticks
         task.cancel()
         assert ticks_during >= 3, f"event loop was blocked during the fetch (ticks={ticks_during})"
+
+
+# ── TestForvoOutcomeVisibility ────────────────────────────────────────────────
+
+
+class TestForvoOutcomeVisibility:
+    """The reason Forvo produced no audio must reach the call site.
+
+    The scraper this replaced funnelled every failure into a bare ``None``, so
+    "nobody recorded this word" and "we could not reach Forvo" produced an
+    identical TTS-only card and identical silence in the log. Both still fall
+    back to TTS — that part is deliberate and unchanged — but they must be
+    distinguishable afterwards.
+    """
+
+    async def _run(self, forvo_result, **kw):
+        _, tts_fn, search_fn, dl_fn, norm_fn = _make_fakes(tts_returns=b"tts_mp3")
+        return await fetch_card_media(
+            "voda",
+            "water",
+            pixabay_key="key",
+            _forvo_fn=lambda *a, **k: forvo_result,
+            _tts_fn=tts_fn,
+            _search_fn=search_fn,
+            _download_fn=dl_fn,
+            _normalize_fn=norm_fn,
+            **kw,
+        )
+
+    async def test_records_outcome_on_success(self):
+        result = await self._run(ForvoResult(ForvoOutcome.FOUND, audio=b"forvo_mp3"))
+        assert result.audio_status == "found"
+        assert result.audio_source == "forvo"
+
+    async def test_records_no_pronunciation_distinctly_from_failure(self):
+        result = await self._run(ForvoResult(ForvoOutcome.NO_PRONUNCIATION))
+        assert result.audio_status == "no_pronunciation"
+        assert result.audio_source == "tts"
+
+    async def test_records_request_failure_distinctly(self):
+        result = await self._run(ForvoResult(ForvoOutcome.REQUEST_FAILED, detail="HTTP 500 from Forvo"))
+        assert result.audio_status == "request_failed"
+        # Same audio outcome as above, different recorded cause — the whole point.
+        assert result.audio_source == "tts"
+
+    async def test_a_real_failure_warns(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            await self._run(ForvoResult(ForvoOutcome.REQUEST_FAILED, detail="HTTP 500 from Forvo"))
+        assert "Forvo unavailable" in caplog.text
+        assert "HTTP 500 from Forvo" in caplog.text
+
+    async def test_a_missing_recording_does_not_warn(self, caplog):
+        """Otherwise every abstract word warns and the log stops being read."""
+        with caplog.at_level(logging.WARNING):
+            await self._run(ForvoResult(ForvoOutcome.NO_PRONUNCIATION))
+        assert caplog.text == ""
+
+    async def test_missing_api_key_is_a_failure_not_a_missing_recording(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            result = await self._run(ForvoResult(ForvoOutcome.NO_API_KEY, detail="FORVO_API_KEY is not set"))
+        assert result.audio_status == "no_api_key"
+        assert "Forvo unavailable" in caplog.text
+
+    async def test_default_forvo_fn_is_the_real_fetcher(self):
+        """Guards the seam every other test in this file mocks away.
+
+        `_forvo_fn` is injected by all of them, so the DEFAULT binding is
+        exercised by nothing — and it really was left pointing at a name that no
+        longer existed while this suite was fully green. conftest pins
+        forvo_api_key empty, so the real fetcher short-circuits to NO_API_KEY
+        without touching the network, which is exactly enough to prove the
+        binding resolves and returns the outcome type the pipeline expects.
+        """
+        _, tts_fn, search_fn, dl_fn, norm_fn = _make_fakes(tts_returns=b"tts_mp3")
+
+        result = await fetch_card_media(
+            "voda",
+            "water",
+            pixabay_key="key",
+            _tts_fn=tts_fn,
+            _search_fn=search_fn,
+            _download_fn=dl_fn,
+            _normalize_fn=norm_fn,
+        )
+
+        assert result.audio_status == "no_api_key"
+        assert result.audio_source == "tts"
