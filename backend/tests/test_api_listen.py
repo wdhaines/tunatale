@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from unittest.mock import AsyncMock
 
 from httpx import ASGITransport, AsyncClient
@@ -1373,27 +1373,64 @@ class TestListenWindowUsesAnkiRollover:
     """
 
     def test_late_evening_grade_still_blocks_regrade_before_rollover(self):
-        from datetime import date
+        """Zone-independent by construction — see the timedelta anchoring below.
 
+        This test used to pin `now` and `last_review` as UTC literals (02:00 and
+        the prior 23:00) while describing a scenario defined in LOCAL time. Those
+        agree only while the host offset is under UTC+5: at +5 the 23:00 UTC
+        "late prior evening" lands at or past the 04:00 local rollover and so
+        belongs to the NEXT Anki day, at which point the fixture is asserting
+        something it does not mean and the production code correctly disagrees.
+        It failed from Asia/Tokyo eastward, and neither gate could see it because
+        both ran inside the passing band (EDT locally, UTC in CI).
+        """
         from app.api.srs import _listen_grade_class
         from app.models.srs_item import DirectionState
         from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
 
-        now = datetime(2026, 5, 8, 2, 0, tzinfo=UTC)
-        last_review = datetime(2026, 5, 7, 23, 0, tzinfo=UTC)
+        # The scenario is defined in LOCAL wall-clock time, so build it that way
+        # and let the rollover arithmetic do the UTC conversion.
+        #
+        # ⚠️ `now` must be LOCAL-aware, not UTC-aware, and that is not a style
+        # choice — the two rollover helpers disagree when handed an aware `now`
+        # in some other zone. `anki_day_bounds_utc_dt` does
+        # `now.astimezone(local_tz)` and computes in local; `anki_today` ->
+        # `local_today_rollover` promotes only NAIVE input and otherwise keeps
+        # the datetime's own tz, so a UTC-aware `now` gets UTC-day arithmetic.
+        # Feeding one UTC-aware `now` to both is what made the old fixture
+        # zone-dependent: it took the day from UTC and the bounds from local, and
+        # those stop agreeing at UTC+5. Deriving local_tz with the SAME
+        # expression the production module uses means the test cannot disagree
+        # with it about the zone.
+        local_tz = datetime.now().astimezone().tzinfo
 
-        today = anki_today(now)
-        today_start, today_end = anki_day_bounds_utc_dt(today, now)
-        end_of_day_utc = datetime.combine(date(2026, 5, 8), time.max).isoformat()
+        # 02:00 local: after midnight, before the 04:00 rollover — the window
+        # whose whole point is that Anki still calls it yesterday.
+        now = datetime(2026, 5, 9, 2, 0, tzinfo=local_tz)
+        # 23:00 local the prior evening — same Anki day, and the grade that must
+        # still block a regrade.
+        last_review = now - timedelta(hours=3)
+
+        day = anki_today(now)
+        day_start, day_end = anki_day_bounds_utc_dt(day, now)
+
+        # Preconditions, asserted rather than assumed. Without these a future
+        # change to the rollover arithmetic could quietly turn this into a
+        # tautology about some other day and it would still pass.
+        assert day == datetime(2026, 5, 8).date(), "02:00 local belongs to the PREVIOUS Anki day"
+        assert day_start <= last_review < day_end, "last_review must be the SAME Anki day as now"
+        assert day_start <= now.astimezone(UTC) < day_end, "now must be inside the Anki day under test"
+
+        end_of_day_utc = datetime.combine(day, time.max).isoformat()
 
         rec = DirectionState(
             direction=Direction.RECOGNITION,
             state=SRSState.REVIEW,
-            due_at=today_start,
+            due_at=day_start,
             reps=5,
             last_review=last_review,
         )
-        assert _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) is None, (
+        assert _listen_grade_class(rec, day_start, day_end, end_of_day_utc=end_of_day_utc) is None, (
             "a card graded late the prior evening is still 'today' by Anki's "
             "4 AM rollover and must not be regraded before rollover"
         )
