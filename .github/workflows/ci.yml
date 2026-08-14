@@ -1,7 +1,21 @@
 name: CI
 
+# `push` is narrowed to main ON PURPOSE. Unrestricted, it fired alongside
+# `pull_request` for every branch push, so any branch with an open PR got TWO
+# complete identical runs of all six jobs — doubling CI minutes on every push.
+#
+# It was not only waste. On PR #19 the redundant run's `backend` job became a
+# zombie (43 minutes without finishing step 1, while the identical job in the
+# sibling run passed in 1m57s). `gh pr checks` aggregates across runs, so the PR
+# showed a permanent `pending` that read as a hanging test suite rather than a
+# dead runner on a run that never needed to exist. One run per push makes that
+# unambiguous.
+#
+# Consequence, accepted deliberately: a branch pushed WITHOUT an open PR now gets
+# no CI. Confirmed with the user 2026-08-14 that nothing relies on that.
 on:
   push:
+    branches: [main]
   pull_request:
 
 # Pinned workflow-wide, to the SAME value test.sh pins, so a future job cannot
