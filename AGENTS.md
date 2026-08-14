@@ -139,6 +139,44 @@ When completing a phase or fix, the definition of done includes pasting the veri
 
 This convention exists because "Done" with no output was the gap in both Phase 3 and Phase 5 — the fix was correct, but the acceptance evidence was missing.
 
+## Delegation and cost — BP is the default executor
+
+**Orchestrator tokens are the scarce resource; BP's are free.** Delegating
+mechanical work to Big Pickle (the free Sonnet-class executor, via the
+`bp-delegate` skill) is the DEFAULT, not an optimization to remember. Doing a
+multi-file mechanical edit inline is the exception, and it should have a reason
+you could state.
+
+**Delegate:** multi-file mechanical edits, test additions against a pinned
+oracle, doc sweeps, ledger burn-downs, renames/refactors with a mechanical rule
+— anything whose hard part is typing rather than deciding.
+
+**Do NOT delegate, regardless of cost:**
+- Anything touching Anki / SRS / sync semantics (`.claude/rules/anki-safety-core.md`).
+- Oracle **design** — deciding what would falsify a claim. Executing a supplied
+  oracle is fine; choosing it is not.
+- The final `./test.sh` gate, the audit of BP's diff, and the merge decision.
+  Those are what the orchestrator is *for*.
+
+**The economics that actually govern this:** the written brief is the expensive
+artifact and the executor is swappable — when BP's quota is out, the same brief
+runs on haiku or sonnet. So the question is never "is BP available", it is "is
+this work brief-able".
+
+**The threshold, stated so it is not re-litigated every session:** if writing
+the brief would cost more than doing the work, do the work. A three-line fix you
+already have full context on is not worth a brief. A twenty-file sweep is — and
+*especially* then, because that is the shape that burns orchestrator context for
+no judgement.
+
+**Do not delegate work that is already finished.** The failure mode is not
+stupidity, it is timing: a "use BP" instruction arriving mid-task tempts you to
+dispatch something you just completed. Check `git status` before briefing.
+
+**Batch, because delegation is not free either.** Every dispatch costs a brief
+plus an audit of the returned diff. Three related tasks in one brief cost one
+audit; three separate dispatches cost three.
+
 ## Committing, Pushing, and Merging
 
 **Committing is standing-authorized; merging into `main` is the checkpoint the
