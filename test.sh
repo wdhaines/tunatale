@@ -22,6 +22,24 @@ if [ -t 1 ]; then
   export FORCE_COLOR=1 PY_COLORS=1
 fi
 
+# Pin the timezone, to the SAME value CI pins (.github/workflows/ci.yml).
+#
+# Unpinned, this gate ran at whatever the developer's host offset was (-0400
+# here) and CI ran at UTC. Both sit inside the band where everything passes, so
+# NEITHER gate could see time-zone fragility — and there was some: a /listen
+# rollover fixture mixed UTC literals with locally-derived Anki-day bounds and
+# failed from UTC+5 eastward (tunatale-3oz). A gate that structurally cannot see
+# a class of bug is worse than one that occasionally trips on it.
+#
+# UTC is the pinned value because it is what a deployment box most likely runs
+# and what CI already used, so pinning changes the local gate rather than the
+# remote one. This makes both gates REPRODUCIBLE; it does not make them
+# tolerant. Tolerance is proved by the hostile-offset job in CI, which runs the
+# backend suite at UTC+14 — do not delete that job on the grounds that this pin
+# makes it redundant. It is the opposite: the pin is what makes everything else
+# blind, and that job is the eye.
+export TZ=UTC
+
 backend_log="$(mktemp)"
 frontend_log="$(mktemp)"
 # Warn LAST (an EXIT trap outlives both the pass and fail paths, so the notice

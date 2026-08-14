@@ -4,6 +4,13 @@ on:
   push:
   pull_request:
 
+# Pinned workflow-wide, to the SAME value test.sh pins, so a future job cannot
+# silently reintroduce the divergence by forgetting it. See test.sh for why;
+# `backend-hostile-tz` deliberately overrides this and is the only job that
+# should. Reproducibility comes from the pin, tolerance from that job.
+env:
+  TZ: UTC
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -57,6 +64,53 @@ jobs:
 
       - name: Test
         run: uv run pytest -n auto
+
+  # Runs the backend suite at a deliberately hostile UTC offset, because pinning
+  # TZ everywhere else makes both gates blind to time-zone fragility rather than
+  # free of it.
+  #
+  # This is not hypothetical. A /listen rollover fixture mixed UTC literals with
+  # locally-derived Anki-day bounds and failed from UTC+5 eastward; local (-0400)
+  # and CI (UTC) both sat inside the passing band, so it survived every gate
+  # until someone went looking (tunatale-3oz).
+  #
+  # UTC+14 is the maximal probe — Kiritimati is the furthest-forward zone that
+  # exists, so a suite green here is green at every offset. It is a separate job
+  # rather than a matrix dimension on `backend` so it runs in parallel and adds
+  # no wall-clock time, and --no-cov because `backend` already owns the coverage
+  # gate; this job exists to answer one question only.
+  #
+  # ⚠️ If this goes red while `backend` is green, the bug is a test that encodes
+  # a local wall-clock assumption as a UTC literal — look for a fixture doing
+  # date arithmetic across ANKI_ROLLOVER_HOUR before suspecting product code.
+  backend-hostile-tz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9 alias exists)
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment
+
+      - name: Test at UTC+14
+        run: uv run pytest -n auto --no-cov
+        env:
+          TZ: Pacific/Kiritimati
 
   frontend:
     runs-on: ubuntu-latest
