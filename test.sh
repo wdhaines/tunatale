@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
-# Runs the full lint + test gate. The backend group (ruff + pytest) and the
-# frontend group (fmt + lint + svelte-check + vitest + e2e) are independent —
-# e2e boots its own backend on port 8001 with a dedicated tunatale-test.db, so
-# nothing is shared with backend pytest — and run concurrently. This mirrors
-# CI's two-job split. Output is buffered per group and printed when both finish
-# (live progress would interleave). Note: pytest -n auto already saturates the
-# CPU, so the two groups contend; the win is the overlap, not free parallelism.
+# Runs the full lint + test gate. Three independent groups run concurrently:
+# backend (ruff + checkers + pytest), frontend (fmt + lint + svelte-check +
+# vitest + e2e), and peer-sync (round-trips against a throwaway anki.syncserver).
+# They share nothing — e2e boots its own backends on :8001/:8002 with dedicated
+# test DBs, and peer-sync's server binds an ephemeral port. Output is buffered
+# per group and printed when all finish (live progress would interleave). Note:
+# pytest -n auto already saturates the CPU, so the groups contend; the win is the
+# overlap, not free parallelism.
 #
-# No `set -e` at the top level: we must collect BOTH exit codes before failing,
+# ⚠️ THIS GATE IS A SUBSET OF CI, BY CONSTRUCTION — never a superset.
+# See `.claude/rules/testing.md` § "What a green gate means". Everything here
+# also runs in CI; CI additionally runs the two hostile-timezone jobs. If you add
+# a check here, add it to .github/workflows/ci.yml in the same commit, or you
+# have quietly recreated the divergence tunatale-as5 existed to remove.
+#
+# No `set -e` at the top level: we must collect ALL exit codes before failing,
 # so each group runs in its own `set -e` subshell and we aggregate afterwards.
 set -uo pipefail
 
@@ -42,13 +49,14 @@ export TZ=UTC
 
 backend_log="$(mktemp)"
 frontend_log="$(mktemp)"
+peer_sync_log="$(mktemp)"
 # Warn LAST (an EXIT trap outlives both the pass and fail paths, so the notice
 # survives even a `| tail -1`) when stdout is a pipe: the caller's `$?` is then
 # the pager's status, not this script's, and a red run reads as green. A file
 # redirect is not a pipe, so `> log 2>&1` stays quiet — that is the good form.
 # Claude Code refuses piped invocations outright (.claude/hooks/gate_pipe_guard.py);
 # this covers a human shell, which no hook sees.
-trap 'rm -f "$backend_log" "$frontend_log"
+trap 'rm -f "$backend_log" "$frontend_log" "$peer_sync_log"
       if [ -p /dev/stdout ]; then
         printf "\n!! stdout is a PIPE: your \$? is the LAST command in that pipeline, NOT this gate.\n"
         printf "!! Read the verdict above, or use: ./test.sh > /tmp/gate.txt 2>&1; echo EXIT=\$?\n"
@@ -131,22 +139,46 @@ backend_pid=$!
 ) >"$frontend_log" 2>&1 &
 frontend_pid=$!
 
+# Peer-sync was tier 2 and manual (`.claude/rules/testing.md`), which meant CI
+# ran it on every push and the pre-commit gate never did — so a sync round-trip
+# regression was discoverable only AFTER pushing. Promoted to tier 1 on
+# 2026-08-14 (tunatale-as5) to close that direction of the gap.
+#
+# Its own group, not a step in the backend group: it spawns an isolated
+# `uv run --with anki` subprocess and an anki.syncserver, so it is mostly waiting
+# on IO and overlaps cleanly with the CPU-bound pytest run. --no-cov because the
+# backend group owns the coverage gate; this group answers one question only.
+#
+# Under --run-peer-sync an unstartable server FAILS rather than skips, on purpose
+# — a silently-skipped round-trip gate is indistinguishable from a passing one.
+(
+  set -e
+  cd "$ROOT/backend"
+
+  echo "=== Peer-sync round-trip ==="
+  uv run pytest tests/test_anki_peer_sync_selfhost.py --run-peer-sync --no-cov
+) >"$peer_sync_log" 2>&1 &
+peer_sync_pid=$!
+
 wait "$backend_pid"; backend_rc=$?
 wait "$frontend_pid"; frontend_rc=$?
+wait "$peer_sync_pid"; peer_sync_rc=$?
 
 {
   echo "===================== BACKEND (exit $backend_rc) ====================="
   cat "$backend_log"
   echo "==================== FRONTEND (exit $frontend_rc) ===================="
   cat "$frontend_log"
+  echo "=================== PEER-SYNC (exit $peer_sync_rc) ==================="
+  cat "$peer_sync_log"
 } | tee "$full_log"
 
-if [ "$backend_rc" -ne 0 ] || [ "$frontend_rc" -ne 0 ]; then
+if [ "$backend_rc" -ne 0 ] || [ "$frontend_rc" -ne 0 ] || [ "$peer_sync_rc" -ne 0 ]; then
   # A stale pass sentinel must never outlive a failing run: the commit gate
   # compares fingerprints, and a flaky green followed by a red on the SAME tree
   # would otherwise still let a commit through unchallenged.
   rm -f "$ROOT/.git/tt-test-pass"
-  echo "=== FAILED (backend=$backend_rc frontend=$frontend_rc) ==="
+  echo "=== FAILED (backend=$backend_rc frontend=$frontend_rc peer_sync=$peer_sync_rc) ==="
   echo "Full log (never truncated): $full_log"
   exit 1
 fi

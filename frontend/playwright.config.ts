@@ -97,10 +97,29 @@ export default defineConfig({
 	// workers: 1 — all specs share one backend DB (tunatale-test.db), so
 	// parallel runs cause seed-data bleeding between specs.
 	workers: 1,
-	retries: process.env.CI ? 2 : 0,
+	// retries: 0 EVERYWHERE, deliberately. This was `process.env.CI ? 2 : 0`,
+	// which had never once executed its CI branch — Playwright did not run in CI
+	// at all until the `e2e` job was added (tunatale-as5), so the retry policy was
+	// dead config that would have silently switched on the day E2E went remote.
+	//
+	// Turning it on was the wrong move at exactly the wrong moment: this suite has
+	// a KNOWN open flake (`card-image.spec.ts` thumbnail assertion, tunatale-vnf.3)
+	// which may not be a flake at all — the upload round-trip may be genuinely
+	// racy, in which case a user sees a missing thumbnail after upload. Two retries
+	// would have converted that signal into a silent green on its first CI run.
+	//
+	// The cost is accepted and named: CI can go intermittently red on vnf.3 until
+	// it is diagnosed. That is the correct failure mode. A retry does not make the
+	// race go away, it makes it someone else's problem later.
+	retries: 0,
 	use: {
 		baseURL: 'http://localhost:5174',
-		trace: 'on-first-retry'
+		// Was 'on-first-retry', which with retries:0 would capture NOTHING — the
+		// two settings are coupled and changing one without the other silently
+		// disables tracing. A CI failure is not locally reproducible by definition
+		// (different machine, timing, shared runner), so the trace is the only
+		// artifact that makes a remote red debuggable; the `e2e` job uploads it.
+		trace: 'retain-on-failure'
 	},
 	projects: [
 		{

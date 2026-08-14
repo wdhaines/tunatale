@@ -35,11 +35,67 @@ Known blind spots (documented in the script): `patch.object(obj, "name")` and 2-
 
 **When the checker fails on your new test**: the fix is to test *through* the seam. There is nowhere to record it as debt, deliberately — the allowlist is a claim that the target IS a process/network boundary (an architectural statement needing user approval), not a place to park a mock. The canonical pattern is `TestSociableSync` (`test_anki_sync_orchestrator.py`): the real `peer_sync` → `main` → `run_full_sync` pipeline runs against a real on-disk `SyntheticCollection` at `settings.tt_collection_path`, with ONLY `_run_driver` replaced by a `fake_driver` fixture that returns canned response dicts and records an op log. Assertions are **outcomes** (rows in the collection file, op-log leg sequence, file bytes), not mock-call shapes.
 
+## What a green gate means
+
+**CI is authoritative. `./test.sh` is a strict SUBSET of it, by construction.**
+(Decided 2026-08-14, `tunatale-as5`.) In one line:
+
+> Green locally is necessary but not sufficient; green in CI is the claim that counts.
+
+Before this, neither gate contained the other — Playwright was local-only,
+peer-sync was CI-only — so "green" had two meanings and a change could satisfy
+either while breaking the other. The subset direction is what makes the sentence
+above true rather than aspirational, and it is maintained by hand:
+
+- **Adding a check to `./test.sh` obliges you to add it to `.github/workflows/ci.yml` in the same commit.** The reverse is not required.
+- **CI may hold checks the local gate does not.** That is the allowed direction of asymmetry, and today it holds exactly one class of them.
+
+### The asymmetries, all of them, deliberately
+
+| CI-only | why it is not local |
+|---|---|
+| `backend-hostile-tz` (UTC+14, UTC−12) | a second and third full suite run would triple the local gate for an axis that changes only when a fixture does date arithmetic |
+| `backend-hostile-hour` (computed 04:xx zone) | same; and its whole trick is varying with wall-clock time, which a pre-commit gate cannot meaningfully sample |
+
+**Local-only: nothing.** Keep it that way.
+
+### The dependency-group split is deliberate, not an oversight
+
+Local installs all groups; CI runs `--no-group slovene --no-group norwegian
+--no-group alignment`. So `build_slicers` wires a real Norwegian syllable slicer
+locally (`Syllable slicing enabled for: no` in every local run) and an empty dict
+in CI, where those paths are exercised only by `find_spec`-monkeypatched unit
+tests.
+
+**This is a chosen trade, not a gap nobody noticed** (2026-08-14): installing the
+lemmatizer/alignment groups in CI means a ~1.2 GB model download on six jobs per
+push, and the paths in question are covered locally on every commit. **Owner: the
+local gate.** The consequence to accept is that a break confined to real-slicer
+behaviour surfaces on a developer's machine, never on a push — so when touching
+`build_slicers` or a syllabifier, the local run is the gate that matters and a
+green CI proves nothing about it.
+
+⚠️ Two smaller divergences that are NOT bugs, so nobody re-files them:
+- **Coverage measures different sets.** Local folds `--run-oracle` into the covered pytest run; CI's `backend` job omits it and a separate `oracle-parity` job runs those tests `--no-cov`. Both reach 100%, so CI's is the *stricter* claim (100% without oracle tests contributing). Fine under "CI authoritative".
+- **ffmpeg** is installed on `backend`, the hostile jobs and `e2e`, but not on `oracle-parity` / `peer-sync` — they never touch the audio pipeline.
+
 ## Test Tiers
 
-1. **`./test.sh`** (pre-commit, mandatory) — lint + format + mock-boundary check + full pytest incl. `--run-oracle` + frontend + Playwright e2e.
-2. **`cd backend && uv run pytest tests/test_anki_peer_sync_selfhost.py --run-peer-sync --no-cov`** — real round-trips against an **auto-started** throwaway `anki.syncserver` (session fixture in `tests/_helpers/sync_server.py`; no manual server; under the flag an unstartable server FAILS, never skips). Run when touching sync/orchestrator/driver/media code.
-3. **CI** (every push/PR) — four parallel jobs: backend (unit + coverage + boundary check), frontend, oracle-parity, peer-sync. An oracle or peer-sync failure is a parity/round-trip regression, not a unit bug — debug it as such.
+1. **`./test.sh`** (pre-commit, mandatory) — three parallel groups: backend (lint + format + checkers + full pytest incl. `--run-oracle`, with coverage), frontend (fmt + lint + svelte-check + vitest + Playwright e2e), and peer-sync.
+2. **CI** (every push to `main` / every PR) — eight parallel job instances: `backend` (unit + coverage + boundary check), `backend-hostile-tz` (×2), `backend-hostile-hour`, `frontend`, `e2e`, `oracle-parity`, `peer-sync`. An oracle or peer-sync failure is a parity/round-trip regression, not a unit bug — debug it as such. A hostile-tz/hour failure is a fixture doing date arithmetic across `ANKI_ROLLOVER_HOUR` — suspect the test before the product code.
+
+Peer-sync used to be tier 2 and manual. It is tier 1 as of 2026-08-14: it runs in
+every `./test.sh`, against an **auto-started** throwaway `anki.syncserver`
+(session fixture in `tests/_helpers/sync_server.py`; no manual server; under
+`--run-peer-sync` an unstartable server FAILS, never skips). It was promoted
+because CI ran it on every push while the pre-commit gate never did, which made a
+sync round-trip regression discoverable only *after* pushing.
+
+**Playwright retries are 0, everywhere, on purpose** — see the comment block in
+`frontend/playwright.config.ts`. A spec that passes only on retry is a flake you
+have chosen not to see, and this suite has a known open one (`tunatale-vnf.3`)
+that may be a real upload race. CI uploads the HTML report and traces on failure;
+read those before calling a red run flaky.
 
 A sociable/outcome test earns its keep by the **sabotage drill**: disable the phase it guards (e.g. comment out `sync_create_new` in `run_full_sync`), watch it go red, revert, watch it go green. A net that can't be proven to catch its target bug is decoration — see the Phase 7 commit messages (2026-06-10) for the recorded drills.
 
