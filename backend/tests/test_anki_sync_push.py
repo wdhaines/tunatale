@@ -18,7 +18,7 @@ from app.plugins.anki_sync.sync import (
 from app.srs.anki_mirror.rollover import anki_today
 from app.srs.database import SRSDatabase
 from tests._helpers.anki_sync_push import FakeReader, FakeWriter  # noqa: F401
-from tests.conftest import make_card_record, make_note_record
+from tests.conftest import anki_day_anchor, make_card_record, make_note_record
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
@@ -3631,8 +3631,14 @@ class TestPerGradeRevlogPush:
         guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
         coll_id = db.get_collocation_id_by_guid(guid)
 
-        now_ms = int(datetime.now(UTC).timestamp() * 1000)
-        earlier_ms = now_ms - 3_600_000  # 1 hour earlier
+        # Anchor both rows INSIDE today's Anki day ([04:00 local, +1d)) rather
+        # than at wall-clock now: in the [04:00, 05:00) local band `now - 1h`
+        # precedes the 4 AM rollover, reads as YESTERDAY's Anki day, and the
+        # count drops to 1. The window start is inclusive on both sides, so
+        # day_start and day_start+10min both count at every wall-clock hour.
+        day_start = anki_day_anchor(anki_today())
+        earlier_ms = int(day_start.timestamp() * 1000)
+        now_ms = int((day_start + timedelta(minutes=10)).timestamp() * 1000)
 
         # Two interday review rows (both count for review_today on both sides)
         for ms, bc in [(earlier_ms, 3), (now_ms, 3)]:
@@ -3677,8 +3683,10 @@ class TestPerGradeRevlogPush:
         sync = AnkiSync(db=db, _reader=FakeReader(), _writer=writer, _anki_col_crt=col_crt)
         sync.sync_push()
 
-        # TT-side count
-        today = date.today()
+        # TT-side count — anki_today() names the Anki day, matching the
+        # _local_today_4am() anchor below (both normalize to the active 4 AM
+        # rollover, so the calendar day yields the same window either way).
+        today = anki_today()
         tt_count = db.count_reviews_completed_today(today)
 
         # Anki-side count (recompute from revlog)
