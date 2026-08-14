@@ -122,6 +122,13 @@ class Settings(BaseSettings):
 
     anki_model_name: str = ""
     pixabay_api_key: str = ""
+    # Which TTS adapter renders audio: "azure" (official Azure Speech, the
+    # default) or "edge" (the unofficial Edge Read Aloud endpoint, retained as an
+    # explicit escape hatch and retired by tunatale-i69). The switch is a human
+    # decision — there is NO automatic runtime fallback between them, because a
+    # silent mid-render swap would mix two providers' renditions of the "same"
+    # voice into one curriculum. See app/audio/tts_factory.py.
+    tts_provider: str = "azure"
     # Azure Speech (TTS). Replaces the unofficial Edge Read Aloud endpoint that
     # `edge-tts` talks to — same underlying neural voices, but an official API with
     # terms and a support channel. F0 (free tier) allows 500K chars/month and

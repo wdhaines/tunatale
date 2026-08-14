@@ -240,6 +240,19 @@ class TestGetLanguage:
         for key in ("narrator", "female-1", "female-2", "male-1", "male-2"):
             assert key in lang.tts_voice_map, f"missing '{key}' in Norwegian voice map"
 
+    def test_norwegian_female_roles_are_distinct_voices(self):
+        """female-1 and female-2 must not collapse to one voice.
+
+        They did until the Azure port: both mapped to Pernille, so in 5 of the 6
+        stored Norwegian lessons two female characters conversed in a single
+        voice — across 462 phrases on female-2 against 90 on female-1. Azure
+        serves nb-NO-IselinNeural and edge-tts does not, so this only became
+        fixable once the provider moved. Slovene has no equivalent: Petra + Rok
+        is that catalogue's entirety.
+        """
+        voices = get_language("no").tts_voice_map
+        assert voices["female-1"] != voices["female-2"]
+
     def test_norwegian_has_legacy_aliases(self):
         lang = get_language("no")
         assert "female" in lang.tts_voice_map

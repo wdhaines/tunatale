@@ -215,7 +215,7 @@ class LessonRenderer:
             The first requester of a given (text, voice, rate) key synthesizes it
             into this phrase's natural ``s{section_idx}_p{i}.mp3`` file and records
             the task; later requesters await that same task and reuse the file.
-            EdgeTTSService._semaphore still caps global TTS concurrency.
+            the TTS adapter's _semaphore still caps global TTS concurrency.
             """
             key = (text, voice_id, rate)
             async with memo_lock:
@@ -317,7 +317,7 @@ class LessonRenderer:
             title_audio = await asyncio.to_thread(_read_audio, title_file)
 
             # Render all sections concurrently — phrases within each section are
-            # also parallelised; EdgeTTSService._semaphore caps total concurrency.
+            # also parallelised; the TTS adapter's _semaphore caps total concurrency.
             # A render-scoped synthesis cache reuses identical utterances across
             # sections (e.g. the shared L2 line + English gloss in the translated
             # and en_translated sections) instead of re-running TTS for each.
