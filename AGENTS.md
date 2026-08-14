@@ -139,6 +139,45 @@ When completing a phase or fix, the definition of done includes pasting the veri
 
 This convention exists because "Done" with no output was the gap in both Phase 3 and Phase 5 — the fix was correct, but the acceptance evidence was missing.
 
+## Committing, Pushing, and Merging
+
+**Committing is standing-authorized; merging into `main` is the checkpoint the
+user babysits** (2026-08-13). Commit and push freely under the rules below — the
+`./test.sh` gate, not a permission prompt, is what stands between a change and
+history.
+
+**Route by weight, and the routing is a judgement call, not a checklist:**
+
+- **Small and self-contained** — docs, a settings field, a one-module fix, a test
+  addition — goes straight to `main` and is pushed without asking.
+- **Substantial** — anything touching Anki/SRS/sync, anything spanning several
+  modules, anything whose blast radius you would have to think about — goes on a
+  branch and opens a PR. **Stop at the open PR.** The user approves the merge.
+- **When it feels risky for any reason you can name, ask** — even if it is small
+  by the rule above. Latitude to route was granted explicitly; latitude to skip
+  the gate was not.
+
+**Why the checkpoint is the merge and not the commit:** a local commit is cheap
+and revertible, and gating it bought a round-trip per change without buying
+safety — the same reasoning `f884e52` applied to beads sync. A merge into `main`
+on a **public** repo is the irreversible, world-visible step, so that is where
+the human belongs.
+
+⚠️ **This only works if branches exist.** From 2026-08-12 to 2026-08-13 every
+commit landed directly on `main` with no branch and no PR, which silently
+emptied this checkpoint of meaning — a merge gate cannot fire when nothing
+merges. If you notice a run of direct-to-`main` commits on work that was
+supposed to be branched, that is the failure mode, not a shortcut that worked.
+
+**Weak-model executors (BP et al.) committing their own work is the
+orchestrator's call**, case by case. `.beads-tasks/DISPATCH-PREAMBLE.md` still
+says leave it uncommitted, and that remains the safe default: auditing a
+working-tree diff is easier than auditing history you are forbidden to amend.
+Let an executor commit only on its own branch, only when the work is mechanical
+enough that the audit is a formality — and never for Anki/SRS/sync changes.
+
+Unchanged by any of this: `./test.sh` green on the exact tree before every
+commit, never amend an audited commit, and beads sync stays standing-authorized.
 
 <!-- BEGIN BEADS INTEGRATION (customized 2026-08-09 — trimmed from bd's stock
      template; a future `bd setup opencode` re-run will NOT match this and
@@ -167,7 +206,9 @@ alternative is a backlog that lives on one disk. An earlier version of this line
 lumped sync in with code commits, so every session stopped to ask permission for
 what is really just the tail of a bd edit.
 
-Committing and pushing **this** repo's code still needs authorization.
+Committing and pushing **this** repo's code is also standing-authorized as of
+2026-08-13 — the gate moved to merges into `main`. See "Committing, Pushing, and
+Merging" above; do not re-derive the policy from this line.
 Full reference: `bd --help` / `bd prime`.
 
 **Two confirmed bd bugs, hands-on-verified, both filed upstream — do not
