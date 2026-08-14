@@ -74,18 +74,27 @@ jobs:
   # and CI (UTC) both sat inside the passing band, so it survived every gate
   # until someone went looking (tunatale-3oz).
   #
-  # UTC+14 is the maximal probe — Kiritimati is the furthest-forward zone that
-  # exists, so a suite green here is green at every offset. It is a separate job
-  # rather than a matrix dimension on `backend` so it runs in parallel and adds
-  # no wall-clock time, and --no-cov because `backend` already owns the coverage
-  # gate; this job exists to answer one question only.
+  # UTC+14 and UTC-12 are the two extreme zones that exist, and the matrix is
+  # prophylactic symmetric coverage of both — NOT two probes for one failure
+  # mode. The extremes did not catch the bug that forced this matrix: a test
+  # seeding revlog timestamps at `now`/`now-1h` straddles the 4 AM Anki-day
+  # rollover inside [04:00, 05:00) local, a wall-clock flake that hits every
+  # timezone for one hour a day. UTC+14 alone missed it only because the run
+  # happened to land outside that band; UTC-12 fails the SAME clock hour
+  # (tunatale-vnf.6). So the offsets are not the probe — the band is. If this
+  # goes red while `backend` is green, the bug is a test encoding a local
+  # wall-clock assumption — look for a fixture doing date arithmetic across
+  # ANKI_ROLLOVER_HOUR before suspecting product code.
   #
-  # ⚠️ If this goes red while `backend` is green, the bug is a test that encodes
-  # a local wall-clock assumption as a UTC literal — look for a fixture doing
-  # date arithmetic across ANKI_ROLLOVER_HOUR before suspecting product code.
+  # Separate job (not a matrix dimension on `backend`) so it runs in parallel
+  # and adds no wall-clock time; --no-cov because `backend` already owns the
+  # coverage gate; this job exists to answer one question only.
   backend-hostile-tz:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      matrix:
+        tz: [Pacific/Kiritimati, Etc/GMT+12]
     defaults:
       run:
         working-directory: backend
@@ -107,10 +116,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment
 
-      - name: Test at UTC+14
+      - name: Test at ${{ matrix.tz }}
         run: uv run pytest -n auto --no-cov
         env:
-          TZ: Pacific/Kiritimati
+          TZ: ${{ matrix.tz }}
 
   frontend:
     runs-on: ubuntu-latest
