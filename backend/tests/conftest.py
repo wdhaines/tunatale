@@ -115,6 +115,13 @@ def _settings_overrides(monkeypatch, tmp_path):
     # empty so generation no-ops by default; tests that exercise it set the key
     # and inject the fetch/query functions (see test_vocab_media_endpoints.py).
     monkeypatch.setattr(settings, "pixabay_api_key", "")
+    # Same trap as pixabay above, one provider along: a developer's real .env
+    # carries a live AZURE_SPEECH_KEY, and tts_provider defaults to "azure". Any
+    # test that reached a real synthesize() would bill the F0 quota and hit the
+    # network. Pinned empty so such a call raises loudly ("AZURE_SPEECH_KEY is
+    # not set") instead of silently succeeding against the live endpoint. Tests
+    # that exercise the adapter pass an explicit key (see test_azure_tts.py).
+    monkeypatch.setattr(settings, "azure_speech_key", "")
     # TT's canonical media dir (served by the frontend; written by sync media gen
     # and the add-time vocab_media path). Pin to tmp so tests never write the real
     # backend/media. Hardcoded module constants, so patch every module's view:

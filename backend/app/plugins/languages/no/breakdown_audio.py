@@ -10,7 +10,7 @@ splits and pronunciation can be confirmed by ear:
     uv run python -m app.plugins.languages.no.breakdown_preview <word> [<word> ...] [--out DIR]
 
 This module is the thin audio/CLI glue: it wires the real audio pipeline
-(``EdgeTTSService`` + ``NaturalPauseCalculator`` + ``LessonRenderer``) to the
+(the configured ``TTSService`` + ``NaturalPauseCalculator`` + ``LessonRenderer``) to the
 pure, fully-tested helpers in ``norwegian_breakdown`` / ``breakdown_preview``.
 Because every line here is I/O against the TTS process boundary and the
 filesystem, the module is coverage-omitted (see ``pyproject.toml``), following
@@ -25,10 +25,10 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-from app.audio.edge_tts import EdgeTTSService
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.renderer import LessonRenderer
 from app.audio.transcode import CODEC_EXT
+from app.audio.tts_factory import get_tts_service
 from app.config import settings
 from app.languages import get_preprocessor, get_tts_voice
 from app.models.lesson import Phrase, Section, SectionType
@@ -74,7 +74,7 @@ def build_preview_sections(word: str, voice_id: str) -> tuple[Section, Section]:
 
 def _build_renderer() -> LessonRenderer:
     return LessonRenderer(
-        tts=EdgeTTSService(),
+        tts=get_tts_service(),
         preprocessors={_LANGUAGE_CODE: get_preprocessor(_LANGUAGE_CODE)},
         pause_calculator=NaturalPauseCalculator(),
         delivery_codec=settings.audio_delivery_codec,

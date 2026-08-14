@@ -29,7 +29,13 @@ register(
             tts_voice_map={
                 "narrator": NARRATOR_VOICE,
                 "female-1": "nb-NO-PernilleNeural",
-                "female-2": "nb-NO-PernilleNeural",
+                # Iselin is served by Azure but NOT by edge-tts, so this slot
+                # could only stop duplicating Pernille once the provider moved.
+                # It carries the bulk of female dialogue (462 phrases vs 90 on
+                # female-1 across the stored lessons) — leaving it collapsed put
+                # two characters in one voice. Affects future renders only;
+                # existing audio on disk is unchanged.
+                "female-2": "nb-NO-IselinNeural",
                 "male-1": "nb-NO-FinnNeural",
                 "male-2": "nb-NO-FinnNeural",
                 "female": "nb-NO-PernilleNeural",

@@ -15,10 +15,10 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from app.api.health import STATUS_OK, check_health  # noqa: E402
 from app.api.models import HealthResponse, LanguagesResponse  # noqa: E402
-from app.audio.edge_tts import EdgeTTSService  # noqa: E402
 from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
 from app.audio.renderer import LessonRenderer  # noqa: E402
 from app.audio.slicer import build_slicers  # noqa: E402
+from app.audio.tts_factory import get_tts_service  # noqa: E402
 from app.config import prod_profile_problems, settings  # noqa: E402
 from app.generation.pipeline import LessonPipeline  # noqa: E402
 from app.generation.planner import CurriculumPlanner  # noqa: E402
@@ -180,7 +180,7 @@ async def lifespan(app: FastAPI):
     app.state.curriculum_planner = CurriculumPlanner(llm)
     app.state.story_generator = StoryGenerator(llm)
     preprocessors = {code: get_preprocessor(code) for code in db_map}
-    tts = EdgeTTSService()
+    tts = get_tts_service()
     # Empty unless ``alignment_installed()`` says the forced-alignment packages
     # are present, in which case breakdown chunks are cut from one whole-word
     # render instead of synthesized fragment-by-fragment. Building a slicer does
