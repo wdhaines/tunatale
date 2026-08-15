@@ -28,14 +28,41 @@ no test between tiers, and this rule sets no policy about which gate runs what.
 *cheapest tier that can actually catch the bug*, which is usually not E2E. "A bug
 happened here once" is never by itself a reason for a spec to be in Playwright.
 
-## The discriminator: what makes something a seam
+## Admission to E2E: two doors, and only one of them uses the discriminator
+
+A spec earns a Playwright slot by one of two routes, and it matters which:
+
+1. **It is a core user journey** — a path a user actually walks, end to end,
+   across the real stack. `smoke`, `review-flow`, `planner-chat` live here.
+   Their assertions are app-computed (visibility, `textContent`, URL) and that
+   is **fine**: the claim is "this whole path works joined up", which no tier
+   below can make. A journey is admitted on the path it walks, not on what it
+   reads.
+2. **Everything else in E2E must be a seam**, and clears the bar below.
+
+⚠️ **Do not apply the discriminator to a core journey and conclude it should
+move down.** That reading empties the tier of the journeys it exists for, and it
+is the first thing a careless reader does with the question below. (Corrected
+2026-08-15, one day after this rule shipped: the first audit against it —
+`tunatale-kct` — hit this immediately, because as originally worded the question
+was stated as an admission test for the whole tier rather than for the seam
+door.)
+
+## The discriminator, for everything that is not a journey
 
 A seam is a place where **two systems must agree and neither can prove the join
-alone**. Operationally that reduces to one question, checkable against a PR
-without opening an argument:
+alone**. Operationally, one question, checkable against a PR without opening an
+argument:
 
-> **Could you assert this without asking the browser to compute a number?**
-> If yes, it is not E2E.
+> **Is the value you are asserting computed by the BROWSER, or by the APP?**
+> Browser-computed → E2E. App-computed → a tier down.
+
+**"Browser-computed" is wider than geometry.** It is anything the app hands to
+the engine and gets a verdict back on: layout and paint (rects, overflow,
+wrapping, stacking), the security policy (`cors-lockdown` — preflight and
+enforcement), the service worker and HTTP range machinery (`offline-audio`). The
+shorthand below covers the layout case, which is most of them in practice:
+*could you assert this without asking the browser to compute a number?*
 
 ```
 PASSES — engine computed it, stays E2E:
