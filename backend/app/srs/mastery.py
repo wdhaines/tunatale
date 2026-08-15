@@ -14,7 +14,7 @@ import datetime
 import math
 from collections.abc import Iterable
 
-from app.models.srs_item import DirectionState, SRSState
+from app.models.srs_item import Direction, DirectionState, SRSState
 
 # A REVIEW card's mastery is its stability mapped onto [0,1] by a log curve: a
 # card stable for >= this many days reads as fully mastered (green). Log scale
@@ -54,8 +54,24 @@ def component_mastery(ds: DirectionState) -> float:
 def compute_mastery_progress(directions: Iterable[DirectionState]) -> float | None:
     """Mean component_mastery over the learn-set. SUSPENDED components excluded.
     None if the set is empty (→ caller renders as not-on-the-ramp).
+
+    An ABSENT production component scores 0.0, exactly like a NEW one: a word you
+    have never had to produce is not mastered, however mature its recognition
+    card is. Without this, any recognition-only card past
+    MASTERY_STABILITY_CEILING_DAYS clamped to a flat 100% — which described 2990
+    of 3017 collocations in the Norwegian deck (18.3% of it read fully mastered,
+    against 0.3% of the two-direction Slovene deck).
+
+    Presence is checked on the RAW input, before the SUSPENDED filter, so a
+    deliberately suspended production card is excluded from the mean without also
+    drawing the absent-production penalty — otherwise one card is scored twice.
+    Cloze notes are production-only by design and so are never penalized.
     """
+    directions = list(directions)  # consumed twice; a generator would read empty
+    present = {d.direction for d in directions}
     ms = [component_mastery(d) for d in directions if d.state != SRSState.SUSPENDED]
+    if ms and Direction.PRODUCTION not in present:
+        ms.append(0.0)
     return sum(ms) / len(ms) if ms else None
 
 
