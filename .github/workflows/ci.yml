@@ -298,9 +298,9 @@ jobs:
   # so "green" had two meanings and neither contained the other.
   #
   # It needs BOTH toolchains, which is why it is not a step on `frontend`:
-  # playwright.config.ts boots three webServers — two uvicorn backends (:8001 SL,
-  # :8002 NO) and Vite (:5174) — so uv, Python and the backend dependency set all
-  # have to be present alongside bun. Its own job keeps that cost off `frontend`
+  # playwright.config.ts boots two webServers — a uvicorn backend (:8001, serving
+  # both languages through its per-language connection map) and Vite (:5174) — so
+  # uv, Python and the backend dependency set all have to be present alongside bun. Its own job keeps that cost off `frontend`
   # and runs it in parallel, adding no wall-clock to the fleet.
   #
   # ffmpeg is installed because the backends are the real app; `oracle-parity` and

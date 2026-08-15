@@ -347,25 +347,36 @@ test("listen preview: words are never truncated and grade targets keep their flo
 	expect(report.minTargetW).toBeGreaterThanOrEqual(24);
 });
 
-test("listen preview: glosses are blurred until tapped, per row", async ({ page, request }) => {
+/**
+ * A blurred gloss is blurred by the ENGINE, not by a class name.
+ *
+ * The toggling — starts blurred, reveals on click, and only that row's —
+ * is app-computed and was stripped from here on 2026-08-15 (`tunatale-vnf.11`).
+ * It is asserted in jsdom by `ListenPreviewModal.test.ts::"a gloss starts
+ * blurred and reveals on click"` and `::"revealing one row's gloss does not
+ * reveal another's"`, which check the exact `.blurred` class transitions this
+ * test used to count.
+ *
+ * What survives here is the half no jsdom tier can make: that the class
+ * actually RESOLVES to a filter. jsdom performs no cascade, so
+ * `getComputedStyle(el).filter` is `""` there no matter what the CSS says — a
+ * gloss whose blur was deleted from the stylesheet stays green at every tier
+ * below a real browser.
+ */
+test("listen preview: a blurred gloss resolves to a real blur filter", async ({ page, request }) => {
 	test.skip(!(await backendAvailable(request)), "Backend not available");
 
 	await page.setViewportSize(PHONE);
 	const modal = await openPreview(page, await curriculumId(request));
 
 	const glosses = modal.locator(".gloss.blurred");
-	const blurredBefore = await glosses.count();
 	// A hard assertion, not a test.skip: a silently skipped layout test is
 	// indistinguishable from a passing one, and the seed above guarantees
-	// several glossed candidates.
-	expect(blurredBefore).toBeGreaterThanOrEqual(2);
+	// glossed candidates. With nothing blurred on screen there is no computed
+	// style worth reading and the assertion below proves nothing.
+	expect(await glosses.count()).toBeGreaterThanOrEqual(1);
 
-	// A blurred gloss really is blurred — the class carries a filter, not just a name.
 	expect(await glosses.first().evaluate((el) => getComputedStyle(el).filter)).toContain("blur");
-
-	await glosses.first().click();
-
-	await expect(modal.locator(".gloss.blurred")).toHaveCount(blurredBefore - 1);
 });
 
 /**
@@ -394,8 +405,8 @@ test("listen preview: glosses are blurred until tapped, per row", async ({ page,
  * the bug does not exist there and a vitest version would pass against the
  * broken code.
  *
- * The two assertions are deliberately fix-agnostic — they pin the user-visible
- * contract, not the mechanism:
+ * The contract has two halves, deliberately fix-agnostic — they pin what the
+ * user sees, not the mechanism:
  *
  *   1. the same click that cancels also applies its rating, and
  *   2. cancelling shifts no geometry.
@@ -406,20 +417,24 @@ test("listen preview: glosses are blurred until tapped, per row", async ({ page,
  * fix on its own terms — cancellation weakens, since a press that never
  * completes would stop cancelling.
  *
- * ⚠️ WHICH ASSERTION IS CURRENTLY RED (measured 2026-08-04): only the geometry
- * one. It fails deterministically — `260 -> 247`, a 13px shift, the countdown
- * line's exact height. The `aria-pressed` assertion PASSES today, because
- * Playwright's synthetic click warps the cursor and dispatches mousedown/mouseup
- * at identical coordinates with no human timing, so it survives a 13px reflow
- * that a real pointer near a row boundary does not. Keep it anyway: it is the
- * user-visible symptom and the thing a regression would break first. Do NOT
- * treat its passing as evidence the bug is absent, and do NOT "fix" the bug by
- * satisfying it alone — the reflow is the defect.
+ * ⚠️ ONLY HALF 2 IS ASSERTED HERE, and which half is which is the whole point.
+ * Measured 2026-08-04 against the broken code: the geometry assertion failed
+ * deterministically — `260 -> 247`, a 13px shift, the countdown line's exact
+ * height — while the `aria-pressed` assertion PASSED, because Playwright's
+ * synthetic click warps the cursor and dispatches mousedown/mouseup at
+ * identical coordinates with no human timing, so it survives a 13px reflow that
+ * a real pointer near a row boundary does not.
+ *
+ * So half 1 was never a regression guard HERE: it stayed green with the bug
+ * live. It was stripped on 2026-08-15 (`tunatale-vnf.11`) and is asserted where
+ * it can be checked directly, in jsdom — `ListenPreviewModal.test.ts::"a grade
+ * click cancels the countdown permanently"` clicks a grade during a running
+ * countdown and asserts both that the rating landed (`aria-pressed`) and that
+ * nothing auto-commits afterwards. Do NOT restore it here in the belief that it
+ * detects the reflow, and do NOT "fix" this class of bug by satisfying it: the
+ * reflow is the defect, and geometry is the only tier that can see it.
  */
-test("listen preview: cancelling the countdown neither swallows the click nor shifts the rows", async ({
-	page,
-	request,
-}) => {
+test("listen preview: cancelling the countdown shifts no rows", async ({ page, request }) => {
 	test.skip(!(await backendAvailable(request)), "Backend not available");
 	const cid = await curriculumId(request);
 
@@ -448,21 +463,18 @@ test("listen preview: cancelling the countdown neither swallows the click nor sh
 	const gradeAll = modal.getByRole("button", { name: /Grade All/ });
 	await expect(gradeAll).toHaveAttribute("data-countdown", "running", { timeout: 5000 });
 
-	// Rows default to "good", so "Hard" starts unpressed and is a clean target.
 	const hard = modal.locator('button[data-grade="hard"]').first();
-	await expect(hard).toHaveAttribute("aria-pressed", "false");
 
 	const before = await hard.boundingBox();
 	expect(before, "grade button has no box").not.toBeNull();
 
 	await hard.click();
 
-	// The countdown does stop — this half already worked and must keep working.
-	// Same state hook as the guard above, for the same reason.
+	// Also a vacuity guard, not a claim about cancellation: unless this click
+	// really did cancel, there was no unmount, nothing could have reflowed, and
+	// the geometry comparison below holds trivially. Same state hook as above,
+	// for the same reason.
 	await expect(gradeAll).toHaveAttribute("data-countdown", "idle");
-
-	// THE BUG: the click that cancelled the countdown must also have graded.
-	await expect(hard).toHaveAttribute("aria-pressed", "true");
 
 	// THE ROOT CAUSE: cancelling must not move anything.
 	const after = await hard.boundingBox();
@@ -492,6 +504,21 @@ test("listen preview: cancelling the countdown neither swallows the click nor sh
  * occupy a fixed-width slot that survives cancellation.
  *
  * Fails today on the first assertion: there is no `data-countdown` attribute.
+ *
+ * TWO CLAIMS WERE STRIPPED ON 2026-08-15 (`tunatale-vnf.11`) — the button's
+ * accessible name reading "auto-grading" (and never the old "auto-marking"),
+ * and the absence of the legacy `<p class="countdown">` line. Both are strings
+ * the APP computes; neither needs an engine. They are now asserted, as an exact
+ * `aria-label` rather than two regexes, by `ListenPreviewModal.test.ts::"shows
+ * a decrementing 'Auto-grading' countdown tick while running"`. ⚠️ That test
+ * did NOT assert either one before this change — the audit's pairing table
+ * claimed it did. The assertions were added there in the same commit; nothing
+ * moved down to a tier that was not already checking it.
+ *
+ * What is left is measurement, plus the guards that keep the measurement
+ * meaningful. The tick's `10s` -> `9s` text assertions LOOK app-computed and
+ * are not up for stripping: they are what proves the width comparison spans the
+ * 3-character-to-2 boundary at all.
  */
 test("listen preview: the countdown rides Grade All and never resizes it", async ({
 	page,
@@ -522,18 +549,11 @@ test("listen preview: the countdown rides Grade All and never resizes it", async
 	const gradeAll = modal.getByRole("button", { name: /Grade All/ });
 	const tick = modal.locator(".grade-all .tick");
 
-	// 1. The timer is ON the button, and the button says so in its accessible
-	//    name — a purely visual tick would leave a screen-reader user with no
-	//    indication that the deck is about to be graded for them.
+	// 1. Vacuity guard: the countdown must be RUNNING, or there is no tick to
+	//    change width and every measurement below is of a static button.
 	await expect(gradeAll).toHaveAttribute("data-countdown", "running", { timeout: 5000 });
-	await expect(gradeAll).toHaveAccessibleName(/auto-grading/i);
-	await expect(gradeAll).not.toHaveAccessibleName(/auto-marking/i);
 
-	// 2. The old centred line is gone entirely — that element and its reserved
-	//    box ARE the gap this change exists to remove.
-	await expect(modal.locator("p.countdown")).toHaveCount(0);
-
-	// 3. Geometry is stable ACROSS THE 10 -> 9 BOUNDARY, where the tick's text
+	// 2. Geometry is stable ACROSS THE 10 -> 9 BOUNDARY, where the tick's text
 	//    goes from 3 characters to 2. Without a fixed-width slot the button
 	//    narrows here, one row above the list, which is F-7 again.
 	await expect(tick).toHaveText("10s", { timeout: 5000 });
@@ -550,7 +570,7 @@ test("listen preview: the countdown rides Grade All and never resizes it", async
 		`Grade All resized as the countdown ticked: ${JSON.stringify(running)} -> ${JSON.stringify(stillRunning)}`,
 	).toEqual(running);
 
-	// 4. And stable across cancellation — the F-7 constraint, one row up.
+	// 3. And stable across cancellation — the F-7 constraint, one row up.
 	await modal.locator("h2").click();
 	await expect(gradeAll).toHaveAttribute("data-countdown", "idle");
 	const cancelled = await gradeAll.boundingBox();

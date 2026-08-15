@@ -892,8 +892,24 @@ describe("ListenPreviewModal", () => {
     const tick = () => container.querySelector(".grade-all .tick")?.textContent ?? "";
     expect(tick()).toContain("10");
 
+    // F-9/F-10, moved down from listen-preview-layout.spec.ts on 2026-08-15
+    // (tunatale-vnf.11). The timer rides the Grade All button, and the button
+    // says so in its ACCESSIBLE NAME — a purely visual tick leaves a
+    // screen-reader user with no indication that the deck is about to be graded
+    // for them. Asserted as the exact string, which subsumes the two regexes the
+    // e2e test used (/auto-grading/ present, the old /auto-marking/ wording
+    // absent). These are app-computed strings; they never needed a browser.
+    const gradeAll = container.querySelector<HTMLElement>(".grade-all");
+    expect(gradeAll?.getAttribute("aria-label")).toBe("Grade All — auto-grading in 10 seconds");
+
+    // And the centred `<p class="countdown">` line the tick replaced is gone
+    // entirely — that element and its reserved box ARE the dead space option C
+    // exists to remove, so its absence is the change, not a detail of it.
+    expect(container.querySelector("p.countdown")).toBeNull();
+
     await vi.advanceTimersByTimeAsync(1000);
     expect(tick()).toContain("9");
+    expect(gradeAll?.getAttribute("aria-label")).toBe("Grade All — auto-grading in 9 seconds");
   });
 
   it("F4: the countdown is visible even with zero candidates, and it auto-commits an empty listen", async () => {
@@ -1005,6 +1021,16 @@ describe("ListenPreviewModal", () => {
 
     await vi.advanceTimersByTimeAsync(5_000);
     await fireEvent.click(gradeBtn(container, "create:kava", "hard"));
+
+    // F-7's user-visible symptom, moved down from listen-preview-layout.spec.ts
+    // on 2026-08-15 (tunatale-vnf.11): the click that cancels the countdown must
+    // ALSO apply its rating. In a real browser that half was never a guard — it
+    // stayed green with the reflow bug live, because Playwright's synthetic
+    // click dispatches mousedown/mouseup at identical coordinates and survives a
+    // 13px shift a human pointer does not. Here it is checked directly. The
+    // reflow itself is not checkable at this tier at all (jsdom does no layout),
+    // which is why the geometry half stays in Playwright.
+    expect(gradeBtn(container, "create:kava", "hard").getAttribute("aria-pressed")).toBe("true");
 
     await vi.advanceTimersByTimeAsync(15_000);
 
