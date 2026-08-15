@@ -81,7 +81,8 @@ All commands use `uv run` (no manual venv activation). Never commit `.env`. Groq
 Most `.claude/rules/*.md` carry `paths:` frontmatter — Claude Code auto-loads a rule when reading files it covers, keeping session startup lean (~20k tokens). A rule not appearing at session start is by design; don't "fix" it by removing the frontmatter. Non-Claude agents: read the relevant rule before working in its domain.
 
 - `anki-safety-core.md`, `tdd.md` — always loaded (no `paths`)
-- `testing.md` — mock boundaries (enforced), cassettes, test tiers, pragma discipline → `backend/tests/**`
+- `testing.md` — mock boundaries (enforced), cassettes, where tests run, pragma discipline → `backend/tests/**`
+- `test-tiers.md` — what a test is ABOUT: the seam discriminator (is the value engine-computed or app-computed?), no fourth tier, and the sabotage-drill retirement criterion → `frontend/tests/**`, `frontend/src/**`, `backend/tests/**`
 - `frontend-coverage-gate.md` — Svelte 5 phantom-branch filter → `frontend/**`
 - `anki-sync.md` — USN protocol, safety envelope, graves, migrations, card-adding-UI contract → `backend/app/plugins/anki_sync/**`, `backend/app/api/anki.py`, Anki tests
 - `anki-queue-parity.md` — REQUIRED before changing SRS/queue/sync behavior or debugging any TT↔Anki divergence → `backend/app/srs/**`, `backend/app/api/srs.py`, `backend/app/plugins/anki_sync/**`, SRS/parity tests
