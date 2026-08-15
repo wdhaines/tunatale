@@ -5,7 +5,7 @@ paths:
 
 # Frontend Coverage Gate (Svelte 5 phantom filter)
 
-*Path-scoped rule: auto-loads when a frontend file is read. Split out of `testing.md` so backend sessions don't carry it.*
+*Path-scoped rule: auto-loads when a frontend file is read. Split out of `testing.md` so backend sessions don't carry it. For which tier a frontend test belongs in, see `.claude/rules/test-tiers.md` — and note its warning that adding a second vitest project would change what this gate measures.*
 
 Frontend runs 100% lines/branches/functions/statements per file via `frontend/scripts/coverage-gate.ts`. Vitest's built-in `thresholds:` block is intentionally absent — the custom gate is what enforces. The gate reads `coverage/coverage-final.json`, filters Svelte 5 compiler-injected phantom branches, then asserts 100% on every file.
 

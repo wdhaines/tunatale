@@ -105,6 +105,11 @@ never had.
 
 ## Test Tiers
 
+*This section is about **where tests run**. For **what a test should be about** —
+the seam discriminator that decides whether something belongs in Playwright, and
+the sabotage-drill criterion for when a test comes down — see
+`.claude/rules/test-tiers.md`.*
+
 1. **`./test.sh`** (pre-commit, mandatory) — three parallel groups: backend (lint + format + checkers + full pytest incl. `--run-oracle`, with coverage), frontend (fmt + lint + svelte-check + vitest + Playwright e2e), and peer-sync.
 2. **CI** (every push to `main` / every PR) — eight parallel job instances: `backend` (unit + coverage + boundary check), `backend-hostile-tz` (×2), `backend-hostile-hour`, `frontend`, `e2e`, `oracle-parity`, `peer-sync`. An oracle or peer-sync failure is a parity/round-trip regression, not a unit bug — debug it as such. A hostile-tz/hour failure is a fixture doing date arithmetic across `ANKI_ROLLOVER_HOUR` — suspect the test before the product code.
 
