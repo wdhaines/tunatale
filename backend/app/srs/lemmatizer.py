@@ -18,13 +18,16 @@ _logger = logging.getLogger(__name__)
 class TokenAnalysis:
     """Result of analyzing a single token in sentence context."""
 
-    surface: str
-    lemma: str
+    surface: str = ""
+    lemma: str = ""
     upos: str = ""
     case: str = ""
     number: str = ""
     person: str = ""
     gender: str = ""
+    definite: str = ""
+    tense: str = ""
+    verbform: str = ""
 
 
 @runtime_checkable
@@ -143,7 +146,7 @@ class _StanzaFamilyLemmatizer:  # pragma: no cover — requires PyTorch pipeline
             token = doc.sentences[0].words[0]
             lemma = token.lemma or word.lower()
             feats = token.feats or ""
-            case, number, _gender = _parse_morphology(feats)
+            case, number, _gender, _definite, _tense, _verbform = _parse_morphology(feats)
             return lemma, case, number
         except IndexError, AttributeError:
             return word.lower(), "", ""
@@ -163,7 +166,7 @@ class _StanzaFamilyLemmatizer:  # pragma: no cover — requires PyTorch pipeline
         for sent in doc.sentences:
             for token in sent.words:
                 feats = token.feats or ""
-                case, number, gender = _parse_morphology(feats)
+                case, number, gender, definite, tense, verbform = _parse_morphology(feats)
                 person = _parse_person(feats)
                 results.append(
                     TokenAnalysis(
@@ -174,6 +177,9 @@ class _StanzaFamilyLemmatizer:  # pragma: no cover — requires PyTorch pipeline
                         number=number,
                         person=person,
                         gender=gender,
+                        definite=definite,
+                        tense=tense,
+                        verbform=verbform,
                     )
                 )
         self._sentence_cache[sentence] = results
@@ -256,15 +262,19 @@ class StanzaLemmatizer(_StanzaFamilyLemmatizer):  # pragma: no cover — require
         return self._nlp
 
 
-def _parse_morphology(feats: str) -> tuple[str, str, str]:
-    """Extract ``(Case, Number, Gender)`` from a UD FEATS string.
+def _parse_morphology(feats: str) -> tuple[str, str, str, str, str, str]:
+    """Extract ``(Case, Number, Gender, Definite, Tense, VerbForm)`` from a UD FEATS string.
 
-    Example: ``Case=Gen|Gender=Fem|Number=Sing`` → ``("Gen", "Sing", "Fem")``.
-    Returns ``("", "", "")`` when all features are absent.
+    Example: ``Case=Gen|Gender=Fem|Number=Sing`` → ``("Gen", "Sing", "Fem", "", "", "")``.
+    Example: ``Definite=Def|Number=Sing`` → ``("", "Sing", "", "Def", "", "")``.
+    Returns all-empty strings when no recognized feature is present.
     """
     case = ""
     number = ""
     gender = ""
+    definite = ""
+    tense = ""
+    verbform = ""
     for part in feats.split("|"):
         part = part.strip()
         if part.startswith("Case="):
@@ -273,7 +283,13 @@ def _parse_morphology(feats: str) -> tuple[str, str, str]:
             number = part.removeprefix("Number=")
         elif part.startswith("Gender="):
             gender = part.removeprefix("Gender=")
-    return case, number, gender
+        elif part.startswith("Definite="):
+            definite = part.removeprefix("Definite=")
+        elif part.startswith("Tense="):
+            tense = part.removeprefix("Tense=")
+        elif part.startswith("VerbForm="):
+            verbform = part.removeprefix("VerbForm=")
+    return case, number, gender, definite, tense, verbform
 
 
 def _parse_person(feats: str) -> str:
@@ -355,15 +371,25 @@ def get_lemmatizer(language_code: str) -> Lemmatizer:
 
 # ── Persistent analysis cache ─────────────────────────────────────────────
 
+# Bumped whenever TokenAnalysis grows/shrinks a field: the analysis rows are
+# stored as JSON and _deserialize_analyses defaults missing keys to "" — so a
+# row cached under an older shape would silently replay empty values for the new
+# fields unless the cache key changes. The rev rides on the model version, which
+# is already part of the (sentence, language_code, model_version) cache key.
+_ANALYSIS_SCHEMA_REV = "f2"
+
 
 def model_version_for(lemmatizer: Lemmatizer) -> str:
     """Return a version string for keying the sentence-analysis cache.
 
     Expensive lemmatizers (``ClasslaLemmatizer``) set ``_cache_version`` to the
-    package version so a model upgrade invalidates stale rows. Cheap lemmatizers
-    return ``""`` and skip the DB round-trip.
+    package version so a model upgrade invalidates stale rows. The analysis
+    schema revision is appended so a TokenAnalysis shape change also
+    invalidates rows. Cheap lemmatizers return ``""`` and skip the DB
+    round-trip (and the suffix, so ``""`` stays ``""``).
     """
-    return getattr(lemmatizer, "_cache_version", "")
+    base = getattr(lemmatizer, "_cache_version", "")
+    return f"{base}+{_ANALYSIS_SCHEMA_REV}" if base else ""
 
 
 def _serialize_analyses(analyses: list[TokenAnalysis]) -> str:

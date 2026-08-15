@@ -209,16 +209,21 @@ def _is_due(ds: DirectionState, today: date) -> bool:
     return ds.due_at.date() <= today
 
 
-def _inflection_feature_for(surface: str, analysis_by_surface: dict[str, object]) -> str:
+def _inflection_feature_for(
+    surface: str,
+    analysis_by_surface: dict[str, object],
+    language_code: str,
+) -> str:
     """Compute the A1 morphology feature string for *surface*, or ``""`` if none.
 
     Looks up the surface in the per-phrase analysis map, maps UD features via
-    ``ud_feats_to_tt_feature``, and returns the feature string if valid.
-    Returns ``""`` when no analysis is available or the feature is not mappable.
+    ``ud_feats_to_tt_feature`` (per *language_code*), and returns the feature
+    string if valid. Returns ``""`` when no analysis is available or the feature
+    is not mappable.
     """
     ta = analysis_by_surface.get(surface.lower())
     if ta is not None:
-        feature = ud_feats_to_tt_feature(ta.upos, ta.case, ta.number, ta.person, ta.gender)
+        feature = ud_feats_to_tt_feature(ta, language_code)
         return feature if feature is not None else ""
     return ""
 
@@ -423,8 +428,8 @@ def extract_transcript(
                     progress_val = compute_mastery_progress(valid_components)
 
                     if surface.lower() != lemma.lower():
-                        feature_str = _inflection_feature_for(surface, analysis_by_surface)
-                        if feature_str and is_a1_morphology_feature(feature_str):
+                        feature_str = _inflection_feature_for(surface, analysis_by_surface, lesson.language_code)
+                        if feature_str and is_a1_morphology_feature(feature_str, lesson.language_code):
                             base_prod = item.directions.get(Direction.PRODUCTION)
                             base_prod_state = base_prod.state if base_prod is not None else None
                             if base_prod_state in (SRSState.REVIEW, SRSState.KNOWN) and inflection_match is None:
@@ -438,8 +443,12 @@ def extract_transcript(
                     and is_clozes_only_verb(lemma, lesson.language_code)
                     and surface.lower() != lemma.lower()
                 ):
-                    feature_str = _inflection_feature_for(surface, analysis_by_surface)
-                    if feature_str and is_a1_morphology_feature(feature_str) and inflection_match is None:
+                    feature_str = _inflection_feature_for(surface, analysis_by_surface, lesson.language_code)
+                    if (
+                        feature_str
+                        and is_a1_morphology_feature(feature_str, lesson.language_code)
+                        and inflection_match is None
+                    ):
                         inflectable_flag = True
                         inflection_feature_val = feature_str
 

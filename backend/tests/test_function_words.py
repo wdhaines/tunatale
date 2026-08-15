@@ -19,6 +19,7 @@ from app.srs.function_words import (
     ud_feats_to_tt_feature,
     uncloze_text,
 )
+from app.srs.lemmatizer import TokenAnalysis
 
 
 class TestIsFunctionWord:
@@ -413,158 +414,300 @@ class TestMakeMorphologyClozeText:
 
 class TestFormatMorphologyHint:
     def test_verb_1sg(self):
-        assert format_morphology_hint("biti", "verb:1sg") == "biti, 1st person singular"
+        assert format_morphology_hint("biti", "verb:1sg", "sl") == "biti, 1st person singular"
 
     def test_verb_2sg(self):
-        assert format_morphology_hint("biti", "verb:2sg") == "biti, 2nd person singular"
+        assert format_morphology_hint("biti", "verb:2sg", "sl") == "biti, 2nd person singular"
 
     def test_verb_3sg(self):
-        assert format_morphology_hint("biti", "verb:3sg") == "biti, 3rd person singular"
+        assert format_morphology_hint("biti", "verb:3sg", "sl") == "biti, 3rd person singular"
 
     def test_verb_1pl(self):
-        assert format_morphology_hint("biti", "verb:1pl") == "biti, 1st person plural"
+        assert format_morphology_hint("biti", "verb:1pl", "sl") == "biti, 1st person plural"
 
     def test_noun_loc_sg(self):
-        assert format_morphology_hint("ljubljana", "noun:loc:sg") == "ljubljana, locative singular"
+        assert format_morphology_hint("ljubljana", "noun:loc:sg", "sl") == "ljubljana, locative singular"
 
     def test_noun_acc_sg(self):
-        assert format_morphology_hint("vodo", "noun:acc:sg") == "vodo, accusative singular"
+        assert format_morphology_hint("vodo", "noun:acc:sg", "sl") == "vodo, accusative singular"
 
     def test_noun_nom_pl(self):
-        assert format_morphology_hint("vode", "noun:nom:pl") == "vode, nominative plural"
+        assert format_morphology_hint("vode", "noun:nom:pl", "sl") == "vode, nominative plural"
 
     def test_adj_nom_f_sg(self):
-        assert format_morphology_hint("lepa", "adj:nom:f:sg") == "lepa, nominative feminine singular"
+        assert format_morphology_hint("lepa", "adj:nom:f:sg", "sl") == "lepa, nominative feminine singular"
 
     def test_adj_nom_m_pl(self):
-        assert format_morphology_hint("lepi", "adj:nom:m:pl") == "lepi, nominative masculine plural"
+        assert format_morphology_hint("lepi", "adj:nom:m:pl", "sl") == "lepi, nominative masculine plural"
 
     def test_empty_feature_returns_lemma(self):
-        assert format_morphology_hint("biti", "") == "biti"
+        assert format_morphology_hint("biti", "", "sl") == "biti"
 
     def test_empty_lemma_and_feature(self):
-        assert format_morphology_hint("", "") == ""
+        assert format_morphology_hint("", "", "sl") == ""
 
     def test_unknown_feature_falls_back_to_short_label(self):
-        assert format_morphology_hint("biti", "unknown:weird") == "biti, weird"
+        assert format_morphology_hint("biti", "unknown:weird", "sl") == "biti, weird"
 
     def test_unknown_feature_empty_label_returns_lemma(self):
-        assert format_morphology_hint("biti", "unknown") == "biti"
+        assert format_morphology_hint("biti", "unknown", "sl") == "biti"
+
+    def test_unknown_language_falls_back_to_default(self):
+        """A language that registers no A1 bundle keeps today's Slovene-shaped
+        vocabulary — the feature strings and hints are unchanged for "en"/"zz"."""
+        assert format_morphology_hint("biti", "verb:1sg", "zz") == "biti, 1st person singular"
+        assert format_morphology_hint("vodo", "noun:acc:sg", "en") == "vodo, accusative singular"
 
 
 class TestIsA1MorphologyFeature:
     def test_a1_verb_prefix_true(self):
         from app.srs.function_words import is_a1_morphology_feature
 
-        assert is_a1_morphology_feature("verb:1sg") is True
+        assert is_a1_morphology_feature("verb:1sg", "sl") is True
 
     def test_a1_noun_nom_true(self):
         from app.srs.function_words import is_a1_morphology_feature
 
-        assert is_a1_morphology_feature("noun:nom:sg") is True
+        assert is_a1_morphology_feature("noun:nom:sg", "sl") is True
 
     def test_a1_noun_acc_true(self):
         from app.srs.function_words import is_a1_morphology_feature
 
-        assert is_a1_morphology_feature("noun:acc:sg") is True
+        assert is_a1_morphology_feature("noun:acc:sg", "sl") is True
 
     def test_a1_noun_loc_true(self):
         from app.srs.function_words import is_a1_morphology_feature
 
-        assert is_a1_morphology_feature("noun:loc:sg") is True
+        assert is_a1_morphology_feature("noun:loc:sg", "sl") is True
 
     def test_a1_adj_nom_true(self):
         from app.srs.function_words import is_a1_morphology_feature
 
-        assert is_a1_morphology_feature("adj:nom:m:sg") is True
+        assert is_a1_morphology_feature("adj:nom:m:sg", "sl") is True
 
     def test_non_a1_noun_gen_false(self):
         from app.srs.function_words import is_a1_morphology_feature
 
-        assert is_a1_morphology_feature("noun:gen:sg") is False
+        assert is_a1_morphology_feature("noun:gen:sg", "sl") is False
 
     def test_non_a1_adj_acc_false(self):
         from app.srs.function_words import is_a1_morphology_feature
 
-        assert is_a1_morphology_feature("adj:acc:m:sg") is False
+        assert is_a1_morphology_feature("adj:acc:m:sg", "sl") is False
 
     def test_empty_string_false(self):
         from app.srs.function_words import is_a1_morphology_feature
 
-        assert is_a1_morphology_feature("") is False
+        assert is_a1_morphology_feature("", "sl") is False
 
     def test_garbage_string_false(self):
         from app.srs.function_words import is_a1_morphology_feature
 
-        assert is_a1_morphology_feature("xyz:foo") is False
+        assert is_a1_morphology_feature("xyz:foo", "sl") is False
+
+    def test_unknown_language_falls_back_to_default(self):
+        from app.srs.function_words import is_a1_morphology_feature
+
+        assert is_a1_morphology_feature("verb:1sg", "zz") is True
+        assert is_a1_morphology_feature("noun:loc:sg", "en") is True
+
+    def test_norwegian_features_validate_under_no(self):
+        from app.srs.function_words import is_a1_morphology_feature
+
+        for feature in (
+            "noun:ind:sg",
+            "noun:def:sg",
+            "noun:ind:pl",
+            "noun:def:pl",
+            "verb:pres",
+            "verb:past",
+            "verb:perf",
+        ):
+            assert is_a1_morphology_feature(feature, "no") is True, feature
+
+    def test_slovene_features_rejected_under_no(self):
+        """A Slovene feature must not validate under Norwegian — the whitelist is
+        per-language, not a merged union."""
+        from app.srs.function_words import is_a1_morphology_feature
+
+        assert is_a1_morphology_feature("verb:1sg", "no") is False
+        assert is_a1_morphology_feature("noun:loc:sg", "no") is False
+        assert is_a1_morphology_feature("adj:nom:m:sg", "no") is False
+
+    def test_norwegian_features_rejected_under_sl(self):
+        """And the reverse: Norwegian definite forms are not Slovene A1 (the
+        default vocabulary has no ``noun:def:``/``noun:ind:`` prefixes)."""
+        from app.srs.function_words import is_a1_morphology_feature
+
+        assert is_a1_morphology_feature("noun:def:sg", "sl") is False
+        assert is_a1_morphology_feature("noun:ind:sg", "sl") is False
+        assert is_a1_morphology_feature("noun:def:pl", "sl") is False
 
 
 class TestUdFeatsToTtFeature:
     def test_verb_1sg(self):
-        assert ud_feats_to_tt_feature("VERB", number="Sing", person="1") == "verb:1sg"
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="VERB", number="Sing", person="1"), "sl") == "verb:1sg"
 
     def test_verb_3pl(self):
-        assert ud_feats_to_tt_feature("VERB", number="Plur", person="3") == "verb:3pl"
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="VERB", number="Plur", person="3"), "sl") == "verb:3pl"
 
     def test_aux_1sg(self):
-        assert ud_feats_to_tt_feature("AUX", number="Sing", person="1") == "verb:1sg"
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="AUX", number="Sing", person="1"), "sl") == "verb:1sg"
 
     def test_aux_3sg(self):
-        assert ud_feats_to_tt_feature("AUX", number="Sing", person="3") == "verb:3sg"
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="AUX", number="Sing", person="3"), "sl") == "verb:3sg"
 
     def test_aux_missing_person_returns_none(self):
-        assert ud_feats_to_tt_feature("AUX", number="Sing", person="") is None
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="AUX", number="Sing", person=""), "sl") is None
 
     def test_aux_missing_number_returns_none(self):
-        assert ud_feats_to_tt_feature("AUX", person="1") is None
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="AUX", person="1"), "sl") is None
 
     def test_verb_missing_person_returns_none(self):
-        assert ud_feats_to_tt_feature("VERB", number="Sing", person="") is None
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="VERB", number="Sing", person=""), "sl") is None
 
     def test_verb_missing_number_returns_none(self):
-        assert ud_feats_to_tt_feature("VERB", person="1") is None
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="VERB", person="1"), "sl") is None
 
     def test_noun_nom_sg(self):
-        assert ud_feats_to_tt_feature("NOUN", case="Nom", number="Sing") == "noun:nom:sg"
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="NOUN", case="Nom", number="Sing"), "sl") == "noun:nom:sg"
 
     def test_noun_acc_sg(self):
-        assert ud_feats_to_tt_feature("NOUN", case="Acc", number="Sing") == "noun:acc:sg"
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="NOUN", case="Acc", number="Sing"), "sl") == "noun:acc:sg"
 
     def test_noun_loc_sg(self):
-        assert ud_feats_to_tt_feature("NOUN", case="Loc", number="Sing") == "noun:loc:sg"
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="NOUN", case="Loc", number="Sing"), "sl") == "noun:loc:sg"
 
     def test_noun_gen_returns_none(self):
-        assert ud_feats_to_tt_feature("NOUN", case="Gen", number="Sing") is None
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="NOUN", case="Gen", number="Sing"), "sl") is None
 
     def test_noun_dat_returns_none(self):
-        assert ud_feats_to_tt_feature("NOUN", case="Dat", number="Sing") is None
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="NOUN", case="Dat", number="Sing"), "sl") is None
 
     def test_noun_ins_returns_none(self):
-        assert ud_feats_to_tt_feature("NOUN", case="Ins", number="Sing") is None
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="NOUN", case="Ins", number="Sing"), "sl") is None
 
     def test_noun_nom_pl(self):
-        assert ud_feats_to_tt_feature("NOUN", case="Nom", number="Plur") == "noun:nom:pl"
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="NOUN", case="Nom", number="Plur"), "sl") == "noun:nom:pl"
 
     def test_noun_nom_dual(self):
-        assert ud_feats_to_tt_feature("NOUN", case="Nom", number="Dual") == "noun:nom:du"
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="NOUN", case="Nom", number="Dual"), "sl") == "noun:nom:du"
 
     def test_adj_nom_masc_sg(self):
-        assert ud_feats_to_tt_feature("ADJ", case="Nom", number="Sing", gender="Masc") == "adj:nom:m:sg"
+        assert (
+            ud_feats_to_tt_feature(TokenAnalysis(upos="ADJ", case="Nom", number="Sing", gender="Masc"), "sl")
+            == "adj:nom:m:sg"
+        )
 
     def test_adj_nom_fem_pl(self):
-        assert ud_feats_to_tt_feature("ADJ", case="Nom", number="Plur", gender="Fem") == "adj:nom:f:pl"
+        assert (
+            ud_feats_to_tt_feature(TokenAnalysis(upos="ADJ", case="Nom", number="Plur", gender="Fem"), "sl")
+            == "adj:nom:f:pl"
+        )
 
     def test_adj_non_nom_returns_none(self):
-        assert ud_feats_to_tt_feature("ADJ", case="Gen", number="Sing", gender="Masc") is None
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="ADJ", case="Gen", number="Sing", gender="Masc"), "sl") is None
 
     def test_adj_nom_missing_gender_returns_none(self):
-        assert ud_feats_to_tt_feature("ADJ", case="Nom", number="Sing") is None
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="ADJ", case="Nom", number="Sing"), "sl") is None
 
     def test_unknown_upos_returns_none(self):
-        assert ud_feats_to_tt_feature("PROPN", case="Nom", number="Sing") is None
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="PROPN", case="Nom", number="Sing"), "sl") is None
 
     def test_empty_upos_returns_none(self):
-        assert ud_feats_to_tt_feature("") is None
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos=""), "sl") is None
+
+    def test_unknown_language_falls_back_to_default(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="VERB", number="Sing", person="1"), "zz") == "verb:1sg"
+
+
+class TestUdFeatsToTtFeatureNorwegian:
+    """A1 morphology under "no" — definite/tense-driven, not person/number."""
+
+    def test_noun_definite_singular(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="NOUN", definite="Def", number="Sing"), "no") == "noun:def:sg"
+
+    def test_noun_indefinite_singular(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="NOUN", definite="Ind", number="Sing"), "no") == "noun:ind:sg"
+
+    def test_noun_definite_plural(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="NOUN", definite="Def", number="Plur"), "no") == "noun:def:pl"
+
+    def test_noun_indefinite_plural(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="NOUN", definite="Ind", number="Plur"), "no") == "noun:ind:pl"
+
+    def test_noun_missing_definite_returns_none(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="NOUN", number="Sing"), "no") is None
+
+    def test_verb_present(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="VERB", tense="Pres", verbform="Fin"), "no") == "verb:pres"
+
+    def test_verb_past(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="VERB", tense="Past", verbform="Fin"), "no") == "verb:past"
+
+    def test_verb_past_participle(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="VERB", verbform="Part"), "no") == "verb:perf"
+
+    def test_verb_infinitive_returns_none(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="VERB", verbform="Inf"), "no") is None
+
+    def test_aux_past(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="AUX", tense="Past", verbform="Fin"), "no") == "verb:past"
+
+    def test_aux_past_participle(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="AUX", verbform="Part"), "no") == "verb:perf"
+
+    def test_adjective_returns_none(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="ADJ", definite="Def", number="Sing"), "no") is None
+
+    def test_no_tense_no_verbform_returns_none(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="VERB", number="Sing", person="1"), "no") is None
+
+    def test_slovene_shape_rejected_under_no(self):
+        """Person/number verb forms are Slovene's vocabulary, not Norwegian's."""
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="AUX", number="Sing", person="1"), "no") is None
+
+    def test_norwegian_shape_rejected_under_sl(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="NOUN", definite="Def", number="Sing"), "sl") is None
+
+
+class TestFormatMorphologyHintNorwegian:
+    def test_noun_indefinite_singular(self):
+        assert format_morphology_hint("bil", "noun:ind:sg", "no") == "bil, indefinite singular"
+
+    def test_noun_definite_singular(self):
+        assert format_morphology_hint("bilen", "noun:def:sg", "no") == "bilen, definite singular"
+
+    def test_noun_indefinite_plural(self):
+        assert format_morphology_hint("biler", "noun:ind:pl", "no") == "biler, indefinite plural"
+
+    def test_noun_definite_plural(self):
+        assert format_morphology_hint("bilene", "noun:def:pl", "no") == "bilene, definite plural"
+
+    def test_verb_present(self):
+        assert format_morphology_hint("være", "verb:pres", "no") == "være, present tense"
+
+    def test_verb_past(self):
+        assert format_morphology_hint("snakke", "verb:past", "no") == "snakke, past tense"
+
+    def test_verb_perfect(self):
+        assert format_morphology_hint("være", "verb:perf", "no") == "være, perfect (past participle)"
+
+    def test_empty_feature_returns_lemma(self):
+        assert format_morphology_hint("bil", "", "no") == "bil"
+
+    def test_empty_lemma_and_feature(self):
+        assert format_morphology_hint("", "", "no") == ""
+
+    def test_unrecognised_feature_falls_back_to_the_default_formatter(self):
+        """A feature outside Norwegian's label map still renders, rather than vanishing.
+
+        Reachable in practice: a cloze row carrying a legacy Slovene-shaped
+        feature string (written before the vocabulary became per-language) is
+        formatted with its own language code. The hint degrades to the default
+        renderer instead of silently returning a bare lemma.
+        """
+        assert format_morphology_hint("biti", "verb:1sg", "no") == "biti, 1st person singular"
 
 
 class TestNorwegianFunctionWords:

@@ -6,6 +6,7 @@ import pytest
 
 from app.srs.database import SRSDatabase
 from app.srs.lemmatizer import (
+    _ANALYSIS_SCHEMA_REV,
     ClasslaLemmatizer,
     LowercaseLemmatizer,
     StanzaLemmatizer,
@@ -95,6 +96,9 @@ class TestTokenAnalysis:
         assert ta.number == "Sing"
         assert ta.person == ""
         assert ta.gender == ""
+        assert ta.definite == ""
+        assert ta.tense == ""
+        assert ta.verbform == ""
 
     def test_defaults(self):
         ta = TokenAnalysis(surface="word", lemma="word")
@@ -103,44 +107,84 @@ class TestTokenAnalysis:
         assert ta.number == ""
         assert ta.person == ""
         assert ta.gender == ""
+        assert ta.definite == ""
+        assert ta.tense == ""
+        assert ta.verbform == ""
+
+    def test_surface_and_lemma_optional(self):
+        """Constructions like ``TokenAnalysis(upos="VERB", person="1")`` are legal."""
+        ta = TokenAnalysis(upos="VERB", person="1", number="Sing")
+        assert ta.surface == ""
+        assert ta.lemma == ""
+        assert ta.upos == "VERB"
+
+    def test_ud_feats_supported(self):
+        """Definite/Tense/VerbForm round-trip — the Norwegian A1 feature inputs."""
+        ta = TokenAnalysis(upos="NOUN", definite="Def", number="Sing")
+        assert ta.definite == "Def"
+        assert TokenAnalysis(upos="VERB", tense="Past", verbform="Fin").tense == "Past"
+        assert TokenAnalysis(upos="VERB", verbform="Part").verbform == "Part"
 
 
 class TestParseMorphology:
     def test_full_features(self):
-        case, number, gender = _parse_morphology("Case=Gen|Gender=Fem|Number=Sing")
+        case, number, gender, definite, tense, verbform = _parse_morphology(
+            "Case=Gen|Definite=Def|Gender=Fem|Number=Sing|Tense=Pres|VerbForm=Part"
+        )
         assert case == "Gen"
         assert number == "Sing"
         assert gender == "Fem"
+        assert definite == "Def"
+        assert tense == "Pres"
+        assert verbform == "Part"
 
     def test_no_case(self):
-        case, number, gender = _parse_morphology("Gender=Masc|Number=Plur")
+        case, number, gender, definite, tense, verbform = _parse_morphology("Gender=Masc|Number=Plur")
         assert case == ""
         assert number == "Plur"
         assert gender == "Masc"
+        assert definite == ""
+        assert tense == ""
+        assert verbform == ""
 
     def test_no_number(self):
-        case, number, gender = _parse_morphology("Case=Nom|Gender=Masc")
+        case, number, gender, definite, tense, verbform = _parse_morphology("Case=Nom|Gender=Masc")
         assert case == "Nom"
         assert number == ""
         assert gender == "Masc"
 
     def test_empty_string(self):
-        case, number, gender = _parse_morphology("")
+        case, number, gender, definite, tense, verbform = _parse_morphology("")
         assert case == ""
         assert number == ""
         assert gender == ""
+        assert definite == ""
+        assert tense == ""
+        assert verbform == ""
 
     def test_dual_number(self):
-        case, number, gender = _parse_morphology("Case=Ins|Gender=Masc|Number=Dual")
+        case, number, gender, definite, tense, verbform = _parse_morphology("Case=Ins|Gender=Masc|Number=Dual")
         assert case == "Ins"
         assert number == "Dual"
         assert gender == "Masc"
 
     def test_no_gender(self):
-        case, number, gender = _parse_morphology("Case=Nom|Number=Sing")
+        case, number, gender, definite, tense, verbform = _parse_morphology("Case=Nom|Number=Sing")
         assert case == "Nom"
         assert number == "Sing"
         assert gender == ""
+
+    def test_definite_extracted(self):
+        _, _, _, definite, _, _ = _parse_morphology("Definite=Ind|Number=Sing")
+        assert definite == "Ind"
+
+    def test_tense_extracted(self):
+        _, _, _, _, tense, _ = _parse_morphology("Number=Sing|Tense=Past")
+        assert tense == "Past"
+
+    def test_verbform_extracted(self):
+        _, _, _, _, _, verbform = _parse_morphology("VerbForm=Part|Tense=Past")
+        assert verbform == "Part"
 
 
 class TestParsePerson:
@@ -613,14 +657,37 @@ class TestAnalyzeSentenceCached:
         assert lem._nlp is None  # pipeline not loaded by construction
         assert model_version_for(lem) != ""
 
+    def test_analysis_schema_rev_part_of_cache_key(self):
+        """The persistent-cache key carries the analysis-schema revision so rows
+        serialized under an older TokenAnalysis shape (missing definite/tense/
+        verbform) can never be replayed as full-featured analyses."""
+        assert _ANALYSIS_SCHEMA_REV == "f2"
+        version = model_version_for(ClasslaLemmatizer())
+        assert version != ""
+        assert version.endswith(f"+{_ANALYSIS_SCHEMA_REV}")
+
     def test_serialize_deserialize_round_trip(self):
         analyses = [
             TokenAnalysis(surface="Dober", lemma="dober", upos="ADJ"),
             TokenAnalysis(surface="dan", lemma="dan", upos="NOUN", case="Nom", number="Sing"),
+            TokenAnalysis(surface="vært", lemma="være", upos="VERB", tense="", verbform="Part"),
         ]
         data = _serialize_analyses(analyses)
         restored = _deserialize_analyses(data)
         assert restored == analyses
+
+    def test_deserialize_old_shape_defaults_new_fields(self):
+        """A row cached before the schema rev lacks definite/tense/verbform; the
+        loader defaults them to "" — and the rev'd key is what keeps such rows
+        from ever being used as full analyses."""
+        old = (
+            '[{"surface": "er", "lemma": "være", "upos": "VERB", "case": "", "number": "", "person": "", "gender": ""}]'
+        )
+        restored = _deserialize_analyses(old)
+        assert restored == [TokenAnalysis(surface="er", lemma="være", upos="VERB")]
+        assert restored[0].definite == ""
+        assert restored[0].tense == ""
+        assert restored[0].verbform == ""
 
     def test_deserialize_empty_array(self):
         assert _deserialize_analyses("[]") == []

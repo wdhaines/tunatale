@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from app.cards.vocab_notetype import VocabNotetype
     from app.config import Settings
     from app.models.breakdown import BreakdownChunk
+    from app.srs.a1_morphology import A1Morphology
 
 
 @dataclass(frozen=True)
@@ -168,6 +169,13 @@ class LanguageConfig:
     # wordfreq lookup code for pedagogical ranking; None disables frequency
     # ranking (creation candidates fall back to in-lesson occurrence count).
     wordfreq_lang: str | None = None
+    # Per-language A1 morphology vocabulary: how a UD analysis maps to a TT
+    # feature string, which feature strings validate as A1, and how they render
+    # as hint text (Slovene's person/number vocabulary vs Norwegian's
+    # definite/tense vocabulary). ``None`` when the language registers no bundle
+    # — the A1-morphology call sites then fall back to the default
+    # (Slovene-shaped) vocabulary in ``app.srs.function_words``.
+    a1_morphology: A1Morphology | None = None
 
 
 _CONFIGS: dict[str, LanguageConfig] = {}
@@ -548,6 +556,17 @@ def get_morphology_profile(code: str) -> str | None:
     discover()
     config = _CONFIGS.get(code)
     return config.morphology_profile if config else None
+
+
+def get_a1_morphology(code: str) -> A1Morphology | None:
+    """Return the language's A1 morphology bundle, or ``None`` when it registers none.
+
+    ``None`` means the A1-morphology call sites keep the default (Slovene-shaped)
+    vocabulary — never a guess. Unknown codes → ``None``.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    return config.a1_morphology if config else None
 
 
 @dataclass(frozen=True)
