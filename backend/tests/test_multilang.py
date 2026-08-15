@@ -149,6 +149,44 @@ class TestPerRequestIsolation:
             assert await self._texts(client, {"X-TT-Language": "sl"}) == {"voda"}
             assert await self._texts(client, {"X-TT-Language": "no"}) == {"vann", "hund"}
 
+    async def test_curriculum_imports_as_norwegian_into_the_norwegian_store(self, two_language_app):
+        """A Norwegian plan import comes back as `no` AND lands only in the `no` store.
+
+        Ported down from `frontend/tests/generate-norwegian.spec.ts` on
+        2026-08-15 (`tunatale-vnf.10`), which asserted the first half against a
+        second uvicorn on port 8002 while never opening a browser. The second
+        half is new and is the part worth having: the e2e version could not see
+        which store the curriculum landed in, because it only ever talked to one
+        backend at a time.
+        """
+        day = {
+            "day": 1,
+            "title": "Kaffe på norsk",
+            "focus": "Basic coffee ordering",
+            "collocations": ["Jeg vil gjerne en kaffe", "En espresso takk"],
+            "learning_objective": "Order a coffee and express simple preferences",
+            "story_guidance": "Learner visits a busy café in Oslo for the first time",
+        }
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/curriculum/import",
+                headers={"X-TT-Language": "no"},
+                json={
+                    "topic": "ordering coffee",
+                    "language_code": "no",
+                    "cefr_level": "A2",
+                    "days": [day],
+                },
+            )
+            assert resp.status_code == 201
+            body = resp.json()
+            assert body["language_code"] == "no"
+            assert body["days"] == 1
+
+        # The isolation claim: the `no` store has it, the `sl` store does not.
+        assert app.state.content_stores["no"].get_curriculum(body["id"]) is not None
+        assert app.state.content_stores["sl"].get_curriculum(body["id"]) is None
+
 
 class TestLanguagesEndpointFallbacks:
     """The /api/languages singular + empty fallbacks (no per-language maps)."""

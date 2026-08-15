@@ -631,6 +631,41 @@ class TestNorwegianStoryGeneration:
         assert "mor" in texts
         assert "gen" in texts
 
+    async def test_every_norwegian_phrase_in_every_section_uses_an_nb_no_voice(self, norwegian_generator, norwegian):
+        """No Slovene voice leaks into ANY section of a Norwegian lesson.
+
+        `test_key_phrases_use_norwegian_voice` above checks one section against
+        one exact voice id. This checks the whole lesson against the `nb-NO-`
+        prefix, which is the claim
+        `frontend/tests/generate-norwegian.spec.ts` was making before it was
+        ported down on 2026-08-15 (`tunatale-vnf.10`) — it flattened
+        `lesson.sections[].phrases` and required the prefix on every L2 phrase.
+        The two are complements: an exact id catches the wrong Norwegian voice,
+        a prefix over every section catches a Slovene one anywhere.
+        """
+        day = _make_curriculum_day()
+        lesson = await norwegian_generator.generate(
+            curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER
+        )
+        l2_phrases = [p for s in lesson.sections for p in s.phrases if p.language_code == "no"]
+        # Vacuity guard: `all()` over an empty list is True, which is exactly how
+        # a voice-map regression would sail through this assertion.
+        assert l2_phrases
+        assert all(p.voice_id.startswith("nb-NO-") for p in l2_phrases)
+
+    async def test_norwegian_lesson_has_the_pimsleur_natural_speed_section(self, norwegian_generator, norwegian):
+        """The Pimsleur section builders ran for `no`, not just the LLM call.
+
+        Also ported down from the e2e spec (`tunatale-vnf.10`). A lesson that
+        generated but built no sections would satisfy every language assertion
+        above and still be useless.
+        """
+        day = _make_curriculum_day()
+        lesson = await norwegian_generator.generate(
+            curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER
+        )
+        assert SectionType.NATURAL_SPEED in {s.section_type for s in lesson.sections}
+
     async def test_norwegian_system_prompt_has_bokmal_no_slavic_morphology(self, norwegian):
         client = MagicMock()
         client.complete = AsyncMock(return_value=self._norwegian_response())

@@ -4,9 +4,17 @@ export default defineConfig({
 	globalSetup: './tests/global-setup.ts',
 	webServer: [
 		{
-			// Test backend: isolated DB, dedicated port — never reuses dev server
-			// rm -f ensures a clean DB every run (globalSetup runs AFTER webServer starts)
-			command: 'cd ../backend && rm -f tunatale-test.db && uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --log-level error',
+			// Test backend: isolated DBs, dedicated port — never reuses dev server
+			// rm -f ensures a clean DB every run (globalSetup runs AFTER webServer starts).
+			//
+			// BOTH language DBs are removed here, and that is load-bearing: this one
+			// backend serves both (see DATABASE_URLS below), so language-switch.spec.ts
+			// reaches the Norwegian DB with a header. tunatale-test-no.db used to be
+			// cleaned by a SECOND uvicorn on :8002, deleted 2026-08-15 with the spec
+			// that was its only consumer (tunatale-vnf.10) — leaving the rm behind
+			// would have made the Norwegian seed accumulate one row per run, and the
+			// spec's strict text locator go non-idempotent on the second one.
+			command: 'cd ../backend && rm -f tunatale-test.db tunatale-test-no.db && uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --log-level error',
 			port: 8001,
 			reuseExistingServer: false,
 			timeout: 30000,
@@ -56,30 +64,20 @@ export default defineConfig({
 				TARGET_LANGUAGE: 'sl'
 			}
 		},
-		{
-			// Norwegian test backend: same image, TARGET_LANGUAGE=no, isolated DB +
-			// port. Exercises the Phase-2 Norwegian generation path (story prompt +
-			// nb-NO voices + syllabifier) against the Norwegian cassettes recorded in
-			// e2e.json. API-level only — the frontend isn't language-switchable yet
-			// (Phase 5), so the Norwegian spec hits port 8002 directly via `request`.
-			command: 'cd ../backend && rm -f tunatale-test-no.db && uv run uvicorn app.main:app --host 0.0.0.0 --port 8002 --log-level error',
-			port: 8002,
-			reuseExistingServer: false,
-			timeout: 30000,
-			env: {
-				LLM_MODE: 'mock',
-				PIPELINE_AUTOSTART: 'false',
-				DATABASE_URL: 'sqlite:///./tunatale-test-no.db',
-				// See the 8001 block: UPPERCASE key (matches .env's DATABASE_URLS) and
-				// every language key listed, or e2e leaks into the real per-language DBs.
-				DATABASE_URLS: '{"sl":"sqlite:///./tunatale-test.db","no":"sqlite:///./tunatale-test-no.db"}',
-				// See the 8001 block — no test-DB snapshots into the real backup dir.
-				DB_BACKUP_KEEP_DAYS: '0',
-				PIXABAY_API_KEY: '',
-				lemmatizer_type: 'lowercase',
-				TARGET_LANGUAGE: 'no'
-			}
-		},
+		// A SECOND BACKEND ON :8002 (TARGET_LANGUAGE=no) USED TO LIVE HERE. It was
+		// deleted 2026-08-15 (tunatale-vnf.10) along with generate-norwegian.spec.ts,
+		// its only consumer — a spec that never opened a browser and whose
+		// assertions were all backend claims, now made in pytest.
+		//
+		// ⚠️ ONE CLAIM WENT UNOWNED WITH IT, stated rather than hidden: Playwright
+		// waits for a webServer's port to listen, so booting that process was an
+		// implicit assertion that a uvicorn with TARGET_LANGUAGE=no starts at all.
+		// Nothing asserts that now — pytest's ASGITransport builds the app in-process
+		// and cannot make a claim about a configured OS process. It is a deployment
+		// topology claim and belongs with the deploy work (tunatale-kbb), not here.
+		// language-switch.spec.ts does NOT recover it: the frontend proxies /api to
+		// :8001 only, so that journey reaches the Norwegian DB through :8001's
+		// per-language connection map, never through a Norwegian-configured process.
 		{
 			// Test frontend: proxies /api to port 8001, dedicated port
 			command: 'npm run dev -- --port 5174',
