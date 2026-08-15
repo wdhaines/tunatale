@@ -184,6 +184,18 @@ async def generate_vocab_media(
         store_tt_media(db, coll_id, "image", img_filename, media.image_bytes)
         stored["image"] = img_filename
 
+    audio_status = getattr(media, "audio_status", None)
+    if audio_status is not None:
+        stored["audio_status"] = audio_status
+        # Only a real failure warns. "nobody recorded this word" is the common
+        # case and warning on it would bury the signal we actually want.
+        if audio_status not in ("found", "no_pronunciation"):
+            logger.warning(
+                "Forvo unavailable for %r: status=%s — card got TTS audio instead",
+                word,
+                audio_status,
+            )
+
     img_status = getattr(media, "image_status", None)
     if img_status is not None:
         stored["image_status"] = img_status

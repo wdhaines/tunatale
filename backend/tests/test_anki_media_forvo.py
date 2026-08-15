@@ -6,7 +6,7 @@ import base64
 
 import httpx
 
-from app.cards.media.forvo import _extract_mp3_url, fetch_forvo_audio
+from app.cards.media.forvo import ForvoOutcome, _extract_mp3_url, fetch_forvo_pronunciation
 
 
 def _make_forvo_html(b64_path: str, *, use_single_quotes: bool = False) -> str:
@@ -81,7 +81,17 @@ class TestExtractMp3Url:
         assert _extract_mp3_url(html, language_code="sl") is None
 
 
-# ── fetch_forvo_audio ──────────────────────────────────────────────────────────
+# ── fetch_forvo_pronunciation ──────────────────────────────────────────────────
+
+# The scraper used to answer every one of these cases with a bare ``None``, so a
+# Cloudflare block, a Forvo markup change and "nobody recorded this word" were
+# indistinguishable at the call site — which is how Forvo could stop working
+# without anything surfacing it. Each test below pins one outcome to one cause.
+
+_CLOUDFLARE_BODY = (
+    '<!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title>'
+    '</head><body><div class="cf-browser-verification"></div></body></html>'
+)
 
 
 class _SequenceTransport(httpx.BaseTransport):
@@ -94,45 +104,95 @@ class _SequenceTransport(httpx.BaseTransport):
         return self._responses.pop(0)
 
 
-class TestFetchForvoAudio:
+class TestFetchForvoPronunciation:
     def _client(self, responses: list[httpx.Response]) -> httpx.Client:
         return httpx.Client(transport=_SequenceTransport(responses))
 
-    def test_returns_mp3_bytes_on_success(self):
+    def test_found_returns_audio_and_found_outcome(self):
         b64 = _b64("audios/mp3/test.mp3")
-        html_body = _make_forvo_html(b64)
         mp3_bytes = b"\xff\xfb\x90\x00fake_mp3"
         client = self._client(
             [
-                httpx.Response(200, text=html_body),
+                httpx.Response(200, text=_make_forvo_html(b64)),
                 httpx.Response(200, content=mp3_bytes),
             ]
         )
-        result = fetch_forvo_audio("voda", language_code="sl", http_client=client)
-        assert result == mp3_bytes
+        result = fetch_forvo_pronunciation("voda", language_code="sl", http_client=client)
+        assert result.outcome is ForvoOutcome.FOUND
+        assert result.audio == mp3_bytes
+        assert result.is_failure is False
 
-    def test_returns_none_when_no_slovenian_section(self):
-        html_body = "<html><p>no slovenian</p></html>"
+    def test_no_container_for_our_language_is_no_pronunciation_not_failure(self):
+        """Other languages have a section, ours doesn't — Forvo answered, the answer is 'none'."""
+        html_body = '<html><div id="language-container-no"><article>x</article></div></html>'
         client = self._client([httpx.Response(200, text=html_body)])
-        result = fetch_forvo_audio("voda", http_client=client)
-        assert result is None
+        result = fetch_forvo_pronunciation("voda", language_code="sl", http_client=client)
+        assert result.outcome is ForvoOutcome.NO_PRONUNCIATION
+        assert result.is_failure is False
+        assert result.audio is None
 
-    def test_returns_none_on_http_error(self):
+    def test_container_without_play_call_is_no_pronunciation(self):
+        html_body = '<html><div id="language-container-sl"><article><p>no play</p></article></div></html>'
+        client = self._client([httpx.Response(200, text=html_body)])
+        result = fetch_forvo_pronunciation("voda", language_code="sl", http_client=client)
+        assert result.outcome is ForvoOutcome.NO_PRONUNCIATION
+        assert result.is_failure is False
+
+    def test_no_language_containers_at_all_is_markup_changed(self):
+        """A 200 with no language-container anywhere means the scraper can no longer parse Forvo.
+
+        Distinct from NO_PRONUNCIATION on purpose: 'nobody recorded this word' is
+        normal and must stay quiet, while 'we can no longer read the page' is a
+        standing defect that needs to be loud.
+        """
+        client = self._client([httpx.Response(200, text="<html><body>totally new markup</body></html>")])
+        result = fetch_forvo_pronunciation("voda", language_code="sl", http_client=client)
+        assert result.outcome is ForvoOutcome.MARKUP_CHANGED
+        assert result.is_failure is True
+
+    def test_cloudflare_challenge_is_blocked(self):
+        """The 2026-08-15 signature: HTTP 403 plus a 'Just a moment...' interstitial."""
+        client = self._client([httpx.Response(403, text=_CLOUDFLARE_BODY)])
+        result = fetch_forvo_pronunciation("voda", language_code="sl", http_client=client)
+        assert result.outcome is ForvoOutcome.BLOCKED
+        assert result.is_failure is True
+        assert "403" in result.detail
+
+    def test_plain_http_error_is_request_failed_not_blocked(self):
+        """A 404 is not a block — conflating them would make the block signal useless."""
         client = self._client([httpx.Response(404)])
-        result = fetch_forvo_audio("voda", http_client=client)
-        assert result is None
+        result = fetch_forvo_pronunciation("voda", language_code="sl", http_client=client)
+        assert result.outcome is ForvoOutcome.REQUEST_FAILED
+        assert result.is_failure is True
 
-    def test_returns_none_on_mp3_download_error(self):
+    def test_403_without_challenge_body_is_request_failed(self):
+        """Only the challenge body earns BLOCKED; a bare 403 could be anything."""
+        client = self._client([httpx.Response(403, text="<html>go away</html>")])
+        result = fetch_forvo_pronunciation("voda", language_code="sl", http_client=client)
+        assert result.outcome is ForvoOutcome.REQUEST_FAILED
+
+    def test_mp3_download_failure_is_its_own_outcome(self):
+        """Metadata parsed fine, the audio host failed — a different thing to chase."""
         b64 = _b64("audios/mp3/test.mp3")
-        html_body = _make_forvo_html(b64)
         client = self._client(
             [
-                httpx.Response(200, text=html_body),
-                httpx.Response(403),
+                httpx.Response(200, text=_make_forvo_html(b64)),
+                httpx.Response(500),
             ]
         )
-        result = fetch_forvo_audio("voda", http_client=client)
-        assert result is None
+        result = fetch_forvo_pronunciation("voda", language_code="sl", http_client=client)
+        assert result.outcome is ForvoOutcome.AUDIO_FETCH_FAILED
+        assert result.is_failure is True
+
+    def test_transport_error_is_request_failed_and_never_raises(self):
+        class ExplodingTransport(httpx.BaseTransport):
+            def handle_request(self, request: httpx.Request) -> httpx.Response:
+                raise httpx.ConnectError("no route to host")
+
+        client = httpx.Client(transport=ExplodingTransport())
+        result = fetch_forvo_pronunciation("voda", language_code="sl", http_client=client)
+        assert result.outcome is ForvoOutcome.REQUEST_FAILED
+        assert "ConnectError" in result.detail
 
     def test_url_encodes_non_ascii_word(self):
         """Words like 'živ' must be URL-encoded in the Forvo path."""
@@ -144,11 +204,11 @@ class TestFetchForvoAudio:
                 return httpx.Response(200, text="<html>no slovenian</html>")
 
         client = httpx.Client(transport=RecordingTransport())
-        fetch_forvo_audio("živ", http_client=client)
-        assert "%C5%BEiv" in recorded_urls[0] or "živ" in recorded_urls[0]  # either encoded or httpx encodes
+        fetch_forvo_pronunciation("živ", language_code="sl", http_client=client)
+        assert "%C5%BEiv" in recorded_urls[0] or "živ" in recorded_urls[0]
 
     def test_creates_own_client_when_none_given(self, monkeypatch):
-        """fetch_forvo_audio creates and closes its own client when http_client=None."""
+        """Creates and closes its own client when http_client=None."""
         calls: list[str] = []
 
         class FakeClient:
@@ -160,6 +220,33 @@ class TestFetchForvoAudio:
                 calls.append("close")
 
         monkeypatch.setattr("app.cards.media.forvo._make_client", lambda: FakeClient())
-        result = fetch_forvo_audio("voda")
-        assert result is None
+        result = fetch_forvo_pronunciation("voda", language_code="sl")
+        assert result.outcome is ForvoOutcome.REQUEST_FAILED
         assert "close" in calls
+
+    def test_defaults_language_to_configured_target(self, monkeypatch):
+        monkeypatch.setattr("app.config.settings.target_language", "sl")
+        b64 = _b64("audios/mp3/test.mp3")
+        client = self._client(
+            [
+                httpx.Response(200, text=_make_forvo_html(b64)),
+                httpx.Response(200, content=b"mp3"),
+            ]
+        )
+        assert fetch_forvo_pronunciation("voda", http_client=client).outcome is ForvoOutcome.FOUND
+
+    def test_logs_a_warning_naming_the_cause_on_failure(self, caplog):
+        """The whole point: a failure must leave a readable trace, not vanish."""
+        client = self._client([httpx.Response(403, text=_CLOUDFLARE_BODY)])
+        with caplog.at_level("WARNING"):
+            fetch_forvo_pronunciation("voda", language_code="sl", http_client=client)
+        assert "voda" in caplog.text
+        assert "blocked" in caplog.text.lower()
+
+    def test_does_not_warn_when_nobody_recorded_the_word(self, caplog):
+        """NO_PRONUNCIATION is a normal answer. Warning here would drown the real signal."""
+        html_body = '<html><div id="language-container-no"><article>x</article></div></html>'
+        client = self._client([httpx.Response(200, text=html_body)])
+        with caplog.at_level("WARNING"):
+            fetch_forvo_pronunciation("voda", language_code="sl", http_client=client)
+        assert caplog.text == ""
