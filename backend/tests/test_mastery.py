@@ -19,9 +19,10 @@ def _ds(
     state: SRSState = SRSState.NEW,
     stability: float = 1.0,
     last_review: datetime | None = None,
+    direction: Direction = Direction.RECOGNITION,
 ) -> DirectionState:
     return DirectionState(
-        direction=Direction.RECOGNITION,
+        direction=direction,
         due_at=datetime(2026, 6, 1, 4, 0, tzinfo=UTC),
         state=state,
         stability=stability,
@@ -150,7 +151,7 @@ class TestComputeMasteryProgress:
     def test_mean_of_new_and_review(self):
         from app.srs.mastery import compute_mastery_progress
 
-        new_ds = _ds(state=SRSState.NEW)
+        new_ds = _ds(state=SRSState.NEW, direction=Direction.PRODUCTION)
         review_ds = _ds(state=SRSState.REVIEW, stability=100.0, last_review=datetime(2026, 5, 30, 4, 0, tzinfo=UTC))
         val = compute_mastery_progress([new_ds, review_ds])
         expected = (0.0 + _expected_review_mastery(100.0)) / 2
@@ -163,6 +164,63 @@ class TestComputeMasteryProgress:
         suspended_ds = _ds(state=SRSState.SUSPENDED, last_review=datetime(2026, 6, 1, 4, 0, tzinfo=UTC))
         # Only NEW counts → 0.0 / 1 = 0.0
         assert compute_mastery_progress([new_ds, suspended_ds]) == 0.0
+
+    def test_recognition_only_never_reads_fully_mastered(self):
+        """A word with no production card is not mastered, however mature recognition is.
+
+        The Norwegian deck is recognition-only for 2990 of 3017 collocations, so
+        before this rule 18.3% of it read 100% (vs 0.3% of the two-direction
+        Slovene deck) — the clamp at MASTERY_STABILITY_CEILING_DAYS meant any
+        recognition card past ~120 days stability rendered as fully known.
+        """
+        from app.srs.mastery import compute_mastery_progress
+
+        mature = _ds(state=SRSState.REVIEW, stability=10_000.0, last_review=datetime(2026, 5, 30, 4, 0, tzinfo=UTC))
+        assert compute_mastery_progress([mature]) == 0.5
+
+    def test_absent_production_scores_as_unlearned(self):
+        """An absent production card counts exactly like a NEW one: 0.0."""
+        from app.srs.mastery import compute_mastery_progress
+
+        recog = _ds(state=SRSState.REVIEW, stability=100.0, last_review=datetime(2026, 5, 30, 4, 0, tzinfo=UTC))
+        absent = compute_mastery_progress([recog])
+        explicit_new = compute_mastery_progress([recog, _ds(state=SRSState.NEW, direction=Direction.PRODUCTION)])
+        assert absent == explicit_new
+
+    def test_both_directions_mature_still_reaches_full(self):
+        from app.srs.mastery import compute_mastery_progress
+
+        kw = {"state": SRSState.REVIEW, "stability": 10_000.0, "last_review": datetime(2026, 5, 30, 4, 0, tzinfo=UTC)}
+        pair = [_ds(**kw), _ds(direction=Direction.PRODUCTION, **kw)]
+        assert compute_mastery_progress(pair) == 1.0
+
+    def test_production_only_card_is_not_penalized(self):
+        """Cloze notes are PRODUCTION-only by design — they have no missing half."""
+        from app.srs.mastery import compute_mastery_progress
+
+        prod = _ds(
+            state=SRSState.REVIEW,
+            stability=10_000.0,
+            last_review=datetime(2026, 5, 30, 4, 0, tzinfo=UTC),
+            direction=Direction.PRODUCTION,
+        )
+        assert compute_mastery_progress([prod]) == 1.0
+
+    def test_suspended_production_is_not_double_counted(self):
+        """A suspended production card is deliberately not studied, not absent.
+
+        It stays out of the mean (existing rule) and must NOT also trigger the
+        absent-production penalty — that would score one card twice.
+        """
+        from app.srs.mastery import compute_mastery_progress
+
+        recog = _ds(state=SRSState.REVIEW, stability=10_000.0, last_review=datetime(2026, 5, 30, 4, 0, tzinfo=UTC))
+        suspended_prod = _ds(
+            state=SRSState.SUSPENDED,
+            last_review=datetime(2026, 6, 1, 4, 0, tzinfo=UTC),
+            direction=Direction.PRODUCTION,
+        )
+        assert compute_mastery_progress([recog, suspended_prod]) == 1.0
 
     def test_adding_zero_mastery_lowers_mean(self):
         from app.srs.mastery import compute_mastery_progress
