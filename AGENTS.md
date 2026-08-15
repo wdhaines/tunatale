@@ -7,7 +7,7 @@ AI-generated audio language curricula — Pimsleur-style listening with content 
 **⚠️ Must run `./test.sh` before every commit — the full suite must pass, or you DO NOT commit.** (Enforced by a commit-gate hook — see Hooks below.)
 
 ```bash
-# Full suite (root): lint + format + checkers + pytest + svelte-check + vitest + playwright
+# Full suite (root): lint + format + checkers + pytest + svelte-check + vitest + playwright + peer-sync
 ./test.sh
 
 # Backend only (from repo root):
@@ -64,8 +64,8 @@ All commands use `uv run` (no manual venv activation). Never commit `.env`. Groq
 - **SRS tests**: `sqlite:///:memory:` via `srs_db` fixture
 - **Anki tests**: use the `fake_anki_db*` fixtures from `conftest.py` — never a real `collection.anki2`
 - **Mock-boundary check**: `./test.sh` + CI fail any `patch("app.…")` not in `backend/tests/mock_allowlist.txt`. **Zero tolerance** — the grandfather ledger was drained to empty and deleted (2026-07-30); the allowlist is the only escape hatch and additions need sign-off. See `.claude/rules/testing.md`
-- **Peer-sync tests** (`--run-peer-sync`): auto-start a throwaway `anki.syncserver`
-- **CI**: four parallel jobs in `.github/workflows/ci.yml` — backend (ruff → checkers → pytest), frontend (svelte-check + vitest), oracle-parity (`pytest -m oracle --run-oracle`), peer-sync. E2E (Playwright) is local-only via `./test.sh`.
+- **Peer-sync tests** (`--run-peer-sync`): auto-start a throwaway `anki.syncserver`. Tier 1 as of 2026-08-14 — a third parallel group in `./test.sh`, not a manual step.
+- **CI is authoritative; `./test.sh` is a strict SUBSET of it** (`tunatale-as5`, 2026-08-14). Green locally is necessary but not sufficient. **Adding a check to `test.sh` obliges you to add it to `ci.yml` in the same commit**; the reverse is not required. Eight parallel job instances in `.github/workflows/ci.yml` — backend (ruff → checkers → pytest), `backend-hostile-tz` (×2), `backend-hostile-hour`, frontend, `e2e` (Playwright), oracle-parity, peer-sync. The hostile-timezone jobs are the only CI-only checks; there are no local-only ones. **There is no dependency-group split** — CI's `--no-group` flags were measured to be cosmetic (`uv run` re-syncs to `[tool.uv] default-groups`, which lists all three) and were deleted. Full rationale: `.claude/rules/testing.md` § "What a green gate means".
 
 ## Key Conventions
 
@@ -99,8 +99,9 @@ Most `.claude/rules/*.md` carry `paths:` frontmatter — Claude Code auto-loads 
   # ← NOTHING after this line. No `echo`, no cleanup, nothing.
   ```
   Then read `/tmp/gate.txt`: require `=== All checks passed ===` (the failure form
-  is `=== FAILED (backend=N frontend=N) ===`), 100.00% backend coverage, and a
-  sane ruff count (~374 and growing; a tiny N means discovery broke).
+  is `=== FAILED (backend=N frontend=N peer_sync=N) ===`), 100.00% backend
+  coverage, and a sane ruff count (~446 and growing; a tiny N means discovery
+  broke).
   **Two fictional greens on 2026-07-29, same root class:**
   1. `./test.sh > log 2>&1; echo "EXIT=$?"` printed `EXIT=0` while the log said
      `no such file or directory: ./test.sh` — an earlier `cd` had persisted across

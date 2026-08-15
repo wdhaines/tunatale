@@ -169,6 +169,20 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.25rem;
+		/* WRAP, because every dimension in this row is in `rem` — the link padding,
+		   the gap and the 0.88rem label all scale with the root font while the row's
+		   width does not. Without this the three links grew past a 320px viewport
+		   and took the whole PAGE sideways with them: 2px of horizontal scroll at a
+		   20px root locally, 32px at 22px, 62px at 24px. Android Chrome's font-size
+		   setting produces exactly this, which is why listen-preview-layout.spec.ts
+		   sweeps root sizes rather than only viewport widths.
+
+		   Found by putting Playwright in CI (tunatale-as5), and it is a genuine bug
+		   the local gate structurally could not see: CI failed at an 18px root while
+		   macOS needed 20px for the identical 2px, because Linux renders this stack
+		   slightly wider. The spec catches it as docOverflow, not modalOverflow —
+		   the offender is this nav, behind the overlay, not the modal it measures. */
+		flex-wrap: wrap;
 	}
 	.review-group {
 		display: inline-flex;
