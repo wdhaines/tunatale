@@ -220,6 +220,48 @@ async def test_image_rate_limited_logs_warning(media_dir, caplog) -> None:
     assert any("image fetch failed" in r.message for r in caplog.records)
 
 
+async def test_forvo_blocked_logs_warning_and_stores_status(media_dir, caplog) -> None:
+    """A Forvo outage must reach the log, not just quietly become a TTS card.
+
+    This is the visibility the scraper never had: the card still gets audio, so
+    nothing downstream looks wrong — the warning is the only thing that says
+    Forvo stopped working.
+    """
+    db = _FakeDB()
+
+    async def _query(*_a, **_k):
+        return "water"
+
+    async def _fetch(*_a, **_k):
+        return MediaResult(audio_bytes=b"TTS", audio_source="tts", audio_status="blocked")
+
+    with caplog.at_level("WARNING"):
+        out = await vocab_media.generate_vocab_media(
+            db, 1, "voda", "water", llm=object(), pixabay_key="k", _query_fn=_query, _fetch_fn=_fetch
+        )
+    assert out["audio_status"] == "blocked"
+    assert out["audio"]  # the card is still fully usable
+    assert any("Forvo unavailable" in r.message for r in caplog.records)
+
+
+async def test_no_pronunciation_stores_status_without_warning(media_dir, caplog) -> None:
+    """The common case must stay quiet or the warning above becomes unreadable noise."""
+    db = _FakeDB()
+
+    async def _query(*_a, **_k):
+        return "water"
+
+    async def _fetch(*_a, **_k):
+        return MediaResult(audio_bytes=b"TTS", audio_source="tts", audio_status="no_pronunciation")
+
+    with caplog.at_level("WARNING"):
+        out = await vocab_media.generate_vocab_media(
+            db, 1, "voda", "water", llm=object(), pixabay_key="k", _query_fn=_query, _fetch_fn=_fetch
+        )
+    assert out["audio_status"] == "no_pronunciation"
+    assert not any("Forvo unavailable" in r.message for r in caplog.records)
+
+
 async def test_image_ok_sets_status(media_dir) -> None:
     """Happy path: image_status='ok' propagated to stored dict."""
     db = _FakeDB()

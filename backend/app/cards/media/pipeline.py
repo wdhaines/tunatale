@@ -13,7 +13,7 @@ import anyio
 from app.languages import get_tts_voice
 
 from .choose_llm import choose_image_hit
-from .forvo import fetch_forvo_audio
+from .forvo import ForvoOutcome, ForvoResult, fetch_forvo_pronunciation
 from .normalize import normalize_audio
 from .pixabay import PixabaySearch, _tag_overlap, best_hit, build_query, download_hit, search_pixabay
 from .tts import generate_tts_audio
@@ -23,6 +23,10 @@ from .tts import generate_tts_audio
 class MediaResult:
     audio_bytes: bytes | None = None
     audio_source: str | None = None
+    # Why Forvo did or didn't supply the audio — a ForvoOutcome value. Mirrors
+    # image_status, and exists so "TTS was used" carries its reason instead of
+    # being indistinguishable from "Forvo had nothing".
+    audio_status: str | None = None
     image_bytes: bytes | None = None
     image_ext: str | None = None
     image_url: str | None = None
@@ -63,7 +67,7 @@ async def fetch_card_media(
     used_image_urls: set[str] | None = None,
     image_query: str | None = None,
     llm: Any = None,
-    _forvo_fn: Callable[..., bytes | None] | None = None,
+    _forvo_fn: Callable[..., ForvoResult] | None = None,
     _tts_fn: Callable[..., Awaitable[bytes | None]] | None = None,
     _search_fn: Callable[..., Any] | None = None,
     _download_fn: Callable[..., Any] | None = None,
@@ -80,7 +84,7 @@ async def fetch_card_media(
       * ``""``   — skip the image entirely (abstract word, no depiction).
       * non-empty — sent to Pixabay verbatim as a sense-disambiguated query.
     """
-    forvo_fn = _forvo_fn or fetch_forvo_audio
+    forvo_fn = _forvo_fn or fetch_forvo_pronunciation
     tts_fn = _tts_fn or generate_tts_audio
     search_fn = _search_fn or search_pixabay
     download_fn = _download_fn or download_hit
@@ -99,13 +103,17 @@ async def fetch_card_media(
     # Forvo / normalize are synchronous (httpx.Client, ffmpeg
     # subprocess) — offload to a worker thread so a slow fetch doesn't block
     # the event loop and stall every other in-flight request.
-    audio = await anyio.to_thread.run_sync(
+    forvo = await anyio.to_thread.run_sync(
         partial(forvo_fn, word, language_code=language_code, http_client=http_client)
     )
-    if audio is not None:
+    result.audio_status = forvo.outcome.value
+    if forvo.outcome is ForvoOutcome.FOUND:
         result.audio_source = "forvo"
-        result.audio_bytes = audio
+        result.audio_bytes = forvo.audio
     else:
+        # Every non-FOUND outcome still falls back to TTS — the card must not be
+        # blocked on a nice-to-have. audio_status is what keeps that fallback
+        # from being silent.
         audio = await tts_fn(word, voice=voice)
         if audio is not None:
             result.audio_source = "tts"

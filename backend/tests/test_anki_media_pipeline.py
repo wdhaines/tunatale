@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.cards.media.forvo import ForvoOutcome, ForvoResult
 from app.cards.media.pipeline import MediaResult, fetch_card_media
 from app.cards.media.pixabay import PixabaySearch
 
@@ -12,6 +13,13 @@ _IMG_URL_2 = "https://cdn.pixabay.com/photo/dog.jpg"
 
 _HIT_1 = {"webformatURL": _IMG_URL, "tags": "tree, forest", "imageWidth": 800, "imageHeight": 600, "likes": 42}
 _HIT_2 = {"webformatURL": _IMG_URL_2, "tags": "dog, pet", "imageWidth": 1024, "imageHeight": 768, "likes": 100}
+
+
+def _forvo_result(audio: bytes | None) -> ForvoResult:
+    """Bytes → FOUND, None → NO_PRONUNCIATION (the ordinary 'Forvo had nothing')."""
+    if audio is None:
+        return ForvoResult(ForvoOutcome.NO_PRONUNCIATION)
+    return ForvoResult(ForvoOutcome.FOUND, audio=audio)
 
 
 def _make_fakes(
@@ -25,7 +33,7 @@ def _make_fakes(
     """Return (forvo_fn, tts_fn, search_fn, download_fn, normalize_fn) configured fakes."""
 
     def fake_forvo(word, *, language_code="sl", http_client=None):
-        return forvo_returns
+        return _forvo_result(forvo_returns)
 
     async def fake_tts(text, *, voice=None):
         return tts_returns
@@ -53,9 +61,64 @@ class TestMediaResult:
         assert r.image_bytes is None
         assert r.image_ext is None
         assert r.image_url is None
+        assert r.audio_status is None
         assert r.image_status is None
         assert r.image_query_used is None
         assert r.image_chooser is None
+
+
+# ── TestAudioStatus ────────────────────────────────────────────────────────────
+
+
+class TestAudioStatus:
+    """Why the card got the audio it got, carried to the call site.
+
+    Before this, a TTS-audio card looked identical whether Forvo had no
+    recording or Forvo was unreachable, so a total Forvo outage was invisible.
+    """
+
+    async def _run(self, forvo_result):
+        _, tts_fn, search_fn, dl_fn, norm_fn = _make_fakes(tts_returns=b"tts_mp3")
+        return await fetch_card_media(
+            "voda",
+            "water",
+            pixabay_key="key",
+            _forvo_fn=lambda *a, **k: forvo_result,
+            _tts_fn=tts_fn,
+            _search_fn=search_fn,
+            _download_fn=dl_fn,
+            _normalize_fn=norm_fn,
+        )
+
+    async def test_found_records_found_and_uses_forvo(self):
+        r = await self._run(ForvoResult(ForvoOutcome.FOUND, audio=b"forvo_mp3"))
+        assert r.audio_status == "found"
+        assert r.audio_source == "forvo"
+
+    async def test_no_pronunciation_records_its_own_status(self):
+        r = await self._run(ForvoResult(ForvoOutcome.NO_PRONUNCIATION))
+        assert r.audio_status == "no_pronunciation"
+        assert r.audio_source == "tts"
+
+    async def test_blocked_is_distinguishable_from_no_pronunciation(self):
+        """The claim this whole change exists for."""
+        r = await self._run(ForvoResult(ForvoOutcome.BLOCKED, detail="HTTP 403 challenge"))
+        assert r.audio_status == "blocked"
+        assert r.audio_source == "tts"
+        assert r.audio_status != "no_pronunciation"
+
+    async def test_every_failure_outcome_still_falls_back_to_tts(self):
+        """Visibility must not cost availability — the card still gets audio."""
+        for outcome in (
+            ForvoOutcome.BLOCKED,
+            ForvoOutcome.MARKUP_CHANGED,
+            ForvoOutcome.REQUEST_FAILED,
+            ForvoOutcome.AUDIO_FETCH_FAILED,
+        ):
+            r = await self._run(ForvoResult(outcome))
+            assert r.audio_source == "tts", outcome
+            assert r.audio_bytes is not None, outcome
+            assert r.audio_status == outcome.value
 
 
 # ── TestLanguageThreading ──────────────────────────────────────────────────────
@@ -68,7 +131,7 @@ class TestLanguageThreading:
         captured_voice: list[str | None] = []
 
         def fake_forvo(word, *, language_code="sl", http_client=None):
-            return None  # force TTS fallback
+            return _forvo_result(None)  # force TTS fallback
 
         async def recording_tts(text, *, voice=None):
             captured_voice.append(voice)
@@ -91,7 +154,7 @@ class TestLanguageThreading:
 
         def recording_forvo(word, *, language_code="sl", http_client=None):
             captured_lang.append(language_code)
-            return b"forvo_mp3"
+            return _forvo_result(b"forvo_mp3")
 
         async def fake_tts(text, *, voice=None):
             return None
@@ -122,7 +185,7 @@ class TestLanguageThreading:
             pixabay_key="key",
             language_code="no",
             tts_voice="custom-voice",
-            _forvo_fn=lambda *a, **k: None,
+            _forvo_fn=lambda *a, **k: _forvo_result(None),
             _tts_fn=recording_tts,
             _search_fn=lambda q, **k: PixabaySearch(hits=[], status="no_results"),
             _download_fn=lambda h, **k: None,
@@ -989,7 +1052,7 @@ class TestFetchCardMedia:
 
         def slow_forvo(word, *, language_code="sl", http_client=None):
             time.sleep(0.2)
-            return b"audio"
+            return _forvo_result(b"audio")
 
         _, tts_fn, search_fn, dl_fn, norm_fn = _make_fakes()
         task = asyncio.create_task(ticker())
