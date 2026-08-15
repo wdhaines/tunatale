@@ -521,8 +521,10 @@ class TestStoryEndpoints:
         try:
             await _prewarm_lesson(lesson, srs_db)
 
+            from app.srs.lemmatizer import model_version_for
+
             for text in ("Dober dan", "Kako si"):
-                cached = srs_db.get_sentence_analysis(text, "sl", "test-v1")
+                cached = srs_db.get_sentence_analysis(text, "sl", model_version_for(_CachingLemmatizer()))
                 assert cached is not None, f"Expected cache entry for {text}"
         finally:
             srs_db.close()

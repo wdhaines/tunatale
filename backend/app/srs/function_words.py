@@ -14,7 +14,8 @@ import json
 import re
 from functools import cache
 
-from app.languages import get_function_words_path
+from app.languages import get_a1_morphology, get_function_words_path
+from app.srs.lemmatizer import TokenAnalysis
 
 
 @cache
@@ -192,8 +193,12 @@ def _format_morphology_feature(feature: str) -> str:
     return " ".join(p for p in feature.split(":")[1:] if p)
 
 
-def format_morphology_hint(lemma: str, feature: str) -> str:
+def _default_format_morphology_hint(lemma: str, feature: str) -> str:
     """Return a human-readable grammar hint like ``"biti, 1st person singular"``.
+
+    This is the default (Slovene-shaped) rendering, also registered as the
+    Slovene plugin's ``format_hint``. Languages that register their own
+    ``A1Morphology`` bundle render their own vocabulary.
 
     Examples:
       ``("biti", "verb:1sg")``        -> ``"biti, 1st person singular"``
@@ -301,8 +306,11 @@ _GENDER_MAP: dict[str, str] = {
 
 # ── A1 morphology feature detection (moved from app/api/srs.py, Phase 4b) ──
 
-
-_A1_MORPHOLOGY_PREFIXES: tuple[str, ...] = (
+# The default (unregistered-language) vocabulary, mirroring the A1 scope of the
+# original hardcoded implementation: all verbs, nouns in nom/acc/loc, adjectives
+# in nom. The Slovene plugin re-registers the exact same strings via
+# ``app.plugins.languages.sl.a1_morphology``, so Slovene output is unchanged.
+_DEFAULT_A1_PREFIXES: tuple[str, ...] = (
     "verb:",
     "noun:nom:",
     "noun:acc:",
@@ -311,47 +319,85 @@ _A1_MORPHOLOGY_PREFIXES: tuple[str, ...] = (
 )
 
 
-def is_a1_morphology_feature(feature: str) -> bool:
-    return any(feature.startswith(p) for p in _A1_MORPHOLOGY_PREFIXES)
+def _default_is_a1_morphology_feature(feature: str) -> bool:
+    return any(feature.startswith(p) for p in _DEFAULT_A1_PREFIXES)
 
 
-def ud_feats_to_tt_feature(
-    upos: str,
-    case: str = "",
-    number: str = "",
-    person: str = "",
-    gender: str = "",
-) -> str | None:
+def _default_ud_feats_to_tt_feature(analysis: TokenAnalysis) -> str | None:
     """Map Universal Dependencies POS + morphological features to a TT feature string.
+
+    This is the default (Slovene-shaped) mapping, also registered as the Slovene
+    plugin's ``to_feature``. Languages that register their own ``A1Morphology``
+    bundle map through their own logic.
 
     Returns ``None`` when the combination is not A1-mappable (e.g., genitive nouns,
     non-nominative adjectives).
 
-    TT feature format (matches ``_A1_MORPHOLOGY_PREFIXES`` in ``srs.py``):
+    TT feature format (matches ``_DEFAULT_A1_PREFIXES``):
       * ``verb:1sg``  — verb with Person=1, Number=Sing
       * ``noun:loc:sg`` — noun with Case=Loc, Number=Sing
       * ``adj:nom:m:sg`` — adjective with Case=Nom, Gender=Masc, Number=Sing
-
-    A1 whitelist: all verbs; nouns in nom/acc/loc; adjectives in nom.
     """
-    n = _NUMBER_MAP.get(number, "")
-    if upos in ("VERB", "AUX"):
-        p = person
+    n = _NUMBER_MAP.get(analysis.number, "")
+    if analysis.upos in ("VERB", "AUX"):
+        p = analysis.person
         if p and n:
             return f"verb:{p}{n}"
         return None
 
-    if upos == "NOUN":
-        c = _CASE_MAP.get(case, "")
+    if analysis.upos == "NOUN":
+        c = _CASE_MAP.get(analysis.case, "")
         if c in ("nom", "acc", "loc") and n:
             return f"noun:{c}:{n}"
         return None
 
-    if upos == "ADJ":
-        c = _CASE_MAP.get(case, "")
-        g = _GENDER_MAP.get(gender, "")
+    if analysis.upos == "ADJ":
+        c = _CASE_MAP.get(analysis.case, "")
+        g = _GENDER_MAP.get(analysis.gender, "")
         if c == "nom" and g and n:
             return f"adj:{c}:{g}:{n}"
         return None
 
     return None
+
+
+# ── Per-language dispatch ──────────────────────────────────────────────────
+
+
+def ud_feats_to_tt_feature(analysis: TokenAnalysis, language_code: str) -> str | None:
+    """Map a UD analysis to a TT feature string for *language_code*.
+
+    Routes through the language's registered ``A1Morphology.to_feature``; falls
+    back to the default mapping when the language registers no bundle (so an
+    unregistered language keeps today's Slovene-shaped behaviour).
+    """
+    bundle = get_a1_morphology(language_code)
+    if bundle is not None:
+        return bundle.to_feature(analysis)
+    return _default_ud_feats_to_tt_feature(analysis)
+
+
+def is_a1_morphology_feature(feature: str, language_code: str) -> bool:
+    """Return whether *feature* is an A1 morphology feature for *language_code*.
+
+    Consults the language's ``a1_prefixes`` whitelist; falls back to the default
+    vocabulary when the language registers no bundle. A feature from one
+    language's vocabulary never validates under another's (the whitelists are
+    per-language, not a merged union).
+    """
+    bundle = get_a1_morphology(language_code)
+    if bundle is not None:
+        return any(feature.startswith(p) for p in bundle.a1_prefixes)
+    return _default_is_a1_morphology_feature(feature)
+
+
+def format_morphology_hint(lemma: str, feature: str, language_code: str) -> str:
+    """Return a human-readable grammar hint for *language_code*.
+
+    Routes through the language's ``A1Morphology.format_hint``; falls back to the
+    default (Slovene-shaped) rendering when the language registers no bundle.
+    """
+    bundle = get_a1_morphology(language_code)
+    if bundle is not None:
+        return bundle.format_hint(lemma, feature)
+    return _default_format_morphology_hint(lemma, feature)

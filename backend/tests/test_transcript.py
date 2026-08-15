@@ -8,7 +8,7 @@ from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionTyp
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
-from app.srs.lemmatizer import LowercaseLemmatizer, TokenAnalysis, _serialize_analyses
+from app.srs.lemmatizer import LowercaseLemmatizer, TokenAnalysis, _serialize_analyses, model_version_for
 from app.srs.transcript import (
     TranscriptData,
     WordToken,
@@ -1122,10 +1122,49 @@ class TestTranscriptEnrichment:
         result = extract_transcript(lesson, self.db, _MockLemmatizer(), today=self.today)
         word = result.dialogue_lines[0].words[0]
         # Now lemmatizer maps "hodim" → "hoditi" → base found → inflectable detection runs
-        # ud_feats_to_tt_feature("VERB", "", "Sing", "1", "") → "verb:1sg" → is_a1_morphology_feature True
+        # ud_feats_to_tt_feature(TokenAnalysis(upos="VERB", number="Sing", person="1"), "sl") → "verb:1sg"
+        # → is_a1_morphology_feature("verb:1sg", "sl") True
         assert word.inflectable is True
         assert word.inflection_feature == "verb:1sg"
         assert word.srs_state != "unknown"
+
+    def test_norwegian_inflectable_uses_definite_feature(self):
+        """A Norwegian definite noun maps to ``noun:def:sg`` and inflects — the
+        feature that used to be ``None`` under the Slovene-only mapper."""
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockNorwegianLemmatizer:
+            def lemmatize(self, word: str, language_code: str) -> str:
+                if word == "bilen":
+                    return "bil"
+                return word.lower()
+
+            def analyze(self, word: str, language_code: str) -> tuple[str, str, str]:
+                if word == "bilen":
+                    return "bil", "", ""
+                return word.lower(), "", ""
+
+            def analyze_sentence(self, sentence: str, language_code: str) -> list:
+                if "bilen" in sentence:
+                    return [_TA(surface="bilen", lemma="bil", upos="NOUN", definite="Def", number="Sing")]
+                return []
+
+        from app.models.srs_item import Direction, SRSState
+
+        self._add_vocab("bil", "car", lemma="bil")
+        item = self.db.get_collocation("bil")
+        item.directions[Direction.PRODUCTION].state = SRSState.REVIEW
+        item.directions[Direction.RECOGNITION].state = SRSState.REVIEW
+        item.directions[Direction.PRODUCTION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        item.directions[Direction.RECOGNITION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        self.db.update_direction(item.guid, Direction.RECOGNITION, item.directions[Direction.RECOGNITION])
+        self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
+
+        lesson = _make_lesson([("female-1", "bilen")], lang="no")
+        result = extract_transcript(lesson, self.db, _MockNorwegianLemmatizer(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.inflectable is True
+        assert word.inflection_feature == "noun:def:sg"
 
     def test_inflection_cloze_exact_match_path(self):
         """When an inflection cloze with exact surface match exists, it takes priority over the base."""
@@ -1555,7 +1594,8 @@ class TestBitiTranscriptSpecialCase:
         result = extract_transcript(lesson, self.db, _MockNonA1(), today=self.today)
         word = result.dialogue_lines[0].words[0]
         assert word.lemma == "biti"
-        # ud_feats_to_tt_feature returns None for person=2, number="" → inflectable stays False
+        # ud_feats_to_tt_feature returns None for person=2, number="" (under "sl")
+        # → inflectable stays False
         assert word.inflectable is False
 
     def test_biti_surface_resolves_existing_inflection_cloze(self):
@@ -1845,9 +1885,11 @@ class TestExtractTranscriptCaching:
         assert len(result1.dialogue_lines) == 2
         assert self.call_count == 2
 
-        # Cache should have entries for both phrases
+        # Cache should have entries for both phrases (keyed under the model
+        # version — which includes the analysis-schema revision, so bumping
+        # TokenAnalysis invalidates old rows)
         for text in ("Dober dan", "Kako si"):
-            cached = self.db.get_sentence_analysis(text, "sl", "test-v1")
+            cached = self.db.get_sentence_analysis(text, "sl", model_version_for(lem))
             assert cached is not None, f"Expected cache entry for {text}"
 
         # Second call: both cache hits → 0 lemmatizer invocations

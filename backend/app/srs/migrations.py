@@ -888,7 +888,7 @@ def migrate_v28_to_v29(conn: sqlite3.Connection) -> None:
     try:
         rows = conn.execute(
             """
-            SELECT id, lemma, disambig_key FROM collocations
+            SELECT id, lemma, disambig_key, language_code FROM collocations
             WHERE card_type = 'cloze'
               AND disambig_key LIKE 'morph:%'
               AND (grammar IS NULL OR grammar = '')
@@ -896,7 +896,7 @@ def migrate_v28_to_v29(conn: sqlite3.Connection) -> None:
         ).fetchall()
         for row in rows:
             feature = row["disambig_key"].replace("morph:", "", 1).replace("-", ":")
-            hint = format_morphology_hint(row["lemma"] or "", feature)
+            hint = format_morphology_hint(row["lemma"] or "", feature, row["language_code"] or "")
             if hint:
                 conn.execute(
                     "UPDATE collocations SET grammar = ? WHERE id = ?",

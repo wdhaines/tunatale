@@ -363,7 +363,8 @@ class TestMigrations:
                 lemma TEXT,
                 disambig_key TEXT NOT NULL DEFAULT '',
                 card_type TEXT DEFAULT 'vocab',
-                grammar TEXT DEFAULT ''
+                grammar TEXT DEFAULT '',
+                language_code TEXT NOT NULL DEFAULT 'sl'
             )"""
         )
         # Seed: inflection cloze with null grammar → should be backfilled
@@ -396,6 +397,12 @@ class TestMigrations:
             "INSERT INTO collocations (text, lemma, disambig_key, card_type, grammar) "
             "VALUES ('hiša', NULL, '', 'vocab', NULL)"
         )
+        # Seed: a Norwegian inflection cloze → the hint is rendered in the
+        # language's own vocabulary, not Slovene's
+        conn.execute(
+            "INSERT INTO collocations (text, lemma, disambig_key, card_type, grammar, language_code) "
+            "VALUES ('bilen', 'bil', 'morph:noun-def-sg', 'cloze', NULL, 'no')"
+        )
 
         _set_version(conn, 28)
         migrate_v28_to_v29(conn)
@@ -408,6 +415,7 @@ class TestMigrations:
         assert rows["sem"] == "biti, 1st person singular", f"got {rows['sem']!r}"
         assert rows["mesto"] == "mesto, accusative singular", f"got {rows['mesto']!r}"
         assert rows["psa"] == "pes, accusative singular", "existing grammar should be preserved"
+        assert rows["bilen"] == "bil, definite singular", f"got {rows['bilen']!r}"
         assert rows["some text"] is None, "non-morph clozes should not be affected"
         assert rows["hiša"] is None, "vocab cards should not be affected"
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 29

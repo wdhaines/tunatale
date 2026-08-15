@@ -712,7 +712,7 @@ class TestSyncCreateNewRouting:
             "ljubljana",
             "Grem v Ljubljano s prijateljem.",
         )
-        grammar_hint = format_morphology_hint("ljubljana", "noun:acc:sg")
+        grammar_hint = format_morphology_hint("ljubljana", "noun:acc:sg", "sl")
         unit = SyntacticUnit(
             text="Ljubljano",
             translation="Ljubljana",

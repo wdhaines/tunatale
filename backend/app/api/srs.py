@@ -2644,7 +2644,7 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
     # 4. Build + create (mirrors /listen morphology-cloze block)
     disambig = f"morph:{body.feature.replace(':', '-')}"
     cloze_sent = make_morphology_cloze_text(body.surface, body.lemma, body.sentence)
-    grammar_hint = format_morphology_hint(body.lemma, body.feature)
+    grammar_hint = format_morphology_hint(body.lemma, body.feature, language_code)
     unit = SyntacticUnit(
         text=body.surface,
         translation=word_translation,
