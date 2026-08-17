@@ -16,6 +16,11 @@ _NUMBER_SHORT: dict[str, str] = {
     "Plur": "pl",
 }
 
+_ADJ_GENDER_MAP: dict[str, str] = {
+    "Fem,Masc": "com",
+    "Neut": "neut",
+}
+
 
 def _to_feature(analysis: TokenAnalysis) -> str | None:
     """Map a Norwegian UD analysis to a TT feature string (or ``None``).
@@ -24,6 +29,11 @@ def _to_feature(analysis: TokenAnalysis) -> str | None:
     VERB/AUX: ``Tense=Pres`` → ``verb:pres``, ``Tense=Past`` → ``verb:past``;
     a past participle (``VerbForm=Part``) without a tense → ``verb:perf``.
     Infinitives (``VerbForm=Inf``) and anything else → ``None``.
+    ADJ: plural → ``adj:pl`` (Bokmål drops both gender and definiteness there);
+    definite singular → ``adj:def:sg``; indefinite singular → ``adj:ind:{gender}:sg``
+    where gender is ``com`` or ``neut``. The adjective's ``Definite`` is its OWN,
+    not the noun's — ``den fine bilen`` is the definite-attributive form — which is
+    why it is a separate segment rather than folded into the gender.
     """
     if analysis.upos == "NOUN":
         number = _NUMBER_SHORT.get(analysis.number, "")
@@ -38,6 +48,19 @@ def _to_feature(analysis: TokenAnalysis) -> str | None:
         if analysis.verbform == "Part":
             return "verb:perf"
         return None
+    if analysis.upos == "ADJ":
+        number = _NUMBER_SHORT.get(analysis.number, "")
+        if number == "pl":
+            return "adj:pl"
+        if number == "sg":
+            if analysis.definite == "Def":
+                return "adj:def:sg"
+            if analysis.definite == "Ind":
+                gender = _ADJ_GENDER_MAP.get(analysis.gender, "")
+                if gender:
+                    return f"adj:ind:{gender}:sg"
+                return None
+        return None
     return None
 
 
@@ -49,6 +72,10 @@ _A1_PREFIXES: tuple[str, ...] = (
     "verb:pres",
     "verb:past",
     "verb:perf",
+    "adj:ind:com:sg",
+    "adj:ind:neut:sg",
+    "adj:def:sg",
+    "adj:pl",
 )
 
 _HINT_LABELS: dict[str, str] = {
@@ -59,6 +86,10 @@ _HINT_LABELS: dict[str, str] = {
     "verb:pres": "present tense",
     "verb:past": "past tense",
     "verb:perf": "perfect (past participle)",
+    "adj:ind:com:sg": "indefinite singular, common gender",
+    "adj:ind:neut:sg": "indefinite singular, neuter",
+    "adj:def:sg": "definite singular",
+    "adj:pl": "plural",
 }
 
 
