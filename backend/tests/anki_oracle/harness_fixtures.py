@@ -105,7 +105,9 @@ def run_oracle(collection_path: Path, operations: list[dict]) -> OracleResult:
                     "3.14",
                     # Single-sourced from settings.anki_pkg_version (via _anki_with_spec,
                     # same as the peer-sync server) so the oracle validates parity against
-                    # the exact Anki version we sync with — currently anki==25.9.5.
+                    # the exact Anki version we sync with. Read the setting for the
+                    # current pin rather than trusting a number written here — one
+                    # said 25.9.5 while the setting had moved to 26.5.
                     "--with",
                     _anki_with_spec(),
                     "python",

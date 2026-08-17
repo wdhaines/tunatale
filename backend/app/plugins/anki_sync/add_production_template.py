@@ -22,6 +22,13 @@ full upload. Workflow (``.claude/rules/anki-sync.md``):
 2. ``uv run python -m app.plugins.anki_sync.add_production_template --notetype "<name>"``
 3. Open Anki → File → Sync → **Upload to AnkiWeb**.
 4. After Anki closes again: ``uv run python -m app.plugins.anki_sync.normalize_usns``.
+5. Re-anchor TT's own sync mirror, which steps 3-4 leave behind the server::
+
+       uv run python -m app.plugins.anki_sync.sync_orchestrator --bootstrap
+
+   Without it the next peer-sync aborts with ``FULL_SYNC (required=2)`` on the
+   pull leg — correctly, rather than clobbering. Download-only. This step was
+   missing when this migration was run for real on 2026-08-15 (tunatale-qf6.6).
 
 Idempotent: re-running once the ``Production`` template exists is a no-op (no
 ``col.scm`` bump, no second separator appended to ``notes.flds``), so it is safe

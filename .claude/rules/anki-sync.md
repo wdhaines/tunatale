@@ -22,15 +22,28 @@ Anki tracks sync state via `col.usn` + per-row `usn`. Rules:
 
 **Forced full uploads preserve local row USNs but reset `col.usn`.** After a full upload, any row whose `usn > 0` (or whatever the server set `col.usn` to) is perpetually seen as dirty. Result: every subsequent incremental sync re-uploads those rows forever. Anki has no self-repair.
 
-## 3-step workflow for schema-changing migrations
+## 4-step workflow for schema-changing migrations
 
 A migration "bumps schema" when it modifies `col.scm` — e.g., adding a notetype field, adding a field config. This forces AnkiWeb to demand a full upload.
 
 1. **Run the migration.** It must also bump `notetypes.mtime_secs`, set `notetypes.usn = -1`, and update `col.scm`. Skipping any of these triggers Anki's "Check Database" on next open, which does the bumps itself and surprises the user.
 2. **Tell the user: open Anki → File → Sync → Upload to AnkiWeb.** This is unavoidable after any `col.scm` change.
 3. **After Anki closes, run `uv run python -m app.plugins.anki_sync.normalize_usns`.** Resets `cards.usn`, `notes.usn`, `revlog.usn` where they're `> col.usn` back to `col.usn`. No content change — just aligns bookkeeping.
+4. **Re-anchor TT's OWN sync mirror:**
 
-Data-only migrations (e.g., `backfill_guids` — rewrites `notes.guid`, sets `notes.usn=-1`) stay within incremental-sync territory and do NOT need steps 2–3.
+   ```bash
+   cd backend && uv run python -m app.plugins.anki_sync.sync_orchestrator --bootstrap
+   ```
+
+   Steps 1–3 only reconcile Anki ↔ AnkiWeb. TT keeps a **separate** collection at `~/.tunatale/tt_collection.anki2` (`settings.tt_collection_path`) — a different file from the desktop collection — and after the full upload that mirror is behind the server, so the next peer-sync aborts on the pull leg with:
+
+       AnkiWeb requires a one-way FULL_SYNC (required=2) on the pull leg
+
+   **That abort is correct behaviour, not a bug** — peer-sync refuses rather than clobber. The gap was only ever documentation. `--bootstrap` is download-only (`bootstrap_collection()` issues `create_collection` + `full_download` against `tt_collection_path`, never touching `anki_collection_path` and never pushing), so it cannot send a half-migrated collection anywhere.
+
+   Hit for real on 2026-08-15 during the Norwegian production-capability migration (`tunatale-qf6.6`), whose runbook was missing this step. Every future schema migration hits the same wall, which is why it is a numbered step rather than a footnote.
+
+Data-only migrations (e.g., `backfill_guids` — rewrites `notes.guid`, sets `notes.usn=-1`) stay within incremental-sync territory and do NOT need steps 2–4.
 
 ## Required writes for every mutation
 
