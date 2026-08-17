@@ -9,6 +9,7 @@ import pytest
 
 from app.plugins.anki_sync.sync import (
     CreateNewReport,
+    PromotionReport,
     PullReport,
     PushReport,
     RecomputeDivergence,
@@ -67,6 +68,12 @@ class TestRunFullSync:
         sync.sync_create_new = _create
         sync.sync_push = MagicMock(side_effect=lambda **kw: (calls.append("push"), PushReport())[1])
         sync.sync_pull = MagicMock(side_effect=lambda **kw: (calls.append("pull"), PullReport())[1])
+
+        async def _promote(**kwargs):
+            calls.append("promote")
+            return PromotionReport()
+
+        sync.promote_production_cards = _promote
         return sync
 
     def _patch_refreshes(self, monkeypatch, recorder):
@@ -135,7 +142,7 @@ class TestRunFullSync:
         )
 
         # Core phases run in the create→push→pull order, soak last.
-        assert calls == ["guid_collisions", "orphans", "create", "push", "pull"]
+        assert calls == ["guid_collisions", "orphans", "create", "push", "pull", "promote"]
         # The soak heartbeat is the real file the phase writes, not a mock marker.
         assert "SYNC_SOAK" in soak_log.read_text()
         # Every deck-config refresh fired — this is the gap that bit the peer path.
@@ -173,7 +180,7 @@ class TestRunFullSync:
             dry_run=True,
         )
 
-        assert calls == ["guid_collisions", "orphans", "create", "push", "pull"]
+        assert calls == ["guid_collisions", "orphans", "create", "push", "pull", "promote"]
         # dry_run writes no soak artifact at all.
         assert not soak_log.exists()
         assert refreshed == []
@@ -199,6 +206,13 @@ class TestRunFullSync:
         sync.sync_create_new = _create
         sync.sync_push = MagicMock(side_effect=lambda **kw: captured.update(force=kw.get("force_fsrs")) or PushReport())
         sync.sync_pull = MagicMock(return_value=PullReport())
+
+        async def _promote(**kwargs):
+            captured["promote_media_fn"] = kwargs.get("_media_fn")
+            captured["promote_dry_run"] = kwargs.get("dry_run")
+            return PromotionReport()
+
+        sync.promote_production_cards = _promote
         self._patch_refreshes(monkeypatch, [])
 
         sentinel = object()
@@ -219,6 +233,11 @@ class TestRunFullSync:
 
         assert captured["media_fn"] is sentinel
         assert captured["force"] is True
+        # The promotion phase fetches its images from the same generator, and
+        # honours dry_run — a phase that wrote on a dry run would be a new bug
+        # class, not a variation on an old one.
+        assert captured["promote_media_fn"] is sentinel
+        assert captured["promote_dry_run"] is False
         assert media_report == {
             "new_media": 0,
             "updated_media": 0,
@@ -272,7 +291,7 @@ class TestRunFullSync:
             dry_run=False,
         )
 
-        assert calls == ["guid_collisions", "orphans", "create", "push", "pull"]
+        assert calls == ["guid_collisions", "orphans", "create", "push", "pull", "promote"]
         # The phase ran: the image is now in TT's media dir with the right bytes.
         assert media_report["new_media"] == 1
         assert (tt_media / "voda.jpg").read_bytes() == b"VODAIMAGE"
@@ -309,7 +328,7 @@ class TestRunFullSync:
             dry_run=False,
         )
 
-        assert calls == ["guid_collisions", "orphans", "create", "push", "pull"]
+        assert calls == ["guid_collisions", "orphans", "create", "push", "pull", "promote"]
         assert list(tt_media.iterdir()) == []
         assert media_report == {
             "new_media": 0,
@@ -347,7 +366,7 @@ class TestRunFullSync:
             dry_run=True,
         )
 
-        assert calls == ["guid_collisions", "orphans", "create", "push", "pull"]
+        assert calls == ["guid_collisions", "orphans", "create", "push", "pull", "promote"]
         assert list(tt_media.iterdir()) == []
         assert media_report == {
             "new_media": 0,

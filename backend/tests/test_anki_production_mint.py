@@ -259,6 +259,17 @@ class TestMintProductionCard:
 
         assert len(_cards_for(conn)) == 1
 
+    def test_production_capable_reads_the_notetype_not_the_tt_row(self) -> None:
+        """The promotion phase's filter: capability is a fact about the collection."""
+        conn = _make_conn()
+        writer = OfflineWriter(conn)
+
+        assert writer.production_capable(NOTE_ID) is True
+        # A TT row pointing at a note Anki no longer has (orphan recovery's
+        # territory) must answer False rather than raise — the phase skips it.
+        assert writer.production_capable(424242) is False
+        assert OfflineWriter(_make_conn(migrate=False)).production_capable(NOTE_ID) is False
+
     def test_rejects_an_unknown_note(self) -> None:
         conn = _make_conn()
         with pytest.raises(ValueError, match="not found"):

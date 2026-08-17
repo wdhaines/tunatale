@@ -67,4 +67,5 @@ def test_public_method_count_pinned() -> None:
     # +clear_pending_grade_by_guid (sync_pull clears by guid, not row id)
     # +clear_pending_grades_for_lesson (a listen resets its own bucket, then stages fresh)
     # +add_production_direction (just-in-time production mint, tunatale-qf6.2)
-    assert count == 124
+    # +count_words_awaiting_production, list_words_awaiting_production (its selection)
+    assert count == 126

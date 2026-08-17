@@ -654,6 +654,29 @@ class OfflineWriter:
         self._conn.commit()
         return note_id
 
+    def _production_ord(self, mid: int) -> int | None:
+        """The ord of *mid*'s ``Production`` template, or None if it has none."""
+        row = self._conn.execute(
+            "SELECT ord FROM templates WHERE ntid = ? AND name = ?",
+            (mid, PRODUCTION_TEMPLATE),
+        ).fetchone()
+        return row["ord"] if row is not None else None
+
+    def production_capable(self, note_id: int) -> bool:
+        """True if *note_id*'s notetype can carry a production card.
+
+        The promotion phase's filter, and the reason it can run against a mixed
+        collection: a single-template notetype (Anki's ``Basic``, used for the
+        Slovene phonics notes) and ``Cloze`` can never carry a second card, so
+        their notes must be skipped rather than minted into. TT's own
+        ``card_type`` is not a usable substitute — those rows are stored as
+        ``vocab``, and the answer lives in the collection anyway.
+        """
+        row = self._conn.execute("SELECT mid FROM notes WHERE id = ?", (note_id,)).fetchone()
+        if row is None:
+            return False
+        return self._production_ord(row["mid"]) is not None and IMAGE_FIELD in self._field_names_for_mid(row["mid"])
+
     def mint_production_card(self, note_id: int, image_tag: str) -> MintedCard:
         """Write *image_tag* into the note's ``Image`` field and land its production card.
 
@@ -696,16 +719,12 @@ class OfflineWriter:
                 f"Notetype {mid} of note {note_id} has no {IMAGE_FIELD!r} field to front a production card"
             )
 
-        tmpl = self._conn.execute(
-            "SELECT ord FROM templates WHERE ntid = ? AND name = ?",
-            (mid, PRODUCTION_TEMPLATE),
-        ).fetchone()
-        if tmpl is None:
+        prod_ord = self._production_ord(mid)
+        if prod_ord is None:
             raise ValueError(
                 f"Notetype {mid} of note {note_id} has no {PRODUCTION_TEMPLATE!r} template — "
                 "run add_production_template first"
             )
-        prod_ord = tmpl["ord"]
 
         sibling = self._conn.execute("SELECT did FROM cards WHERE nid = ? ORDER BY ord LIMIT 1", (note_id,)).fetchone()
         if sibling is None:

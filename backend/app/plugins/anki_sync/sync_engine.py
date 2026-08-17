@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from hashlib import sha256 as _sha256
 
 from app.cards.media.vocab_media import safe_stem as _safe_stem
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media
@@ -25,6 +26,7 @@ from app.plugins.anki_sync.sync_common import (
     CreateNewReport,
     DuplicateNoteError,
     OrphanThresholdExceededError,
+    PromotionReport,
     PullReport,
     PushReport,
     RecomputeDivergence,
@@ -43,6 +45,20 @@ from app.srs.queue_stats import resolve_bury_new, resolve_bury_review, resolve_l
 # tests/test_anki_sync_pull.py (caplog.at_level(..., logger="app.anki.sync"))
 # and the log-forensics docs reference this exact name.
 _log = logging.getLogger("app.anki.sync")
+
+#: Production cards minted per sync (settled with the user 2026-08-15). The
+#: drain is paced on purpose: at a 3 new-cards/day introduction cap a backlog of
+#: ~1550 words is years of queue, so minting faster than the learner can meet
+#: the cards buys nothing and costs one image fetch each. This is why the bulk
+#: backfill of 2990 cards was rejected — see
+#: `.beads-tasks/briefs/design-no-production-cards-2026-08.md`.
+PRODUCTIONS_PER_SYNC = 10
+
+#: Candidates read per sync. Deliberately far larger than the mint budget: a
+#: word this phase cannot serve (its notetype can't carry a production card, or
+#: its image search came back empty) must not wedge the drain behind it. Reading
+#: a row is one indexed query; only mints and image fetches are budgeted.
+PRODUCTION_SCAN_LIMIT = 200
 
 
 def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool:
@@ -1625,3 +1641,122 @@ class AnkiSync:
             image_no_results=image_no_results,
             image_failed=image_failed,
         )
+
+    async def promote_production_cards(
+        self,
+        *,
+        dry_run: bool = False,
+        _media_fn=None,
+        limit: int = PRODUCTIONS_PER_SYNC,
+    ) -> PromotionReport:
+        """Mint production cards for words whose recognition card has graduated.
+
+        A deck imported recognition-only gains the *capability* to carry
+        production cards from ``add_production_template``; this is where a word
+        actually gets one — one card, one image fetch, when it graduates. It
+        serves the forward trigger and the backlog drain through a single query
+        (``list_words_awaiting_production``), because a word that graduated
+        yesterday and one that graduated before the migration are the same
+        thing: graduated recognition, no production direction.
+
+        Paced at *limit* per sync (settled with the user 2026-08-15). The budget
+        is spent on **work**, not rows: a word whose notetype cannot carry a
+        production card costs one indexed read and is skipped, so the drain is
+        never wedged behind an unservable head of the queue.
+
+        Three things this must not do, each measured or observed rather than
+        assumed:
+
+        - mint into a notetype with no ``Production`` template (Slovene's
+          ``Basic`` phonics notes and its clozes) — the card would be an orphan
+          Check Database deletes;
+        - mint against an empty ``Image`` — Anki calls that an *empty card* and
+          offers to delete it, so those words are counted and left for the cloze
+          fallback;
+        - create a second collocation. These words already have one; a duplicate
+          is the GUID-collision hazard (Layer 33/35).
+
+        The image write and the card mint are one transaction inside
+        ``OfflineWriter.mint_production_card`` — see its docstring for why the
+        gap between them is the hazard.
+        """
+        from app.plugins.anki_sync.sync import _copy_tt_media_to_anki
+
+        report = PromotionReport(awaiting=self._db.count_words_awaiting_production())
+        if report.awaiting == 0:
+            return report
+        if dry_run:
+            _log.info("PRODUCTION_MINT awaiting=%d (dry run — nothing minted)", report.awaiting)
+            return report
+
+        used_image_urls: set[str] = set()
+        fetches_left = limit
+        for cand in self._db.list_words_awaiting_production(limit=PRODUCTION_SCAN_LIMIT):
+            if report.minted + report.adopted >= limit or fetches_left <= 0:
+                break
+
+            if not self._writer.production_capable(cand.anki_note_id):
+                report.no_template += 1
+                continue
+
+            unit = cand.item.syntactic_unit
+            filename = self._db.get_image_filename(cand.collocation_id)
+            if filename is None:
+                # No TT image yet: fetch one now, at promotion time. This is the
+                # cost the bulk backfill was rejected for front-loading.
+                fetches_left -= 1
+                media = (
+                    None
+                    if _media_fn is None
+                    else await _media_fn(
+                        unit.text,
+                        unit.translation,
+                        used_image_urls=used_image_urls,
+                        source_sentence=unit.source_sentence or "",
+                        grammar=unit.grammar or "",
+                    )
+                )
+                if media is None or media.image_bytes is None:
+                    report.no_image += 1
+                    _log.warning(
+                        "PRODUCTION_MINT_DEFERRED text=%r cid=%d — no image, needs the cloze fallback",
+                        unit.text,
+                        cand.collocation_id,
+                    )
+                    continue
+                # Hash-suffixed, like `replace_item_image` and unlike
+                # `sync_create_new`'s bare `img_<gloss>.jpg`. At 1550 words a
+                # shared gloss is common ("beslutning" and "avgjørelse" are both
+                # "decision"), and the bare name would have the second fetch
+                # overwrite the first word's picture in place — silently changing
+                # a card the learner already knows. Identical bytes still collapse
+                # to one file.
+                digest = _sha256(media.image_bytes).hexdigest()[:8]
+                filename = f"{_safe_stem(unit.translation, 'img')}_{digest}.{media.image_ext or 'jpg'}"
+                self._writer.store_media_file(filename, media.image_bytes)
+                _store_tt_media(self._db, cand.collocation_id, "image", filename, media.image_bytes)
+            else:
+                # Reuse the picture the card already has — a word imaged at add
+                # time must not acquire a second, different one.
+                _copy_tt_media_to_anki(self._writer, filename)
+
+            minted = self._writer.mint_production_card(cand.anki_note_id, f'<img src="{filename}">')
+            self._db.add_production_direction(
+                cand.collocation_id,
+                anki_card_id=minted.card_id,
+                anki_due=minted.due,
+            )
+            if minted.created:
+                report.minted += 1
+            else:
+                report.adopted += 1
+
+        _log.info(
+            "PRODUCTION_MINT awaiting=%d minted=%d adopted=%d no_image=%d no_template=%d",
+            report.awaiting,
+            report.minted,
+            report.adopted,
+            report.no_image,
+            report.no_template,
+        )
+        return report
