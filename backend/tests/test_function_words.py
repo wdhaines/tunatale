@@ -534,6 +534,25 @@ class TestIsA1MorphologyFeature:
         assert is_a1_morphology_feature("noun:loc:sg", "no") is False
         assert is_a1_morphology_feature("adj:nom:m:sg", "no") is False
 
+    def test_norwegian_adj_features_validate_under_no(self):
+        from app.srs.function_words import is_a1_morphology_feature
+
+        for feature in ("adj:ind:com:sg", "adj:ind:neut:sg", "adj:def:sg", "adj:pl"):
+            assert is_a1_morphology_feature(feature, "no") is True, feature
+
+    def test_norwegian_adj_feature_rejected_under_sl(self):
+        from app.srs.function_words import is_a1_morphology_feature
+
+        assert is_a1_morphology_feature("adj:ind:com:sg", "sl") is False
+        assert is_a1_morphology_feature("adj:ind:neut:sg", "sl") is False
+        assert is_a1_morphology_feature("adj:def:sg", "sl") is False
+        assert is_a1_morphology_feature("adj:pl", "sl") is False
+
+    def test_slovene_adj_feature_rejected_under_no(self):
+        from app.srs.function_words import is_a1_morphology_feature
+
+        assert is_a1_morphology_feature("adj:nom:m:sg", "no") is False
+
     def test_norwegian_features_rejected_under_sl(self):
         """And the reverse: Norwegian definite forms are not Slovene A1 (the
         default vocabulary has no ``noun:def:``/``noun:ind:`` prefixes)."""
@@ -657,8 +676,35 @@ class TestUdFeatsToTtFeatureNorwegian:
     def test_aux_past_participle(self):
         assert ud_feats_to_tt_feature(TokenAnalysis(upos="AUX", verbform="Part"), "no") == "verb:perf"
 
-    def test_adjective_returns_none(self):
-        assert ud_feats_to_tt_feature(TokenAnalysis(upos="ADJ", definite="Def", number="Sing"), "no") is None
+    def test_adj_definite_singular(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="ADJ", definite="Def", number="Sing"), "no") == "adj:def:sg"
+
+    def test_adj_indefinite_singular_common_gender(self):
+        assert (
+            ud_feats_to_tt_feature(TokenAnalysis(upos="ADJ", definite="Ind", number="Sing", gender="Fem,Masc"), "no")
+            == "adj:ind:com:sg"
+        )
+
+    def test_adj_indefinite_singular_neuter(self):
+        assert (
+            ud_feats_to_tt_feature(TokenAnalysis(upos="ADJ", definite="Ind", number="Sing", gender="Neut"), "no")
+            == "adj:ind:neut:sg"
+        )
+
+    def test_adj_plural(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="ADJ", number="Plur"), "no") == "adj:pl"
+
+    def test_adj_indefinite_missing_gender_returns_none(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="ADJ", definite="Ind", number="Sing"), "no") is None
+
+    def test_adj_missing_number_returns_none(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="ADJ", definite="Ind"), "no") is None
+
+    def test_adj_unrecognised_definite_returns_none(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="ADJ", definite="Xxx", number="Sing"), "no") is None
+
+    def test_unknown_upos_returns_none(self):
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="PROPN", case="Nom", number="Sing"), "no") is None
 
     def test_no_tense_no_verbform_returns_none(self):
         assert ud_feats_to_tt_feature(TokenAnalysis(upos="VERB", number="Sing", person="1"), "no") is None
@@ -708,6 +754,18 @@ class TestFormatMorphologyHintNorwegian:
         renderer instead of silently returning a bare lemma.
         """
         assert format_morphology_hint("biti", "verb:1sg", "no") == "biti, 1st person singular"
+
+    def test_adj_indefinite_singular_common(self):
+        assert format_morphology_hint("fin", "adj:ind:com:sg", "no") == "fin, indefinite singular, common gender"
+
+    def test_adj_indefinite_singular_neuter(self):
+        assert format_morphology_hint("fint", "adj:ind:neut:sg", "no") == "fint, indefinite singular, neuter"
+
+    def test_adj_definite_singular(self):
+        assert format_morphology_hint("fine", "adj:def:sg", "no") == "fine, definite singular"
+
+    def test_adj_plural(self):
+        assert format_morphology_hint("fine", "adj:pl", "no") == "fine, plural"
 
 
 class TestNorwegianFunctionWords:
