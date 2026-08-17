@@ -2592,7 +2592,17 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
         if base is None:
             raise HTTPException(status_code=409, detail="Base word not yet learned")
         prod = base.directions.get(Direction.PRODUCTION)
-        if prod is None or prod.state not in (SRSState.REVIEW, SRSState.KNOWN):
+        # Two different facts, deliberately no longer one message. A missing
+        # production direction means the word's production card has not been
+        # minted yet — the sync's promotion phase does that when recognition
+        # graduates, paced (tunatale-qf6.2) — whereas a NEW/learning production
+        # means the card exists and the learner has not got there. Before the
+        # mint existed the distinction was academic (2990 Norwegian words had no
+        # production direction and never would); now it is the difference
+        # between "wait for the next sync" and "study this word".
+        if prod is None:
+            raise HTTPException(status_code=409, detail="Base word has no production card yet")
+        if prod.state not in (SRSState.REVIEW, SRSState.KNOWN):
             raise HTTPException(status_code=409, detail="Base word not yet learned")
 
     # 2. Degenerate guard — surface == lemma reveals the answer

@@ -18,6 +18,7 @@ from app.cards.media.vocab_media import safe_stem as _safe_stem
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media
 from app.common.guid import compute_guid
 from app.config import settings
+from app.languages import card_surface_variants
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
 from app.models.syntactic_unit import SyntacticUnit, serialize_extras
 from app.plugins.anki_sync.sync_common import (
@@ -1844,7 +1845,12 @@ class AnkiSync:
         nothing measurable and the failure it prevents would be silent.
         """
         unit = cand.item.syntactic_unit
-        choice = choose_cloze_sentence(unit.text, material.examples, material.inflections)
+        choice = choose_cloze_sentence(
+            unit.text,
+            material.examples,
+            material.inflections,
+            variants=card_surface_variants(settings.target_language, unit.text),
+        )
         if choice is None:
             report.unservable += 1
             _log.warning(

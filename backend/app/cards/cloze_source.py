@@ -22,6 +22,7 @@ missing one.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from app.cards.example_sentences import parse_example_sentences
@@ -33,6 +34,20 @@ from app.cards.example_sentences import parse_example_sentences
 _TBODY_RE = re.compile(r"<tbody[^>]*>(.*?)</tbody>", re.DOTALL | re.IGNORECASE)
 _CELL_RE = re.compile(r"<td[^>]*>(.*?)</td>", re.DOTALL | re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _dedup(surfaces: list[str]) -> list[str]:
+    """*surfaces* in order, first occurrence wins.
+
+    The headword is usually also its own first variant, and an inflection table
+    often lists the base form again; a duplicate would only re-run a search that
+    already failed.
+    """
+    seen: list[str] = []
+    for surface in surfaces:
+        if surface and surface not in seen:
+            seen.append(surface)
+    return seen
 
 
 @dataclass(frozen=True)
@@ -62,13 +77,26 @@ def parse_inflection_forms(raw: str) -> tuple[str, ...]:
     return tuple(forms)
 
 
-def choose_cloze_sentence(word: str, examples_raw: str, inflections_raw: str) -> ClozeChoice | None:
+def choose_cloze_sentence(
+    word: str,
+    examples_raw: str,
+    inflections_raw: str,
+    *,
+    variants: Sequence[str] = (),
+) -> ClozeChoice | None:
     """Pick the first example sentence that contains *word* in a blankable form.
 
-    Candidate surfaces are the headword itself, then the deck's own inflected
-    forms. Sentences are tried in source order, and within a sentence the
-    headword wins — an example that spells the word plainly is a better prompt
-    than one that inflects it.
+    Candidate surfaces are the headword itself, then any alternate spellings the
+    card front lists, then the deck's own inflected forms. Sentences are tried in
+    source order, and within a sentence the headword wins — an example that
+    spells the word plainly is a better prompt than one that inflects it.
+
+    *variants* is the caller's registry-resolved ``card_surface_variants``: a
+    front like ``mot, imot`` is ONE lexical item wearing two spellings, and the
+    example sentence naturally uses one of them rather than the comma-joined
+    headword. Without them such a word can never be clozed — searching the
+    literal string ``mot, imot`` matches nothing — and 10 of the real deck's
+    1550 candidates are that shape.
 
     Returns ``None`` when nothing matches: the word needs the LLM tier, which is
     not built. The surface is returned as the *sentence* spells it (casing and
@@ -77,7 +105,7 @@ def choose_cloze_sentence(word: str, examples_raw: str, inflections_raw: str) ->
     if not word.strip():
         return None
 
-    candidates = [word, *parse_inflection_forms(inflections_raw)]
+    candidates = _dedup([word, *variants, *parse_inflection_forms(inflections_raw)])
     for example in parse_example_sentences(examples_raw):
         for candidate in candidates:
             match = re.search(rf"\b{re.escape(candidate)}\b", example.l2, re.IGNORECASE)

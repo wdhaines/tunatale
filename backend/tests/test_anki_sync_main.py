@@ -132,7 +132,7 @@ class TestRunFullSync:
         soak_log = tmp_path / "sync.log"
         db = SRSDatabase(":memory:")
 
-        create, push, pull, media_report = await run_full_sync(
+        create, push, pull, media_report, promotion = await run_full_sync(
             sync,
             MagicMock(),
             db,
@@ -151,6 +151,11 @@ class TestRunFullSync:
         assert isinstance(create, CreateNewReport)
         assert isinstance(push, PushReport)
         assert isinstance(pull, PullReport)
+        # The promotion report is RETURNED, not just logged: its `unservable`
+        # count is the only signal that a word can be neither pictured nor
+        # clozed, and the decision not to build the LLM tier for those
+        # (tunatale-qf6.10) rests on that number being visible.
+        assert isinstance(promotion, PromotionReport)
         # No media_dir → media refresh skipped; default dict returned.
         assert media_report == {
             "new_media": 0,
@@ -171,7 +176,7 @@ class TestRunFullSync:
         soak_log = tmp_path / "sync.log"
         db = SRSDatabase(":memory:")
 
-        _, _, _, media_report = await run_full_sync(
+        _, _, _, media_report, _ = await run_full_sync(
             sync,
             MagicMock(),
             db,
@@ -220,7 +225,7 @@ class TestRunFullSync:
         soak_log = tmp_path / "sync.log"
         db = SRSDatabase(":memory:")
 
-        _, _, _, media_report = await run_full_sync(
+        _, _, _, media_report, _ = await run_full_sync(
             sync,
             MagicMock(),
             db,
@@ -281,7 +286,7 @@ class TestRunFullSync:
         monkeypatch.setattr("app.plugins.anki_sync.sync._MEDIA_DIR", tt_media)
         soak_log = tmp_path / "sync.log"
 
-        _, _, _, media_report = await run_full_sync(
+        _, _, _, media_report, _ = await run_full_sync(
             sync,
             conn,
             db,
@@ -319,7 +324,7 @@ class TestRunFullSync:
         monkeypatch.setattr("app.plugins.anki_sync.sync._MEDIA_DIR", tt_media)
         soak_log = tmp_path / "sync.log"
 
-        _, _, _, media_report = await run_full_sync(
+        _, _, _, media_report, _ = await run_full_sync(
             sync,
             conn,
             db,
@@ -356,7 +361,7 @@ class TestRunFullSync:
         monkeypatch.setattr("app.plugins.anki_sync.sync._MEDIA_DIR", tt_media)
         soak_log = tmp_path / "sync.log"
 
-        _, _, _, media_report = await run_full_sync(
+        _, _, _, media_report, _ = await run_full_sync(
             sync,
             conn,
             db,

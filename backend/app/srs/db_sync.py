@@ -36,12 +36,31 @@ class ProductionCandidate(NamedTuple):
 #: or marked known would resurrect it, so active review is the bar —
 #: ``sync_create_new`` filters suspended/buried items for the same reason.
 #:
-#: A word already covered by a **cloze** is excluded by lemma. A cloze is a
-#: separate note on Anki's ``Cloze`` notetype, so it adds no production direction
-#: to the vocab collocation — without this clause the drain would return the same
+#: A word already covered by a **base cloze** is excluded. A cloze is a separate
+#: note on Anki's ``Cloze`` notetype, so it adds no production direction to the
+#: vocab collocation — without this clause the drain would return the same
 #: unimageable word every sync forever, and mint it a second cloze each time.
-#: Matching on lemma rather than text is what makes it hold across the headword
-#: formatting the two paths use.
+#:
+#: Two things about the key, both of which the first version got wrong:
+#:
+#: - It excludes ``morph:`` rows. TT has exactly two kinds of cloze and
+#:   ``db_lemma_cache.get_inflection_clozes_for_lemma`` already draws the line:
+#:   a **base** cloze (empty disambig) IS the word's production card, while an
+#:   **inflection** cloze drills one inflected form and is not. Both carry the
+#:   base lemma, so a lemma-shaped key cannot tell them apart, and a word that
+#:   got an inflection cloze would silently lose its production card forever.
+#: - It keys on ``text``, not ``lemma``. ``upsert_by_guid`` — the Anki import
+#:   path every candidate arrives by — leaves ``lemma`` NULL for a multi-token
+#:   headword, and ``z.lemma = c.lemma`` is NULL against NULL, never true. 10 of
+#:   the real deck's 1550 candidates are that shape (``mot, imot``, ``fra,
+#:   ifra``, ``selv, sjøl``). ``text`` is NOT NULL and both paths take it from
+#:   the same field, so it is the identity that actually holds.
+#:
+#: Residual, accepted: two homographs sharing a front (``løfte`` noun/verb) share
+#: this key, so a base cloze for one suppresses the other's mint. Narrowing it
+#: would need the cloze to carry the word class — which is exactly what the
+#: identity-collision guard in ``_fallback_to_cloze`` forbids. Tracked as the
+#: homograph family (``tunatale-m3q``), not fixed here.
 #:
 #: The ordering IS the forward trigger: the most recently graduated word is
 #: promoted first, so a word that graduated since the last sync jumps the
@@ -58,7 +77,9 @@ _AWAITING_PRODUCTION_WHERE = """
       )
       AND NOT EXISTS (
         SELECT 1 FROM collocations z
-        WHERE z.card_type = 'cloze' AND z.lemma IS NOT NULL AND z.lemma = c.lemma
+        WHERE z.card_type = 'cloze'
+          AND COALESCE(z.disambig_key, '') NOT LIKE 'morph:%'
+          AND z.text = c.text
       )
 """
 

@@ -1166,6 +1166,63 @@ class TestTranscriptEnrichment:
         assert word.inflectable is True
         assert word.inflection_feature == "noun:def:sg"
 
+    def test_norwegian_freshly_minted_production_is_not_yet_inflectable(self):
+        """The state the just-in-time mint creates, which did not exist before it.
+
+        `promote_production_cards` adds the production direction as NEW — the
+        card is *added*, not graded (`.claude/rules/anki-sync.md`). So a word the
+        drain promoted this morning has a production direction and still must not
+        offer the inflection affordance: the gate is "the learner can produce
+        this", not "a production card exists". It becomes inflectable once that
+        card is actually studied to REVIEW, which is the same bar Slovene has
+        always had.
+        """
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockNorwegianLemmatizer:
+            def lemmatize(self, word: str, language_code: str) -> str:
+                return "bil" if word == "bilen" else word.lower()
+
+            def analyze(self, word: str, language_code: str) -> tuple[str, str, str]:
+                return ("bil", "", "") if word == "bilen" else (word.lower(), "", "")
+
+            def analyze_sentence(self, sentence: str, language_code: str) -> list:
+                if "bilen" in sentence:
+                    return [_TA(surface="bilen", lemma="bil", upos="NOUN", definite="Def", number="Sing")]
+                return []
+
+        from app.models.srs_item import Direction, SRSState
+
+        self._add_vocab("bil", "car", lemma="bil")
+        item = self.db.get_collocation("bil")
+        # Recognition graduated a year ago; production minted this morning.
+        item.directions[Direction.RECOGNITION].state = SRSState.REVIEW
+        item.directions[Direction.RECOGNITION].last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        item.directions[Direction.RECOGNITION].stability = 180.0
+        item.directions[Direction.RECOGNITION].reps = 40
+        item.directions[Direction.PRODUCTION].state = SRSState.NEW
+        item.directions[Direction.PRODUCTION].last_review = None
+        self.db.update_direction(item.guid, Direction.RECOGNITION, item.directions[Direction.RECOGNITION])
+        self.db.update_direction(item.guid, Direction.PRODUCTION, item.directions[Direction.PRODUCTION])
+
+        lesson = _make_lesson([("female-1", "bilen")], lang="no")
+        result = extract_transcript(lesson, self.db, _MockNorwegianLemmatizer(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+
+        assert word.inflectable is False
+        # ...and the flip of the ACTIVE direction is not a regression in what the
+        # reader sees. `resolve_active_direction` hands over to production the
+        # moment one exists, so a word mature for a year starts reporting
+        # `active_state='new'` — but the colour and the tooltip percentage are
+        # driven by `progress`, and that does not move: a recognition-only word
+        # was already capped at half, and the minted direction supplies the
+        # other half's zero.
+        from app.srs.mastery import compute_mastery_progress
+
+        assert word.active_direction == "production"
+        before = compute_mastery_progress([item.directions[Direction.RECOGNITION]])
+        assert word.progress == before == 0.5
+
     def test_inflection_cloze_exact_match_path(self):
         """When an inflection cloze with exact surface match exists, it takes priority over the base."""
         from app.srs.lemmatizer import TokenAnalysis as _TA
