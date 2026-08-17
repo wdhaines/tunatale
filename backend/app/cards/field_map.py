@@ -17,6 +17,7 @@ not field 0) declare a profile and skip the heuristics entirely.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from app.models.syntactic_unit import BackFieldTier
@@ -44,6 +45,18 @@ class NotetypeProfile:
     ``None`` (extraction yields an empty disambig key). ``back_fields`` lists the
     secondary fields (IPA, inflections, dictionary entry…) surfaced on the card
     back; empty for notetypes that carry none.
+
+    ``examples`` / ``inflections`` name the same fields ``back_fields`` renders,
+    but declare a second *role* for them: raw material for a cloze production
+    card when a word cannot be imaged. A notetype that leaves them ``None`` has
+    no cloze source of its own and falls through to the (unbuilt) LLM tier.
+
+    ``disambig_upos`` maps this deck's own part-of-speech vocabulary onto UPOS
+    tags, so the closed-class test can go through the language registry
+    (``is_function_word``) instead of matching deck labels anywhere in the sync
+    path. The imported Norwegian deck writes English POS names into ``Word
+    class``; another deck will write something else, which is exactly why this
+    is per-notetype data rather than logic.
     """
 
     l2: str  # field name holding the L2 (target-language) word
@@ -51,6 +64,9 @@ class NotetypeProfile:
     disambig: str | None = None  # field name holding the disambig key, if any
     article: str | None = None  # field name holding the gender article (en/ei/et), if any
     back_fields: tuple[BackFieldSpec, ...] = field(default_factory=tuple)
+    examples: str | None = None  # field name holding glossed example sentences
+    inflections: str | None = None  # field name holding the inflection table
+    disambig_upos: Mapping[str, str] = field(default_factory=dict)  # this deck's POS label → UPOS
 
 
 _PROFILES: dict[str, NotetypeProfile] = {
@@ -82,6 +98,27 @@ _PROFILES: dict[str, NotetypeProfile] = {
             BackFieldSpec("Note", "Note", "details"),
             BackFieldSpec("Dictionary entry", "Dictionary entry", "deep"),
         ),
+        # Cloze material for words that image badly. `Example sentences` is
+        # 98.7% populated and glossed; `Inflections` supplies the surface to
+        # blank when the headword appears inflected in its own example (31.8% of
+        # the words awaiting promotion). See app.cards.cloze_source.
+        examples="Example sentences",
+        inflections="Inflections",
+        # The deck's own `Word class` vocabulary, mapped onto UPOS so the
+        # closed-class routing runs through the language registry. Counts in the
+        # deck: noun 1445, verb 615, adjective 537, adverb 183, preposition 72,
+        # determinative 62, interjection 35, conjunction 22, pronoun 19.
+        disambig_upos={
+            "noun": "NOUN",
+            "verb": "VERB",
+            "adjective": "ADJ",
+            "adverb": "ADV",
+            "preposition": "ADP",
+            "determinative": "DET",
+            "interjection": "INTJ",
+            "conjunction": "CCONJ",
+            "pronoun": "PRON",
+        },
     ),
 }
 

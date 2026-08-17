@@ -36,6 +36,13 @@ class ProductionCandidate(NamedTuple):
 #: or marked known would resurrect it, so active review is the bar —
 #: ``sync_create_new`` filters suspended/buried items for the same reason.
 #:
+#: A word already covered by a **cloze** is excluded by lemma. A cloze is a
+#: separate note on Anki's ``Cloze`` notetype, so it adds no production direction
+#: to the vocab collocation — without this clause the drain would return the same
+#: unimageable word every sync forever, and mint it a second cloze each time.
+#: Matching on lemma rather than text is what makes it hold across the headword
+#: formatting the two paths use.
+#:
 #: The ordering IS the forward trigger: the most recently graduated word is
 #: promoted first, so a word that graduated since the last sync jumps the
 #: backlog of words that were already in review when the notetype gained its
@@ -48,6 +55,10 @@ _AWAITING_PRODUCTION_WHERE = """
       AND NOT EXISTS (
         SELECT 1 FROM collocation_directions p
         WHERE p.collocation_id = c.id AND p.direction = 'production'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM collocations z
+        WHERE z.card_type = 'cloze' AND z.lemma IS NOT NULL AND z.lemma = c.lemma
       )
 """
 

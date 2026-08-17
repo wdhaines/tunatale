@@ -13,6 +13,7 @@ import logging
 from datetime import UTC, datetime
 from hashlib import sha256 as _sha256
 
+from app.cards.cloze_source import choose_cloze_sentence
 from app.cards.media.vocab_media import safe_stem as _safe_stem
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media
 from app.common.guid import compute_guid
@@ -39,6 +40,7 @@ from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
 from app.srs.database import SRSDatabase
 from app.srs.direction_fields import SYNC_COMPARABLE_MODEL_FIELDS
 from app.srs.fsrs import is_day_level_last_review
+from app.srs.function_words import is_function_word, make_cloze_text
 from app.srs.queue_stats import resolve_bury_new, resolve_bury_review, resolve_learning_steps, resolve_relearning_steps
 
 # Logger name pinned to "app.anki.sync": BURY_TRACE assertions in
@@ -1483,8 +1485,6 @@ class AnkiSync:
         image_failed = 0
 
         for guid, item, coll_id in items:
-            from app.srs.function_words import make_cloze_text
-
             if item.syntactic_unit.card_type == "cloze":
                 cloze_text = make_cloze_text(
                     item.syntactic_unit.text,
@@ -1751,6 +1751,18 @@ class AnkiSync:
                 continue
 
             unit = cand.item.syntactic_unit
+            material = self._reader.get_cloze_material(cand.anki_note_id)
+
+            # Closed-class words route to a cloze without spending a fetch: a
+            # picture of "foran" is noise, and minting a card with a meaningless
+            # image is the failure mode this whole router exists to avoid. The
+            # test goes through the language registry — the deck's own POS label
+            # is mapped to a UPOS tag by its notetype profile — so this is the
+            # same closed-class decision `/listen` makes, not a parallel one.
+            if is_function_word(unit.text, settings.target_language, upos=material.upos):
+                self._fallback_to_cloze(cand, material, report)
+                continue
+
             filename = self._db.get_image_filename(cand.collocation_id)
             if filename is None:
                 # No TT image yet: fetch one now, at promotion time. This is the
@@ -1768,12 +1780,9 @@ class AnkiSync:
                     )
                 )
                 if media is None or media.image_bytes is None:
-                    report.no_image += 1
-                    _log.warning(
-                        "PRODUCTION_MINT_DEFERRED text=%r cid=%d — no image, needs the cloze fallback",
-                        unit.text,
-                        cand.collocation_id,
-                    )
+                    # The one genuinely new decision in the router: a word that
+                    # cannot be pictured gets a cloze instead of a bad picture.
+                    self._fallback_to_cloze(cand, material, report)
                     continue
                 # Hash-suffixed, like `replace_item_image` and unlike
                 # `sync_create_new`'s bare `img_<gloss>.jpg`. At 1550 words a
@@ -1803,11 +1812,75 @@ class AnkiSync:
                 report.adopted += 1
 
         _log.info(
-            "PRODUCTION_MINT awaiting=%d minted=%d adopted=%d no_image=%d no_template=%d",
+            "PRODUCTION_MINT awaiting=%d minted=%d adopted=%d clozed=%d unservable=%d no_template=%d",
             report.awaiting,
             report.minted,
             report.adopted,
-            report.no_image,
+            report.clozed,
+            report.unservable,
             report.no_template,
         )
         return report
+
+    def _fallback_to_cloze(self, cand, material, report: PromotionReport) -> None:
+        """Give *cand* a cloze production card built from the note's own fields.
+
+        The word cannot be pictured — it is closed-class, or its image search
+        came back empty — and a production card fronted by a meaningless picture
+        is worse than none. A cloze is a **separate note** on Anki's built-in
+        ``Cloze`` notetype, so this writes a TT collocation and stops: the next
+        sync's ``sync_create_new`` mints the note, reads back the card id and
+        links it, exactly as it does for a ``/listen`` cloze. Nothing is written
+        to the collection here.
+
+        Declines (counting ``unservable``) in two cases. When no example sentence
+        can carry the cloze — the LLM tier that would serve those is not built.
+        And when the word's own disambig is empty: a cloze collocation carries no
+        disambig, so the two rows would share the ``(text, language, disambig)``
+        identity, and ``add_collocation`` would merge into the vocab row and add
+        a production direction with no Anki card behind it — the stranding shape,
+        arriving by a different road. 28 rows in the real Norwegian deck have an
+        empty ``Word class``; none is a candidate today, so this guard costs
+        nothing measurable and the failure it prevents would be silent.
+        """
+        unit = cand.item.syntactic_unit
+        choice = choose_cloze_sentence(unit.text, material.examples, material.inflections)
+        if choice is None:
+            report.unservable += 1
+            _log.warning(
+                "PRODUCTION_MINT_UNSERVABLE text=%r cid=%d — no image and no clozable example sentence",
+                unit.text,
+                cand.collocation_id,
+            )
+            return
+
+        if not unit.disambig_key.strip():
+            report.unservable += 1
+            _log.warning(
+                "PRODUCTION_MINT_UNSERVABLE text=%r cid=%d — the word carries no disambig, so a cloze"
+                " row would collide with its own vocab collocation",
+                unit.text,
+                cand.collocation_id,
+            )
+            return
+
+        # Store the cloze pre-built, like `/listen` does: the surface to blank is
+        # the sentence's own inflected form, which `sync_create_new` could not
+        # re-derive from the headword. `make_cloze_text` is idempotent, so its
+        # second pass there leaves this untouched.
+        self._db.add_collocation(
+            SyntacticUnit(
+                text=unit.text,
+                translation=unit.translation,
+                word_count=1,
+                difficulty=unit.difficulty,
+                source="anki",
+                frequency=unit.frequency,
+                lemma=unit.text.casefold(),
+                card_type="cloze",
+                source_sentence=make_cloze_text(choice.surface, choice.sentence),
+                source_sentence_translation=choice.gloss,
+            ),
+            language_code=settings.target_language,
+        )
+        report.clozed += 1

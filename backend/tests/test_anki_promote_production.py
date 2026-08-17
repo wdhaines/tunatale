@@ -26,8 +26,11 @@ Two populations it must NOT touch, both live in the real collections today:
   Check Database deletes. `card_type` is NOT the discriminator (those 77 rows
   are stored as ``vocab``); the collection is.
 - a word whose image search comes back empty. Rule 3 of the mint: an ord=1 card
-  with a blank ``Image`` is an *empty card* to Anki. Those words are counted and
-  left for the cloze fallback (piece D), which is deliberately not built here.
+  with a blank ``Image`` is an *empty card* to Anki. Those words route to the
+  **cloze fallback** (piece D) instead, built from the note's own example
+  sentence — as do closed-class words, before any fetch is spent on them. What
+  neither shape can serve is counted as ``unservable`` and left for the LLM
+  tier, which is not built.
 """
 
 from __future__ import annotations
@@ -57,7 +60,17 @@ LANG = "no"
 SEED_NOTETYPE = "6000 Most Frequent Norwegian Words"
 BASIC_NOTETYPE = "Basic"
 
-SEED_FIELDS = ("Frequency index", "Norwegian word", "Word class", "Article", "IPA", "English translation")
+SEED_FIELDS = (
+    "Frequency index",
+    "Norwegian word",
+    "Word class",
+    "Article",
+    "IPA",
+    "English translation",
+    "Inflections",
+    "Example sentences",
+)
+CLOZE_MID = 1694414741777
 
 _SCHEMA = """
     CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, dty INTEGER,
@@ -76,6 +89,13 @@ _SCHEMA = """
     CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, common BLOB);
 """
 
+
+#: The deck's own inflection table, in the shape the real field carries it:
+#: grammar labels in <thead>, forms in <tbody> cells, some with an article.
+NOUN_TABLE = (
+    '<table class="tg"><thead><tr><th>entall</th><th>flertall</th></tr></thead>'
+    "<tbody><tr><td>en&nbsp;valp</td><td>valpen</td><td>valper</td><td>valpene</td></tr></tbody></table>"
+)
 
 #: What the phase names the picture it fetches for "house": the gloss stem plus
 #: the bytes' hash, so two words glossed alike cannot overwrite each other.
@@ -128,6 +148,12 @@ def _make_conn() -> sqlite3.Connection:
         conn.execute("INSERT INTO fields VALUES (?, ?, ?, X'')", (BASIC_MID, ord_, name))
     conn.execute("INSERT INTO templates VALUES (?, 0, 'Card 1', 50, 0, X'')", (BASIC_MID,))
 
+    # Anki's built-in Cloze notetype: where a word that cannot be imaged lands.
+    conn.execute("INSERT INTO notetypes VALUES (?, 'Cloze', 50, 0, X'')", (CLOZE_MID,))
+    for ord_, name in enumerate(("Text", "Back Extra")):
+        conn.execute("INSERT INTO fields VALUES (?, ?, ?, X'')", (CLOZE_MID, ord_, name))
+    conn.execute("INSERT INTO templates VALUES (?, 0, 'Cloze', 50, 0, X'')", (CLOZE_MID,))
+
     profile = get_profile(SEED_NOTETYPE)
     assert profile is not None
     add_production_template(conn, SEED_NOTETYPE, profile)
@@ -135,12 +161,29 @@ def _make_conn() -> sqlite3.Connection:
     return conn
 
 
-def _add_note(conn: sqlite3.Connection, note_id: int, word: str, english: str, *, mid: int = SEED_MID) -> int:
+def _add_note(
+    conn: sqlite3.Connection,
+    note_id: int,
+    word: str,
+    english: str,
+    *,
+    mid: int = SEED_MID,
+    word_class: str = "noun",
+    examples: str = "",
+    inflections: str = "",
+) -> int:
     """Insert a note plus its recognition card; returns the card id."""
-    field_count = conn.execute("SELECT COUNT(*) FROM fields WHERE ntid = ?", (mid,)).fetchone()[0]
-    parts = [""] * field_count
+    names = [r[0] for r in conn.execute("SELECT name FROM fields WHERE ntid = ? ORDER BY ord", (mid,))]
+    parts = [""] * len(names)
     if mid == SEED_MID:
-        parts[1], parts[5] = word, english
+        for name, value in (
+            ("Norwegian word", word),
+            ("English translation", english),
+            ("Word class", word_class),
+            ("Example sentences", examples),
+            ("Inflections", inflections),
+        ):
+            parts[names.index(name)] = value
     else:
         parts[0], parts[1] = word, english
     conn.execute(
@@ -165,12 +208,15 @@ def _add_word(
     card_id: int,
     state: SRSState = SRSState.REVIEW,
     with_production: bool = False,
+    disambig: str = "noun",
     last_review: str = "2026-08-01T12:00:00+00:00",
 ) -> int:
     """Seed the TT side: a collocation with a recognition direction, optionally production."""
     from datetime import datetime
 
-    unit = SyntacticUnit(text=word, translation=english, word_count=1, difficulty=1, source="anki", frequency=0)
+    unit = SyntacticUnit(
+        text=word, translation=english, word_count=1, difficulty=1, source="anki", frequency=0, disambig_key=disambig
+    )
     directions = {
         Direction.RECOGNITION: DirectionState(
             direction=Direction.RECOGNITION,
@@ -199,6 +245,22 @@ def _make_sync(conn: sqlite3.Connection, db: SRSDatabase, anki_media_dir=None) -
     )
 
 
+def _cloze_id(db: SRSDatabase, lemma: str) -> int:
+    """The cloze collocation for *lemma*.
+
+    Not ``get_collocation_by_lemma_with_id``: the word's vocab row carries the
+    same lemma, so that lookup is ambiguous and silently returns the wrong one.
+    """
+    with db._get_conn() as conn:
+        row = conn.execute("SELECT id FROM collocations WHERE card_type = 'cloze' AND lemma = ?", (lemma,)).fetchone()
+    assert row is not None, f"no cloze collocation for {lemma!r}"
+    return row["id"]
+
+
+def _cloze_unit(db: SRSDatabase, lemma: str) -> SyntacticUnit:
+    return db.get_collocation_by_id(_cloze_id(db, lemma))[1].syntactic_unit
+
+
 def _prod_cards(conn: sqlite3.Connection, note_id: int) -> list[sqlite3.Row]:
     return conn.execute("SELECT * FROM cards WHERE nid = ? AND ord > 0", (note_id,)).fetchall()
 
@@ -221,7 +283,7 @@ class TestPromoteProductionCards:
 
         report = await _make_sync(conn, db, anki_media).promote_production_cards(_media_fn=media_fn)
 
-        assert (report.minted, report.adopted, report.no_image, report.no_template) == (1, 0, 0, 0)
+        assert (report.minted, report.adopted, report.unservable, report.no_template) == (1, 0, 0, 0)
         assert report.awaiting == 1
 
         # One production card in Anki, in the recognition card's deck, fronted by
@@ -268,6 +330,157 @@ class TestPromoteProductionCards:
         assert (sync_mod._MEDIA_DIR / first.removeprefix('<img src="').removesuffix('">')).read_bytes() == (
             b"IMG-beslutning"
         )
+
+    async def test_routes_a_word_it_cannot_image_to_a_cloze(self) -> None:
+        """Piece D: the fallback, built from the note's own fields."""
+        conn = _make_conn()
+        card_id = _add_note(
+            conn,
+            1000,
+            "valp",
+            "puppy",
+            examples="Valpen er veldig leken (<i>The puppy is very playful</i>)",
+            inflections=NOUN_TABLE,
+        )
+        db = SRSDatabase(":memory:")
+        coll_id = _add_word(db, "valp", "puppy", note_id=1000, card_id=card_id)
+
+        report = await _make_sync(conn, db).promote_production_cards(
+            _media_fn=_MediaFn(_Media(image_bytes=None, image_status="no_results"))
+        )
+
+        assert (report.minted, report.clozed, report.unservable) == (0, 1, 0)
+        # No production card and no image on the vocab note — the word went the
+        # other way entirely.
+        assert _prod_cards(conn, 1000) == []
+        assert _image_field(conn, 1000) == ""
+        assert db.get_collocation_by_id(coll_id)[1].directions.keys() == {Direction.RECOGNITION}
+
+        # A separate cloze collocation, blanking the surface as the sentence
+        # spells it — not the dictionary headword, which is not in the sentence.
+        unit = _cloze_unit(db, "valp")
+        assert unit.card_type == "cloze"
+        assert unit.source_sentence == "{{c1::Valpen}} er veldig leken"
+        assert unit.source_sentence_translation == "The puppy is very playful"
+        assert unit.translation == "puppy"
+
+    async def test_routes_a_closed_class_word_to_a_cloze_without_spending_a_fetch(self) -> None:
+        """`Word class` is the first filter: a picture of a preposition is noise.
+
+        The deck's POS label resolves through the language registry, so this is
+        the same closed-class test `/listen` applies — not a parallel one.
+        """
+        conn = _make_conn()
+        card_id = _add_note(
+            conn,
+            1000,
+            "foran",
+            "in front of",
+            word_class="preposition",
+            examples="Bilen står foran huset (<i>The car is in front of the house</i>)",
+        )
+        db = SRSDatabase(":memory:")
+        _add_word(db, "foran", "in front of", note_id=1000, card_id=card_id, disambig="preposition")
+        media_fn = _MediaFn()
+
+        report = await _make_sync(conn, db).promote_production_cards(_media_fn=media_fn)
+
+        assert (report.clozed, report.minted) == (1, 0)
+        assert media_fn.calls == [], "a closed-class word must not cost an image fetch"
+        assert _prod_cards(conn, 1000) == []
+        assert _cloze_unit(db, "foran").source_sentence == "Bilen står {{c1::foran}} huset"
+
+    async def test_declines_when_no_example_sentence_can_carry_a_cloze(self) -> None:
+        """Neither shape is available: counted, not guessed at."""
+        conn = _make_conn()
+        card_id = _add_note(conn, 1000, "beslutning", "decision", examples="Katten sover (<i>The cat sleeps</i>)")
+        db = SRSDatabase(":memory:")
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id)
+
+        report = await _make_sync(conn, db).promote_production_cards(
+            _media_fn=_MediaFn(_Media(image_bytes=None)),
+        )
+
+        assert (report.minted, report.clozed, report.unservable) == (0, 0, 1)
+        assert db.count_collocations() == 1
+        assert _prod_cards(conn, 1000) == []
+
+    async def test_refuses_a_cloze_that_would_collide_with_the_word_itself(self) -> None:
+        """A cloze row carries no disambig, so a word that has none either would
+        share its identity — and `add_collocation` would merge into the vocab row
+        and hang a production direction there with no Anki card behind it. 28 rows
+        in the real deck have an empty `Word class`."""
+        conn = _make_conn()
+        card_id = _add_note(
+            conn,
+            1000,
+            "valp",
+            "puppy",
+            word_class="",
+            examples="Valpen er veldig leken (<i>The puppy is very playful</i>)",
+            inflections=NOUN_TABLE,
+        )
+        db = SRSDatabase(":memory:")
+        coll_id = _add_word(db, "valp", "puppy", note_id=1000, card_id=card_id, disambig="")
+
+        report = await _make_sync(conn, db).promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+
+        assert (report.clozed, report.unservable) == (0, 1)
+        assert db.count_collocations() == 1
+        assert db.get_collocation_by_id(coll_id)[1].directions.keys() == {Direction.RECOGNITION}
+
+    async def test_a_word_covered_by_a_cloze_stops_being_a_candidate(self) -> None:
+        """Otherwise the drain returns the same word every sync, forever.
+
+        A cloze is a separate note on the `Cloze` notetype, so it adds no
+        production direction to the vocab collocation — the selection query has
+        to exclude the word explicitly, by lemma.
+        """
+        conn = _make_conn()
+        card_id = _add_note(
+            conn,
+            1000,
+            "valp",
+            "puppy",
+            examples="Valpen er veldig leken (<i>The puppy is very playful</i>)",
+            inflections=NOUN_TABLE,
+        )
+        db = SRSDatabase(":memory:")
+        _add_word(db, "valp", "puppy", note_id=1000, card_id=card_id)
+        sync = _make_sync(conn, db)
+        first = await sync.promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+        assert first.clozed == 1
+
+        again = await sync.promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+
+        assert (again.awaiting, again.clozed) == (0, 0)
+        assert db.count_collocations() == 2, "no second cloze for the same word"
+
+    async def test_the_cloze_it_creates_is_mintable_by_sync_create_new(self) -> None:
+        """The card-adding contract (.claude/rules/anki-sync.md): the row this
+        phase drops must be one the existing create path can turn into a note."""
+        conn = _make_conn()
+        card_id = _add_note(
+            conn,
+            1000,
+            "valp",
+            "puppy",
+            examples="Valpen er veldig leken (<i>The puppy is very playful</i>)",
+            inflections=NOUN_TABLE,
+        )
+        db = SRSDatabase(":memory:")
+        _add_word(db, "valp", "puppy", note_id=1000, card_id=card_id)
+        sync = _make_sync(conn, db)
+        await sync.promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+
+        await sync.sync_create_new(deck_name=DECK_NAME, model_name=SEED_NOTETYPE)
+
+        note = conn.execute("SELECT id, flds FROM notes WHERE mid = ?", (CLOZE_MID,)).fetchone()
+        assert note is not None, "the cloze collocation never reached Anki"
+        assert note["flds"].split("\x1f")[0] == "{{c1::Valpen}} er veldig leken"
+        # ...and TT holds the ids, so the cloze is not stranded.
+        cloze_id = _cloze_id(db, "valp")
+        assert db.get_collocation_by_id(cloze_id)[1].directions[Direction.PRODUCTION].anki_card_id is not None
 
     async def test_ignores_a_word_whose_recognition_has_not_graduated(self) -> None:
         conn = _make_conn()
@@ -319,7 +532,7 @@ class TestPromoteProductionCards:
 
         report = await _make_sync(conn, db).promote_production_cards(_media_fn=media_fn)
 
-        assert (report.minted, report.no_image) == (0, 1)
+        assert (report.minted, report.unservable) == (0, 1)
         assert _prod_cards(conn, 1000) == []
         assert _image_field(conn, 1000) == ""
         assert db.get_collocation_by_id(coll_id)[1].directions.keys() == {Direction.RECOGNITION}
@@ -429,7 +642,7 @@ class TestPromoteProductionCards:
 
         report = await _make_sync(conn, db).promote_production_cards()
 
-        assert (report.minted, report.no_image) == (0, 1)
+        assert (report.minted, report.unservable) == (0, 1)
         assert _prod_cards(conn, 1000) == []
 
     async def test_logs_the_drain_and_names_each_deferred_word(self, caplog) -> None:
@@ -441,7 +654,7 @@ class TestPromoteProductionCards:
         with caplog.at_level(logging.INFO, logger="app.anki.sync"):
             await _make_sync(conn, db).promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
 
-        assert "PRODUCTION_MINT awaiting=1 minted=0 adopted=0 no_image=1 no_template=0" in caplog.text
+        assert "PRODUCTION_MINT awaiting=1 minted=0 adopted=0 clozed=0 unservable=1 no_template=0" in caplog.text
         assert "beslutning" in caplog.text
 
     async def test_quiet_when_there_is_nothing_to_promote(self, caplog) -> None:
@@ -499,3 +712,61 @@ class TestWordsAwaitingProduction:
         (cand,) = srs_db.list_words_awaiting_production(limit=10)
         assert (cand.collocation_id, cand.anki_note_id) == (coll_id, 1000)
         assert cand.item.syntactic_unit.text == "hus"
+
+
+class TestClozeMaterial:
+    """``OfflineReader.get_cloze_material`` — the fallback's inputs, by profile."""
+
+    def test_reads_the_examples_inflections_and_part_of_speech(self) -> None:
+        conn = _make_conn()
+        _add_note(
+            conn, 1000, "valp", "puppy", word_class="noun", examples="Valpen sover (<i>x</i>)", inflections=NOUN_TABLE
+        )
+
+        material = OfflineReader(conn, DECK_NAME, language_code=LANG).get_cloze_material(1000)
+
+        assert material.examples == "Valpen sover (<i>x</i>)"
+        assert material.inflections == NOUN_TABLE
+        # The deck says "noun"; the registry speaks UPOS.
+        assert material.upos == "NOUN"
+
+    def test_maps_the_decks_closed_class_labels(self) -> None:
+        conn = _make_conn()
+        _add_note(conn, 1000, "foran", "in front of", word_class="preposition")
+        _add_note(conn, 1001, "og", "and", word_class="conjunction")
+        reader = OfflineReader(conn, DECK_NAME, language_code=LANG)
+
+        assert reader.get_cloze_material(1000).upos == "ADP"
+        assert reader.get_cloze_material(1001).upos == "CCONJ"
+
+    def test_a_label_the_deck_never_uses_maps_to_nothing(self) -> None:
+        conn = _make_conn()
+        _add_note(conn, 1000, "hm", "hm", word_class="klingon")
+        assert OfflineReader(conn, DECK_NAME, language_code=LANG).get_cloze_material(1000).upos is None
+
+    def test_yields_nothing_for_a_notetype_with_no_profile(self) -> None:
+        """A deck TT has no field map for gets no cloze source rather than a guess."""
+        conn = _make_conn()
+        _add_note(conn, 2000, "sound", "phonics", mid=BASIC_MID)
+
+        material = OfflineReader(conn, DECK_NAME, language_code=LANG).get_cloze_material(2000)
+
+        assert material == ("", "", None)
+
+    def test_yields_nothing_for_a_note_that_no_longer_exists(self) -> None:
+        conn = _make_conn()
+        assert OfflineReader(conn, DECK_NAME, language_code=LANG).get_cloze_material(424242) == ("", "", None)
+
+    def test_yields_nothing_when_the_notetype_lacks_the_declared_fields(self) -> None:
+        """The profile names fields this particular collection's notetype omits —
+        an older revision of the shared deck. Reading by name rather than by ord
+        is what makes that a blank instead of a wrong field."""
+        conn = _make_conn()
+        _add_note(conn, 1000, "valp", "puppy")
+        conn.execute("DELETE FROM fields WHERE ntid = ? AND name IN ('Example sentences', 'Inflections')", (SEED_MID,))
+        conn.commit()
+
+        material = OfflineReader(conn, DECK_NAME, language_code=LANG).get_cloze_material(1000)
+
+        assert (material.examples, material.inflections) == ("", "")
+        assert material.upos == "NOUN"
