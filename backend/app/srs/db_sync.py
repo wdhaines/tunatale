@@ -41,26 +41,24 @@ class ProductionCandidate(NamedTuple):
 #: vocab collocation — without this clause the drain would return the same
 #: unimageable word every sync forever, and mint it a second cloze each time.
 #:
-#: Two things about the key, both of which the first version got wrong:
+#: The key is the RECORDED LINK (``base_collocation_id``), set when the cloze is
+#: minted. Three earlier keys were tried against this and each was wrong:
 #:
-#: - It excludes ``morph:`` rows. TT has exactly two kinds of cloze and
-#:   ``db_lemma_cache.get_inflection_clozes_for_lemma`` already draws the line:
-#:   a **base** cloze (empty disambig) IS the word's production card, while an
-#:   **inflection** cloze drills one inflected form and is not. Both carry the
-#:   base lemma, so a lemma-shaped key cannot tell them apart, and a word that
-#:   got an inflection cloze would silently lose its production card forever.
-#: - It keys on ``text``, not ``lemma``. ``upsert_by_guid`` — the Anki import
-#:   path every candidate arrives by — leaves ``lemma`` NULL for a multi-token
-#:   headword, and ``z.lemma = c.lemma`` is NULL against NULL, never true. 10 of
-#:   the real deck's 1550 candidates are that shape (``mot, imot``, ``fra,
-#:   ifra``, ``selv, sjøl``). ``text`` is NOT NULL and both paths take it from
-#:   the same field, so it is the identity that actually holds.
+#: - ``z.lemma = c.lemma`` was **origin-blind**: an inflection cloze carries the
+#:   base lemma too (``create_inflection_cloze``), so a word that got one would
+#:   silently lose its production card forever — while a base cloze IS the word's
+#:   production card and an inflection cloze is not.
+#: - ``z.lemma`` also **could not match a NULL lemma**. ``upsert_by_guid``, the
+#:   Anki import path every candidate arrives by, leaves ``lemma`` NULL for a
+#:   multi-token headword; 10 of the real deck's 1550 candidates are that shape
+#:   (``mot, imot``, ``fra, ifra``, ``selv, sjøl``).
+#: - ``z.text = c.text`` fixed both but **could not tell two homographs apart**.
+#:   ``løfte`` is a noun and a verb — 17 such pairs in the deck — two
+#:   collocations sharing one front, so a base cloze for either silenced the
+#:   other's mint permanently.
 #:
-#: Residual, accepted: two homographs sharing a front (``løfte`` noun/verb) share
-#: this key, so a base cloze for one suppresses the other's mint. Narrowing it
-#: would need the cloze to carry the word class — which is exactly what the
-#: identity-collision guard in ``_fallback_to_cloze`` forbids. Tracked as the
-#: homograph family (``tunatale-m3q``), not fixed here.
+#: A recorded link has none of those failure modes because it is not an
+#: inference: the mint knows exactly which word it is covering, so it says so.
 #:
 #: The ordering IS the forward trigger: the most recently graduated word is
 #: promoted first, so a word that graduated since the last sync jumps the
@@ -77,9 +75,7 @@ _AWAITING_PRODUCTION_WHERE = """
       )
       AND NOT EXISTS (
         SELECT 1 FROM collocations z
-        WHERE z.card_type = 'cloze'
-          AND COALESCE(z.disambig_key, '') NOT LIKE 'morph:%'
-          AND z.text = c.text
+        WHERE z.card_type = 'cloze' AND z.base_collocation_id = c.id
       )
 """
 

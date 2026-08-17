@@ -175,6 +175,11 @@ def resolve_active_direction(item: object) -> Direction:
     return Direction.PRODUCTION
 
 
+#: Cache miss marker: `None` is a legitimate cached answer ("this word has no
+#: covering cloze"), so absence needs its own sentinel or every uncovered word
+#: re-queries on each token.
+_UNSET = object()
+
 _NON_REVIEWABLE_STATES = (SRSState.NEW, SRSState.KNOWN, SRSState.SUSPENDED, SRSState.BURIED)
 # Read-ahead is more permissive than the due queue: reading a NEW word is a valid
 # early introduction (the user recognizes it before the SRS surfaces it), so NEW is
@@ -304,6 +309,11 @@ def extract_transcript(
         inflection_cache: dict[str, list[tuple[int, object]]] = {}
         # Cache base-collocation lookups per lemma (finding #6)
         base_cache: dict[str, tuple | None] = {}
+        # Cache "does this word have a base cloze carrying its production?" per
+        # collocation id. Keyed by id rather than lemma because that is what the
+        # link records — a lemma cannot tell two homographs apart. `None` is a
+        # real answer here (no covering cloze), hence the _UNSET sentinel.
+        base_cloze_cache: dict[int, tuple | None] = {}
 
         for phrase in natural_speed.phrases:
             if phrase.language_code != lesson.language_code:
@@ -382,6 +392,23 @@ def extract_transcript(
                         components = list(item.directions.values())
                         for _ic_id, ic_item in inflection_clozes:
                             components.append(ic_item.directions[Direction.PRODUCTION])
+                        # ...plus the production of a BASE cloze covering this word.
+                        # A word that cannot be pictured gets its production card as a
+                        # cloze, which is a separate Anki note and so a separate
+                        # collocation. Without this the word is measured on its vocab
+                        # row alone, which has no production direction — so mastery
+                        # imputes the absent-production 0.0 and the word reads
+                        # half-mastered forever, with the card that completes it
+                        # sitting unread in the next row.
+                        covering = base_cloze_cache.get(item_id, _UNSET)
+                        if covering is _UNSET:
+                            covering = db.get_covering_cloze(item_id)
+                            base_cloze_cache[item_id] = covering
+                        if covering is not None:
+                            # Appended unconditionally: `valid_components` below
+                            # already drops None, so guarding here would only add
+                            # a branch nothing can reach.
+                            components.append(covering[1].directions.get(Direction.PRODUCTION))
                     else:
                         # Step 3: Unknown
                         components = []
@@ -431,6 +458,18 @@ def extract_transcript(
                         feature_str = _inflection_feature_for(surface, analysis_by_surface, lesson.language_code)
                         if feature_str and is_a1_morphology_feature(feature_str, lesson.language_code):
                             base_prod = item.directions.get(Direction.PRODUCTION)
+                            if base_prod is None:
+                                # Same predicate the /inflection-clozes gate uses:
+                                # a word whose production card is a base cloze can
+                                # be produced, so the affordance must open for it.
+                                # Plain `.get()`: the cache only ever holds None or
+                                # a tuple, so a miss and a cached "no covering
+                                # cloze" mean the same thing here. (The _UNSET
+                                # sentinel matters only where a miss must trigger
+                                # a query — the components block above.)
+                                covering_for_gate = base_cloze_cache.get(resolved_item_id)
+                                if covering_for_gate is not None:
+                                    base_prod = covering_for_gate[1].directions.get(Direction.PRODUCTION)
                             base_prod_state = base_prod.state if base_prod is not None else None
                             if base_prod_state in (SRSState.REVIEW, SRSState.KNOWN) and inflection_match is None:
                                 inflectable_flag = True

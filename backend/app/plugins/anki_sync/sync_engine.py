@@ -1874,19 +1874,30 @@ class AnkiSync:
         # the sentence's own inflected form, which `sync_create_new` could not
         # re-derive from the headword. `make_cloze_text` is idempotent, so its
         # second pass there leaves this untouched.
-        self._db.add_collocation(
-            SyntacticUnit(
-                text=unit.text,
-                translation=unit.translation,
-                word_count=1,
-                difficulty=unit.difficulty,
-                source="anki",
-                frequency=unit.frequency,
-                lemma=unit.text.casefold(),
-                card_type="cloze",
-                source_sentence=make_cloze_text(choice.surface, choice.sentence),
-                source_sentence_translation=choice.gloss,
-            ),
-            language_code=settings.target_language,
+        cloze_unit = SyntacticUnit(
+            text=unit.text,
+            translation=unit.translation,
+            word_count=1,
+            difficulty=unit.difficulty,
+            source="anki",
+            frequency=unit.frequency,
+            lemma=unit.text.casefold(),
+            card_type="cloze",
+            source_sentence=make_cloze_text(choice.surface, choice.sentence),
+            source_sentence_translation=choice.gloss,
         )
+        self._db.add_collocation(cloze_unit, language_code=settings.target_language)
+        # Record WHICH word this cloze covers. The rows stay separate — sync maps
+        # one Anki note to one collocation — but every reader now resolves the
+        # word rather than whichever of the two the lemma index happened to
+        # return, and the selection query excludes by this link rather than by a
+        # text match that could not tell two homographs apart.
+        #
+        # Re-derive the id from the guid rather than from `add_collocation`, which
+        # returns whether it created the row, not which row: on the idempotent
+        # second pass there is no new id to return but the link still has to hold.
+        cloze_id = self._db.get_collocation_id_by_guid(
+            compute_guid(cloze_unit.text, settings.target_language, cloze_unit.disambig_key or "")
+        )
+        self._db.set_base_collocation_id(cloze_id, cand.collocation_id)
         report.clozed += 1

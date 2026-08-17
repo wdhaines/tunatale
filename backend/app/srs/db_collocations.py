@@ -179,6 +179,41 @@ class DbCollocationsMixin:
                 return None
             return self._row_to_item(conn, row)
 
+    def set_base_collocation_id(self, cloze_id: int, base_id: int) -> None:
+        """Record that the base cloze *cloze_id* carries production for *base_id*.
+
+        TT-local bookkeeping: no USN, no Anki write, no guid change. The two rows
+        stay separate because sync maps one Anki note to one collocation, but
+        this is what stops the reader treating them as two different words.
+        """
+        with self._get_conn() as conn:
+            conn.execute("UPDATE collocations SET base_collocation_id = ? WHERE id = ?", (base_id, cloze_id))
+            self._commit(conn)
+
+    def get_base_collocation_id(self, cloze_id: int) -> int | None:
+        """The word a base cloze covers, or None when it covers none."""
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT base_collocation_id FROM collocations WHERE id = ?", (cloze_id,)).fetchone()
+        return None if row is None else row["base_collocation_id"]
+
+    def get_covering_cloze(self, base_id: int) -> tuple[int, SRSItem] | None:
+        """The base cloze that carries production for *base_id*, if one exists.
+
+        This is the whole point of the link: one call answers "does this word
+        have a production card?" for a word whose production card lives on a
+        separate Cloze note. Callers that ask it of the vocab row alone get
+        ``None`` for the production direction and conclude, wrongly, that the
+        word has no production track at all.
+        """
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM collocations WHERE base_collocation_id = ? AND card_type = 'cloze' LIMIT 1",
+                (base_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return row["id"], self._row_to_item(conn, row)
+
     def get_created_at_by_guid(self, guid: str) -> str | None:
         """Return the ISO timestamp from collocations.created_at for the given guid,
         or None if no row matches. Used by sync_create_new to sort items so newer
