@@ -365,6 +365,55 @@ class DbDirectionsMixin:
             anki_id = self._get_anki_card_id_for_direction(row_id, direction)
             self.append_manual_revlog(row_id, direction, anki_card_id=anki_id)
 
+    def add_production_direction(self, collocation_id: int, *, anki_card_id: int, anki_due: int) -> bool:
+        """Give an existing collocation a production direction for a just-minted card.
+
+        The legacy shape this exists for: a word imported from a recognition-only
+        community deck already **has** a collocation, and gaining a production
+        card must add a direction to it — never a second collocation. Two
+        collocations on one Anki note is the duplicate/GUID-collision hazard
+        (``warn_if_guid_collisions``, Layer 33/35), which is why the promotion
+        path calls this instead of ``add_collocation``.
+
+        The card is *added*, not graded (`.claude/rules/anki-sync.md` § "When
+        building a new UI that adds cards"): everything but the link and the due
+        date takes the schema default, so the row is indistinguishable from a
+        freshly created one — ``state='new'``, ``reps=0``, ``dirty_fsrs=0``,
+        ``last_review`` and ``introduced_at`` NULL. ``anki_card_id`` is the real
+        id read back from the collection by ``mint_production_card``, never NULL.
+
+        Returns True when a direction was inserted, False when the collocation is
+        unknown or already has one. An existing production direction is left
+        exactly as it is — re-running the promotion is a no-op, and this is not a
+        relink path (``set_anki_ids`` owns that).
+        """
+        with self._get_conn() as conn:
+            if conn.execute("SELECT 1 FROM collocations WHERE id = ?", (collocation_id,)).fetchone() is None:
+                return False
+            existing = conn.execute(
+                "SELECT 1 FROM collocation_directions WHERE collocation_id = ? AND direction = ?",
+                (collocation_id, Direction.PRODUCTION.value),
+            ).fetchone()
+            if existing is not None:
+                return False
+            conn.execute(
+                """
+                INSERT INTO collocation_directions
+                    (collocation_id, direction, due_at, anki_card_id, anki_due)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    collocation_id,
+                    Direction.PRODUCTION.value,
+                    due_at_rollover_utc(anki_today()).isoformat(),
+                    anki_card_id,
+                    anki_due,
+                ),
+            )
+            conn.execute("UPDATE collocations SET updated_at = datetime('now') WHERE id = ?", (collocation_id,))
+            self._commit(conn)
+        return True
+
     def _existing_directions(self, collocation_id: int) -> list[Direction]:
         """Return the directions with a collocation_directions row, in canonical
         (recognition, production) order. Cloze collocations have production only.

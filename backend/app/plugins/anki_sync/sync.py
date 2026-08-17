@@ -79,6 +79,7 @@ from app.plugins.anki_sync.sync_engine import (
     _step_minutes_from_left as _step_minutes_from_left,
 )
 from app.plugins.anki_sync.sync_reader import OfflineReader as OfflineReader
+from app.plugins.anki_sync.sync_writer import MintedCard as MintedCard
 from app.plugins.anki_sync.sync_writer import OfflineWriter as OfflineWriter
 from app.srs.database import SRSDatabase
 
