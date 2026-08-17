@@ -17,6 +17,12 @@ Operations
     Calls ``col.set_config(key, value)`` for setup.
 ``{"op": "get_today"}``
     Returns ``{"today": col.sched.today}`` — Anki's day index for today.
+``{"op": "note_ords"}``
+    Returns ``{"ords": {sfld: [ord…]}, "card_ids": {sfld: {ord: card_id}}}`` —
+    which cards exist per note, for card-generation questions.
+``{"op": "check_database"}``
+    Runs Tools → Check Database. Returns ``{"ran", "ok", "report"}``; assert on
+    ``ok``, because a failed check returns rather than raises.
 """
 
 from __future__ import annotations
@@ -318,7 +324,55 @@ def _op_add_review_cards(col: Any, op: dict) -> dict:
     return {"added": added}
 
 
+def _op_note_ords(col: Any, op: dict) -> dict:
+    """Report which card ords exist per note, keyed by the note's sort field.
+
+    The unit of interest for card generation is "does an ord exist yet", so this
+    reads the rows rather than the scheduler: a generated card may be in any
+    queue state, and a card that was never generated is simply absent. The LEFT
+    JOIN is what makes "no cards at all" distinguishable from "note missing".
+
+    ``card_ids`` carries the actual ids so a test can tell an adopted card from a
+    regenerated one — a duplicate and a rewrite look identical in ``ords``.
+    """
+    ords: dict[str, list[int]] = {}
+    for sfld, ord_ in col.db.all(
+        "select n.sfld, c.ord from notes n left join cards c on c.nid = n.id order by n.id, c.ord"
+    ):
+        ords.setdefault(str(sfld), [])
+        if ord_ is not None:
+            ords[str(sfld)].append(ord_)
+
+    card_ids: dict[str, dict[str, int]] = {}
+    for sfld, ord_, cid in col.db.all("select n.sfld, c.ord, c.id from notes n join cards c on c.nid = n.id"):
+        card_ids.setdefault(str(sfld), {})[str(ord_)] = cid
+
+    return {"ords": ords, "card_ids": card_ids}
+
+
+def _op_check_database(col: Any, op: dict) -> dict:
+    """Run Anki's Check Database (Tools → Check Database).
+
+    Relevant to card generation because ``dbcheck.rs`` walks **every** note
+    through ``update_note_inner_generating_cards``, which makes it the one
+    generation trigger a user can fire by hand over a collection TT mutated with
+    raw SQL.
+
+    ``ok`` is reported separately and callers must assert on it. ``fix_integrity``
+    swallows a failure into its return value instead of raising, so a schema gap
+    in the synthetic collection makes dbcheck abort *before* the notes loop and
+    generate nothing — which is indistinguishable from Anki deciding not to
+    generate. That exact false negative cost a debugging round on 2026-08-17
+    (the fixture's ``tags`` table was missing ``collapsed``).
+    """
+    report = col.fix_integrity()
+    ok = bool(report[1]) if isinstance(report, tuple) else True
+    return {"ran": True, "ok": ok, "report": str(report)}
+
+
 _OPERATIONS: dict[str, Any] = {
+    "note_ords": _op_note_ords,
+    "check_database": _op_check_database,
     "get_queue": _op_get_queue,
     "set_config": _op_set_config,
     "answer_card": _op_answer_card,

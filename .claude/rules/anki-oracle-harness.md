@@ -52,8 +52,11 @@ Heuristic: if a failure mode is "TT and Anki produce different outputs for this 
 
 **Modeled.** `col` table, `notes`, `cards` (with `data.s` / `data.d` / `data.lrt` / `data.dr`), `revlog`, `decks` + `deck_config` (modern protobuf), `notetypes` + `fields` + `templates`, `config` table (modern). FSRS-5 weights + desired_retention + new/reviews_per_day + learn_steps + relearn_steps + review_order. The V3 scheduler is enabled automatically by `oracle.py` after open (`col.set_v3_scheduler(True)`).
 
+**Multi-template notetypes: modeled as of 2026-08-17** (`tunatale-qf6.2`). `add_notetype(..., templates=[(name, qfmt, afmt), …])` writes real `templates.config` blobs via production's own `build_template_config`. The older `template_count=N` form still writes anonymous `Card N` templates with an **empty** config, which stays the default because the scheduling tests never render a card.
+
+**Use `templates=` whenever the subject is card generation.** Anki decides whether to create a card for an ord by asking whether that template's front renders non-empty (`cardgen.rs::new_cards_required_normal`), so an empty config makes every front empty and the generator a silent no-op — a test that passes vacuously. Phase 2.2.4's sibling-bury parity was blocked on this gap; a cross-direction queue test is now buildable.
+
 **Not modeled (extend the builder if you need these).**
-- **Multi-template notetypes.** Default Basic has one template (Front/Back). Phase 2.2.4's sibling-bury parity couldn't test the cross-direction case because of this. Add a 2-template notetype only if a future Layer surfaces a cross-direction divergence.
 - **Time-travel.** `col.crt` is fixed at 2024-01-01 UTC and the subprocess's `now` is real wall-clock time. Day-rollover unbury timing (Layer 27/35) can't be tested cleanly.
 - **Revlog history beyond what `add_revlog` writes.** No automatic computation of `cards.data` from revlog; you write both directly.
 
@@ -80,6 +83,8 @@ These are documented in the test docstrings too, but listed here for fast recall
 9. **`due=0, ivl=10` for a NULL-R card lands at the queue tail.** SM2 fallback `-(elapsed/ivl)` evaluates to `-0.0001` because of saturating-`u32` wraparound on `review_day = due - interval = -10`. Use `due=today_col_day, ivl=N → elapsed=N` to land NULL-R near the dr position (Layer 43).
 
 10. **Never compute Anki's `today` Python-side.** Naive UTC day division (`(now - col.crt) // 86400`) ignores the local-TZ 4AM rollover. Between local midnight and 4AM, the naive UTC day has advanced but Anki's `today` has NOT — so `due=naive_today` lands one day in Anki's **future**, the card isn't due yet, and it's absent from the queue entirely (a past-due card would still be gathered). Passes in EDT afternoons, fails in UTC CI (and on any machine in the midnight–4AM window). Use the `get_today` oracle op (`col.sched.today`) — Anki's authoritative day index. Found on the first Linux/UTC CI run (2026-06-10), LAYER_38.
+
+11. **`col.fix_integrity()` (Check Database) reports failure by RETURN VALUE, not by raising** — and an aborted check generates no cards, which is indistinguishable from Anki *deciding* not to generate. The synthetic collection's schema is minimal, so a whole-collection operation walks into tables the scheduler tests never touch: dbcheck opens with `select tag from tags where collapsed = false`, the fixture's `tags` table was missing `collapsed`, and dbcheck returned `(DbError{…no such column…}, False)` with the notes loop never running. The `check_database` op returns `ok` separately for exactly this reason — **assert on it**. If you extend the fixture for another whole-collection operation, expect the same class of gap, and take the DDL from the real collection (`SELECT sql FROM sqlite_master WHERE name='…'`) rather than from what looks plausible. This is `.claude/rules/tdd.md`'s clean-negative trap in its harness costume: the probe disagreed with a measurement against a real anki-built collection, and the *probe* was wrong.
 
 ## Both gates per commit
 

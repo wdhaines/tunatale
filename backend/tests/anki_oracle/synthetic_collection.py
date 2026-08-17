@@ -20,6 +20,10 @@ import struct
 from pathlib import Path
 from typing import Any
 
+# The template config is borrowed from production rather than re-encoded here on
+# purpose: a card-generation fixture is only evidence about the real collection if
+# its `templates.config` rows are the bytes TT's own migration writes.
+from app.cards.vocab_notetype import build_template_config
 from tests._helpers.protobuf import encode_varint, pb_len_field, pb_varint_field
 
 FSRS5_WEIGHTS_FIELD = 5
@@ -89,8 +93,16 @@ CREATE TABLE IF NOT EXISTS config (
     val BLOB NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS graves (
     oid INTEGER, type INTEGER, usn INTEGER);
+-- Columns mirror Anki's real `tags` table (`collapsed`, `config`), not a
+-- plausible-looking subset: Check Database opens with
+-- `select tag from tags where collapsed = false`, so a missing column aborts
+-- dbcheck before it reaches the notes loop -- and it aborts by *returning* an
+-- error rather than raising, which reads as "Anki chose not to act". The real
+-- table is `without rowid` with `tag` COLLATE unicase; both are omitted because
+-- nothing here inserts a tag and the collation would need registering on every
+-- connection.
 CREATE TABLE IF NOT EXISTS tags (
-    tag TEXT PRIMARY KEY, usn INTEGER, mtime_secs INTEGER);
+    tag TEXT PRIMARY KEY, usn INTEGER, collapsed BOOLEAN NOT NULL DEFAULT 0, config BLOB NULL);
 """
 
 
@@ -195,7 +207,7 @@ class SyntheticCollection:
         self.col_crt: int = COL_CRT
         self.notetypes: list[dict[str, Any]] = []
         self.fields: list[tuple[int, int, str]] = []
-        self.templates: list[tuple[int, int, str]] = []
+        self.templates: list[tuple[int, int, str, bytes]] = []
         self.notes: list[dict[str, Any]] = []
         self.cards: list[dict[str, Any]] = []
         self.revlogs: list[dict[str, Any]] = []
@@ -252,12 +264,38 @@ class SyntheticCollection:
         self.bury_reviews = bury_reviews
         self.bury_interday_learning = bury_interday_learning
 
-    def add_notetype(self, id: int, name: str, field_names: tuple[str, ...], template_count: int = 1) -> None:
+    def add_notetype(
+        self,
+        id: int,
+        name: str,
+        field_names: tuple[str, ...],
+        template_count: int = 1,
+        templates: list[tuple[str, str, str]] | None = None,
+    ) -> None:
+        """Register a notetype with *field_names* and either N bare templates or explicit ones.
+
+        ``template_count`` gives anonymous ``Card N`` templates with an **empty**
+        config — no ``qfmt``, no ``afmt``. That is enough for the scheduling
+        parity tests, which never render a card, and it is the default because
+        those tests are the majority.
+
+        ``templates`` takes ``(name, qfmt, afmt)`` triples and writes a real
+        template config via the same ``build_template_config`` production code
+        uses. Pass it when the test's subject is **card generation**: Anki decides
+        whether to create a card for an ord by asking whether that template's
+        front renders non-empty (``cardgen.rs::new_cards_required_normal``), so an
+        empty config makes every front empty and the generator a no-op — a test
+        that would pass vacuously. It takes precedence over ``template_count``.
+        """
         self.notetypes.append({"id": id, "name": name})
         for ord, fname in enumerate(field_names):
             self.fields.append((id, ord, fname))
+        if templates is not None:
+            for ord, (tname, qfmt, afmt) in enumerate(templates):
+                self.templates.append((id, ord, tname, build_template_config(qfmt, afmt)))
+            return
         for ord in range(template_count):
-            self.templates.append((id, ord, f"Card {ord + 1}"))
+            self.templates.append((id, ord, f"Card {ord + 1}", b""))
 
     def add_note(
         self,
@@ -479,10 +517,10 @@ class SyntheticCollection:
                 "INSERT INTO fields VALUES (?, ?, ?, x'')",
                 (ntid, ord, name),
             )
-        for ntid, ord, name in self.templates:
+        for ntid, ord, name, config in self.templates:
             conn.execute(
-                "INSERT INTO templates VALUES (?, ?, ?, 0, 0, x'')",
-                (ntid, ord, name),
+                "INSERT INTO templates VALUES (?, ?, ?, 0, 0, ?)",
+                (ntid, ord, name, config),
             )
 
     def _write_notes(self, conn: sqlite3.Connection) -> None:
