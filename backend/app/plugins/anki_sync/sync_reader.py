@@ -50,6 +50,17 @@ class OfflineReader:
             (card_id, after_ms),
         ).fetchall()
 
+    def get_recognition_only_share(self):
+        """How much of this reader's deck sits on recognition-only notetypes.
+
+        A pure read, delegated to ``recognition_only_share`` — the reader owns
+        the deck name and the connection, so the tripwire on ``AnkiSync`` does
+        not have to be handed either.
+        """
+        from app.plugins.anki_sync.add_production_template import recognition_only_share
+
+        return recognition_only_share(self._conn, self._deck_name)
+
     def get_grave_note_ids(self) -> set[int]:
         """Return the note ids in Anki's ``graves`` table (``type=1``).
 

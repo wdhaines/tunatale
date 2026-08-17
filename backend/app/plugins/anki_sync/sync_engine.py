@@ -60,6 +60,12 @@ PRODUCTIONS_PER_SYNC = 10
 #: a row is one indexed query; only mints and image fetches are budgeted.
 PRODUCTION_SCAN_LIMIT = 200
 
+#: Fraction of a deck's notes that must be structurally recognition-only before
+#: the tripwire fires. The measured shares sit far either side of it — Slovene
+#: 7.2%, Norwegian 99.4% before its migration — so this is a wide gap, not a
+#: tuned knob. See ``AnkiSync.warn_if_recognition_only_deck``.
+RECOGNITION_ONLY_WARN_SHARE = 0.5
+
 
 def _direction_differs(local: DirectionState, candidate: DirectionState) -> bool:
     """Return True only if a sync-relevant field changed between local and candidate.
@@ -418,6 +424,51 @@ class AnkiSync:
                     len(note_ids),
                 )
         return collisions
+
+    def warn_if_recognition_only_deck(self) -> float:
+        """WARN when most of the deck's notes can only ever yield a recognition card.
+
+        The failure this exists for was **silence**: Norwegian carried 2990 of
+        3009 words with no production direction and every consumer degraded
+        quietly — the transcript skipped the affordance, ``/inflection-clozes``
+        returned a plausible 409, mastery computed over a shorter component
+        list, the drill simply never served an L2-production card. The number
+        surfaced only from an ad-hoc query, months later.
+
+        Same genre as ``warn_if_guid_collisions``: reports, never blocks, runs
+        on dry-runs too because it is a pure read of the collection. Returns the
+        fraction (0.0 for an empty or unknown deck).
+
+        It keys on the **root cause** — notes on a notetype with a single
+        template, which can only ever make one card — rather than on the
+        symptom, "collocations lacking a production direction". The symptom
+        fires 77 legitimate false positives on Slovene: phonics notes on
+        ``Basic`` and clozes, neither of which is a defect. Measured against the
+        real collection (2026-08-17), the two languages sit far apart:
+        Slovene 53/734 = 7.2%, Norwegian 2990/3009 = 99.4% before its migration
+        and 0/3023 after. The threshold has a wide, empirically-checked gap to
+        clear, so it does not need tuning.
+
+        This is a net for the *next* deck imported from the community, which is
+        why it is silent on both configured languages today. The seed import
+        faithfully mirrors whatever notetype a shared deck used, so this will
+        recur.
+        """
+        share = self._reader.get_recognition_only_share()
+        if share.fraction < RECOGNITION_ONLY_WARN_SHARE:
+            return share.fraction
+        _log.warning(
+            "RECOGNITION_ONLY_DECK %d of %d notes (%.1f%%) sit on notetypes with a single card"
+            " template %s — those words can never get a production card, and every consumer"
+            " (transcript affordance, inflection clozes, mastery, the drill) degrades silently."
+            " Give the notetype a production template:"
+            " uv run python -m app.plugins.anki_sync.add_production_template --notetype <name>",
+            share.notes,
+            share.total,
+            share.fraction * 100,
+            share.by_notetype,
+        )
+        return share.fraction
 
     def detect_and_reset_orphans(self) -> tuple[int, int]:
         """Reset TT pointers to Anki cards/notes that no longer exist.

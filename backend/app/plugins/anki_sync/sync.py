@@ -219,6 +219,11 @@ async def run_full_sync(
     # collocation with two candidate cards, free to alternate between them. Reports
     # only, never blocks, and runs on dry-runs too — it is a read of the collection.
     sync.warn_if_guid_collisions()
+    # Second read-only tripwire: a deck whose notes sit on single-template
+    # notetypes can never carry production cards, and every consumer of that
+    # capability degrades silently (the 2990-word Norwegian gap). Runs on
+    # dry-runs for the same reason as the line above — it writes nothing.
+    sync.warn_if_recognition_only_deck()
 
     sync.detect_and_reset_orphans()
 

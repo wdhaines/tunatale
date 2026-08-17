@@ -46,11 +46,14 @@ import argparse
 import sqlite3
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 from app.cards.field_map import NotetypeProfile, get_profile
 from app.cards.vocab_notetype import build_field_config, build_template_config
 from app.config import settings
 from app.plugins.anki_sync.safety import safe_open
+from app.plugins.anki_sync.sqlite_reader import find_deck_id
+from app.srs.anki_mirror.protobuf_wire import find_varint_field
 
 #: Field this migration adds to front the production card with. Matches the
 #: field name TT's own vocab notetypes use, so the media pipeline writes to the
@@ -104,11 +107,10 @@ def find_recognition_only_notetypes(conn: sqlite3.Connection, deck_name: str) ->
     against the user's collection is an explicit choice.
 
     Anki's built-in ``Cloze`` notetype also has a single template but generates
-    one card per cloze deletion; it is not a candidate for this migration.
-    Returns ``[]`` when the deck does not exist.
+    one card per cloze deletion; it is **not** filtered out here — callers that
+    care use ``recognition_only_share``, which drops cloze-kind notetypes by
+    reading their config. Returns ``[]`` when the deck does not exist.
     """
-    from app.plugins.anki_sync.sqlite_reader import find_deck_id
-
     deck_id = find_deck_id(conn, deck_name)
     if deck_id is None:
         return []
@@ -125,6 +127,60 @@ def find_recognition_only_notetypes(conn: sqlite3.Connection, deck_name: str) ->
         (deck_id,),
     ).fetchall()
     return [(r[0], r[1], r[2]) for r in rows]
+
+
+class RecognitionOnlyShare(NamedTuple):
+    """How much of a deck sits on notetypes that can only ever make one card."""
+
+    notes: int
+    total: int
+    by_notetype: list[tuple[str, int]]
+
+    @property
+    def fraction(self) -> float:
+        """*notes* over *total*, or 0.0 for an empty/unknown deck."""
+        return self.notes / self.total if self.total else 0.0
+
+
+#: Field 1 of Anki's ``NotetypeConfig`` protobuf: 0 = normal, 1 = cloze. A normal
+#: notetype omits it entirely (protobuf drops zero-valued scalars), so "absent"
+#: reads as normal. Verified against the real collection, where ``Cloze`` **and**
+#: ``Image Occlusion`` both report 1 — which is why this reads the config rather
+#: than matching the name ``Cloze``.
+_NOTETYPE_CONFIG_KIND = 1
+_NOTETYPE_KIND_CLOZE = 1
+
+
+def recognition_only_share(conn: sqlite3.Connection, deck_name: str) -> RecognitionOnlyShare:
+    """What fraction of *deck_name*'s notes can only ever yield a recognition card.
+
+    Counts notes on single-template notetypes, **excluding cloze-kind ones**: a
+    cloze notetype has one template but generates a card per deletion, so it is
+    not recognition-only. Everything else with one template structurally is.
+
+    This is the root-cause measure behind the whole recognition-only problem,
+    and it is deliberately not "collocations lacking a production direction" —
+    that symptom fires 77 legitimate false positives on Slovene.
+    """
+    deck_id = find_deck_id(conn, deck_name)
+    if deck_id is None:
+        return RecognitionOnlyShare(0, 0, [])
+
+    total = conn.execute(
+        "SELECT COUNT(DISTINCT n.id) FROM notes n JOIN cards c ON c.nid = n.id WHERE c.did = ?",
+        (deck_id,),
+    ).fetchone()[0]
+
+    by_notetype: list[tuple[str, int]] = []
+    notes = 0
+    for ntid, name, count in find_recognition_only_notetypes(conn, deck_name):
+        row = conn.execute("SELECT config FROM notetypes WHERE id = ?", (ntid,)).fetchone()
+        config = bytes(row[0]) if row is not None and row[0] else b""
+        if find_varint_field(config, _NOTETYPE_CONFIG_KIND) == _NOTETYPE_KIND_CLOZE:
+            continue
+        by_notetype.append((name, count))
+        notes += count
+    return RecognitionOnlyShare(notes, total, by_notetype)
 
 
 def add_production_template(
