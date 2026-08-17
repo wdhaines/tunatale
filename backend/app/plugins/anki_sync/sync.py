@@ -40,6 +40,9 @@ from app.plugins.anki_sync.sync_common import (
     OrphanThresholdExceededError as OrphanThresholdExceededError,
 )
 from app.plugins.anki_sync.sync_common import (
+    PromotionReport as PromotionReport,
+)
+from app.plugins.anki_sync.sync_common import (
     PullReport as PullReport,
 )
 from app.plugins.anki_sync.sync_common import (
@@ -227,6 +230,14 @@ async def run_full_sync(
     )
     push_report = sync.sync_push(dry_run=dry_run, force_fsrs=force_fsrs)
     pull_report = sync.sync_pull(dry_run=dry_run)
+
+    # Just-in-time production mint: a paced batch of words whose recognition card
+    # has graduated get their production counterpart (tunatale-qf6.2). AFTER the
+    # pull on purpose — that is what brings in graduations made in Anki since the
+    # last sync, so the trigger fires on the freshest state rather than on a
+    # sync-old snapshot. The cards it adds are NEW, which `get_review_queue`
+    # tail-appends to the frozen queue, so they still surface today.
+    await sync.promote_production_cards(dry_run=dry_run, _media_fn=media_fn)
 
     # Default media report (returned on dry-run / no media_dir).
     media_report: dict[str, int] = {

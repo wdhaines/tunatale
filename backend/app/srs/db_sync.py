@@ -9,11 +9,47 @@ before changing anything here.
 
 import logging
 from datetime import UTC, datetime
+from typing import NamedTuple
 
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.srs.db_base import _DIR_COLUMNS, _parse_last_review
 
 logger = logging.getLogger(__name__)
+
+
+class ProductionCandidate(NamedTuple):
+    """A word whose recognition card has graduated and which has no production card."""
+
+    guid: str
+    item: SRSItem
+    collocation_id: int
+    anki_note_id: int
+
+
+#: Candidate selection for the just-in-time production mint.
+#:
+#: ``state = 'review'`` is the "graduated" test, and it is deliberately NARROWER
+#: than the Layer 65 introduction gate in ``get_new_items`` (which accepts any
+#: state outside new/learning/relearning). The two answer different questions:
+#: that gate asks "may this existing card be introduced", this asks "should a
+#: new card be created". Creating one for a word the user has suspended, buried
+#: or marked known would resurrect it, so active review is the bar —
+#: ``sync_create_new`` filters suspended/buried items for the same reason.
+#:
+#: The ordering IS the forward trigger: the most recently graduated word is
+#: promoted first, so a word that graduated since the last sync jumps the
+#: backlog of words that were already in review when the notetype gained its
+#: production capability. Both populations are described by this one query.
+_AWAITING_PRODUCTION_WHERE = """
+    FROM collocations c
+    JOIN collocation_directions r ON r.collocation_id = c.id AND r.direction = 'recognition'
+    WHERE c.anki_note_id IS NOT NULL
+      AND r.state = 'review'
+      AND NOT EXISTS (
+        SELECT 1 FROM collocation_directions p
+        WHERE p.collocation_id = c.id AND p.direction = 'production'
+      )
+"""
 
 
 class DbSyncMixin:
@@ -496,6 +532,38 @@ class DbSyncMixin:
         with self._get_conn() as conn:
             rows = conn.execute("SELECT * FROM collocations WHERE anki_note_id IS NULL").fetchall()
             return [(row["guid"], self._row_to_item(conn, row), row["id"]) for row in rows]
+
+    def count_words_awaiting_production(self) -> int:
+        """How many linked words have a graduated recognition and no production card.
+
+        The drain's denominator — logged each sync so the backlog's progress is
+        visible rather than inferred. See ``_AWAITING_PRODUCTION_WHERE``.
+        """
+        with self._get_conn() as conn:
+            return conn.execute(f"SELECT COUNT(*) {_AWAITING_PRODUCTION_WHERE}").fetchone()[0]
+
+    def list_words_awaiting_production(self, limit: int) -> list[ProductionCandidate]:
+        """Return up to *limit* candidates for the production mint, freshest first.
+
+        Note this cannot filter on whether the word's Anki notetype can actually
+        carry a production card — that lives in the collection, not here. The
+        phase asks the writer per candidate (``production_capable``), which is
+        what keeps Slovene's 77 ``Basic``/``Cloze`` rows out. ``card_type`` is
+        NOT a usable substitute: those rows are stored as ``vocab``.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT c.* {_AWAITING_PRODUCTION_WHERE}
+                ORDER BY r.last_review DESC NULLS LAST, c.id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [
+                ProductionCandidate(row["guid"], self._row_to_item(conn, row), row["id"], row["anki_note_id"])
+                for row in rows
+            ]
 
     def list_dirty_field_edits(self) -> list[tuple[str, int | None, str, SRSItem, int]]:
         """Return (guid, anki_note_id, dirty_fields_str, SRSItem, id) for rows with non-empty dirty_fields."""

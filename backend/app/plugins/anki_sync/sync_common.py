@@ -133,6 +133,28 @@ class CreateNewReport:
     image_failed: int = 0
 
 
+@dataclass
+class PromotionReport:
+    """One sync's worth of just-in-time production minting.
+
+    ``awaiting`` is the backlog *before* this run — the drain's denominator, so
+    progress is visible rather than inferred. ``adopted`` counts cards Anki had
+    already generated and TT merely linked (the stranding self-heal), which is
+    not new capability for the learner and so is reported apart from ``minted``.
+
+    ``no_image`` is the population the cloze fallback exists for: a word whose
+    image search came back empty must not get a production card (Anki would call
+    it an *empty card*), so it is counted and left. ``no_template`` is the note
+    whose notetype cannot carry a production card at all.
+    """
+
+    awaiting: int = 0
+    minted: int = 0
+    adopted: int = 0
+    no_image: int = 0
+    no_template: int = 0
+
+
 _BACK_EXTRA_TRANS = re.compile(r"^\s*<i>([^<]+)</i>\s*<br\s*/?>\s*<br\s*/?>\s*(.*)", re.DOTALL)
 _BACK_EXTRA_SENT = re.compile(
     r"^\s*<i>([^<]+)</i>\s*<br\s*/?>\s*<br\s*/?>\s*<span class=\"st\">([^<]*)</span>\s*(.*)", re.DOTALL
