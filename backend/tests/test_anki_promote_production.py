@@ -456,6 +456,53 @@ class TestPromoteProductionCards:
         assert (again.awaiting, again.clozed) == (0, 0)
         assert db.count_collocations() == 2, "no second cloze for the same word"
 
+    async def test_the_cloze_it_creates_is_linked_to_the_word_it_covers(self) -> None:
+        """The cloze keeps its own row — sync needs one note per collocation — but
+        it records WHICH word it covers, so the reader is never left inferring the
+        pairing from a shared lemma."""
+        conn = _make_conn()
+        card_id = _add_note(
+            conn,
+            1000,
+            "valp",
+            "puppy",
+            examples="Valpen er veldig leken (<i>The puppy is very playful</i>)",
+            inflections=NOUN_TABLE,
+        )
+        db = SRSDatabase(":memory:")
+        coll_id = _add_word(db, "valp", "puppy", note_id=1000, card_id=card_id)
+
+        report = await _make_sync(conn, db).promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+
+        assert report.clozed == 1
+        assert db.get_base_collocation_id(_cloze_id(db, "valp")) == coll_id
+
+    async def test_a_homograph_is_not_suppressed_by_its_twins_cloze(self) -> None:
+        """The residual the text-keyed exclusion had to accept, now gone.
+
+        `løfte` is a noun AND a verb — 17 such pairs in the real deck — and they
+        are two collocations sharing one front. Keyed on text, a base cloze for
+        one silenced the other's mint forever. Keyed on the recorded link, each
+        word is asked about itself.
+        """
+        conn = _make_conn()
+        noun_card = _add_note(conn, 1000, "løfte", "promise", word_class="noun", examples="Et løfte (<i>A promise</i>)")
+        verb_card = _add_note(conn, 1001, "løfte", "to lift", word_class="verb", examples="Å løfte (<i>To lift</i>)")
+        db = SRSDatabase(":memory:")
+        noun_id = _add_word(db, "løfte", "promise", note_id=1000, card_id=noun_card, disambig="noun")
+        verb_id = _add_word(db, "løfte", "to lift", note_id=1001, card_id=verb_card, disambig="verb")
+        assert noun_id != verb_id, "a POS homonym is two collocations"
+        sync = _make_sync(conn, db)
+
+        # The noun gets a cloze (no image available).
+        first = await sync.promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)), limit=1)
+        assert first.clozed == 1
+
+        # The verb must still be a candidate.
+        assert db.count_words_awaiting_production() == 1
+        remaining = {c.collocation_id for c in db.list_words_awaiting_production(limit=10)}
+        assert remaining == {verb_id}, "the noun's cloze suppressed its homograph twin"
+
     async def test_an_inflection_cloze_is_not_production_coverage(self) -> None:
         """A morphology cloze drills ONE inflected form; it is not the word's
         production card, so it must not silence the promotion.

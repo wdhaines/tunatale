@@ -18,7 +18,7 @@ from app.storage.db_backup import snapshot_before_migration
 
 _logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 42
+CURRENT_VERSION = 43
 
 
 class SchemaTooNewError(RuntimeError):
@@ -1304,6 +1304,39 @@ def migrate_v41_to_v42(conn: sqlite3.Connection) -> None:
     _set_version(conn, 42)
 
 
+def migrate_v42_to_v43(conn: sqlite3.Connection) -> None:
+    """Link a base cloze to the word it covers (``base_collocation_id``).
+
+    A word that cannot be pictured gets its production card as a **cloze**, and a
+    cloze is a separate note on Anki's built-in ``Cloze`` notetype. It therefore
+    has to keep its own collocation: ``sync_pull`` resolves each Anki note
+    through ``get_collocation_by_anki_note_id``, one note to one row, and
+    ``set_anki_ids`` assumes every direction's card belongs to that row's note.
+    Folding the cloze's production direction onto the vocab row would make one
+    collocation own two notes and break both.
+
+    So the two rows stay, and this column records which word the cloze covers.
+    Without it the reader has to infer the pairing from a shared lemma or text,
+    which cannot distinguish a homograph (``løfte`` noun vs verb, 17 such pairs
+    in the Norwegian deck) and cannot match a NULL lemma at all — the two ways
+    the first version of the promotion phase's exclusion clause was wrong.
+
+    Nullable, and no backfill: every existing row predates the promotion phase's
+    cloze fallback, and there are zero minted base clozes in the real Norwegian
+    collection. A backfill would have to guess the pairing from text, which is
+    precisely what this column replaces.
+    """
+    if _column_exists(conn, "collocations", "base_collocation_id"):
+        _set_version(conn, 43)
+        return
+    conn.execute("ALTER TABLE collocations ADD COLUMN base_collocation_id INTEGER REFERENCES collocations(id)")
+    # The read is "does this word have a base cloze?" — i.e. a lookup BY the
+    # covered word, not by the cloze. Without the index that is a table scan on
+    # every transcript token.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_collocations_base_collocation_id ON collocations(base_collocation_id)")
+    _set_version(conn, 43)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -1347,6 +1380,7 @@ _MIGRATIONS = {
     39: migrate_v39_to_v40,
     40: migrate_v40_to_v41,
     41: migrate_v41_to_v42,
+    42: migrate_v42_to_v43,
 }
 
 

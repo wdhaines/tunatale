@@ -211,6 +211,107 @@ class TestInflectionClozes:
         guid = compute_guid("Ljubljano", "sl", "morph:noun-acc-sg")
         assert api_app_state.get_collocation_by_guid(guid) is None
 
+    @staticmethod
+    def _seed_covered_by_cloze(db, *, cloze_state: SRSState):
+        """A word whose production card is a base cloze on a separate note."""
+        from app.common.guid import compute_guid
+
+        unit = SyntacticUnit(
+            text="ljubljana",
+            translation="ljubljana",
+            word_count=1,
+            difficulty=1,
+            source="test",
+            disambig_key="noun",
+        )
+        base_id = db.upsert_by_guid(
+            unit,
+            "sl",
+            {
+                Direction.RECOGNITION: DirectionState(
+                    direction=Direction.RECOGNITION,
+                    due_at=datetime.now(UTC),
+                    state=SRSState.REVIEW,
+                    reps=9,
+                )
+            },
+            anki_note_id=8800,
+        )
+        cloze_unit = SyntacticUnit(
+            text="ljubljana",
+            translation="ljubljana",
+            word_count=1,
+            difficulty=1,
+            source="test",
+            lemma="ljubljana",
+            card_type="cloze",
+            source_sentence="Grem v {{c1::Ljubljano}}.",
+        )
+        db.add_collocation(cloze_unit, language_code="sl")
+        cloze_guid = compute_guid(cloze_unit.text, "sl", "")
+        db.update_direction(
+            cloze_guid,
+            Direction.PRODUCTION,
+            DirectionState(
+                direction=Direction.PRODUCTION,
+                due_at=datetime.now(UTC),
+                state=cloze_state,
+                stability=30.0,
+                reps=6,
+            ),
+        )
+        db.set_base_collocation_id(db.get_collocation_id_by_guid(cloze_guid), base_id)
+
+    async def test_a_word_covered_by_a_cloze_is_not_told_to_wait_for_a_mint(self, api_app_state):
+        """The "yet" has to be true.
+
+        "No production card yet" promises a pending mint. For a cloze-covered
+        word that mint will NEVER come — the promotion phase excludes it by
+        design, because the word already has a production card. Saying "yet"
+        there is a specific false statement, and it was introduced by the fix
+        that split this message in two (qf6.4).
+        """
+        self._seed_covered_by_cloze(api_app_state, cloze_state=SRSState.NEW)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "Ljubljano",
+                    "lemma": "ljubljana",
+                    "feature": "noun:acc:sg",
+                    "sentence": "Grem v Ljubljano.",
+                    "language_code": "sl",
+                },
+            )
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"].lower()
+        assert "no production card" not in detail, f"promised a mint that will never come: {detail!r}"
+        assert "not yet learned" in detail
+
+    async def test_a_word_whose_covering_cloze_is_learned_can_be_inflected(self, api_app_state):
+        """The affordance must actually open for these words.
+
+        Their production card is a cloze, and a cloze in REVIEW means the learner
+        can produce the word — which is the whole thing the gate is asking.
+        """
+        self._seed_covered_by_cloze(api_app_state, cloze_state=SRSState.REVIEW)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "Ljubljano",
+                    "lemma": "ljubljana",
+                    "feature": "noun:acc:sg",
+                    "sentence": "Grem v Ljubljano.",
+                    "language_code": "sl",
+                },
+            )
+
+        assert resp.status_code == 200, resp.json()
+
     async def test_degenerate_surface_equals_lemma_returns_422(self, api_app_state):
         """surface==lemma → 422."""
         self._seed_base_learned(api_app_state)

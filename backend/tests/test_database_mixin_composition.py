@@ -68,4 +68,6 @@ def test_public_method_count_pinned() -> None:
     # +clear_pending_grades_for_lesson (a listen resets its own bucket, then stages fresh)
     # +add_production_direction (just-in-time production mint, tunatale-qf6.2)
     # +count_words_awaiting_production, list_words_awaiting_production (its selection)
-    assert count == 126
+    # +set_base_collocation_id, get_base_collocation_id, get_covering_cloze
+    #  (the base-cloze link: one word, two rows, one resolver — tunatale-qf6.9)
+    assert count == 129

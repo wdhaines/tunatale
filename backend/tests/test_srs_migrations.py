@@ -74,7 +74,59 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 42
+        assert CURRENT_VERSION == 43
+
+    def test_migrates_v42_to_v43_adds_base_collocation_id(self, tmp_path):
+        """The link that stops a cloze-covered word reading as two words.
+
+        A base cloze is a separate note on Anki's Cloze notetype, so it must keep
+        its own collocation — `sync_pull` resolves notes through
+        `get_collocation_by_anki_note_id`, one note to one row. This column is
+        what lets the READER put the two back together without guessing from a
+        shared lemma, which could not distinguish a homograph or match a NULL one.
+        """
+        from app.srs.migrations import _set_version, migrate_v42_to_v43
+
+        conn = sqlite3.connect(str(tmp_path / "v43.db"))
+        _set_version(conn, 42)
+        conn.execute("CREATE TABLE collocations (id INTEGER PRIMARY KEY, text TEXT, card_type TEXT)")
+        assert "base_collocation_id" not in {r[1] for r in conn.execute("PRAGMA table_info(collocations)")}
+
+        migrate_v42_to_v43(conn)
+
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(collocations)")}
+        assert "base_collocation_id" in cols
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 43
+
+    def test_migrates_v42_to_v43_idempotent(self, tmp_path):
+        from app.srs.migrations import _set_version, migrate_v42_to_v43
+
+        conn = sqlite3.connect(str(tmp_path / "v43b.db"))
+        _set_version(conn, 42)
+        conn.execute("CREATE TABLE collocations (id INTEGER PRIMARY KEY, text TEXT, card_type TEXT)")
+
+        migrate_v42_to_v43(conn)
+        migrate_v42_to_v43(conn)  # second call must not raise
+
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 43
+
+    def test_migrates_v42_to_v43_defaults_existing_rows_to_null(self, tmp_path):
+        """Nothing is inferred for rows that predate the link.
+
+        There are zero minted base clozes in the real Norwegian DB today, which
+        is why this ships with no backfill — a backfill would have to guess the
+        pairing from text, which is exactly what the column exists to replace.
+        """
+        from app.srs.migrations import _set_version, migrate_v42_to_v43
+
+        conn = sqlite3.connect(str(tmp_path / "v43c.db"))
+        _set_version(conn, 42)
+        conn.execute("CREATE TABLE collocations (id INTEGER PRIMARY KEY, text TEXT, card_type TEXT)")
+        conn.execute("INSERT INTO collocations (id, text, card_type) VALUES (1, 'foran', 'cloze')")
+
+        migrate_v42_to_v43(conn)
+
+        assert conn.execute("SELECT base_collocation_id FROM collocations WHERE id = 1").fetchone()[0] is None
 
     def test_migrates_v40_to_v41_creates_pending_listen_grades_table(self, tmp_path):
         from app.srs.migrations import _set_version, migrate_v40_to_v41
@@ -2318,7 +2370,7 @@ class TestMigrateV37ToV38:
     """Tests for v37→v38 (lesson_listens table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 42
+        assert CURRENT_VERSION == 43
 
     def test_v37_to_v38_creates_lesson_listens_table_and_index(self):
         from app.srs.migrations import migrate_v37_to_v38
@@ -2361,7 +2413,7 @@ class TestMigrateV37ToV38:
         try:
             tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "lesson_listens" in tables
-            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 42
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 43
         finally:
             db.close()
 
@@ -2388,7 +2440,7 @@ class TestMigrateV38ToV39:
     """Tests for v38→v39 (lesson_reviews table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 42
+        assert CURRENT_VERSION == 43
 
     def test_v38_to_v39_creates_lesson_reviews_table_and_index(self):
         from app.srs.migrations import migrate_v38_to_v39
@@ -2431,7 +2483,7 @@ class TestMigrateV38ToV39:
         try:
             tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "lesson_reviews" in tables
-            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 42
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 43
         finally:
             db.close()
 
@@ -2448,7 +2500,7 @@ class TestMigrateV38ToV39:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         assert "lesson_listens" in tables
         assert "lesson_reviews" in tables
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 42
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 43
 
 
 class TestMigrationDriverAtomicity:

@@ -2588,18 +2588,28 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
     # 1. Eligibility gate — base word production must be REVIEW/KNOWN.
     #    Clozes-only verbs (e.g. biti) have no base card and are ungated.
     if not is_clozes_only_verb(body.lemma, language_code):
-        base = db.get_collocation_by_lemma(body.lemma)
-        if base is None:
+        resolved = db.get_collocation_by_lemma_with_id(body.lemma)
+        if resolved is None:
             raise HTTPException(status_code=409, detail="Base word not yet learned")
+        base_id, base = resolved
         prod = base.directions.get(Direction.PRODUCTION)
-        # Two different facts, deliberately no longer one message. A missing
-        # production direction means the word's production card has not been
-        # minted yet — the sync's promotion phase does that when recognition
-        # graduates, paced (tunatale-qf6.2) — whereas a NEW/learning production
-        # means the card exists and the learner has not got there. Before the
-        # mint existed the distinction was academic (2990 Norwegian words had no
-        # production direction and never would); now it is the difference
-        # between "wait for the next sync" and "study this word".
+        if prod is None:
+            # The word's production card may live on a separate Cloze note — that
+            # is what happens to a word that cannot be pictured. Its collocation
+            # is separate because sync maps one Anki note to one row, so the
+            # production direction is genuinely absent HERE while the card very
+            # much exists.
+            covering = db.get_covering_cloze(base_id)
+            if covering is not None:
+                prod = covering[1].directions.get(Direction.PRODUCTION)
+        # Two different facts, deliberately not one message. A production card
+        # that does not exist at all is waiting on the sync's promotion phase
+        # (tunatale-qf6.2, paced); one in NEW/learning is waiting on the learner.
+        #
+        # The "yet" is load-bearing and must not be said to a cloze-covered word:
+        # the promotion phase excludes those by design, so no mint will ever
+        # come, and the message would be a specific false promise rather than a
+        # vague true one.
         if prod is None:
             raise HTTPException(status_code=409, detail="Base word has no production card yet")
         if prod.state not in (SRSState.REVIEW, SRSState.KNOWN):

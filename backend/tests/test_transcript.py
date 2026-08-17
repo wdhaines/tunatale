@@ -1166,6 +1166,192 @@ class TestTranscriptEnrichment:
         assert word.inflectable is True
         assert word.inflection_feature == "noun:def:sg"
 
+    def test_a_word_whose_production_is_a_cloze_reads_as_covered(self):
+        """One word, two rows — the reader must not report only the vocab one.
+
+        A word that cannot be pictured gets its production card as a **cloze**,
+        which is a separate note and therefore a separate collocation (sync maps
+        one note to one row). Reading the vocab row alone, the word has no
+        production direction, so `compute_mastery_progress` imputes the
+        absent-production 0.0 and the word reads half-mastered forever — while
+        the card that would make it whole sits in the next row, linked by
+        `base_collocation_id`.
+
+        Mastery itself is NOT at fault and is unchanged: a cloze on its own has
+        always been mastered by its single card. What changes is WHICH rows the
+        reader measures.
+        """
+        from app.common.guid import compute_guid
+        from app.models.srs_item import Direction, DirectionState, SRSState
+
+        # The vocab row as the Anki import makes it: recognition only, mature.
+        # The non-empty disambig is load-bearing, not decoration — with an empty
+        # one the cloze below would share this row's (text, language, disambig)
+        # identity and `add_collocation` would MERGE into it instead of creating
+        # a second row. That is exactly why `_fallback_to_cloze` declines a word
+        # whose own Word class is blank.
+        unit = SyntacticUnit(
+            text="foran",
+            translation="in front of",
+            word_count=1,
+            difficulty=1,
+            source="anki",
+            disambig_key="preposition",
+        )
+        base_id = self.db.upsert_by_guid(
+            unit,
+            "sl",
+            {
+                Direction.RECOGNITION: DirectionState(
+                    direction=Direction.RECOGNITION,
+                    due_at=datetime(2026, 9, 1, tzinfo=UTC),
+                    state=SRSState.REVIEW,
+                    stability=120.0,
+                    reps=30,
+                    last_review=datetime(2026, 5, 1, tzinfo=UTC),
+                )
+            },
+            anki_note_id=9100,
+        )
+        # The base cloze the promotion path mints for it, equally mature.
+        cloze_unit = SyntacticUnit(
+            text="foran",
+            translation="in front of",
+            word_count=1,
+            difficulty=1,
+            source="anki",
+            lemma="foran",
+            card_type="cloze",
+            source_sentence="Han står {{c1::foran}} huset",
+        )
+        self.db.add_collocation(cloze_unit, language_code="sl")
+        cloze_guid = compute_guid(cloze_unit.text, "sl", cloze_unit.disambig_key or "")
+        cloze_id = self.db.get_collocation_id_by_guid(cloze_guid)
+        self.db.update_direction(
+            cloze_guid,
+            Direction.PRODUCTION,
+            DirectionState(
+                direction=Direction.PRODUCTION,
+                due_at=datetime(2026, 9, 1, tzinfo=UTC),
+                state=SRSState.REVIEW,
+                stability=120.0,
+                reps=30,
+                last_review=datetime(2026, 5, 1, tzinfo=UTC),
+            ),
+        )
+        self.db.set_base_collocation_id(cloze_id, base_id)
+
+        lesson = _make_lesson([("female-1", "foran")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = result.dialogue_lines[0].words[0]
+
+        assert word.progress == 1.0, "the covering cloze's production was not counted"
+
+    def test_a_cloze_covered_word_can_still_be_inflected(self):
+        """The affordance must OPEN for these words, not just stop lying about them.
+
+        A word whose production card is a base cloze can be produced once that
+        cloze is in REVIEW — which is exactly what the inflection gate asks. The
+        vocab row has no production direction of its own, so without the link the
+        gate reads `None` and the affordance stays invisible forever.
+        """
+        from app.common.guid import compute_guid
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockNorwegianLemmatizer:
+            def lemmatize(self, word: str, language_code: str) -> str:
+                return "bil" if word == "bilen" else word.lower()
+
+            def analyze(self, word: str, language_code: str) -> tuple[str, str, str]:
+                return ("bil", "", "") if word == "bilen" else (word.lower(), "", "")
+
+            def analyze_sentence(self, sentence: str, language_code: str) -> list:
+                if "bilen" in sentence:
+                    return [_TA(surface="bilen", lemma="bil", upos="NOUN", definite="Def", number="Sing")]
+                return []
+
+        mature = lambda d: DirectionState(  # noqa: E731
+            direction=d,
+            due_at=datetime(2026, 9, 1, tzinfo=UTC),
+            state=SRSState.REVIEW,
+            stability=120.0,
+            reps=30,
+            last_review=datetime(2026, 5, 1, tzinfo=UTC),
+        )
+        base_unit = SyntacticUnit(
+            text="bil", translation="car", word_count=1, difficulty=1, source="anki", disambig_key="noun"
+        )
+        base_id = self.db.upsert_by_guid(
+            base_unit, "no", {Direction.RECOGNITION: mature(Direction.RECOGNITION)}, anki_note_id=9200
+        )
+        cloze_unit = SyntacticUnit(
+            text="bil",
+            translation="car",
+            word_count=1,
+            difficulty=1,
+            source="anki",
+            lemma="bil",
+            card_type="cloze",
+            source_sentence="Jeg kjører {{c1::bil}}",
+        )
+        self.db.add_collocation(cloze_unit, language_code="no")
+        cloze_guid = compute_guid("bil", "no", "")
+        self.db.update_direction(cloze_guid, Direction.PRODUCTION, mature(Direction.PRODUCTION))
+        self.db.set_base_collocation_id(self.db.get_collocation_id_by_guid(cloze_guid), base_id)
+
+        lesson = _make_lesson([("female-1", "bilen")], lang="no")
+        result = extract_transcript(lesson, self.db, _MockNorwegianLemmatizer(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+
+        assert word.inflectable is True, "the covering cloze's production did not open the gate"
+        assert word.inflection_feature == "noun:def:sg"
+
+    def test_a_word_still_awaiting_its_production_card_is_not_inflectable(self):
+        """Neither a production direction NOR a covering cloze — the state every
+        un-promoted word is in until the sync's mint reaches it. The affordance
+        stays shut, and the covering-cloze lookup must not manufacture one."""
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.srs.lemmatizer import TokenAnalysis as _TA
+
+        class _MockNorwegianLemmatizer:
+            def lemmatize(self, word: str, language_code: str) -> str:
+                return "bil" if word == "bilen" else word.lower()
+
+            def analyze(self, word: str, language_code: str) -> tuple[str, str, str]:
+                return ("bil", "", "") if word == "bilen" else (word.lower(), "", "")
+
+            def analyze_sentence(self, sentence: str, language_code: str) -> list:
+                if "bilen" in sentence:
+                    return [_TA(surface="bilen", lemma="bil", upos="NOUN", definite="Def", number="Sing")]
+                return []
+
+        unit = SyntacticUnit(
+            text="bil", translation="car", word_count=1, difficulty=1, source="anki", disambig_key="noun"
+        )
+        self.db.upsert_by_guid(
+            unit,
+            "no",
+            {
+                Direction.RECOGNITION: DirectionState(
+                    direction=Direction.RECOGNITION,
+                    due_at=datetime(2026, 9, 1, tzinfo=UTC),
+                    state=SRSState.REVIEW,
+                    stability=120.0,
+                    reps=30,
+                    last_review=datetime(2026, 5, 1, tzinfo=UTC),
+                )
+            },
+            anki_note_id=9300,
+        )
+
+        lesson = _make_lesson([("female-1", "bilen")], lang="no")
+        result = extract_transcript(lesson, self.db, _MockNorwegianLemmatizer(), today=self.today)
+        word = result.dialogue_lines[0].words[0]
+
+        assert word.inflectable is False
+        assert word.progress == 0.5, "recognition-only still draws the absent-production penalty"
+
     def test_norwegian_freshly_minted_production_is_not_yet_inflectable(self):
         """The state the just-in-time mint creates, which did not exist before it.
 
