@@ -130,3 +130,32 @@ class TestChooseClozeSentence:
     @pytest.mark.parametrize("word", ["", "   "])
     def test_declines_an_empty_word(self, word: str) -> None:
         assert choose_cloze_sentence(word, "Valpen sover (<i>The puppy sleeps</i>)", "") is None
+
+    def test_blanks_an_alternate_spelling_the_card_front_lists(self) -> None:
+        """`mot, imot` is one word wearing two spellings, and the example uses one
+        of them — the comma-joined headword appears in no sentence anywhere."""
+        raw = "Vi går mot byen (<i>We walk towards the city</i>)"
+
+        assert choose_cloze_sentence("mot, imot", raw, "") is None
+        assert choose_cloze_sentence("mot, imot", raw, "", variants=["mot", "imot"]) == ClozeChoice(
+            sentence="Vi går mot byen", gloss="We walk towards the city", surface="mot"
+        )
+
+    def test_prefers_the_variant_the_sentence_actually_uses(self) -> None:
+        choice = choose_cloze_sentence(
+            "mot, imot",
+            "Han var imot forslaget (<i>He was against the proposal</i>)",
+            "",
+            variants=["mot", "imot"],
+        )
+        assert choice is not None
+        assert choice.surface == "imot"
+
+    def test_a_word_that_is_its_own_only_variant_is_searched_once(self) -> None:
+        """`card_surface_variants` returns `[text]` for an ordinary headword, so
+        the headword arrives twice; a duplicate would only re-run a failed search."""
+        assert choose_cloze_sentence("valp", self.NOUN_EXAMPLES, NOUN_TABLE, variants=["valp"]) == ClozeChoice(
+            sentence="Valpen er veldig leken",
+            gloss="The puppy is very playful",
+            surface="Valpen",
+        )

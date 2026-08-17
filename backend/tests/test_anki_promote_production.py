@@ -456,6 +456,85 @@ class TestPromoteProductionCards:
         assert (again.awaiting, again.clozed) == (0, 0)
         assert db.count_collocations() == 2, "no second cloze for the same word"
 
+    async def test_an_inflection_cloze_is_not_production_coverage(self) -> None:
+        """A morphology cloze drills ONE inflected form; it is not the word's
+        production card, so it must not silence the promotion.
+
+        `create_inflection_cloze` writes `card_type='cloze'` with the **base**
+        lemma and a `morph:` disambig, which a lemma-shaped exclusion cannot tell
+        apart from the base cloze this phase mints. `db_lemma_cache` already
+        draws that line (`get_inflection_clozes_for_lemma`); the selection query
+        has to draw the same one, or the affordance qf6.4 exists to expose would
+        quietly cost the word its production card forever.
+        """
+        conn = _make_conn()
+        card_id = _add_note(conn, 1000, "hus", "house")
+        db = SRSDatabase(":memory:")
+        coll_id = _add_word(db, "hus", "house", note_id=1000, card_id=card_id)
+        db.add_collocation(
+            SyntacticUnit(
+                text="huset",
+                translation="the house",
+                word_count=1,
+                difficulty=1,
+                source="llm",
+                lemma="hus",
+                disambig_key="morph:noun-def-sg",
+                card_type="cloze",
+                source_sentence="Jeg ser {{c1::huset}}",
+            ),
+            language_code=LANG,
+        )
+
+        report = await _make_sync(conn, db).promote_production_cards(
+            _media_fn=_MediaFn(_Media(image_bytes=b"jpeg")),
+        )
+
+        assert report.minted == 1, "an inflection cloze silenced the promotion"
+        assert db.get_collocation_by_id(coll_id)[1].directions.keys() == {
+            Direction.RECOGNITION,
+            Direction.PRODUCTION,
+        }
+
+    async def test_a_word_whose_lemma_is_unset_stops_being_a_candidate_once_clozed(self, monkeypatch) -> None:
+        """The spelling-variant shape, where the lemma-keyed exclusion could not fire.
+
+        `upsert_by_guid` — the Anki import path every candidate arrives by —
+        leaves `lemma` NULL for a multi-token headword, and 10 of the real deck's
+        1550 candidates are exactly that (`mot, imot`, `fra, ifra`, `selv, sjøl`
+        …), 7 of them closed-class and so routed straight to a cloze. `z.lemma =
+        c.lemma` is NULL against a NULL lemma, never true, so the word would come
+        back every sync forever.
+
+        Pins the active language to the deck's own, which is what `_tt_settings`
+        does per request in production. The suite-wide conftest default is `sl`,
+        and Slovene declares no `variant_separator` — so under the default this
+        word is unservable for a reason that has nothing to do with what is
+        being tested here.
+        """
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        card_id = _add_note(
+            conn,
+            1000,
+            "mot, imot",
+            "against",
+            word_class="preposition",
+            examples="Vi går mot byen (<i>We walk towards the city</i>)",
+        )
+        db = SRSDatabase(":memory:")
+        coll_id = _add_word(db, "mot, imot", "against", note_id=1000, card_id=card_id, disambig="preposition")
+        with db._get_conn() as raw:
+            assert raw.execute("SELECT lemma FROM collocations WHERE id = ?", (coll_id,)).fetchone()["lemma"] is None
+        sync = _make_sync(conn, db)
+        first = await sync.promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+        assert first.clozed == 1
+
+        again = await sync.promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+
+        assert (again.awaiting, again.clozed) == (0, 0)
+        assert db.count_collocations() == 2, "no second cloze for the same word"
+
     async def test_the_cloze_it_creates_is_mintable_by_sync_create_new(self) -> None:
         """The card-adding contract (.claude/rules/anki-sync.md): the row this
         phase drops must be one the existing create path can turn into a note."""

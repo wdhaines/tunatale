@@ -164,6 +164,53 @@ class TestInflectionClozes:
         guid = compute_guid("Ljubljano", "sl", "morph:noun-acc-sg")
         assert api_app_state.get_collocation_by_guid(guid) is None
 
+    async def test_base_with_no_production_card_says_so(self, api_app_state):
+        """A missing production card and an unlearned one are different facts.
+
+        Before the just-in-time mint (tunatale-qf6.2) they were the same 409 for a
+        good reason — 2990 of 3009 Norwegian words had no production direction at
+        all and never would, so the distinction was academic. Now the promotion
+        phase fills them in at 10 per sync, so a word can be *waiting for its
+        production card to be minted* rather than waiting for the learner, and a
+        single message makes a feature that is working look like one that is not
+        (`feedback_silent_state_hides_failures`).
+        """
+        # Recognition-only, which is the shape the Anki seed import actually
+        # produces — not a direction deleted after the fact.
+        unit = SyntacticUnit(text="ljubljana", translation="ljubljana", word_count=1, difficulty=1, source="test")
+        api_app_state.upsert_by_guid(
+            unit,
+            "sl",
+            {
+                Direction.RECOGNITION: DirectionState(
+                    direction=Direction.RECOGNITION,
+                    due_at=datetime.now(UTC),
+                    state=SRSState.REVIEW,
+                    reps=9,
+                )
+            },
+            anki_note_id=4242,
+        )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "Ljubljano",
+                    "lemma": "ljubljana",
+                    "feature": "noun:acc:sg",
+                    "sentence": "Grem v Ljubljano.",
+                    "language_code": "sl",
+                },
+            )
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"].lower()
+        assert "no production card" in detail, f"indistinguishable from not-yet-learned: {detail!r}"
+
+        guid = compute_guid("Ljubljano", "sl", "morph:noun-acc-sg")
+        assert api_app_state.get_collocation_by_guid(guid) is None
+
     async def test_degenerate_surface_equals_lemma_returns_422(self, api_app_state):
         """surface==lemma → 422."""
         self._seed_base_learned(api_app_state)

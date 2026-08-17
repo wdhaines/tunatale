@@ -242,7 +242,7 @@ async def run_full_sync(
     # last sync, so the trigger fires on the freshest state rather than on a
     # sync-old snapshot. The cards it adds are NEW, which `get_review_queue`
     # tail-appends to the frozen queue, so they still surface today.
-    await sync.promote_production_cards(dry_run=dry_run, _media_fn=media_fn)
+    promotion_report = await sync.promote_production_cards(dry_run=dry_run, _media_fn=media_fn)
 
     # Default media report (returned on dry-run / no media_dir).
     media_report: dict[str, int] = {
@@ -315,7 +315,7 @@ async def run_full_sync(
             db=db,
         )
 
-    return create_report, push_report, pull_report, media_report
+    return create_report, push_report, pull_report, media_report, promotion_report
 
 
 def _resolve_model_name(_s, code: str, conn, deck_name: str) -> str:
@@ -398,7 +398,7 @@ def main(
                 _anki_col_crt=col_crt,
             )
             model_name = _resolve_model_name(_s, language_code, ctx.conn, deck_name)
-            create, push, pull, media = asyncio.run(
+            create, push, pull, media, promotion = asyncio.run(
                 run_full_sync(
                     sync,
                     ctx.conn,
@@ -411,7 +411,7 @@ def main(
                     dry_run=args.dry_run,
                 )
             )
-            _print_sync_report(create, push, pull, media, dry_run=args.dry_run, media_dir=_media_dir)
+            _print_sync_report(create, push, pull, media, promotion, dry_run=args.dry_run, media_dir=_media_dir)
             return 0
     except OrphanThresholdExceededError as e:
         # run_full_sync runs detect_and_reset_orphans on this path; its threshold
@@ -425,8 +425,17 @@ def main(
         return 1
 
 
-def _print_sync_report(create, push, pull, media, *, dry_run: bool, media_dir) -> None:
-    """Print the sync summary."""
+def _print_sync_report(create, push, pull, media, promotion, *, dry_run: bool, media_dir) -> None:
+    """Print the sync summary.
+
+    The promotion line carries ``unservable`` on purpose. Those are the words
+    that can be neither pictured nor clozed from their own example sentences —
+    the population the LLM sentence tier would have served, which was decided
+    against (``tunatale-qf6.10``, 2026-08-17: 29 words of 3018, against putting
+    an LLM dependency on the sync path). A decision not to serve them is only
+    defensible if the count is visible; left as a log WARNING it is
+    indistinguishable from the feature silently not working.
+    """
     print(f"Create: {create.created} created, {create.linked} linked, {create.notes_created_from_anki} from Anki")
     print(
         f"Pull: {pull.notes_updated} notes updated, "
@@ -439,3 +448,7 @@ def _print_sync_report(create, push, pull, media, *, dry_run: bool, media_dir) -
             f"Media: {media['new_media']} new, {media['updated_media']} updated, {media['collapsed_media']} collapsed"
         )
     print(f"Push: {push.notes_pushed} notes, {push.directions_pushed} directions")
+    print(
+        f"Promotion: {promotion.minted} minted, {promotion.clozed} clozed, "
+        f"{promotion.unservable} unservable, {promotion.awaiting} awaiting"
+    )
