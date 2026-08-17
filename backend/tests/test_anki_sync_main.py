@@ -59,6 +59,7 @@ class TestRunFullSync:
 
         sync = MagicMock()
         sync.warn_if_guid_collisions = MagicMock(side_effect=lambda: (calls.append("guid_collisions"), 0)[1])
+        sync.warn_if_recognition_only_deck = MagicMock(side_effect=lambda: (calls.append("recognition_only"), 0.0)[1])
         sync.detect_and_reset_orphans = MagicMock(side_effect=lambda: calls.append("orphans"))
 
         async def _create(**kwargs):
@@ -142,7 +143,7 @@ class TestRunFullSync:
         )
 
         # Core phases run in the create→push→pull order, soak last.
-        assert calls == ["guid_collisions", "orphans", "create", "push", "pull", "promote"]
+        assert calls == ["guid_collisions", "recognition_only", "orphans", "create", "push", "pull", "promote"]
         # The soak heartbeat is the real file the phase writes, not a mock marker.
         assert "SYNC_SOAK" in soak_log.read_text()
         # Every deck-config refresh fired — this is the gap that bit the peer path.
@@ -180,7 +181,7 @@ class TestRunFullSync:
             dry_run=True,
         )
 
-        assert calls == ["guid_collisions", "orphans", "create", "push", "pull", "promote"]
+        assert calls == ["guid_collisions", "recognition_only", "orphans", "create", "push", "pull", "promote"]
         # dry_run writes no soak artifact at all.
         assert not soak_log.exists()
         assert refreshed == []
@@ -291,7 +292,7 @@ class TestRunFullSync:
             dry_run=False,
         )
 
-        assert calls == ["guid_collisions", "orphans", "create", "push", "pull", "promote"]
+        assert calls == ["guid_collisions", "recognition_only", "orphans", "create", "push", "pull", "promote"]
         # The phase ran: the image is now in TT's media dir with the right bytes.
         assert media_report["new_media"] == 1
         assert (tt_media / "voda.jpg").read_bytes() == b"VODAIMAGE"
@@ -328,7 +329,7 @@ class TestRunFullSync:
             dry_run=False,
         )
 
-        assert calls == ["guid_collisions", "orphans", "create", "push", "pull", "promote"]
+        assert calls == ["guid_collisions", "recognition_only", "orphans", "create", "push", "pull", "promote"]
         assert list(tt_media.iterdir()) == []
         assert media_report == {
             "new_media": 0,
@@ -366,7 +367,7 @@ class TestRunFullSync:
             dry_run=True,
         )
 
-        assert calls == ["guid_collisions", "orphans", "create", "push", "pull", "promote"]
+        assert calls == ["guid_collisions", "recognition_only", "orphans", "create", "push", "pull", "promote"]
         assert list(tt_media.iterdir()) == []
         assert media_report == {
             "new_media": 0,
