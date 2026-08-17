@@ -11,8 +11,10 @@ import re
 import sqlite3
 import time as _time
 from pathlib import Path
+from typing import NamedTuple
 
 from app.common.guid import compute_guid
+from app.plugins.anki_sync.add_production_template import IMAGE_FIELD, PRODUCTION_TEMPLATE
 from app.plugins.anki_sync.sqlite_reader import find_deck_id
 from app.plugins.anki_sync.sync_common import DuplicateNoteError
 from app.srs.anki_mirror.protobuf_wire import (
@@ -21,6 +23,22 @@ from app.srs.anki_mirror.protobuf_wire import (
     pb_replace_or_insert_varint,
 )
 from app.srs.anki_mirror.rollover import anki_today
+
+_FIELD_SEP = "\x1f"
+
+
+class MintedCard(NamedTuple):
+    """The production card a mint landed on.
+
+    ``created`` distinguishes a card this mint inserted from one it *adopted* —
+    Anki's own generator, or an earlier mint, having got there first. Callers
+    report the two separately: a run that is all adoptions means the phase is
+    re-walking work already done, which is idempotency, not progress.
+    """
+
+    card_id: int
+    due: int
+    created: bool
 
 
 class OfflineWriter:
@@ -635,6 +653,107 @@ class OfflineWriter:
         self._bump_col(ts)
         self._conn.commit()
         return note_id
+
+    def mint_production_card(self, note_id: int, image_tag: str) -> MintedCard:
+        """Write *image_tag* into the note's ``Image`` field and land its production card.
+
+        The just-in-time half of the recognition-only migration: a word whose
+        recognition card has graduated gets one production card, with the image
+        that fronts it fetched at that moment. Both writes land in a **single
+        transaction**, and that is the whole point — a note carrying a non-empty
+        ``Image`` with no production card is a window Anki fills itself on the
+        user's next Check Database, minting a card with an id TT never recorded
+        and stranding the production direction (measured against the real binary;
+        ``tests/test_parity_cardgen.py``).
+
+        **Adopt-or-create.** If a card already exists at the production ord, its
+        id is adopted rather than a second one inserted — which makes the mint
+        idempotent *and* self-heals a note Anki already generated for. Anki never
+        duplicates an existing ord, so an adopted card is the only card.
+
+        The ord comes from the notetype's own ``Production`` template (both the
+        migrated community notetypes and TT's own vocab notetypes name it that),
+        never a hardcoded 1: a card at an ord with no template is an orphan that
+        Check Database deletes.
+
+        Raises ``ValueError`` — before writing anything — when *image_tag* is
+        blank (Anki classifies an image-less production card as an *empty card*,
+        so that word belongs on the cloze branch instead), when the note or its
+        notetype's production capability is missing, or when the note has no
+        existing card to inherit a deck from.
+        """
+        if not image_tag.strip():
+            raise ValueError(f"refusing to mint an empty production card for note {note_id}: image_tag is empty")
+
+        note = self._conn.execute("SELECT mid, flds FROM notes WHERE id = ?", (note_id,)).fetchone()
+        if note is None:
+            raise ValueError(f"Note {note_id} not found")
+        mid = note["mid"]
+
+        field_names = self._field_names_for_mid(mid)
+        if IMAGE_FIELD not in field_names:
+            raise ValueError(
+                f"Notetype {mid} of note {note_id} has no {IMAGE_FIELD!r} field to front a production card"
+            )
+
+        tmpl = self._conn.execute(
+            "SELECT ord FROM templates WHERE ntid = ? AND name = ?",
+            (mid, PRODUCTION_TEMPLATE),
+        ).fetchone()
+        if tmpl is None:
+            raise ValueError(
+                f"Notetype {mid} of note {note_id} has no {PRODUCTION_TEMPLATE!r} template — "
+                "run add_production_template first"
+            )
+        prod_ord = tmpl["ord"]
+
+        sibling = self._conn.execute("SELECT did FROM cards WHERE nid = ? ORDER BY ord LIMIT 1", (note_id,)).fetchone()
+        if sibling is None:
+            raise ValueError(f"Note {note_id} has no cards — nothing to take a deck from")
+
+        # ── Everything above is a read. From here it is one transaction. ──
+        ts = int(_time.time())
+        changed = False
+
+        parts = note["flds"].split(_FIELD_SEP)
+        # A note that missed the migration's separator sweep carries too few
+        # fields; pad rather than raise, which is what Anki's own dbcheck does.
+        parts += [""] * (len(field_names) - len(parts))
+        image_idx = field_names.index(IMAGE_FIELD)
+        if parts[image_idx] != image_tag:
+            parts[image_idx] = image_tag
+            self._conn.execute(
+                "UPDATE notes SET flds = ?, mod = ?, usn = -1 WHERE id = ?",
+                (_FIELD_SEP.join(parts), ts, note_id),
+            )
+            changed = True
+
+        existing = self._conn.execute(
+            "SELECT id, due FROM cards WHERE nid = ? AND ord = ?", (note_id, prod_ord)
+        ).fetchone()
+        if existing is not None:
+            minted = MintedCard(card_id=existing["id"], due=existing["due"], created=False)
+        else:
+            due_row = self._conn.execute("SELECT MAX(due) + 1 FROM cards WHERE type = 0").fetchone()
+            next_due = due_row[0] if due_row and due_row[0] else 1
+            # Anki's id convention, same as create_note: nid + ord, bumped past
+            # any collision with an unrelated note's card.
+            card_id = note_id + prod_ord
+            while self._conn.execute("SELECT 1 FROM cards WHERE id = ?", (card_id,)).fetchone():
+                card_id += 1
+            self._conn.execute(
+                "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, "
+                "factor, reps, lapses, left, odue, odid, flags, data) "
+                "VALUES (?, ?, ?, ?, ?, -1, 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+                (card_id, note_id, sibling["did"], prod_ord, ts, next_due),
+            )
+            minted = MintedCard(card_id=card_id, due=next_due, created=True)
+            changed = True
+
+        if changed:
+            self._bump_col(ts)
+        self._conn.commit()
+        return minted
 
     def store_media_file(self, filename: str, data: bytes) -> None:
         """Write media file to collection.media dir and register in collection.media.db."""
