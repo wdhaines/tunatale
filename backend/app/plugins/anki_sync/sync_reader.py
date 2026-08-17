@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from app.cards.field_map import get_profile
 from app.languages import get_l2_css_class
 from app.models.syntactic_unit import BackField
 from app.plugins.anki_sync.sqlite_reader import (
@@ -21,6 +22,7 @@ from app.plugins.anki_sync.sqlite_reader import (
 )
 from app.plugins.anki_sync.sync_common import (
     CardRecord,
+    ClozeMaterial,
     NoteRecord,
     _ms_to_datetime,
     extract_cloze_note,
@@ -49,6 +51,36 @@ class OfflineReader:
             "SELECT id, ease, ivl, lastIvl, factor, time, type FROM revlog WHERE cid = ? AND id > ? ORDER BY id",
             (card_id, after_ms),
         ).fetchall()
+
+    def get_cloze_material(self, note_id: int) -> ClozeMaterial:
+        """Everything the cloze fallback needs from *note_id*, resolved by profile.
+
+        Keeps deck field names and the deck's own part-of-speech vocabulary in
+        the reader — the same place ``extract_via_profile`` already resolves
+        them — so the promotion phase works in plain data. A notetype with no
+        profile, or one that declares no cloze source, yields empty strings and
+        no UPOS, which routes the word to the (unbuilt) LLM tier rather than to
+        a guess.
+        """
+        row = self._conn.execute("SELECT flds, mid FROM notes WHERE id = ?", (note_id,)).fetchone()
+        if row is None:
+            return ClozeMaterial("", "", None)
+        name_row = self._conn.execute("SELECT name FROM notetypes WHERE id = ?", (row["mid"],)).fetchone()
+        profile = get_profile(name_row["name"]) if name_row is not None else None
+        if profile is None:
+            return ClozeMaterial("", "", None)
+
+        names = [r[0] for r in self._conn.execute("SELECT name FROM fields WHERE ntid = ? ORDER BY ord", (row["mid"],))]
+        parts = row["flds"].split("\x1f")
+
+        def _field(field_name: str | None) -> str:
+            if field_name is None or field_name not in names:
+                return ""
+            idx = names.index(field_name)
+            return parts[idx] if idx < len(parts) else ""
+
+        upos = profile.disambig_upos.get(_field(profile.disambig).strip().casefold())
+        return ClozeMaterial(_field(profile.examples), _field(profile.inflections), upos)
 
     def get_recognition_only_share(self):
         """How much of this reader's deck sits on recognition-only notetypes.

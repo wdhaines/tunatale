@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import NamedTuple
 
 from app.models.syntactic_unit import BackField
 from app.plugins.anki_sync.sqlite_reader import extract_translation
@@ -133,6 +134,20 @@ class CreateNewReport:
     image_failed: int = 0
 
 
+class ClozeMaterial(NamedTuple):
+    """A note's own raw material for a cloze production card.
+
+    ``examples`` / ``inflections`` are the unparsed field values;
+    ``upos`` is the note's part of speech mapped onto a UPOS tag (None when the
+    notetype declares no mapping), which is what lets the closed-class routing
+    go through the language registry instead of matching deck labels.
+    """
+
+    examples: str
+    inflections: str
+    upos: str | None
+
+
 @dataclass
 class PromotionReport:
     """One sync's worth of just-in-time production minting.
@@ -142,16 +157,23 @@ class PromotionReport:
     already generated and TT merely linked (the stranding self-heal), which is
     not new capability for the learner and so is reported apart from ``minted``.
 
-    ``no_image`` is the population the cloze fallback exists for: a word whose
-    image search came back empty must not get a production card (Anki would call
-    it an *empty card*), so it is counted and left. ``no_template`` is the note
-    whose notetype cannot carry a production card at all.
+    ``clozed`` is the other shape a word can be promoted into: one that cannot
+    be pictured (closed-class, or its image search came back empty) gets a cloze
+    production card built from the note's own example sentence. It is counted
+    apart from ``minted`` because it lands a TT row, not an Anki card — the next
+    sync's ``sync_create_new`` mints the note.
+
+    ``unservable`` is the residue neither shape can serve: no image AND no
+    clozable sentence. That is the population the (unbuilt) LLM tier is for, and
+    those words are re-attempted every sync. ``no_template`` is the note whose
+    notetype cannot carry a production card at all.
     """
 
     awaiting: int = 0
     minted: int = 0
     adopted: int = 0
-    no_image: int = 0
+    clozed: int = 0
+    unservable: int = 0
     no_template: int = 0
 
 
