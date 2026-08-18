@@ -2076,6 +2076,53 @@
         "title": "LlmLastError",
         "type": "object"
       },
+      "LoginRequest": {
+        "description": "Request body for POST /api/auth/login.",
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
+      "LoginResponse": {
+        "description": "Response of POST /api/auth/login.\n\nDeliberately does NOT carry the session token \u2014 it lives in ``Set-Cookie``\nonly.  ``response_model_exclude_unset`` is not needed: every field is\nalways set.",
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "LoginResponse",
+        "type": "object"
+      },
+      "LogoutResponse": {
+        "description": "Response of POST /api/auth/logout.\n\n200 with a small model rather than 204: the repo is known-green on the\n200-plus-model path, and the locked test accepts either.",
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "LogoutResponse",
+        "type": "object"
+      },
       "MarkLessonReviewedResponse": {
         "description": "Response of POST /api/srs/lesson/{lesson_id}/reviewed.",
         "properties": {
@@ -2088,6 +2135,20 @@
           "ok"
         ],
         "title": "MarkLessonReviewedResponse",
+        "type": "object"
+      },
+      "MeResponse": {
+        "description": "Response of GET /api/auth/me.\n\nMirrors ``User`` without ``password_hash`` \u2014 that is a credential the\nstore round-trips, not something to publish.",
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "MeResponse",
         "type": "object"
       },
       "NewCollocationsResponse": {
@@ -4137,6 +4198,83 @@
         "tags": [
           "audio"
         ]
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "description": "Verify credentials and set a session cookie.\n\nBoth unknown-email and wrong-password produce the same 401 body \u2014 no\nuser enumeration.",
+        "operationId": "login_api_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login"
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "description": "Delete the session row, then clear the cookie.\n\nSucceeds even when no cookie is present or the session is already gone \u2014\nsomeone clicking \"log out\" on an expired session should not get an error.",
+        "operationId": "logout_api_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogoutResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Logout"
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "description": "Return the current user's email.\n\n``require_user`` is declared on this route alone \u2014 the router is mounted\nwithout a router-level dependency, since that would apply to login too.\n\n**This endpoint answers the same way whether ``auth_enabled`` is True or\nFalse**: 200 with the email for a valid cookie, 401 for an anonymous\ncaller. Measured 2026-08-18, both flag states. That is deliberate \u2014 \"who\nam I\" is a question about the cookie, not about the gate \u2014 but it has a\nconsequence P1.4 must handle: a dev running with auth disabled still gets\n401 here, so the frontend must not read a 401 from ``me`` as \"redirect to\nthe login page\" without checking whether auth is on at all.\n\nThe cookie lookup is repeated here rather than injected, because\n``require_user`` sits in ``dependencies=`` and its return value therefore\nis not passed in. Switching to the injected form\n(``user: User | None = Depends(require_user)``) would remove the second\nlookup, but it would also make this endpoint 401 with a VALID cookie\nwhenever the flag is off \u2014 ``require_user`` short-circuits to ``None``\nthere \u2014 which is a semantic change, not a refactor. The duplicate read is\nthe cheaper of the two costs; both paths call ``get_session_user``, so\nthey cannot disagree about what a valid session is.",
+        "operationId": "me_api_auth_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Me"
       }
     },
     "/api/curriculum": {

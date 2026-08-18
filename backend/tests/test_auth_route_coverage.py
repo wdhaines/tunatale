@@ -45,14 +45,22 @@ from app.main import app
 # Paths that legitimately answer without a session. Keep this SHORT and keep
 # every entry justified — it is the only way an endpoint escapes the sweep.
 #
-#   /api/health  — the container's liveness probe runs before anyone logs in.
-#   /api/auth/*  — login cannot require being logged in (arrives in P1.3).
+#   /api/health        — the liveness probe runs before anyone logs in.
+#   /api/auth/login    — login cannot require being logged in.
+#   /api/auth/logout   — logging out with an already-expired session should
+#                        succeed quietly, not 401 at someone clicking "log out".
+#
+# ⚠️ This is an exact-path list, NOT the "/api/auth/" prefix it started as.
+# A prefix would blanket-exempt /api/auth/me — the one endpoint that most needs
+# sweeping, since it reports who you are and an anonymous caller must get 401
+# rather than a null user. Widening this back to a prefix silently drops that
+# route out of the sweep.
 #
 # Deliberately NOT exempt: /api/languages. It is read-only metadata, but the
 # rule here is default-deny, and "the login page needs it" is a P1.4 question to
 # answer by moving the data, not by opening the endpoint.
-EXEMPT_PATHS = frozenset({"/api/health"})
-EXEMPT_PREFIXES = ("/api/auth/",)
+EXEMPT_PATHS = frozenset({"/api/health", "/api/auth/login", "/api/auth/logout"})
+EXEMPT_PREFIXES = ()
 
 # The non-APIRoute paths FastAPI mounts for its own docs. They are not covered
 # by router dependencies, so they are recorded here rather than silently
@@ -174,8 +182,8 @@ class TestEveryRouteRequiresASession:
     async def test_a_bogus_token_is_401(self) -> None:
         """A well-formed cookie that matches no session row is still rejected."""
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.get("/api/languages", cookies={"tt_session": "a" * 43})
+        async with AsyncClient(transport=transport, base_url="http://test", cookies={"tt_session": "a" * 43}) as client:
+            response = await client.get("/api/languages")
         assert response.status_code == 401
 
 

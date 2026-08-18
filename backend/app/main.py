@@ -309,6 +309,7 @@ async def _resolve_language_state(request, call_next):
 
 
 from app.api import admin, anki, audio, curriculum, generation, srs  # noqa: E402
+from app.api import auth as auth_api  # noqa: E402
 from app.api import llm as llm_api  # noqa: E402
 from app.api import pipeline as pipeline_api  # noqa: E402
 from app.api import srs_images as srs_images_api  # noqa: E402
@@ -340,6 +341,7 @@ if settings.sync_enabled and _anki_sync_importable():
     app.include_router(anki.router, dependencies=[Depends(require_user)])
 app.include_router(admin.router, dependencies=[Depends(require_user)])
 app.include_router(llm_api.router, dependencies=[Depends(require_user)])
+app.include_router(auth_api.router)  # NO router-level dependency — login/logout are unauthenticated
 
 
 def _state_dependencies(plural: str, singular: str) -> list:
