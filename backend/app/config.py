@@ -208,6 +208,16 @@ class Settings(BaseSettings):
     auth_enabled: bool = False
     session_secret: str = ""
 
+    # Identity lives in its OWN database. The content DBs are per-language
+    # (tunatale_sl.db / tunatale_no.db) and get copied, migrated and restored
+    # per language, so a users table inside one of them would exist once per
+    # language and disagree with itself. Sits alongside them by default.
+    auth_database_url: str = "sqlite:///./auth.db"
+    # Default lifetime of a login session, read by
+    # app.auth.database.AuthDatabase.create_session. P1.2 rotates the token on
+    # login rather than extending an existing session.
+    session_ttl_days: int = 30
+
 
 def prod_profile_problems(s: Settings) -> list[str]:
     """Everything wrong with *s* as a production profile, as human sentences.
