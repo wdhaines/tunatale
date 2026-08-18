@@ -78,6 +78,28 @@ profile guard (`TT_ENV=prod`) refuses to boot without it set True, so a real
 deployment cannot forget. Create the account first, then flip the flag —
 the other way round locks you out of your own box.
 
+### Signing in
+
+The SPA determines whether this deployment requires a login by asking
+`GET /api/auth/status` at boot — that is the **only** way it can know. The
+endpoint returns a single boolean and is deliberately unauthenticated; it must
+stay that narrow. `GET /api/auth/me` answers 401 for an anonymous caller
+**whether the gate is on or off**, so a 401 alone is not evidence of being
+logged out.
+
+A 401 from any other endpoint mid-session sends the user to `/login`, preserving
+the route they were on so they land back there after signing in. Sign out lives
+on `/settings`, under **Account**.
+
+⚠️ The session cookie is `Secure`. Over plain `http://` a browser stores it and
+never sends it back, so login appears to succeed and every later request is
+anonymous — **it reads exactly like a broken server and is not**. This is why the
+TLS work (Caddy, P2.2) is a prerequisite for the gate in production, not a
+nicety. The one exception is `localhost`, which browsers treat as a trustworthy
+origin — measured 2026-08-18 in Chromium: a `Secure` cookie set over
+`http://localhost` **is** returned on later requests, which is why local dev and
+the E2E suite work without TLS.
+
 ## Backups and restore
 
 ### Why this section exists before the deployment does

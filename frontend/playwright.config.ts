@@ -14,7 +14,7 @@ export default defineConfig({
 			// that was its only consumer (tunatale-vnf.10) — leaving the rm behind
 			// would have made the Norwegian seed accumulate one row per run, and the
 			// spec's strict text locator go non-idempotent on the second one.
-			command: 'cd ../backend && rm -f tunatale-test.db tunatale-test-no.db && uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --log-level error',
+			command: 'cd ../backend && rm -f tunatale-test.db tunatale-test-no.db tunatale-test-auth.db && uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --log-level error',
 			port: 8001,
 			reuseExistingServer: false,
 			timeout: 30000,
@@ -61,7 +61,26 @@ export default defineConfig({
 				// backed by Slovene LLM cassettes. A developer's .env with TARGET_LANGUAGE=no
 				// (running TT as Norwegian) would otherwise generate a Norwegian prompt with
 				// no cassette → 500. Uppercase matches the .env key so load_dotenv keeps it.
-				TARGET_LANGUAGE: 'sl'
+				TARGET_LANGUAGE: 'sl',
+				// ⚠️ AUTH ON, deliberately — this suite runs the deployed shape.
+				//
+				// With the gate off, every spec here would prove the app works in a
+				// configuration production never uses, and the login journey would have
+				// no real stack to walk. So the backend requires a session, globalSetup
+				// creates the account and signs in once, and `use.storageState` below
+				// hands that cookie to every spec. Only auth-login.spec.ts opts out.
+				//
+				// The session cookie is `Secure` and this suite is plain http. That
+				// works because browsers treat `localhost` as a trustworthy origin —
+				// measured 2026-08-18 in the pinned chromium: cookie set over
+				// http://localhost and returned on the next request, `me` → 200. Do
+				// NOT generalise that to a deployment: over http on any other host the
+				// cookie is stored and never sent back, and it reads exactly like a
+				// broken server (see docs/deployment.md § Signing in).
+				AUTH_ENABLED: 'true',
+				// Its own store, removed by the rm above so each run starts with no
+				// accounts. Never the real ./auth.db.
+				AUTH_DATABASE_URL: 'sqlite:///./tunatale-test-auth.db'
 			}
 		},
 		// A SECOND BACKEND ON :8002 (TARGET_LANGUAGE=no) USED TO LIVE HERE. It was
@@ -112,6 +131,10 @@ export default defineConfig({
 	retries: 0,
 	use: {
 		baseURL: 'http://localhost:5174',
+		// The signed-in cookie globalSetup produced. Every spec starts logged in,
+		// which is what the app's own specs are about; auth-login.spec.ts overrides
+		// this with an empty state to test the logged-out path.
+		storageState: 'tests/.auth/state.json',
 		// Was 'on-first-retry', which with retries:0 would capture NOTHING — the
 		// two settings are coupled and changing one without the other silently
 		// disables tracing. A CI failure is not locally reproducible by definition

@@ -2,7 +2,7 @@
  * TunaTaleAPI client unit tests.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { TunaTaleAPI } from "./api";
+import { TunaTaleAPI, setUnauthorizedHandler } from "./api";
 import { makeSRSItemDetail } from "../test/factories";
 
 const BASE = "http://test-backend";
@@ -2168,5 +2168,136 @@ describe("image methods", () => {
     );
     expect(result.status).toBe("ok");
     expect(result.applied).toBe(3);
+  });
+});
+
+describe("auth endpoints", () => {
+  let api: TunaTaleAPI;
+
+  beforeEach(() => {
+    api = new TunaTaleAPI(BASE);
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setUnauthorizedHandler(null);
+  });
+
+  it("getAuthStatus calls GET /api/auth/status", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ auth_enabled: true })));
+
+    const result = await api.getAuthStatus();
+
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/auth/status`);
+    expect(result.auth_enabled).toBe(true);
+  });
+
+  it("login POSTs the credentials as JSON", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ email: "a@b.c" })));
+
+    const result = await api.login("a@b.c", "hunter2");
+
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "a@b.c", password: "hunter2" }),
+    });
+    expect(result.email).toBe("a@b.c");
+  });
+
+  it("logout POSTs /api/auth/logout", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ status: "logged out" })));
+
+    await api.logout();
+
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/auth/logout`, { method: "POST" });
+  });
+
+  it("getMe calls GET /api/auth/me", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ email: "a@b.c" })));
+
+    const result = await api.getMe();
+
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/auth/me`);
+    expect(result.email).toBe("a@b.c");
+  });
+});
+
+describe("401 interception", () => {
+  let api: TunaTaleAPI;
+
+  beforeEach(() => {
+    api = new TunaTaleAPI(BASE);
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setUnauthorizedHandler(null);
+  });
+
+  it("notifies the handler when a data endpoint answers 401", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFailBody({ detail: "no" }, 401)));
+    const onUnauthorized = vi.fn();
+    setUnauthorizedHandler(onUnauthorized);
+
+    await expect(api.listCurricula()).rejects.toThrow();
+
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it("still throws after notifying, so the caller is not left awaiting a value", async () => {
+    // The redirect is asynchronous; the in-flight call must not resolve with
+    // undefined in the meantime or every consumer needs a null check that only
+    // this one path can trigger.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFailBody({ detail: "no" }, 401)));
+    setUnauthorizedHandler(vi.fn());
+
+    await expect(api.listCurricula()).rejects.toThrow("GET /api/curriculum");
+  });
+
+  it("does NOT notify when the 401 came from the login endpoint", async () => {
+    // A wrong password is a 401, and treating it as "session expired" would
+    // bounce the user off the login page they are standing on — losing the
+    // error message that tells them what went wrong.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(mockFailBody({ detail: "Invalid credentials" }, 401)),
+    );
+    const onUnauthorized = vi.fn();
+    setUnauthorizedHandler(onUnauthorized);
+
+    await expect(api.login("a@b.c", "wrong")).rejects.toThrow("Invalid credentials");
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it("does NOT notify when /api/auth/me answers 401", async () => {
+    // The boot probe asks "am I logged in?" and 401 is the ordinary NO. The
+    // store decides what that means; the interceptor must not pre-empt it.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFailBody({ detail: "" }, 401)));
+    const onUnauthorized = vi.fn();
+    setUnauthorizedHandler(onUnauthorized);
+
+    await expect(api.getMe()).rejects.toThrow();
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it("does NOT notify for a non-401 failure", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFailBody({ detail: "boom" }, 500)));
+    const onUnauthorized = vi.fn();
+    setUnauthorizedHandler(onUnauthorized);
+
+    await expect(api.listCurricula()).rejects.toThrow("boom");
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op when no handler is registered", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFailBody({ detail: "no" }, 401)));
+
+    await expect(api.listCurricula()).rejects.toThrow();
   });
 });
