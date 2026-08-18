@@ -376,3 +376,21 @@ def verify_password_raw(password_hash: str, password: str) -> bool:
     from app.auth.passwords import verify_password
 
     return verify_password(password_hash, password)
+
+
+class TestListUsers:
+    def test_empty_store(self, db: AuthDatabase) -> None:
+        assert db.list_users() == []
+
+    def test_returns_all_users_oldest_first(self, db: AuthDatabase) -> None:
+        first = db.create_user("a@b.com", "pw")
+        second = db.create_user("c@d.com", "pw")
+        assert [u.id for u in db.list_users()] == [first.id, second.id]
+
+    def test_includes_deactivated_users(self, db: AuthDatabase) -> None:
+        """A disabled account must still be listable, or it cannot be found again."""
+        user = db.create_user("a@b.com", "pw")
+        db.set_active(user.id, False)
+        listed = db.list_users()
+        assert len(listed) == 1
+        assert listed[0].is_active is False
