@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, Request, Response  # noqa: E402
+from fastapi import Depends, FastAPI, Request, Response  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from app.api.health import STATUS_OK, check_health  # noqa: E402
@@ -19,6 +19,7 @@ from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
 from app.audio.renderer import LessonRenderer  # noqa: E402
 from app.audio.slicer import build_slicers  # noqa: E402
 from app.audio.tts_factory import get_tts_service  # noqa: E402
+from app.auth.database import AuthDatabase  # noqa: E402
 from app.config import prod_profile_problems, settings  # noqa: E402
 from app.generation.pipeline import LessonPipeline  # noqa: E402
 from app.generation.planner import CurriculumPlanner  # noqa: E402
@@ -166,6 +167,13 @@ async def lifespan(app: FastAPI):
         content_stores[code] = ContentStore(path)
         languages[code] = get_language(code)
 
+    # Identity store. Opened here rather than lazily per request because a
+    # missing app.state.auth_db makes require_user fail CLOSED — every request
+    # 401s, including a correct login — and a lazy open would turn that into a
+    # first-request surprise instead of a startup one. Not per-language: see
+    # settings.auth_database_url.
+    app.state.auth_db = AuthDatabase(settings.auth_database_url)
+
     app.state.srs_dbs = srs_dbs
     app.state.content_stores = content_stores
     app.state.languages = languages
@@ -233,6 +241,7 @@ async def lifespan(app: FastAPI):
         db.close()
     for store in content_stores.values():
         store.close()
+    app.state.auth_db.close()
     logger.info("TunaTale backend shutting down")
 
 
@@ -303,6 +312,7 @@ from app.api import admin, anki, audio, curriculum, generation, srs  # noqa: E40
 from app.api import llm as llm_api  # noqa: E402
 from app.api import pipeline as pipeline_api  # noqa: E402
 from app.api import srs_images as srs_images_api  # noqa: E402
+from app.auth.dependencies import require_user  # noqa: E402
 
 
 def _anki_sync_importable() -> bool:
@@ -320,16 +330,16 @@ def _anki_sync_importable() -> bool:
         return False
 
 
-app.include_router(curriculum.router)
-app.include_router(pipeline_api.router)
-app.include_router(generation.router)
-app.include_router(srs.router)
-app.include_router(srs_images_api.router)
-app.include_router(audio.router)
+app.include_router(curriculum.router, dependencies=[Depends(require_user)])
+app.include_router(pipeline_api.router, dependencies=[Depends(require_user)])
+app.include_router(generation.router, dependencies=[Depends(require_user)])
+app.include_router(srs.router, dependencies=[Depends(require_user)])
+app.include_router(srs_images_api.router, dependencies=[Depends(require_user)])
+app.include_router(audio.router, dependencies=[Depends(require_user)])
 if settings.sync_enabled and _anki_sync_importable():
-    app.include_router(anki.router)
-app.include_router(admin.router)
-app.include_router(llm_api.router)
+    app.include_router(anki.router, dependencies=[Depends(require_user)])
+app.include_router(admin.router, dependencies=[Depends(require_user)])
+app.include_router(llm_api.router, dependencies=[Depends(require_user)])
 
 
 def _state_dependencies(plural: str, singular: str) -> list:
@@ -367,7 +377,7 @@ async def health(response: Response):
     return {"status": status, "checks": checks}
 
 
-@app.get("/api/languages", response_model=LanguagesResponse)
+@app.get("/api/languages", response_model=LanguagesResponse, dependencies=[Depends(require_user)])
 async def languages(request: Request):
     """Configured languages (for the frontend selector) + the request's active one.
 
