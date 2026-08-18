@@ -31,6 +31,42 @@ function activeLanguageHeader(): Record<string, string> {
   return code ? { "X-TT-Language": code } : {};
 }
 
+// ── Session expiry ────────────────────────────────────────────────────
+// A 401 from a data endpoint means the cookie is gone or expired mid-session.
+// The API client cannot navigate (it must stay importable outside a SvelteKit
+// runtime — `api.test.ts` imports it into bare jsdom), so it reports and the
+// layout decides. See `stores/auth.svelte.ts` for the handler that is
+// registered here in the app.
+let unauthorizedHandler: (() => void) | null = null;
+
+/** Register (or clear, with `null`) the callback fired on a session-expiry 401. */
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
+}
+
+// `/api/auth/*` is excluded from the handler on purpose: 401 is an ORDINARY
+// answer there, not a session expiry. `login` answers 401 for a wrong password
+// — treating that as "session expired" would bounce the user off the very
+// login page that carries the error message — and `me` answers 401 as its
+// plain "no, you are not logged in", which the auth store must interpret
+// itself (the backend answers it identically whether the gate is on or off).
+const AUTH_PATH_PREFIX = "/api/auth/";
+
+export interface AuthStatus {
+  /**
+   * Whether this deployment requires a login at all.
+   *
+   * The frontend cannot infer this from a 401: `GET /api/auth/me` answers 401
+   * for an anonymous caller in BOTH flag states, so a dev running with auth
+   * off would be redirected to a login page that cannot help them.
+   */
+  auth_enabled: boolean;
+}
+
+export interface AuthUser {
+  email: string;
+}
+
 export interface LanguageOption {
   code: string;
   name: string;
@@ -565,6 +601,9 @@ export class TunaTaleAPI {
         : await fetch(`${this.baseUrl}${path}`);
     }
     if (!res.ok) {
+      if (res.status === 401 && !path.startsWith(AUTH_PATH_PREFIX)) {
+        unauthorizedHandler?.();
+      }
       // Surface the server's error detail (FastAPI puts it in body.detail) instead of
       // the bare status line — statusText is empty over HTTP/2, which left sync/other
       // failures showing a useless "METHOD /path:" with no reason.
@@ -1078,6 +1117,35 @@ export class TunaTaleAPI {
 
   async removeItemImage(id: number): Promise<SRSItemDetail> {
     return this.request(`/api/srs/items/${id}/image`, { method: "DELETE" });
+  }
+
+  /** Whether this deployment requires a login. Unauthenticated by design. */
+  async getAuthStatus(): Promise<AuthStatus> {
+    return this.request("/api/auth/status");
+  }
+
+  /**
+   * Exchange credentials for a session cookie.
+   *
+   * The token is never visible to JS — the backend sets an HttpOnly cookie and
+   * the response body carries only the email. There is deliberately nothing to
+   * store here.
+   */
+  async login(email: string, password: string): Promise<AuthUser> {
+    return this.request("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+  }
+
+  async logout(): Promise<{ status: string }> {
+    return this.request("/api/auth/logout", { method: "POST" });
+  }
+
+  /** The current user, or a 401 rejection when there is no live session. */
+  async getMe(): Promise<AuthUser> {
+    return this.request("/api/auth/me");
   }
 }
 

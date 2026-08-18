@@ -12,7 +12,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
-from app.api.models import LoginRequest, LoginResponse, LogoutResponse, MeResponse
+from app.api.models import (
+    AuthStatusResponse,
+    LoginRequest,
+    LoginResponse,
+    LogoutResponse,
+    MeResponse,
+)
 from app.auth.dependencies import require_user
 from app.auth.models import User
 from app.auth.session import (
@@ -25,6 +31,33 @@ from app.auth.session import (
 from app.config import settings
 
 router = APIRouter()
+
+
+@router.get("/api/auth/status", response_model=AuthStatusResponse)
+async def auth_status() -> dict[str, bool]:
+    """Report whether this deployment requires a login.
+
+    **Why this exists at all:** ``/api/auth/me`` answers 401 for an anonymous
+    caller whether ``auth_enabled`` is True or False, so a 401 alone does not
+    mean "you are logged out" — with the gate off it means "no cookie, and none
+    is needed". A frontend that redirected on every 401 would send a developer
+    running with the flag off to a login page that cannot fix anything: the
+    login would succeed and the next request would 401 again. The SPA therefore
+    reads this first and only treats a 401 as "go to /login" when the answer is
+    True.
+
+    **Unauthenticated on purpose, and narrow on purpose.** It is asked before a
+    session exists, so it cannot be gated; that makes it readable by anyone who
+    can reach the port, so it answers exactly one boolean. Do not add user
+    counts, a bootstrap-needed flag, or the configured email — those turn a
+    status probe into reconnaissance. It is exempt in
+    ``tests/test_auth_route_coverage.py``; the key-set is pinned by
+    ``test_status_leaks_nothing_beyond_the_flag``.
+
+    Reads ``settings`` per request rather than at import, matching
+    ``require_user`` — the flag is monkeypatched in tests after import.
+    """
+    return {"auth_enabled": settings.auth_enabled}
 
 
 @router.post("/api/auth/login", response_model=LoginResponse)

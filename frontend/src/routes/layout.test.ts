@@ -17,13 +17,20 @@ vi.mock("$app/stores", () => ({
   },
 }));
 
+const mockGoto = vi.fn();
+vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
+
 vi.mock("$lib/api", () => ({
   LANGUAGE_STORAGE_KEY: "tt-language",
+  setUnauthorizedHandler: vi.fn(),
   api: {
     peerSync: vi.fn(),
     fetchQueueStats: vi.fn(),
     getRateLimit: vi.fn(),
     probeRateLimit: vi.fn(),
+    getAuthStatus: vi.fn().mockResolvedValue({ auth_enabled: false }),
+    getMe: vi.fn(),
+    logout: vi.fn(),
     getLanguages: vi.fn().mockResolvedValue({ languages: [], active: "sl" }),
     getLlmHealth: vi.fn().mockResolvedValue({
       healthy: true,
@@ -35,7 +42,8 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-import { api } from "$lib/api";
+import { api, setUnauthorizedHandler } from "$lib/api";
+import { authStore } from "$lib/stores/auth.svelte";
 import { syncStore } from "$lib/stores/sync.svelte";
 import { queueStatsStore } from "$lib/stores/queueStats.svelte";
 import { themeStore } from "$lib/stores/theme.svelte";
@@ -44,6 +52,8 @@ import Layout from "./+layout.svelte";
 const mockPeerSync = vi.mocked(api.peerSync);
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 const mockGetLanguages = vi.mocked(api.getLanguages);
+const mockGetAuthStatus = vi.mocked(api.getAuthStatus);
+const mockGetMe = vi.mocked(api.getMe);
 
 const RESULT = {
   auth_success: true,
@@ -60,7 +70,7 @@ function renderLayout() {
   return render(Layout, { props: { children } });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   nav.pathname = "/";
   syncStore.notify(null);
@@ -82,6 +92,11 @@ beforeEach(() => {
     cap_source: "default",
     fsrs_source: "default",
   });
+  // `authStore` is a module singleton, so it carries state between tests. Reset
+  // it to the dev-box shape — gate off, nobody signed in — via its real init.
+  mockGetAuthStatus.mockResolvedValue({ auth_enabled: false });
+  await authStore.init();
+  mockGoto.mockClear();
 });
 
 describe("root +layout.svelte", () => {
@@ -305,5 +320,73 @@ describe("root +layout.svelte", () => {
     const { findByText } = renderLayout();
     await findByText("Sync with AnkiWeb");
     expect(await findByText("5")).toBeTruthy();
+  });
+});
+
+describe("root +layout.svelte — the session guard", () => {
+  it("registers a 401 handler on mount and clears it on unmount", async () => {
+    // api.ts holds a single module-level handler. Leaving a dead component's
+    // handler installed would redirect through an unmounted layout's store.
+    const { unmount } = renderLayout();
+    await waitFor(() => expect(setUnauthorizedHandler).toHaveBeenCalled());
+    expect(typeof vi.mocked(setUnauthorizedHandler).mock.calls[0][0]).toBe("function");
+
+    unmount();
+
+    expect(setUnauthorizedHandler).toHaveBeenLastCalledWith(null);
+  });
+
+  it("sends a logged-out visitor to the login page and fetches nothing", async () => {
+    mockGetAuthStatus.mockResolvedValue({ auth_enabled: true });
+    mockGetMe.mockRejectedValue(new Error("GET /api/auth/me: "));
+
+    renderLayout();
+
+    await waitFor(() => expect(mockGoto).toHaveBeenCalledWith("/login"));
+    // The point of the guard: the login page is not decorated with a row of
+    // failures caused by the very thing it exists to fix.
+    expect(mockFetchQueueStats).not.toHaveBeenCalled();
+    expect(mockGetLanguages).not.toHaveBeenCalled();
+  });
+
+  it("boots the data stores for a signed-in user", async () => {
+    mockGetAuthStatus.mockResolvedValue({ auth_enabled: true });
+    mockGetMe.mockResolvedValue({ email: "a@b.c" });
+
+    renderLayout();
+
+    await waitFor(() => expect(mockFetchQueueStats).toHaveBeenCalled());
+    expect(mockGetLanguages).toHaveBeenCalled();
+    expect(mockGoto).not.toHaveBeenCalled();
+  });
+
+  it("boots the data stores when the deployment has no login at all", async () => {
+    // The dev-box shape, and the one the rest of this file's tests run in.
+    renderLayout();
+
+    await waitFor(() => expect(mockFetchQueueStats).toHaveBeenCalled());
+    expect(mockGoto).not.toHaveBeenCalled();
+  });
+
+  it("does not refetch on window focus while a login is required", async () => {
+    mockGetAuthStatus.mockResolvedValue({ auth_enabled: true });
+    mockGetMe.mockRejectedValue(new Error("GET /api/auth/me: "));
+    renderLayout();
+    await waitFor(() => expect(mockGoto).toHaveBeenCalledWith("/login"));
+
+    window.dispatchEvent(new Event("focus"));
+
+    expect(mockFetchQueueStats).not.toHaveBeenCalled();
+  });
+
+  it("renders no nav and no health banner on the login route", async () => {
+    nav.pathname = "/login";
+
+    const { queryByRole, container } = renderLayout();
+
+    expect(queryByRole("link", { name: "TunaTale" })).toBeNull();
+    expect(container.querySelector("nav.global-nav")).toBeNull();
+    // The page itself still renders — the layout wraps it, it does not replace it.
+    expect(container.querySelector('[data-testid="slot"]')).not.toBeNull();
   });
 });

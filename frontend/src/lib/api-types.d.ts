@@ -214,6 +214,46 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/auth/status": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Auth Status
+     * @description Report whether this deployment requires a login.
+     *
+     *     **Why this exists at all:** ``/api/auth/me`` answers 401 for an anonymous
+     *     caller whether ``auth_enabled`` is True or False, so a 401 alone does not
+     *     mean "you are logged out" — with the gate off it means "no cookie, and none
+     *     is needed". A frontend that redirected on every 401 would send a developer
+     *     running with the flag off to a login page that cannot fix anything: the
+     *     login would succeed and the next request would 401 again. The SPA therefore
+     *     reads this first and only treats a 401 as "go to /login" when the answer is
+     *     True.
+     *
+     *     **Unauthenticated on purpose, and narrow on purpose.** It is asked before a
+     *     session exists, so it cannot be gated; that makes it readable by anyone who
+     *     can reach the port, so it answers exactly one boolean. Do not add user
+     *     counts, a bootstrap-needed flag, or the configured email — those turn a
+     *     status probe into reconnaissance. It is exempt in
+     *     ``tests/test_auth_route_coverage.py``; the key-set is pinned by
+     *     ``test_status_leaks_nothing_beyond_the_flag``.
+     *
+     *     Reads ``settings`` per request rather than at import, matching
+     *     ``require_user`` — the flag is monkeypatched in tests after import.
+     */
+    get: operations["auth_status_api_auth_status_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/curriculum": {
     parameters: {
       query?: never;
@@ -1463,6 +1503,21 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /**
+     * AuthStatusResponse
+     * @description Response of GET /api/auth/status.
+     *
+     *     One boolean, and it must stay one boolean.  The endpoint is unauthenticated
+     *     by necessity — the SPA asks it before it has a session — so anything added
+     *     here is published to anyone who can reach the port.  "Does this deployment
+     *     require a login?" is safe; "how many users exist" or "has anyone been
+     *     bootstrapped" is reconnaissance.  Pinned by
+     *     ``test_status_leaks_nothing_beyond_the_flag``.
+     */
+    AuthStatusResponse: {
+      /** Auth Enabled */
+      auth_enabled: boolean;
+    };
     /**
      * BackfillTranslationsResponse
      * @description Response of POST /api/srs/backfill-translations.
@@ -3395,6 +3450,26 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["MeResponse"];
+        };
+      };
+    };
+  };
+  auth_status_api_auth_status_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuthStatusResponse"];
         };
       };
     };

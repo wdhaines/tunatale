@@ -77,6 +77,9 @@ backend/media/
 # — a root-level "backend/scripts/*" glob broke ruff's local file discovery.)
 backend/output/
 frontend/test-results/
+# Playwright's signed-in cookie, produced per run by tests/global-setup.ts.
+# A session token — never committed.
+frontend/tests/.auth/
 
 # docs/briefs/ — retired from the workflow 2026-08-10; dispatch docs now live in
 # the .beads-tasks submodule (version-controlled, off-machine). What remains is a

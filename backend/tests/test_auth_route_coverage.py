@@ -49,6 +49,14 @@ from app.main import app
 #   /api/auth/login    — login cannot require being logged in.
 #   /api/auth/logout   — logging out with an already-expired session should
 #                        succeed quietly, not 401 at someone clicking "log out".
+#   /api/auth/status   — answers "does this deployment require a login?", which
+#                        the SPA must know BEFORE it has a session (a 401 from
+#                        /api/auth/me is identical with the gate on and off, so
+#                        it cannot be read as "go to /login" on its own). Gating
+#                        it would make it useless. It returns exactly one
+#                        boolean and nothing else — see
+#                        test_status_leaks_nothing_beyond_the_flag, which is the
+#                        guard that keeps this exemption cheap.
 #
 # ⚠️ This is an exact-path list, NOT the "/api/auth/" prefix it started as.
 # A prefix would blanket-exempt /api/auth/me — the one endpoint that most needs
@@ -59,7 +67,7 @@ from app.main import app
 # Deliberately NOT exempt: /api/languages. It is read-only metadata, but the
 # rule here is default-deny, and "the login page needs it" is a P1.4 question to
 # answer by moving the data, not by opening the endpoint.
-EXEMPT_PATHS = frozenset({"/api/health", "/api/auth/login", "/api/auth/logout"})
+EXEMPT_PATHS = frozenset({"/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/status"})
 EXEMPT_PREFIXES = ()
 
 # The non-APIRoute paths FastAPI mounts for its own docs. They are not covered

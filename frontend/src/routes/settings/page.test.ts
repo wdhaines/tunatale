@@ -3,25 +3,42 @@
  * in the header: theme, auto-download-on-wifi, and the language switcher.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent } from "@testing-library/svelte";
+import { render, fireEvent, waitFor } from "@testing-library/svelte";
 
 vi.mock("$lib/api", () => ({
   LANGUAGE_STORAGE_KEY: "tt-language",
   api: {
     getLanguages: vi.fn().mockResolvedValue({ languages: [], active: "sl" }),
+    getAuthStatus: vi.fn(),
+    getMe: vi.fn(),
+    login: vi.fn(),
+    logout: vi.fn(),
   },
+  setUnauthorizedHandler: vi.fn(),
 }));
+
+const mockGoto = vi.fn();
+vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
 import { api } from "$lib/api";
 import { themeStore } from "$lib/stores/theme.svelte";
 import { prefetchPrefStore } from "$lib/stores/prefetchPref.svelte";
 import { listenCountdownPref } from "$lib/stores/listenCountdownPref.svelte";
 import { languageStore } from "$lib/stores/language.svelte";
+import { authStore } from "$lib/stores/auth.svelte";
 import Settings from "./+page.svelte";
 
 const mockGetLanguages = vi.mocked(api.getLanguages);
+const mockGetAuthStatus = vi.mocked(api.getAuthStatus);
+const mockGetMe = vi.mocked(api.getMe);
 
-beforeEach(() => {
+async function signIn(): Promise<void> {
+  mockGetAuthStatus.mockResolvedValue({ auth_enabled: true });
+  mockGetMe.mockResolvedValue({ email: "a@b.c" });
+  await authStore.init();
+}
+
+beforeEach(async () => {
   vi.clearAllMocks();
   localStorage.clear();
   // jsdom lacks matchMedia; themeStore.set() resolves "system" through it.
@@ -34,6 +51,11 @@ beforeEach(() => {
   themeStore.set("system");
   prefetchPrefStore.set(true);
   mockGetLanguages.mockResolvedValue({ languages: [], active: "sl" });
+  // Reset the auth singleton to the dev-box shape — gate off, nobody signed in.
+  // `getMe` is deliberately left unstubbed here: with the gate off the store
+  // never calls it, and stubbing it would hide a regression that did.
+  mockGetAuthStatus.mockResolvedValue({ auth_enabled: false });
+  await authStore.init();
 });
 
 describe("/settings", () => {
@@ -95,5 +117,29 @@ describe("/settings", () => {
     expect(listenCountdownPref.value).toBe("30");
     expect(getByRole("button", { name: "30s" }).getAttribute("aria-pressed")).toBe("true");
     expect(getByRole("button", { name: "Off" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("renders no Account section when the deployment has no login", () => {
+    const { queryByRole } = render(Settings);
+    expect(queryByRole("heading", { name: /account/i })).toBeNull();
+    expect(queryByRole("button", { name: /sign out/i })).toBeNull();
+  });
+
+  it("names the signed-in user and offers a way out", async () => {
+    await signIn();
+    const { getByRole } = render(Settings);
+    expect(getByRole("heading", { name: /account/i })).toBeTruthy();
+    expect(getByRole("button", { name: /sign out/i })).toBeTruthy();
+    const section = getByRole("heading", { name: /account/i }).closest("section")!;
+    expect(section.textContent).toContain("a@b.c");
+  });
+
+  it("signing out calls the backend and lands on the login page", async () => {
+    await signIn();
+    vi.mocked(api.logout).mockResolvedValue({ status: "logged out" });
+    const { getByRole } = render(Settings);
+    await fireEvent.click(getByRole("button", { name: /sign out/i }));
+    await waitFor(() => expect(api.logout).toHaveBeenCalled());
+    expect(mockGoto).toHaveBeenCalledWith("/login");
   });
 });

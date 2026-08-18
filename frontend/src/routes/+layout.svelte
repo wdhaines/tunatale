@@ -13,6 +13,8 @@
 	import { listenCountdownPref } from '$lib/stores/listenCountdownPref.svelte';
 	import { llmHealthStore } from '$lib/stores/llmHealth.svelte';
 	import { listenedStore } from '$lib/stores/listened.svelte';
+	import { authStore } from '$lib/stores/auth.svelte';
+	import { setUnauthorizedHandler } from '$lib/api';
 	import LlmHealthBanner from '$lib/components/LlmHealthBanner.svelte';
 
 	let { children } = $props();
@@ -26,20 +28,56 @@
 	// badge live (not just on the next focus). /queue-stats reads Anki's collection
 	// live, so we also refresh on focus and after a sync. Failures degrade silently
 	// — the badge just doesn't render.
+	let healthTimer: ReturnType<typeof setInterval> | undefined;
+
 	onMount(() => {
+		// Local preferences first, unconditionally: they need no session, and the
+		// login page should be themed like the rest of the app.
 		themeStore.init();
 		prefetchPrefStore.init();
 		listenCountdownPref.init();
+
+		// Every data request in the app funnels through api.ts, so one handler
+		// covers a session that dies mid-visit — including on pages whose only
+		// fetch is a `+page.ts` load that ran before this layout ever mounted.
+		setUnauthorizedHandler(() => void authStore.handleUnauthorized());
+		void boot();
+
+		return () => {
+			setUnauthorizedHandler(null);
+			clearInterval(healthTimer);
+		};
+	});
+
+	/**
+	 * Learn the session state, then start everything that needs one.
+	 *
+	 * The ordering is the guard: nothing here fires a request until
+	 * `authStore.init()` has answered. A logged-out visitor gets a redirect and
+	 * NO data requests, so the login page is not decorated with a row of
+	 * failures caused by the very thing it exists to fix.
+	 *
+	 * This is belt to the interceptor's braces, and it covers a case the
+	 * interceptor cannot: a route whose page makes no API call at all would
+	 * otherwise render an empty shell to someone who is not logged in, with
+	 * nothing to 401 and nothing to trigger the redirect.
+	 */
+	async function boot(): Promise<void> {
+		await authStore.init();
+		if (authStore.requiresLogin) {
+			await authStore.redirectToLogin();
+			return;
+		}
 		languageStore.init();
 		queueStatsStore.refresh();
 		llmHealthStore.refresh();
 		listenedStore.hydrate();
-		const healthTimer = setInterval(() => llmHealthStore.refresh(), 60000);
-		return () => clearInterval(healthTimer);
-	});
+		healthTimer = setInterval(() => llmHealthStore.refresh(), 60000);
+	}
 
 	$effect(() => {
 		const onFocus = () => {
+			if (authStore.requiresLogin) return;
 			queueStatsStore.refresh();
 		};
 		window.addEventListener('focus', onFocus);
@@ -66,12 +104,17 @@
 	const onReview = $derived(path === '/review');
 	const onCards = $derived(path.startsWith('/cards'));
 	const onSettings = $derived(path.startsWith('/settings'));
+	// The login page carries no chrome: every nav destination behind it needs a
+	// session, and the health banner reports on a backend we have not been
+	// allowed to ask about yet.
+	const onLogin = $derived(path === '/login');
 </script>
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
+{#if !onLogin}
 <LlmHealthBanner />
 
 <nav class="global-nav">
@@ -97,6 +140,7 @@
 		<SyncButton syncAvailable={languageStore.syncAvailable} />
 	</div>
 </nav>
+{/if}
 
 {@render children()}
 

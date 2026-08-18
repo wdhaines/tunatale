@@ -1,6 +1,20 @@
 {
   "components": {
     "schemas": {
+      "AuthStatusResponse": {
+        "description": "Response of GET /api/auth/status.\n\nOne boolean, and it must stay one boolean.  The endpoint is unauthenticated\nby necessity \u2014 the SPA asks it before it has a session \u2014 so anything added\nhere is published to anyone who can reach the port.  \"Does this deployment\nrequire a login?\" is safe; \"how many users exist\" or \"has anyone been\nbootstrapped\" is reconnaissance.  Pinned by\n``test_status_leaks_nothing_beyond_the_flag``.",
+        "properties": {
+          "auth_enabled": {
+            "title": "Auth Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "auth_enabled"
+        ],
+        "title": "AuthStatusResponse",
+        "type": "object"
+      },
       "BackfillTranslationsResponse": {
         "description": "Response of POST /api/srs/backfill-translations.",
         "properties": {
@@ -4275,6 +4289,25 @@
           }
         },
         "summary": "Me"
+      }
+    },
+    "/api/auth/status": {
+      "get": {
+        "description": "Report whether this deployment requires a login.\n\n**Why this exists at all:** ``/api/auth/me`` answers 401 for an anonymous\ncaller whether ``auth_enabled`` is True or False, so a 401 alone does not\nmean \"you are logged out\" \u2014 with the gate off it means \"no cookie, and none\nis needed\". A frontend that redirected on every 401 would send a developer\nrunning with the flag off to a login page that cannot fix anything: the\nlogin would succeed and the next request would 401 again. The SPA therefore\nreads this first and only treats a 401 as \"go to /login\" when the answer is\nTrue.\n\n**Unauthenticated on purpose, and narrow on purpose.** It is asked before a\nsession exists, so it cannot be gated; that makes it readable by anyone who\ncan reach the port, so it answers exactly one boolean. Do not add user\ncounts, a bootstrap-needed flag, or the configured email \u2014 those turn a\nstatus probe into reconnaissance. It is exempt in\n``tests/test_auth_route_coverage.py``; the key-set is pinned by\n``test_status_leaks_nothing_beyond_the_flag``.\n\nReads ``settings`` per request rather than at import, matching\n``require_user`` \u2014 the flag is monkeypatched in tests after import.",
+        "operationId": "auth_status_api_auth_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Auth Status"
       }
     },
     "/api/curriculum": {

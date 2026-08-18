@@ -273,6 +273,20 @@ class MeResponse(BaseModel):
     email: str
 
 
+class AuthStatusResponse(BaseModel):
+    """Response of GET /api/auth/status.
+
+    One boolean, and it must stay one boolean.  The endpoint is unauthenticated
+    by necessity — the SPA asks it before it has a session — so anything added
+    here is published to anyone who can reach the port.  "Does this deployment
+    require a login?" is safe; "how many users exist" or "has anyone been
+    bootstrapped" is reconnaissance.  Pinned by
+    ``test_status_leaks_nothing_beyond_the_flag``.
+    """
+
+    auth_enabled: bool
+
+
 class LogoutResponse(BaseModel):
     """Response of POST /api/auth/logout.
 

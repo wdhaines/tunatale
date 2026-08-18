@@ -149,3 +149,57 @@ class TestAuthStoreUnavailable:
             response = await client.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
         assert response.status_code == 503
         assert COOKIE_NAME not in response.cookies
+
+
+class TestAuthStatus:
+    """``GET /api/auth/status`` — the one thing the SPA must know before it can
+    interpret a 401.
+
+    ``me`` answers 401 identically whether the gate is on or off (pinned by
+    ``test_me_answers_identically_with_the_flag_off``), so a frontend that read
+    401 as "logged out, go to the login page" would bounce a developer running
+    with ``auth_enabled=False`` to a page that cannot help them — the login
+    would succeed and the next request would 401 again forever.
+
+    This endpoint is a **pre-auth, unauthenticated read**: it is reachable by
+    anyone who can reach the port, so it says only on/off. The tests below pin
+    that narrowness by asserting the exact key-set, not just the flag.
+    """
+
+    async def test_status_reports_enabled_without_a_cookie(self, auth_db: AuthDatabase) -> None:
+        """Flag on, anonymous caller: 200 ``{"auth_enabled": true}``.
+
+        ``auth_db`` sets ``auth_enabled=True``. No cookie is sent — that is the
+        point: the SPA asks this question *before* it has a session.
+        """
+        async with _client() as client:
+            response = await client.get("/api/auth/status")
+        assert response.status_code == 200
+        assert response.json() == {"auth_enabled": True}
+
+    async def test_status_reports_disabled_when_the_flag_is_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Flag off: 200 ``{"auth_enabled": false}`` — and no auth store needed.
+
+        Deliberately does NOT use the ``auth_db`` fixture: with the gate off
+        there may be no store at all, and the endpoint must still answer rather
+        than 503. Otherwise the SPA's very first request on a dev box would fail
+        and it would have no way to learn the gate is off.
+        """
+        monkeypatch.setattr(settings, "auth_enabled", False)
+        monkeypatch.setattr(app.state, "auth_db", None, raising=False)
+        async with _client() as client:
+            response = await client.get("/api/auth/status")
+        assert response.status_code == 200
+        assert response.json() == {"auth_enabled": False}
+
+    async def test_status_leaks_nothing_beyond_the_flag(self, auth_db: AuthDatabase) -> None:
+        """Exactly one key. Asserted as a key-set, not a field lookup.
+
+        A field lookup passes just as happily when someone later adds
+        ``user_count`` or ``bootstrap_required`` beside it, and those are
+        exactly the "helpful" additions that turn a status probe into
+        reconnaissance on an unauthenticated endpoint.
+        """
+        async with _client() as client:
+            response = await client.get("/api/auth/status")
+        assert set(response.json()) == {"auth_enabled"}

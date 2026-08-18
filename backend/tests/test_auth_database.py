@@ -37,9 +37,26 @@ class TestCreateUser:
         assert user.created_at.tzinfo is not None
 
     def test_password_hash_starts_with_argon2(self, db: AuthDatabase) -> None:
-        user = db.create_user("a@b.com", "pw")
+        """What is stored is an argon2id PHC string, not the password.
+
+        ⚠️ The password MUST stay long. This ran with ``"pw"`` until 2026-08-18,
+        when it went red on CI (run 32175289770, ``backend-hostile-tz
+        (Pacific/Kiritimati)``) with::
+
+            'pw' is contained here: Kwk+aY4PAUpw$CeGvEAjl96uCKsr/gakxzaSz0iy9...
+
+        The salt and hash are base64, so a two-character needle turns up inside
+        a ~65-character haystack by chance roughly 1.6% of the time — the test
+        was a coin flip that lands wrong once every few dozen jobs. The
+        timezone was a red herring: the hostile-tz job draws from the same
+        distribution as every other one, it just drew first. A 28-character
+        password cannot collide, which is what makes this assertion mean what
+        it says.
+        """
+        password = "correct horse battery staple"
+        user = db.create_user("a@b.com", password)
         assert user.password_hash.startswith("$argon2id$")
-        assert "pw" not in user.password_hash
+        assert password not in user.password_hash
 
     def test_duplicate_email_by_case_raises(self, db: AuthDatabase) -> None:
         db.create_user("A@B.com", "pw")

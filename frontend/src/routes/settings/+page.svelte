@@ -4,6 +4,7 @@
 	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
 	import { listenCountdownPref, type CountdownValue } from '$lib/stores/listenCountdownPref.svelte';
 	import { languageStore } from '$lib/stores/language.svelte';
+	import { authStore } from '$lib/stores/auth.svelte';
 
 	// The header used to carry these controls inline; they're set-and-forget
 	// preferences, so they live here and only critical CTAs stay in the nav.
@@ -94,6 +95,16 @@
 				<p>Switch the active learning language. The app reloads to refetch your decks.</p>
 			</div>
 			<LanguageSelector />
+		</section>
+	{/if}
+
+	{#if authStore.enabled}
+		<section class="card setting">
+			<div class="setting-head">
+				<h2>Account</h2>
+				<p>Signed in as {authStore.email}.</p>
+			</div>
+			<button class="signout" onclick={() => authStore.logout()}>Sign out</button>
 		</section>
 	{/if}
 </main>
@@ -194,5 +205,15 @@
 	}
 	.toggle.on .toggle-thumb {
 		transform: translateX(16px);
+	}
+	.signout {
+		padding: 0.4rem 0.75rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-pill);
+		background: var(--color-surface);
+		color: var(--color-text);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
 	}
 </style>
