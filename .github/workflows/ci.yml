@@ -73,7 +73,15 @@ jobs:
         # a broken build (that misdiagnosis cost real time on 2026-08-18).
         # 6 min, NOT the 2-3 min that issue suggested: the step measured 4m28s
         # on e2e in run 32185315294, so a 3min cap would have reddened CI on
-        # the spot. Tighten it once the cache above is landing hits.
+        # the spot.
+        #
+        # ⚠️ DO NOT tighten this toward the observed 14-35s. An earlier version
+        # of this comment said to, and that was wrong. Those numbers are the
+        # WARM path (`Need to get 0 B/62.8 MB`); the cap has to survive the COLD
+        # one — a bumped cache key, an evicted cache, a new runner image — which
+        # still pulls 62.8 MB and, at the 352 kB/s this mirror has actually been
+        # measured serving, takes ~3 minutes. A cap sized to the warm path turns
+        # every cache miss into a red build.
         timeout-minutes: 6
         uses: ./.github/actions/setup-ffmpeg
       - name: Install uv
