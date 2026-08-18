@@ -122,6 +122,13 @@ class Settings(BaseSettings):
 
     anki_model_name: str = ""
     pixabay_api_key: str = ""
+    # How many production-card images to pre-stage in the background after a sync
+    # (app.cards.media.prestage). Promotion mints PRODUCTIONS_PER_SYNC=10 per sync,
+    # so a larger number here drains the backlog while keeping every mint free of a
+    # live fetch. 0 disables pre-staging entirely. This is a LATENCY knob — it does
+    # not change how many cards are minted, which is a settled pedagogical pacing
+    # decision (2026-08-15), not a performance one.
+    prestage_images_limit: int = 20
     # Which TTS adapter renders audio: "azure" (official Azure Speech, the
     # default) or "edge" (the unofficial Edge Read Aloud endpoint, retained as an
     # explicit escape hatch and retired by tunatale-i69). The switch is a human

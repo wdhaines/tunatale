@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from app.api.models import PeerSyncResponse
 from app.cards.media.pipeline import fetch_card_media
@@ -44,7 +44,7 @@ def _build_media_fn(llm, db):
 
 
 @router.post("/peer-sync", status_code=200, response_model=PeerSyncResponse)
-async def trigger_peer_sync(request: Request, dry_run: bool = False):
+async def trigger_peer_sync(request: Request, background_tasks: BackgroundTasks, dry_run: bool = False):
     """Sync TT's own collection to AnkiWeb (or a self-host server) as a peer.
 
     Touches TT's own ``tt_collection`` and works with Anki open. Returns
@@ -56,6 +56,8 @@ async def trigger_peer_sync(request: Request, dry_run: bool = False):
     """
     from fastapi.concurrency import run_in_threadpool
 
+    from app.cards.media.prestage import prestage_production_images
+    from app.config import settings
     from app.plugins.anki_sync.sync_orchestrator import PeerSyncError, peer_sync
 
     db = request.state.srs_db
@@ -74,6 +76,20 @@ async def trigger_peer_sync(request: Request, dry_run: bool = False):
         # Error". An unhandled exception here (e.g. a sqlite IntegrityError mid-
         # reconcile) otherwise reaches the user as an opaque 500 with no reason.
         raise HTTPException(status_code=500, detail=f"Sync failed: {type(e).__name__}: {e}") from e
+
+    # Pre-stage the NEXT sync's production images off the critical path. Promotion
+    # fetches inline for any candidate lacking an image (an LLM call plus a Pixabay
+    # round trip, serially, while the user waits) and 1487 Norwegian words await
+    # production with none — so this is what makes a sync stop being slow. It writes
+    # only TT media, never the Anki collection, which is why it is safe off-sync.
+    if not dry_run and settings.prestage_images_limit > 0:
+        background_tasks.add_task(
+            prestage_production_images,
+            db,
+            media_fn,
+            language_code=language_code or settings.target_language,
+            limit=settings.prestage_images_limit,
+        )
 
     return {
         "auth_success": report.auth_success,
