@@ -19,9 +19,25 @@ untracked (non-ignored), paired with its working-tree content — so it is
 staging-invariant (`git add` doesn't change it) but any edit after the
 recorded pass invalidates it. After a commit, HEAD moves and the next commit
 needs a fresh pass — matching the policy.
-Commits in other repos (micro-demo-*, etc.) are ignored via a repo-root check
-on the session cwd; `git -C <elsewhere> commit` is a known gap that at worst
-asks unnecessarily.
+
+Commits in other repos (the .beads-tasks submodule, micro-demo-*, etc.) are
+ignored via a repo-root check. That check resolves the command's EFFECTIVE cwd
+— honouring `cd <path> &&` prefixes and `git -C <path>` — rather than the
+session cwd.
+
+⚠️ Fixed 2026-08-17. Probing from the session cwd was a documented gap ("at
+worst asks unnecessarily"), and it turned out not to be harmless: every
+`.beads-tasks` commit is `cd <submodule> && git commit`, which resolved to the
+main repo root and raised a prompt. Beads sync is standing-authorized and runs
+several times a session, so the gate asked constantly about a repository
+`./test.sh` does not cover. A gate that cries wolf on work it does not govern
+trains the reader to click through it — the same failure the gate exists to
+prevent, reached from the other side.
+
+Resolution FAILS SAFE: anything unparseable (a shell variable, command
+substitution) falls back to the session cwd, i.e. keeps gating. Only `cd`
+segments occurring BEFORE the `git commit` are applied — otherwise
+`git commit && cd /elsewhere` would launder a local commit past the gate.
 """
 
 import hashlib
@@ -42,8 +58,54 @@ SENTINEL = os.path.join(REPO_ROOT, ".git", "tt-test-pass")
 COMMIT_RE = re.compile(r"\bgit(\s+-\S+(\s+[^\s-]\S*)?)*\s+commit\b")
 
 
+# A quoted or bare path argument. Bare form stops at shell metacharacters so a
+# `cd foo && …` doesn't swallow the rest of the line.
+_PATH = r"""'[^']*'|"[^"]*"|[^\s;&|]+"""
+# `cd <path>` at the start of the command or after a shell separator.
+CD_RE = re.compile(rf"(?:^|&&|\|\||;)\s*cd\s+(?P<p>{_PATH})")
+# git's own -C, allowing the global options that may precede it.
+GIT_C_RE = re.compile(rf"\bgit\s+(?:-c\s+\S+\s+|--no-pager\s+|--git-dir\s+\S+\s+)*-C\s+(?P<p>{_PATH})")
+# Anything we cannot resolve statically. Falling back to the session cwd keeps
+# the gate ON, which is the safe direction.
+UNRESOLVABLE = ("$", "`", "~")
+
+
 def _git(args, cwd):
     return subprocess.run(["git", *args], capture_output=True, cwd=cwd, timeout=60)
+
+
+def _unquote(token):
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in "'\"":
+        return token[1:-1]
+    return token
+
+
+def effective_cwd(command, cwd):
+    """Resolve the directory *command*'s `git commit` actually runs in.
+
+    Honours `cd <path> &&` prefixes (which compose, and where an absolute path
+    resets the base) and `git -C <path>` (which wins, since git applies it
+    regardless of the shell's cwd). Only text BEFORE the `git commit` is
+    considered. Unresolvable paths leave the base unchanged — fail safe.
+    """
+    match = COMMIT_RE.search(command)
+    head = command[: match.start()] if match else command
+
+    base = cwd
+    for cd in CD_RE.finditer(head):
+        target = _unquote(cd.group("p"))
+        if any(ch in target for ch in UNRESOLVABLE):
+            return cwd  # can't know where we ended up — keep gating
+        base = os.path.join(base, target)
+
+    dash_c = GIT_C_RE.search(command)
+    if dash_c:
+        target = _unquote(dash_c.group("p"))
+        if any(ch in target for ch in UNRESOLVABLE):
+            return cwd
+        base = os.path.join(base, target)
+
+    return os.path.normpath(base)
 
 
 def tree_fingerprint(root):
@@ -77,7 +139,9 @@ def main():
     if not COMMIT_RE.search(command):
         return 0
 
-    cwd = data.get("cwd") or os.getcwd()
+    cwd = effective_cwd(command, data.get("cwd") or os.getcwd())
+    if not os.path.isdir(cwd):
+        return 0  # target directory doesn't exist — nothing of ours to gate
     probe = _git(["rev-parse", "--show-toplevel"], cwd)
     if probe.returncode != 0 or probe.stdout.decode().strip() != REPO_ROOT:
         return 0  # commit targets a different repo — not ours to gate
