@@ -142,6 +142,18 @@ export interface paths {
      *
      *     Both unknown-email and wrong-password produce the same 401 body — no
      *     user enumeration.
+     *
+     *     **Only failed attempts are recorded.** That is why the Playwright suite —
+     *     which runs with ``AUTH_ENABLED=true`` and signs in several times per run
+     *     from one address (``frontend/tests/global-setup.ts``) — is unaffected by
+     *     the throttle, rather than the limits having been loosened until it went
+     *     green. Knowing the password is not an attack.
+     *
+     *     **The 429 is not an enumeration oracle.** Attempts are recorded against the
+     *     submitted address whether or not it names a real account, so a nonexistent
+     *     email locks out on exactly the same schedule as a real one. Were failures
+     *     recorded only for accounts that exist, the status code would answer "does
+     *     this user exist?" for anyone willing to send five requests.
      */
     post: operations["login_api_auth_login_post"];
     delete?: never;

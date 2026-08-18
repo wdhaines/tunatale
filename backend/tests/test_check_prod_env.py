@@ -27,6 +27,7 @@ TT_ENV=prod
 LLM_MODE=live
 AUTH_ENABLED=true
 SESSION_SECRET=not-a-real-secret
+TRUSTED_PROXY_HEADER=X-Forwarded-For
 CORS_ORIGINS=["https://tunatale.example.com"]
 """
 

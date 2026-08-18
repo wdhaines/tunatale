@@ -8,8 +8,13 @@ independent of the SRS package.
 
 There is deliberately **no migration-function registry**.  The SRS package has
 one because it has 43 versions of history; auth has one version, and a registry
-with no entries is machinery whose tests would only shadow themselves.  Add it
-when there is a v2.
+with no entries is machinery whose tests would only shadow themselves.
+
+There is now a v2 (``login_attempts``, for login throttling) and it still needs
+no registry, because the change is a pure *addition*: the
+``CREATE TABLE IF NOT EXISTS`` run at every open **is** the migration, and it is
+idempotent for a fresh database and an existing one alike.  The first change
+requiring an ``ALTER`` is what would force a registry.
 """
 
 from __future__ import annotations
@@ -25,7 +30,7 @@ from app.auth.models import Session, User
 from app.auth.passwords import hash_password, needs_rehash, verify_password
 from app.auth.tokens import hash_token, mint_token
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @cache
@@ -87,6 +92,27 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user    ON sessions(user_id)
 _CREATE_INDEXES_EXPIRES = """\
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)
 """
+
+_CREATE_LOGIN_ATTEMPTS = """\
+CREATE TABLE IF NOT EXISTS login_attempts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope        TEXT NOT NULL,
+    subject      TEXT NOT NULL,
+    attempted_at TEXT NOT NULL
+)
+"""
+_CREATE_INDEX_LOGIN_ATTEMPTS = """\
+CREATE INDEX IF NOT EXISTS idx_login_attempts ON login_attempts(scope, subject, attempted_at)
+"""
+
+SCOPE_IP = "ip"
+SCOPE_ACCOUNT = "account"
+
+# Retention for login_attempts rows.  Must be >= throttle.WINDOW (also 1
+# hour) — a shorter retention would silently shrink the counting window and
+# release locks early.  database.py must NOT import throttle (throttle
+# imports these constants, not the reverse); this comment is the link.
+LOGIN_ATTEMPT_RETENTION = timedelta(hours=1)
 
 # Journal modes that need no write: ``wal`` is already what we want, and
 # ``memory`` is what a ``:memory:`` connection reports — it cannot become WAL.
@@ -195,6 +221,8 @@ class AuthDatabase:
         conn.execute(_CREATE_SESSIONS)
         conn.execute(_CREATE_INDEXES)
         conn.execute(_CREATE_INDEXES_EXPIRES)
+        conn.execute(_CREATE_LOGIN_ATTEMPTS)
+        conn.execute(_CREATE_INDEX_LOGIN_ATTEMPTS)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.commit()
 
@@ -420,6 +448,75 @@ class AuthDatabase:
             cursor = conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (_to_iso(now),))
             self._commit(conn)
             return cursor.rowcount
+
+    # ── Failed-login methods ────────────────────────────────────────────
+
+    def record_failed_login(self, *, ip: str, email: str, now: datetime | None = None) -> None:
+        """Record a failed login against both the IP and account scopes.
+
+        Inserts two rows sharing one timestamp, then purges rows older than
+        the retention horizon.
+        """
+        if now is None:
+            now = datetime.now(UTC)
+        norm = _normalize_email(email)
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT INTO login_attempts (scope, subject, attempted_at) VALUES (?, ?, ?)",
+                (SCOPE_IP, ip, _to_iso(now)),
+            )
+            conn.execute(
+                "INSERT INTO login_attempts (scope, subject, attempted_at) VALUES (?, ?, ?)",
+                (SCOPE_ACCOUNT, norm, _to_iso(now)),
+            )
+            cutoff = _to_iso(now - LOGIN_ATTEMPT_RETENTION)
+            conn.execute("DELETE FROM login_attempts WHERE attempted_at <= ?", (cutoff,))
+            self._commit(conn)
+
+    def failed_login_state(self, *, ip: str, email: str, since: datetime) -> dict[str, tuple[int, datetime | None]]:
+        """Return the failure count and latest timestamp for each scope.
+
+        ``since`` is exclusive — only rows with ``attempted_at > since`` are
+        counted.  Reuses ``_to_iso`` so the SQL comparison is sound against
+        UTC-normalised stored values.
+        """
+        norm = _normalize_email(email)
+        since_iso = _to_iso(since)
+        result: dict[str, tuple[int, datetime | None]] = {}
+        with self._get_conn() as conn:
+            for scope, subject in ((SCOPE_IP, ip), (SCOPE_ACCOUNT, norm)):
+                row = conn.execute(
+                    "SELECT COUNT(*), MAX(attempted_at) FROM login_attempts"
+                    " WHERE scope = ? AND subject = ? AND attempted_at > ?",
+                    (scope, subject, since_iso),
+                ).fetchone()
+                count = row[0]
+                latest = _from_iso(row[1]) if row[1] is not None else None
+                result[scope] = (count, latest)
+        return result
+
+    def clear_failed_logins_for_account(self, email: str) -> int:
+        """Delete SCOPE_ACCOUNT rows for the normalised email.
+
+        Must not touch SCOPE_IP rows — see throttle module docstring.
+        Returns the number of rows deleted.
+        """
+        norm = _normalize_email(email)
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "DELETE FROM login_attempts WHERE scope = ? AND subject = ?",
+                (SCOPE_ACCOUNT, norm),
+            )
+            self._commit(conn)
+            return cursor.rowcount
+
+    def count_login_attempt_rows(self) -> int:
+        """Return the total row count of login_attempts.
+
+        Exists for the purge test; see test_auth_throttle.py.
+        """
+        with self._get_conn() as conn:
+            return conn.execute("SELECT COUNT(*) FROM login_attempts").fetchone()[0]
 
     # ── Internal helpers ─────────────────────────────────────────────────
 

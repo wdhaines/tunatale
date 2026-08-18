@@ -4216,7 +4216,7 @@
     },
     "/api/auth/login": {
       "post": {
-        "description": "Verify credentials and set a session cookie.\n\nBoth unknown-email and wrong-password produce the same 401 body \u2014 no\nuser enumeration.",
+        "description": "Verify credentials and set a session cookie.\n\nBoth unknown-email and wrong-password produce the same 401 body \u2014 no\nuser enumeration.\n\n**Only failed attempts are recorded.** That is why the Playwright suite \u2014\nwhich runs with ``AUTH_ENABLED=true`` and signs in several times per run\nfrom one address (``frontend/tests/global-setup.ts``) \u2014 is unaffected by\nthe throttle, rather than the limits having been loosened until it went\ngreen. Knowing the password is not an attack.\n\n**The 429 is not an enumeration oracle.** Attempts are recorded against the\nsubmitted address whether or not it names a real account, so a nonexistent\nemail locks out on exactly the same schedule as a real one. Were failures\nrecorded only for accounts that exist, the status code would answer \"does\nthis user exist?\" for anyone willing to send five requests.",
         "operationId": "login_api_auth_login_post",
         "requestBody": {
           "content": {

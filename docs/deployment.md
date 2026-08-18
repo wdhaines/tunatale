@@ -100,6 +100,45 @@ origin — measured 2026-08-18 in Chromium: a `Secure` cookie set over
 `http://localhost` **is** returned on later requests, which is why local dev and
 the E2E suite work without TLS.
 
+### Login throttling
+
+Failed login attempts are rate-limited at two independent scopes to defend
+against brute-force and distributed enumeration:
+
+- **Per-account** (default: 5 attempts / hour): locks the email address,
+  regardless of source IP.  A botnet targeting one account from many addresses
+  is stopped here.
+- **Per-IP** (default: 20 attempts / hour): locks the address, regardless of
+  which accounts were targeted.  A user-enumeration sweep against many
+  accounts from one address is stopped here.
+
+Both limits use exponential backoff — each additional failure beyond the
+threshold doubles the wait, starting at 60 seconds and capping at 30 minutes.
+A **successful** login clears only the account counter (not the IP counter),
+so a user who mistypes their password and then gets it right starts clean,
+but an attacker who owns one valid account cannot use that account's
+successes to reset the per-IP budget.
+
+Only *failed* attempts are recorded.  The Playwright E2E suite, which signs
+in repeatedly from one address, is unaffected.
+
+When locked out, the response is `429 Too Many Requests` with a `Retry-After`
+header stating the number of whole seconds to wait.  The lock lapses on its
+own after the backoff expires; no administrator intervention is needed.
+Attempts against a nonexistent email lock on the same schedule as a real one,
+so the 429 is not a user-enumeration oracle.
+
+**`TRUSTED_PROXY_HEADER`** must be set to `X-Forwarded-For` behind the
+Caddy reverse proxy (P2.2).  Without it every request appears to come from
+the proxy's address and all callers share one throttle bucket.  The backend
+reads the **rightmost** entry in the header, which is the one the trusted
+proxy vouched for; the leftmost is attacker-controlled.
+
+The accepted trade-off: anyone who can reach the login endpoint can lock a
+known account out for up to 30 minutes by failing on purpose.  That is the
+standard cost of account lockout, it is time-bounded, and it is preferred
+over leaving distributed guessing unthrottled.
+
 ## Backups and restore
 
 ### Why this section exists before the deployment does

@@ -19,6 +19,7 @@ from app.api.models import (
     LogoutResponse,
     MeResponse,
 )
+from app.auth import throttle
 from app.auth.dependencies import require_user
 from app.auth.models import User
 from app.auth.session import (
@@ -66,14 +67,38 @@ async def login(request: Request, body: LoginRequest) -> Response:
 
     Both unknown-email and wrong-password produce the same 401 body — no
     user enumeration.
+
+    **Only failed attempts are recorded.** That is why the Playwright suite —
+    which runs with ``AUTH_ENABLED=true`` and signs in several times per run
+    from one address (``frontend/tests/global-setup.ts``) — is unaffected by
+    the throttle, rather than the limits having been loosened until it went
+    green. Knowing the password is not an attack.
+
+    **The 429 is not an enumeration oracle.** Attempts are recorded against the
+    submitted address whether or not it names a real account, so a nonexistent
+    email locks out on exactly the same schedule as a real one. Were failures
+    recorded only for accounts that exist, the status code would answer "does
+    this user exist?" for anyone willing to send five requests.
     """
     auth_db = getattr(request.app.state, "auth_db", None)
     if auth_db is None:
         raise HTTPException(status_code=503, detail="Auth unavailable")
 
+    ip = throttle.client_ip(request)
+    lock = throttle.check(auth_db, ip=ip, email=body.email)
+    if lock is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed login attempts",
+            headers={"Retry-After": str(lock.retry_after)},
+        )
+
     user = auth_db.verify_credentials(body.email, body.password)
     if user is None:
+        throttle.record_failure(auth_db, ip=ip, email=body.email)
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    throttle.clear_account(auth_db, email=body.email)
 
     token, _session = auth_db.create_session(user.id)
 
