@@ -217,6 +217,13 @@ class Settings(BaseSettings):
     # app.auth.database.AuthDatabase.create_session. P1.2 rotates the token on
     # login rather than extending an existing session.
     session_ttl_days: int = 30
+    # Trusted proxy header for client-IP resolution.  Empty means "read the
+    # socket peer", which is right for direct exposure and for local dev.
+    # Behind the Caddy reverse proxy the socket peer is the proxy, so every
+    # user in the world would share one throttle bucket and the per-IP limit
+    # would be worse than useless — set it to X-Forwarded-For there.  See
+    # app.auth.throttle.client_ip.
+    trusted_proxy_header: str = ""
 
 
 def prod_profile_problems(s: Settings) -> list[str]:
@@ -247,6 +254,12 @@ def prod_profile_problems(s: Settings) -> list[str]:
     if not s.cors_origins and not s.cors_allow_origin_regex:
         problems.append(
             "cors_origins is empty and no cors_allow_origin_regex is set — no browser client could reach the API"
+        )
+    if s.auth_enabled and not s.trusted_proxy_header:
+        problems.append(
+            "trusted_proxy_header is unset — behind the reverse proxy every request"
+            " appears to come from the proxy, so login throttling would treat all"
+            " callers as one client (set TRUSTED_PROXY_HEADER=X-Forwarded-For)"
         )
     return problems
 

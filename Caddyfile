@@ -2,6 +2,10 @@
 	root * /srv
 
 	handle /api/* {
+		# Caddy appends the real peer to X-Forwarded-For; the backend reads
+		# the rightmost entry (app.auth.throttle.client_ip), and
+		# TRUSTED_PROXY_HEADER=X-Forwarded-For must be set on the API or
+		# login throttling collapses every caller into one bucket.
 		reverse_proxy api:8000
 	}
 

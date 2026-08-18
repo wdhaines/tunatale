@@ -84,6 +84,7 @@ def test_prod_profile_clean_when_fully_configured(monkeypatch, tmp_path):
         auth_enabled=True,
         session_secret="a-real-secret",
         cors_origins=["https://tunatale.example.com"],
+        trusted_proxy_header="X-Forwarded-For",
     )
     assert prod_profile_problems(s) == []
 
@@ -98,6 +99,7 @@ def test_prod_profile_clean_when_fully_configured(monkeypatch, tmp_path):
         ({"cors_origins": ["*"]}, "cors_origins"),
         ({"cors_allow_origin_regex": ".*"}, "cors_allow_origin_regex"),
         ({"cors_origins": []}, "cors_origins"),
+        ({"trusted_proxy_header": ""}, "trusted_proxy_header"),
     ],
 )
 def test_prod_profile_flags_each_misconfiguration(monkeypatch, tmp_path, overrides, fragment):
@@ -108,6 +110,7 @@ def test_prod_profile_flags_each_misconfiguration(monkeypatch, tmp_path, overrid
         "auth_enabled": True,
         "session_secret": "a-real-secret",
         "cors_origins": ["https://tunatale.example.com"],
+        "trusted_proxy_header": "X-Forwarded-For",
     }
     s = _clean_settings(monkeypatch, tmp_path, **{**base, **overrides})
     problems = prod_profile_problems(s)
@@ -133,6 +136,7 @@ def test_prod_profile_ignores_wildcard_regex_only_when_scoped(monkeypatch, tmp_p
         session_secret="a-real-secret",
         cors_origins=[],
         cors_allow_origin_regex=r"^https://[a-z0-9-]+\.example\.com$",
+        trusted_proxy_header="X-Forwarded-For",
     )
     assert prod_profile_problems(s) == []
 
@@ -173,6 +177,7 @@ async def test_lifespan_starts_when_the_prod_profile_is_satisfied(tmp_path, monk
     monkeypatch.setattr(settings, "auth_enabled", True)
     monkeypatch.setattr(settings, "session_secret", "a-real-secret")
     monkeypatch.setattr(settings, "cors_origins", ["https://tunatale.example.com"])
+    monkeypatch.setattr(settings, "trusted_proxy_header", "X-Forwarded-For")
     monkeypatch.setattr(settings, "pipeline_autostart", False)
 
     test_app = FastAPI()

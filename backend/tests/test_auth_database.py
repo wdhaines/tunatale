@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from app.auth.database import (
+    SCHEMA_VERSION,
     AuthDatabase,
     EmailExistsError,
     SchemaTooNewError,
@@ -313,12 +314,16 @@ class TestIdempotentMigration:
             user = db.create_user("a@b.com", "pw")
             user_id = user.id
         with AuthDatabase(str(db_path)) as db:
-            # PRAGMA user_version should be 1
+            # Reopening must leave the stamped version alone. Asserted against
+            # SCHEMA_VERSION rather than a literal: this test is about the
+            # migration being IDEMPOTENT, not about which version we are on, and
+            # a literal here goes red on every future bump for no reason (it did
+            # exactly that on the v1 → v2 bump that added login_attempts).
             conn = db._conn if db._in_memory else sqlite3.connect(str(db_path))
             version = conn.execute("PRAGMA user_version").fetchone()[0]
             if not db._in_memory:
                 conn.close()
-            assert version == 1
+            assert version == SCHEMA_VERSION
             assert db.get_user_by_id(user_id) is not None
 
 
