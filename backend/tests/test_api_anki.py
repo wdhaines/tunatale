@@ -257,3 +257,104 @@ class TestBuildMediaFn:
         from app.cards.media.query_llm import IMAGE_QUERY_MODEL_VERSION
 
         assert db.get_image_query("sodišče", "court", IMAGE_QUERY_MODEL_VERSION) == "courtroom interior"
+
+
+class TestPreStagesNextSyncsImages:
+    """The sync schedules a background image pre-stage (tunatale-6xa).
+
+    Sociable: the REAL ``prestage_production_images`` runs, driven by the real
+    endpoint, with only ``fetch_card_media`` (the designated Pixabay/Forvo
+    boundary in ``mock_allowlist.txt``) faked. No LLM call happens because
+    ``app.state.llm`` is unset and ``generate_image_query`` short-circuits to the
+    English gloss when ``llm is None``.
+
+    What it proves: after a sync, a word awaiting production has an image in TT —
+    so the NEXT sync's promotion takes its local-copy branch instead of paying a
+    live LLM+Pixabay round trip. That is the whole point of the change; the 10
+    cards/sync mint pacing is deliberately unchanged.
+    """
+
+    @staticmethod
+    def _seed_awaiting_production(db, word="beslutning", english="decision", note_id=1000, card_id=10000):
+        from datetime import datetime
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
+
+        unit = SyntacticUnit(
+            text=word,
+            translation=english,
+            word_count=1,
+            difficulty=1,
+            source="anki",
+            frequency=0,
+            disambig_key="noun",
+        )
+        return db.upsert_by_guid(
+            unit,
+            "sl",
+            {
+                Direction.RECOGNITION: DirectionState(
+                    direction=Direction.RECOGNITION,
+                    due_at=due_at_rollover_utc(anki_today()),
+                    state=SRSState.REVIEW,
+                    reps=9,
+                    anki_card_id=card_id,
+                    last_review=datetime.fromisoformat("2026-08-01T12:00:00+00:00"),
+                )
+            },
+            anki_note_id=note_id,
+        )
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    async def test_a_real_sync_prestages_an_image_for_the_next_one(self, fake_driver, tmp_path, monkeypatch):
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path / "media")
+        db = app.state.srs_db
+        coll_id = self._seed_awaiting_production(db)
+
+        class _M:
+            image_bytes, image_ext, audio_bytes, audio_source = b"IMGBYTES", "jpg", None, None
+
+        async def _fake_fetch(*a, **k):
+            return _M()
+
+        with patch("app.api.anki.fetch_card_media", _fake_fetch):
+            response = await _post_peer_sync()
+
+        assert response.status_code == 200
+        filename = db.get_image_filename(coll_id)
+        assert filename is not None, "the background pre-stage did not store an image"
+        assert (tmp_path / "media" / filename).read_bytes() == b"IMGBYTES"
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    async def test_a_dry_run_prestages_nothing(self, fake_driver, tmp_path, monkeypatch):
+        """A dry run must not spend live media fetches — it changes nothing by definition."""
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path / "media")
+        db = app.state.srs_db
+        coll_id = self._seed_awaiting_production(db)
+
+        async def _explode(*a, **k):  # pragma: no cover - must never be called
+            raise AssertionError("dry run must not fetch media")
+
+        with patch("app.api.anki.fetch_card_media", _explode):
+            response = await _post_peer_sync(params={"dry_run": "true"})
+
+        assert response.status_code == 200
+        assert db.get_image_filename(coll_id) is None
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    async def test_the_limit_setting_can_disable_prestaging(self, fake_driver, tmp_path, monkeypatch):
+        """0 is the off switch — a user on a metered connection can stop the fetches."""
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path / "media")
+        monkeypatch.setattr("app.config.settings.prestage_images_limit", 0)
+        db = app.state.srs_db
+        coll_id = self._seed_awaiting_production(db)
+
+        async def _explode(*a, **k):  # pragma: no cover - must never be called
+            raise AssertionError("prestaging is disabled")
+
+        with patch("app.api.anki.fetch_card_media", _explode):
+            response = await _post_peer_sync()
+
+        assert response.status_code == 200
+        assert db.get_image_filename(coll_id) is None
