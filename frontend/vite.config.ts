@@ -26,6 +26,19 @@ const serverOptions = {
 		}
 	}),
 	allowedHosts: ['.ts.net'],
+	// The test scripts sync SvelteKit's generated tree into `.svelte-kit-test`
+	// (see svelte.config.js::outDir) so they do not rewrite the one this dev
+	// server is using. That is necessary but NOT sufficient: vite watches the
+	// project root, so it saw the 32 files landing in the new directory and
+	// reloaded the page anyway — verified 2026-08-18, the redirect alone left
+	// the reload exactly as it was.
+	//
+	// ⚠️ Ignoring THIS path is safe precisely because nothing here ever reads it:
+	// it is written only by `bun run check` / vitest. Do NOT extend this to
+	// `.svelte-kit/generated`, which is how a newly-added route reaches a running
+	// dev server — ignoring that would trade a visible reload for a dev server
+	// that silently misses new routes.
+	watch: { ignored: ['**/.svelte-kit-test/**'] },
 	proxy: USE_SSL
 		? { '/api': { target: `${API_PROTO}://localhost:${process.env.API_PORT ?? 8000}`, secure: false } }
 		: { '/api': `http://localhost:${process.env.API_PORT ?? 8000}` }

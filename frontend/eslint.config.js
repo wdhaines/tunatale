@@ -28,6 +28,7 @@ export default ts.config(
 	{
 		ignores: [
 			'.svelte-kit/',
+			'.svelte-kit-test/',
 			'build/',
 			'node_modules/',
 			// .svelte.ts files use Svelte 5 rune syntax in .ts context — handled by svelte-check

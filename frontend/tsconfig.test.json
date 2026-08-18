@@ -1,0 +1,6 @@
+// `bun run check` only. Identical to tsconfig.json except it reads the
+// generated tree from `.svelte-kit-test`, which the test scripts sync to so
+// they do not reload the dev server's page. See svelte.config.js::outDir.
+{
+	"extends": ["./.svelte-kit-test/tsconfig.json", "./tsconfig.base.json"]
+}

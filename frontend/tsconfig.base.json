@@ -1,0 +1,22 @@
+// Shared compiler options for both tsconfigs. They differ ONLY in which
+// generated SvelteKit config they layer on top of (.svelte-kit vs
+// .svelte-kit-test), and duplicating these keys across the two would be a
+// silent-drift hazard: type checking would quietly diverge between the
+// editor and the gate.
+//
+// Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias
+// except $lib which is handled by https://svelte.dev/docs/kit/configuration#files
+{
+	"compilerOptions": {
+		"rewriteRelativeImportExtensions": true,
+		"allowJs": true,
+		"checkJs": true,
+		"esModuleInterop": true,
+		"forceConsistentCasingInFileNames": true,
+		"resolveJsonModule": true,
+		"skipLibCheck": true,
+		"sourceMap": true,
+		"strict": true,
+		"moduleResolution": "bundler"
+	}
+}
