@@ -1,0 +1,64 @@
+services:
+  init:
+    build:
+      context: .
+      target: api
+    platform: linux/amd64
+    user: root
+    volumes:
+      - data:/data
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mkdir -p /data/media /data/output/audio /data/.tunatale/logs
+        UV_CACHE_DIR=/data/.uv-cache uv run --isolated --no-project --python 3.14 --with anki python -c "import anki; print('pre-warmed')"
+        chown -R appuser:appuser /data
+
+  api:
+    build:
+      context: .
+      target: api
+    platform: linux/amd64
+    env_file: backend/.env
+    environment:
+      HOME: /data
+      MEDIA_DIR: /data/media
+      AUDIO_DIR: /data/output/audio
+      DATABASE_URL: sqlite:////data/tunatale_sl.db
+      DATABASE_URLS: '{"sl": "sqlite:////data/tunatale_sl.db", "no": "sqlite:////data/tunatale_no.db"}'
+      LEMMATIZER_TYPE: lowercase
+      UV_CACHE_DIR: /data/.uv-cache
+    volumes:
+      - data:/data
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  web:
+    build:
+      context: .
+      target: web
+    # ⚠️ Deliberately NOT pinned to linux/amd64, unlike api/init above.
+    # Caddy is a Go binary and SEGVs under this Mac's QEMU amd64 emulation —
+    # a panic in crypto/x509.parseCertificate inside x509roots/fallback's init,
+    # before it serves anything. Pinning it here makes `docker compose up`
+    # unusable on an arm64 dev machine for no production benefit: on the GCP
+    # host and on a CI runner, native IS amd64.
+    # The amd64 guarantee for the SHIPPED artifact therefore belongs to the
+    # build command (`docker build --platform linux/amd64`) and to tunatale-pse,
+    # not to this file. Do not "fix" this by adding a platform key — verify the
+    # reasoning in tunatale-014's notes first.
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+
+volumes:
+  data:

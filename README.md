@@ -70,6 +70,31 @@ cd frontend && bun run test:coverage   # frontend only (100% per-file via a cust
 
 CI runs four parallel jobs: backend (lint + mock-boundary and language-literal checkers + pytest), frontend (svelte-check + vitest), oracle-parity, and peer-sync. The Anki oracle harness (`--run-oracle`) spawns Anki's actual scheduler in a subprocess via `uv run --with anki python` — production code never imports Anki.
 
+## Deployment (Docker Compose)
+
+A production-ready Docker Compose stack is included. It builds a multi-stage image (Bun for the frontend, uv + Python 3.14 for the API, Caddy for serving) and runs two services behind a single port.
+
+```bash
+# 1. Create your .env (copy .env.example, set GROQ_API_KEY and other values)
+cd backend
+cp .env.example .env
+# edit .env with your keys
+
+# 2. Build and start the stack
+cd ..
+docker compose build
+docker compose up -d
+
+# 3. Verify
+curl -s localhost/api/health   # should return {"status":"ok",...}
+```
+
+The stack uses `HOME=/data` to relocate all `~/.tunatale/*` paths (logs, backups, alignment cache, sync log) onto a named volume. The `media_dir` and `audio_dir` are also volume-backed. An init service pre-creates the required directories so the health check passes on first boot.
+
+Caddy serves the static SPA at `/` and reverse-proxies `/api` to the backend — no CORS configuration needed (same-origin).
+
+See `Dockerfile`, `docker-compose.yml`, and `Caddyfile` in the repo root.
+
 ## Stack
 
 - **Backend** — FastAPI on Python 3.14, `uv` for dependencies, SQLite for SRS + content storage. Per-language plugin registry so adding an L2 doesn't touch the core.
