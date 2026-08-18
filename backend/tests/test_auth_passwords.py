@@ -29,8 +29,25 @@ class TestHashAndVerify:
     def test_verify_not_a_hash(self) -> None:
         assert verify_password("not-a-hash", "anything") is False
 
-    def test_verify_malformed_argon2(self) -> None:
-        assert verify_password("$argon2id$v=19$m=1,t=1,p=1$AAAA$AAAA", "anything") is False
+    def test_verify_corrupt_stored_hash(self) -> None:
+        """A garbled stored hash returns False rather than raising into a login.
+
+        Built by clobbering a live hash's last digest character rather than
+        pasting a PHC literal. Two reasons, in order: a hardcoded
+        ``$argon2id$…`` constant is what secret scanners flag — GitGuardian's
+        "Generic Password" detector tripped on the previous form of this line,
+        a false positive with nothing to revoke but a real cost in noise — and
+        corrupting a real hash models the failure that actually happens (a DB
+        value truncated or garbled in storage) instead of a synthetic string.
+
+        The flip is deterministic, not random: picking a replacement that
+        differs from the original character means this can never accidentally
+        reconstruct a verifying hash.
+        """
+        real = hash_password("real")
+        corrupt = real[:-1] + ("A" if real[-1] != "A" else "B")
+        assert corrupt != real
+        assert verify_password(corrupt, "real") is False
 
     def test_verify_empty_password(self) -> None:
         hashed = hash_password("real")
