@@ -342,3 +342,35 @@ async def test_lifespan_leaves_slicers_empty_when_not_installed(tmp_path, monkey
     test_app = FastAPI()
     async with lifespan(test_app):
         assert test_app.state.renderer._slicers == {}
+
+
+async def test_lifespan_opens_the_auth_db(tmp_path, monkeypatch):
+    """The identity store is opened at startup and points at its own setting.
+
+    This exists because nothing else can catch its absence. ``require_user``
+    fails CLOSED, so a missing ``app.state.auth_db`` does not error — every
+    request simply answers 401, *including a correct login*. The route-coverage
+    sweep in test_auth_route_coverage.py runs without a lifespan and asserts 401
+    everywhere, so it reads a completely unwired auth store as total success.
+
+    Verified by construction 2026-08-18: P1.2 shipped its dependency with no
+    lifespan wiring at all, 76/76 green, and this is the assertion that found it.
+    """
+    from app.auth.database import AuthDatabase
+    from app.config import settings
+    from app.main import lifespan
+
+    auth_path = tmp_path / "auth.db"
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setattr(settings, "auth_database_url", f"sqlite:///{auth_path}")
+    monkeypatch.setattr(settings, "llm_mode", "mock")
+
+    test_app = FastAPI()
+
+    async with lifespan(test_app):
+        assert isinstance(test_app.state.auth_db, AuthDatabase)
+        # It must be the file the SETTING names, not a per-language content DB
+        # and not an in-memory store that silently loses every user on restart.
+        assert auth_path.exists()
+        user = test_app.state.auth_db.create_user("lifespan@example.com", "pw")
+        assert test_app.state.auth_db.get_user_by_id(user.id) is not None
