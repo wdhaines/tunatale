@@ -4,8 +4,74 @@ Operational runbook for running TunaTale somewhere other than the author's
 laptop. Built incrementally alongside the `Deploy` epic; sections appear as the
 corresponding work lands.
 
-Provisioning, auth, and cutover are not written yet. What follows is the part
-that already applies to the laptop today.
+Provisioning and cutover are not written yet. What follows is the part that
+already applies to the laptop today, plus account management, which landed with
+Phase 1 of the auth work.
+
+## Accounts
+
+There is **no self-serve signup**, by design, at any point in Phases 1–3. Every
+account is created from the command line, including the first one on a fresh
+box. Until you run this, nobody can log in — the API answers 401 to everything
+except `/api/health`.
+
+### Creating the first account
+
+On a deployed container:
+
+```bash
+docker compose exec -T api \
+  uv run python -m app.auth.cli create-user you@example.com
+# then type the password and press ctrl-D, or pipe it:
+printf 's3cret\n' | docker compose exec -T api \
+  uv run python -m app.auth.cli create-user you@example.com
+```
+
+Locally, drop the `docker compose exec -T api` prefix and run it from
+`backend/`.
+
+⚠️ **`-T` matters.** Without it `docker compose exec` allocates a TTY, the CLI
+takes that as an interactive session and prompts via `getpass`, and a piped
+password is never read — the command then blocks with no visible reason.
+
+### The other commands
+
+```bash
+uv run python -m app.auth.cli list-users
+uv run python -m app.auth.cli set-password you@example.com     # revokes that account's sessions
+uv run python -m app.auth.cli deactivate-user you@example.com  # revokes its sessions too
+```
+
+`set-password` and `deactivate-user` both delete the account's server-side
+sessions. That is the point of them: a password changed because it may have
+leaked is useless if the sessions opened with it keep working.
+
+There is deliberately no `activate-user`. Re-enabling an account somebody
+disabled should take more thought than pressing ↑ and Enter; do it from a
+Python shell against `AuthDatabase.set_active`.
+
+### ⚠️ Never pass a password in argv
+
+There is no `--password` flag and adding one would be a security bug — argv is
+visible in shell history, in `ps` output to every user on the box, and in
+process-accounting logs. The two supported sources are stdin and
+`TT_AUTH_PASSWORD`:
+
+```bash
+TT_AUTH_PASSWORD=s3cret docker compose exec -T api \
+  uv run python -m app.auth.cli create-user you@example.com
+```
+
+An environment variable is not free either — it is readable from `/proc` on
+some systems and lands in the deploy tool's logs — but it beats argv and is the
+only option a non-interactive deploy has.
+
+### Turning the gate on
+
+`auth_enabled` defaults **False**, which leaves the API open. The production
+profile guard (`TT_ENV=prod`) refuses to boot without it set True, so a real
+deployment cannot forget. Create the account first, then flip the flag —
+the other way round locks you out of your own box.
 
 ## Backups and restore
 

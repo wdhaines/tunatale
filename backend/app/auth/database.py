@@ -266,6 +266,17 @@ class AuthDatabase:
                 return None
             return self._row_to_user(row)
 
+    def list_users(self) -> list[User]:
+        """Every account, oldest first. Used by the bootstrap CLI.
+
+        Returns full ``User`` objects, ``password_hash`` included, because that
+        is what the row is — it is the CALLER's job not to print it, and
+        ``cli.py`` does not.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
+            return [self._row_to_user(row) for row in rows]
+
     def set_password(self, user_id: int, password: str) -> None:
         """Set a new password for *user_id* and delete that user's sessions."""
         with self._get_conn() as conn:
