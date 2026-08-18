@@ -498,9 +498,12 @@
 		font-weight: 600;
 		cursor: pointer;
 	}
-	/* Mobile-first: ratings are a 2-up grid with big touch targets; images are
-	   capped by viewport height (not a fixed px box) so they shrink on short
-	   screens and never push the buttons off-screen, whatever the aspect ratio. */
+	/* Mobile-first: ratings are a 2-up grid with big touch targets.
+	   NOTE: the viewport-height image caps below do NOT keep the buttons on
+	   screen — they bound each IMAGE, never the SUM of image + text + grammar +
+	   note + ratings. That is what the docked bar at the end of this file is
+	   for; this comment used to claim the caps were sufficient, which is the
+	   belief that shipped tunatale-asi. */
 	.ratings button {
 		margin-top: 0;
 		flex: 1 1 calc(50% - 0.5rem);
@@ -528,6 +531,46 @@
 	@media (hover: none) {
 		.key-hint {
 			display: none;
+		}
+	}
+
+	/* ── Small viewports: dock the grade row to the bottom of the screen ──
+	   The four grade buttons are the only controls that MUST be reachable
+	   without scrolling, and no per-element clamp can guarantee that: `.gram`
+	   and `.note` are variable-length, so the card's total height is unbounded
+	   by construction. Taking the row out of flow is the only fix that holds
+	   for every content combination (tunatale-asi).
+
+	   `position: sticky` was tried first and cannot work here: a sticky element
+	   is confined to its containing block, and `.ratings` is the second-to-last
+	   child of `.drill-card` — with `.key-hint` hidden on touch devices it has
+	   about 12px of travel. It would read as correct and do nothing. */
+	@media (max-width: 640px) {
+		.ratings {
+			position: fixed;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			margin-top: 0;
+			padding: 0.5rem 0.75rem;
+			/* Opaque: the card scrolls underneath this. */
+			background: var(--color-surface);
+			border-top: 1px solid var(--color-border);
+			/* Above page content, below the sticky nav (50) and modals (100+). */
+			z-index: 20;
+			/* Clear of the iOS home indicator. */
+			padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+		}
+		/* Reserve the height the bar no longer occupies in flow, or it would
+		   permanently cover the last line of the card. The arithmetic is two
+		   44px button rows + the 0.5rem row gap + the bar's own vertical
+		   padding; the "does not cover the last line" assertion in
+		   tests/review-grade-buttons.spec.ts is what catches it if this drifts
+		   out of step with the button sizing above. */
+		.drill-card {
+			padding-bottom: calc(
+				(2 * 44px) + 0.5rem + 1rem + env(safe-area-inset-bottom, 0px)
+			);
 		}
 	}
 
