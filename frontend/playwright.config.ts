@@ -157,8 +157,26 @@ export default defineConfig({
 			// door is what a CI-only fork decays into: config nobody has ever seen run.
 			// `playwright install chromium` provides both binaries, so this costs no
 			// extra download.
-			channel: 'chromium',
-			use: { ...devices['Desktop Chrome'] }
+			//
+			// ⚠️⚠️ IT MUST LIVE INSIDE `use`, AND IT DID NOT UNTIL 2026-08-18.
+			// `channel` is a TestOptions field, so as a sibling of `use` — where it
+			// sat from 18f3a89 until now — Playwright silently ignored it and every
+			// run, local and CI, kept using chrome-headless-shell. Nothing said so:
+			// the config parsed, the comment above described a mitigation that was
+			// never in effect, and the suite went on segfaulting (tunatale-vnf.15,
+			// three sightings in three different specs).
+			//
+			// Measured both ways before and after, because "it parses" proved
+			// nothing the first time:
+			//   raw chromium.launch({channel:'chromium'}) → chromium-1234           (full)
+			//   the RUNNER, channel beside `use`         → chromium_headless_shell-1234
+			//   the RUNNER, channel inside `use`         → chromium-1234           (full)
+			// The probe is `ps -ax -o command= | grep ms-playwright` while a spec
+			// runs. Re-run it if you touch this block — an inert option here looks
+			// exactly like a working one.
+			//
+			// The spread comes FIRST so a device descriptor cannot clobber it.
+			use: { ...devices['Desktop Chrome'], channel: 'chromium' }
 		}
 	]
 });
