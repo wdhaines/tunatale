@@ -15,8 +15,14 @@ A password in argv is visible in shell history, in ``ps`` output to every user
 on the box, and in any process-accounting log. The only two sources are stdin
 and the ``TT_AUTH_PASSWORD`` environment variable:
 
-    echo 's3cret' | uv run python -m app.auth.cli create-user alice@example.com
-    TT_AUTH_PASSWORD=s3cret uv run python -m app.auth.cli create-user alice@…
+    read -rs NEW_PASSWORD                       # prompts, does not echo
+    printf '%s\n' "$NEW_PASSWORD" | uv run python -m app.auth.cli create-user alice@example.com
+    TT_AUTH_PASSWORD="$NEW_PASSWORD" uv run python -m app.auth.cli create-user alice@example.com
+
+The examples read a shell variable rather than showing a literal on purpose: a
+runbook that prints ``TT_AUTH_PASSWORD=hunter2`` invites the reader to paste a
+real password into the exact shell history this module exists to keep it out
+of. (It also trips secret scanners, which is the cheap half of the reason.)
 
 An interactive terminal is prompted via ``getpass``, which does not echo.
 """

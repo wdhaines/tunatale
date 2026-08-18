@@ -22,8 +22,9 @@ On a deployed container:
 ```bash
 docker compose exec -T api \
   uv run python -m app.auth.cli create-user you@example.com
-# then type the password and press ctrl-D, or pipe it:
-printf 's3cret\n' | docker compose exec -T api \
+# then type the password and press ctrl-D, or pipe it from a shell variable:
+read -rs NEW_PASSWORD          # prompts without echoing
+printf '%s\n' "$NEW_PASSWORD" | docker compose exec -T api \
   uv run python -m app.auth.cli create-user you@example.com
 ```
 
@@ -58,9 +59,13 @@ process-accounting logs. The two supported sources are stdin and
 `TT_AUTH_PASSWORD`:
 
 ```bash
-TT_AUTH_PASSWORD=s3cret docker compose exec -T api \
+TT_AUTH_PASSWORD="$NEW_PASSWORD" docker compose exec -T api \
   uv run python -m app.auth.cli create-user you@example.com
 ```
+
+Both examples read a shell variable rather than showing a literal. A runbook
+that prints a real-looking password invites the reader to paste one into the
+very shell history this CLI exists to keep it out of.
 
 An environment variable is not free either — it is readable from `/proc` on
 some systems and lands in the deploy tool's logs — but it beats argv and is the
