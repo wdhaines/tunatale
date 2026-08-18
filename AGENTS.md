@@ -231,7 +231,8 @@ explicit instructions always win. See "Beads + TunaTale specifics" below for
 exactly what this does and doesn't replace.
 
 ```bash
-bd ready                                     # what's unblocked right now
+bd ready --exclude-type=epic                 # what's unblocked right now
+bd ready --parent <epic> --exclude-type=epic # ...scoped to one theme
 bd show <id> --json | jq -r '.[0].description'  # full detail — NEVER plain `bd show` for technical content, see below
 bd create "title" -d "..." -p 0-4            # new issue (0 critical .. 4 backlog)
 bd dep add <child> <parent>                  # child is blocked by parent — see below, this direction is easy to get backwards
@@ -250,6 +251,26 @@ Committing and pushing **this** repo's code is also standing-authorized as of
 2026-08-13 — the gate moved to merges into `main`. See "Committing, Pushing, and
 Merging" above; do not re-derive the policy from this line.
 Full reference: `bd --help` / `bd prime`.
+
+**Bare `bd ready` is the wrong command and the listing says so.** Epics are
+containers, not claimable work, so they are pure noise in a ready queue —
+measured 2026-08-18: 44 rows bare, 35 with `--exclude-type=epic`. `--parent`
+scopes to one theme (`tunatale-kbb` alone: 11), which is the answer to a big
+epic's children scattering across a priority-sorted global list rather than
+restructuring the epic.
+
+⚠️ **bd's JSON is not one shape, and a wrong field name returns a clean
+negative rather than an error.** Verify any field against a record whose answer
+you already know before believing a count. Three confirmed shapes, all of which
+produced confident wrong conclusions on 2026-08-18:
+- The field is **`parent`**, not `parent_id`. Querying `parent_id` reported
+  `parented: 0` on a backlog where a child had just been created with
+  `--parent`.
+- **`dependency_count` counts only `blocks` edges**, while the `dependencies`
+  array carries `blocks`, `parent-child` and `discovered-from`. They disagree
+  on 47 of 58 open issues, which looks exactly like a bug and is not one.
+- `bd show --json` uses a different shape again from `bd list` / `bd export`
+  (this is the one that ate a `depends_on_id` query — see `.claude/rules/tdd.md`).
 
 **Two confirmed bd bugs, hands-on-verified, both filed upstream — do not
 rediscover these blind:**
