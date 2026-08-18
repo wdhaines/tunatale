@@ -103,6 +103,31 @@ describe("/login", () => {
     await waitFor(() => expect(mockGoto).toHaveBeenCalled());
   });
 
+  it("renders Retry-After wait when a 429 includes the header", async () => {
+    const err = Object.assign(new Error("POST /api/auth/login: Too many failed login attempts"), {
+      retryAfter: 300,
+    });
+    mockLogin.mockRejectedValue(err);
+    const { getByLabelText, getByRole, findByRole } = render(Login);
+
+    await submit(getByLabelText, getByRole);
+
+    const alert = await findByRole("alert");
+    expect(alert.textContent).toContain("Too many failed login attempts");
+    expect(alert.textContent).toContain("about 5 minutes");
+  });
+
+  it("does not append an undefined string when Retry-After is absent", async () => {
+    mockLogin.mockRejectedValue(new Error("POST /api/auth/login: Too many failed login attempts"));
+    const { getByLabelText, getByRole, findByRole } = render(Login);
+
+    await submit(getByLabelText, getByRole);
+
+    const alert = await findByRole("alert");
+    expect(alert.textContent).toContain("Too many failed login attempts");
+    expect(alert.textContent).not.toContain("undefined");
+  });
+
   describe("the `next` parameter is attacker-controllable", () => {
     // Each of these is a real open-redirect payload: a login link mailed to a
     // user that hands them back to a lookalike host once they authenticate.

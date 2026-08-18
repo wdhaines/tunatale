@@ -627,7 +627,12 @@ export class TunaTaleAPI {
       } catch {
         /* error response body wasn't JSON */
       }
-      throw new Error(`${method} ${path}: ${detail || res.statusText || `HTTP ${res.status}`}`);
+      const err = new Error(
+        `${method} ${path}: ${detail || res.statusText || `HTTP ${res.status}`}`,
+      );
+      const retryAfter = res.headers.get("Retry-After");
+      if (retryAfter) (err as Error & { retryAfter?: number }).retryAfter = Number(retryAfter);
+      throw err;
     }
     return res.json();
   }

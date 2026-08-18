@@ -30,9 +30,18 @@
 	// `Error: ` from String(err), then the `METHOD /path: ` prefix api.ts adds so
 	// a thrown message names its request. Neither belongs in front of a person.
 	function humanise(err: unknown): string {
-		return String(err)
+		let msg = String(err)
 			.replace(/^Error:\s*/, '')
 			.replace(/^[A-Z]+ \/\S+:\s*/, '');
+		const retryAfter = (err as { retryAfter?: number } | undefined)?.retryAfter;
+		if (retryAfter) {
+			const wait =
+				retryAfter > 90
+					? `about ${Math.round(retryAfter / 60)} minutes`
+					: `${retryAfter} seconds`;
+			msg += `. Try again in ${wait}`;
+		}
+		return msg;
 	}
 
 	async function handleSubmit(event: SubmitEvent): Promise<void> {

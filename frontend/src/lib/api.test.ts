@@ -12,11 +12,32 @@ function mockOk(json: unknown): Response {
 }
 
 function mockFail(statusText = "Internal Server Error"): Response {
-  return { ok: false, statusText } as Response;
+  return { ok: false, statusText, headers: new Headers() } as unknown as Response;
 }
 
 function mockFailBody(body: unknown, status = 500, statusText = ""): Response {
-  return { ok: false, status, statusText, json: async () => body } as Response;
+  return {
+    ok: false,
+    status,
+    statusText,
+    json: async () => body,
+    headers: new Headers(),
+  } as unknown as Response;
+}
+
+function mockFailWithHeaders(
+  body: unknown,
+  headers: Record<string, string>,
+  status = 500,
+): Response {
+  const h = new Headers(headers);
+  return {
+    ok: false,
+    status,
+    statusText: "",
+    headers: h,
+    json: async () => body,
+  } as unknown as Response;
 }
 
 describe("BASE_URL SSR branch", () => {
@@ -2299,5 +2320,42 @@ describe("401 interception", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFailBody({ detail: "no" }, 401)));
 
     await expect(api.listCurricula()).rejects.toThrow();
+  });
+
+  it("surfaces Retry-After header as retryAfter on the thrown error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          mockFailWithHeaders(
+            { detail: "Too many failed login attempts" },
+            { "Retry-After": "300" },
+            429,
+          ),
+        ),
+    );
+
+    try {
+      await api.login("a@b.c", "wrong");
+      expect.fail("should have thrown");
+    } catch (err) {
+      expect((err as Error & { retryAfter: number }).retryAfter).toBe(300);
+      expect((err as Error).message).toContain("Too many failed login attempts");
+    }
+  });
+
+  it("omits retryAfter when no Retry-After header is present", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(mockFailBody({ detail: "Server error" }, 503)),
+    );
+
+    try {
+      await api.login("a@b.c", "wrong");
+      expect.fail("should have thrown");
+    } catch (err) {
+      expect((err as Error & { retryAfter?: number }).retryAfter).toBeUndefined();
+    }
   });
 });
