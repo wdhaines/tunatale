@@ -242,6 +242,47 @@ class CreateBaseCardRequest(BaseModel):
     translation: str = ""
 
 
+# ── Auth models ─────────────────────────────────────────────────────────────
+
+
+class LoginRequest(BaseModel):
+    """Request body for POST /api/auth/login."""
+
+    email: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    """Response of POST /api/auth/login.
+
+    Deliberately does NOT carry the session token — it lives in ``Set-Cookie``
+    only.  ``response_model_exclude_unset`` is not needed: every field is
+    always set.
+    """
+
+    email: str
+
+
+class MeResponse(BaseModel):
+    """Response of GET /api/auth/me.
+
+    Mirrors ``User`` without ``password_hash`` — that is a credential the
+    store round-trips, not something to publish.
+    """
+
+    email: str
+
+
+class LogoutResponse(BaseModel):
+    """Response of POST /api/auth/logout.
+
+    200 with a small model rather than 204: the repo is known-green on the
+    200-plus-model path, and the locked test accepts either.
+    """
+
+    status: str
+
+
 # ── Response models (BP ledger drain, bp-ledger-burndown-2026-07 stage 3) ────
 # Each mirrors a handler that returns a single fixed key-set — no conditional
 # keys, no delegation to a helper whose shape must be traced.

@@ -127,6 +127,93 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/auth/login": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Login
+     * @description Verify credentials and set a session cookie.
+     *
+     *     Both unknown-email and wrong-password produce the same 401 body — no
+     *     user enumeration.
+     */
+    post: operations["login_api_auth_login_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/logout": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Logout
+     * @description Delete the session row, then clear the cookie.
+     *
+     *     Succeeds even when no cookie is present or the session is already gone —
+     *     someone clicking "log out" on an expired session should not get an error.
+     */
+    post: operations["logout_api_auth_logout_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/me": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Me
+     * @description Return the current user's email.
+     *
+     *     ``require_user`` is declared on this route alone — the router is mounted
+     *     without a router-level dependency, since that would apply to login too.
+     *
+     *     **This endpoint answers the same way whether ``auth_enabled`` is True or
+     *     False**: 200 with the email for a valid cookie, 401 for an anonymous
+     *     caller. Measured 2026-08-18, both flag states. That is deliberate — "who
+     *     am I" is a question about the cookie, not about the gate — but it has a
+     *     consequence P1.4 must handle: a dev running with auth disabled still gets
+     *     401 here, so the frontend must not read a 401 from ``me`` as "redirect to
+     *     the login page" without checking whether auth is on at all.
+     *
+     *     The cookie lookup is repeated here rather than injected, because
+     *     ``require_user`` sits in ``dependencies=`` and its return value therefore
+     *     is not passed in. Switching to the injected form
+     *     (``user: User | None = Depends(require_user)``) would remove the second
+     *     lookup, but it would also make this endpoint 401 with a VALID cookie
+     *     whenever the flag is off — ``require_user`` short-circuits to ``None``
+     *     there — which is a semantic change, not a refactor. The duplicate read is
+     *     the cheaper of the two costs; both paths call ``get_session_user``, so
+     *     they cannot disagree about what a valid session is.
+     */
+    get: operations["me_api_auth_me_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/curriculum": {
     parameters: {
       query?: never;
@@ -2306,12 +2393,56 @@ export interface components {
       status: number;
     };
     /**
+     * LoginRequest
+     * @description Request body for POST /api/auth/login.
+     */
+    LoginRequest: {
+      /** Email */
+      email: string;
+      /** Password */
+      password: string;
+    };
+    /**
+     * LoginResponse
+     * @description Response of POST /api/auth/login.
+     *
+     *     Deliberately does NOT carry the session token — it lives in ``Set-Cookie``
+     *     only.  ``response_model_exclude_unset`` is not needed: every field is
+     *     always set.
+     */
+    LoginResponse: {
+      /** Email */
+      email: string;
+    };
+    /**
+     * LogoutResponse
+     * @description Response of POST /api/auth/logout.
+     *
+     *     200 with a small model rather than 204: the repo is known-green on the
+     *     200-plus-model path, and the locked test accepts either.
+     */
+    LogoutResponse: {
+      /** Status */
+      status: string;
+    };
+    /**
      * MarkLessonReviewedResponse
      * @description Response of POST /api/srs/lesson/{lesson_id}/reviewed.
      */
     MarkLessonReviewedResponse: {
       /** Ok */
       ok: boolean;
+    };
+    /**
+     * MeResponse
+     * @description Response of GET /api/auth/me.
+     *
+     *     Mirrors ``User`` without ``password_hash`` — that is a credential the
+     *     store round-trips, not something to publish.
+     */
+    MeResponse: {
+      /** Email */
+      email: string;
     };
     /**
      * NewCollocationsResponse
@@ -3191,6 +3322,79 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  login_api_auth_login_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LoginRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LoginResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  logout_api_auth_logout_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LogoutResponse"];
+        };
+      };
+    };
+  };
+  me_api_auth_me_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MeResponse"];
         };
       };
     };

@@ -14,9 +14,11 @@ when there is a v2.
 
 from __future__ import annotations
 
+import secrets
 import sqlite3
 from contextlib import contextmanager, suppress
 from datetime import UTC, datetime, timedelta
+from functools import cache
 from pathlib import Path
 
 from app.auth.models import Session, User
@@ -25,10 +27,28 @@ from app.auth.tokens import hash_token, mint_token
 
 SCHEMA_VERSION = 1
 
-# Pre-computed argon2id hash with default parameters.  Used as a dummy in
-# verify_credentials timing equalisation (step 2).  Must be regenerated if
-# argon2-cffi's default parameters change, or the timing equalisation drifts.
-_DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=4$zNImjVeBYvd2sHB3c7mX7w$kl6/DlK1matYRD4MYa8/66wbT+plg9XGhXCuKOobFNE"
+
+@cache
+def _dummy_hash() -> str:
+    """An argon2 hash to verify against when the email is unknown.
+
+    Computed once per process from a random string, rather than stored as a
+    literal, for two reasons:
+
+    - Its parameters always match ``PasswordHasher()``'s current defaults. A
+      pasted literal silently stops matching when argon2-cffi changes them, and
+      the timing equalisation it exists for drifts away without any test
+      noticing.
+    - A hardcoded ``$argon2id$…`` string is what secret scanners match on.
+      GitGuardian's "Generic Password" detector already failed a build over a
+      throwaway PHC literal in this package's tests (false positive, but a real
+      cost in noise).
+
+    ``@cache`` and not a module-level call: computing this at import would put
+    ~50 ms of argon2 work into every process start and every test collection.
+    The first unknown-email login pays it instead, once.
+    """
+    return hash_password(secrets.token_urlsafe(32))
 
 
 class EmailExistsError(ValueError):
@@ -268,7 +288,7 @@ class AuthDatabase:
         """Verify email + password and return the user, or ``None``.
 
         Timing-equalised: always runs ``verify_password`` against
-        ``_DUMMY_HASH`` for unknown emails, and checks ``is_active`` only
+        a dummy hash for unknown emails, and checks ``is_active`` only
         after password verification succeeds.  This reduces an obvious timing
         signal; it is not a proof of constant time, and no unit test in this
         suite establishes that.
@@ -277,7 +297,7 @@ class AuthDatabase:
         with self._get_conn() as conn:
             row = conn.execute("SELECT * FROM users WHERE email = ?", (norm,)).fetchone()
             if row is None:
-                verify_password(_DUMMY_HASH, password)
+                verify_password(_dummy_hash(), password)
                 return None
             if not verify_password(row["password_hash"], password):
                 return None
