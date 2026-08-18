@@ -1,0 +1,83 @@
+name: Setup ffmpeg
+description: >
+  Install ffmpeg, reusing the Actions cache so the 94 MB dependency closure is
+  fetched from an Ubuntu mirror once rather than once per job instance.
+
+runs:
+  using: composite
+  steps:
+    # ── Why this action exists ──────────────────────────────────────────────
+    # Measured on run 32185315294, per job instance:
+    #
+    #   apt-get update      11.3 MB in 1s   (7.8-11.2 MB/s)
+    #   the install fetch   94.1 MB in 1m48s - 4m28s  (352-874 kB/s)
+    #
+    # So `apt-get update` was never the cost, despite tunatale-ouk.1 naming it
+    # as such — the cost is 94.1 MB of ffmpeg's DEPENDENCY CLOSURE dragged off
+    # an archive mirror at a rate that varies 2.5x between jobs in the same run.
+    # Five job instances install ffmpeg (backend, backend-hostile-tz x2,
+    # backend-hostile-hour, e2e), so a run moved ~470 MB over that slow link.
+    #
+    # The bytes are not really the problem; the MIRROR is. Anything that moves
+    # them over GitHub's own network instead wins, which is what the cache does.
+    - name: Restore the ffmpeg package cache
+      id: apt-cache
+      uses: actions/cache@v4
+      with:
+        # ⚠️ ABSOLUTE, via github.workspace, and that is load-bearing. Every job
+        # here sets `defaults.run.working-directory: backend`, while
+        # actions/cache resolves a relative `path:` against the WORKSPACE ROOT.
+        # A relative path would therefore have apt writing .debs into
+        # backend/.ci-apt-cache while the cache saved an empty
+        # <workspace>/.ci-apt-cache — a permanent cache miss that looks
+        # exactly like a working cache, reporting a hit and re-downloading
+        # 94 MB every run. Composite-action steps inheriting the job's
+        # working-directory is ambiguous enough that it is not worth relying
+        # on in either direction; absolute paths make the question moot.
+        path: ${{ github.workspace }}/.ci-apt-cache
+        # Bump the trailing version to force a refetch. The key deliberately
+        # does NOT include the package version: nobody knows it before asking
+        # apt, and a mirror-side bump simply costs one slow run before the new
+        # .debs are cached again.
+        key: ffmpeg-apt-${{ runner.os }}-${{ runner.arch }}-v1
+
+    - name: Install ffmpeg
+      shell: bash
+      env:
+        CACHE_DIR: ${{ github.workspace }}/.ci-apt-cache
+      run: |
+        set -euo pipefail
+        # apt needs `partial/` to exist inside its archive dir or it refuses to
+        # download at all — this is the step's one non-obvious requirement.
+        sudo mkdir -p "$CACHE_DIR/partial"
+
+        # `update` is kept even on a cache hit: it costs ~1s (measured above),
+        # and without fresh lists apt cannot resolve the package to the exact
+        # .deb filenames sitting in the cache.
+        sudo apt-get update -o Acquire::Retries=3
+
+        # Dir::Cache::archives points apt at the cached .debs. On a hit it finds
+        # every file already present and installs without touching the network;
+        # on a miss it downloads into the same directory, which the cache then
+        # saves. ONE command serves both paths, so there is no `if` to get
+        # wrong and no untested branch.
+        sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+          -o Dir::Cache::archives="$CACHE_DIR" ffmpeg
+
+        # actions/cache saves as the runner user; apt wrote these as root.
+        sudo chown -R "$(id -u):$(id -g)" "$CACHE_DIR"
+        rm -rf "$CACHE_DIR/partial"   # never worth caching, and it is root-owned
+
+    - name: Report what this cost
+      shell: bash
+      env:
+        CACHE_DIR: ${{ github.workspace }}/.ci-apt-cache
+      run: |
+        echo "cache hit: ${{ steps.apt-cache.outputs.cache-hit || 'false' }}"
+        echo "cached .debs: $(ls "$CACHE_DIR"/*.deb 2>/dev/null | wc -l), $(du -sh "$CACHE_DIR" 2>/dev/null | cut -f1)"
+        ffmpeg -version | head -1
+        # libopus is what app/audio/transcode.py encodes with, and it is the
+        # codec most likely to arrive via Recommends rather than Depends. Fail
+        # HERE, with a legible message, rather than inside an audio test.
+        ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libopus \
+          || { echo "::error::ffmpeg has no libopus encoder — --no-install-recommends dropped it"; exit 1; }

@@ -87,3 +87,4 @@ frontend/tests/.auth/
 # new setup proves out. See docs/briefs/README.md. Do not author new content
 # there: gitignored means no history, one copy, no recovery path.
 docs/briefs/
+.ci-apt-cache

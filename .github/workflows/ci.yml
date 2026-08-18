@@ -61,9 +61,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
+      # ffmpeg is a hard runtime dep (app/audio/transcode.py,
+      # app/cards/media/normalize.py, app/audio/alignment.py) and no test
+      # skips without it. Defined ONCE in .github/actions/setup-ffmpeg —
+      # five job instances used to each drag the same 94.1 MB dependency
+      # closure off an Ubuntu mirror (~470 MB/run) with the step duplicated
+      # verbatim in four places.
+      - name: Install ffmpeg
+        # tunatale-ouk.2: cap the step so a hung mirror cannot eat the job's
+        # full 20min and then report as a plain `fail` that reads exactly like
+        # a broken build (that misdiagnosis cost real time on 2026-08-18).
+        # 6 min, NOT the 2-3 min that issue suggested: the step measured 4m28s
+        # on e2e in run 32185315294, so a 3min cap would have reddened CI on
+        # the spot. Tighten it once the cache above is landing hits.
+        timeout-minutes: 6
+        uses: ./.github/actions/setup-ffmpeg
       - name: Install uv
         uses: astral-sh/setup-uv@v9.0.0  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9 alias exists)
         with:
@@ -158,9 +170,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
+      # ffmpeg is a hard runtime dep (app/audio/transcode.py,
+      # app/cards/media/normalize.py, app/audio/alignment.py) and no test
+      # skips without it. Defined ONCE in .github/actions/setup-ffmpeg —
+      # five job instances used to each drag the same 94.1 MB dependency
+      # closure off an Ubuntu mirror (~470 MB/run) with the step duplicated
+      # verbatim in four places.
+      - name: Install ffmpeg
+        # tunatale-ouk.2: cap the step so a hung mirror cannot eat the job's
+        # full 20min and then report as a plain `fail` that reads exactly like
+        # a broken build (that misdiagnosis cost real time on 2026-08-18).
+        # 6 min, NOT the 2-3 min that issue suggested: the step measured 4m28s
+        # on e2e in run 32185315294, so a 3min cap would have reddened CI on
+        # the spot. Tighten it once the cache above is landing hits.
+        timeout-minutes: 6
+        uses: ./.github/actions/setup-ffmpeg
       - name: Install uv
         uses: astral-sh/setup-uv@v9.0.0  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9 alias exists)
         with:
@@ -222,9 +246,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
+      # ffmpeg is a hard runtime dep (app/audio/transcode.py,
+      # app/cards/media/normalize.py, app/audio/alignment.py) and no test
+      # skips without it. Defined ONCE in .github/actions/setup-ffmpeg —
+      # five job instances used to each drag the same 94.1 MB dependency
+      # closure off an Ubuntu mirror (~470 MB/run) with the step duplicated
+      # verbatim in four places.
+      - name: Install ffmpeg
+        # tunatale-ouk.2: cap the step so a hung mirror cannot eat the job's
+        # full 20min and then report as a plain `fail` that reads exactly like
+        # a broken build (that misdiagnosis cost real time on 2026-08-18).
+        # 6 min, NOT the 2-3 min that issue suggested: the step measured 4m28s
+        # on e2e in run 32185315294, so a 3min cap would have reddened CI on
+        # the spot. Tighten it once the cache above is landing hits.
+        timeout-minutes: 6
+        uses: ./.github/actions/setup-ffmpeg
       - name: Install uv
         uses: astral-sh/setup-uv@v9.0.0  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9 alias exists)
         with:
@@ -322,9 +358,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
+      # ffmpeg is a hard runtime dep (app/audio/transcode.py,
+      # app/cards/media/normalize.py, app/audio/alignment.py) and no test
+      # skips without it. Defined ONCE in .github/actions/setup-ffmpeg —
+      # five job instances used to each drag the same 94.1 MB dependency
+      # closure off an Ubuntu mirror (~470 MB/run) with the step duplicated
+      # verbatim in four places.
+      - name: Install ffmpeg
+        # tunatale-ouk.2: cap the step so a hung mirror cannot eat the job's
+        # full 20min and then report as a plain `fail` that reads exactly like
+        # a broken build (that misdiagnosis cost real time on 2026-08-18).
+        # 6 min, NOT the 2-3 min that issue suggested: the step measured 4m28s
+        # on e2e in run 32185315294, so a 3min cap would have reddened CI on
+        # the spot. Tighten it once the cache above is landing hits.
+        timeout-minutes: 6
+        uses: ./.github/actions/setup-ffmpeg
       - name: Install uv
         uses: astral-sh/setup-uv@v9.0.0  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9 alias exists)
         with:
