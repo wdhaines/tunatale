@@ -70,10 +70,23 @@ dev = [
 # stanza for Norwegian (Bokmål/Nynorsk; stanza is the upstream project classla
 # forks). Both are DEFAULT dependency groups (see `[tool.uv] default-groups`
 # below), NOT extras — so every plain `uv sync`, `uv sync --all-groups`, or
-# the implicit sync inside `uv run` installs both. CI opts OUT per-language
-# with `--no-group slovene --no-group norwegian` to stay PyTorch-free — the
-# party that wants the unusual (torch-free) behavior carries the flag, in
-# machine-controlled config.
+# the implicit sync inside `uv run` installs both.
+#
+# ⚠️ CI IS NOT PyTorch-FREE, despite what this comment said until 2026-08-18.
+# It claimed CI opted out with `--no-group slovene --no-group norwegian`. Those
+# flags were DELETED on 2026-08-14 (tunatale-as5) because they did nothing: a
+# bare `uv run` re-syncs to `default-groups` below and puts everything straight
+# back. So CI installs torch, and has since long before the flags went. The
+# reasoning, the proof, and the note that `default-groups`/`--no-sync` is the
+# actual lever are in `.github/workflows/ci.yml` above `jobs:` — read that
+# rather than re-deriving it.
+#
+# What running fat costs, measured 2026-08-18 on run 32189295215: the restored
+# uv cache is **2.5 GB** and the `Install uv` step is **~103s per job** (~80s
+# downloading at 31-43 MB/s, ~21s untarring), across 7 jobs. That is now the
+# largest single setup cost in CI — bigger than the ffmpeg install it sits
+# next to. Nobody had measured it, which is why nothing had weighed the
+# divergence a lean CI would create against a number.
 # classla 2.2.1 pins torch<=2.6 / protobuf==4.21.2, neither of which has a
 # cp314 wheel; the `[tool.uv] override-dependencies` below forces 3.14-capable
 # builds. Models still download once per engine: `classla.download("sl")` /
@@ -87,27 +100,36 @@ norwegian = [
 # Forced-alignment models for syllable slicing (app/plugins/languages/no/alignment.py).
 # A DEFAULT dependency group (see `[tool.uv] default-groups` below), so a plain
 # `uv sync` produces a slicing-capable environment with no flags to remember.
-# CI opts out with `--no-group alignment` to skip the transformers package
-# (torch is avoided via --no-group slovene --no-group norwegian).
+# ⚠️ CI does NOT opt out of this, despite what this comment said until
+# 2026-08-18 — the `--no-group alignment` flag it named was deleted on
+# 2026-08-14 with the others, for the same reason (see the block above the
+# slovene group, and ci.yml above `jobs:`). transformers IS installed in CI,
+# and the e2e job's own log proves the capability is live: it prints
+# `Syllable slicing enabled for: no`, which is guarded by `if slicers:` and
+# cannot print in a transformers-free environment.
 # Gated at runtime by `app.audio.slicer.alignment_installed()`.
 # Separate from norwegian/stanza because morphology and forced alignment are
-# different capabilities that happen to share torch today, and CI's opt-out list
-# stays readable as a list of capabilities it declines.
+# different capabilities that happen to share torch today. (The original second
+# half of this sentence — "and CI's opt-out list stays readable as a list of
+# capabilities it declines" — described an opt-out list that no longer exists.)
 alignment = ["transformers>=4.57"]
 
 [tool.uv]
 # The slovene/norwegian/alignment groups are DEFAULT groups, so a bare
 # `uv sync`, `uv sync --all-groups`, and the implicit sync inside `uv run` all
 # install them — a working dev env is the default, with no flags to remember.
-# CI stays PyTorch-free by opting out explicitly:
-# `uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment`
-# (.github/workflows/ci.yml). The `anki` extra is separate (not a group) —
+# ⚠️ CI does NOT stay PyTorch-free. This comment used to claim it did, via
+# `uv sync --all-groups --no-group slovene --no-group norwegian --no-group
+# alignment`; those flags were deleted 2026-08-14 (tunatale-as5) as inert, and
+# CI runs a plain `uv sync --all-groups`. The `anki` extra is separate (not a group) —
 # pulled only by the `uv run --with anki` driver subprocess, never by these
 # syncs.
 default-groups = ["dev", "slovene", "norwegian", "alignment"]
-# Two 3.14 pin-overrides for the slovene/norwegian groups. Inert unless
-# torch/protobuf are actually pulled — CI's `--no-group slovene --no-group
-# norwegian` run never resolves them.
+# Two 3.14 pin-overrides for the slovene/norwegian groups. These are LIVE, not
+# inert: an earlier version of this comment called them "inert unless
+# torch/protobuf are actually pulled — CI's `--no-group ...` run never resolves
+# them", which stopped being true when those flags were deleted 2026-08-14.
+# Every CI job resolves them today.
 #   torch:    classla 2.2.1 pins torch<=2.6, which has no cp314 wheel — torch only
 #             gained 3.14 support at 2.12.
 #   protobuf: classla 2.2.1 pins protobuf==4.21.2, whose google._upb C extension has
@@ -188,10 +210,18 @@ omit = [
     # CLI audio-preview glue: pure TTS-process + filesystem I/O. Testable logic
     # lives in norwegian_breakdown / breakdown_preview (both fully covered).
     "app/plugins/languages/no/breakdown_audio.py",
-    # Thin transformers/torch adapter for forced alignment. No test may download
-    # a ~1.2 GB model (CI runs torch-free via --no-group alignment --no-group
-    # slovene --no-group norwegian), so this module's body cannot execute under
-    # test in any environment. It holds no decisions; the Viterbi, the frame->sample
+    # Thin transformers/torch adapter for forced alignment. Omitted because NO
+    # TEST MAY DOWNLOAD A ~1.2 GB MODEL — that is the whole justification, and
+    # it holds everywhere including CI.
+    #
+    # ⚠️ It used to read "(CI runs torch-free via --no-group ...)", which is
+    # FALSE and has been since those flags were deleted 2026-08-14: torch and
+    # transformers are both installed in every CI job. Do not read torch's
+    # presence as a reason to un-omit this file — the blocker is the model
+    # download, not the import. Un-omitting would make the suite fetch 1.2 GB
+    # per run, or fail.
+    #
+    # It holds no decisions; the Viterbi, the frame->sample
     # mapping and every fallback live in app/audio/alignment.py and app/audio/slicer.py,
     # both covered by model-free tests.
     "app/plugins/languages/no/alignment.py",
