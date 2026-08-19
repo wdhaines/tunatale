@@ -550,10 +550,28 @@ jobs:
           sudo mkdir -p "$PW_APT_CACHE/partial"   # apt refuses to download without it
 
           installed_from_cache=false
-          # Not gated on cache-hit: a prefix restore reports false while the
+          # ⚠️ COMPLETENESS, NOT MERE PRESENCE — and the difference is a real bug
+          # that shipped. A partial cache (one .deb banked by a timed-out cold
+          # run) satisfied the old `ls *.deb` test; dpkg installed that single
+          # package, exited 0, and the step reported success having skipped the
+          # other 8 entirely. Run 32290246422 did exactly this: `cached .debs: 1`,
+          # `pw deps path: cache-dpkg`, 0s, green. The specs passed only because
+          # the runner image already carries most of Chromium's libraries.
+          #
+          # The marker is written ONLY after a successful cold install, so its
+          # presence means "this set is complete" and the count catches a cache
+          # that lost files. Anything else falls through to the mirror.
+          #
+          # Still not gated on cache-hit: a prefix restore reports false while the
           # .debs are present, and requiring "true" would send a warm job to the
-          # mirror. Presence is the real precondition; dpkg failing falls back.
-          if ls "$PW_APT_CACHE"/*.deb >/dev/null 2>&1; then
+          # mirror.
+          expected_debs=$(cat "$PW_APT_CACHE/.deb-count" 2>/dev/null || echo 0)
+          # find, not ls: `ls *.deb` on an empty dir EXITS NON-ZERO, and under
+          # `set -euo pipefail` a failing command substitution aborts the step —
+          # which is precisely the genuine cold-start case, on every fresh runner.
+          # find reports 0 matches with status 0.
+          actual_debs=$(find "$PW_APT_CACHE" -maxdepth 1 -name '*.deb' | wc -l | tr -d ' ')
+          if [ "$expected_debs" -gt 0 ] && [ "$actual_debs" = "$expected_debs" ]; then
             # dpkg needs no package lists and no network, which is the whole
             # point — this is the path that a sick mirror cannot reach.
             if sudo dpkg -i "$PW_APT_CACHE"/*.deb; then
@@ -596,6 +614,10 @@ jobs:
               "$PW_APT_CACHE" \
               | sudo tee /etc/apt/apt.conf.d/99-ci-playwright-cache > /dev/null
             bunx playwright install-deps chromium
+            # Reached only if install-deps exited 0, so the .deb set is complete.
+            # This is what makes the warm path above trustworthy.
+            find "$PW_APT_CACHE" -maxdepth 1 -name '*.deb' | wc -l | tr -d ' ' \
+              > "$PW_APT_CACHE/.deb-count"
           fi
 
           echo "pw_deps_path=$([ "$installed_from_cache" = true ] && echo cache-dpkg || echo mirror-apt)" \
@@ -635,8 +657,14 @@ jobs:
       # not save when the job fails, so a cold run that dies on the mirror would
       # bank nothing and the cache could never bootstrap. Guarded on cache-hit
       # because the key is immutable and re-saving only logs "already exists".
+      # ⚠️ NO LONGER always(). #55 saved on failure so a stalled cold run could
+      # bank partial progress and later runs would converge. That idea did not
+      # work and actively harmed: the stall is in `apt-get update`, BEFORE any
+      # .deb is fetched, so it banked 0 MB and then 3 MB/1 .deb — a cache that
+      # looked valid and silently under-installed. Only complete sets are worth
+      # keeping; an incomplete one is worse than none.
       - name: Save the Playwright browser + apt caches
-        if: always() && steps.pw-cache.outputs.cache-hit != 'true'
+        if: steps.pw-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
