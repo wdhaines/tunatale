@@ -45,37 +45,68 @@ runs:
       shell: bash
       env:
         CACHE_DIR: ${{ github.workspace }}/.ci-apt-cache
+        CACHE_HIT: ${{ steps.apt-cache.outputs.cache-hit }}
       run: |
         set -euo pipefail
         # apt needs `partial/` to exist inside its archive dir or it refuses to
         # download at all — this is the step's one non-obvious requirement.
         sudo mkdir -p "$CACHE_DIR/partial"
 
-        # `update` is kept even on a cache hit: it costs ~1s (measured above),
-        # and without fresh lists apt cannot resolve the package to the exact
-        # .deb filenames sitting in the cache.
+        # ── WARM PATH: no network at all (tunatale-ouk.5) ────────────────────
+        # A cache hit already holds the ENTIRE dependency closure as .debs — the
+        # hit-path logs have read `Need to get 0 B/62.8 MB of archives` since the
+        # cache landed, i.e. the install downloads nothing. The only reason the
+        # old code still contacted the mirror was `apt-get update`, needed solely
+        # so apt could map the name `ffmpeg` onto those filenames.
         #
-        # The per-connection timeouts are what stop a sick mirror from eating the
-        # whole step (tunatale-ouk.5). On 2026-08-19 azure.archive.ubuntu.com
-        # degraded and `update` hung for 5m30s AFTER successfully falling back to
-        # archive.ubuntu.com for InRelease — it stalled again on the package
-        # indices, with nothing bounding each fetch. Three runs died at
-        # duration_ms=369078/369931, i.e. exactly the 6-minute step cap.
-        #
-        # ⚠️ This does NOT tighten that cap, which must stay wide enough for a
-        # cache MISS to pull 94.1 MB at 352-874 kB/s (tunatale-ouk / 2dfa191).
-        # It bounds each CONNECTION so the fallback mirror is reached in seconds
-        # instead of consuming the budget the miss path needs.
-        sudo apt-get update -o Acquire::Retries=3 \
-          -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15
+        # dpkg needs no such mapping: it installs the files it is handed. So the
+        # warm path now issues zero network calls, which is what makes a sick
+        # mirror unable to affect it. That matters because bounding the
+        # CONNECTION (90cff2a) provably was not enough — a mirror that trickles
+        # bytes never trips an inactivity timeout, and on 2026-08-19 `update`
+        # hung ~370s on the package indices AFTER successfully failing over for
+        # InRelease. That run killed all five ffmpeg jobs at once.
+        installed_from_cache=false
+        if [ "${CACHE_HIT:-false}" = "true" ] && ls "$CACHE_DIR"/*.deb >/dev/null 2>&1; then
+          if sudo dpkg -i "$CACHE_DIR"/*.deb; then
+            installed_from_cache=true
+          else
+            # The closure is complete only for the runner image it was built on.
+            # If a newer image dropped something that used to be preinstalled,
+            # dpkg leaves packages unpacked-but-unconfigured; clear that before
+            # apt runs, or apt inherits the broken state and fails too.
+            sudo dpkg --configure -a || true
+            echo "::warning::cached .debs did not satisfy ffmpeg — falling back to the mirror"
+          fi
+        fi
 
-        # Dir::Cache::archives points apt at the cached .debs. On a hit it finds
-        # every file already present and installs without touching the network;
-        # on a miss it downloads into the same directory, which the cache then
-        # saves. ONE command serves both paths, so there is no `if` to get
-        # wrong and no untested branch.
-        sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
-          -o Dir::Cache::archives="$CACHE_DIR" ffmpeg
+        # ── COLD PATH: the only path that touches the mirror ─────────────────
+        # Runs on a genuine miss (key bump, eviction, new runner image) and on a
+        # warm-path failure. It is deliberately unchanged, including the
+        # per-connection timeouts.
+        #
+        # ⚠️ Do NOT tighten the step's 6-minute cap onto this. It must stay wide
+        # enough for a MISS to pull 94.1 MB at the 352-874 kB/s this mirror has
+        # been measured serving (tunatale-ouk / 2dfa191), and the slowest
+        # SUCCESSFUL install measured to date is 208s against that 372s cap —
+        # only 1.8x headroom. A total bound sized to the warm path converts an
+        # intermittent failure into a deterministic one.
+        if [ "$installed_from_cache" != "true" ]; then
+          sudo apt-get update -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15
+
+          # Dir::Cache::archives points apt at the cache dir, so whatever it
+          # downloads here is what actions/cache saves for the next run's warm
+          # path.
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+            -o Dir::Cache::archives="$CACHE_DIR" ffmpeg
+        fi
+
+        # Both paths converge here, and both are verified by the libopus check in
+        # the next step — there is no path that installs ffmpeg without proving
+        # it works.
+        echo "install_path=$([ "$installed_from_cache" = true ] && echo cache-dpkg || echo mirror-apt)" \
+          >> "$GITHUB_ENV"
 
         # actions/cache saves as the runner user; apt wrote these as root.
         sudo chown -R "$(id -u):$(id -g)" "$CACHE_DIR"
@@ -87,6 +118,11 @@ runs:
         CACHE_DIR: ${{ github.workspace }}/.ci-apt-cache
       run: |
         echo "cache hit: ${{ steps.apt-cache.outputs.cache-hit || 'false' }}"
+        # install_path=cache-dpkg means this job made ZERO requests to the apt
+        # mirror. That is the property tunatale-ouk.5 is about, and it is the one
+        # to grep for when asking whether the fix is actually in force — a green
+        # run alone proves nothing, because a healthy mirror looks identical.
+        echo "install path: ${install_path:-unknown}"
         echo "cached .debs: $(ls "$CACHE_DIR"/*.deb 2>/dev/null | wc -l), $(du -sh "$CACHE_DIR" 2>/dev/null | cut -f1)"
         ffmpeg -version | head -1
         # libopus is what app/audio/transcode.py encodes with, and it is the
