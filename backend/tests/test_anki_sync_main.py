@@ -1008,3 +1008,178 @@ class TestResolveModelName:
         conn = sqlite3.connect(":memory:")
         assert _resolve_model_name(self._S(), "no", conn, "deck") == "Norwegian Vocabulary"
         assert _resolve_model_name(self._S(), "sl", conn, "deck") == "Slovene Vocabulary"
+
+
+class TestReconcileTiming:
+    """The reconcile phase is 88-95% of a slow peer-sync and had no timers inside
+    it (tunatale-byw).
+
+    ``sync_orchestrator`` times its seven trivial legs to 0.01s and wraps the
+    90-second one — the whole of ``tt_sync_main`` — in a single opaque
+    ``report.timings["reconcile"]``. These tests pin the inside of that timer.
+
+    The oracle these encode is the bead's: a phase breakdown must ACCOUNT for the
+    total. A breakdown that leaves the slow seconds unattributed means the timers
+    are in the wrong places, which is why ``test_a_slow_phase_is_attributed_to_it``
+    asserts on the *unaccounted remainder* rather than merely on key presence —
+    a dict of the right keys all reading 0.00 would pass the shape test and tell
+    us nothing.
+
+    ``open_collection`` is timed in ``main`` and not ``run_full_sync`` on purpose:
+    ``safe_open`` runs a lock probe, a full-file SHA256, a whole-collection
+    SQLite backup, a validation pass and a prune BEFORE ``run_full_sync`` is
+    entered. That is a fixed per-sync cost that scales with collection SIZE
+    rather than with dirty rows — the exact shape the bead measured (10 dirty
+    dirs was SLOWER than 1576) — so a timer set that stopped at run_full_sync's
+    edge could report every phase at ~0 and still leave the wall time unexplained.
+    """
+
+    def _spy_sync(self, calls, *, slow_phase=None, delay=0.0):
+        """The spy from TestRunFullSync, with an optional artificial delay in one
+        phase so attribution can be tested against a known duration."""
+        import time
+        from unittest.mock import MagicMock
+
+        def _mark(name):
+            calls.append(name)
+            if name == slow_phase:
+                time.sleep(delay)
+
+        sync = MagicMock()
+        sync.warn_if_guid_collisions = MagicMock(side_effect=lambda: (_mark("guid_collisions"), 0)[1])
+        sync.warn_if_recognition_only_deck = MagicMock(side_effect=lambda: (_mark("recognition_only"), 0.0)[1])
+        sync.detect_and_reset_orphans = MagicMock(side_effect=lambda: _mark("orphans"))
+
+        async def _create(**kwargs):
+            _mark("create_new")
+            return CreateNewReport()
+
+        sync.sync_create_new = _create
+        sync.sync_push = MagicMock(side_effect=lambda **kw: (_mark("push"), PushReport())[1])
+        sync.sync_pull = MagicMock(side_effect=lambda **kw: (_mark("pull"), PullReport())[1])
+
+        async def _promote(**kwargs):
+            _mark("promote")
+            return PromotionReport()
+
+        sync.promote_production_cards = _promote
+        return sync
+
+    async def test_run_full_sync_times_every_phase_it_runs(self, monkeypatch, tmp_path):
+        """Every phase run_full_sync executes gets its own key in ``timings``.
+
+        The refresh keys are asserted from the same ``_REFRESH_FUNCS`` list that
+        pins the phase order, so a refresh added to the sequence without a timer
+        fails here rather than hiding inside an untimed block.
+        """
+        from unittest.mock import MagicMock
+
+        calls: list[str] = []
+        sync = self._spy_sync(calls)
+        _patch_all_refreshes(monkeypatch)
+
+        timings: dict[str, float] = {}
+        await run_full_sync(
+            sync,
+            MagicMock(),
+            SRSDatabase(":memory:"),
+            deck_name="0. Slovene",
+            model_name="Slovene Vocabulary",
+            sync_log_path=tmp_path / "sync.log",
+            timings=timings,
+        )
+
+        for phase in ("guid_collisions", "recognition_only", "orphans", "create_new", "push", "pull", "promote"):
+            assert phase in timings, f"phase {phase!r} is untimed"
+        for refresh in _REFRESH_FUNCS:
+            assert refresh in timings, f"deck-config refresh {refresh!r} is untimed"
+        assert "soak_log" in timings
+
+    async def test_a_slow_phase_is_attributed_to_it_not_to_the_gaps(self, monkeypatch, tmp_path):
+        """A phase that burns 60ms shows up as ~60ms in ITS key, and the time
+        between phases stays near zero.
+
+        The 0.08s tolerance sits well below the 0.2s injected delay on purpose:
+        it absorbs scheduler noise under a parallel gate and the per-leg rounding
+        of the logged line, while still failing outright if the delay landed in
+        an untimed gap instead of in its phase. Tolerance >= delay would make the
+        test vacuous.
+
+        This is the discriminating test: the bug being instrumented is 90 seconds
+        landing in a timer that spans everything, so a timer set that merely
+        *exists* is worthless. Here the unaccounted remainder (the sum of the
+        gaps between leaf timers) must stay well under the injected delay — if
+        the delay leaked into an untimed gap instead, this fails.
+        """
+        from unittest.mock import MagicMock
+
+        calls: list[str] = []
+        sync = self._spy_sync(calls, slow_phase="pull", delay=0.2)
+        _patch_all_refreshes(monkeypatch)
+
+        timings: dict[str, float] = {}
+        await run_full_sync(
+            sync,
+            MagicMock(),
+            SRSDatabase(":memory:"),
+            deck_name="0. Slovene",
+            model_name="Slovene Vocabulary",
+            sync_log_path=tmp_path / "sync.log",
+            timings=timings,
+        )
+
+        assert timings["pull"] >= 0.2
+        leaves = sum(v for k, v in timings.items() if k != "run_full_sync")
+        assert timings["run_full_sync"] >= 0.2
+        unaccounted = timings["run_full_sync"] - leaves
+        assert unaccounted < 0.08, f"{unaccounted:.3f}s of the reconcile is in no phase: {timings}"
+
+    def test_main_times_the_collection_open_and_logs_the_breakdown(self, tmp_path, monkeypatch):
+        """``main`` attributes ``safe_open`` to ``open_collection`` and appends one
+        greppable ``RECONCILE_TIMING`` line to the sync log.
+
+        ``safe_open`` is the phase that sits between the orchestrator's
+        ``reconcile`` timer and run_full_sync's first phase; the fake here sleeps
+        so a run that failed to time it would leave that 60ms unaccounted.
+        """
+        import time
+
+        from tests._helpers.anki_sync_create_new import _make_dual_collection_conn
+
+        anki_conn = _make_dual_collection_conn()
+        log_path = tmp_path / "sync.log"
+
+        class FakeSettings:
+            anki_collection_path = "unused"
+            anki_deck_name = "0. Slovene"
+            anki_model_name = "Slovene Vocabulary"
+            target_language = "sl"
+            database_url = "sqlite:///:memory:"
+            sync_log = log_path
+
+        @contextmanager
+        def fake_safe_open(path, mode):
+            time.sleep(0.2)
+            yield type("Ctx", (), {"conn": anki_conn})()
+
+        _patch_all_refreshes(monkeypatch)
+        exit_code = main(
+            argv=[],
+            _settings=FakeSettings(),
+            _safe_open_fn=fake_safe_open,
+            _db=SRSDatabase(":memory:"),
+        )
+
+        assert exit_code == 0
+        log = log_path.read_text()
+        assert "RECONCILE_TIMING" in log
+        line = next(ln for ln in log.splitlines() if "RECONCILE_TIMING" in ln)
+        legs = dict(
+            (part.split("=", 1)[0], float(part.split("=", 1)[1]))
+            for part in line.split()
+            if "=" in part and part.split("=", 1)[0] not in {"dry_run"}
+        )
+        assert legs["open_collection"] >= 0.2
+        # The whole point: the breakdown accounts for the total.
+        leaves = sum(v for k, v in legs.items() if k not in {"total", "run_full_sync"})
+        assert legs["total"] - leaves < 0.08, f"unaccounted time in RECONCILE_TIMING: {line}"

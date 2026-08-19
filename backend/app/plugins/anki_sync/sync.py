@@ -8,7 +8,9 @@ leaf modules directly.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -93,6 +95,50 @@ _log = logging.getLogger(__name__)
 # Settings.media_dir. (Was `.parent` x4: one level deeper than the pre-Stage-4
 # app/anki/, hence the extra one, which is exactly the fragility this removes.)
 _MEDIA_DIR = settings.media_dir
+
+
+@contextmanager
+def _phase(timings: dict[str, float] | None, name: str):
+    """Record the wall time of one sync phase into *timings* under *name*.
+
+    A no-op when *timings* is None, so the phase list reads identically on the
+    untimed path and no call site has to branch.
+
+    Exists because ``reconcile`` — the orchestrator leg that wraps ALL of this —
+    was 88-95% of a 46-101s peer-sync while every phase inside it was invisible
+    (tunatale-byw). The seven trivial legs around it were each timed to 0.01s.
+    ``finally`` so a phase that raises still reports the time it burned first:
+    an exception is exactly when you most want to know which phase was running.
+    """
+    if timings is None:
+        yield
+        return
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        timings[name] = time.perf_counter() - t0
+
+
+def _write_reconcile_timing_log(path: Path, timings: dict[str, float], *, dry_run: bool) -> None:
+    """Append one greppable ``RECONCILE_TIMING`` line per reconcile.
+
+    The inside-the-reconcile counterpart to the orchestrator's
+    ``PEER_SYNC_TIMING``, and deliberately the same shape (``name=secs``), so one
+    grep of ``~/.tunatale/logs/sync.log`` attributes a slow sync to a phase
+    instead of to "the reconcile". Phases are emitted in execution order —
+    dicts preserve insertion order and every timer writes on exit — so the line
+    also reads as the sequence that ran.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().isoformat(timespec="seconds")
+    # 3dp, not the 2dp of PEER_SYNC_TIMING: this line carries ~25 legs, and at
+    # 2dp each one rounds away up to 5ms, so the breakdown can silently fail to
+    # add up to its own total. Sub-second phases are also the ones you squint at
+    # when hunting which of thirteen deck-config refreshes is not free.
+    legs = " ".join(f"{name}={secs:.3f}" for name, secs in timings.items())
+    with open(path, "a") as f:
+        f.write(f"{ts} RECONCILE_TIMING dry_run={dry_run} {legs}\n")
 
 
 def _copy_tt_media_to_anki(writer: OfflineWriter, filename: str) -> None:
@@ -187,7 +233,8 @@ async def run_full_sync(
     media_dir: Path | None = None,
     dry_run: bool = False,
     force_fsrs: bool = False,
-) -> tuple[CreateNewReport, PushReport, PullReport, dict[str, int]]:
+    timings: dict[str, float] | None = None,
+) -> tuple[CreateNewReport, PushReport, PullReport, dict[str, int], PromotionReport]:
     """The single canonical TT↔Anki sync sequence.
 
     The one sync path funnels through ``main`` into this function: the peer-sync
@@ -206,35 +253,47 @@ async def run_full_sync(
     every ``refresh_*`` (Anki-side FSRS-param / retention / daily-cap changes
     never reached TT). New phases go here, not at a call site.
 
+    ``timings``, when supplied, is populated with one wall-time entry per phase
+    plus a ``run_full_sync`` total. It is diagnostic only — nothing branches on
+    it — and exists because this whole function was a single opaque 90-second
+    timer in the orchestrator's report (tunatale-byw).
+
     ``detect_and_reset_orphans`` runs unconditionally (it only resets stale TT
     pointers so create/push can rebuild). create/push/pull honor ``dry_run``;
     the refresh block, media propagation, and soak log run only on a real
     (non-dry) sync. ``media_dir`` activates the Anki→TT media-refresh phase
     (peer-sync path; CLI passes ``None``).
     """
+    _t_start = time.perf_counter()
     # Self-healing: reset TT rows pointing at Anki cards/notes that no longer
     # exist, so sync_create_new recreates them and sync_push force_fsrs the
     # rebuild. Must run BEFORE create_new and push to land in this same sync.
     # Tripwire: Anki notes that collapse to one TT guid (same text + POS) leave a
     # collocation with two candidate cards, free to alternate between them. Reports
     # only, never blocks, and runs on dry-runs too — it is a read of the collection.
-    sync.warn_if_guid_collisions()
+    with _phase(timings, "guid_collisions"):
+        sync.warn_if_guid_collisions()
     # Second read-only tripwire: a deck whose notes sit on single-template
     # notetypes can never carry production cards, and every consumer of that
     # capability degrades silently (the 2990-word Norwegian gap). Runs on
     # dry-runs for the same reason as the line above — it writes nothing.
-    sync.warn_if_recognition_only_deck()
+    with _phase(timings, "recognition_only"):
+        sync.warn_if_recognition_only_deck()
 
-    sync.detect_and_reset_orphans()
+    with _phase(timings, "orphans"):
+        sync.detect_and_reset_orphans()
 
-    create_report = await sync.sync_create_new(
-        deck_name=deck_name,
-        model_name=model_name,
-        dry_run=dry_run,
-        _media_fn=media_fn,
-    )
-    push_report = sync.sync_push(dry_run=dry_run, force_fsrs=force_fsrs)
-    pull_report = sync.sync_pull(dry_run=dry_run)
+    with _phase(timings, "create_new"):
+        create_report = await sync.sync_create_new(
+            deck_name=deck_name,
+            model_name=model_name,
+            dry_run=dry_run,
+            _media_fn=media_fn,
+        )
+    with _phase(timings, "push"):
+        push_report = sync.sync_push(dry_run=dry_run, force_fsrs=force_fsrs)
+    with _phase(timings, "pull"):
+        pull_report = sync.sync_pull(dry_run=dry_run)
 
     # Just-in-time production mint: a paced batch of words whose recognition card
     # has graduated get their production counterpart (tunatale-qf6.2). AFTER the
@@ -242,7 +301,8 @@ async def run_full_sync(
     # last sync, so the trigger fires on the freshest state rather than on a
     # sync-old snapshot. The cards it adds are NEW, which `get_review_queue`
     # tail-appends to the frozen queue, so they still surface today.
-    promotion_report = await sync.promote_production_cards(dry_run=dry_run, _media_fn=media_fn)
+    with _phase(timings, "promote"):
+        promotion_report = await sync.promote_production_cards(dry_run=dry_run, _media_fn=media_fn)
 
     # Default media report (returned on dry-run / no media_dir).
     media_report: dict[str, int] = {
@@ -274,19 +334,32 @@ async def run_full_sync(
         # when the relevant config is absent, so it's safe on a minimal/peer
         # collection. Mirrors the per-day caps, retention, FSRS params, learning
         # steps and load-balancer toggle the queue-parity machinery depends on.
-        refresh_col_crt(db, conn)
-        refresh_daily_new_cap(db, conn, deck_name)
-        refresh_daily_review_cap(db, conn, deck_name)
-        refresh_desired_retention(db, conn, deck_name)
-        refresh_fsrs_params(db, conn, deck_name)
-        refresh_fsrs_short_term_flag(db, conn)
-        refresh_maximum_review_interval(db, conn, deck_name)
-        refresh_review_settings(db, conn, deck_name)
-        refresh_learning_steps(db, conn, deck_name)
-        refresh_load_balancer_enabled(db, conn)
-        refresh_new_cards_ignore_review_limit(db, conn)
-        refresh_easy_days(db, conn, deck_name)
-        warn_if_multi_deck_preset(conn, deck_name)
+        with _phase(timings, "refresh_col_crt"):
+            refresh_col_crt(db, conn)
+        with _phase(timings, "refresh_daily_new_cap"):
+            refresh_daily_new_cap(db, conn, deck_name)
+        with _phase(timings, "refresh_daily_review_cap"):
+            refresh_daily_review_cap(db, conn, deck_name)
+        with _phase(timings, "refresh_desired_retention"):
+            refresh_desired_retention(db, conn, deck_name)
+        with _phase(timings, "refresh_fsrs_params"):
+            refresh_fsrs_params(db, conn, deck_name)
+        with _phase(timings, "refresh_fsrs_short_term_flag"):
+            refresh_fsrs_short_term_flag(db, conn)
+        with _phase(timings, "refresh_maximum_review_interval"):
+            refresh_maximum_review_interval(db, conn, deck_name)
+        with _phase(timings, "refresh_review_settings"):
+            refresh_review_settings(db, conn, deck_name)
+        with _phase(timings, "refresh_learning_steps"):
+            refresh_learning_steps(db, conn, deck_name)
+        with _phase(timings, "refresh_load_balancer_enabled"):
+            refresh_load_balancer_enabled(db, conn)
+        with _phase(timings, "refresh_new_cards_ignore_review_limit"):
+            refresh_new_cards_ignore_review_limit(db, conn)
+        with _phase(timings, "refresh_easy_days"):
+            refresh_easy_days(db, conn, deck_name)
+        with _phase(timings, "warn_if_multi_deck_preset"):
+            warn_if_multi_deck_preset(conn, deck_name)
 
         # Anki→TT media propagation: pull the (media-synced) note fields from
         # tt_collection into TT's own media table + backend/media, so an image
@@ -295,26 +368,30 @@ async def run_full_sync(
         if media_dir is not None:
             from app.plugins.anki_sync.import_seed import refresh_media_from_conn
 
-            media_report = refresh_media_from_conn(
-                conn,
-                deck_name=deck_name,
-                anki_media_path=media_dir,
-                media_dir=_MEDIA_DIR,
-                db=db,
-            )
+            with _phase(timings, "media_refresh"):
+                media_report = refresh_media_from_conn(
+                    conn,
+                    deck_name=deck_name,
+                    anki_media_path=media_dir,
+                    media_dir=_MEDIA_DIR,
+                    db=db,
+                )
 
         # Merge AFTER the media refresh: on the media_dir path the line above
         # reassigns media_report to refresh_media_from_conn's dict, which has no
         # image key. Setting it here survives both paths.
         media_report["image_fetch_failed"] = getattr(create_report, "image_failed", 0)
 
-        _write_sync_soak_log(
-            sync_log_path,
-            pull=pull_report,
-            push=push_report,
-            db=db,
-        )
+        with _phase(timings, "soak_log"):
+            _write_sync_soak_log(
+                sync_log_path,
+                pull=pull_report,
+                push=push_report,
+                db=db,
+            )
 
+    if timings is not None:
+        timings["run_full_sync"] = time.perf_counter() - _t_start
     return create_report, push_report, pull_report, media_report, promotion_report
 
 
@@ -371,8 +448,19 @@ def main(
 
     deck_name = _s.anki_deck_name
 
+    # Phase wall times for the whole reconcile, written as one RECONCILE_TIMING
+    # line below. `safe_open` is timed from HERE rather than inside run_full_sync
+    # because it runs a lock probe, a full-file SHA256, a whole-collection SQLite
+    # backup, a backup validation and a prune before run_full_sync is entered —
+    # a fixed per-sync cost that scales with collection SIZE, not with the number
+    # of dirty rows. A timer set that started at run_full_sync's first phase could
+    # report every phase at ~0 and still leave the wall time unexplained.
+    timings: dict[str, float] = {}
+    _t_total = time.perf_counter()
+
     try:
         with _so(_s.anki_collection_path, mode="rw") as ctx:
+            timings["open_collection"] = time.perf_counter() - _t_total
             col_row = ctx.conn.execute("SELECT ver, crt FROM col").fetchone()
             col_ver = col_row[0]
             col_crt = col_row[1]
@@ -397,7 +485,8 @@ def main(
                 _anki_col_ver=col_ver,
                 _anki_col_crt=col_crt,
             )
-            model_name = _resolve_model_name(_s, language_code, ctx.conn, deck_name)
+            with _phase(timings, "resolve_model"):
+                model_name = _resolve_model_name(_s, language_code, ctx.conn, deck_name)
             create, push, pull, media, promotion = asyncio.run(
                 run_full_sync(
                     sync,
@@ -409,9 +498,15 @@ def main(
                     media_fn=_media_fn,
                     media_dir=_media_dir,
                     dry_run=args.dry_run,
+                    timings=timings,
                 )
             )
             _print_sync_report(create, push, pull, media, promotion, dry_run=args.dry_run, media_dir=_media_dir)
+            timings["total"] = time.perf_counter() - _t_total
+            if not args.dry_run:
+                # Gated like the soak heartbeat: a dry run is a diagnostic, and
+                # leaving the log untouched is a contract the dry-run tests pin.
+                _write_reconcile_timing_log(_sync_log, timings, dry_run=args.dry_run)
             return 0
     except OrphanThresholdExceededError as e:
         # run_full_sync runs detect_and_reset_orphans on this path; its threshold
