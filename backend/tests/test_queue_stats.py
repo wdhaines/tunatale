@@ -279,8 +279,12 @@ def test_refresh_review_settings_skips_invalid_new_spread(tmp_path):
     # new_spread=5 is invalid, so cache should NOT be written
     assert db.get_anki_state_cache("daily_new_cap") is None
     assert db.get_anki_state_cache("new_spread") is None
-    assert db.get_anki_state_cache("bury_new") is None
-    assert db.get_anki_state_cache("bury_review") is None
+    # The bury fields are absent from this blob, which in proto3 means false — they are
+    # cached as such. (They read None here before tunatale-6kl, but only via the same
+    # skip-on-absent bug that let a stale new_spread survive; that was never this test's
+    # subject, which is the invalid-range guard asserted above.)
+    assert db.get_anki_state_cache("bury_new")[0] == "False"
+    assert db.get_anki_state_cache("bury_review")[0] == "False"
     conn.close()
 
 
