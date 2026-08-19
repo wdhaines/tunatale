@@ -422,11 +422,105 @@ jobs:
         working-directory: frontend
         run: bun install
 
+      # ── The SECOND route to the sick apt mirror (tunatale-ouk.5) ───────────
+      # `--with-deps` is an apt install: it pulls 9 packages / 21.1 MB of
+      # Chromium's system libraries on EVERY run, and those are genuinely absent
+      # from the runner image, so it cannot simply be dropped. Measured on run
+      # 32209290580, where this step took 88s:
+      #
+      #   apt fetch    21.1 MB in 1m13s (289 kB/s)   <- 73 of the 88 seconds
+      #   the browsers  ~9s from cdn.playwright.dev  <- consistently fast
+      #
+      # So the browser download was never the problem and caching it alone would
+      # not have helped; the apt half is where the stalls live, at the same
+      # degraded mirror rate the ffmpeg action documents. This step also had NO
+      # timeout of its own, so a bad enough stall rode the job's full 20 minutes
+      # — which is exactly how run 32275195979 died.
+      # restore/save split rather than actions/cache@v4, and that is load-bearing
+      # right now: the combined action does not save when the job fails, so with
+      # the 6-minute cap below a COLD run against a sick mirror would die before
+      # seeding anything and the cache could never bootstrap. Saving with
+      # `if: always()` banks whatever .debs did arrive, and apt tops up the rest
+      # next run — so even a stalling mirror converges instead of deadlocking.
+      - name: Restore the Playwright browser + apt caches
+        id: pw-cache
+        uses: actions/cache/restore@v4
+        with:
+          # Two dirs, one key: the browsers Playwright downloads from its CDN,
+          # and the .debs `--with-deps` drags off the Ubuntu mirror. They are
+          # invalidated by the same thing (a Playwright version bump changes both
+          # the browser build and, occasionally, the dep list), so splitting them
+          # would only add a second key to keep in sync.
+          path: |
+            ~/.cache/ms-playwright
+            ${{ github.workspace }}/.ci-playwright-apt
+          # Keyed on the lockfile, which moves whenever @playwright/test does.
+          # It also moves for unrelated frontend deps, costing an occasional
+          # needless refetch — accepted deliberately over parsing a version out
+          # of package.json, because a key that is merely too fresh is safe and a
+          # key that is too stale silently serves the wrong browser build.
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/bun.lock') }}-v1
+
+      # apt reads Dir::Cache::archives from any conf.d file, and Playwright shells
+      # out to plain `apt-get`. Setting it globally is what lets us cache a fetch
+      # we do not control the command line of — on a hit apt finds every .deb
+      # already present and reports `Need to get 0 B`, so the 21.1 MB never
+      # crosses the network.
+      - name: Point apt at the cached archive directory
+        run: |
+          set -euo pipefail
+          sudo mkdir -p "$PW_APT_CACHE/partial"   # apt refuses to download without partial/
+          printf 'Dir::Cache::archives "%s";\n' "$PW_APT_CACHE" \
+            | sudo tee /etc/apt/apt.conf.d/99-ci-playwright-cache > /dev/null
+        env:
+          PW_APT_CACHE: ${{ github.workspace }}/.ci-playwright-apt
+
       # Only chromium: playwright.config.ts declares exactly one project. Pulling
       # the full browser set would triple the download for browsers no spec opens.
+      #
+      # ⚠️ The cap is a BACKSTOP, not the fix — bounding a hang only converts it
+      # into a faster red, which is why the cache above exists. 6 minutes matches
+      # the ffmpeg step and must clear a genuine miss: the browsers are ~9s from
+      # the CDN and the deps 21.1 MB, which at the 289 kB/s this mirror has been
+      # measured serving is ~73s. Do not tighten it toward the warm path.
       - name: Install Playwright chromium
+        timeout-minutes: 6
         working-directory: frontend
         run: bunx playwright install --with-deps chromium
+
+      # actions/cache saves as the runner user; apt wrote the .debs as root.
+      - name: Re-own the apt cache so it can be saved
+        if: always()
+        run: |
+          set -euo pipefail
+          sudo chown -R "$(id -u):$(id -g)" "$PW_APT_CACHE" || true
+          rm -rf "$PW_APT_CACHE/partial"   # root-owned, and never worth caching
+        env:
+          PW_APT_CACHE: ${{ github.workspace }}/.ci-playwright-apt
+
+      # Same discipline as the ffmpeg step: a green run proves nothing here,
+      # because a healthy mirror and a working cache produce identical logs. This
+      # line is the evidence — on a warm run it must read `Need to get 0 B`.
+      - name: Report what Playwright cost
+        if: always()
+        run: |
+          echo "browser+apt cache hit: ${{ steps.pw-cache.outputs.cache-hit || 'false' }}"
+          echo "cached .debs: $(ls "$PW_APT_CACHE"/*.deb 2>/dev/null | wc -l)"
+          echo "browsers on disk: $(ls ~/.cache/ms-playwright 2>/dev/null | tr '\n' ' ')"
+        env:
+          PW_APT_CACHE: ${{ github.workspace }}/.ci-playwright-apt
+
+      # Skipped on a hit because the key is immutable — re-saving it would only
+      # log "cache already exists". On a miss this runs even if the install
+      # failed, which is the bootstrap path described above.
+      - name: Save the Playwright browser + apt caches
+        if: always() && steps.pw-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ${{ github.workspace }}/.ci-playwright-apt
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/bun.lock') }}-v1
 
       - name: E2E tests
         working-directory: frontend
