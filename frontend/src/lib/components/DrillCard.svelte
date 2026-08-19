@@ -252,7 +252,9 @@
 			<button class="btn-easy" class:suggested={pendingRating === 'easy'} onclick={() => rate('easy')}>Easy</button>
 		</div>
 	{:else}
-		<button onclick={show}>Show</button>
+		<div class="actions">
+			<button onclick={show}>Show</button>
+		</div>
 	{/if}
 	<p class="key-hint">Space to flip · 1–4 to grade</p>
 </div>
@@ -481,6 +483,18 @@
 		align-items: center;
 		gap: 0.3rem;
 	}
+	/* Show shares .ratings' box model so the two can dock identically on small
+	   viewports — the thumb taps Show and then a grade without leaving the strip
+	   (user request 2026-08-18). */
+	.actions {
+		display: flex;
+		justify-content: center;
+		margin-top: 1rem;
+	}
+	.actions button {
+		margin-top: 0;
+		min-height: 44px;
+	}
 	.ratings {
 		display: flex;
 		justify-content: center;
@@ -546,7 +560,8 @@
 	   child of `.drill-card` — with `.key-hint` hidden on touch devices it has
 	   about 12px of travel. It would read as correct and do nothing. */
 	@media (max-width: 640px) {
-		.ratings {
+		.ratings,
+		.actions {
 			position: fixed;
 			left: 0;
 			right: 0;
@@ -561,22 +576,19 @@
 			/* Clear of the iOS home indicator. */
 			padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
 		}
-		/* Reserve the height the bar no longer occupies in flow, or it would
-		   permanently cover the last line of the card. The arithmetic is two
-		   44px button rows + the 0.5rem row gap + the bar's own vertical
-		   padding; the "does not cover the last line" assertion in
-		   tests/review-grade-buttons.spec.ts is what catches it if this drifts
-		   out of step with the button sizing above.
-
-		   ⚠️ `.revealed` ONLY. `.ratings` lives inside `{#if revealed}`, so on
-		   the front of the card there is no bar to reserve for and this became
-		   112px of dead space under the Show button (user-reported 2026-08-18;
-		   the reservation shipped unconditional in 1b33cd1). */
-		.drill-card.revealed {
-			padding-bottom: calc(
-				(2 * 44px) + 0.5rem + 1rem + env(safe-area-inset-bottom, 0px)
-			);
+		/* The only control in the strip, so it takes the whole width. */
+		.actions button {
+			flex: 1 1 auto;
 		}
+		/* ⚠️ The height these fixed bars vacate is reserved by the PAGE, not here
+		   — `.card-section`'s margin-bottom in src/routes/review/+page.svelte.
+		   It lived here as `.drill-card { padding-bottom }` until 2026-08-18 and
+		   was wrong twice over: `.drill-card` sits INSIDE `.card-section`, the
+		   element that paints the white card, so the reservation inflated the
+		   visible card rather than the page and read as a large empty band
+		   inside it on both sides. Margin on the section is outside the border
+		   box, so the page scrolls clear of the bar without the card growing.
+		   Keep the arithmetic there in step with the 44px button rows above. */
 	}
 
 	@media (min-width: 641px) {

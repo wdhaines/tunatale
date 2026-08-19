@@ -149,40 +149,75 @@ test('desktop layout is untouched — the grade row stays in normal flow', async
 	expect(position).toBe('static');
 });
 
-test('the front of the card reserves no space for a grade bar that is not there', async ({
-	page,
-}) => {
-	// User-reported 2026-08-18: "too much padding below the show button now".
-	// 1b33cd1 docked `.ratings` on small viewports and reserved its height with
-	// an UNCONDITIONAL `.drill-card { padding-bottom: … }`. But `.ratings` only
-	// renders inside `{#if revealed}` — on the front there is no bar, so the
-	// reservation is ~112px of dead space under the Show button.
+test('Show is docked in the same strip the grades appear in', async ({ page }) => {
+	// User request 2026-08-18: "put show where the grades are so there's less
+	// finger jumping". On a phone the thumb taps Show and then immediately taps
+	// a grade; those two targets should sit in the same band, not a screen apart.
 	//
-	// Asserted as geometry rather than by reading the CSS: the complaint is
-	// about what the page looks like, and a rule-text assertion would still
-	// pass if the padding moved to another selector.
+	// The oracle is the distance between the Show button's centre and the
+	// NEAREST grade button's centre — that is literally the travel the thumb
+	// makes. Asserting "Show is near the bottom" instead would pass for a layout
+	// where the grades moved somewhere else entirely.
 	await page.setViewportSize({ width: 390, height: 664 });
 	await mockQueue(page, 'recognition');
 	await page.goto('/review');
 
 	const showBtn = page.getByRole('button', { name: 'Show' });
 	await expect(showBtn).toBeVisible();
-	// The premise: no grade bar exists yet. If this ever fails the test below
-	// is measuring something else entirely.
-	await expect(page.locator('.drill-card .ratings')).toHaveCount(0);
+	const showBox = await showBtn.boundingBox();
+	expect(showBox, 'Show has no layout box').not.toBeNull();
+	const showCentre = showBox!.y + showBox!.height / 2;
 
-	const card = await page.locator('.drill-card').boundingBox();
-	// `.key-hint` is the last in-flow child where it renders — it is hidden on
-	// `hover: none` devices, which Playwright's desktop chromium is not.
-	const hint = page.locator('.drill-card .key-hint');
-	const lastChild = (await hint.isVisible()) ? await hint.boundingBox() : await showBtn.boundingBox();
+	await showBtn.click();
+	await expect(page.locator('.drill-card img')).toBeVisible();
 
-	expect(card, 'card has no layout box').not.toBeNull();
-	expect(lastChild, 'last child has no layout box').not.toBeNull();
+	const centres: number[] = [];
+	for (const grade of GRADES) {
+		const box = await page.getByRole('button', { name: grade, exact: true }).boundingBox();
+		expect(box, `${grade} has no layout box`).not.toBeNull();
+		centres.push(box!.y + box!.height / 2);
+	}
 
-	const deadSpace = card!.y + card!.height - (lastChild!.y + lastChild!.height);
+	const travel = Math.min(...centres.map(c => Math.abs(c - showCentre)));
 	expect(
-		deadSpace,
-		'dead space below the front of the card (reserved for an absent grade bar)',
-	).toBeLessThanOrEqual(32);
+		travel,
+		'vertical thumb travel from Show to the nearest grade button',
+	).toBeLessThanOrEqual(60);
+});
+
+test('the card surface carries no dead space below its content', async ({ page }) => {
+	// User-reported 2026-08-18, twice. The docked bar's height has to be
+	// reserved somewhere, and it was reserved as `padding-bottom` on
+	// `.drill-card` — which lives INSIDE `.card-section`, the element that paints
+	// the white card. So the reservation inflated the visible card instead of the
+	// page, showing up as a large empty band inside the card on BOTH sides.
+	//
+	// The reservation now sits on `.card-section`'s MARGIN, which is outside the
+	// border box: the page still scrolls clear of the bar, the card does not grow.
+	//
+	// Measured from the last in-flow content (`.key-hint`) to the card's bottom
+	// edge, because that gap IS the complaint. Measuring `.drill-card`'s own box
+	// would read ~0 whether or not the bug is present, since its padding is
+	// inside its own border box — a control that cannot fail.
+	await page.setViewportSize({ width: 390, height: 664 });
+	await mockQueue(page, 'recognition');
+	await page.goto('/review');
+
+	const hint = page.locator('.drill-card .key-hint');
+	await expect(hint, 'this assertion is anchored on .key-hint being rendered').toBeVisible();
+
+	const deadSpace = async () => {
+		const section = await page.locator('.card-section').boundingBox();
+		const last = await hint.boundingBox();
+		expect(section, 'card-section has no layout box').not.toBeNull();
+		expect(last, 'key-hint has no layout box').not.toBeNull();
+		return section!.y + section!.height - (last!.y + last!.height);
+	};
+
+	// `.drill-card`'s own 0.75rem padding is the legitimate remainder.
+	expect(await deadSpace(), 'dead space inside the card, front').toBeLessThanOrEqual(24);
+
+	await page.getByRole('button', { name: 'Show' }).click();
+	await expect(page.locator('.drill-card img')).toBeVisible();
+	expect(await deadSpace(), 'dead space inside the card, back').toBeLessThanOrEqual(24);
 });

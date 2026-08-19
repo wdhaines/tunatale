@@ -270,6 +270,23 @@
 		border-radius: var(--radius-lg);
 		box-shadow: var(--shadow-sm);
 	}
+	/* DrillCard docks its action bar (Show, or the four grades) to the bottom of
+	   the viewport below 640px, taking it out of flow — see the matching block in
+	   DrillCard.svelte. Something has to reserve the height it vacated or the bar
+	   permanently covers the card's last line, and that something is THIS margin.
+	   MARGIN, not the card's padding: margin is outside the border box, so the
+	   page scrolls clear while the white card keeps its natural height. Putting it
+	   on `.drill-card` inflated the visible card instead, which is what the
+	   2026-08-18 "weird padding" reports were.
+	   Sized for the taller of the two bars (the 2-up grade grid): two 44px rows +
+	   the 0.5rem row gap + the bar's own 1rem vertical padding. The one-row Show
+	   bar over-reserves by ~52px of page background, which costs nothing visible
+	   and keeps the page free of the card's flip state. */
+	@media (max-width: 640px) {
+		.card-section {
+			margin-bottom: calc((2 * 44px) + 0.5rem + 1rem + env(safe-area-inset-bottom, 0px));
+		}
+	}
 	.done {
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
