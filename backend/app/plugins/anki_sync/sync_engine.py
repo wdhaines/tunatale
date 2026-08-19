@@ -1738,7 +1738,10 @@ class AnkiSync:
         if report.awaiting == 0:
             return report
         if dry_run:
-            _log.info("PRODUCTION_MINT awaiting=%d (dry run — nothing minted)", report.awaiting)
+            # WARNING, not INFO: start-dev.sh runs uvicorn at --log-level warning
+            # and peer-sync only ever runs inside that dev server, so an info line
+            # here is written nowhere a human will read it.
+            _log.warning("PRODUCTION_MINT awaiting=%d (dry run — nothing minted)", report.awaiting)
             return report
 
         used_image_urls: set[str] = set()
@@ -1812,7 +1815,13 @@ class AnkiSync:
             else:
                 report.adopted += 1
 
-        _log.info(
+        # WARNING, not INFO — see the dry-run branch above. This is the only line
+        # that reports what the phase DID, and its branch counters are what
+        # separate "minted 10" from "skipped 200 as no_template" from "routed 200
+        # to cloze". Suppressed at the dev server's log level, the Norwegian
+        # backlog sat at 1435 with nothing minted since 2026-07-25 and the reason
+        # was unreadable rather than unknown (tunatale-byw, 2026-08-19).
+        _log.warning(
             "PRODUCTION_MINT awaiting=%d minted=%d adopted=%d clozed=%d unservable=%d no_template=%d",
             report.awaiting,
             report.minted,

@@ -791,6 +791,46 @@ class TestPromoteProductionCards:
         assert report.awaiting == 0
         assert "PRODUCTION_MINT" not in caplog.text
 
+    async def test_the_drain_summary_survives_the_dev_servers_warning_log_level(self, caplog) -> None:
+        """The once-per-sync PRODUCTION_MINT summary must be emitted at WARNING.
+
+        This is the only line that says what the phase actually DID — the branch
+        counters that distinguish "minted 10" from "skipped 200 as no_template"
+        from "routed 200 to cloze". It was `_log.info`, and `start-dev.sh` runs
+        uvicorn with `--log-level warning`; peer-sync only ever runs inside that
+        dev server, so the line had never once been visible in the environment
+        that produces it. Measured consequence (2026-08-19): the Norwegian
+        backlog sat at 1435 words awaiting production with nothing minted since
+        2026-07-25, and the reason was unreadable rather than unknown.
+
+        Asserted at WARNING and not INFO deliberately — `caplog.at_level(INFO)`
+        admits WARNING too, so an INFO-level assertion passes either way and
+        could never have caught this. Its sibling PRODUCTION_MINT_UNSERVABLE was
+        already a warning, which is what made the absence of unservable lines in
+        the real log meaningful evidence rather than an artifact.
+        """
+        conn = _make_conn()
+        card_id = _add_note(conn, 1000, "beslutning", "decision")
+        db = SRSDatabase(":memory:")
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id)
+
+        with caplog.at_level(logging.WARNING, logger="app.anki.sync"):
+            await _make_sync(conn, db).promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+
+        assert "PRODUCTION_MINT awaiting=1 minted=0 adopted=0 clozed=0 unservable=1 no_template=0" in caplog.text
+
+    async def test_the_dry_run_backlog_line_also_survives_warning(self, caplog) -> None:
+        """The dry-run twin reports the backlog and is equally invisible at info."""
+        conn = _make_conn()
+        card_id = _add_note(conn, 1000, "beslutning", "decision")
+        db = SRSDatabase(":memory:")
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id)
+
+        with caplog.at_level(logging.WARNING, logger="app.anki.sync"):
+            await _make_sync(conn, db).promote_production_cards(dry_run=True, _media_fn=_MediaFn())
+
+        assert "PRODUCTION_MINT awaiting=1 (dry run — nothing minted)" in caplog.text
+
 
 class TestWordsAwaitingProduction:
     """The selection query, at the boundaries the phase depends on."""
