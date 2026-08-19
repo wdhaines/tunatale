@@ -505,7 +505,15 @@ jobs:
           # runner image", so they go stale when the image changes, not when
           # Playwright does. Without it those .debs would be pinned until someone
           # happened to bump a frontend dependency.
-          echo "value=playwright-${RUNNER_OS}-${RUNNER_ARCH}-${ImageOS:-noimage}-${ImageVersion:-noversion}-${{ hashFiles('frontend/bun.lock') }}-v3" \
+          # ⚠️ ORDER IS LOAD-BEARING. bun.lock stays in the PREFIX because a
+          # Playwright bump must genuinely invalidate the browsers — restoring a
+          # neighbour there would serve the wrong browser build. The image
+          # version goes LAST, past the prefix boundary, because it must NOT
+          # force a cold install: GitHub runs a mixed fleet (two image versions
+          # inside one run, measured on 32285662518), so an exact-only key sends
+          # half the jobs to the mirror every time.
+          echo "prefix=playwright-${RUNNER_OS}-${RUNNER_ARCH}-${{ hashFiles('frontend/bun.lock') }}-v4-" >> "$GITHUB_OUTPUT"
+          echo "value=playwright-${RUNNER_OS}-${RUNNER_ARCH}-${{ hashFiles('frontend/bun.lock') }}-v4-${ImageOS:-noimage}-${ImageVersion:-noversion}" \
             >> "$GITHUB_OUTPUT"
 
       - name: Restore the Playwright browser + apt caches
@@ -522,6 +530,12 @@ jobs:
           # a key that is too FRESH costs one slow run while one that is too
           # STALE silently serves the wrong browser build.
           key: ${{ steps.pw-key.outputs.value }}
+          # Restores the newest cache for this bun.lock regardless of runner
+          # image, so a fleet rollout cannot force a cold apt install. The exact
+          # key still misses, so the save step banks a fresh entry for this
+          # image — warm every run, still refreshed per image.
+          restore-keys: |
+            ${{ steps.pw-key.outputs.prefix }}
 
       # The apt half, and the half that can hang. On a warm run this issues zero
       # network calls; only a genuine miss reaches the mirror.
@@ -536,7 +550,10 @@ jobs:
           sudo mkdir -p "$PW_APT_CACHE/partial"   # apt refuses to download without it
 
           installed_from_cache=false
-          if [ "${CACHE_HIT:-false}" = "true" ] && ls "$PW_APT_CACHE"/*.deb >/dev/null 2>&1; then
+          # Not gated on cache-hit: a prefix restore reports false while the
+          # .debs are present, and requiring "true" would send a warm job to the
+          # mirror. Presence is the real precondition; dpkg failing falls back.
+          if ls "$PW_APT_CACHE"/*.deb >/dev/null 2>&1; then
             # dpkg needs no package lists and no network, which is the whole
             # point — this is the path that a sick mirror cannot reach.
             if sudo dpkg -i "$PW_APT_CACHE"/*.deb; then

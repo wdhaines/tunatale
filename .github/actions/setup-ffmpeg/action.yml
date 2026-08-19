@@ -52,7 +52,11 @@ runs:
         # tunatale-ouk.5 was about. That exposure is bounded by the step's 6-minute
         # cap and self-heals on the next run. The trade is deliberate: a permanently
         # pinned, possibly-stale closure was the alternative.
-        echo "value=ffmpeg-apt-${RUNNER_OS}-${RUNNER_ARCH}-${ImageOS:-noimage}-${ImageVersion:-noversion}-v2" \
+        # ⚠️ ORDER IS LOAD-BEARING: the image version goes LAST so `prefix`
+        # below can match every image. Putting it in the middle (as v2 did) makes
+        # a prefix impossible and is what split the cache across the fleet.
+        echo "prefix=ffmpeg-apt-${RUNNER_OS}-${RUNNER_ARCH}-v3-" >> "$GITHUB_OUTPUT"
+        echo "value=ffmpeg-apt-${RUNNER_OS}-${RUNNER_ARCH}-v3-${ImageOS:-noimage}-${ImageVersion:-noversion}" \
           >> "$GITHUB_OUTPUT"
 
     - name: Restore the ffmpeg package cache
@@ -75,6 +79,25 @@ runs:
         # see that step for why the IMAGE version stands in for the package
         # version, and what that costs.
         key: ${{ steps.key.outputs.value }}
+        # ⚠️ WITHOUT THIS, KEYING ON THE IMAGE VERSION IS ACTIVELY HARMFUL.
+        # GitHub's runner fleet is NOT homogeneous: measured 2026-08-19 on run
+        # 32285662518, jobs in ONE run landed on two different images —
+        # backend/e2e/peer-sync on 20260810.271.1, hostile-hour/oracle-parity on
+        # 20260816.277.1. An exact-match-only key therefore gives every image its
+        # own cache, so whichever half is unseeded does a COLD install every run.
+        # That is not the "one cold run per image bump" the v2 comment predicted;
+        # it recurs continuously while a rollout is in flight, and it reddened
+        # main (run 32286105649: e2e and hostile-hour both died at 372s on the
+        # mirror).
+        #
+        # The prefix restores the newest cache from ANY image while the exact key
+        # still misses, so actions/cache saves a fresh entry for this image. The
+        # result is warm on every run AND still refreshed per image — which is
+        # what v2 was trying to buy. A closure from a neighbouring image is
+        # almost always identical; when it is not, dpkg fails and the apt
+        # fallback below re-resolves it.
+        restore-keys: |
+          ${{ steps.key.outputs.prefix }}
 
     - name: Install ffmpeg
       shell: bash
@@ -102,7 +125,12 @@ runs:
         # hung ~370s on the package indices AFTER successfully failing over for
         # InRelease. That run killed all five ffmpeg jobs at once.
         installed_from_cache=false
-        if [ "${CACHE_HIT:-false}" = "true" ] && ls "$CACHE_DIR"/*.deb >/dev/null 2>&1; then
+        # Deliberately NOT gated on cache-hit. With restore-keys, a prefix
+        # restore reports cache-hit=false even though the .debs are present, so
+        # requiring "true" would send a perfectly warm job down the mirror path.
+        # The .debs being on disk is the real precondition; if they are the wrong
+        # ones, dpkg fails and the fallback handles it.
+        if ls "$CACHE_DIR"/*.deb >/dev/null 2>&1; then
           if sudo dpkg -i "$CACHE_DIR"/*.deb; then
             installed_from_cache=true
           else
