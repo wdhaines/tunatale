@@ -180,7 +180,7 @@
 	{/if}
 {/snippet}
 
-<div class="drill-card">
+<div class="drill-card" class:revealed>
 	<div class="prompt" class:revealed>
 		{#if direction === 'recognition'}
 			{#if item.audio_url}
@@ -566,8 +566,13 @@
 		   44px button rows + the 0.5rem row gap + the bar's own vertical
 		   padding; the "does not cover the last line" assertion in
 		   tests/review-grade-buttons.spec.ts is what catches it if this drifts
-		   out of step with the button sizing above. */
-		.drill-card {
+		   out of step with the button sizing above.
+
+		   ⚠️ `.revealed` ONLY. `.ratings` lives inside `{#if revealed}`, so on
+		   the front of the card there is no bar to reserve for and this became
+		   112px of dead space under the Show button (user-reported 2026-08-18;
+		   the reservation shipped unconditional in 1b33cd1). */
+		.drill-card.revealed {
 			padding-bottom: calc(
 				(2 * 44px) + 0.5rem + 1rem + env(safe-area-inset-bottom, 0px)
 			);

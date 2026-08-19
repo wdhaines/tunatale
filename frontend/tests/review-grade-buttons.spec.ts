@@ -148,3 +148,41 @@ test('desktop layout is untouched — the grade row stays in normal flow', async
 		.evaluate(el => getComputedStyle(el).position);
 	expect(position).toBe('static');
 });
+
+test('the front of the card reserves no space for a grade bar that is not there', async ({
+	page,
+}) => {
+	// User-reported 2026-08-18: "too much padding below the show button now".
+	// 1b33cd1 docked `.ratings` on small viewports and reserved its height with
+	// an UNCONDITIONAL `.drill-card { padding-bottom: … }`. But `.ratings` only
+	// renders inside `{#if revealed}` — on the front there is no bar, so the
+	// reservation is ~112px of dead space under the Show button.
+	//
+	// Asserted as geometry rather than by reading the CSS: the complaint is
+	// about what the page looks like, and a rule-text assertion would still
+	// pass if the padding moved to another selector.
+	await page.setViewportSize({ width: 390, height: 664 });
+	await mockQueue(page, 'recognition');
+	await page.goto('/review');
+
+	const showBtn = page.getByRole('button', { name: 'Show' });
+	await expect(showBtn).toBeVisible();
+	// The premise: no grade bar exists yet. If this ever fails the test below
+	// is measuring something else entirely.
+	await expect(page.locator('.drill-card .ratings')).toHaveCount(0);
+
+	const card = await page.locator('.drill-card').boundingBox();
+	// `.key-hint` is the last in-flow child where it renders — it is hidden on
+	// `hover: none` devices, which Playwright's desktop chromium is not.
+	const hint = page.locator('.drill-card .key-hint');
+	const lastChild = (await hint.isVisible()) ? await hint.boundingBox() : await showBtn.boundingBox();
+
+	expect(card, 'card has no layout box').not.toBeNull();
+	expect(lastChild, 'last child has no layout box').not.toBeNull();
+
+	const deadSpace = card!.y + card!.height - (lastChild!.y + lastChild!.height);
+	expect(
+		deadSpace,
+		'dead space below the front of the card (reserved for an absent grade bar)',
+	).toBeLessThanOrEqual(32);
+});
