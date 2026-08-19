@@ -572,7 +572,28 @@ jobs:
             # Dir::Cache::archives from any conf.d file, and Playwright shells
             # out to plain apt-get, so this is how we capture .debs from a
             # command whose arguments we do not control.
-            printf 'Dir::Cache::archives "%s";\n' "$PW_APT_CACHE" \
+            # ⚠️ THE TIMEOUTS ARE NOT DECORATION — WITHOUT THEM THIS PATH CANNOT
+            # BOOTSTRAP. Playwright shells out to plain `apt-get`, so it inherits
+            # none of the Acquire bounds setup-ffmpeg passes on its command line.
+            # Measured on run 32287959161: apt-get update Ign'd every
+            # azure.archive.ubuntu.com index, failed over to archive.ubuntu.com,
+            # then went SILENT for 5m30s until the step cap killed it — before a
+            # single .deb was fetched. So the save-on-failure below had nothing to
+            # bank (the main-scoped cache is literally 0 MB), the next run
+            # repeated it, and the cache could never seed. A deadlock that only
+            # appears while the mirror is sick, i.e. exactly when it matters.
+            #
+            # A conf.d file is the only way to reach apt here, the same trick the
+            # Dir::Cache::archives line below uses. These are the values 90cff2a
+            # gave the ffmpeg step.
+            #
+            # ⚠️ AND THEY ARE NOT SUFFICIENT ON THEIR OWN — tunatale-ouk.5 proved
+            # that for ffmpeg: a mirror that trickles bytes never trips an
+            # INACTIVITY bound. They fix the observed stall (a dead connection
+            # after failover) and buy the cold path a chance to complete; the real
+            # protection is still the cache, which makes this path rare.
+            printf 'Dir::Cache::archives "%s";\nAcquire::Retries "3";\nAcquire::http::Timeout "15";\nAcquire::https::Timeout "15";\n' \
+              "$PW_APT_CACHE" \
               | sudo tee /etc/apt/apt.conf.d/99-ci-playwright-cache > /dev/null
             bunx playwright install-deps chromium
           fi
