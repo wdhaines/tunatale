@@ -54,7 +54,20 @@ runs:
         # `update` is kept even on a cache hit: it costs ~1s (measured above),
         # and without fresh lists apt cannot resolve the package to the exact
         # .deb filenames sitting in the cache.
-        sudo apt-get update -o Acquire::Retries=3
+        #
+        # The per-connection timeouts are what stop a sick mirror from eating the
+        # whole step (tunatale-ouk.5). On 2026-08-19 azure.archive.ubuntu.com
+        # degraded and `update` hung for 5m30s AFTER successfully falling back to
+        # archive.ubuntu.com for InRelease — it stalled again on the package
+        # indices, with nothing bounding each fetch. Three runs died at
+        # duration_ms=369078/369931, i.e. exactly the 6-minute step cap.
+        #
+        # ⚠️ This does NOT tighten that cap, which must stay wide enough for a
+        # cache MISS to pull 94.1 MB at 352-874 kB/s (tunatale-ouk / 2dfa191).
+        # It bounds each CONNECTION so the fallback mirror is reached in seconds
+        # instead of consuming the budget the miss path needs.
+        sudo apt-get update -o Acquire::Retries=3 \
+          -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15
 
         # Dir::Cache::archives points apt at the cached .debs. On a hit it finds
         # every file already present and installs without touching the network;
