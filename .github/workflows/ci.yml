@@ -616,8 +616,16 @@ jobs:
             bunx playwright install-deps chromium
             # Reached only if install-deps exited 0, so the .deb set is complete.
             # This is what makes the warm path above trustworthy.
+            # ⚠️ sudo tee, NOT a plain redirect. $PW_APT_CACHE is created with
+            # `sudo mkdir` and apt writes into it as root, so the runner user
+            # cannot create a file there — a bare `>` dies with "Permission
+            # denied" and, under `set -e`, takes the whole step with it. That is
+            # not hypothetical: run 32292432808 fetched all 21.1 MB and installed
+            # all 9 packages in 2m29s, then failed on this line and threw the
+            # result away. The re-own step that would have fixed the ownership
+            # runs AFTER this one, which is why it cannot be relied on here.
             find "$PW_APT_CACHE" -maxdepth 1 -name '*.deb' | wc -l | tr -d ' ' \
-              > "$PW_APT_CACHE/.deb-count"
+              | sudo tee "$PW_APT_CACHE/.deb-count" > /dev/null
           fi
 
           echo "pw_deps_path=$([ "$installed_from_cache" = true ] && echo cache-dpkg || echo mirror-apt)" \
