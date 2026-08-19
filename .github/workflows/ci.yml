@@ -490,6 +490,24 @@ jobs:
       # ALL. In that same run, Install ffmpeg took 10s on a hit because it uses
       # dpkg against cached .debs. So the warm path here does the same, and
       # `playwright install` (browsers only) never shells out to apt.
+      # Computed in a step, not inline: ImageOS/ImageVersion are runner PROCESS
+      # env vars, and the `env` context in a `${{ }}` expression only carries what
+      # a workflow `env:` block defined — `${{ env.ImageVersion }}` would expand to
+      # empty and give every image the same key.
+      - name: Compute the Playwright cache key
+        id: pw-key
+        run: |
+          set -euo pipefail
+          # bun.lock covers the PLAYWRIGHT version: a bump moves the lock, which
+          # moves the key, which refetches both the browsers and the dep list.
+          # The image version covers the OTHER axis, which bun.lock cannot see —
+          # the 9 apt packages riding this same key are "what is missing from this
+          # runner image", so they go stale when the image changes, not when
+          # Playwright does. Without it those .debs would be pinned until someone
+          # happened to bump a frontend dependency.
+          echo "value=playwright-${RUNNER_OS}-${RUNNER_ARCH}-${ImageOS:-noimage}-${ImageVersion:-noversion}-${{ hashFiles('frontend/bun.lock') }}-v3" \
+            >> "$GITHUB_OUTPUT"
+
       - name: Restore the Playwright browser + apt caches
         id: pw-cache
         uses: actions/cache/restore@v4
@@ -503,7 +521,7 @@ jobs:
           # costing an occasional needless refetch: chosen deliberately, because
           # a key that is too FRESH costs one slow run while one that is too
           # STALE silently serves the wrong browser build.
-          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/bun.lock') }}-v2
+          key: ${{ steps.pw-key.outputs.value }}
 
       # The apt half, and the half that can hang. On a warm run this issues zero
       # network calls; only a genuine miss reaches the mirror.
@@ -586,7 +604,7 @@ jobs:
           path: |
             ~/.cache/ms-playwright
             ${{ github.workspace }}/.ci-playwright-apt
-          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/bun.lock') }}-v2
+          key: ${{ steps.pw-key.outputs.value }}
 
       - name: E2E tests
         working-directory: frontend

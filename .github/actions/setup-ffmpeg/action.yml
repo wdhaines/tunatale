@@ -20,6 +20,41 @@ runs:
     #
     # The bytes are not really the problem; the MIRROR is. Anything that moves
     # them over GitHub's own network instead wins, which is what the cache does.
+    # ⚠️ THE KEY IS COMPUTED IN A STEP, NOT INLINE, because ImageOS/ImageVersion
+    # are runner PROCESS env vars — the `env` context in a `${{ }}` expression
+    # only carries what a workflow `env:` block defined, so `${{ env.ImageVersion }}`
+    # would silently expand to empty and give every image the same key. bash sees
+    # the real values.
+    - name: Compute the cache key
+      id: key
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Why the IMAGE version and not the ffmpeg version: the original key
+        # carried no version at all, on the reasoning that "nobody knows the
+        # package version before asking apt" — which is true, and asking apt is
+        # exactly the network round trip this action exists to avoid. The image
+        # version answers a better question anyway. What is cached is the set of
+        # .debs MISSING FROM THIS RUNNER IMAGE, so the closure is only valid for
+        # the image it was computed on; when GitHub ships a new one, a cached
+        # closure can be incomplete. That was previously caught at runtime by the
+        # dpkg fallback below. Keying on it makes the same condition a clean cache
+        # miss instead.
+        #
+        # It also fixes an unintended side effect of moving to dpkg: apt used to
+        # re-resolve ffmpeg every run, so a mirror-side version bump was picked up
+        # for free. dpkg installs exactly the bytes it is handed, which pinned CI
+        # at whatever version was cached, indefinitely. Now it refreshes whenever
+        # the image does — roughly every week or two.
+        #
+        # ⚠️ THE COST, STATED SO IT IS NOT DISCOVERED THE HARD WAY: each image bump
+        # is one COLD run per job, i.e. renewed exposure to the apt mirror that
+        # tunatale-ouk.5 was about. That exposure is bounded by the step's 6-minute
+        # cap and self-heals on the next run. The trade is deliberate: a permanently
+        # pinned, possibly-stale closure was the alternative.
+        echo "value=ffmpeg-apt-${RUNNER_OS}-${RUNNER_ARCH}-${ImageOS:-noimage}-${ImageVersion:-noversion}-v2" \
+          >> "$GITHUB_OUTPUT"
+
     - name: Restore the ffmpeg package cache
       id: apt-cache
       uses: actions/cache@v4
@@ -35,11 +70,11 @@ runs:
         # working-directory is ambiguous enough that it is not worth relying
         # on in either direction; absolute paths make the question moot.
         path: ${{ github.workspace }}/.ci-apt-cache
-        # Bump the trailing version to force a refetch. The key deliberately
-        # does NOT include the package version: nobody knows it before asking
-        # apt, and a mirror-side bump simply costs one slow run before the new
-        # .debs are cached again.
-        key: ffmpeg-apt-${{ runner.os }}-${{ runner.arch }}-v1
+        # Bump the trailing -vN in the step above to force a refetch by hand.
+        # The key now also carries the runner image, so it refreshes on its own —
+        # see that step for why the IMAGE version stands in for the package
+        # version, and what that costs.
+        key: ${{ steps.key.outputs.value }}
 
     - name: Install ffmpeg
       shell: bash
