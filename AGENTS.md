@@ -238,12 +238,31 @@ bd update <id> --claim  /  bd close <id> --reason "..."
 bd graph --all --html   /  --compact          # browse the backlog, edges included
 ```
 
-Full reference: `bd --help`. **`bd prime` is a lookup, not a prime — never wire
-it into a SessionStart hook.** Its flag reference is authoritative and
-self-updating, which a hand-written section like this one can never be; but its
-"Core Rules" block contradicts this repo in four places (bans markdown task
-files, bans MEMORY.md, requires an issue before any code, declares "no git
-operations"). Read it for flags; ignore its policy.
+Full reference: `bd --help`, and **`bd prime` — run it by hand** whenever you
+want the current command and flag reference. It is authoritative and
+self-updating in a way this hand-written section can never be, and it is only
+~100 lines.
+
+**Do not wire it into a SessionStart hook.** The objection is mechanism, not
+content: auto-injected, its "Core Rules" block arrives as authoritative context
+every session, and the predicted drift is an agent that quietly stops writing
+briefs and stops committing. ⚠️ **That drift is a prediction and has never been
+measured.** The ban stands on asymmetry — running it by hand costs nothing, and
+the failure it guards against would be silent.
+
+⚠️ **Audited against the real output 2026-08-18. This used to claim four
+contradictions; only two are real, and on one of them beads is right.**
+- **"Create beads issue BEFORE writing code"** — a real conflict, and ours is
+  the sloppier side: most commits here have no bead.
+- **"Do NOT use MEMORY.md"** — a real conflict where we are right for this
+  situation. Its stated reason is that they "fragment across accounts"; this is
+  one user on one machine, and MEMORY.md is the harness's own system, not a
+  choice bd can override.
+- "No markdown files for task tracking" — **not a conflict.** Tracking lives in
+  bd; `.beads-tasks/briefs/` holds documents, not a task list.
+- "Git workflow: stealth mode (no git ops)" — **not a conflict, and reading it
+  as one was backwards.** That line is bd echoing OUR OWN config (`no-git-ops`),
+  which is a privacy guard — see the stealth-mode note below.
 
 ⚠️ **bd's JSON is not one shape, and a wrong field name returns a clean negative
 rather than an error.** Verify any field against a record whose answer you
@@ -271,6 +290,14 @@ wrong conclusions on 2026-08-18:
   and its Dolt backups sit on the same disk, so nothing leaves this machine until
   that script runs. It pushes the Dolt store, exports, renders `GRAPH.md`,
   commits and pushes.
+- **Stealth mode (`no-git-ops`) is a privacy guard, not a preference.** `.beads/`
+  must sit at the PARENT repo root (bd stops walking up at a git root, so from
+  inside `.beads-tasks/` it never finds `../.beads`) — and that root's origin is
+  the PUBLIC repo. With bd's automatic git operations on, they would write
+  `refs/dolt/data` to the public remote, and **a hidden ref is unlisted, not
+  private**. It costs nothing: stealth suppresses only *automatic* git ops, so
+  `bd dolt push` via `sync.sh` still works. Full reasoning:
+  `.beads-tasks/briefs/design-beads-github-sync-2026-08.md` § Appendix B.
 - **The backlog is private, and the Dolt remote is the whole mechanism.** The
   store travels as the hidden ref `refs/dolt/data` on the **private**
   tunatale-tasks repo — deliberately NOT this repo's origin, which is public.

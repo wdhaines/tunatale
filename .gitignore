@@ -88,3 +88,12 @@ frontend/tests/.auth/
 # there: gitignored means no history, one copy, no recovery path.
 docs/briefs/
 .ci-apt-cache
+
+# bd's local store. Ignored via .git/info/exclude on the original machine, but
+# that is local-only and does NOT travel with a clone — verified 2026-08-18 by
+# bootstrapping a real fresh clone, where `.beads/` showed up as untracked and
+# `git add -A` would have staged config.yaml + metadata.json into this PUBLIC
+# repo. bd ships its own `.beads/.gitignore` that already excludes the Dolt
+# store (embeddeddolt/, dolt/, proxieddb/), so the backlog itself was never at
+# risk; this is hygiene, not a disclosure fix.
+.beads/
