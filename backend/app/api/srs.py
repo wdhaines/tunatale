@@ -12,7 +12,7 @@ from datetime import timedelta
 from typing import Literal, NamedTuple
 
 import anyio
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
 from app.api.models import (
@@ -437,6 +437,52 @@ async def undo_grade(item_id: int, direction: str, request: Request):
         "restored_state": restored.state.value,
         "restored_due_at": restored.due_at.isoformat(),
     }
+
+
+async def _complete_listen_media(db, llm, *, vocab, clozes, language_code: str) -> None:
+    """Fetch the media for cards ``/listen`` just created — AFTER the response.
+
+    ``/listen`` had three inline network sites in one request: cloze audio for
+    each new function word, image + word audio for each new vocab word, and an
+    audio backfill for pre-existing cloze rows missing it. Each is a TTS call or
+    an LLM-plus-Pixabay round trip, awaited serially while the user waits, so a
+    lesson introducing N new words cost N round trips before the response.
+
+    That is the same shape that made peer-sync take 46-101s (tunatale-byw): the
+    reconcile was slow because production minting fetched an image per card
+    inline, and tunatale-6xa fixed it by moving those fetches to a
+    ``BackgroundTask``. This is that treatment applied to the ``/listen`` mint
+    path — the user reported it as slow, and it is the same cause.
+
+    Sequential on purpose. ``used_image_urls`` is shared across the batch so two
+    new words cannot pick the same picture, which is an ordering dependency:
+    running these concurrently would reintroduce the duplicate-image collision
+    the shared set exists to prevent. Off the critical path, the serial cost is
+    no longer the user's problem.
+
+    Every item is guarded individually. An exception in a background task is
+    invisible — no response carries it — so one word that cannot be pictured or
+    synthesized must not silently strand the rest of the batch.
+    """
+    used_image_urls: set[str] = set()
+    for coll_id, sentence, word, lemma in clozes:
+        try:
+            await synthesize_cloze_audios(db, coll_id, sentence, word, voice=get_tts_voice(language_code))
+        except Exception:
+            _logger.warning("Failed to synthesize cloze audio for %r", lemma)
+    for coll_id, unit, card_lemma in vocab:
+        try:
+            await _generate_add_time_media(
+                db,
+                llm,
+                coll_id,
+                unit,
+                language_code=language_code,
+                used_image_urls=used_image_urls,
+                media_word=card_lemma,
+            )
+        except Exception:
+            _logger.warning("Failed to generate add-time media for %r", card_lemma)
 
 
 @router.get(
@@ -924,7 +970,7 @@ def _resolve_card_for_lemma(
 
 
 @router.post("/listen", status_code=200, response_model=ListenResponse)
-async def mark_lesson_listened(body: ListenRequest, request: Request):
+async def mark_lesson_listened(body: ListenRequest, request: Request, background_tasks: BackgroundTasks):
     store = request.state.content_store
     lesson = store.get_lesson(body.lesson_id)
     if lesson is None:
@@ -932,8 +978,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
 
     db = request.state.srs_db
     llm = getattr(request.app.state, "llm", None)
-    # One shared set across this request so two new words don't pick the same image.
-    used_image_urls: set[str] = set()
+    # Media work found while building cards, executed after the response by
+    # _complete_listen_media. Collected rather than awaited so the request does
+    # not pay for a TTS/Pixabay round trip per new word (tunatale-byw's shape).
+    pending_vocab: list = []
+    pending_cloze: list = []
 
     # ── Word-level tracking from NATURAL_SPEED section ──────────────────
     from app.models.lesson import extract_sentence_translations_from_translated
@@ -1119,16 +1168,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
                 # source_sentence contains {{c1::…}} markup under Phase-2b.
                 sent = lemma_to_sentence.get(lemma, "")
                 if sent and not db.get_sentence_audio_filename(existing_id):
-                    try:
-                        await synthesize_cloze_audios(
-                            db,
-                            existing_id,
-                            sent,
-                            lemma_to_first_surface.get(lemma, lemma),
-                            voice=get_tts_voice(lesson.language_code),
-                        )
-                    except Exception:
-                        _logger.warning("Failed to synthesize cloze audio for %r", lemma)
+                    pending_cloze.append((existing_id, sent, lemma_to_first_surface.get(lemma, lemma), lemma))
                 continue
 
             rec = existing.directions.get(Direction.RECOGNITION)
@@ -1322,27 +1362,10 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
         if is_func:
             coll = db.get_collocation_by_lemma_with_id(card_lemma)
             new_id, _ = coll
-            try:
-                await synthesize_cloze_audios(
-                    db,
-                    new_id,
-                    sent,
-                    lemma_to_first_surface.get(lemma, lemma),
-                    voice=get_tts_voice(lesson.language_code),
-                )
-            except Exception:
-                _logger.warning("Failed to synthesize cloze audio for %r", lemma)
+            pending_cloze.append((new_id, sent, lemma_to_first_surface.get(lemma, lemma), lemma))
         else:
             new_id, _ = db.get_collocation_by_lemma_with_id(card_lemma)
-            await _generate_add_time_media(
-                db,
-                llm,
-                new_id,
-                unit,
-                language_code=lesson.language_code,
-                used_image_urls=used_image_urls,
-                media_word=card_lemma,
-            )
+            pending_vocab.append((new_id, unit, card_lemma))
         created_count += 1
     remaining_candidates = len(ranked) - created_count
 
@@ -1353,6 +1376,17 @@ async def mark_lesson_listened(body: ListenRequest, request: Request):
     # grades is still one grade event, so advance once at the end.
     if grade_ctx["applied"]:
         advance_learning_cutoff(db, grade_ctx["now"])
+
+    # Off the critical path: Starlette runs this after the response is sent.
+    if pending_vocab or pending_cloze:
+        background_tasks.add_task(
+            _complete_listen_media,
+            db,
+            llm,
+            vocab=pending_vocab,
+            clozes=pending_cloze,
+            language_code=lesson.language_code,
+        )
 
     return {
         "status": "ok",
