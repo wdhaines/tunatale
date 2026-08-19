@@ -363,6 +363,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    # ⚠️ THE FLAG THAT MAKES THE LEAN SYNC BELOW STICK. `uv run` re-syncs to
+    # `[tool.uv] default-groups` implicitly, which is why the `--no-group` flags
+    # deleted in tunatale-as5 were inert — something later ran `uv run` and put
+    # torch straight back. Playwright's webServer starts the backend with
+    # `uv run uvicorn` (frontend/playwright.config.ts), so without this the sync
+    # below would be undone before the first spec. Set as an env var rather than
+    # editing that command, so LOCAL e2e runs are unaffected: a developer's
+    # environment stays full-fat with no flags to remember.
+    env:
+      UV_NO_SYNC: "1"
+
     steps:
       - uses: actions/checkout@v7
 
@@ -385,13 +396,42 @@ jobs:
         uses: astral-sh/setup-uv@v9.0.0  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9 alias exists)
         with:
           version: "latest"
+          # A SEPARATE CACHE SCOPE, and it is the point of this change rather
+          # than an optimisation of it. setup-uv caches ~/.cache/uv keyed on the
+          # lockfile, so every job restores the same 2.5 GB of wheels — torch
+          # included — and pays ~21s doing it (~10s transfer, ~10s untar;
+          # measured 103s/job on a slow day, see backend/pyproject.toml). The
+          # group flags below cannot shrink that: the cache holds what the LOCK
+          # resolves, not what the job installs. A distinct suffix gives e2e its
+          # own cache containing only what it actually syncs.
+          cache-suffix: lean-e2e
 
       - name: Set up Python
         run: uv python install 3.14
 
-      - name: Install backend dependencies
+      # E2E DELIBERATELY DIVERGES FROM THE OTHER JOBS, and only this job does.
+      # The three heavy groups exist for lemmatization (classla/stanza) and
+      # forced alignment (transformers -> torch). E2E exercises neither, and
+      # already says so: playwright.config.ts pins `lemmatizer_type: lowercase`
+      # so the backend does not pay classla's ~26s model load and blow the
+      # webServer timeout.
+      #
+      # Safe because every heavy import is LAZY and gated:
+      #   - app/srs/lemmatizer.py imports classla/stanza inside _ensure_pipeline
+      #     and behind `if engine == "classla"`, so `lowercase` never touches them
+      #   - app/plugins/languages/no/alignment.py imports torch inside a function,
+      #     behind app.audio.slicer.alignment_installed(), a find_spec gate that
+      #     degrades rather than raising
+      #   - no spec calls a slicing or alignment endpoint (checked: every "slice"
+      #     in frontend/tests is Array.prototype.slice)
+      #
+      # ⚠️ If a spec ever needs real lemmatization or slicing, this is what will
+      # have broken it — restore --all-groups here rather than adding the
+      # packages back some other way. The backend/pytest jobs keep --all-groups
+      # on purpose, so nothing about the tested environment changes for them.
+      - name: Install backend dependencies (lean — no lemmatizers, no torch)
         working-directory: backend
-        run: uv sync --all-groups
+        run: uv sync --no-group slovene --no-group norwegian --no-group alignment
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
