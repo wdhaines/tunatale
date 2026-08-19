@@ -1300,3 +1300,83 @@ class TestRefreshAndResolveColCrt:
         db = SRSDatabase(":memory:")
         db.set_anki_state_cache("col_crt", "not-an-integer")
         assert resolve_col_crt(db) is None
+
+
+# ---- Absent-field regression: proto3 implicit presence (tunatale-6kl) ----
+
+
+def _make_deck_config_omitting(
+    *, new_spread: bool = True, bury_new: bool = True, bury_reviews: bool = True
+) -> tuple[sqlite3.Connection, int]:
+    """Return (conn, conf_id) whose config blob OMITS the requested review-settings fields.
+
+    Anki serializes DeckConfig.Config as proto3 with implicit presence, so a field
+    holding its default (newSpread=0 / bury=false) is not written to the wire at all.
+    The blob is padded with new_per_day so it stays non-empty — an empty blob hits an
+    earlier return in refresh_review_settings and would prove nothing.
+    """
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+
+    for sql in [
+        "CREATE TABLE deck_config (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)",
+        "CREATE TABLE decks (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, conf INTEGER, kind BLOB)",
+    ]:
+        conn.execute(sql)
+
+    blob = pb_varint_field(9, 20)  # new_per_day — padding, keeps the blob non-empty
+    if not new_spread:
+        blob += pb_varint_field(30, 2)
+    if not bury_new:
+        blob += pb_varint_field(27, 1)
+    if not bury_reviews:
+        blob += pb_varint_field(28, 1)
+
+    conn.execute("INSERT INTO deck_config VALUES (1, 'Slovene', 0, -1, ?)", (blob,))
+    conn.execute("INSERT INTO decks VALUES (1, '0. Slovene', 0, -1, 1, ?)", (make_deck_kind_blob(1),))
+    conn.commit()
+    return conn, 1
+
+
+class TestRefreshReviewSettingsAbsentMeansDefault:
+    """An absent field is proto3 for 'the default' — it must overwrite a stale cache.
+
+    Seeding the cache with the value the blob already encodes cannot fail; every case
+    here seeds the OPPOSITE of the expected result so the assertion discriminates.
+    """
+
+    def test_absent_new_spread_resets_stale_cache_to_mix(self):
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("new_spread", "2")  # stale 'before_reviews'
+        conn, _ = _make_deck_config_omitting()
+        refresh_review_settings(db, conn, "0. Slovene")
+        row = db.get_anki_state_cache("new_spread")
+        assert row is not None
+        assert int(row[0]) == 0
+
+    def test_absent_bury_new_resets_stale_cache_to_false(self):
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("bury_new", "True")
+        conn, _ = _make_deck_config_omitting()
+        refresh_review_settings(db, conn, "0. Slovene")
+        row = db.get_anki_state_cache("bury_new")
+        assert row is not None
+        assert row[0] == "False"
+
+    def test_absent_bury_review_resets_stale_cache_to_false(self):
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("bury_review", "True")
+        conn, _ = _make_deck_config_omitting()
+        refresh_review_settings(db, conn, "0. Slovene")
+        row = db.get_anki_state_cache("bury_review")
+        assert row is not None
+        assert row[0] == "False"
+
+    def test_present_fields_still_win_over_default(self):
+        """Regression guard: a present non-default field must not be clobbered."""
+        db = SRSDatabase(":memory:")
+        conn, _ = _make_deck_config_omitting(new_spread=False, bury_new=False, bury_reviews=False)
+        refresh_review_settings(db, conn, "0. Slovene")
+        assert int(db.get_anki_state_cache("new_spread")[0]) == 2
+        assert db.get_anki_state_cache("bury_new")[0] == "True"
+        assert db.get_anki_state_cache("bury_review")[0] == "True"

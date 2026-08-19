@@ -396,17 +396,25 @@ def refresh_review_settings(db: SRSDatabase, conn: sqlite3.Connection, deck_name
 
     config_blob = bytes(config_row[0]) if isinstance(config_row[0], memoryview) else config_row[0]
 
+    # DeckConfig.Config is proto3 with implicit presence (no field below is declared
+    # `optional`; the file does use `optional` elsewhere, so this is a deliberate
+    # choice, not an omission). prost therefore omits a field holding its default,
+    # making "absent" wire-identical to "default". Skipping the write on absence let a
+    # stale cache value survive forever once the user set the value back to its default
+    # — see anki/proto/anki/deck_config.proto (tag 26.05) and tunatale-6kl.
     new_spread = find_varint_field(config_blob, _NEW_SPREAD_FIELD)
-    if new_spread is not None and new_spread in (0, 1, 2):
+    if new_spread is None:
+        new_spread = _DEFAULT_NEW_SPREAD
+    if new_spread in (0, 1, 2):
         db.set_anki_state_cache("new_spread", str(new_spread))
 
+    # bool fields: absent == false. bool(None) is already False, so the write is
+    # unconditional — do not restore an `is not None` guard here.
     bury_new_raw = find_varint_field(config_blob, _BURY_NEW_FIELD)
-    if bury_new_raw is not None:
-        db.set_anki_state_cache("bury_new", str(bool(bury_new_raw)))
+    db.set_anki_state_cache("bury_new", str(bool(bury_new_raw)))
 
     bury_reviews_raw = find_varint_field(config_blob, _BURY_REVIEW_FIELD)
-    if bury_reviews_raw is not None:
-        db.set_anki_state_cache("bury_review", str(bool(bury_reviews_raw)))
+    db.set_anki_state_cache("bury_review", str(bool(bury_reviews_raw)))
 
 
 def resolve_daily_new_cap(db: SRSDatabase) -> tuple[int, str]:
