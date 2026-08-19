@@ -187,6 +187,7 @@ def _write_sync_soak_log(
     pull: PullReport,
     push,
     db=None,
+    promotion: PromotionReport | None = None,
 ) -> None:
     """Append a durable, greppable soak line for each non-dry CLI sync.
 
@@ -198,6 +199,15 @@ def _write_sync_soak_log(
     ``INVARIANT_TRACE`` line per direction row that breaks a column-level
     invariant (rules 7/8/10). Grep ``~/.tunatale/logs/sync.log`` for any of the
     three.
+
+    When *promotion* is supplied, also emits one ``PRODUCTION_MINT`` line with
+    the phase's branch counters. Same reason as everything else here: the phase
+    logs that summary through ``logging``, and ``start-dev.sh`` runs uvicorn at
+    ``--log-level warning`` AND redirects it nowhere — so the counters reached
+    the dev server's terminal at best, and nothing greppable survived a sync.
+    ``no_template=200``, ``clozed=200`` and ``minted=10`` are three different
+    diagnoses of the same promote wall time, and telling them apart after the
+    fact is the whole point (tunatale-byw, 2026-08-19).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().isoformat(timespec="seconds")
@@ -207,6 +217,12 @@ def _write_sync_soak_log(
         f"recompute_divergences={len(pull.recompute_divergences)} "
         f"push_notes={push.notes_pushed} push_dirs={push.directions_pushed}"
     ]
+    if promotion is not None:
+        lines.append(
+            f"{ts} PRODUCTION_MINT awaiting={promotion.awaiting} minted={promotion.minted} "
+            f"adopted={promotion.adopted} clozed={promotion.clozed} "
+            f"unservable={promotion.unservable} no_template={promotion.no_template}"
+        )
     for d in pull.recompute_divergences:
         lines.append(
             f"{ts}   RECOMPUTE_DIVERGENCE cid={d.collocation_id} dir={d.direction} "
@@ -388,6 +404,7 @@ async def run_full_sync(
                 pull=pull_report,
                 push=push_report,
                 db=db,
+                promotion=promotion_report,
             )
 
     if timings is not None:

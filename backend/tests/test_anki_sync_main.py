@@ -1010,6 +1010,90 @@ class TestResolveModelName:
         assert _resolve_model_name(self._S(), "sl", conn, "deck") == "Slovene Vocabulary"
 
 
+class TestPromotionHeartbeat:
+    """The promote phase's branch counters must survive in the sync log.
+
+    ``PRODUCTION_MINT`` is the only line that says what the phase DID —
+    ``no_template=200``, ``clozed=200`` and ``minted=10`` are three completely
+    different diagnoses of the same 0.08s reading. It was ``_log.info`` while
+    ``start-dev.sh`` runs uvicorn at ``--log-level warning``; raising it to
+    warning made it visible but sent it to the dev server's TERMINAL, because
+    that script redirects uvicorn nowhere. Nothing greppable survived a sync.
+
+    That is the identical problem ``_write_sync_soak_log`` was built for — its
+    docstring says the CLI summary "would be lost when the terminal scrolled" —
+    so the fix is the one this module already established: persist a heartbeat
+    per sync beside SYNC_SOAK and grep the file, not the scrollback.
+    """
+
+    def test_the_promotion_counters_land_in_the_sync_log(self, tmp_path):
+        """A PRODUCTION_MINT line is appended carrying every branch counter."""
+        log_path = tmp_path / "sync.log"
+        _write_sync_soak_log(
+            log_path,
+            pull=PullReport(),
+            push=PushReport(),
+            promotion=PromotionReport(awaiting=1435, minted=10, adopted=1, clozed=2, unservable=3, no_template=4),
+        )
+
+        line = next(ln for ln in log_path.read_text().splitlines() if "PRODUCTION_MINT" in ln)
+        for field in ("awaiting=1435", "minted=10", "adopted=1", "clozed=2", "unservable=3", "no_template=4"):
+            assert field in line, f"{field} missing from {line!r}"
+
+    def test_a_sync_with_nothing_awaiting_still_writes_the_heartbeat(self, tmp_path):
+        """Written even at awaiting=0, exactly like SYNC_SOAK.
+
+        A silent phase and an absent phase look identical in a log, and this
+        investigation started because promote's 0.08s could not be told apart
+        from promote never running. Positive "ran clean" confirmation is the point.
+        """
+        log_path = tmp_path / "sync.log"
+        _write_sync_soak_log(log_path, pull=PullReport(), push=PushReport(), promotion=PromotionReport())
+
+        assert "PRODUCTION_MINT awaiting=0" in log_path.read_text()
+
+    async def test_run_full_sync_persists_what_the_promote_phase_reported(self, monkeypatch, tmp_path):
+        """End-to-end: the phase's real report reaches the log, not a default.
+
+        Asserting through run_full_sync rather than on _write_sync_soak_log alone
+        is what pins the wiring — a heartbeat hardcoded to zeros would pass the
+        unit test above and still say nothing about a real sync.
+        """
+        from unittest.mock import MagicMock
+
+        sync = MagicMock()
+        sync.warn_if_guid_collisions = MagicMock(return_value=0)
+        sync.warn_if_recognition_only_deck = MagicMock(return_value=0.0)
+        sync.detect_and_reset_orphans = MagicMock()
+
+        async def _create(**kwargs):
+            return CreateNewReport()
+
+        sync.sync_create_new = _create
+        sync.sync_push = MagicMock(return_value=PushReport())
+        sync.sync_pull = MagicMock(return_value=PullReport())
+
+        async def _promote(**kwargs):
+            return PromotionReport(awaiting=1435, no_template=200)
+
+        sync.promote_production_cards = _promote
+        _patch_all_refreshes(monkeypatch)
+
+        log_path = tmp_path / "sync.log"
+        await run_full_sync(
+            sync,
+            MagicMock(),
+            SRSDatabase(":memory:"),
+            deck_name="0. Slovene",
+            model_name="Slovene Vocabulary",
+            sync_log_path=log_path,
+        )
+
+        text = log_path.read_text()
+        assert "PRODUCTION_MINT awaiting=1435" in text
+        assert "no_template=200" in text
+
+
 class TestReconcileTiming:
     """The reconcile phase is 88-95% of a slow peer-sync and had no timers inside
     it (tunatale-byw).
