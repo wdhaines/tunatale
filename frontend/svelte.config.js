@@ -25,10 +25,13 @@ const config = {
 		//   touch src/routes/+page.svelte -> no reload (HMR swapped the module)
 		//   touch vite.config.ts          -> RELOADED  (positive control)
 		//   bunx svelte-kit sync          -> RELOADED
-		// A write to a SIBLING directory does not reload, which is why redirecting
-		// the output is enough and no `server.watch.ignored` entry is needed —
-		// and ignoring `.svelte-kit/generated` would have been actively wrong,
-		// since that tree is how a newly-added route reaches the running server.
+		// ⚠️ Redirecting the output is NECESSARY BUT NOT SUFFICIENT — this comment
+		// claimed the opposite until 2026-08-18 and was measurably wrong. vite
+		// watches the project root, so it sees the 32 files land in the sibling
+		// directory and reloads anyway. The `server.watch.ignored` entry in
+		// vite.config.ts is the half that actually stops it; see the A/B/C table
+		// there. Do NOT ignore `.svelte-kit/generated` — that tree is how a
+		// newly-added route reaches the running server.
 		outDir: process.env.SVELTEKIT_OUT_DIR || '.svelte-kit',
 
 		// adapter-static: production is a plain static bundle served by any file

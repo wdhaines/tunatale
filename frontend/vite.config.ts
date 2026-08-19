@@ -33,12 +33,25 @@ const serverOptions = {
 	// reloaded the page anyway — verified 2026-08-18, the redirect alone left
 	// the reload exactly as it was.
 	//
-	// ⚠️ Ignoring THIS path is safe precisely because nothing here ever reads it:
-	// it is written only by `bun run check` / vitest. Do NOT extend this to
-	// `.svelte-kit/generated`, which is how a newly-added route reaches a running
-	// dev server — ignoring that would trade a visible reload for a dev server
-	// that silently misses new routes.
-	watch: { ignored: ['**/.svelte-kit-test/**'] },
+	// `.svelte-kit-e2e` is the same treatment for Playwright's own dev server
+	// (playwright.config.ts starts it with SVELTEKIT_OUT_DIR set), added
+	// 2026-08-18 after `./test.sh` was still reloading the page even though
+	// `check` and vitest no longer did — the e2e step was never covered.
+	//
+	// Measured A/B/C for the e2e step, warm dev server, oracle = the dev
+	// server's own `page reload` / `forcing full-reload` lines:
+	//   no fix                    -> 4 reloads (.svelte-kit/generated/*)
+	//   outDir redirect only      -> 1 reload  (.svelte-kit-e2e/tsconfig.json,
+	//                                via vite's "changed tsconfig file detected"
+	//                                path, which does NOT print "page reload")
+	//   redirect + ignored        -> 0 reloads, control fired immediately after
+	//
+	// ⚠️ Ignoring THESE paths is safe precisely because nothing the developer's
+	// server reads ever lives there. Do NOT extend this to `.svelte-kit/generated`,
+	// which is how a newly-added route reaches a running dev server — ignoring
+	// that would trade a visible reload for a dev server that silently misses
+	// new routes.
+	watch: { ignored: ['**/.svelte-kit-test/**', '**/.svelte-kit-e2e/**'] },
 	proxy: USE_SSL
 		? { '/api': { target: `${API_PROTO}://localhost:${process.env.API_PORT ?? 8000}`, secure: false } }
 		: { '/api': `http://localhost:${process.env.API_PORT ?? 8000}` }

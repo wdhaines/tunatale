@@ -99,7 +99,7 @@ export default defineConfig({
 		// per-language connection map, never through a Norwegian-configured process.
 		{
 			// Test frontend: proxies /api to port 8001, dedicated port
-			command: 'npm run dev -- --port 5174',
+			command: 'SVELTEKIT_OUT_DIR=.svelte-kit-e2e npm run dev -- --port 5174',
 			url: 'http://localhost:5174',
 			reuseExistingServer: false,
 			timeout: 30000,
