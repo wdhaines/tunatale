@@ -336,8 +336,8 @@ not author anything new there.
   MAIL_ID=orch ./.beads-tasks/mail.sh send peer "subject" "body"
   ```
   `unread == open`, `read == closed`, addressing is a `to-*` label. Message beads
-  are excluded from `bd list` / `bd ready` / `GRAPH.md`, and `sync.sh` filters
-  them out of the GitHub mirror — verified, they cannot be mistaken for backlog.
+  are excluded from `bd list` / `bd ready` / `GRAPH.md` — verified, they cannot
+  be mistaken for backlog.
   A `SessionStart` hook surfaces unread mail automatically; without it a session
   never looks, which is exactly what happened on 2026-08-10 (a peer completed a
   whole stage with two messages waiting).
@@ -422,14 +422,22 @@ not author anything new there.
   - **An empty backlog after bootstrap is a red flag, not "nothing to do."** The
     script exits non-zero on 0 open issues for exactly that reason. If `.beads/`
     is simply absent and you cannot bootstrap, fall back to normal judgment.
-- **The GitHub Issues tab is a read-only view**, not a second source of truth. It
-  carries title/description/status/labels and **no dependency edges** — the edges
-  are the reason this project uses bd at all, and only the Dolt ref and
-  `bd-export.jsonl` have them.
-  The view is allowed to lag; a known bd bug (gastownhall/beads#5486) means a
-  local `closed` does not always reach an already-pushed issue. `sync.sh` reports
-  the count difference and moves on. If a stale row bothers you:
-  `gh issue close <n> --repo wdhaines/tunatale-tasks`. Never restore from it.
+- **Browse the backlog with `bd graph --all --html`** (or `--compact` in a
+  terminal). It reads the live Dolt store, so it cannot lag, and it renders the
+  **dependency edges** — the thing the backlog is kept in bd for, and the thing
+  title/description/status/labels could never carry.
+  ⚠️ Its help text calls the output "self-contained" and that is FALSE: it pulls
+  d3 from `https://d3js.org` at runtime, so it breaks offline and cannot be
+  published as an Artifact without inlining d3.
+
+  **The GitHub Issues mirror was retired 2026-08-18** (`tunatale-93s`). It bought
+  no privacy — the Dolt private remote is the whole privacy mechanism — while
+  carrying no edges, a known-buggy close path (gastownhall/beads#5486), and a
+  drift check that would report the entire opposite side as stale whenever either
+  probe came back empty: ~58 `gh issue close` lines against a *healthy* sync
+  (`cd4c0b3`, caught before damage). Rows may still exist on
+  wdhaines/tunatale-tasks; nothing writes to them and they are authoritative for
+  nothing.
 - **The submodule pointer rides code commits — never its own** (revised
   2026-08-10). `.gitmodules` sets `branch = main`; refresh with
   `git submodule update --remote .beads-tasks`.
