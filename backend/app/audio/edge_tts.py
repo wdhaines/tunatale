@@ -23,14 +23,18 @@ class EdgeTTSService:
     """Microsoft Edge TTS adapter.
 
     Implements the TTSService Protocol with:
-    - Rate limiting (200 ms between requests, max 10 concurrent)
+    - Rate limiting (configurable concurrency and inter-request delay)
     - Optional file-based caching (keyed on text + voice + rate)
     - Retry on transient errors
     """
 
     def __init__(self, cache_dir: Path | None = None) -> None:
+        from app.config import settings
+
         self._cache_dir = cache_dir
-        self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+        self._max_concurrent = settings.tts_max_concurrent_requests
+        self._min_delay = settings.tts_min_request_delay_s
+        self._semaphore = asyncio.Semaphore(self._max_concurrent)
 
     # ------------------------------------------------------------------
     # TTSService Protocol implementation
@@ -90,7 +94,10 @@ class EdgeTTSService:
             ) as exc:
                 last_error = exc
                 logger.warning("EdgeTTS transient error (attempt %d): %s", attempt + 1, exc)
-                await asyncio.sleep(0.5 * (2**attempt))
+                # Do not sleep after the final attempt — it adds dead time
+                # to every terminal failure.
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(0.5 * (2**attempt))
         raise RuntimeError(f"EdgeTTS synthesis failed after {MAX_RETRIES} attempts") from last_error
 
     async def _do_synthesize(self, text: str, voice_id: str, output_path: Path, rate: str) -> None:
@@ -98,4 +105,4 @@ class EdgeTTSService:
             communicate = edge_tts.Communicate(text, voice_id, rate=rate)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             await communicate.save(str(output_path))
-            await asyncio.sleep(MIN_REQUEST_DELAY_S)
+            await asyncio.sleep(self._min_delay)

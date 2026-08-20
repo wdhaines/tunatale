@@ -23,7 +23,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # Kept in step with EdgeTTSService so the provider switch is not also a
-# throughput or pacing change.
+# throughput or pacing change. Overridden by app/config.py settings.
 MIN_REQUEST_DELAY_S = 0.2
 MAX_CONCURRENT_REQUESTS = 10
 MAX_RETRIES = 3
@@ -56,8 +56,9 @@ class AzureTTSService:
         key: str | None = None,
         region: str | None = None,
         timeout: float = 30.0,
-        min_delay: float = MIN_REQUEST_DELAY_S,
+        min_delay: float | None = None,
         retry_base_delay: float = 0.5,
+        max_concurrent_requests: int | None = None,
     ) -> None:
         # Resolved at construction but NOT validated here: the app builds a
         # renderer at startup whether or not anyone renders anything, so an
@@ -68,6 +69,14 @@ class AzureTTSService:
 
             key = settings.azure_speech_key if key is None else key
             region = settings.azure_speech_region if region is None else region
+        if min_delay is None:
+            from app.config import settings
+
+            min_delay = settings.tts_min_request_delay_s
+        if max_concurrent_requests is None:
+            from app.config import settings
+
+            max_concurrent_requests = settings.tts_max_concurrent_requests
         self._key = key
         self._region = region
         self._cache_dir = cache_dir
@@ -77,7 +86,8 @@ class AzureTTSService:
         # i.e. an architectural claim, for what is really just a tuning knob.
         self._min_delay = min_delay
         self._retry_base_delay = retry_base_delay
-        self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+        self._max_concurrent = max_concurrent_requests
+        self._semaphore = asyncio.Semaphore(max_concurrent_requests)
 
     # ------------------------------------------------------------------
     # TTSService Protocol implementation
@@ -186,10 +196,22 @@ class AzureTTSService:
                     attempt + 1,
                     exc.response.status_code,
                 )
+                # 429 (rate limit) gets a longer backoff than transient 5xx,
+                # because the burst window refills in ~0s of true idle but
+                # the semaphore serializes requests — a short backoff would
+                # just pile the next request into the same window.
+                if exc.response.status_code == 429:
+                    delay = self._retry_base_delay * 4 * (2**attempt)
+                else:
+                    delay = self._retry_base_delay * (2**attempt)
             except (httpx.TransportError, OSError) as exc:
                 last_error = exc
+                delay = self._retry_base_delay * (2**attempt)
                 logger.warning("Azure TTS transient error (attempt %d): %s", attempt + 1, exc)
-            await asyncio.sleep(self._retry_base_delay * (2**attempt))
+            # Do not sleep after the final attempt — it adds dead time to
+            # every terminal failure.
+            if attempt < MAX_RETRIES - 1:
+                await asyncio.sleep(delay)
         raise RuntimeError(f"Azure TTS synthesis failed after {MAX_RETRIES} attempts") from last_error
 
     async def _do_synthesize(self, text: str, voice_id: str, rate: str) -> bytes:

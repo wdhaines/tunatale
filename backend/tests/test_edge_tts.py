@@ -1,10 +1,12 @@
 """EdgeTTS adapter tests."""
 
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
 import edge_tts
+import pytest
 
 from app.audio.edge_tts import EdgeTTSService
 from app.audio.ports import TTSService
@@ -205,8 +207,80 @@ async def test_synthesize_raises_after_max_retries(tmp_path):
     with (
         patch("app.audio.edge_tts.edge_tts.Communicate", side_effect=always_fail),
         patch("app.audio.edge_tts.asyncio.sleep", new_callable=AsyncMock),
+        pytest.raises(RuntimeError, match=str(MAX_RETRIES)),
     ):
-        import pytest
+        await svc.synthesize("test", "sl-SI-PetraNeural", output)
 
-        with pytest.raises(RuntimeError, match=str(MAX_RETRIES)):
-            await svc.synthesize("test", "sl-SI-PetraNeural", output)
+
+# ------------------------------------------------------------------
+# Throttle: configurable concurrency from settings
+# ------------------------------------------------------------------
+
+
+def test_edge_adapter_uses_settings_throttle_defaults():
+    """Adapter reads max_concurrent_requests and min_request_delay_s from settings."""
+    from app.config import settings
+
+    svc = EdgeTTSService()
+    assert svc._max_concurrent == settings.tts_max_concurrent_requests
+    assert svc._min_delay == settings.tts_min_request_delay_s
+
+
+async def test_edge_adapter_respects_configured_concurrency_limit(tmp_path):
+    """Semaphore caps in-flight requests; the adapter never exceeds the limit."""
+    max_concurrent = 2
+    in_flight = 0
+    max_observed = 0
+
+    def make_communicate(text, voice, rate):
+        nonlocal in_flight, max_observed
+
+        async def capture_save(path):
+            nonlocal in_flight, max_observed
+            in_flight += 1
+            max_observed = max(max_observed, in_flight)
+            await asyncio.sleep(0.01)
+            Path(path).write_bytes(b"audio")
+            in_flight -= 1
+
+        mock = AsyncMock()
+        mock.save = capture_save
+        return mock
+
+    svc = EdgeTTSService()
+    # Override the semaphore to use our test limit
+    svc._semaphore = asyncio.Semaphore(max_concurrent)
+
+    with patch("app.audio.edge_tts.edge_tts.Communicate", side_effect=make_communicate):
+        await asyncio.gather(
+            *[svc.synthesize(f"phrase {i}", "sl-SI-PetraNeural", tmp_path / f"{i}.mp3") for i in range(6)]
+        )
+
+    assert max_observed <= max_concurrent
+
+
+async def test_edge_no_trailing_sleep_after_final_attempt(tmp_path):
+    """The retry ladder does not sleep after the final (failed) attempt."""
+    import time
+
+    svc = EdgeTTSService()
+
+    def always_fail(text, voice, rate):
+        mock = AsyncMock()
+        mock.save = AsyncMock(side_effect=ConnectionResetError("always fails"))
+        return mock
+
+    with (
+        patch("app.audio.edge_tts.edge_tts.Communicate", side_effect=always_fail),
+        patch("app.audio.edge_tts.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+    ):
+        t0 = time.monotonic()
+        with pytest.raises(RuntimeError, match="after 3 attempts"):
+            await svc.synthesize("test", "sl-SI-PetraNeural", tmp_path / "out.mp3")
+        elapsed = time.monotonic() - t0
+
+    # With patched sleep the elapsed time should be near-zero.
+    # If a trailing sleep slipped through, it would be > 0.05s.
+    assert elapsed < 0.1, f"elapsed {elapsed:.3f}s suggests a trailing sleep after final attempt"
+    # Only 2 sleeps: between attempt 1-2 and 2-3 (not after 3).
+    assert mock_sleep.call_count == 2
