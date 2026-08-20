@@ -136,6 +136,11 @@ class Settings(BaseSettings):
     # silent mid-render swap would mix two providers' renditions of the "same"
     # voice into one curriculum. See app/audio/tts_factory.py.
     tts_provider: str = "azure"
+    # TTS concurrency and pacing — the measured-safe point for Azure Speech
+    # (region eastus, 2026-08-19): 120 sequential requests at 0.6s apart,
+    # concurrency 1, all return 200 over 107s. Both adapters read these.
+    tts_max_concurrent_requests: int = 1
+    tts_min_request_delay_s: float = 0.6
     # Azure Speech (TTS). Replaces the unofficial Edge Read Aloud endpoint that
     # `edge-tts` talks to — same underlying neural voices, but an official API with
     # terms and a support channel. F0 (free tier) allows 500K chars/month and

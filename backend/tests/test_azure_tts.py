@@ -7,6 +7,8 @@ functions. That is why this file needs no ``mock_allowlist.txt`` entry.
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 import respx
@@ -203,3 +205,218 @@ async def test_list_voices_requires_credentials():
     """The credential check guards voice listing too, not just synthesis."""
     with pytest.raises(RuntimeError, match="AZURE_SPEECH_KEY"):
         await _svc(key="").list_voices()
+
+
+# ------------------------------------------------------------------
+# Throttle: configurable concurrency from settings
+# ------------------------------------------------------------------
+
+
+@respx.mock
+async def test_adapter_uses_settings_throttle_defaults(tmp_path):
+    """Adapter reads max_concurrent_requests and min_request_delay_s from settings."""
+    from app.config import settings
+
+    svc = AzureTTSService()
+    assert svc._max_concurrent == settings.tts_max_concurrent_requests
+    assert svc._min_delay == settings.tts_min_request_delay_s
+
+
+@respx.mock
+async def test_adapter_respects_configured_concurrency_limit(tmp_path):
+    """OBSERVED in-flight requests never exceed the configured limit.
+
+    Deliberately asserts on concurrency measured inside the real request path
+    rather than on ``_semaphore._value``. A semaphore that is constructed with
+    the right number but never *held* satisfies the value check while leaving
+    the burst bug — the whole defect this guards — completely intact. Drilled
+    2026-08-19: dropping the ``async with self._semaphore`` in
+    ``_do_synthesize`` leaves every value-based assertion green.
+    """
+    max_concurrent = 2
+    in_flight = 0
+    observed_max = 0
+
+    async def _tracking(request):
+        nonlocal in_flight, observed_max
+        in_flight += 1
+        observed_max = max(observed_max, in_flight)
+        # Yield with the slot still held, so genuine overlap is observable.
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        return httpx.Response(200, content=b"audio")
+
+    respx.post(SYNTH_URL).mock(side_effect=_tracking)
+
+    svc = _svc(max_concurrent_requests=max_concurrent)
+    await asyncio.gather(
+        *[svc.synthesize(f"phrase {i}", "nb-NO-FinnNeural", tmp_path / f"{i}.mp3") for i in range(max_concurrent * 6)]
+    )
+
+    assert observed_max > 0, "no request reached the transport — the test proves nothing"
+    assert observed_max <= max_concurrent, f"adapter allowed {observed_max} in flight, limit is {max_concurrent}"
+
+
+@respx.mock
+async def test_429_retries_with_longer_backoff(tmp_path):
+    """A429 is retried (not fatal like 401/403) and reaches eventual success."""
+    route = respx.post(SYNTH_URL).mock(
+        side_effect=[
+            httpx.Response(429),
+            httpx.Response(429),
+            httpx.Response(200, content=b"ok"),
+        ]
+    )
+
+    await _svc().synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
+
+    assert route.call_count == 3
+    assert (tmp_path / "o.mp3").read_bytes() == b"ok"
+
+
+@respx.mock
+async def test_401_is_not_retried(tmp_path):
+    """A 401 is fatal — fail immediately, no retry."""
+    route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(401))
+
+    with pytest.raises(RuntimeError, match="401"):
+        await _svc().synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
+
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_403_is_not_retried(tmp_path):
+    """A 403 is fatal — fail immediately, no retry."""
+    route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(403))
+
+    with pytest.raises(RuntimeError, match="403"):
+        await _svc().synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
+
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_no_trailing_sleep_after_final_attempt(tmp_path):
+    """The retry ladder does not sleep after the final (failed) attempt.
+
+    With retry_base_delay=1 the exponential backoff is 1s, 2s between attempts,
+    and a trailing sleep would add a third 1s delay after the final failure.
+    The total elapsed time must be under 3.5s (sum of 1+2 backoff sleeps).
+    """
+    import time
+
+    respx.post(SYNTH_URL).mock(return_value=httpx.Response(503))
+
+    svc = _svc(retry_base_delay=1)
+    t0 = time.monotonic()
+    with pytest.raises(RuntimeError, match="after 3 attempts"):
+        await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
+    elapsed = time.monotonic() - t0
+
+    # Backoff sleeps: 1s + 2s = 3s total. If a trailing sleep exists,
+    # elapsed would be ~4s. Use 3.5s as the boundary.
+    assert elapsed < 3.5, f"elapsed {elapsed:.1f}s suggests a trailing sleep after final attempt"
+
+
+# ------------------------------------------------------------------
+# Discriminating test: renderer completes a multi-section lesson
+# despite a concurrency-limited fake TTSService
+# ------------------------------------------------------------------
+
+
+async def test_renderer_completes_through_a_throttled_tts_port(tmp_path):
+    """The renderer drives a multi-section lesson to completion through the port.
+
+    ⚠️ This is a SMOKE test, not the concurrency guard. The throttle lives in
+    the adapter, and this test replaces the adapter with a fake — so nothing
+    here can prove the real semaphore is held. An earlier version asserted
+    ``observed_max <= SAFE_LIMIT`` while the fake itself constructed the
+    semaphore that produced that number, which made the assertion a test of
+    ``asyncio.Semaphore`` rather than of any code in this repo. Verified
+    2026-08-19: disabling the real throttle entirely left it green.
+
+    The real guard is ``test_adapter_respects_configured_concurrency_limit``,
+    which measures in-flight count inside the adapter's own request path.
+    """
+    from app.audio.pause_calculator import NaturalPauseCalculator
+    from app.audio.renderer import LessonRenderer
+    from app.config import settings
+    from app.models.lesson import Lesson, Phrase, Section, SectionType
+
+    observed_max = 0
+    in_flight = 0
+
+    class FakeTTS:
+        def __init__(self):
+            self._semaphore = asyncio.Semaphore(settings.tts_max_concurrent_requests)
+
+        async def synthesize(self, text, voice_id, output_path, rate="+0%"):
+            nonlocal in_flight, observed_max
+            async with self._semaphore:
+                in_flight += 1
+                observed_max = max(observed_max, in_flight)
+                try:
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    import struct
+
+                    rate_hz = 24000
+                    n_frames = rate_hz // 10
+                    data = b"\x00\x00" * n_frames
+                    header = struct.pack(
+                        "<4sI4s4sIHHIIHH4sI",
+                        b"RIFF",
+                        36 + len(data),
+                        b"WAVE",
+                        b"fmt ",
+                        16,
+                        1,
+                        1,
+                        rate_hz,
+                        rate_hz * 2,
+                        2,
+                        16,
+                        b"data",
+                        len(data),
+                    )
+                    output_path.write_bytes(header + data)
+                    await asyncio.sleep(0)
+                finally:
+                    in_flight -= 1
+
+        async def list_voices(self, language_code=None):
+            return []
+
+    lesson = Lesson(
+        title="Day 1",
+        language_code="sl",
+        narrator_voice="en-US-GuyNeural",
+        sections=[
+            Section(
+                section_type=SectionType.NATURAL_SPEED,
+                phrases=[
+                    Phrase(text="dober dan", voice_id="sl-SI-PetraNeural", language_code="sl"),
+                    Phrase(text="hvala", voice_id="sl-SI-PetraNeural", language_code="sl"),
+                ],
+            ),
+            Section(
+                section_type=SectionType.TRANSLATED,
+                phrases=[
+                    Phrase(text="nasvidenje", voice_id="sl-SI-PetraNeural", language_code="sl"),
+                    Phrase(text="prosim", voice_id="sl-SI-PetraNeural", language_code="sl"),
+                ],
+            ),
+        ],
+    )
+
+    renderer = LessonRenderer(
+        tts=FakeTTS(),
+        preprocessors={"sl": type("P", (), {"preprocess": lambda self, text, st: text})()},
+        pause_calculator=NaturalPauseCalculator(),
+    )
+    out = tmp_path / "lesson.wav"
+    cues = await renderer.render(lesson, out)
+
+    assert out.exists()
+    assert len(cues) > 0
+    assert observed_max > 0, "the fake port was never called — the smoke test proves nothing"

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
-import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.api.models import GetLessonAudioResponse, RenderAudioResponse, RenderAudioSection, RenderSectionCue
@@ -205,10 +204,11 @@ class TestAudioEndpoints:
             assert resp1.status_code == 202
             assert len(store.list_audio_files_for_lesson(lesson_id)) == expected_count
 
-            # Second render fails mid-flight.
+            # Second render fails mid-flight — now returns 503.
             mock_renderer.render = AsyncMock(side_effect=RuntimeError("edge-tts blew up"))
-            with pytest.raises(RuntimeError):
-                await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+            resp2 = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+            assert resp2.status_code == 503
+            assert "edge-tts blew up" in resp2.json()["detail"]
 
             # The old rows must survive — the lesson still has its audio.
             after_fail = store.list_audio_files_for_lesson(lesson_id)
@@ -1276,3 +1276,31 @@ class TestClozeTTSIntegration:
         # Cloze card should still exist
         coll = db.get_collocation_by_lemma("kje")
         assert coll is not None
+
+
+class TestAudioErrorMapping:
+    """TTS RuntimeError → 503 with adapter message."""
+
+    async def test_renderer_runtime_error_returns_503(self, tmp_path):
+        from app.storage.store import ContentStore
+
+        async def failing_render(lesson, full_path, section_paths=None):
+            raise RuntimeError("Azure TTS synthesis failed after 3 attempts")
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=failing_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        lesson_id = "test-fail-lesson"
+        store.save_lesson(lesson_id, "some-curriculum-id", 1, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+
+        assert response.status_code == 503
+        assert "Azure TTS synthesis failed" in response.json()["detail"]

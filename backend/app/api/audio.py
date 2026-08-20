@@ -75,13 +75,16 @@ async def render_audio(body: RenderAudioRequest, request: Request):
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
 
-    return await render_lesson_audio(
-        store=store,
-        renderer=request.app.state.renderer,
-        audio_dir=request.app.state.audio_dir,
-        lesson_id=body.lesson_id,
-        lesson=lesson,
-    )
+    try:
+        return await render_lesson_audio(
+            store=store,
+            renderer=request.app.state.renderer,
+            audio_dir=request.app.state.audio_dir,
+            lesson_id=body.lesson_id,
+            lesson=lesson,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
 
 
 @router.get("/lesson/{lesson_id}", status_code=200, response_model=GetLessonAudioResponse)
