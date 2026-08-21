@@ -3,7 +3,6 @@ app.plugins.anki_sync.sync_orchestrator.subprocess.run       # subprocess bounda
 app.plugins.anki_sync.sync_orchestrator._run_driver          # designated driver boundary for sociable peer-sync tests
 app.plugins.anki_sync.sync_orchestrator._keychain_password   # macOS Keychain boundary
 app.audio.edge_tts.edge_tts.*                   # EdgeTTS network boundary (Communicate, list_voices)
-app.audio.edge_tts.asyncio.sleep                # EdgeTTS retry sleep
 app.cards.media.pixabay.*                        # Pixabay HTTP client boundary
 app.cards.media.forvo._make_client               # Forvo HTTP client boundary
 app.api.anki.fetch_card_media                   # Pixabay/Forvo network boundary (card media fetch)

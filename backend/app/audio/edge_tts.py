@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import logging
 import shutil
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import aiohttp
@@ -28,13 +29,33 @@ class EdgeTTSService:
     - Retry on transient errors
     """
 
-    def __init__(self, cache_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        cache_dir: Path | None = None,
+        min_delay: float | None = None,
+        retry_base_delay: float = 0.5,
+        max_concurrent_requests: int | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
+    ) -> None:
         from app.config import settings
 
         self._cache_dir = cache_dir
-        self._max_concurrent = settings.tts_max_concurrent_requests
-        self._min_delay = settings.tts_min_request_delay_s
+        if max_concurrent_requests is None:
+            max_concurrent_requests = settings.tts_max_concurrent_requests
+        if min_delay is None:
+            # Per-provider override first, shared setting when unset — see
+            # app/config.py::tts_edge_min_request_delay_s.
+            min_delay = settings.tts_edge_min_request_delay_s
+            if min_delay is None:
+                min_delay = settings.tts_min_request_delay_s
+        self._max_concurrent = max_concurrent_requests
+        self._min_delay = min_delay
+        self._retry_base_delay = retry_base_delay
         self._semaphore = asyncio.Semaphore(self._max_concurrent)
+        # Injectable so tests can run the retry ladder at zero cost, same
+        # strategy as AzureTTSService — patching asyncio.sleep would mean a
+        # mock_allowlist.txt entry for what is really just a tuning knob.
+        self._sleep = sleep if sleep is not None else asyncio.sleep
 
     # ------------------------------------------------------------------
     # TTSService Protocol implementation
@@ -97,12 +118,20 @@ class EdgeTTSService:
                 # Do not sleep after the final attempt — it adds dead time
                 # to every terminal failure.
                 if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(0.5 * (2**attempt))
+                    await self._sleep(self._retry_base_delay * (2**attempt))
         raise RuntimeError(f"EdgeTTS synthesis failed after {MAX_RETRIES} attempts") from last_error
 
     async def _do_synthesize(self, text: str, voice_id: str, output_path: Path, rate: str) -> None:
         async with self._semaphore:
             communicate = edge_tts.Communicate(text, voice_id, rate=rate)
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            await communicate.save(str(output_path))
-            await asyncio.sleep(self._min_delay)
+            # The pacing delay must be paid on EVERY attempt — success or
+            # failure — or a throttled/failed request exits the semaphore
+            # without ever sleeping and frees the slot instantly, which is
+            # what amplifies a burst into a cascade of failures
+            # (findings-tts-pacing-2026-08-21.md, mirrored from the identical
+            # bug in AzureTTSService._do_synthesize).
+            try:
+                await communicate.save(str(output_path))
+            finally:
+                await self._sleep(self._min_delay)

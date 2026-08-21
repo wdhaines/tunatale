@@ -136,11 +136,32 @@ class Settings(BaseSettings):
     # silent mid-render swap would mix two providers' renditions of the "same"
     # voice into one curriculum. See app/audio/tts_factory.py.
     tts_provider: str = "azure"
-    # TTS concurrency and pacing — the measured-safe point for Azure Speech
-    # (region eastus, 2026-08-19): 120 sequential requests at 0.6s apart,
-    # concurrency 1, all return 200 over 107s. Both adapters read these.
+    # TTS concurrency and pacing. tts_max_concurrent_requests stays at 1: Azure
+    # has never been tested above 1, so concurrency is a separate, untested axis
+    # (findings-tts-pacing-2026-08-21.md, "Explicitly OUT of scope") — do not
+    # touch this constant without its own ladder.
+    #
+    # tts_min_request_delay_s lowered 0.6 -> 0.2 per
+    # findings-tts-pacing-2026-08-21.md: throughput measured 210-220 req/min at
+    # 0.2s vs 87 req/min at 0.6s (a day-8 render: ~1 min vs ~2.5 min). This is
+    # NOT a 429 fix — a fixed-setting repetition control at 0.2s produced 429
+    # counts of [0, 0, 8, 0] across four identical runs, a spread larger than
+    # every difference measured BETWEEN settings across a 5x span of delay
+    # (4, 0, 0, 1, 0, 0 for 1.0s down to 0.2s). Lowering the delay buys wall-clock
+    # time only; it does not and must not be sold as reducing throttling. Safe to
+    # lower only because the burst-amplification bug (a throttled request paying
+    # no pacing delay and freeing its slot instantly) is fixed first — see
+    # app/audio/azure_tts.py::_do_synthesize and app/audio/edge_tts.py::_do_synthesize.
     tts_max_concurrent_requests: int = 1
-    tts_min_request_delay_s: float = 0.6
+    tts_min_request_delay_s: float = 0.2
+    # Per-provider pacing override, falling back to tts_min_request_delay_s when
+    # unset (None). Edge measured ZERO throughput degradation from concurrency
+    # 1->10 (findings-tts-pacing-2026-08-21.md item 3) — i.e. Azure's pacing
+    # constraint does not apply to it — so the two adapters must not be pinned
+    # to the same number. Concurrency intentionally has no per-provider override
+    # here; see the "OUT of scope" note above.
+    tts_azure_min_request_delay_s: float | None = None
+    tts_edge_min_request_delay_s: float | None = None
     # Azure Speech (TTS). Replaces the unofficial Edge Read Aloud endpoint that
     # `edge-tts` talks to — same underlying neural voices, but an official API with
     # terms and a support channel. F0 (free tier) allows 500K chars/month and
