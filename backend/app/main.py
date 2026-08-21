@@ -188,7 +188,7 @@ async def lifespan(app: FastAPI):
     app.state.curriculum_planner = CurriculumPlanner(llm)
     app.state.story_generator = StoryGenerator(llm)
     preprocessors = {code: get_preprocessor(code) for code in db_map}
-    tts = get_tts_service()
+    tts = get_tts_service(cache_dir=settings.tts_cache_dir)
     # Empty unless ``alignment_installed()`` says the forced-alignment packages
     # are present, in which case breakdown chunks are cut from one whole-word
     # render instead of synthesized fragment-by-fragment. Building a slicer does
