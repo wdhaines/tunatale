@@ -15,6 +15,9 @@ import asyncio
 import hashlib
 import logging
 import shutil
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from xml.sax.saxutils import escape, quoteattr
 
@@ -41,6 +44,36 @@ _VOICES_PATH = "/cognitiveservices/voices/list"
 _FATAL_STATUSES = frozenset({401, 403})
 
 
+def _parse_retry_after(value: str | None) -> float | None:
+    """Parse a Retry-After header into seconds, or ``None`` if absent/malformed.
+
+    RFC 9110 allows two wire forms: delta-seconds ("120") or an HTTP-date
+    ("Wed, 21 Oct 2026 07:28:00 GMT"). Azure has never been observed to send
+    this header at all (findings-tts-pacing-2026-08-21.md) — this exists
+    defensively, in case that changes or another provider sends one. The
+    caller combines the result with the retry ladder via ``max(header,
+    ladder)`` so a malformed or absent header falls back to the ladder rather
+    than raising, and a present header can only ever LENGTHEN a wait.
+    """
+    if not value:
+        return None
+    value = value.strip()
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    try:
+        # email.utils.parsedate_to_datetime never returns None: on a
+        # malformed date it raises ValueError, and on a valid one it returns
+        # a datetime (naive if the string carried no timezone offset).
+        parsed = parsedate_to_datetime(value)
+    except TypeError, ValueError, OverflowError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return (parsed - datetime.now(UTC)).total_seconds()
+
+
 class AzureTTSService:
     """Azure Speech REST adapter.
 
@@ -59,6 +92,7 @@ class AzureTTSService:
         min_delay: float | None = None,
         retry_base_delay: float = 0.5,
         max_concurrent_requests: int | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         # Resolved at construction but NOT validated here: the app builds a
         # renderer at startup whether or not anyone renders anything, so an
@@ -72,7 +106,11 @@ class AzureTTSService:
         if min_delay is None:
             from app.config import settings
 
-            min_delay = settings.tts_min_request_delay_s
+            # Per-provider override first, shared setting when unset — see
+            # app/config.py::tts_azure_min_request_delay_s.
+            min_delay = settings.tts_azure_min_request_delay_s
+            if min_delay is None:
+                min_delay = settings.tts_min_request_delay_s
         if max_concurrent_requests is None:
             from app.config import settings
 
@@ -88,6 +126,12 @@ class AzureTTSService:
         self._retry_base_delay = retry_base_delay
         self._max_concurrent = max_concurrent_requests
         self._semaphore = asyncio.Semaphore(max_concurrent_requests)
+        # Same injection strategy as min_delay/retry_base_delay: real code path,
+        # zero wall-clock cost in tests, no mock_allowlist.txt entry needed.
+        self._sleep = sleep if sleep is not None else asyncio.sleep
+        # 429 headers+body are logged once per instance — a burst produces one
+        # diagnostic line, not a hundred identical dumps.
+        self._logged_429 = False
 
     # ------------------------------------------------------------------
     # TTSService Protocol implementation
@@ -201,7 +245,15 @@ class AzureTTSService:
                 # the semaphore serializes requests — a short backoff would
                 # just pile the next request into the same window.
                 if exc.response.status_code == 429:
+                    self._log_429_once(exc.response)
                     delay = self._retry_base_delay * 4 * (2**attempt)
+                    # Defensive, not the point: Azure has never sent this
+                    # header (findings-tts-pacing-2026-08-21.md), but honour
+                    # it when present. max() means it can only LENGTHEN the
+                    # wait, never shorten it below the ladder.
+                    retry_after = _parse_retry_after(exc.response.headers.get("Retry-After"))
+                    if retry_after is not None:
+                        delay = max(delay, retry_after)
                 else:
                     delay = self._retry_base_delay * (2**attempt)
             except (httpx.TransportError, OSError) as exc:
@@ -211,8 +263,23 @@ class AzureTTSService:
             # Do not sleep after the final attempt — it adds dead time to
             # every terminal failure.
             if attempt < MAX_RETRIES - 1:
-                await asyncio.sleep(delay)
+                await self._sleep(delay)
         raise RuntimeError(f"Azure TTS synthesis failed after {MAX_RETRIES} attempts") from last_error
+
+    def _log_429_once(self, response: httpx.Response) -> None:
+        """Log the 429 body AND headers — the only signal the provider gives.
+
+        Once per adapter instance: a burst can produce dozens of 429s and
+        they are one diagnostic dump, not one per request.
+        """
+        if self._logged_429:
+            return
+        self._logged_429 = True
+        logger.warning(
+            "Azure TTS 429 (throttled) — headers=%r body=%r",
+            dict(response.headers),
+            response.text,
+        )
 
     async def _do_synthesize(self, text: str, voice_id: str, rate: str) -> bytes:
         async with self._semaphore:
@@ -222,13 +289,29 @@ class AzureTTSService:
                 "X-Microsoft-OutputFormat": OUTPUT_FORMAT,
                 "User-Agent": "tunatale",
             }
-            async with httpx.AsyncClient(timeout=self._timeout) as http:
-                response = await http.post(
-                    self._url(_SYNTHESIS_PATH),
-                    headers=headers,
-                    content=self._build_ssml(text, voice_id, rate).encode("utf-8"),
-                )
+            # The pacing delay must be paid on EVERY attempt — success or
+            # failure — or a throttled request exits the semaphore without
+            # ever sleeping and frees the slot instantly, which is exactly
+            # what amplifies a burst into a cascade of 429s
+            # (findings-tts-pacing-2026-08-21.md). The one exception is a
+            # FATAL status (401/403): retrying cannot fix bad credentials, so
+            # there is nothing to pace for and the oracle requires zero
+            # sleeps on that path.
+            try:
+                async with httpx.AsyncClient(timeout=self._timeout) as http:
+                    response = await http.post(
+                        self._url(_SYNTHESIS_PATH),
+                        headers=headers,
+                        content=self._build_ssml(text, voice_id, rate).encode("utf-8"),
+                    )
                 response.raise_for_status()
-                audio = response.content
-            await asyncio.sleep(self._min_delay)
-            return audio
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code not in _FATAL_STATUSES:
+                    await self._sleep(self._min_delay)
+                raise
+            except httpx.TransportError, OSError:
+                await self._sleep(self._min_delay)
+                raise
+            else:
+                await self._sleep(self._min_delay)
+                return response.content

@@ -297,6 +297,232 @@ async def test_403_is_not_retried(tmp_path):
 
 
 @respx.mock
+async def test_pacing_delay_paid_on_429_and_on_success(tmp_path):
+    """THE test for the burst-amplification fix.
+
+    A 429 must pay its pacing delay before the semaphore slot frees, exactly
+    like a success does — otherwise a throttled request exits instantly and
+    the next request piles straight into the same window
+    (findings-tts-pacing-2026-08-21.md). If ``_do_synthesize`` only sleeps on
+    the success path (the bug), the failed attempt contributes nothing to the
+    sleep sequence and this goes red.
+    """
+    route = respx.post(SYNTH_URL).mock(
+        side_effect=[
+            httpx.Response(429, headers={"date": "x"}, content=b"Downstream Service Throttled"),
+            httpx.Response(200, content=b"ok"),
+        ]
+    )
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    svc = _svc(min_delay=0.3, retry_base_delay=0, sleep=fake_sleep)
+    await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
+
+    assert route.call_count == 2
+    pacing_sleeps = [s for s in sleeps if s == 0.3]
+    assert len(pacing_sleeps) == 2, f"expected the pacing delay on BOTH attempts (429 and success), got sleeps={sleeps}"
+
+
+@respx.mock
+@pytest.mark.parametrize("status", [401, 403])
+async def test_fatal_status_records_zero_sleeps(tmp_path, status):
+    """401/403 raise immediately, naming the status, and pay NO pacing delay.
+
+    Retrying (or pacing for a retry) cannot fix bad credentials — the fix for
+    item 1 must not accidentally make every attempt sleep unconditionally.
+    """
+    respx.post(SYNTH_URL).mock(return_value=httpx.Response(status))
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    svc = _svc(min_delay=0.3, retry_base_delay=0.3, sleep=fake_sleep)
+    with pytest.raises(RuntimeError, match=str(status)):
+        await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
+
+    assert sleeps == [], f"a fatal status must record ZERO sleeps, got {sleeps}"
+
+
+@respx.mock
+async def test_429_headers_and_body_logged_once_per_instance(tmp_path, caplog):
+    """The first 429 dumps headers+body; a second 429 on the same instance does not.
+
+    The body is the only signal Azure's istio-envoy throttle gives
+    (findings-tts-pacing-2026-08-21.md) — it must reach the log, but a burst
+    of dozens of 429s must not repeat the dump dozens of times.
+    """
+    body = b"Downstream Service Throttled. Please try again in some time"
+    route = respx.post(SYNTH_URL).mock(
+        side_effect=[
+            httpx.Response(429, headers={"server": "istio-envoy"}, content=body),
+            httpx.Response(200, content=b"ok"),
+            httpx.Response(429, headers={"server": "istio-envoy"}, content=body),
+            httpx.Response(200, content=b"ok"),
+        ]
+    )
+    with caplog.at_level("WARNING"):
+        svc = _svc()
+        await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o1.mp3")
+        await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o2.mp3")
+
+    assert route.call_count == 4
+    assert caplog.text.count("Downstream Service Throttled") == 1
+    assert "istio-envoy" in caplog.text
+
+
+@respx.mock
+async def test_retry_after_seconds_exceeding_ladder_wins(tmp_path):
+    """Retry-After: 5, when it exceeds the ladder value, wins — max(header, ladder)."""
+    route = respx.post(SYNTH_URL).mock(
+        side_effect=[
+            httpx.Response(429, headers={"Retry-After": "5"}, content=b"throttled"),
+            httpx.Response(200, content=b"ok"),
+        ]
+    )
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    # ladder at attempt 0 = retry_base_delay * 4 * 2**0 = 0.5*4 = 2.0 < 5
+    svc = _svc(min_delay=0, retry_base_delay=0.5, sleep=fake_sleep)
+    await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
+
+    assert route.call_count == 2
+    assert sleeps[1] == pytest.approx(5.0)
+
+
+@respx.mock
+async def test_retry_after_seconds_below_ladder_is_ignored(tmp_path):
+    """Retry-After: 0.1, below the ladder, does not shorten the wait."""
+    route = respx.post(SYNTH_URL).mock(
+        side_effect=[
+            httpx.Response(429, headers={"Retry-After": "0.1"}, content=b"throttled"),
+            httpx.Response(200, content=b"ok"),
+        ]
+    )
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    # ladder at attempt 0 = 0.5*4*2**0 = 2.0 > 0.1
+    svc = _svc(min_delay=0, retry_base_delay=0.5, sleep=fake_sleep)
+    await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
+
+    assert route.call_count == 2
+    assert sleeps[1] == pytest.approx(2.0)
+
+
+@respx.mock
+async def test_retry_after_http_date_waits_the_right_delta(tmp_path):
+    """Retry-After as an HTTP-date (the other RFC 9110 wire form) is honoured."""
+    import datetime
+    from email.utils import format_datetime
+
+    target = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=10)
+    route = respx.post(SYNTH_URL).mock(
+        side_effect=[
+            httpx.Response(429, headers={"Retry-After": format_datetime(target, usegmt=True)}, content=b"throttled"),
+            httpx.Response(200, content=b"ok"),
+        ]
+    )
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    # ladder at attempt 0 = 0.1*4 = 0.4, well under the ~10s date delta.
+    svc = _svc(min_delay=0, retry_base_delay=0.1, sleep=fake_sleep)
+    await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
+
+    assert route.call_count == 2
+    assert sleeps[1] == pytest.approx(10.0, abs=1.0)
+
+
+@respx.mock
+async def test_retry_after_http_date_without_timezone_is_treated_as_utc(tmp_path):
+    """An HTTP-date with no zone offset is naive; RFC 9110 dates are always GMT.
+
+    ``email.utils.parsedate_to_datetime`` returns a naive ``datetime`` for a
+    date string with no zone component — this pins that ``_parse_retry_after``
+    fills in UTC rather than comparing naive-to-aware and raising.
+    """
+    import datetime
+
+    target = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=10)
+    # No "GMT"/zone suffix — the wire form email.utils treats as tz-naive.
+    naive_date = target.strftime("%a, %d %b %Y %H:%M:%S")
+    route = respx.post(SYNTH_URL).mock(
+        side_effect=[
+            httpx.Response(429, headers={"Retry-After": naive_date}, content=b"throttled"),
+            httpx.Response(200, content=b"ok"),
+        ]
+    )
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    svc = _svc(min_delay=0, retry_base_delay=0.1, sleep=fake_sleep)
+    await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
+
+    assert route.call_count == 2
+    assert sleeps[1] == pytest.approx(10.0, abs=1.0)
+
+
+@respx.mock
+async def test_retry_after_malformed_is_ignored_not_raised(tmp_path):
+    """A nonsense Retry-After value falls back to the ladder and never raises."""
+    route = respx.post(SYNTH_URL).mock(
+        side_effect=[
+            httpx.Response(429, headers={"Retry-After": "soon"}, content=b"throttled"),
+            httpx.Response(200, content=b"ok"),
+        ]
+    )
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    svc = _svc(min_delay=0, retry_base_delay=0.5, sleep=fake_sleep)
+    await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
+
+    assert route.call_count == 2
+    assert sleeps[1] == pytest.approx(2.0)
+
+
+# ------------------------------------------------------------------
+# Per-provider pacing override
+# ------------------------------------------------------------------
+
+
+async def test_azure_falls_back_to_shared_delay_when_no_override(monkeypatch):
+    """With no per-provider override set, Azure's pacing is byte-identical to the shared setting."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "tts_azure_min_request_delay_s", None)
+    svc = AzureTTSService(key="k", region="r")
+
+    assert svc._min_delay == settings.tts_min_request_delay_s
+
+
+async def test_azure_per_provider_override_wins_over_shared(monkeypatch):
+    """A configured Azure-specific delay overrides the shared setting."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "tts_azure_min_request_delay_s", 0.05)
+    monkeypatch.setattr(settings, "tts_min_request_delay_s", 0.99)
+    svc = AzureTTSService(key="k", region="r")
+
+    assert svc._min_delay == 0.05
+
+
+@respx.mock
 async def test_no_trailing_sleep_after_final_attempt(tmp_path):
     """The retry ladder does not sleep after the final (failed) attempt.
 

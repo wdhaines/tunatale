@@ -12,6 +12,16 @@ from app.audio.edge_tts import EdgeTTSService
 from app.audio.ports import TTSService
 
 
+def _svc(**kw):
+    # Timing is injected, not patched: the retry ladder and the inter-request
+    # pacing are real code paths here, they just run at zero delay. Patching
+    # asyncio.sleep would have meant a mock_allowlist.txt entry (mirrors
+    # test_azure_tts.py's ``_svc`` helper).
+    kw.setdefault("min_delay", 0)
+    kw.setdefault("retry_base_delay", 0)
+    return EdgeTTSService(**kw)
+
+
 def test_edge_tts_satisfies_tts_protocol():
     svc = EdgeTTSService()
     assert isinstance(svc, TTSService)
@@ -196,7 +206,7 @@ async def test_synthesize_raises_after_max_retries(tmp_path):
     """All retries exhausted → RuntimeError with retry count in message."""
     from app.audio.edge_tts import MAX_RETRIES
 
-    svc = EdgeTTSService()
+    svc = _svc()
     output = tmp_path / "out.mp3"
 
     def always_fail(text, voice, rate):
@@ -206,10 +216,87 @@ async def test_synthesize_raises_after_max_retries(tmp_path):
 
     with (
         patch("app.audio.edge_tts.edge_tts.Communicate", side_effect=always_fail),
-        patch("app.audio.edge_tts.asyncio.sleep", new_callable=AsyncMock),
         pytest.raises(RuntimeError, match=str(MAX_RETRIES)),
     ):
         await svc.synthesize("test", "sl-SI-PetraNeural", output)
+
+
+async def test_edge_pacing_delay_paid_on_failure_and_success(tmp_path):
+    """THE test for the burst-amplification fix, mirrored for the edge adapter.
+
+    ``edge_tts.py::_do_synthesize`` had the identical shape to the Azure bug:
+    ``save()`` raising skipped the pacing sleep below it entirely
+    (findings-tts-pacing-2026-08-21.md). A failed attempt must pay the same
+    pacing delay a successful one does. If the fix is reverted to only sleep
+    after a successful ``save()``, the failed attempt contributes nothing to
+    the sleep sequence and this goes red.
+    """
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    svc = _svc(min_delay=0.3, retry_base_delay=0, sleep=fake_sleep)
+    attempt = 0
+
+    def make_communicate(text, voice, rate):
+        nonlocal attempt
+        attempt += 1
+        mock = AsyncMock()
+
+        async def maybe_fail(path):
+            if attempt < 2:
+                raise ConnectionResetError("transient")
+            Path(path).write_bytes(b"audio")
+
+        mock.save = maybe_fail
+        return mock
+
+    with patch("app.audio.edge_tts.edge_tts.Communicate", side_effect=make_communicate):
+        await svc.synthesize("test", "sl-SI-PetraNeural", tmp_path / "out.mp3")
+
+    assert attempt == 2
+    pacing_sleeps = [s for s in sleeps if s == 0.3]
+    assert len(pacing_sleeps) == 2, (
+        f"expected the pacing delay on BOTH attempts (failure and success), got sleeps={sleeps}"
+    )
+
+
+# ------------------------------------------------------------------
+# Per-provider pacing override
+# ------------------------------------------------------------------
+
+
+def test_edge_falls_back_to_shared_delay_when_no_override(monkeypatch):
+    """With no per-provider override set, edge's pacing is byte-identical to the shared setting."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "tts_edge_min_request_delay_s", None)
+    svc = EdgeTTSService()
+
+    assert svc._min_delay == settings.tts_min_request_delay_s
+
+
+def test_edge_per_provider_override_wins_over_shared(monkeypatch):
+    """A configured edge-specific delay overrides the shared setting."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "tts_edge_min_request_delay_s", 0.07)
+    monkeypatch.setattr(settings, "tts_min_request_delay_s", 0.99)
+    svc = EdgeTTSService()
+
+    assert svc._min_delay == 0.07
+
+
+def test_edge_explicit_max_concurrent_requests_overrides_settings():
+    """An explicit ``max_concurrent_requests`` constructor arg wins over settings.
+
+    Mirrors AzureTTSService's constructor shape/tests — a caller can pin
+    concurrency directly without touching global settings.
+    """
+    svc = EdgeTTSService(max_concurrent_requests=3)
+
+    assert svc._max_concurrent == 3
 
 
 # ------------------------------------------------------------------
@@ -218,7 +305,13 @@ async def test_synthesize_raises_after_max_retries(tmp_path):
 
 
 def test_edge_adapter_uses_settings_throttle_defaults():
-    """Adapter reads max_concurrent_requests and min_request_delay_s from settings."""
+    """Adapter reads max_concurrent_requests and min_request_delay_s from settings.
+
+    This is also the "no per-provider override" oracle: the default
+    ``tts_edge_min_request_delay_s`` is ``None``, so with nothing configured
+    the adapter's pacing falls back to (and is byte-identical to) the shared
+    setting.
+    """
     from app.config import settings
 
     svc = EdgeTTSService()
@@ -260,10 +353,19 @@ async def test_edge_adapter_respects_configured_concurrency_limit(tmp_path):
 
 
 async def test_edge_no_trailing_sleep_after_final_attempt(tmp_path):
-    """The retry ladder does not sleep after the final (failed) attempt."""
-    import time
+    """The retry ladder does not sleep after the final (failed) attempt.
 
-    svc = EdgeTTSService()
+    Timing is injected via the ``sleep`` constructor arg (not
+    ``patch("app.audio.edge_tts.asyncio.sleep")``), so the assertion is on
+    the actual sequence of durations the adapter asked to wait, not on a
+    mock's call count against a module attribute.
+    """
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    svc = _svc(retry_base_delay=1, sleep=fake_sleep)
 
     def always_fail(text, voice, rate):
         mock = AsyncMock()
@@ -272,15 +374,13 @@ async def test_edge_no_trailing_sleep_after_final_attempt(tmp_path):
 
     with (
         patch("app.audio.edge_tts.edge_tts.Communicate", side_effect=always_fail),
-        patch("app.audio.edge_tts.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        pytest.raises(RuntimeError, match="after 3 attempts"),
     ):
-        t0 = time.monotonic()
-        with pytest.raises(RuntimeError, match="after 3 attempts"):
-            await svc.synthesize("test", "sl-SI-PetraNeural", tmp_path / "out.mp3")
-        elapsed = time.monotonic() - t0
+        await svc.synthesize("test", "sl-SI-PetraNeural", tmp_path / "out.mp3")
 
-    # With patched sleep the elapsed time should be near-zero.
-    # If a trailing sleep slipped through, it would be > 0.05s.
-    assert elapsed < 0.1, f"elapsed {elapsed:.3f}s suggests a trailing sleep after final attempt"
-    # Only 2 sleeps: between attempt 1-2 and 2-3 (not after 3).
-    assert mock_sleep.call_count == 2
+    # min_delay=0 (from _svc), so the pacing sleep after each failed attempt
+    # records 0 and the backoff sleeps record 1, 2 — three attempts, three
+    # pacing sleeps (item 1's fix), but only two backoff sleeps: between
+    # attempt 1-2 and 2-3, never after the final (3rd) attempt.
+    backoff_sleeps = [s for s in sleeps if s > 0]
+    assert backoff_sleeps == [1, 2], f"expected backoff 1s then 2s with no trailing sleep, got {sleeps}"
