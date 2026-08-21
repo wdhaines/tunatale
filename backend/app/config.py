@@ -173,6 +173,15 @@ class Settings(BaseSettings):
     # never re-runs the model. Boundaries are keyed by (word, voice, rate, model).
     audio_alignment_cache_dir: Path = Path("~/.tunatale/alignment-cache").expanduser()
 
+    # Where synthesized clips are cached BETWEEN renders, keyed by
+    # (voice, rate, text) — the sha256 mp3 cache both TTS adapters have always
+    # implemented and which nothing in production ever passed a directory to.
+    # Wiring it is what makes a failed render resumable: since the burst
+    # throttle (fb0a17f) a lesson is a ~24-minute serial run of TTS calls, so
+    # one clip failing at minute 23 used to cost all 24 minutes again.
+    # Unbounded — nothing evicts from it; see tunatale-rm6v.
+    tts_cache_dir: Path = Path("~/.tunatale/tts-cache").expanduser()
+
     pipeline_autostart: bool = True
 
     # A listen only offers cards due within this many days; beyond it the word is

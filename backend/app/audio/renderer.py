@@ -226,7 +226,22 @@ class LessonRenderer:
                     entry = (canonical, task)
                     synth_memo[key] = entry
             canonical, task = entry
-            await task
+            try:
+                await task
+            except asyncio.CancelledError:
+                # Our own doing (see render's cleanup) — the real cause is the
+                # sibling that failed, and it does its own logging.
+                raise
+            except Exception:
+                logger.error(
+                    "TTS failed for section %d phrase %d (voice=%s, rate=%s): %r",
+                    section_idx,
+                    phrase_idx,
+                    voice_id,
+                    rate,
+                    text,
+                )
+                raise
             return canonical
 
         phrase_files = list(
@@ -324,12 +339,35 @@ class LessonRenderer:
             t0 = time.perf_counter()
             synth_memo: dict[tuple[str, str, str], tuple[Path, asyncio.Task]] = {}
             memo_lock = asyncio.Lock()
-            section_results = await asyncio.gather(
-                *[
+            section_tasks = [
+                asyncio.ensure_future(
                     self._render_section(section, tmp, i, lesson.language_code, synth_memo, memo_lock)
-                    for i, section in enumerate(lesson.sections)
-                ]
-            )
+                )
+                for i, section in enumerate(lesson.sections)
+            ]
+            try:
+                section_results = await asyncio.gather(*section_tasks)
+            except BaseException:
+                # gather STOPS WAITING on the first failure; it does not cancel
+                # the siblings it was waiting on. Left alone they keep
+                # synthesizing into `tmp` while this very function is deleting
+                # it (the adapter re-creates the directory to write, so the
+                # damage is silent), and any that fail surface as a bare "Task
+                # exception was never retrieved" with no lesson context.
+                #
+                # Cancel rather than drain: a TTS failure is nearly always
+                # provider-level, so the ~150 clips still queued behind a
+                # concurrency-1 semaphore would each fail in turn at 0.6s apart.
+                # Nothing is lost by stopping — every clip that DID complete is
+                # already in settings.tts_cache_dir and the re-render reuses it.
+                for task in (*section_tasks, *(t for _canonical, t in synth_memo.values())):
+                    task.cancel()
+                await asyncio.gather(
+                    *section_tasks,
+                    *(t for _canonical, t in synth_memo.values()),
+                    return_exceptions=True,
+                )
+                raise
             section_audios = [r[0] for r in section_results]
             section_cue_lists = [r[1] for r in section_results]
             logger.debug("All sections TTS → %.0f ms", (time.perf_counter() - t0) * 1000)
