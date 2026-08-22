@@ -18,6 +18,8 @@ from app.srs.queue_stats import (
     resolve_bury_review,
     resolve_daily_review_cap,
     resolve_fsrs_params,
+    resolve_new_card_gather_priority,
+    resolve_new_card_sort_order,
     resolve_new_spread,
 )
 from tests._helpers.anki_db import (
@@ -1380,3 +1382,134 @@ class TestRefreshReviewSettingsAbsentMeansDefault:
         assert int(db.get_anki_state_cache("new_spread")[0]) == 2
         assert db.get_anki_state_cache("bury_new")[0] == "True"
         assert db.get_anki_state_cache("bury_review")[0] == "True"
+
+
+# ---- New-card display order (deck_config fields 32 / 34) ----
+#
+# `new_card_sort_order` (32) and `new_card_gather_priority` (34) were hardcoded in
+# TT (Template + HighestPosition) until 2026-08-22, when reading the user's real
+# preset showed gather priority was actually DECK. Both are now mirrored like every
+# other ANKI_CONFIG key. See tunatale-qf6.13.
+
+
+def _make_display_order_blob(sort_order: int | None = None, gather_priority: int | None = None) -> bytes:
+    """A DeckConfig.Config blob carrying only the display-order fields present.
+
+    Passing None omits the field entirely, which is what Anki's own writer does
+    for a value at its proto default — the case that must still land the default
+    in the cache rather than leaving a stale value behind (tunatale-6kl).
+    """
+    # new_per_day (9) is always present so the blob is non-empty: `refresh_review_settings`
+    # returns early on a falsy config blob, and an all-defaults blob built without it
+    # would exercise that early return instead of the absent-field path under test.
+    blob = pb_varint_field(9, 20)
+    if sort_order is not None:
+        blob += pb_varint_field(32, sort_order)
+    if gather_priority is not None:
+        blob += pb_varint_field(34, gather_priority)
+    return blob
+
+
+def _conn_with_display_order(sort_order: int | None, gather_priority: int | None) -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE deck_config (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)")
+    conn.execute("CREATE TABLE decks (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, conf INTEGER, kind BLOB)")
+    conn.execute(
+        "INSERT INTO deck_config VALUES (1, 'Slovene', 0, -1, ?)",
+        (_make_display_order_blob(sort_order, gather_priority),),
+    )
+    conn.execute("INSERT INTO decks VALUES (1, '0. Slovene', 0, -1, 1, ?)", (make_deck_kind_blob(1),))
+    conn.commit()
+    return conn
+
+
+class TestRefreshNewCardDisplayOrder:
+    def test_reads_sort_order_from_blob(self):
+        db = SRSDatabase(":memory:")
+        conn = _conn_with_display_order(sort_order=1, gather_priority=None)
+        refresh_review_settings(db, conn, "0. Slovene")
+        row = db.get_anki_state_cache("new_card_sort_order")
+        assert row is not None
+        assert int(row[0]) == 1
+
+    def test_reads_gather_priority_from_blob(self):
+        db = SRSDatabase(":memory:")
+        conn = _conn_with_display_order(sort_order=None, gather_priority=2)
+        refresh_review_settings(db, conn, "0. Slovene")
+        row = db.get_anki_state_cache("new_card_gather_priority")
+        assert row is not None
+        assert int(row[0]) == 2
+
+    def test_absent_fields_overwrite_a_stale_non_default_cache(self):
+        """proto3 omits a scalar at its default, so absent must mean 0 — not "leave
+        whatever was there". Seeding a non-default first is what makes this
+        discriminating: a `if value is not None` guard passes without it."""
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("new_card_sort_order", "4")
+        db.set_anki_state_cache("new_card_gather_priority", "2")
+        conn = _conn_with_display_order(sort_order=None, gather_priority=None)
+        refresh_review_settings(db, conn, "0. Slovene")
+        assert int(db.get_anki_state_cache("new_card_sort_order")[0]) == 0
+        assert int(db.get_anki_state_cache("new_card_gather_priority")[0]) == 0
+
+    def test_out_of_range_values_are_ignored(self):
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("new_card_sort_order", "1")
+        conn = _conn_with_display_order(sort_order=99, gather_priority=None)
+        refresh_review_settings(db, conn, "0. Slovene")
+        assert int(db.get_anki_state_cache("new_card_sort_order")[0]) == 1
+
+    def test_out_of_range_gather_priority_is_ignored(self):
+        """An enum value from an Anki newer than these constants leaves the cache
+        alone rather than poisoning it with a number nothing can interpret."""
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("new_card_gather_priority", "2")
+        conn = _conn_with_display_order(sort_order=None, gather_priority=99)
+        refresh_review_settings(db, conn, "0. Slovene")
+        assert int(db.get_anki_state_cache("new_card_gather_priority")[0]) == 2
+
+
+class TestResolveNewCardDisplayOrder:
+    def test_sort_order_returns_cache_when_fresh(self):
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("new_card_sort_order", "1")
+        val, source = resolve_new_card_sort_order(db)
+        assert (val, source) == (1, "cache")
+
+    def test_sort_order_defaults_to_template(self):
+        db = SRSDatabase(":memory:")
+        val, source = resolve_new_card_sort_order(db)
+        assert (val, source) == (0, "default")
+
+    def test_gather_priority_returns_cache_when_fresh(self):
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("new_card_gather_priority", "2")
+        val, source = resolve_new_card_gather_priority(db)
+        assert (val, source) == (2, "cache")
+
+    def test_gather_priority_defaults_to_deck(self):
+        db = SRSDatabase(":memory:")
+        val, source = resolve_new_card_gather_priority(db)
+        assert (val, source) == (0, "default")
+
+    def test_out_of_range_cached_value_falls_back_to_default(self):
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("new_card_sort_order", "99")
+        assert resolve_new_card_sort_order(db) == (0, "default")
+
+    def test_unparseable_cached_value_falls_back_to_default(self):
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("new_card_gather_priority", "not-a-number")
+        assert resolve_new_card_gather_priority(db) == (0, "default")
+
+    def test_stale_cache_falls_back_to_default(self):
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("new_card_gather_priority", "2")
+        stale = (datetime.now(UTC) - timedelta(days=400)).isoformat()
+        with db._get_conn() as conn:
+            conn.execute(
+                "UPDATE anki_state_cache SET updated_at = ? WHERE key = ?", (stale, "new_card_gather_priority")
+            )
+        val, source = resolve_new_card_gather_priority(db)
+        assert (val, source) == (0, "default")

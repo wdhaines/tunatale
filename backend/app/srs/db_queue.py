@@ -113,23 +113,33 @@ class DbQueueMixin:
         self,
         limit: int = 10,
         direction: Direction = Direction.RECOGNITION,
+        *,
+        gather_descending: bool | None = None,
     ) -> list[tuple[int, SRSItem, str]]:
-        """Return new-state cards in Anki-parity order under HighestPosition gather.
+        """Return new-state cards in the deck's Anki gather order.
 
-        Sort order mirrors Anki's deck setting "New card gather order: Descending
-        position" (`NewCardGatherPriority::HighestPosition`, emits `due DESC, ord ASC`
-        in `rslib/src/storage/card/mod.rs:923`):
+        Position order follows the deck's mirrored ``new_card_gather_priority``:
 
-        1. `d.anki_due DESC NULLS FIRST` — unsynced rows (anki_due NULL) sit above
-           every synced row so /listen auto-adds surface immediately, before they're
-           pushed to Anki. After `sync_create_new` allocates `MAX(due)+1` per Phase C,
-           they re-anchor at the top of the synced pool with the highest anki_due.
+        1. `d.anki_due` ASC, or DESC under HighestPosition — NULLS FIRST either way.
+           Unsynced rows (anki_due NULL) sit above every synced row so /listen
+           auto-adds surface immediately, before they're pushed to Anki. That half
+           is TT-only: Anki has no opinion about a card it has never seen.
         2. `c.created_at DESC NULLS LAST` — within the unsynced batch, newer wins.
         3. `d.anki_card_id ASC NULLS LAST`, `c.id ASC` — deterministic tiebreakers.
 
-        Layer 25 (this commit) replaces Layer 24's `created_at DESC` lead key with
-        `anki_due DESC` so both apps order the synced pool identically while still
-        keeping fresh TT-only rows up front. See `.claude/rules/anki-queue-parity.md`.
+        ⚠️ The direction used to be hardcoded DESC, citing
+        `NewCardGatherPriority::HighestPosition` (`due DESC, ord ASC`,
+        `rslib/src/storage/card/mod.rs:923`) as Anki parity. That was true of the
+        deck it was written for and not of the next one: read on 2026-08-22, the
+        Slovene deck's preset carries field 34 = 2 (HighestPosition, the setting
+        Layer 25 describes the user flipping), and the Norwegian deck's has it
+        absent, i.e. DECK — ascending position. It is a per-deck setting, so it is
+        mirrored per deck now rather than compiled in (tunatale-qf6.13). Layer 25's
+        reason for the DESC lead key — keeping fresh TT-only rows up front —
+        survives in the NULLS FIRST clause, which is independent of the direction.
+
+        ``gather_descending`` overrides the mirrored setting; tests use it to pin
+        both directions against one fixture.
         """
         # Phase 3 introduction gate (TT-only): a PRODUCTION new card is not
         # introducible until its recognition sibling has graduated past the
@@ -155,13 +165,21 @@ class DbQueueMixin:
             if direction == Direction.PRODUCTION
             else ""
         )
+        if gather_descending is None:
+            # Lazy import: anki_mirror.queue_stats imports the database package, so a
+            # module-level import here would close the cycle.
+            from app.srs.anki_mirror.queue_stats import new_cards_gather_descending
+
+            gather_descending = new_cards_gather_descending(self)
+        position_order = "DESC NULLS FIRST" if gather_descending else "ASC NULLS FIRST"
+
         with self._get_conn() as conn:
             rows = conn.execute(
                 f"""
                 SELECT c.* FROM collocations c
                 JOIN collocation_directions d ON d.collocation_id = c.id
                 WHERE d.direction = ? AND d.state = 'new'{gate}
-                 ORDER BY d.anki_due DESC NULLS FIRST,
+                 ORDER BY d.anki_due {position_order},
                           c.created_at DESC NULLS LAST,
                           d.anki_card_id ASC NULLS LAST,
                           c.id ASC

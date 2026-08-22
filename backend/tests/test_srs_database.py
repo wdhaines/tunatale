@@ -574,8 +574,13 @@ class TestDueQueries:
         second = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=5)]
         assert first == second
 
-    def test_get_new_items_synced_orders_by_anki_due_desc(self, srs_db):
-        """Synced rows sort by anki_due DESC to mirror Anki HighestPosition gather."""
+    def _seed_positioned_new_rows(self, srs_db):
+        """Three synced NEW rows whose anki_due order disagrees with insertion order.
+
+        The disagreement is the point: a fixture whose positions ascend with
+        insertion cannot tell an ASC gather from a DESC one, and would pass either
+        way (tunatale-qf6.13's oracle note).
+        """
         for t in ["word_a", "word_b", "word_c"]:
             srs_db.add_collocation(_unit(t, f"trans_{t}"), language_code="sl")
         due_map = {"word_a": 100, "word_b": 200, "word_c": 150}
@@ -598,8 +603,26 @@ class TestDueQueries:
                     anki_due=due,
                 ),
             )
+
+    def test_get_new_items_gathers_ascending_position_by_default(self, srs_db):
+        """DECK gather (Anki's app default, and the user's actual preset) walks a
+        deck's new cards from the LOWEST position upward.
+
+        Hardcoded DESC until 2026-08-22, when reading the real preset showed field
+        34 absent — DECK, not HighestPosition. TT was serving the opposite end of
+        the pool from Anki (tunatale-qf6.13).
+        """
+        self._seed_positioned_new_rows(srs_db)
         texts = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=10)]
-        # Highest anki_due first → b (200), c (150), a (100)
+        # Lowest anki_due first → a (100), c (150), b (200)
+        assert texts == ["word_a", "word_c", "word_b"]
+
+    def test_get_new_items_gathers_descending_under_highest_position(self, srs_db):
+        """The mirror image, and the test that proves the setting is READ rather
+        than defaulted: HighestPosition inverts the same fixture."""
+        self._seed_positioned_new_rows(srs_db)
+        srs_db.set_anki_state_cache("new_card_gather_priority", "2")  # HIGHEST_POSITION
+        texts = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=10)]
         assert texts == ["word_b", "word_c", "word_a"]
 
     def test_get_new_items_unsynced_rows_surface_above_synced(self, srs_db):
