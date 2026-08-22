@@ -41,6 +41,21 @@ class MintedCard(NamedTuple):
     created: bool
 
 
+#: Reserved position band for TT-minted production cards, used when the deck gathers
+#: new cards in ASCENDING position. It sits below every imported card (the Norwegian
+#: deck's new cards start at 1518) so minted production drains before new vocabulary,
+#: and it fills UPWARD so mint order and serve order agree — which is what keeps
+#: tunatale-qf6.11's frequency-ordered minting visible to the learner. Allocating
+#: downward from the frontier instead would serve the most recently minted card
+#: first, silently reintroducing the bug qf6.11 exists to fix.
+#:
+#: Negative positions are not a trick: ``cards.due`` is an i32 and Anki's scheduler
+#: orders them correctly — pinned against the binary in
+#: ``tests/test_parity_front_positions.py``.
+_PRODUCTION_BAND_FLOOR = -1_000_000
+_PRODUCTION_BAND_CEILING = 0
+
+
 class OfflineWriter:
     """Write changes directly into a raw sqlite3.Connection to collection.anki2.
 
@@ -59,10 +74,73 @@ class OfflineWriter:
         conn: sqlite3.Connection,
         media_dir: Path | None = None,
         media_db_path: Path | None = None,
+        *,
+        gather_descending: bool = False,
     ) -> None:
         self._conn = conn
         self._media_dir = media_dir
         self._media_db_path = media_db_path
+        # The deck's mirrored NewCardGatherPriority (Layer 83). It decides which END
+        # of the position range is the front of the new queue, and therefore where a
+        # newly written card has to go to be seen. Defaults to Anki's own app default
+        # (DECK, ascending); the Slovene deck is the one on HighestPosition.
+        self._gather_descending = gather_descending
+
+    def _next_front_position(self, slots: int = 1) -> int:
+        """Base position for ``slots`` consecutive cards at the FRONT of the new queue.
+
+        "Front" is whichever end the deck gathers from, so this is `MAX(due)+1` under
+        HighestPosition and `MIN(due)-slots` under DECK. Cards are then written at
+        ``base + ord``, which keeps a note's templates contiguous and in ord order.
+
+        Used for TunaTale's own additions, whose whole point is to surface
+        immediately (Layer 24/25): the caller adds oldest-first, each addition lands
+        ahead of the previous one, and the freshest ends up frontmost under either
+        gather direction.
+
+        ⚠️ Before Layer 83 this was unconditionally `MAX(due)+1`, which is the front
+        only under HighestPosition. On the Norwegian deck — DECK gather — it put
+        every fresh /listen add at the very BACK, behind 1400+ imported words.
+        """
+        if self._gather_descending:
+            row = self._conn.execute("SELECT IFNULL(MAX(due), 0) FROM cards WHERE type = 0").fetchone()
+            return int(row[0] or 0) + 1
+        row = self._conn.execute("SELECT MIN(due) FROM cards WHERE type = 0").fetchone()
+        lowest = int(row[0]) if row is not None and row[0] is not None else 1
+        return lowest - slots
+
+    def _next_production_position(self) -> int:
+        """Next position in the reserved production band — FIFO, ahead of the deck.
+
+        Production cards want the opposite growth direction from ``_next_front_position``:
+        the band fills toward the deck so that the FIRST card minted is the first
+        served, preserving mint order across syncs rather than serving the newest
+        batch first.
+
+        Under HighestPosition there is no band — `MAX(due)+1` is already both the
+        front of the queue and this writer's pre-existing behaviour, and the Slovene
+        deck (the only one on that setting) does not mint production cards in
+        practice, its notes having carried both templates since import. Documented
+        residual: cross-batch order there is newest-first.
+        """
+        if self._gather_descending:
+            row = self._conn.execute("SELECT IFNULL(MAX(due), 0) FROM cards WHERE type = 0").fetchone()
+            return int(row[0] or 0) + 1
+        row = self._conn.execute(
+            "SELECT MAX(due) FROM cards WHERE type = 0 AND due >= ? AND due < ?",
+            (_PRODUCTION_BAND_FLOOR, _PRODUCTION_BAND_CEILING),
+        ).fetchone()
+        if row is None or row[0] is None:
+            return _PRODUCTION_BAND_FLOOR
+        nxt = int(row[0]) + 1
+        if nxt >= _PRODUCTION_BAND_CEILING:
+            # A million minted cards against a 3009-word deck: unreachable, and if it
+            # is reached something upstream is minting in a loop. Fail loudly rather
+            # than hand out a position that collides with the imported deck.
+            raise ValueError(
+                f"production position band [{_PRODUCTION_BAND_FLOOR}, {_PRODUCTION_BAND_CEILING}) is exhausted"
+            )
+        return nxt
 
     def _bump_col(self, ts: int) -> None:
         # Bump col.mod (so Anki sees the collection changed) but DO NOT touch col.usn.
@@ -564,8 +642,7 @@ class OfflineWriter:
         )
 
         tmpl_rows = self._conn.execute("SELECT ord FROM templates WHERE ntid = ? ORDER BY ord", (mid,)).fetchall()
-        due_row = self._conn.execute("SELECT MAX(due) + 1 FROM cards WHERE type = 0").fetchone()
-        next_due = due_row[0] if due_row and due_row[0] else 1
+        next_due = self._next_front_position(slots=len(tmpl_rows) or 1)
 
         for (ord_,) in tmpl_rows:
             card_id = note_id + ord_
@@ -636,8 +713,7 @@ class OfflineWriter:
         )
 
         tmpl_rows = self._conn.execute("SELECT ord FROM templates WHERE ntid = ? ORDER BY ord", (mid,)).fetchall()
-        due_row = self._conn.execute("SELECT MAX(due) + 1 FROM cards WHERE type = 0").fetchone()
-        next_due = due_row[0] if due_row and due_row[0] else 1
+        next_due = self._next_front_position(slots=len(tmpl_rows) or 1)
 
         for (ord_,) in tmpl_rows:
             card_id = note_id + ord_
@@ -753,8 +829,7 @@ class OfflineWriter:
         if existing is not None:
             minted = MintedCard(card_id=existing["id"], due=existing["due"], created=False)
         else:
-            due_row = self._conn.execute("SELECT MAX(due) + 1 FROM cards WHERE type = 0").fetchone()
-            next_due = due_row[0] if due_row and due_row[0] else 1
+            next_due = self._next_production_position()
             # Anki's id convention, same as create_note: nid + ord, bumped past
             # any collision with an unrelated note's card.
             card_id = note_id + prod_ord

@@ -86,6 +86,7 @@ from app.plugins.anki_sync.sync_engine import (
 from app.plugins.anki_sync.sync_reader import OfflineReader as OfflineReader
 from app.plugins.anki_sync.sync_writer import MintedCard as MintedCard
 from app.plugins.anki_sync.sync_writer import OfflineWriter as OfflineWriter
+from app.srs.anki_mirror.queue_stats import new_cards_gather_descending
 from app.srs.database import SRSDatabase
 
 _log = logging.getLogger(__name__)
@@ -494,7 +495,13 @@ def main(
             # it; the fallback existed only for test doubles that omitted it.
             language_code = _s.target_language
             reader = OfflineReader(ctx.conn, deck_name, language_code=language_code)
-            writer = OfflineWriter(ctx.conn, media_dir=_media_dir)
+            # The deck's mirrored gather priority decides which end of the position
+            # range a newly written card must land on to be seen at all (Layer 83).
+            writer = OfflineWriter(
+                ctx.conn,
+                media_dir=_media_dir,
+                gather_descending=new_cards_gather_descending(db),
+            )
             sync = AnkiSync(
                 db=db,
                 _reader=reader,

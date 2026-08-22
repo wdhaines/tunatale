@@ -1470,11 +1470,14 @@ class AnkiSync:
         if dry_run:
             return CreateNewReport(count=len(items))
 
-        # Sort oldest-first so the MAX(due)+1 allocator in create_note gives newer
-        # items higher cards.due. Under Anki's "New card gather order: Descending
-        # position" deck setting (rslib/src/storage/card/mod.rs:923 — emits
-        # "due DESC, ord ASC"), the freshest TT auto-add surfaces first in the
-        # user's next review. See docs/anki-parity-layers.md Layer 24.
+        # Sort oldest-first so each successive item is allocated AHEAD of the
+        # previous one by create_note's front-of-queue allocator, leaving the
+        # freshest TT auto-add frontmost in the user's next review (Layer 24).
+        # The sort direction is the same under either gather priority — the
+        # allocator is what knows which end of the position range the front is
+        # (Layer 83). It used to be MAX(due)+1 unconditionally, which is the front
+        # only under HighestPosition; on a DECK-gather deck that put every fresh
+        # add at the very back.
         items.sort(key=lambda gi: self._db.get_created_at_by_guid(gi[0]) or "")
 
         used_image_urls: set[str] = set()

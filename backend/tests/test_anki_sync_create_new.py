@@ -370,8 +370,11 @@ class TestClozeNote:
         with pytest.raises(DuplicateNoteError):
             writer.create_cloze_note(deck_name="0. Slovene", cloze_text=cloze_text, language_code="sl")
 
-    def test_create_cloze_note_creates_card_with_max_due_plus_one(self):
-        """Cloze card gets MAX(due)+1 allocator same as create_note."""
+    def test_create_cloze_note_places_the_card_at_the_front_of_the_new_queue(self):
+        """Cloze card uses the same front-of-queue allocator as create_note. Under
+        DECK gather (Anki's app default) the front is the LOWEST position, so the new
+        card lands below the existing one — not at MAX(due)+1, which is where these
+        were invisible before Layer 83."""
         anki_conn = _make_cloze_collection_conn()
         # Pre-populate with an existing card at due=5
         existing_id = 9001
@@ -396,7 +399,33 @@ class TestClozeNote:
         )
         due = anki_conn.execute("SELECT due FROM cards WHERE nid = ?", (note_id,)).fetchone()
         assert due is not None
-        assert due["due"] >= 6  # MAX(5) + 1 = 6
+        assert due["due"] < 5, "the new cloze card must sort ahead of the existing card at position 5"
+
+    def test_create_cloze_note_allocates_at_the_tail_under_highest_position_gather(self):
+        """The mirror image: under HighestPosition the tail IS the front, so the same
+        allocator hands out MAX(due)+1. Proves the writer reads the setting."""
+        anki_conn = _make_cloze_collection_conn()
+        existing_id = 9001
+        anki_conn.execute(
+            "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+            "VALUES (?, ?, 1000001, 0, 0, '', 'existing', 'existing', 0, 0, '')",
+            (existing_id, "aabbccdd00112233"),
+        )
+        anki_conn.execute(
+            "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, lapses, left, odue, odid, flags, data) "
+            "VALUES (?, 9001, 12345, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+            (existing_id * 10,),
+        )
+        anki_conn.commit()
+
+        writer = OfflineWriter(anki_conn, gather_descending=True)
+        note_id = writer.create_cloze_note(
+            deck_name="0. Slovene",
+            cloze_text="knjiga, {{c1::je}} tam",
+            language_code="sl",
+        )
+        due = anki_conn.execute("SELECT due FROM cards WHERE nid = ?", (note_id,)).fetchone()
+        assert due["due"] == 6  # MAX(5) + 1
 
 
 # ── TestSyncCreateNewRouting ──────────────────────────────────────────────────
@@ -1155,8 +1184,11 @@ class TestSyncCreateNew:
         # find_notes must NOT be called (offline path knows the ID from the exception)
         assert not any(c[0] == "find_notes" for c in writer.calls)
 
-    async def test_creates_notes_with_higher_due_for_newer_items(self):
-        """sync_create_new with real OfflineWriter: newer items get higher cards.due."""
+    async def test_creates_notes_with_the_newest_item_at_the_front(self):
+        """sync_create_new with a real OfflineWriter: the newest TT item ends up
+        frontmost in the new queue — Layer 24/25's listen-first intent. Under DECK
+        gather "frontmost" is the LOWEST position, so the newest item now gets the
+        lowest cards.due rather than the highest."""
         from app.cards.vocab_notetype import SLOVENE_VOCAB
         from app.plugins.anki_sync.sync import OfflineWriter
 
@@ -1178,9 +1210,10 @@ class TestSyncCreateNew:
         ).fetchall()
         assert len(rows) == 4  # 2 notes × 2 cards each (rec + prod)
         guids = [r["guid"] for r in rows]
-        # Oldest TT item (staro) should have lowest cards.due → appears first
-        assert guids[0] == guid_old
-        assert guids[2] == guid_new  # newer TT item starts at position 3 (after both staro cards)
+        # Ascending position order = serve order under DECK gather: the NEWER item's
+        # pair sorts ahead of the older item's pair.
+        assert guids[0] == guid_new
+        assert guids[2] == guid_old
 
     async def test_preserves_existing_anki_due(self):
         """sync_create_new doesn't touch existing cards' due values."""
@@ -1217,10 +1250,13 @@ class TestSyncCreateNew:
             (guid_new,),
         ).fetchone()
         assert new_due is not None
-        assert new_due["due"] >= 4  # MAX(existing due) + 1 = 3 + 1 = 4
+        assert new_due["due"] < 1, "under DECK gather the new card belongs ahead of the existing ones at 1..3"
 
     async def test_sorts_by_created_at_asc_before_creating_notes(self):
-        """sync_create_new sorts oldest-first so MAX(due)+1 gives newer items higher due."""
+        """sync_create_new sorts oldest-first so each successive item is allocated
+        ahead of the previous one, leaving the newest frontmost. The sort is the same
+        under either gather direction — it is the allocator that knows which end the
+        front is (Layer 83)."""
         db = _make_db()
         guid_new = _add_item(db, "new_word", "new")
         guid_old = _add_item(db, "old_word", "old")
