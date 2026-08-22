@@ -47,6 +47,7 @@ from app.plugins.anki_sync.add_production_template import (
     add_production_template,
 )
 from app.plugins.anki_sync.sync import OfflineWriter
+from app.plugins.anki_sync.sync_writer import _PRODUCTION_BAND_CEILING, _PRODUCTION_BAND_FLOOR
 from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
 
 SEED_MID = 1694414741634
@@ -156,6 +157,23 @@ def _cards_for(conn: sqlite3.Connection, note_id: int = NOTE_ID) -> list[sqlite3
     return conn.execute("SELECT * FROM cards WHERE nid = ? ORDER BY ord", (note_id,)).fetchall()
 
 
+def _add_second_mintable_note(conn: sqlite3.Connection) -> int:
+    """A second note on the migrated notetype, with a recognition card to inherit a
+    deck from — enough for a second mint, so band allocation order is observable."""
+    note_id = NOTE_ID + 1000
+    flds = "\x1f".join(("2", "bok", "noun", "en", "/buːk/", "book", "a book"))
+    conn.execute(
+        "INSERT INTO notes VALUES (?, 'guid-bok', ?, 100, 7, '', ?, 'bok', 0, 0, '')",
+        (note_id, SEED_MID, flds),
+    )
+    conn.execute(
+        "INSERT INTO cards VALUES (?, ?, ?, 0, 100, 7, 2, 2, 901, 30, 2500, 9, 0, 0, 0, 0, 0, '')",
+        (note_id * 10, note_id, DECK_ID),
+    )
+    conn.commit()
+    return note_id
+
+
 def _col_mod(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT mod FROM col").fetchone()["mod"]
 
@@ -176,9 +194,10 @@ class TestMintProductionCard:
         card = cards[1]
         assert card["id"] == minted.card_id
         assert card["due"] == minted.due
-        # Added, not graded: a NEW card at the tail of the new queue.
+        # Added, not graded: a NEW card, in the reserved production band ahead of the
+        # imported deck (Layer 83 — the tail is where these were invisible).
         assert (card["type"], card["queue"], card["reps"], card["ivl"]) == (0, 0, 0, 0)
-        assert card["due"] == OTHER_DUE + 1
+        assert card["due"] == _PRODUCTION_BAND_FLOOR
         # Same deck as its recognition sibling — never deck 0.
         assert card["did"] == DECK_ID
         assert card["usn"] == -1
@@ -188,6 +207,48 @@ class TestMintProductionCard:
         note = conn.execute("SELECT usn FROM notes WHERE id = ?", (NOTE_ID,)).fetchone()
         assert note["usn"] == -1
         assert _col_mod(conn) != before
+
+    def test_mints_at_the_tail_under_highest_position_gather(self) -> None:
+        """The mirror image, and the proof the writer reads the setting rather than
+        defaulting: under HighestPosition the tail IS the front of the new queue, so
+        `MAX(due)+1` is already correct there and no band is used."""
+        conn = _make_conn()
+        writer = OfflineWriter(conn, gather_descending=True)
+
+        minted = writer.mint_production_card(NOTE_ID, IMAGE_TAG)
+
+        assert minted.due == OTHER_DUE + 1
+
+    def test_band_fills_upward_so_mint_order_is_serve_order(self) -> None:
+        """FIFO is the point of the band. Allocating downward from the frontier would
+        serve the most recently minted card first, which is the bug
+        tunatale-qf6.11's frequency-ordered minting exists to prevent."""
+        conn = _make_conn()
+        writer = OfflineWriter(conn)
+
+        first = writer.mint_production_card(NOTE_ID, IMAGE_TAG)
+        second_note = _add_second_mintable_note(conn)
+        second = writer.mint_production_card(second_note, IMAGE_TAG)
+
+        assert first.due == _PRODUCTION_BAND_FLOOR
+        assert second.due == _PRODUCTION_BAND_FLOOR + 1
+        assert first.due < second.due, "the earlier mint must sort ahead under ascending gather"
+
+    def test_refuses_when_the_band_is_exhausted(self) -> None:
+        """The band's top slot is taken, so the next allocation would land on the
+        imported deck's side of the boundary. Fail loudly rather than hand out a
+        colliding position — reached through the seam by seeding a card in the last
+        slot, not by patching the constant."""
+        conn = _make_conn()
+        conn.execute(
+            "INSERT INTO cards VALUES (?, ?, ?, 0, 100, 7, 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+            (77_777, OTHER_NOTE_ID, DECK_ID, _PRODUCTION_BAND_CEILING - 1),
+        )
+        conn.commit()
+        writer = OfflineWriter(conn)
+
+        with pytest.raises(ValueError, match="band .* is exhausted"):
+            writer.mint_production_card(NOTE_ID, IMAGE_TAG)
 
     def test_adopts_a_card_anki_already_generated(self) -> None:
         """The stranding self-heal: Anki minted ord=1 with an id TT never chose."""
