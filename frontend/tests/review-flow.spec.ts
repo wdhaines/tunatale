@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { backendAvailable, resetSRSItems, seedSRSItems } from './helpers';
 
 // This spec asserts on exact queue counts ("3 + 0 + 0" → 3 reviews → "Done").

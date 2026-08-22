@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { backendAvailable, resetSRSItems, seedSRSItems } from './helpers';
 
 // This spec suspends 'eden' and does not restore it, and /cards paginates at 50

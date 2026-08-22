@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 /**
  * Offline-audio service worker e2e (offline-audio Phases 3/4).
@@ -21,11 +21,15 @@ import { test, expect } from "@playwright/test";
  */
 
 const BACKEND_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../backend");
+// Per-worker app DB name — must stay in lockstep with the DATABASE_URL this
+// worker's backend receives from playwright.config.ts. Module evaluation
+// happens inside the worker process, so TEST_PARALLEL_INDEX is set here.
+const APP_DB = `tunatale-test-${Number(process.env.TEST_PARALLEL_INDEX ?? 0)}.db`;
 const CACHED_ID = "e2e-fixture-id";
 const CACHED_PATH = `/api/audio/${CACHED_ID}`;
 const UNCACHED_PATH = "/api/audio/e2e-never-fetched-id";
 
-// Seed a 3s silent opus + its audio_files row into the e2e backend (tunatale-test.db).
+// Seed a 3s silent opus + its audio_files row into this worker's backend (APP_DB above).
 const SEED_PY = `
 import os, sqlite3, subprocess, pathlib
 fixture = pathlib.Path("output/audio/e2e-fixture.opus").resolve()
@@ -35,7 +39,7 @@ subprocess.run(
      "-c:a","libopus","-b:a","28k","-f","ogg",str(fixture)],
     check=True, capture_output=True,
 )
-con = sqlite3.connect("tunatale-test.db")
+con = sqlite3.connect("${APP_DB}")
 con.execute(
     "INSERT OR REPLACE INTO audio_files (id, lesson_id, file_path, section_index, section_type)"
     " VALUES (?,?,?,?,?)",

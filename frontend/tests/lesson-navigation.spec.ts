@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { backendAvailable, seedCurriculumWithLesson } from './helpers';
 
 test('curriculum → day picker → lesson page renders header', async ({ page, request }) => {

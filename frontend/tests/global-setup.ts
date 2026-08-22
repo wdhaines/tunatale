@@ -3,7 +3,8 @@
 // created (and the webServer command has already removed) the auth store, so
 // the CLI writes into the same SQLite file the running server reads.
 //
-// DB cleanup is handled in the webServer command itself (rm -f tunatale-test*.db).
+// DB cleanup lives at module scope in playwright.config.ts (rmSync before any
+// server spawns — an rm in a webServer command would race the shared auth DB).
 //
 // What this does: creates the E2E account, signs in through the real login
 // page, and saves the cookie for every spec to reuse (see `use.storageState`).
@@ -48,6 +49,11 @@ export default async function globalSetup(): Promise<void> {
 	// Setup should not be racing the dev server's module graph. The login PAGE
 	// is covered properly by auth-login.spec.ts, where the navigation that gets
 	// there is itself client-side and therefore proves hydration happened.
+	// :5174 stays hardcoded on purpose. globalSetup runs ONCE, before any worker
+	// exists, so there is no worker index to read. One login through worker 0's
+	// frontend suffices because cookies ignore port: a cookie set for host
+	// `localhost` is sent to `localhost:5175` too, and the shared auth DB means
+	// either backend validates it.
 	const ctx = await request.newContext({ baseURL: 'http://localhost:5174' });
 	const response = await ctx.post('/api/auth/login', { data: { email: EMAIL, password } });
 	if (!response.ok()) {

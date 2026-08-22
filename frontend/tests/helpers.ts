@@ -1,6 +1,10 @@
 import type { APIRequestContext } from '@playwright/test';
 
-export const BACKEND = 'http://localhost:8001';
+// Per-worker backend. Playwright evaluates this module inside the worker
+// process, so TEST_PARALLEL_INDEX is set — worker 0 → :8001, worker 1 → :8003.
+// Must stay in lockstep with PORTS.backend() in ./fixtures and with the
+// webServer entries in playwright.config.ts.
+export const BACKEND = `http://localhost:${8001 + 2 * Number(process.env.TEST_PARALLEL_INDEX ?? 0)}`;
 
 export async function backendAvailable(request: APIRequestContext): Promise<boolean> {
 	return (await request.get(`${BACKEND}/api/health`)).ok();
@@ -20,10 +24,13 @@ export async function seedSRSItems(
 }
 
 /**
- * Wipes ALL SRS items from the shared test DB. Used by specs whose assertions
- * depend on a known item count (e.g., review-flow asserts "Done for today"
- * after exactly N reviews). Specs that share the DB with earlier-running
- * specs need this in `beforeEach` to undo the prior seeds.
+ * Wipes ALL SRS items from the calling worker's OWN test DB — each worker has
+ * its own backend/DB since tunatale-5od (see BACKEND above), so this never
+ * touches the other worker's data. Used by specs whose assertions depend on a
+ * known item count (e.g., review-flow asserts "Done for today" after exactly N
+ * reviews). Specs sharing a worker still run in sequence, so a spec can still
+ * inherit earlier seeds from its own worker's DB — hence the `beforeEach`
+ * reset where counts matter.
  */
 export async function resetSRSItems(request: APIRequestContext): Promise<void> {
 	const res = await request.get(`${BACKEND}/api/srs/items?limit=10000`);

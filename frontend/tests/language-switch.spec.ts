@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 /**
  * Switching the active language in Settings re-points the whole app at the
@@ -32,8 +32,6 @@ import { test, expect } from '@playwright/test';
  * one — which is why removing the :8002 server cost this suite nothing.
  */
 
-const API = 'http://localhost:8001';
-
 // Distinctive enough that a match cannot be some other spec's fixture leaking
 // through the shared Slovene DB — which is the failure this test's first
 // assertion would otherwise silently absorb.
@@ -45,15 +43,16 @@ const API = 'http://localhost:8001';
 const NO_TOPIC = `norsk kaffekurs (language-switch ${Math.random().toString(36).slice(2, 8)})`;
 
 test('switching to Norwegian in Settings re-points the library at the Norwegian DB', async ({
+	backendURL,
 	page,
 	request
 }) => {
-	const health = await request.get(`${API}/api/health`);
+	const health = await request.get(`${backendURL}/api/health`);
 	test.skip(!health.ok(), 'Backend not available');
 
 	// Seed the NORWEGIAN database, via the header the app itself sends. Nothing
 	// else in this suite writes to it, so this row is the discriminator.
-	const seeded = await request.post(`${API}/api/curriculum/import`, {
+	const seeded = await request.post(`${backendURL}/api/curriculum/import`, {
 		headers: { 'X-TT-Language': 'no' },
 		data: {
 			topic: NO_TOPIC,

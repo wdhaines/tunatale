@@ -2,8 +2,8 @@
 # Runs the full lint + test gate. Three independent groups run concurrently:
 # backend (ruff + checkers + pytest), frontend (fmt + lint + svelte-check +
 # vitest + e2e), and peer-sync (round-trips against a throwaway anki.syncserver).
-# They share nothing — e2e boots its own backend on :8001 with dedicated test
-# DBs, and peer-sync's server binds an ephemeral port. Output is buffered
+# They share nothing — e2e boots one backend per Playwright worker (:8001, :8003),
+# each with its own test DBs, and peer-sync's server binds an ephemeral port. Output is buffered
 # per group and printed when all finish (live progress would interleave). Note:
 # pytest -n auto already saturates the CPU, so the groups contend; the win is the
 # overlap, not free parallelism.

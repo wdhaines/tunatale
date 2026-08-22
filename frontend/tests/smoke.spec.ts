@@ -1,7 +1,7 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
-test('backend health check', async ({ request }) => {
-	const res = await request.get('http://localhost:8001/api/health');
+test('backend health check', async ({ request, backendURL }) => {
+	const res = await request.get(`${backendURL}/api/health`);
 	expect(res.ok()).toBe(true);
 	const body = await res.json();
 	expect(body.status).toBe('ok');
@@ -18,14 +18,14 @@ test('home page loads', async ({ page }) => {
 
 test('frontend proxies /api to backend', async ({ request }) => {
 	// Hits backend via Vite proxy — catches the "Not Found" gap
-	const res = await request.get('http://localhost:5174/api/health');
+	const res = await request.get('/api/health');
 	expect(res.ok()).toBe(true);
 	const body = await res.json();
 	expect(body.status).toBe('ok');
 });
 
-test('start curriculum plan flow', async ({ page, request }) => {
-	const health = await request.get('http://localhost:8001/api/health');
+test('start curriculum plan flow', async ({ page, request, backendURL }) => {
+	const health = await request.get(`${backendURL}/api/health`);
 	test.skip(!health.ok(), 'Backend not available');
 
 	await page.goto('/');
@@ -54,8 +54,8 @@ test('review page loads', async ({ page }) => {
 	).toBeVisible({ timeout: 5000 });
 });
 
-test('review page loads (with backend)', async ({ page, request }) => {
-	const health = await request.get('http://localhost:8001/api/health');
+test('review page loads (with backend)', async ({ page, request, backendURL }) => {
+	const health = await request.get(`${backendURL}/api/health`);
 	test.skip(!health.ok(), 'Backend not available');
 
 	await page.goto('/review');

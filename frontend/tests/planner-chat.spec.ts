@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 const CANNED_TURN_REPLY = "Here are two ideas for your coffee curriculum!";
 const CANNED_DAYS = [
@@ -22,12 +22,12 @@ const CANNED_DAYS = [
 	},
 ];
 
-test('planner chat: route-mocked turn + commit render the full propose/commit UI loop', async ({ page, request }) => {
-	const health = await request.get('http://localhost:8001/api/health');
+test('planner chat: route-mocked turn + commit render the full propose/commit UI loop', async ({ backendURL, page, request }) => {
+	const health = await request.get(`${backendURL}/api/health`);
 	test.skip(!health.ok(), 'Backend not available');
 
 	// 1. Create a curriculum plan (LLM-free)
-	const planRes = await request.post('http://localhost:8001/api/curriculum/plan', {
+	const planRes = await request.post(`${backendURL}/api/curriculum/plan`, {
 		data: { topic: 'ordering coffee', cefr_level: 'A2' },
 	});
 	test.skip(!planRes.ok(), 'Failed to create plan');

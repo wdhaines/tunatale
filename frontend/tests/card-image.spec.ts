@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
@@ -46,7 +46,7 @@ test.describe('card image upload', () => {
 		await resetSRSItems(request);
 	});
 
-	test('remove image from card', async ({ page, request }) => {
+	test('remove image from card', async ({ page, request, backendURL }) => {
 		test.skip(!(await backendAvailable(request)), 'Backend not available');
 		await resetSRSItems(request);
 
@@ -56,11 +56,11 @@ test.describe('card image upload', () => {
 		]);
 
 		// First upload an image via the backend API (PUT, not POST)
-		const itemsRes = await request.get(`http://localhost:8001/api/srs/items?search=${itemText}`);
+		const itemsRes = await request.get(`${backendURL}/api/srs/items?search=${itemText}`);
 		const items = await itemsRes.json();
 		const itemId = items.items[0].id;
 		const uploadRes = await request.put(
-			`http://localhost:8001/api/srs/items/${itemId}/image/upload`,
+			`${backendURL}/api/srs/items/${itemId}/image/upload`,
 			{
 				multipart: {
 					file: {

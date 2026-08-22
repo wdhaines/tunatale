@@ -13,7 +13,7 @@
  * the signed-in cookie from `use.storageState` in playwright.config.ts.
  */
 import { readFileSync } from 'node:fs';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { CREDENTIALS } from './global-setup';
 
 test.use({ storageState: { cookies: [], origins: [] } });
@@ -71,7 +71,7 @@ test('a session that dies mid-visit lands on the login page, not a broken one', 
 }) => {
 	await page.goto('/login');
 	await signIn(page);
-	await page.waitForURL('http://localhost:5174/');
+	await page.waitForURL('/');
 
 	// The cookie expiring is indistinguishable, from the browser's side, from
 	// this. The layout guard cannot catch it — it already ran and passed — so
