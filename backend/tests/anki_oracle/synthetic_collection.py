@@ -121,6 +121,8 @@ REVIEW_ORDER_RETRIEVABILITY_ASCENDING = 7  # ReviewCardOrder.RETRIEVABILITY_ASCE
 BURY_NEW_FIELD = 27  # DeckConfig.Config.bury_new (bool)
 BURY_REVIEWS_FIELD = 28  # DeckConfig.Config.bury_reviews (bool)
 BURY_INTERDAY_LEARNING_FIELD = 29  # DeckConfig.Config.bury_interday_learning (bool)
+NEW_CARD_SORT_ORDER_FIELD = 32  # DeckConfig.Config.new_card_sort_order (enum)
+NEW_CARD_GATHER_PRIORITY_FIELD = 34  # DeckConfig.Config.new_card_gather_priority (enum)
 
 
 def _make_deck_config_blob(
@@ -134,6 +136,8 @@ def _make_deck_config_blob(
     bury_new: bool = False,
     bury_reviews: bool = False,
     bury_interday_learning: bool = False,
+    new_card_sort_order: int = 0,
+    new_card_gather_priority: int = 0,
 ) -> bytes:
     """Build a DeckConfig.Config protobuf blob.
 
@@ -173,6 +177,12 @@ def _make_deck_config_blob(
         blob += pb_varint_field(BURY_REVIEWS_FIELD, 1)
     if bury_interday_learning:
         blob += pb_varint_field(BURY_INTERDAY_LEARNING_FIELD, 1)
+    # Display order. Both default to 0 (TEMPLATE / DECK), which is also Anki's app
+    # default, so the field is omitted then and existing blobs stay byte-identical.
+    if new_card_sort_order:
+        blob += pb_varint_field(NEW_CARD_SORT_ORDER_FIELD, new_card_sort_order)
+    if new_card_gather_priority:
+        blob += pb_varint_field(NEW_CARD_GATHER_PRIORITY_FIELD, new_card_gather_priority)
     return blob
 
 
@@ -204,6 +214,8 @@ class SyntheticCollection:
         self.bury_new: bool = False
         self.bury_reviews: bool = False
         self.bury_interday_learning: bool = False
+        self.new_card_sort_order: int = 0
+        self.new_card_gather_priority: int = 0
         self.col_crt: int = COL_CRT
         self.notetypes: list[dict[str, Any]] = []
         self.fields: list[tuple[int, int, str]] = []
@@ -263,6 +275,18 @@ class SyntheticCollection:
         self.bury_new = bury_new
         self.bury_reviews = bury_reviews
         self.bury_interday_learning = bury_interday_learning
+
+    def set_new_card_display_order(self, *, sort_order: int = 0, gather_priority: int = 0) -> None:
+        """Set NewCardSortOrder (field 32) and NewCardGatherPriority (field 34).
+
+        Both default to 0 — TEMPLATE and DECK, Anki's own app defaults. TEMPLATE
+        ranks every ord=0 card ahead of every ord=1 card whatever their positions,
+        which is what kept TunaTale's production cards out of the served queue
+        entirely (tunatale-uze6); pass ``sort_order=1`` (NO_SORT) to hand the
+        decision back to position.
+        """
+        self.new_card_sort_order = sort_order
+        self.new_card_gather_priority = gather_priority
 
     def add_notetype(
         self,
@@ -491,6 +515,8 @@ class SyntheticCollection:
             bury_new=self.bury_new,
             bury_reviews=self.bury_reviews,
             bury_interday_learning=self.bury_interday_learning,
+            new_card_sort_order=self.new_card_sort_order,
+            new_card_gather_priority=self.new_card_gather_priority,
         )
         conn.execute(
             "INSERT INTO deck_config VALUES (?, ?, 0, -1, ?)",

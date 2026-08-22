@@ -88,9 +88,9 @@ REGISTRY: Final[dict[str, CacheKeySpec]] = {
         name="session_main_queue",
         source=CacheSource.TT_SESSION,
         day_scoped=True,
-        logic_version=1,
+        logic_version=2,
     ),
-    # ANKI_CONFIG keys (15 total)
+    # ANKI_CONFIG keys (17 total)
     "daily_new_cap": CacheKeySpec(
         name="daily_new_cap",
         source=CacheSource.ANKI_CONFIG,
@@ -105,6 +105,17 @@ REGISTRY: Final[dict[str, CacheKeySpec]] = {
     ),
     "new_spread": CacheKeySpec(
         name="new_spread",
+        source=CacheSource.ANKI_CONFIG,
+    ),
+    # New-card display order. Hardcoded in TT (TEMPLATE + HighestPosition) until
+    # 2026-08-22; mirrored since, because the user's preset was on DECK gather and
+    # TT was serving the opposite end of the new pool (tunatale-qf6.13).
+    "new_card_sort_order": CacheKeySpec(
+        name="new_card_sort_order",
+        source=CacheSource.ANKI_CONFIG,
+    ),
+    "new_card_gather_priority": CacheKeySpec(
+        name="new_card_gather_priority",
         source=CacheSource.ANKI_CONFIG,
     ),
     "bury_new": CacheKeySpec(

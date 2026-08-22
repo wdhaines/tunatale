@@ -13,7 +13,7 @@ class TestRegistryStructure:
 
     def test_registry_has_19_keys(self):
         """All 19 cache keys are registered."""
-        assert len(REGISTRY) == 19
+        assert len(REGISTRY) == 21
 
     def test_registry_keys_sorted(self):
         """Registry keys (for visual clarity in diffs)."""
@@ -33,6 +33,8 @@ class TestRegistryStructure:
             "learning_cutoff",
             "load_balancer_enabled",
             "maximum_review_interval",
+            "new_card_gather_priority",
+            "new_card_sort_order",
             "new_cards_ignore_review_limit",
             "new_spread",
             "relearn_steps",
@@ -41,9 +43,9 @@ class TestRegistryStructure:
         assert set(REGISTRY.keys()) == expected_keys
 
     def test_anki_config_keys_count(self):
-        """15 keys have source ANKI_CONFIG."""
+        """17 keys have source ANKI_CONFIG."""
         anki_config_count = sum(1 for spec in REGISTRY.values() if spec.source == CacheSource.ANKI_CONFIG)
-        assert anki_config_count == 15
+        assert anki_config_count == 17
 
     def test_tt_session_keys_count(self):
         """2 keys have source TT_SESSION."""
@@ -68,7 +70,7 @@ class TestRegistryStructure:
     def test_logic_version_only_on_session_main_queue(self):
         """Only session_main_queue has logic_version (=1)."""
         versioned = {k: spec.logic_version for k, spec in REGISTRY.items() if spec.logic_version is not None}
-        assert versioned == {"session_main_queue": 1}
+        assert versioned == {"session_main_queue": 2}
 
     def test_all_specs_have_matching_names(self):
         """Each spec's name field matches its key."""

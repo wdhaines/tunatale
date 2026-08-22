@@ -1401,8 +1401,11 @@ class TestReviewQueue:
         result = _merge_directions([], [])
         assert result == []
 
-    async def test_review_queue_new_cards_ordered_by_anki_due_desc(self, api_app_state):
-        """Anki HighestPosition parity: synced new cards order by anki_due DESC."""
+    async def test_review_queue_new_cards_ordered_by_position_ascending(self, api_app_state):
+        """DECK gather parity through the route: synced new cards order by anki_due
+        ASC. Was DESC until 2026-08-22, when the user's preset turned out to be on
+        DECK rather than HighestPosition (tunatale-qf6.13); the direction is
+        mirrored from the deck config now, and this fixture pins the default."""
         from datetime import date
 
         db = api_app_state
@@ -1473,11 +1476,11 @@ class TestReviewQueue:
         assert resp.status_code == 200
         queue = resp.json()["queue"]
         new_items = [q for q in queue if q["state"] == "new"]
-        # Higher anki_due first → coll_a (596) before coll_b (200); sibling-bury
+        # Lower anki_due first → coll_b (200) before coll_a (596); sibling-bury
         # removes the prod duplicate of each.
         assert len(new_items) >= 2
-        assert new_items[0]["text"] == "coll_a"
-        assert new_items[1]["text"] == "coll_b"
+        assert new_items[0]["text"] == "coll_b"
+        assert new_items[1]["text"] == "coll_a"
 
     # --- Additional tests for _spread_mix ---
     async def test_spread_mix_empty_news_returns_reviews(self, api_app_state):
@@ -1738,7 +1741,11 @@ class TestReviewQueue:
           - časa: rec anki_due=1001997, prod anki_due=1001998
           - sekira: rec anki_due=1001974, prod anki_due=1001974
         Both productions are gated out (recognition still NEW); the surviving
-        recognitions order by gather (anki_due DESC): časa, then sekira.
+        recognitions order by gather. That gather is ASCENDING position under DECK,
+        the deck's actual setting since it was mirrored rather than hardcoded on
+        2026-08-22 (tunatale-qf6.13) — so sekira (1001974), then časa (1001997).
+        The claim under test is the recognition-before-production ranking, which is
+        unchanged; only the order between the two words follows the gather.
         """
 
         from app.models.syntactic_unit import SyntacticUnit
@@ -1783,9 +1790,9 @@ class TestReviewQueue:
         new_items = [q for q in queue if q["state"] == "new"]
         assert len(new_items) >= 2
         # Phase 3: both notes are paired-NEW, so both productions are gated out;
-        # the surviving recognitions order by gather (anki_due DESC): časa, sekira.
-        assert (new_items[0]["text"], new_items[0]["direction"]) == ("časa", "recognition")
-        assert (new_items[1]["text"], new_items[1]["direction"]) == ("sekira", "recognition")
+        # the surviving recognitions order by gather (anki_due ASC): sekira, časa.
+        assert (new_items[0]["text"], new_items[0]["direction"]) == ("sekira", "recognition")
+        assert (new_items[1]["text"], new_items[1]["direction"]) == ("časa", "recognition")
         assert all(q["direction"] == "recognition" for q in new_items)
 
     async def test_review_queue_includes_audio_url_when_audio_exists(self, api_app_state):

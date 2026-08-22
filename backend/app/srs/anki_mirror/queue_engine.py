@@ -17,6 +17,8 @@ from app.srs.anki_mirror.queue_stats import (
     clear_session_main_queue,
     effective_review_budget,
     get_session_main_queue,
+    new_cards_gather_descending,
+    new_cards_ranked_by_template,
     resolve_bury_new,
     resolve_bury_review,
     resolve_col_crt,
@@ -92,6 +94,8 @@ def _merge_by_retrievability_ascending(
 def _merge_directions(
     rec: list[tuple[int, SRSItem, str]],
     prod: list[tuple[int, SRSItem, str]],
+    *,
+    gather_descending: bool = False,
 ) -> list[tuple[int, SRSItem, str, Direction]]:
     """Merge new-card directions in Anki's gather order.
 
@@ -139,7 +143,8 @@ def _merge_directions(
         # populated — typically a cross-note homonym link that sync_pull can't
         # reach via the parent collocation. Sinking phantoms to the bottom keeps
         # them out of the queue head while preserving the listen-first benefit.
-        primary = ((0, 0) if item.anki_note_id is None else (2, 0)) if ds.anki_due is None else (1, -ds.anki_due)
+        position = -ds.anki_due if gather_descending else ds.anki_due
+        primary = ((0, 0) if item.anki_note_id is None else (2, 0)) if ds.anki_due is None else (1, position)
         return (*primary, ord_value, ds.anki_card_id or (1 << 62), row_id)
 
     combined.sort(key=_gather_key)
@@ -267,9 +272,14 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     # `count_new_available` is the total across both directions; using it as the
     # per-direction cap is a strict upper bound.
     _NEW_OVERFETCH = max(db.count_new_available(), new_quota + 50)
-    new_rec = db.get_new_items(direction=Direction.RECOGNITION, limit=_NEW_OVERFETCH)
-    new_prod = db.get_new_items(direction=Direction.PRODUCTION, limit=_NEW_OVERFETCH)
-    new_combined = _merge_directions(new_rec, new_prod)
+    gather_descending = new_cards_gather_descending(db)
+    new_rec = db.get_new_items(
+        direction=Direction.RECOGNITION, limit=_NEW_OVERFETCH, gather_descending=gather_descending
+    )
+    new_prod = db.get_new_items(
+        direction=Direction.PRODUCTION, limit=_NEW_OVERFETCH, gather_descending=gather_descending
+    )
+    new_combined = _merge_directions(new_rec, new_prod, gather_descending=gather_descending)
     if bury_new:
         new_combined = [t for t in new_combined if t[0] not in buried]
 
@@ -297,7 +307,6 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     # toward the limit), keeping the lowest-R reviews (already R-ascending).
     nonlearning_due = nonlearning_due[:review_remaining]
     nonlearning_new = _bury(nonlearning_new, bury_new)
-    nonlearning_new.sort(key=lambda t: 0 if t[3] == Direction.RECOGNITION else 1)
     # Layer 77: the review limit also caps NEW cards (`new_cards_ignore_review_limit`
     # defaults off). Anki caps `new_limit = min(new_limit, review_limit)` at build
     # (limits.rs:104-108) and re-mins it as each review is gathered (`decrement()`,
@@ -308,7 +317,24 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     # Brief #4a: skip this cap when "New cards ignore review limit" is ON.
     if not ignore_review_limit:
         new_quota = min(new_quota, review_remaining - len(nonlearning_due))
+    # ⚠️ ORDER OF THESE TWO STEPS IS THE PARITY POINT. Anki gathers new cards in
+    # POSITION order and stops at the limit (`gather_new_cards`), then applies
+    # NewCardSortOrder to the cards it gathered (`sort_new_cards`) — so the limit is
+    # a position window, and the sort only reorders what is inside it. TT used to
+    # sort the whole pool and truncate afterwards, which turns a ranking into a
+    # filter: with TEMPLATE ranking every ord=0 ahead of every ord=1, no production
+    # card could survive the truncation while any new recognition card remained,
+    # whatever its position. Pinned against the real binary in
+    # `tests/test_parity_new_card_sort_order.py`, which is what caught this — the
+    # arithmetic (1439 recognition cards / 3 per day ≈ 478 days) comes out the same
+    # under either mechanism, so only Anki itself could tell them apart.
     nonlearning_new = nonlearning_new[:new_quota]
+    # Anki's NewCardSortOrder, applied to the gathered slice. TEMPLATE (its app
+    # default) ranks ord=0 ahead of ord=1 within the day's new cards; NO_SORT leaves
+    # them in position order. Mirrored rather than hardcoded since 2026-08-22. The
+    # sort is stable, so the gather order survives within a template rank.
+    if new_cards_ranked_by_template(db):
+        nonlearning_new.sort(key=lambda t: 0 if t[3] == Direction.RECOGNITION else 1)
 
     if spread == 1:
         return nonlearning_due + nonlearning_new

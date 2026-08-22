@@ -38,6 +38,8 @@ _REVIEWS_PER_DAY_FIELD = 10  # VARINT uint32
 _BURY_NEW_FIELD = 27  # VARINT bool
 _BURY_REVIEW_FIELD = 28  # VARINT bool
 _NEW_SPREAD_FIELD = 30  # VARINT uint32 (0=mix, 1=after_reviews, 2=before_reviews)
+_NEW_CARD_SORT_ORDER_FIELD = 32  # VARINT enum NewCardSortOrder
+_NEW_CARD_GATHER_PRIORITY_FIELD = 34  # VARINT enum NewCardGatherPriority
 _DESIRED_RETENTION_FIELD = 37  # FIXED32 float — per /tmp/anki-source/proto/anki/deck_config.proto:188
 _MAX_REVIEW_INTERVAL_FIELD = 16  # VARINT uint32
 # Field 40 is historical_retention; pre-2026-05-16 code read 40 thinking it was desired_retention.
@@ -50,6 +52,34 @@ _WIRE_TYPE_FIXED32 = 5
 _DEFAULT_NEW_PER_DAY = 20
 _DEFAULT_REVIEWS_PER_DAY = 200
 _DEFAULT_NEW_SPREAD = 0
+
+# NewCardSortOrder (deck_config field 32). Anki's app default is TEMPLATE — every
+# ord=0 card ranks ahead of every ord=1 card, whatever their positions. That single
+# fact is why no production card had ever been served (tunatale-uze6).
+_SORT_ORDER_TEMPLATE = 0
+_SORT_ORDER_NO_SORT = 1
+_SORT_ORDER_TEMPLATE_THEN_RANDOM = 2
+_SORT_ORDER_RANDOM_NOTE_THEN_TEMPLATE = 3
+_SORT_ORDER_RANDOM_CARD = 4
+_DEFAULT_NEW_CARD_SORT_ORDER = _SORT_ORDER_TEMPLATE
+#: The orders whose ranking begins with the card template. The two random variants
+#: still rank by template first; TT mirrors that half and not their randomisation.
+_TEMPLATE_RANKED_SORT_ORDERS = frozenset(
+    {_SORT_ORDER_TEMPLATE, _SORT_ORDER_TEMPLATE_THEN_RANDOM, _SORT_ORDER_RANDOM_NOTE_THEN_TEMPLATE}
+)
+
+# NewCardGatherPriority (deck_config field 34). Anki's app default is DECK, which
+# for a single deck walks its new cards in ASCENDING position.
+_GATHER_DECK = 0
+_GATHER_LOWEST_POSITION = 1
+_GATHER_HIGHEST_POSITION = 2
+_GATHER_RANDOM_NOTES = 3
+_GATHER_RANDOM_CARDS = 4
+_GATHER_DECK_THEN_RANDOM_NOTES = 5
+_DEFAULT_NEW_CARD_GATHER_PRIORITY = _GATHER_DECK
+#: Only HighestPosition walks positions downward. Everything else — including the
+#: random variants, whose randomisation TT does not mirror — walks upward.
+_DESCENDING_GATHER_PRIORITIES = frozenset({_GATHER_HIGHEST_POSITION})
 _DEFAULT_BURY_NEW = True
 _DEFAULT_BURY_REVIEW = True
 _DEFAULT_LEARN_STEPS: list[float] = [1.0, 10.0]
@@ -377,7 +407,7 @@ def effective_review_budget(
 
 
 def refresh_review_settings(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str) -> None:
-    """Read newSpread/bury flags from Anki's deck_config protobuf and write to cache."""
+    """Read newSpread, bury flags and new-card display order from deck_config into the cache."""
     try:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     except sqlite3.Error:
@@ -415,6 +445,25 @@ def refresh_review_settings(db: SRSDatabase, conn: sqlite3.Connection, deck_name
 
     bury_reviews_raw = find_varint_field(config_blob, _BURY_REVIEW_FIELD)
     db.set_anki_state_cache("bury_review", str(bool(bury_reviews_raw)))
+
+    # Display order (fields 32/34). Both were hardcoded in TT — TEMPLATE and
+    # HighestPosition — until 2026-08-22, when reading the collection showed the two
+    # decks disagree: Slovene carries 34 = 2 (HighestPosition, the setting Layer 25
+    # describes the user flipping), Norwegian has it absent, i.e. DECK. A per-deck
+    # setting cannot be a constant (tunatale-qf6.13). Absent means the proto default
+    # here too, so the write is unconditional; the range check only rejects a value
+    # from an Anki newer than this enum.
+    sort_order = find_varint_field(config_blob, _NEW_CARD_SORT_ORDER_FIELD)
+    if sort_order is None:
+        sort_order = _DEFAULT_NEW_CARD_SORT_ORDER
+    if _SORT_ORDER_TEMPLATE <= sort_order <= _SORT_ORDER_RANDOM_CARD:
+        db.set_anki_state_cache("new_card_sort_order", str(sort_order))
+
+    gather_priority = find_varint_field(config_blob, _NEW_CARD_GATHER_PRIORITY_FIELD)
+    if gather_priority is None:
+        gather_priority = _DEFAULT_NEW_CARD_GATHER_PRIORITY
+    if _GATHER_DECK <= gather_priority <= _GATHER_DECK_THEN_RANDOM_NOTES:
+        db.set_anki_state_cache("new_card_gather_priority", str(gather_priority))
 
 
 def resolve_daily_new_cap(db: SRSDatabase) -> tuple[int, str]:
@@ -461,6 +510,64 @@ def resolve_new_spread(db: SRSDatabase) -> tuple[int, str]:
             pass
 
     return (_DEFAULT_NEW_SPREAD, "default")
+
+
+def _resolve_cached_enum(db: SRSDatabase, key: str, valid: range, default: int) -> tuple[int, str]:
+    """Return (value, 'cache') for a fresh in-range cached enum, else (default, 'default')."""
+    row = db.get_anki_state_cache(key)
+    if row is not None:
+        value_str, updated_at = row
+        try:
+            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+                val = int(value_str)
+                if val in valid:
+                    return (val, "cache")
+        except ValueError, TypeError, OverflowError:
+            pass
+    return (default, "default")
+
+
+def resolve_new_card_sort_order(db: SRSDatabase) -> tuple[int, str]:
+    """Return (NewCardSortOrder, source). Default TEMPLATE, Anki's own app default."""
+    return _resolve_cached_enum(
+        db,
+        "new_card_sort_order",
+        range(_SORT_ORDER_TEMPLATE, _SORT_ORDER_RANDOM_CARD + 1),
+        _DEFAULT_NEW_CARD_SORT_ORDER,
+    )
+
+
+def resolve_new_card_gather_priority(db: SRSDatabase) -> tuple[int, str]:
+    """Return (NewCardGatherPriority, source). Default DECK, Anki's own app default."""
+    return _resolve_cached_enum(
+        db,
+        "new_card_gather_priority",
+        range(_GATHER_DECK, _GATHER_DECK_THEN_RANDOM_NOTES + 1),
+        _DEFAULT_NEW_CARD_GATHER_PRIORITY,
+    )
+
+
+def new_cards_gather_descending(db: SRSDatabase) -> bool:
+    """True when the deck gathers new cards from the HIGHEST position downward.
+
+    The one question the queue needs answered about gather priority: which end of
+    the position range does the next new card come from. TT does not mirror the
+    random gather variants' randomisation — they walk upward here.
+    """
+    priority, _ = resolve_new_card_gather_priority(db)
+    return priority in _DESCENDING_GATHER_PRIORITIES
+
+
+def new_cards_ranked_by_template(db: SRSDatabase) -> bool:
+    """True when the deck ranks ord=0 ahead of ord=1 regardless of position.
+
+    Under TEMPLATE (Anki's default) a production card can only be served once the
+    recognition new pool is empty — the whole of tunatale-uze6. Under NO_SORT the
+    gathered order stands and position decides.
+    """
+    sort_order, _ = resolve_new_card_sort_order(db)
+    return sort_order in _TEMPLATE_RANKED_SORT_ORDERS
 
 
 def resolve_bury_new(db: SRSDatabase) -> tuple[bool, str]:

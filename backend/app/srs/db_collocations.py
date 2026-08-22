@@ -217,7 +217,13 @@ class DbCollocationsMixin:
     def get_created_at_by_guid(self, guid: str) -> str | None:
         """Return the ISO timestamp from collocations.created_at for the given guid,
         or None if no row matches. Used by sync_create_new to sort items so newer
-        cards get higher cards.due under Anki's Descending position gather order.
+        cards get higher cards.due.
+
+        ⚠️ That ordering surfaces the newest card FIRST only under Descending
+        position gather, which is the Slovene deck's setting and not the Norwegian
+        one's (Layer 83). Under DECK gather the same allocation puts fresh adds
+        last. Unresolved here on purpose — the fix is the mint/add allocator, in
+        tunatale-uze6's second half, not this accessor.
         """
         with self._get_conn() as conn:
             row = conn.execute("SELECT created_at FROM collocations WHERE guid = ?", (guid,)).fetchone()

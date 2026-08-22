@@ -5,18 +5,26 @@ from __future__ import annotations
 import json
 from datetime import date
 
+from app.srs.anki_mirror.cache_registry import REGISTRY
 from app.srs.anki_mirror.queue_stats import (
     get_session_main_queue,
     set_session_main_queue,
 )
 from app.srs.database import SRSDatabase
 
+#: Read from the registry rather than hardcoded: this suite is about the plumbing
+#: that stamps and checks the version, not about which number it currently holds.
+#: A queue-order change is *required* to bump it (see .claude/rules/anki-queue-parity.md
+#: principle 2's pre-Layer checklist), so a hardcoded literal here turns every such
+#: change into unrelated test churn — it did on 2026-08-22, at v1 -> v2.
+LOGIC_VERSION = REGISTRY["session_main_queue"].logic_version
+
 
 class TestSessionQueueLogicVersion:
     """Test that session_main_queue payload includes and respects logic_version."""
 
     def test_set_session_main_queue_includes_version(self, srs_db: SRSDatabase):
-        """set_session_main_queue stamps the payload with logic_version=1."""
+        """set_session_main_queue stamps the payload with the registry's logic_version."""
         today = date(2026, 7, 17)
         items = [(1, "recognition"), (2, "production")]
 
@@ -29,7 +37,7 @@ class TestSessionQueueLogicVersion:
 
         # Payload should have "v" field
         assert "v" in payload
-        assert payload["v"] == 1  # logic_version from registry
+        assert payload["v"] == LOGIC_VERSION
 
     def test_get_session_main_queue_rebuilds_on_version_mismatch(self, srs_db: SRSDatabase):
         """get_session_main_queue returns None when cached v doesn't match registry."""
@@ -47,7 +55,7 @@ class TestSessionQueueLogicVersion:
         cached = srs_db.get_anki_state_cache("session_main_queue")
         assert cached is not None
         payload = json.loads(cached[0])
-        payload["v"] = 2  # Simulate a version bump in the code
+        payload["v"] = LOGIC_VERSION + 1  # Simulate a version bump in the code
         srs_db.set_anki_state_cache("session_main_queue", json.dumps(payload))
 
         # Now reading should return None (treat like day mismatch → rebuild)
@@ -55,7 +63,7 @@ class TestSessionQueueLogicVersion:
         assert result is None
 
     def test_get_session_main_queue_respects_matching_version(self, srs_db: SRSDatabase):
-        """get_session_main_queue returns items when v matches registry (=1)."""
+        """get_session_main_queue returns items when v matches the registry."""
         today = date(2026, 7, 17)
         items = [(1, "recognition"), (2, "production")]
 
