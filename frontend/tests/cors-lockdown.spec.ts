@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, PORTS, test } from './fixtures';
 
 /**
  * CORS is enforced by the BROWSER, not by the server.
@@ -59,8 +59,6 @@ import { expect, test } from '@playwright/test';
  */
 test.use({ serviceWorkers: 'block' });
 
-const API = 'http://localhost:8001/api/health';
-
 type Probe = { ok: boolean; status?: number; body?: string; error?: string };
 
 /** Cross-origin fetch executed inside the page, credentials attached. */
@@ -75,17 +73,21 @@ async function fetchFromPage(page: import('@playwright/test').Page, url: string)
 	}, url);
 }
 
-test('CORS: an allowlisted origin may read the API cross-origin', async ({ page }) => {
-	await page.goto('http://localhost:5174/');
-	const res = await fetchFromPage(page, API);
+test('CORS: an allowlisted origin may read the API cross-origin', async ({ page, backendURL }) => {
+	// The page origin must be the worker's OWN frontend port, spelled
+	// `localhost` — that spelling is what the worker's backend CORS_ORIGINS
+	// allowlists. Relative goto('/') would land here too, but keeping the
+	// absolute form makes the localhost/127.0.0.1 pairing below visible.
+	await page.goto(`http://localhost:${PORTS.frontend()}/`);
+	const res = await fetchFromPage(page, `${backendURL}/api/health`);
 	expect(res.ok, `expected the allowlisted origin to succeed, got ${res.error}`).toBe(true);
 	expect(res.status).toBe(200);
 });
 
-test('CORS: an unlisted origin is refused by the browser', async ({ page }) => {
+test('CORS: an unlisted origin is refused by the browser', async ({ page, backendURL }) => {
 	// Same server, same port — only the host spelling differs, and that alone
 	// puts the page on an origin the backend does not list.
-	await page.goto('http://127.0.0.1:5174/');
-	const res = await fetchFromPage(page, API);
+	await page.goto(`http://127.0.0.1:${PORTS.frontend()}/`);
+	const res = await fetchFromPage(page, `${backendURL}/api/health`);
 	expect(res.ok, `unlisted origin read the API: ${res.status} ${res.body}`).toBe(false);
 });

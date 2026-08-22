@@ -8,6 +8,7 @@ node_modules
 /.svelte-kit
 /.svelte-kit-test
 /.svelte-kit-e2e
+/.svelte-kit-e2e-1
 /build
 
 # OS

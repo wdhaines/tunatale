@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { backendAvailable, seedSRSItems } from './helpers';
 
 test('review: Again rating puts card into learning queue, not immediate re-show', async ({

@@ -342,8 +342,9 @@ jobs:
   # so "green" had two meanings and neither contained the other.
   #
   # It needs BOTH toolchains, which is why it is not a step on `frontend`:
-  # playwright.config.ts boots two webServers — a uvicorn backend (:8001, serving
-  # both languages through its per-language connection map) and Vite (:5174) — so
+  # playwright.config.ts boots four webServers — one uvicorn backend per Playwright
+  # worker (:8001, :8003; each serves both languages through its per-language
+  # connection map) and one Vite per worker (:5174, :5175) — so
   # uv, Python and the backend dependency set all have to be present alongside bun. Its own job keeps that cost off `frontend`
   # and runs it in parallel, adding no wall-clock to the fleet.
   #

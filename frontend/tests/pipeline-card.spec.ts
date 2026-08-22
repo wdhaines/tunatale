@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import type { APIRequestContext, Page } from '@playwright/test';
 
 // Pipeline card e2e — the pipeline + activity endpoints are route-mocked
@@ -15,10 +15,10 @@ const CANNED_DAY = {
 	story_guidance: 'At the counter',
 };
 
-async function createPlan(request: APIRequestContext) {
-	const health = await request.get('http://localhost:8001/api/health');
+async function createPlan(request: APIRequestContext, backendURL: string) {
+	const health = await request.get(`${backendURL}/api/health`);
 	test.skip(!health.ok(), 'Backend not available');
-	const planRes = await request.post('http://localhost:8001/api/curriculum/plan', {
+	const planRes = await request.post(`${backendURL}/api/curriculum/plan`, {
 		data: { topic: 'pipeline e2e', cefr_level: 'A2' },
 	});
 	test.skip(!planRes.ok(), 'Failed to create plan');
@@ -70,10 +70,11 @@ function dayPayload(state: string) {
 }
 
 	test('pipeline card: committed day walks queued → generating → ready, with live activity line', async ({
-	page,
-	request,
-}) => {
-	const curriculumId = await createPlan(request);
+		page,
+		request,
+		backendURL,
+	}) => {
+	const curriculumId = await createPlan(request, backendURL);
 
 	// Each poll (2s cadence while active) advances one step; clamps on the last.
 	// The pipeline store starts polling on mount now, so pre-commit polls consume
@@ -136,8 +137,8 @@ function dayPayload(state: string) {
 	await expect(page.getByText('queued', { exact: true })).not.toBeVisible();
 });
 
-test('pipeline card: failed day → Retry → queued', async ({ page, request }) => {
-	const curriculumId = await createPlan(request);
+test('pipeline card: failed day → Retry → queued', async ({ page, request, backendURL }) => {
+	const curriculumId = await createPlan(request, backendURL);
 
 	let retried = false;
 	await page.route(`**/api/curriculum/${curriculumId}/pipeline`, async (route) => {

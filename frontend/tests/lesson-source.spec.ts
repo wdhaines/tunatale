@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { backendAvailable, seedWithCannedStory, CANNED_STORY } from './helpers';
 
 // Real-backend round-trip for the lesson source panel: the source GET and both

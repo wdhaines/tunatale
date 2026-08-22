@@ -1,27 +1,53 @@
+import { rmSync } from 'node:fs';
+
 import { defineConfig, devices } from '@playwright/test';
+
+// DB cleanup happens HERE, at module scope, before any server spawns — NOT in
+// the webServer commands. Both backends share the auth store
+// (tunatale-test-auth.db), so an `rm -f` inside either command is a boot race:
+// if worker 1's backend opens the auth DB before worker 0's rm runs, it holds
+// a deleted inode, the storageState cookie stops validating on that worker,
+// and every spec there redirects to /login.
+//
+// ⚠️ This file is evaluated by MORE than the main process — each worker loads
+// it too — so the loop below MUST be guarded: unguarded, a worker's copy fires
+// mid-run and deletes the DBs out from under the RUNNING backends, which
+// surfaces as `sqlite3.OperationalError: no such table: sessions /
+// audio_files`, 503s from /api/health, and mass failures. Setting the flag in
+// our own env marks the run clean; every child process inherits it and skips.
+if (!process.env.TT_E2E_DBS_CLEANED) {
+	process.env.TT_E2E_DBS_CLEANED = '1';
+	for (const f of [
+		'../backend/tunatale-test-auth.db',
+		'../backend/tunatale-test-0.db',
+		'../backend/tunatale-test-1.db',
+		'../backend/tunatale-test-no-0.db',
+		'../backend/tunatale-test-no-1.db'
+	]) rmSync(f, { force: true });
+}
 
 export default defineConfig({
 	globalSetup: './tests/global-setup.ts',
 	webServer: [
 		{
-			// Test backend: isolated DBs, dedicated port — never reuses dev server
-			// rm -f ensures a clean DB every run (globalSetup runs AFTER webServer starts).
+			// Worker-0 test backend: isolated DBs, dedicated port — never reuses dev
+			// server. DB cleanup lives at module scope above (see the boot-race note).
 			//
-			// BOTH language DBs are removed here, and that is load-bearing: this one
+			// BOTH language DBs are removed every run, and that is load-bearing: this one
 			// backend serves both (see DATABASE_URLS below), so language-switch.spec.ts
 			// reaches the Norwegian DB with a header. tunatale-test-no.db used to be
 			// cleaned by a SECOND uvicorn on :8002, deleted 2026-08-15 with the spec
 			// that was its only consumer (tunatale-vnf.10) — leaving the rm behind
 			// would have made the Norwegian seed accumulate one row per run, and the
 			// spec's strict text locator go non-idempotent on the second one.
-			command: 'cd ../backend && rm -f tunatale-test.db tunatale-test-no.db tunatale-test-auth.db && uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --log-level error',
+			command: 'cd ../backend && uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --log-level error',
 			port: 8001,
 			reuseExistingServer: false,
 			timeout: 30000,
 			env: {
 				LLM_MODE: 'mock',
 				PIPELINE_AUTOSTART: 'false',
-				DATABASE_URL: 'sqlite:///./tunatale-test.db',
+				DATABASE_URL: 'sqlite:///./tunatale-test-0.db',
 				// Redirect the Phase-5 multi-language map at test DBs. _language_db_map()
 				// returns settings.database_urls verbatim when non-empty and IGNORES
 				// database_url — so a developer whose .env sets DATABASE_URLS (real
@@ -33,7 +59,7 @@ export default defineConfig({
 				// the .env value and pydantic's case-insensitive read resolves to the real
 				// DBs (this silently wiped tunatale_sl.db twice — 2026-06-30, 2026-07-13).
 				// Every language key must be listed here to fully isolate.
-				DATABASE_URLS: '{"sl":"sqlite:///./tunatale-test.db","no":"sqlite:///./tunatale-test-no.db"}',
+				DATABASE_URLS: '{"sl":"sqlite:///./tunatale-test-0.db","no":"sqlite:///./tunatale-test-no-0.db"}',
 				// Startup DB-backup rotation would otherwise snapshot the throwaway
 				// test DB into the real ~/.tunatale/db-backups. 0 disables it for E2E.
 				DB_BACKUP_KEEP_DAYS: '0',
@@ -98,12 +124,45 @@ export default defineConfig({
 		// :8001 only, so that journey reaches the Norwegian DB through :8001's
 		// per-language connection map, never through a Norwegian-configured process.
 		{
+			// Worker-1 test backend: same shape as worker-0's, own app DB pair and
+			// CORS origin. Differences from worker 0 are ONLY: port, DATABASE_URL,
+			// DATABASE_URLS, CORS_ORIGINS — every env var below must stay in
+			// lockstep with worker 0's, comments included. AUTH_DATABASE_URL is
+			// deliberately SHARED (see its comment in worker 0's env).
+			command: 'cd ../backend && uv run uvicorn app.main:app --host 0.0.0.0 --port 8003 --log-level error',
+			port: 8003,
+			reuseExistingServer: false,
+			timeout: 30000,
+			env: {
+				LLM_MODE: 'mock',
+				PIPELINE_AUTOSTART: 'false',
+				DATABASE_URL: 'sqlite:///./tunatale-test-1.db',
+				DATABASE_URLS: '{"sl":"sqlite:///./tunatale-test-1.db","no":"sqlite:///./tunatale-test-no-1.db"}',
+				DB_BACKUP_KEEP_DAYS: '0',
+				PIXABAY_API_KEY: '',
+				lemmatizer_type: 'lowercase',
+				CORS_ORIGINS: '["http://localhost:5175"]',
+				TARGET_LANGUAGE: 'sl',
+				AUTH_ENABLED: 'true',
+				AUTH_DATABASE_URL: 'sqlite:///./tunatale-test-auth.db'
+			}
+		},
+		{
 			// Test frontend: proxies /api to port 8001, dedicated port
 			command: 'SVELTEKIT_OUT_DIR=.svelte-kit-e2e npm run dev -- --port 5174',
 			url: 'http://localhost:5174',
 			reuseExistingServer: false,
 			timeout: 30000,
 			env: { API_PORT: '8001' }
+		},
+		{
+			// Worker-1 test frontend: proxies /api to :8003. Distinct SVELTEKIT_OUT_DIR
+			// or the two dev servers clobber each other's build output.
+			command: 'SVELTEKIT_OUT_DIR=.svelte-kit-e2e-1 npm run dev -- --port 5175',
+			url: 'http://localhost:5175',
+			reuseExistingServer: false,
+			timeout: 30000,
+			env: { API_PORT: '8003' }
 		}
 	],
 	testDir: 'tests',
@@ -111,9 +170,13 @@ export default defineConfig({
 	// `coverage-gate.test.ts`) use `.test.ts` and must NOT be collected here.
 	testMatch: /\.spec\.[jt]s/,
 	timeout: 30000,
-	// workers: 1 — all specs share one backend DB (tunatale-test.db), so
-	// parallel runs cause seed-data bleeding between specs.
-	workers: 1,
+	// workers: 2 — each worker owns a backend (:8001 / :8003) with its own app
+	// DB pair (tunatale-test-{0,1}.db, tunatale-test-no-{0,1}.db) and its own
+	// frontend port (:5174 / :5175); tests/fixtures.ts::PORTS must stay in
+	// lockstep. The auth DB is SHARED (AUTH_DATABASE_URL below): sessions are
+	// token_hash → user_id rows, so one storageState cookie validates against
+	// either backend. Two is deliberate — measure at 2 before building for N.
+	workers: 2,
 	// retries: 0 EVERYWHERE, deliberately. This was `process.env.CI ? 2 : 0`,
 	// which had never once executed its CI branch — Playwright did not run in CI
 	// at all until the `e2e` job was added (tunatale-as5), so the retry policy was

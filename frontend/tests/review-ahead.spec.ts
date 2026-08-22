@@ -1,8 +1,6 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import type { APIRequestContext } from '@playwright/test';
 import { backendAvailable, seedCurriculumWithLesson } from './helpers';
-
-const BACKEND = 'http://localhost:8001';
 
 type TranscriptWord = {
 	surface: string;
@@ -16,8 +14,8 @@ type TranscriptWord = {
 	recognition_reviewable?: boolean;
 };
 
-async function getTranscript(request: APIRequestContext, lessonId: string) {
-	const res = await request.get(`${BACKEND}/api/srs/lesson/${lessonId}/transcript`);
+async function getTranscript(request: APIRequestContext, lessonId: string, backendURL: string) {
+	const res = await request.get(`${backendURL}/api/srs/lesson/${lessonId}/transcript`);
 	expect(res.ok()).toBe(true);
 	const data = await res.json();
 	return (data.dialogue_lines ?? []).flatMap(
@@ -31,12 +29,12 @@ async function getTranscript(request: APIRequestContext, lessonId: string) {
  * store is empty. Generating here would collide on the single-use "ordering
  * coffee" cassette, so reuse is the robust path.
  */
-async function existingCurriculumWithLesson(request: APIRequestContext) {
-	const listRes = await request.get(`${BACKEND}/api/curriculum`);
+async function existingCurriculumWithLesson(request: APIRequestContext, backendURL: string) {
+	const listRes = await request.get(`${backendURL}/api/curriculum`);
 	if (listRes.ok()) {
 		const curricula = (await listRes.json()) as Array<{ id: string }>;
 		for (const c of curricula) {
-			const lessonRes = await request.get(`${BACKEND}/api/curriculum/${c.id}/days/1/lesson`);
+			const lessonRes = await request.get(`${backendURL}/api/curriculum/${c.id}/days/1/lesson`);
 			if (lessonRes.ok()) {
 				const lesson = await lessonRes.json();
 				return { curriculumId: c.id, lessonId: lesson.id as string };
@@ -52,17 +50,18 @@ async function existingCurriculumWithLesson(request: APIRequestContext) {
 // Read mode, tap the word, and confirm the review is recorded (the popover flips
 // to the Undo affordance, which only appears after a successful grade).
 test('review-ahead: reading a not-due recognition word records a review', async ({
+	backendURL,
 	page,
 	request
 }) => {
 	test.skip(!(await backendAvailable(request)), 'Backend not available');
 
-	const { curriculumId, lessonId } = await existingCurriculumWithLesson(request);
+	const { curriculumId, lessonId } = await existingCurriculumWithLesson(request, backendURL);
 
 	// Pick a resolvable, punctuation-free single word from the actual transcript so
 	// the card we create matches the lemma the transcript resolves, and the DOM
 	// button's accessible name equals the surface exactly.
-	const before = await getTranscript(request, lessonId);
+	const before = await getTranscript(request, lessonId, backendURL);
 	const candidate = before.find(
 		(w) =>
 			w.collocation_span_id == null &&
@@ -76,12 +75,12 @@ test('review-ahead: reading a not-due recognition word records a review', async 
 
 	// Create a NEW base card for the word. NEW is review-ahead eligible (reading it
 	// is a valid early introduction) and never "due", so the word gets "Review ✓".
-	const createRes = await request.post(`${BACKEND}/api/srs/items`, {
+	const createRes = await request.post(`${backendURL}/api/srs/items`, {
 		data: { text: lemma, language_code: 'sl', word_count: 1, translation: 'x' }
 	});
 	expect(createRes.ok() || createRes.status() === 409).toBe(true);
 
-	const after = await getTranscript(request, lessonId);
+	const after = await getTranscript(request, lessonId, backendURL);
 	const word = after.find((w) => w.surface === surface && w.srs_item_id != null);
 	expect(word, 'seeded card should resolve in the transcript').toBeTruthy();
 	expect(word!.is_due).toBe(false);
@@ -108,7 +107,7 @@ test('review-ahead: reading a not-due recognition word records a review', async 
 	await expect
 		.poll(
 			async () => {
-				const words = await getTranscript(request, lessonId);
+				const words = await getTranscript(request, lessonId, backendURL);
 				return words.find((w) => w.srs_item_id === word!.srs_item_id)?.active_state;
 			},
 			{ timeout: 10000 }
