@@ -75,18 +75,24 @@ def main(argv: list[str] | None = None) -> int:
             print("\nDRY RUN — nothing written. Re-run with --apply.")
             return 0
 
-        if not plan.moves:
-            print("\nNothing to move; collection untouched.")
-            return 0
+        if plan.moves:
+            apply_repositioning(ctx.conn, plan)
+            ctx.conn.commit()
+            # cards.due is an INTEGER column, so the planned values must be ints.
+            # Passing str() here reported all 158 planned writes as "missing" on a run
+            # whose writes had in fact all landed (2026-08-22) — the audit compares
+            # against the raw source value, and -1000000 != '-1000000'.
+            ctx.audit_changes("cards", "id", "due", dict(plan.moves))
+        else:
+            print("\nCollection already placed; nothing to write there.")
 
-        apply_repositioning(ctx.conn, plan)
-        ctx.conn.commit()
-        ctx.audit_changes("cards", "id", "due", {card_id: str(new_due) for card_id, new_due in plan.moves})
-
+    # Always run, even when the collection needed no writes: the mirror is the half
+    # that can be stale on its own, and a run with empty `moves` is exactly the case
+    # that repairs it.
     with db._get_conn() as tt_conn:
         mirrored = mirror_positions_to_tt(tt_conn, plan)
         tt_conn.commit()
-    print(f"\nApplied. {len(plan.moves)} cards repositioned, {mirrored} TunaTale mirror rows updated.")
+    print(f"\nDone. {len(plan.moves)} cards repositioned, {mirrored} TunaTale mirror rows updated.")
     print("Backup + audit passed. Sync from TunaTale when convenient; nothing forces a full sync.")
     return 0
 

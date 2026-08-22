@@ -124,6 +124,39 @@ class TestPlanRepositioning:
 
         assert [card_id for card_id, _ in plan.moves] == [mine]
 
+    def test_assignments_cover_every_card_even_when_nothing_moves(self):
+        """The regression that cost a real repair on 2026-08-22. When the collection
+        half already landed, `moves` is empty — and driving the TT mirror off `moves`
+        made the one run that could fix a stale mirror a silent no-op. `assignments`
+        is the full desired mapping and is what the mirror follows."""
+        conn = _conn()
+        first = _vocab_note(conn, note_id=10, card_id=900, due=_PRODUCTION_BAND_FLOOR)
+        second = _vocab_note(conn, note_id=20, card_id=700, due=_PRODUCTION_BAND_FLOOR + 1)
+
+        plan = plan_repositioning(conn, DECK_ID)
+
+        assert plan.moves == []
+        assert plan.assignments == [
+            (first, _PRODUCTION_BAND_FLOOR),
+            (second, _PRODUCTION_BAND_FLOOR + 1),
+        ]
+        assert plan.already_placed == 2
+
+    def test_assignments_are_integers_so_the_write_audit_can_compare_them(self):
+        """`cards.due` is an INTEGER column and `audit_changes` compares planned
+        values against the raw source value. A str() anywhere in this path reports
+        every landed write as "missing" — which is how a wholly successful run
+        raised on 2026-08-22."""
+        conn = _conn()
+        _vocab_note(conn, note_id=10, card_id=900, due=TAIL)
+
+        plan = plan_repositioning(conn, DECK_ID)
+        apply_repositioning(conn, plan)
+
+        card_id, planned = plan.moves[0]
+        assert isinstance(planned, int)
+        assert conn.execute("SELECT due FROM cards WHERE id = ?", (card_id,)).fetchone()["due"] == planned
+
     def test_cards_already_in_their_slot_are_counted_not_moved(self):
         conn = _conn()
         _vocab_note(conn, note_id=10, card_id=900, due=_PRODUCTION_BAND_FLOOR)
@@ -222,6 +255,34 @@ class TestMirrorPositionsToTt:
             tt_conn.commit()
 
         assert updated == 1
+        with db._get_conn() as tt_conn:
+            row = tt_conn.execute("SELECT anki_due FROM collocation_directions WHERE anki_card_id = ?", (card_id,))
+            assert row.fetchone()["anki_due"] == _PRODUCTION_BAND_FLOOR
+
+    def test_repairs_a_stale_mirror_when_the_collection_is_already_placed(self):
+        """The real 2026-08-22 state: Anki written, mirror not. `moves` is empty and
+        the repair must still happen — otherwise TunaTale keeps serving the old order
+        and the whole change reads as having done nothing."""
+        db = SRSDatabase(":memory:")
+        conn = _conn()
+        card_id = _vocab_note(conn, note_id=10, card_id=900, due=_PRODUCTION_BAND_FLOOR)
+        with db._get_conn() as tt_conn:
+            tt_conn.execute(
+                "INSERT INTO collocations (id, text, translation, language_code) VALUES (1, 'x', 'y', 'sl')"
+            )
+            tt_conn.execute(
+                "INSERT INTO collocation_directions (collocation_id, direction, due_at, anki_card_id, anki_due) "
+                "VALUES (1, 'production', '2026-01-01T04:00:00+00:00', ?, ?)",
+                (card_id, TAIL),
+            )
+            tt_conn.commit()
+
+        plan = plan_repositioning(conn, DECK_ID)
+        assert plan.moves == [], "fixture precondition: the collection half already landed"
+        with db._get_conn() as tt_conn:
+            assert mirror_positions_to_tt(tt_conn, plan) == 1
+            tt_conn.commit()
+
         with db._get_conn() as tt_conn:
             row = tt_conn.execute("SELECT anki_due FROM collocation_directions WHERE anki_card_id = ?", (card_id,))
             assert row.fetchone()["anki_due"] == _PRODUCTION_BAND_FLOOR
