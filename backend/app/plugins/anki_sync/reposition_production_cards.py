@@ -55,14 +55,28 @@ _SELECT_MINTED_PRODUCTION = f"""
 
 @dataclass(frozen=True)
 class RepositionPlan:
-    """What a run would do. ``moves`` is (card_id, new_due) for rows that change."""
+    """The band slot every minted production card should hold, and which ones move.
 
+    ``assignments`` is the full desired mapping; ``moves`` is the subset whose value
+    in the collection differs from it.
+
+    ⚠️ The two are NOT interchangeable, and conflating them cost a real repair on
+    2026-08-22: the TunaTale mirror must be driven by ``assignments``, because a run
+    where Anki is already correct but the mirror is stale has an empty ``moves`` and
+    is exactly the case that needs repairing. Driving the mirror off ``moves`` makes
+    such a run a silent no-op — the state it is least able to fix.
+    """
+
+    assignments: list[tuple[int, int]]
     moves: list[tuple[int, int]]
-    already_placed: int
+
+    @property
+    def already_placed(self) -> int:
+        return len(self.assignments) - len(self.moves)
 
     @property
     def total(self) -> int:
-        return len(self.moves) + self.already_placed
+        return len(self.assignments)
 
 
 def plan_repositioning(
@@ -87,15 +101,14 @@ def plan_repositioning(
     if len(rows) > capacity:
         raise ValueError(f"{len(rows)} minted production cards exceed the band's {capacity} slots")
 
+    assignments: list[tuple[int, int]] = []
     moves: list[tuple[int, int]] = []
-    already_placed = 0
     for index, row in enumerate(rows):
         new_due = band_floor + index
-        if row["due"] == new_due:
-            already_placed += 1
-        else:
+        assignments.append((row["card_id"], new_due))
+        if row["due"] != new_due:
             moves.append((row["card_id"], new_due))
-    return RepositionPlan(moves=moves, already_placed=already_placed)
+    return RepositionPlan(assignments=assignments, moves=moves)
 
 
 def apply_repositioning(conn: sqlite3.Connection, plan: RepositionPlan) -> None:
@@ -116,15 +129,19 @@ def apply_repositioning(conn: sqlite3.Connection, plan: RepositionPlan) -> None:
 
 
 def mirror_positions_to_tt(tt_conn: sqlite3.Connection, plan: RepositionPlan) -> int:
-    """Point TunaTale's ``anki_due`` mirror at the new positions. Returns rows updated.
+    """Point TunaTale's ``anki_due`` mirror at the band positions. Returns rows updated.
 
     Without this the two sides disagree until the next ``sync_pull`` recomputes the
     mirror, and TunaTale keeps serving the old order in the meantime — which on a
     change whose whole purpose is queue position would read as "the fix did nothing".
-    The values written are the ones just written to Anki, so no divergence is created.
+    The values written are the ones written to Anki, so no divergence is created.
+
+    Driven by ``assignments``, not ``moves``: see the RepositionPlan docstring. A run
+    whose collection half already landed still has a mirror to repair, and that is
+    precisely the run whose ``moves`` is empty.
     """
     updated = 0
-    for card_id, new_due in plan.moves:
+    for card_id, new_due in plan.assignments:
         cur = tt_conn.execute(
             "UPDATE collocation_directions SET anki_due = ? WHERE anki_card_id = ?",
             (new_due, card_id),
