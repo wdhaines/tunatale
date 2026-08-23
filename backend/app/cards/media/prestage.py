@@ -107,6 +107,13 @@ async def prestage_production_images(
             already += 1
             continue
 
+        if db.is_image_unavailable(cand.collocation_id):
+            # Already searched, already came back empty. Without this the same
+            # unpicturable word costs a live fetch on every pass forever; the mint
+            # reads the same marker and clozes the word instead of minting it.
+            already += 1
+            continue
+
         if is_function_word(unit.text, language_code):
             skipped += 1
             continue
@@ -139,9 +146,11 @@ async def prestage_production_images(
     for cand, media in results:
         unit = cand.item.syntactic_unit
         if media is None or media.image_bytes is None:
-            # Not an error: promotion will route this word to a cloze. Counted so
-            # a run that finds nothing picturable is distinguishable from a run
-            # that found nothing to do.
+            # Not an error, and this is the ONLY place the fact is discoverable:
+            # the mint no longer fetches, so without this marker it could not tell
+            # "cannot be pictured" (cloze it) from "not staged yet" (wait). Record
+            # it, and the next mint routes the word to a cloze.
+            db.mark_image_unavailable(cand.collocation_id)
             missing += 1
             continue
 

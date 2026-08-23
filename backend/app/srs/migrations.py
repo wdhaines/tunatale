@@ -18,7 +18,7 @@ from app.storage.db_backup import snapshot_before_migration
 
 _logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 43
+CURRENT_VERSION = 44
 
 
 class SchemaTooNewError(RuntimeError):
@@ -1337,6 +1337,35 @@ def migrate_v42_to_v43(conn: sqlite3.Connection) -> None:
     _set_version(conn, 43)
 
 
+def migrate_v43_to_v44(conn: sqlite3.Connection) -> None:
+    """Record that a word's image search came back empty (``image_unavailable_at``).
+
+    The promotion mint used to fetch an image inline and, when the search
+    returned nothing, route the word to a cloze on the spot. That fetch was
+    tunatale-byw: a measured 10.0s median per image, up to 10 per sync, 88-97%% of
+    a 30-160s sync. It now happens only in ``prestage_production_images``, off the
+    critical path — which splits one question the mint used to answer in one go.
+
+    "No image in TT" now means either *the pre-stage has not reached this word
+    yet* or *this word cannot be pictured*, and those want opposite handling: the
+    first must wait, the second must cloze. Clozing on the first would
+    permanently mis-shape a word that was merely early. Only the pre-stage knows
+    which it is, so it writes the answer here and the mint reads it.
+
+    Second job: without this the pre-stage re-fetches every known-unpicturable
+    word on every pass, since nothing records that it already tried.
+
+    Nullable, no backfill. A set marker is short-lived by construction — the next
+    mint clozes the word, which removes it from the awaiting-production set for
+    good, so nothing needs to clear it.
+    """
+    if _column_exists(conn, "collocations", "image_unavailable_at"):
+        _set_version(conn, 44)
+        return
+    conn.execute("ALTER TABLE collocations ADD COLUMN image_unavailable_at TEXT")
+    _set_version(conn, 44)
+
+
 _MIGRATIONS = {
     0: migrate_v0_to_v1,
     1: migrate_v1_to_v2,
@@ -1381,6 +1410,7 @@ _MIGRATIONS = {
     40: migrate_v40_to_v41,
     41: migrate_v41_to_v42,
     42: migrate_v42_to_v43,
+    43: migrate_v43_to_v44,
 }
 
 

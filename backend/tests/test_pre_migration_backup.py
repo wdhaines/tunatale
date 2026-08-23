@@ -343,7 +343,7 @@ class TestReversibilityIsDocumented:
     def test_class_counts_match_the_prose(self) -> None:
         """The summary sentence above the table states these three numbers."""
         counts = Counter(c.strip("*") for c in self._rows().values())
-        assert counts == {"Additive": 27, "Backfill": 3, "Destructive": 13}
+        assert counts == {"Additive": 28, "Backfill": 3, "Destructive": 13}
         assert f"{counts['Additive']} of the {len(M._MIGRATIONS)} are additive" in self.DOC.read_text()
 
 

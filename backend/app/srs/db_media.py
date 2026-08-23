@@ -19,6 +19,31 @@ class DbMediaMixin:
             ).fetchone()
         return row["filename"] if row is not None else None
 
+    def mark_image_unavailable(self, collocation_id: int) -> None:
+        """Record that this word's image search came back empty.
+
+        Written by ``prestage_production_images``, read by the promotion mint.
+        The mint no longer fetches, so "no image in TT" alone cannot distinguish
+        *not staged yet* (wait) from *cannot be pictured* (cloze) — this marker is
+        that distinction. It also stops the pre-stage spending a live fetch on the
+        same unpicturable word every pass.
+        """
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocations SET image_unavailable_at = datetime('now') WHERE id = ?",
+                (collocation_id,),
+            )
+            self._commit(conn)
+
+    def is_image_unavailable(self, collocation_id: int) -> bool:
+        """True when a previous pre-stage pass found no picture for this word."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT image_unavailable_at FROM collocations WHERE id = ?",
+                (collocation_id,),
+            ).fetchone()
+        return row is not None and row["image_unavailable_at"] is not None
+
     def get_audio_filename(self, collocation_id: int) -> str | None:
         """Return the filename of the preferred audio media row (forvo > tts), or None."""
         with self._get_conn() as conn:

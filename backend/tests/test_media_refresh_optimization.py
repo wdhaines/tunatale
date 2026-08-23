@@ -123,7 +123,7 @@ class TestMigrationV36ToV37:
     def test_current_version_is_43(self):
         from app.srs.migrations import CURRENT_VERSION
 
-        assert CURRENT_VERSION == 43
+        assert CURRENT_VERSION == 44
 
 
 # ---------------------------------------------------------------------------

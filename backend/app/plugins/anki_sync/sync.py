@@ -319,7 +319,7 @@ async def run_full_sync(
     # sync-old snapshot. The cards it adds are NEW, which `get_review_queue`
     # tail-appends to the frozen queue, so they still surface today.
     with _phase(timings, "promote"):
-        promotion_report = await sync.promote_production_cards(dry_run=dry_run, _media_fn=media_fn)
+        promotion_report = await sync.promote_production_cards(dry_run=dry_run)
 
     # Default media report (returned on dry-run / no media_dir).
     media_report: dict[str, int] = {

@@ -321,3 +321,37 @@ class TestConcurrentFetching:
 
         images = [db.get_image_filename(a), db.get_image_filename(b)]
         assert images.count(None) == 1, f"both words were given the same picture: {images}"
+
+
+class TestUnpicturableWords:
+    """The verdict the mint can no longer reach on its own (tunatale-byw).
+
+    The mint used to fetch inline and, on an empty image search, route the word to
+    a cloze. With the fetch gone it sees only "no image in TT", which now means
+    either *not staged yet* (wait) or *cannot be pictured* (cloze) — opposite
+    handling. Only this pass can tell the two apart, so it records the answer.
+    """
+
+    async def test_an_empty_image_search_is_recorded_for_the_mint(self, db) -> None:
+        coll_id = _add_word(db, "foranledning", "occasion", note_id=1000, card_id=10000)
+
+        report = await prestage_production_images(db, _MediaFn(_Media(image_bytes=None)), language_code=LANG, limit=10)
+
+        assert report.no_image == 1
+        assert db.is_image_unavailable(coll_id), "the mint cannot cloze this word without the marker"
+
+    async def test_a_known_unpicturable_word_is_never_refetched(self, db) -> None:
+        """Otherwise the same word burns a live fetch on every pass, forever.
+
+        The pre-stage budget is the scarce thing here: 20 fetches a pass against a
+        1200-word backlog. Re-searching words already known to have no picture
+        would starve the words that do.
+        """
+        _add_word(db, "foranledning", "occasion", note_id=1000, card_id=10000)
+        await prestage_production_images(db, _MediaFn(_Media(image_bytes=None)), language_code=LANG, limit=10)
+
+        again = _MediaFn()
+        report = await prestage_production_images(db, again, language_code=LANG, limit=10)
+
+        assert again.calls == [], "a word already known to be unpicturable cost another live fetch"
+        assert report.fetched == 0

@@ -214,7 +214,7 @@ class TestRunFullSync:
         sync.sync_pull = MagicMock(return_value=PullReport())
 
         async def _promote(**kwargs):
-            captured["promote_media_fn"] = kwargs.get("_media_fn")
+            captured["promote_kwargs"] = kwargs
             captured["promote_dry_run"] = kwargs.get("dry_run")
             return PromotionReport()
 
@@ -239,10 +239,12 @@ class TestRunFullSync:
 
         assert captured["media_fn"] is sentinel
         assert captured["force"] is True
-        # The promotion phase fetches its images from the same generator, and
-        # honours dry_run — a phase that wrote on a dry run would be a new bug
-        # class, not a variation on an old one.
-        assert captured["promote_media_fn"] is sentinel
+        # The promotion phase is NOT handed the media generator: it mints only
+        # from images `prestage_production_images` already staged, so the sync
+        # makes no network call for one (tunatale-byw). It still honours dry_run —
+        # a phase that wrote on a dry run would be a new bug class, not a
+        # variation on an old one.
+        assert "_media_fn" not in captured["promote_kwargs"]
         assert captured["promote_dry_run"] is False
         assert media_report == {
             "new_media": 0,
