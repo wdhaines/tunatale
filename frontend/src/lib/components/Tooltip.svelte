@@ -185,16 +185,39 @@
 	// still false, and an un-clamped hovered popover is exactly the F-8 bug.
 	const EDGE_MARGIN_PX = 8;
 	let shiftX = $state(0);
+	// The paint boundary is not always the viewport. An ancestor can clip its
+	// contents — Transcript.svelte's `.transcript-wrapper` sets
+	// `overflow-x: clip` — so a popover parked 8px from the VIEWPORT edge can
+	// still sit outside that ancestor's clip edge and be painted off
+	// (tunatale-s8d, measured: popover left 8 vs wrapper content box 37 at a
+	// 390px viewport — "nudged as far as it can, still cut off"). Clamp against
+	// the nearest horizontally-clipping ancestor when there is one; otherwise
+	// fall back to the viewport, which is what jsdom sees (no layout, no
+	// clipping ancestors), keeping the unit tests' mocked-rect math identical.
+	function clampBounds(): { minLeft: number; maxRight: number } {
+		let el = wrapEl?.parentElement ?? null;
+		while (el) {
+			const ox = getComputedStyle(el).overflowX;
+			if (ox !== '' && ox !== 'visible') {
+				const r = el.getBoundingClientRect();
+				return { minLeft: r.left + EDGE_MARGIN_PX, maxRight: r.right - EDGE_MARGIN_PX };
+			}
+			el = el.parentElement;
+		}
+		const vw = viewportWidth();
+		return { minLeft: EDGE_MARGIN_PX, maxRight: vw - EDGE_MARGIN_PX };
+	}
 	$effect(() => {
 		if ((!open && !hovered) || !ttEl) {
 			shiftX = 0;
 			return;
 		}
 		const rect = ttEl.getBoundingClientRect();
-		if (rect.left < EDGE_MARGIN_PX) {
-			shiftX = EDGE_MARGIN_PX - rect.left;
-		} else if (rect.right > viewportWidth() - EDGE_MARGIN_PX) {
-			shiftX = viewportWidth() - EDGE_MARGIN_PX - rect.right;
+		const { minLeft, maxRight } = clampBounds();
+		if (rect.left < minLeft) {
+			shiftX = minLeft - rect.left;
+		} else if (rect.right > maxRight) {
+			shiftX = maxRight - rect.right;
 		} else {
 			shiftX = 0;
 		}

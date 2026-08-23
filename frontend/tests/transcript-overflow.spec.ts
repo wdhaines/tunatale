@@ -433,3 +433,124 @@ test.describe("coarse pointer (touch phone)", () => {
 		expect(failures, failures.join("\n")).toEqual([]);
 	});
 });
+
+/**
+ * F (2026-08-15 user report): a popover on a word near the LEFT edge gets cut
+ * off rather than nudged right; the right margin behaves.
+ *
+ * Why every test above is blind to it, in one sentence: they all assert
+ * `document.scrollWidth - clientWidth`, and `.transcript-wrapper` answers with
+ * `overflow-x: clip` — content clipped by an ancestor NEVER extends the
+ * document's scroll width, so a CLIPPED popover satisfies an overflow
+ * assertion perfectly. An overflow test cannot catch a clipping bug in either
+ * direction.
+ *
+ * ROOT CAUSE (measured, tunatale-s8d control): the clamp in Tooltip.svelte
+ * measures against the VIEWPORT, while the paint boundary is the WRAPPER.
+ * Measured literals at a 390px viewport: wrapper content box starts at x=37
+ * (padding 0, border 0), but the left-edge clamp parks the popover at x=8 —
+ * 29px of it outside the wrapper's clip edge, painted off. Same at 800px
+ * (wrapper 71, popover 8). The wrapper is inset SYMMETRICALLY (37px both
+ * sides at 390px, 71px both sides at 800px), so the right margin carries the
+ * identical latent overhang — it just has no visibility assertion anywhere to
+ * catch it either.
+ *
+ * So this asserts what the others cannot: the DISPLAYED popover's own rect
+ * against the WRAPPER's content box, both edges.
+ */
+test("lesson page: a HOVER-revealed tooltip near the left margin never leaves the transcript wrapper", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+	const { curriculumId } = await seed(request);
+
+	const failures: string[] = [];
+	for (const width of [390, 432, 800, 1280]) {
+		await page.setViewportSize({ width, height: 700 });
+		await page.goto(`/c/${curriculumId}`);
+		await page.getByRole("button", { name: "Day 1" }).click();
+		await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({
+			timeout: 15000,
+		});
+		await page.getByRole("button", { name: "Read", exact: true }).click();
+		await expect(page.locator(".tt-wrap").first()).toBeVisible({ timeout: 15000 });
+
+		// Words closest to the LEFT margin are the ones whose popovers have to
+		// survive the left clip edge — mirror image of the right-margin sweeps
+		// above, for the same reason (which word lands nearest depends on where
+		// the dialogue wraps at each width).
+		//
+		// Scoped to `.transcript-wrapper .tt-wrap`, not every tooltip on the
+		// page: the mastery-segment chips in +page.svelte also render Tooltips
+		// OUTSIDE the wrapper, where the viewport clamp is correct (no ancestor
+		// clips them) — asserting wrapper containment on those would demand an
+		// invariant their layout never needed.
+		const targets = await page.evaluate(
+			() =>
+				[...document.querySelectorAll(".transcript-wrapper .tt-wrap")]
+					.map((el, i) => ({
+						i,
+						left: el.getBoundingClientRect().left,
+						w: el.getBoundingClientRect().width,
+						has: !!el.querySelector(".tt"),
+					}))
+					.filter((t) => t.has && t.w > 0)
+					.sort((a, b) => a.left - b.left)
+					.slice(0, 7)
+					.map((t) => ({ index: t.i, left: Math.round(t.left) })),
+		);
+		expect(targets.length, "no words with popovers rendered").toBeGreaterThan(0);
+
+		for (const t of targets) {
+			// Same scoped selector as the sweep above: the mastery chips in the
+			// player header also render .tt-wrap and precede the transcript in
+			// DOM order, so a GLOBAL nth() would hover a different element than
+			// the one whose rect this loop collected.
+			const word = page.locator(".transcript-wrapper .tt-wrap").nth(t.index);
+			await word.hover();
+			await expect(word.locator(".tt").first()).toBeVisible({ timeout: 5000 });
+
+			const r = await page.evaluate(() => {
+				const shown = [...document.querySelectorAll(".tt")].filter(
+					(el) => getComputedStyle(el).display !== "none",
+				);
+				const rect = shown[0]?.getBoundingClientRect();
+				const wrapEl = document.querySelector(".transcript-wrapper")!;
+				const wr = wrapEl.getBoundingClientRect();
+				const cs = getComputedStyle(wrapEl);
+				return {
+					shownCount: shown.length,
+					tipLeft: rect ? Math.round(rect.left * 100) / 100 : null,
+					tipRight: rect ? Math.round(rect.right * 100) / 100 : null,
+					wrapperContentLeft:
+						Math.round(
+							(wr.left +
+								parseFloat(cs.paddingLeft) +
+								parseFloat(cs.borderLeftWidth)) *
+								100,
+						) / 100,
+					wrapperContentRight:
+						Math.round(
+							(wr.right -
+								parseFloat(cs.paddingRight) -
+								parseFloat(cs.borderRightWidth)) *
+								100,
+						) / 100,
+				};
+			});
+			expect(r.shownCount, "no popover displayed — measurement would be vacuous").toBeGreaterThan(0);
+
+			if (r.tipLeft !== null && r.tipLeft < r.wrapperContentLeft)
+				failures.push(
+					`${width}px word ${t.index} (starts at ${t.left}): popover left ${r.tipLeft} is OUTSIDE the wrapper's clip edge at ${r.wrapperContentLeft}`,
+				);
+			if (r.tipRight !== null && r.tipRight > r.wrapperContentRight)
+				failures.push(
+					`${width}px word ${t.index} (starts at ${t.left}): popover right ${r.tipRight} is OUTSIDE the wrapper's clip edge at ${r.wrapperContentRight}`,
+				);
+		}
+	}
+
+	expect(failures, failures.join("\n")).toEqual([]);
+});

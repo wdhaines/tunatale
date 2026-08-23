@@ -863,6 +863,53 @@ describe("Tooltip", () => {
       }
     });
 
+    it("clamps against a horizontally-clipping ancestor instead of the viewport", async () => {
+      vi.useFakeTimers();
+      try {
+        const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+        const { getByText, container } = render(TooltipTest, {
+          props: { translation: "hello", word, childText: "clamp-me" },
+        });
+        const tt = container.querySelector<HTMLElement>(".tt")!;
+        // jsdom reports inline overflow-x through getComputedStyle, so the
+        // render container stands in for .transcript-wrapper.
+        container.style.overflowX = "hidden";
+        container.getBoundingClientRect = () =>
+          ({
+            left: 50,
+            right: 500,
+            top: 0,
+            bottom: 400,
+            width: 450,
+            height: 400,
+            x: 50,
+            y: 0,
+            toJSON: () => ({}),
+          }) as DOMRect;
+        tt.getBoundingClientRect = () =>
+          ({
+            left: 10,
+            right: 200,
+            top: 0,
+            bottom: 20,
+            width: 190,
+            height: 20,
+            x: 10,
+            y: 0,
+            toJSON: () => ({}),
+          }) as DOMRect;
+
+        await fireEvent.pointerDown(getByText("clamp-me"));
+        vi.advanceTimersByTime(500);
+        await tick();
+
+        // minLeft = 50 + 8 = 58; tooltip left 10 < 58 → shiftX = 58 - 10 = 48.
+        expect(tt.style.transform).toBe("translateX(calc(-50% + 48px))");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("opening with no tooltip content (suppressed/empty) does not crash the clamp", async () => {
       vi.useFakeTimers();
       try {
