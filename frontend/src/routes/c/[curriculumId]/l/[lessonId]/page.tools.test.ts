@@ -6,7 +6,7 @@
  * Split from page.test.ts (item 14, Phase B) — see page-test-helpers.ts for
  * the shared $lib/api / pipeline mock factories and fixtures.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor, screen } from "@testing-library/svelte";
 
 const mockGoto = vi.fn();

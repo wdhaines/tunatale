@@ -519,7 +519,7 @@ jobs:
 
       - name: Restore the Playwright browser + apt caches
         id: pw-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/.cache/ms-playwright
@@ -662,7 +662,7 @@ jobs:
           echo "pw deps path: ${pw_deps_path:-unknown}"
           echo "cached .debs: $(ls "$PW_APT_CACHE"/*.deb 2>/dev/null | wc -l)"
 
-      # restore/save split rather than actions/cache@v4: the combined action does
+      # restore/save split rather than the combined actions/cache@v5: that action does
       # not save when the job fails, so a cold run that dies on the mirror would
       # bank nothing and the cache could never bootstrap. Guarded on cache-hit
       # because the key is immutable and re-saving only logs "already exists".
@@ -674,7 +674,7 @@ jobs:
       # keeping; an incomplete one is worse than none.
       - name: Save the Playwright browser + apt caches
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: |
             ~/.cache/ms-playwright
