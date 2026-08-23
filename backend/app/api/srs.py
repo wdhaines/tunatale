@@ -105,7 +105,12 @@ from app.srs.queue_stats import (
     resolve_relearning_steps,
 )
 from app.srs.tokenizer import tokenize
-from app.srs.transcript import _build_variant_index, extract_transcript
+from app.srs.transcript import (
+    _build_inflection_index,
+    _build_variant_index,
+    extract_transcript,
+    resolve_via_inflection_index,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -943,6 +948,7 @@ def _resolve_card_for_lemma(
     lemma: str,
     surfaces: set[str],
     variant_index: dict[str, tuple[int, SRSItem]] | None = None,
+    inflection_index: dict[str, int] | None = None,
 ):
     """Resolve the tracked card for a lemma, or None if untracked.
 
@@ -954,6 +960,14 @@ def _resolve_card_for_lemma(
     When *variant_index* is provided (built once per request by
     ``_build_variant_index``), also resolves comma-variant card fronts
     (Norwegian ``mot, imot``) whose surface matches a variant spelling.
+
+    *inflection_index* (``_build_inflection_index``) is the LAST resort: the
+    deck's own Inflections table, which lists ``ferskt`` under ``fersk``. It is
+    tried only after every lemma and surface key has missed, so a form that is
+    also some other card's headword resolves to that card rather than to the
+    card whose table happens to mention it — 16 forms in the real Norwegian deck
+    are both. Ambiguous forms are already absent from the index (see its
+    docstring); nothing here arbitrates.
     """
     res = db.get_collocation_by_lemma_with_id(lemma)
     if res is None:
@@ -966,6 +980,8 @@ def _resolve_card_for_lemma(
         # Index keys are casefolded (_build_variant_index) — match that, or a
         # capitalized lemma from the Norwegian lemmatizer silently misses.
         res = variant_index.get(lemma.casefold())
+    if res is None and inflection_index:
+        res = resolve_via_inflection_index(db, inflection_index, lemma, *sorted(surfaces))
     return res
 
 
@@ -1118,6 +1134,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     # _build_variant_index usage so /listen resolves the same cards the transcript
     # shows as tracked.
     variant_index = _build_variant_index(db, lesson.language_code)
+    inflection_index = _build_inflection_index(db, lesson.language_code)
 
     for lemma in lemma_to_sentence:
         # Cloze cards are always on, for every language (no feature flag, no
@@ -1130,7 +1147,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
             lemma, lemma_to_surfaces.get(lemma, set()), lesson.language_code, surface_to_upos
         )
 
-        res = _resolve_card_for_lemma(db, lemma, lemma_to_surfaces.get(lemma, set()), variant_index)
+        res = _resolve_card_for_lemma(db, lemma, lemma_to_surfaces.get(lemma, set()), variant_index, inflection_index)
         existing_id, existing = res if res is not None else (None, None)
 
         if existing is None:
@@ -1748,6 +1765,7 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
     today_start, today_end, end_of_day_utc = _listen_day_window()
 
     variant_index = _build_variant_index(db, lesson.language_code)
+    inflection_index = _build_inflection_index(db, lesson.language_code)
 
     from app.srs.mastery import compute_mastery_progress
 
@@ -1772,7 +1790,7 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
         if is_func and is_clozes_only_verb(lemma, lesson.language_code):
             continue
 
-        res = _resolve_card_for_lemma(db, lemma, words.surfaces.get(lemma, set()), variant_index)
+        res = _resolve_card_for_lemma(db, lemma, words.surfaces.get(lemma, set()), variant_index, inflection_index)
         if res is None:
             # Untracked → ranked/budget-truncated below, mirroring
             # mark_lesson_listened exactly.

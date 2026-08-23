@@ -130,3 +130,27 @@ def get_profile(notetype_name: str) -> NotetypeProfile | None:
     heuristics in ``sqlite_reader``.
     """
     return _PROFILES.get(notetype_name)
+
+
+def inflection_labels() -> frozenset[str]:
+    """Extras labels under which a profile's inflection table is stored.
+
+    A profile names its inflection table twice: once as a ``back_fields`` spec
+    (which decides the *label* the table is stored under in ``collocations.extras``)
+    and once as the ``inflections`` role. Intersecting the two yields the labels a
+    reader must look under, without a per-deck literal anywhere in core — a second
+    deck that calls its table something else is picked up by declaring a profile.
+
+    Deliberately excludes every other table-shaped field. Norwegian's
+    ``Gradbøying`` (label ``Comparison``) is also an HTML table, but its
+    ``<tbody>`` carries the grammar labels *komparativ* / *superlativ* as cells
+    rather than in ``<thead>``, so reading it would feed those words into the
+    inflected-form index as if they were surfaces.
+    """
+    return frozenset(
+        spec.label
+        for profile in _PROFILES.values()
+        if profile.inflections
+        for spec in profile.back_fields
+        if spec.field_name == profile.inflections
+    )

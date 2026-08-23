@@ -30,3 +30,28 @@ class TestGetProfile:
 
     def test_empty_name_has_no_profile(self):
         assert get_profile("") is None
+
+
+class TestInflectionLabels:
+    """The extras labels under which a notetype's inflection table is stored.
+
+    Derived from the profiles rather than hardcoded, so a second deck that
+    names its table something else is picked up by declaring a profile —
+    the reader never grows a per-deck literal.
+    """
+
+    def test_derives_the_label_from_the_profile_that_declares_an_inflections_role(self):
+        from app.cards.field_map import inflection_labels
+
+        assert "Inflections" in inflection_labels()
+
+    def test_excludes_labels_of_fields_that_are_not_the_inflections_role(self):
+        from app.cards.field_map import inflection_labels
+
+        labels = inflection_labels()
+        # "Comparison" (Gradbøying) is a table too, and its <tbody> carries the
+        # grammar labels komparativ/superlativ as cells — reading it would put
+        # them in the form index.
+        assert "Comparison" not in labels
+        assert "Examples" not in labels
+        assert "IPA" not in labels
