@@ -167,6 +167,15 @@ class PromotionReport:
     clozable sentence. That is the population the (unbuilt) LLM tier is for, and
     those words are re-attempted every sync. ``no_template`` is the note whose
     notetype cannot carry a production card at all.
+
+    ``awaiting_image`` counts words the sync declined to serve because
+    ``prestage_production_images`` has not fetched a picture for them yet. It is
+    not an error and not a backlog of its own — those words sit at the head of
+    the deck-ordered queue and mint on a later sync. A number that stays high
+    across syncs means the pre-stage is not keeping up (or is failing), which is
+    the one thing this counter exists to make visible: before it, the sync
+    covered for a lagging pre-stage by fetching inline, and the only symptom was
+    a 30-160s sync (tunatale-byw).
     """
 
     awaiting: int = 0
@@ -175,6 +184,7 @@ class PromotionReport:
     clozed: int = 0
     unservable: int = 0
     no_template: int = 0
+    awaiting_image: int = 0
 
 
 _BACK_EXTRA_TRANS = re.compile(r"^\s*<i>([^<]+)</i>\s*<br\s*/?>\s*<br\s*/?>\s*(.*)", re.DOTALL)

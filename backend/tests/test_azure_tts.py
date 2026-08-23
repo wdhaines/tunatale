@@ -441,7 +441,14 @@ async def test_retry_after_http_date_waits_the_right_delta(tmp_path):
     await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
 
     assert route.call_count == 2
-    assert sleeps[1] == pytest.approx(10.0, abs=1.0)
+    # abs must exceed 1.0, and that is not slack — it is what the wire format
+    # costs. An HTTP-date has ONE-SECOND resolution, so `format_datetime` throws
+    # away `target`'s fractional second; the parsed delta is therefore up to a
+    # full second short, plus however long the request round trip took. At
+    # abs=1.0 the tolerance was exactly the truncation with zero margin left,
+    # and CI duly failed at 8.995752 (= 10 - 0.9998 truncation - 0.0044 elapsed)
+    # on 2026-08-23 whenever the clock happened to sit near a second boundary.
+    assert sleeps[1] == pytest.approx(10.0, abs=2.0)
 
 
 @respx.mock
@@ -472,7 +479,14 @@ async def test_retry_after_http_date_without_timezone_is_treated_as_utc(tmp_path
     await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
 
     assert route.call_count == 2
-    assert sleeps[1] == pytest.approx(10.0, abs=1.0)
+    # abs must exceed 1.0, and that is not slack — it is what the wire format
+    # costs. An HTTP-date has ONE-SECOND resolution, so `format_datetime` throws
+    # away `target`'s fractional second; the parsed delta is therefore up to a
+    # full second short, plus however long the request round trip took. At
+    # abs=1.0 the tolerance was exactly the truncation with zero margin left,
+    # and CI duly failed at 8.995752 (= 10 - 0.9998 truncation - 0.0044 elapsed)
+    # on 2026-08-23 whenever the clock happened to sit near a second boundary.
+    assert sleeps[1] == pytest.approx(10.0, abs=2.0)
 
 
 @respx.mock

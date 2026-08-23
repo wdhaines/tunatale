@@ -196,7 +196,10 @@ class TestPreStaging:
     async def test_the_limit_bounds_the_number_of_live_fetches(self, db) -> None:
         for i in range(5):
             _add_word(db, f"ord{i}", f"word{i}", note_id=1000 + i, card_id=10000 + i)
-        media_fn = _MediaFn()
+        # Distinct bytes per word: the default `_MediaFn()` hands back one shared
+        # image, which the run's duplicate-picture guard now (correctly) refuses to
+        # store twice. That guard is not what this test is about.
+        media_fn = _MediaFn(_Media(image_bytes=b"ONE"), _Media(image_bytes=b"TWO"))
 
         report = await prestage_production_images(db, media_fn, language_code=LANG, limit=2)
 
@@ -233,3 +236,122 @@ class TestPreStaging:
         assert len(seen) == 2
         assert seen[0] is seen[1], "both fetches must share one set, or duplicates slip through"
         assert seen[0] is not None
+
+
+class TestConcurrentFetching:
+    """Fetching in parallel (tunatale-byw).
+
+    A pre-stage pass refills the buffer the mint drains. Serially at a measured
+    10.0s median per image, refilling 20 takes ~200s — and the real trigger for a
+    slow sync was syncing again ~2 minutes later, before the buffer had refilled.
+    So the refill has to outrun the user, not merely happen.
+
+    This is safe to parallelise precisely because of the property in this module's
+    docstring: the pass never opens the Anki collection. It writes TT media only,
+    so there is no lock, no sync sequence and no Anki-side ordering to preserve.
+    """
+
+    async def test_fetches_overlap_rather_than_running_one_at_a_time(self, db) -> None:
+        """The point of the change: N images must not cost N x one-image latency."""
+        import asyncio
+
+        in_flight = 0
+        peak = 0
+
+        async def slow_media_fn(word, english, **kwargs):
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0)  # yield, so a serial implementation cannot overlap
+            await asyncio.sleep(0)
+            in_flight -= 1
+            return _Media(image_bytes=f"IMG-{word}".encode(), image_ext="png")
+
+        for i in range(6):
+            _add_word(db, f"ord{i}", f"word{i}", note_id=1000 + i, card_id=10000 + i)
+
+        report = await prestage_production_images(db, slow_media_fn, language_code=LANG, limit=6)
+
+        assert report.fetched == 6
+        assert peak > 1, "fetches ran strictly one at a time — the refill is still serial"
+
+    async def test_concurrency_is_capped(self, db) -> None:
+        """Unbounded fan-out at Pixabay/LLM rate limits trades one problem for another."""
+        import asyncio
+
+        from app.cards.media.prestage import PRESTAGE_CONCURRENCY
+
+        in_flight = 0
+        peak = 0
+
+        async def slow_media_fn(word, english, **kwargs):
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0)
+            in_flight -= 1
+            return _Media(image_bytes=f"IMG-{word}".encode(), image_ext="png")
+
+        for i in range(PRESTAGE_CONCURRENCY * 3):
+            _add_word(db, f"ord{i}", f"word{i}", note_id=1000 + i, card_id=10000 + i)
+
+        await prestage_production_images(db, slow_media_fn, language_code=LANG, limit=PRESTAGE_CONCURRENCY * 3)
+
+        assert peak <= PRESTAGE_CONCURRENCY, f"{peak} concurrent fetches exceeds the cap"
+
+    async def test_two_words_cannot_be_given_the_same_picture(self, db) -> None:
+        """The dedup invariant must survive concurrency.
+
+        Serially, `used_image_urls` stopped two words being handed one picture.
+        Concurrent calls all see the set as it was when they started, so that guard
+        alone no longer holds — two words with a shared English gloss can come back
+        with identical bytes. Content-identical images are the observable form of
+        the bug, so the pass must refuse to store the second one rather than
+        silently give two cards the same picture.
+        """
+        same = _Media(image_bytes=b"IDENTICAL-BYTES", image_ext="png")
+
+        async def duplicating_media_fn(word, english, **kwargs):
+            return same
+
+        a = _add_word(db, "beslutning", "decision", note_id=1000, card_id=10000)
+        b = _add_word(db, "avgjørelse", "decision", note_id=1001, card_id=10001)
+
+        await prestage_production_images(db, duplicating_media_fn, language_code=LANG, limit=10)
+
+        images = [db.get_image_filename(a), db.get_image_filename(b)]
+        assert images.count(None) == 1, f"both words were given the same picture: {images}"
+
+
+class TestUnpicturableWords:
+    """The verdict the mint can no longer reach on its own (tunatale-byw).
+
+    The mint used to fetch inline and, on an empty image search, route the word to
+    a cloze. With the fetch gone it sees only "no image in TT", which now means
+    either *not staged yet* (wait) or *cannot be pictured* (cloze) — opposite
+    handling. Only this pass can tell the two apart, so it records the answer.
+    """
+
+    async def test_an_empty_image_search_is_recorded_for_the_mint(self, db) -> None:
+        coll_id = _add_word(db, "foranledning", "occasion", note_id=1000, card_id=10000)
+
+        report = await prestage_production_images(db, _MediaFn(_Media(image_bytes=None)), language_code=LANG, limit=10)
+
+        assert report.no_image == 1
+        assert db.is_image_unavailable(coll_id), "the mint cannot cloze this word without the marker"
+
+    async def test_a_known_unpicturable_word_is_never_refetched(self, db) -> None:
+        """Otherwise the same word burns a live fetch on every pass, forever.
+
+        The pre-stage budget is the scarce thing here: 20 fetches a pass against a
+        1200-word backlog. Re-searching words already known to have no picture
+        would starve the words that do.
+        """
+        _add_word(db, "foranledning", "occasion", note_id=1000, card_id=10000)
+        await prestage_production_images(db, _MediaFn(_Media(image_bytes=None)), language_code=LANG, limit=10)
+
+        again = _MediaFn()
+        report = await prestage_production_images(db, again, language_code=LANG, limit=10)
+
+        assert again.calls == [], "a word already known to be unpicturable cost another live fetch"
+        assert report.fetched == 0

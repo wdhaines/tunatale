@@ -75,4 +75,7 @@ def test_public_method_count_pinned() -> None:
     #  Norwegian deck has 2591 such rows and only the one winner is hydrated)
     # +set_translation_dirty (gloss retry backfills a translation and marks it
     #  for push, without re-keying the guid — tunatale-1wiw)
-    assert count == 131
+    # +mark_image_unavailable, is_image_unavailable (the pre-stage's verdict that
+    #  a word cannot be pictured; the mint no longer fetches, so it cannot reach
+    #  that verdict itself — tunatale-byw)
+    assert count == 133

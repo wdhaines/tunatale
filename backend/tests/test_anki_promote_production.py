@@ -35,9 +35,9 @@ Two populations it must NOT touch, both live in the real collections today:
 
 from __future__ import annotations
 
+import inspect
 import logging
 import sqlite3
-from dataclasses import dataclass
 from hashlib import sha256
 
 import pytest
@@ -97,36 +97,24 @@ NOUN_TABLE = (
     "<tbody><tr><td>en&nbsp;valp</td><td>valpen</td><td>valper</td><td>valpene</td></tr></tbody></table>"
 )
 
+
 #: What the phase names the picture it fetches for "house": the gloss stem plus
 #: the bytes' hash, so two words glossed alike cannot overwrite each other.
-IMG_FILENAME = f"img_house_{sha256(b'IMGDATA').hexdigest()[:8]}.jpg"
+def _staged_image(word: str, english: str) -> tuple[str, bytes]:
+    """The filename+bytes `_add_word` stages, matching prestage's convention.
 
-
-@dataclass
-class _Media:
-    """What the peer-sync media generator returns (app.api.anki._build_media_fn)."""
-
-    image_bytes: bytes | None = b"IMGDATA"
-    image_ext: str | None = "jpg"
-    image_status: str | None = "ok"
-    audio_bytes: bytes | None = None
-    audio_source: str | None = None
-
-
-class _MediaFn:
-    """A stand-in for the media generator — the network boundary, passed in.
-
-    Records its calls so a test can assert the phase did *not* fetch (the
-    reuse-existing-image case) without patching anything.
+    Bytes are per-WORD, not per-gloss: two words sharing an English gloss must
+    end up with different pictures, and a fixture that gave them identical bytes
+    would collapse them onto one hash-suffixed filename — the very collision
+    `test_two_words_sharing_a_gloss_keep_their_own_pictures` exists to catch.
     """
+    from app.cards.media.vocab_media import safe_stem
 
-    def __init__(self, media: _Media | None = None) -> None:
-        self._media = _Media() if media is None else media
-        self.calls: list[tuple[str, str]] = []
+    data = b"IMGDATA-" + word.encode()
+    return f"{safe_stem(english, 'img')}_{sha256(data).hexdigest()[:8]}.jpg", data
 
-    async def __call__(self, word, english, *, used_image_urls, source_sentence="", grammar=""):
-        self.calls.append((word, english))
-        return self._media
+
+IMG_FILENAME, IMG_BYTES = _staged_image("hus", "house")
 
 
 def _make_conn() -> sqlite3.Connection:
@@ -210,8 +198,20 @@ def _add_word(
     with_production: bool = False,
     disambig: str = "noun",
     last_review: str = "2026-08-01T12:00:00+00:00",
+    image: bool = True,
+    unpicturable: bool = False,
 ) -> int:
-    """Seed the TT side: a collocation with a recognition direction, optionally production."""
+    """Seed the TT side: a collocation with a recognition direction, optionally production.
+
+    ``image`` defaults to True because the mint no longer fetches (tunatale-byw):
+    it mints only from a picture ``prestage_production_images`` already staged, so
+    a word with no TT image is skipped, not minted. Staging by default keeps every
+    test that is about something else reading as it did.
+
+    ``unpicturable`` sets the marker the pre-stage writes when an image search
+    comes back empty, and is what now routes a word to the cloze fallback — the
+    job ``_MediaFn(_Media(image_bytes=None))`` used to do when the mint fetched.
+    """
     from datetime import datetime
 
     unit = SyntacticUnit(
@@ -234,7 +234,18 @@ def _add_word(
             state=SRSState.NEW,
             anki_card_id=card_id + 1,
         )
-    return db.upsert_by_guid(unit, LANG, directions, anki_note_id=note_id)
+    coll_id = db.upsert_by_guid(unit, LANG, directions, anki_note_id=note_id)
+    if unpicturable:
+        db.mark_image_unavailable(coll_id)
+    elif image:
+        # Staged exactly as `prestage_production_images` stages it — safe_stem of
+        # the gloss plus a content-hash suffix — so what the mint reads back here
+        # is the same shape it reads in production.
+        from app.cards.media.vocab_media import store_tt_media
+
+        filename, data = _staged_image(word, english)
+        store_tt_media(db, coll_id, "image", filename, data)
+    return coll_id
 
 
 def _make_sync(conn: sqlite3.Connection, db: SRSDatabase, anki_media_dir=None) -> AnkiSync:
@@ -279,9 +290,8 @@ class TestPromoteProductionCards:
         coll_id = _add_word(db, "hus", "house", note_id=1000, card_id=card_id)
         anki_media = tmp_path / "collection.media"
         anki_media.mkdir()
-        media_fn = _MediaFn()
 
-        report = await _make_sync(conn, db, anki_media).promote_production_cards(_media_fn=media_fn)
+        report = await _make_sync(conn, db, anki_media).promote_production_cards()
 
         assert (report.minted, report.adopted, report.unservable, report.no_template) == (1, 0, 0, 0)
         assert report.awaiting == 1
@@ -302,8 +312,8 @@ class TestPromoteProductionCards:
         assert prod.anki_due == cards[0]["due"]
 
         # The bytes land in both media stores, as sync_create_new does it.
-        assert (anki_media / IMG_FILENAME).read_bytes() == b"IMGDATA"
-        assert (sync_mod._MEDIA_DIR / IMG_FILENAME).read_bytes() == b"IMGDATA"
+        assert (anki_media / IMG_FILENAME).read_bytes() == IMG_BYTES
+        assert (sync_mod._MEDIA_DIR / IMG_FILENAME).read_bytes() == IMG_BYTES
         assert db.get_image_filename(coll_id) == IMG_FILENAME
 
     async def test_two_words_sharing_a_gloss_keep_their_own_pictures(self, tmp_path) -> None:
@@ -318,18 +328,13 @@ class TestPromoteProductionCards:
         anki_media = tmp_path / "collection.media"
         anki_media.mkdir()
 
-        class _PerWordMedia(_MediaFn):
-            async def __call__(self, word, english, **kwargs):
-                self.calls.append((word, english))
-                return _Media(image_bytes=f"IMG-{word}".encode())
-
-        await _make_sync(conn, db, anki_media).promote_production_cards(_media_fn=_PerWordMedia())
+        await _make_sync(conn, db, anki_media).promote_production_cards()
 
         first, second = _image_field(conn, 1000), _image_field(conn, 1001)
         assert first != second, (first, second)
-        assert (sync_mod._MEDIA_DIR / first.removeprefix('<img src="').removesuffix('">')).read_bytes() == (
-            b"IMG-beslutning"
-        )
+        expected_name, expected_bytes = _staged_image("beslutning", "decision")
+        assert first == f'<img src="{expected_name}">'
+        assert (sync_mod._MEDIA_DIR / expected_name).read_bytes() == expected_bytes
 
     async def test_routes_a_word_it_cannot_image_to_a_cloze(self) -> None:
         """Piece D: the fallback, built from the note's own fields."""
@@ -343,11 +348,9 @@ class TestPromoteProductionCards:
             inflections=NOUN_TABLE,
         )
         db = SRSDatabase(":memory:")
-        coll_id = _add_word(db, "valp", "puppy", note_id=1000, card_id=card_id)
+        coll_id = _add_word(db, "valp", "puppy", note_id=1000, card_id=card_id, unpicturable=True)
 
-        report = await _make_sync(conn, db).promote_production_cards(
-            _media_fn=_MediaFn(_Media(image_bytes=None, image_status="no_results"))
-        )
+        report = await _make_sync(conn, db).promote_production_cards()
 
         assert (report.minted, report.clozed, report.unservable) == (0, 1, 0)
         # No production card and no image on the vocab note — the word went the
@@ -381,12 +384,10 @@ class TestPromoteProductionCards:
         )
         db = SRSDatabase(":memory:")
         _add_word(db, "foran", "in front of", note_id=1000, card_id=card_id, disambig="preposition")
-        media_fn = _MediaFn()
 
-        report = await _make_sync(conn, db).promote_production_cards(_media_fn=media_fn)
+        report = await _make_sync(conn, db).promote_production_cards()
 
         assert (report.clozed, report.minted) == (1, 0)
-        assert media_fn.calls == [], "a closed-class word must not cost an image fetch"
         assert _prod_cards(conn, 1000) == []
         assert _cloze_unit(db, "foran").source_sentence == "Bilen står {{c1::foran}} huset"
 
@@ -395,11 +396,9 @@ class TestPromoteProductionCards:
         conn = _make_conn()
         card_id = _add_note(conn, 1000, "beslutning", "decision", examples="Katten sover (<i>The cat sleeps</i>)")
         db = SRSDatabase(":memory:")
-        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id)
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id, unpicturable=True)
 
-        report = await _make_sync(conn, db).promote_production_cards(
-            _media_fn=_MediaFn(_Media(image_bytes=None)),
-        )
+        report = await _make_sync(conn, db).promote_production_cards()
 
         assert (report.minted, report.clozed, report.unservable) == (0, 0, 1)
         assert db.count_collocations() == 1
@@ -421,9 +420,9 @@ class TestPromoteProductionCards:
             inflections=NOUN_TABLE,
         )
         db = SRSDatabase(":memory:")
-        coll_id = _add_word(db, "valp", "puppy", note_id=1000, card_id=card_id, disambig="")
+        coll_id = _add_word(db, "valp", "puppy", note_id=1000, card_id=card_id, disambig="", unpicturable=True)
 
-        report = await _make_sync(conn, db).promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+        report = await _make_sync(conn, db).promote_production_cards()
 
         assert (report.clozed, report.unservable) == (0, 1)
         assert db.count_collocations() == 1
@@ -446,12 +445,12 @@ class TestPromoteProductionCards:
             inflections=NOUN_TABLE,
         )
         db = SRSDatabase(":memory:")
-        _add_word(db, "valp", "puppy", note_id=1000, card_id=card_id)
+        _add_word(db, "valp", "puppy", note_id=1000, card_id=card_id, unpicturable=True)
         sync = _make_sync(conn, db)
-        first = await sync.promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+        first = await sync.promote_production_cards()
         assert first.clozed == 1
 
-        again = await sync.promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+        again = await sync.promote_production_cards()
 
         assert (again.awaiting, again.clozed) == (0, 0)
         assert db.count_collocations() == 2, "no second cloze for the same word"
@@ -470,9 +469,9 @@ class TestPromoteProductionCards:
             inflections=NOUN_TABLE,
         )
         db = SRSDatabase(":memory:")
-        coll_id = _add_word(db, "valp", "puppy", note_id=1000, card_id=card_id)
+        coll_id = _add_word(db, "valp", "puppy", note_id=1000, card_id=card_id, unpicturable=True)
 
-        report = await _make_sync(conn, db).promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+        report = await _make_sync(conn, db).promote_production_cards()
 
         assert report.clozed == 1
         assert db.get_base_collocation_id(_cloze_id(db, "valp")) == coll_id
@@ -489,13 +488,13 @@ class TestPromoteProductionCards:
         noun_card = _add_note(conn, 1000, "løfte", "promise", word_class="noun", examples="Et løfte (<i>A promise</i>)")
         verb_card = _add_note(conn, 1001, "løfte", "to lift", word_class="verb", examples="Å løfte (<i>To lift</i>)")
         db = SRSDatabase(":memory:")
-        noun_id = _add_word(db, "løfte", "promise", note_id=1000, card_id=noun_card, disambig="noun")
-        verb_id = _add_word(db, "løfte", "to lift", note_id=1001, card_id=verb_card, disambig="verb")
+        noun_id = _add_word(db, "løfte", "promise", note_id=1000, card_id=noun_card, disambig="noun", unpicturable=True)
+        verb_id = _add_word(db, "løfte", "to lift", note_id=1001, card_id=verb_card, disambig="verb", unpicturable=True)
         assert noun_id != verb_id, "a POS homonym is two collocations"
         sync = _make_sync(conn, db)
 
         # The noun gets a cloze (no image available).
-        first = await sync.promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)), limit=1)
+        first = await sync.promote_production_cards(limit=1)
         assert first.clozed == 1
 
         # The verb must still be a candidate.
@@ -533,9 +532,7 @@ class TestPromoteProductionCards:
             language_code=LANG,
         )
 
-        report = await _make_sync(conn, db).promote_production_cards(
-            _media_fn=_MediaFn(_Media(image_bytes=b"jpeg")),
-        )
+        report = await _make_sync(conn, db).promote_production_cards()
 
         assert report.minted == 1, "an inflection cloze silenced the promotion"
         assert db.get_collocation_by_id(coll_id)[1].directions.keys() == {
@@ -570,14 +567,16 @@ class TestPromoteProductionCards:
             examples="Vi går mot byen (<i>We walk towards the city</i>)",
         )
         db = SRSDatabase(":memory:")
-        coll_id = _add_word(db, "mot, imot", "against", note_id=1000, card_id=card_id, disambig="preposition")
+        coll_id = _add_word(
+            db, "mot, imot", "against", note_id=1000, card_id=card_id, disambig="preposition", unpicturable=True
+        )
         with db._get_conn() as raw:
             assert raw.execute("SELECT lemma FROM collocations WHERE id = ?", (coll_id,)).fetchone()["lemma"] is None
         sync = _make_sync(conn, db)
-        first = await sync.promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+        first = await sync.promote_production_cards()
         assert first.clozed == 1
 
-        again = await sync.promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+        again = await sync.promote_production_cards()
 
         assert (again.awaiting, again.clozed) == (0, 0)
         assert db.count_collocations() == 2, "no second cloze for the same word"
@@ -595,9 +594,9 @@ class TestPromoteProductionCards:
             inflections=NOUN_TABLE,
         )
         db = SRSDatabase(":memory:")
-        _add_word(db, "valp", "puppy", note_id=1000, card_id=card_id)
+        _add_word(db, "valp", "puppy", note_id=1000, card_id=card_id, unpicturable=True)
         sync = _make_sync(conn, db)
-        await sync.promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+        await sync.promote_production_cards()
 
         await sync.sync_create_new(deck_name=DECK_NAME, model_name=SEED_NOTETYPE)
 
@@ -613,12 +612,10 @@ class TestPromoteProductionCards:
         card_id = _add_note(conn, 1000, "hus", "house")
         db = SRSDatabase(":memory:")
         _add_word(db, "hus", "house", note_id=1000, card_id=card_id, state=SRSState.NEW)
-        media_fn = _MediaFn()
 
-        report = await _make_sync(conn, db).promote_production_cards(_media_fn=media_fn)
+        report = await _make_sync(conn, db).promote_production_cards()
 
         assert (report.awaiting, report.minted) == (0, 0)
-        assert media_fn.calls == []
         assert _prod_cards(conn, 1000) == []
 
     async def test_ignores_a_word_that_already_has_a_production_direction(self) -> None:
@@ -627,7 +624,7 @@ class TestPromoteProductionCards:
         db = SRSDatabase(":memory:")
         _add_word(db, "hus", "house", note_id=1000, card_id=card_id, with_production=True)
 
-        report = await _make_sync(conn, db).promote_production_cards(_media_fn=_MediaFn())
+        report = await _make_sync(conn, db).promote_production_cards()
 
         assert (report.awaiting, report.minted) == (0, 0)
         assert _prod_cards(conn, 1000) == []
@@ -638,30 +635,87 @@ class TestPromoteProductionCards:
         card_id = _add_note(conn, 2000, "sound", "phonics", mid=BASIC_MID)
         db = SRSDatabase(":memory:")
         coll_id = _add_word(db, "sound", "phonics", note_id=2000, card_id=card_id)
-        media_fn = _MediaFn()
 
-        report = await _make_sync(conn, db).promote_production_cards(_media_fn=media_fn)
+        report = await _make_sync(conn, db).promote_production_cards()
 
         assert (report.minted, report.no_template) == (0, 1)
         assert _prod_cards(conn, 2000) == []
         assert db.get_collocation_by_id(coll_id)[1].directions.keys() == {Direction.RECOGNITION}
         # Not even an image fetch: an unservable word costs nothing.
-        assert media_fn.calls == []
 
     async def test_defers_a_word_whose_image_search_comes_back_empty(self) -> None:
         """Rule 3 — no card, and crucially no image write either."""
         conn = _make_conn()
         card_id = _add_note(conn, 1000, "beslutning", "decision")
         db = SRSDatabase(":memory:")
-        coll_id = _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id)
-        media_fn = _MediaFn(_Media(image_bytes=None, image_status="no_results"))
+        coll_id = _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id, unpicturable=True)
 
-        report = await _make_sync(conn, db).promote_production_cards(_media_fn=media_fn)
+        report = await _make_sync(conn, db).promote_production_cards()
 
         assert (report.minted, report.unservable) == (0, 1)
         assert _prod_cards(conn, 1000) == []
         assert _image_field(conn, 1000) == ""
         assert db.get_collocation_by_id(coll_id)[1].directions.keys() == {Direction.RECOGNITION}
+
+    def test_the_phase_has_no_way_to_fetch_an_image_at_all(self) -> None:
+        """The no-network guarantee is structural, not a runtime assertion.
+
+        Until 2026-08-23 several tests here passed a recording media generator and
+        asserted `calls == []`. Once the parameter was removed those assertions
+        became vacuously true — they could never fail again, and a reintroduced
+        fetch would sail past every one of them. This asserts the property that
+        actually holds: the phase accepts no media generator, so there is nothing
+        for it to fetch with. Re-adding the parameter must fail here first.
+        """
+        params = inspect.signature(AnkiSync.promote_production_cards).parameters
+
+        assert "_media_fn" not in params, "promote_production_cards can fetch again — that IS tunatale-byw"
+
+    async def test_a_word_with_no_staged_image_is_skipped_not_fetched(self, tmp_path, caplog) -> None:
+        """The sync's critical path makes NO network call (tunatale-byw).
+
+        Fetching here was the whole regression: an LLM call plus a Pixabay search
+        and download, serially, at a measured 10.0s median per image and up to 10
+        per sync — 88-97%% of a 30-160s sync. `prestage_production_images` fetches
+        these off the critical path instead; if it has not got to a word yet, the
+        sync leaves it alone and says so. The word is not lost: it stays at the
+        head of the deck-ordered queue and mints next sync, once an image exists.
+        """
+        conn = _make_conn()
+        card_id = _add_note(conn, 1000, "hus", "house")
+        db = SRSDatabase(":memory:")
+        _add_word(db, "hus", "house", note_id=1000, card_id=card_id, image=False)
+
+        with caplog.at_level(logging.WARNING):
+            report = await _make_sync(conn, db, tmp_path).promote_production_cards()
+
+        assert (report.minted, report.clozed) == (0, 0)
+        assert report.awaiting_image == 1
+        assert _prod_cards(conn, 1000) == []
+        assert "hus" in caplog.text
+
+    async def test_an_unstaged_word_does_not_block_a_staged_one(self, tmp_path) -> None:
+        """Skipping must not wedge the drain behind the head of the queue.
+
+        Deck order puts an unstaged word ahead of a staged one all the time — the
+        pre-stage buffer is 20 deep and the deck is 1200+. If a skip stopped the
+        scan, one unstaged word at the head would cost the whole sync's mint.
+        """
+        conn = _make_conn()
+        db = SRSDatabase(":memory:")
+        from app.cards.media.vocab_media import store_tt_media
+
+        # Note 1000 is FRONT of deck and has no image; 1001 is behind it and does.
+        _add_word(db, "hus", "house", note_id=1000, card_id=_add_note(conn, 1000, "hus", "house"), image=False)
+        staged = _add_word(db, "bil", "car", note_id=1001, card_id=_add_note(conn, 1001, "bil", "car"))
+        store_tt_media(db, staged, "image", "img_bil.jpg", b"BILIMAGE")
+        anki_media = tmp_path / "collection.media"
+        anki_media.mkdir()
+
+        report = await _make_sync(conn, db, anki_media).promote_production_cards()
+
+        assert (report.minted, report.awaiting_image) == (1, 1)
+        assert len(_prod_cards(conn, 1001)) == 1, "the staged word behind it should still mint"
 
     async def test_reuses_an_image_tt_already_has(self, tmp_path) -> None:
         """A word imaged at add time must not get a second, different picture."""
@@ -674,12 +728,10 @@ class TestPromoteProductionCards:
         store_tt_media(db, coll_id, "image", "img_existing.jpg", b"OLDIMAGE")
         anki_media = tmp_path / "collection.media"
         anki_media.mkdir()
-        media_fn = _MediaFn()
 
-        report = await _make_sync(conn, db, anki_media).promote_production_cards(_media_fn=media_fn)
+        report = await _make_sync(conn, db, anki_media).promote_production_cards()
 
         assert report.minted == 1
-        assert media_fn.calls == []
         assert _image_field(conn, 1000) == '<img src="img_existing.jpg">'
         # The existing file is copied into Anki's media dir, not re-fetched.
         assert (anki_media / "img_existing.jpg").read_bytes() == b"OLDIMAGE"
@@ -691,26 +743,41 @@ class TestPromoteProductionCards:
             card_id = _add_note(conn, 1000 + i, word, f"en {word}")
             _add_word(db, word, f"en {word}", note_id=1000 + i, card_id=card_id)
 
-        report = await _make_sync(conn, db).promote_production_cards(_media_fn=_MediaFn(), limit=2)
+        report = await _make_sync(conn, db).promote_production_cards(limit=2)
 
         assert (report.awaiting, report.minted) == (3, 2)
         minted_notes = conn.execute("SELECT COUNT(DISTINCT nid) FROM cards WHERE ord > 0").fetchone()[0]
         assert minted_notes == 2
 
-    async def test_promotes_the_most_recently_graduated_first(self) -> None:
-        """The forward trigger: a word that just graduated jumps the backlog."""
+    async def test_promotes_in_deck_order_not_recency(self) -> None:
+        """Deck order wins over a fresh graduation (tunatale-qf6.11 + tunatale-byw).
+
+        This test asserted the opposite until 2026-08-23: "a word that just
+        graduated jumps the backlog". That WAS the qf6.11 bug written down as an
+        oracle. Recency-first drains the rare end of a frequency deck, because the
+        words you touched most recently are the ones furthest into it.
+
+        It is also what made syncs slow. ``last_review`` is mutable, so any review
+        session rewrote this queue's head; the pre-stage had already fetched images
+        for the OLD head, so the mint missed the buffer and fetched inline — a
+        measured 10.0s median per image, up to 10 per sync (tunatale-byw). Deck
+        order is immutable, so the head holds still and the buffer hits.
+
+        The fixture is deliberately adversarial: ``bil`` is the freshly graduated
+        word AND the higher note id, so recency and deck order disagree.
+        """
         conn = _make_conn()
         db = SRSDatabase(":memory:")
-        old_card = _add_note(conn, 1000, "hus", "house")
-        _add_word(db, "hus", "house", note_id=1000, card_id=old_card, last_review="2026-01-01T12:00:00+00:00")
+        front_card = _add_note(conn, 1000, "hus", "house")
+        _add_word(db, "hus", "house", note_id=1000, card_id=front_card, last_review="2026-01-01T12:00:00+00:00")
         fresh_card = _add_note(conn, 1001, "bil", "car")
         _add_word(db, "bil", "car", note_id=1001, card_id=fresh_card, last_review="2026-08-16T12:00:00+00:00")
 
-        report = await _make_sync(conn, db).promote_production_cards(_media_fn=_MediaFn(), limit=1)
+        report = await _make_sync(conn, db).promote_production_cards(limit=1)
 
         assert report.minted == 1
-        assert len(_prod_cards(conn, 1001)) == 1, "the freshly graduated word should be promoted first"
-        assert _prod_cards(conn, 1000) == []
+        assert len(_prod_cards(conn, 1000)) == 1, "the front-of-deck word should be promoted first"
+        assert _prod_cards(conn, 1001) == [], "a fresh graduation must not jump the deck"
 
     async def test_adopts_a_card_anki_already_generated(self) -> None:
         """End-to-end self-heal: Anki minted ord=1 itself; TT adopts and links it."""
@@ -725,7 +792,7 @@ class TestPromoteProductionCards:
         db = SRSDatabase(":memory:")
         coll_id = _add_word(db, "hus", "house", note_id=1000, card_id=card_id)
 
-        report = await _make_sync(conn, db).promote_production_cards(_media_fn=_MediaFn())
+        report = await _make_sync(conn, db).promote_production_cards()
 
         assert (report.minted, report.adopted) == (0, 1)
         assert [c["id"] for c in _prod_cards(conn, 1000)] == [anki_card_id]
@@ -738,9 +805,9 @@ class TestPromoteProductionCards:
         db = SRSDatabase(":memory:")
         _add_word(db, "hus", "house", note_id=1000, card_id=card_id)
         sync = _make_sync(conn, db)
-        await sync.promote_production_cards(_media_fn=_MediaFn())
+        await sync.promote_production_cards()
 
-        again = await sync.promote_production_cards(_media_fn=_MediaFn())
+        again = await sync.promote_production_cards()
 
         assert (again.awaiting, again.minted, again.adopted) == (0, 0, 0)
         assert len(_prod_cards(conn, 1000)) == 1
@@ -750,12 +817,10 @@ class TestPromoteProductionCards:
         card_id = _add_note(conn, 1000, "hus", "house")
         db = SRSDatabase(":memory:")
         coll_id = _add_word(db, "hus", "house", note_id=1000, card_id=card_id)
-        media_fn = _MediaFn()
 
-        report = await _make_sync(conn, db).promote_production_cards(_media_fn=media_fn, dry_run=True)
+        report = await _make_sync(conn, db).promote_production_cards(dry_run=True)
 
         assert (report.awaiting, report.minted) == (1, 0)
-        assert media_fn.calls == []
         assert _prod_cards(conn, 1000) == []
         assert db.get_collocation_by_id(coll_id)[1].directions.keys() == {Direction.RECOGNITION}
 
@@ -764,7 +829,7 @@ class TestPromoteProductionCards:
         conn = _make_conn()
         card_id = _add_note(conn, 1000, "hus", "house")
         db = SRSDatabase(":memory:")
-        _add_word(db, "hus", "house", note_id=1000, card_id=card_id)
+        _add_word(db, "hus", "house", note_id=1000, card_id=card_id, unpicturable=True)
 
         report = await _make_sync(conn, db).promote_production_cards()
 
@@ -775,10 +840,10 @@ class TestPromoteProductionCards:
         conn = _make_conn()
         card_id = _add_note(conn, 1000, "beslutning", "decision")
         db = SRSDatabase(":memory:")
-        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id)
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id, unpicturable=True)
 
         with caplog.at_level(logging.INFO, logger="app.anki.sync"):
-            await _make_sync(conn, db).promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+            await _make_sync(conn, db).promote_production_cards()
 
         assert "PRODUCTION_MINT awaiting=1 minted=0 adopted=0 clozed=0 unservable=1 no_template=0" in caplog.text
         assert "beslutning" in caplog.text
@@ -786,7 +851,7 @@ class TestPromoteProductionCards:
     async def test_quiet_when_there_is_nothing_to_promote(self, caplog) -> None:
         db = SRSDatabase(":memory:")
         with caplog.at_level(logging.INFO, logger="app.anki.sync"):
-            report = await _make_sync(_make_conn(), db).promote_production_cards(_media_fn=_MediaFn())
+            report = await _make_sync(_make_conn(), db).promote_production_cards()
 
         assert report.awaiting == 0
         assert "PRODUCTION_MINT" not in caplog.text
@@ -812,10 +877,10 @@ class TestPromoteProductionCards:
         conn = _make_conn()
         card_id = _add_note(conn, 1000, "beslutning", "decision")
         db = SRSDatabase(":memory:")
-        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id)
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id, unpicturable=True)
 
         with caplog.at_level(logging.WARNING, logger="app.anki.sync"):
-            await _make_sync(conn, db).promote_production_cards(_media_fn=_MediaFn(_Media(image_bytes=None)))
+            await _make_sync(conn, db).promote_production_cards()
 
         assert "PRODUCTION_MINT awaiting=1 minted=0 adopted=0 clozed=0 unservable=1 no_template=0" in caplog.text
 
@@ -827,7 +892,7 @@ class TestPromoteProductionCards:
         _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id)
 
         with caplog.at_level(logging.WARNING, logger="app.anki.sync"):
-            await _make_sync(conn, db).promote_production_cards(dry_run=True, _media_fn=_MediaFn())
+            await _make_sync(conn, db).promote_production_cards(dry_run=True)
 
         assert "PRODUCTION_MINT awaiting=1 (dry run — nothing minted)" in caplog.text
 

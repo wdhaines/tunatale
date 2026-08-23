@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from hashlib import sha256 as _sha256
 
 from app.cards.cloze_source import choose_cloze_sentence
 from app.cards.media.vocab_media import safe_stem as _safe_stem
@@ -1729,14 +1728,17 @@ class AnkiSync:
         self,
         *,
         dry_run: bool = False,
-        _media_fn=None,
         limit: int = PRODUCTIONS_PER_SYNC,
     ) -> PromotionReport:
         """Mint production cards for words whose recognition card has graduated.
 
         A deck imported recognition-only gains the *capability* to carry
         production cards from ``add_production_template``; this is where a word
-        actually gets one — one card, one image fetch, when it graduates. It
+        actually gets one, when it graduates. It makes NO network call: the image
+        must already have been staged into TT by ``prestage_production_images``,
+        and a word without one is counted in ``awaiting_image``, logged, and left
+        for a later sync (tunatale-byw — fetching here cost a measured 10.0s per
+        image and was 88-97%% of a 30-160s sync). It
         serves the forward trigger and the backlog drain through a single query
         (``list_words_awaiting_production``), because a word that graduated
         yesterday and one that graduated before the migration are the same
@@ -1775,10 +1777,17 @@ class AnkiSync:
             _log.warning("PRODUCTION_MINT awaiting=%d (dry run — nothing minted)", report.awaiting)
             return report
 
-        used_image_urls: set[str] = set()
-        fetches_left = limit
+        # The pacing budget. Before tunatale-byw this was `fetches_left`, spent on
+        # live image fetches; the fetch is gone but the budget it imposed was
+        # load-bearing and is kept exactly. A word settled as "cannot be pictured"
+        # costs one unit, because turning a word into a cloze is real, irreversible
+        # promotion work — 10 of those a sync is the settled pacing (2026-08-15),
+        # and without this one sync could cloze all PRODUCTION_SCAN_LIMIT rows.
+        # A closed-class word still costs nothing: it is routed before this point,
+        # exactly as it was routed before the fetch.
+        budget_left = limit
         for cand in self._db.list_words_awaiting_production(limit=PRODUCTION_SCAN_LIMIT):
-            if report.minted + report.adopted >= limit or fetches_left <= 0:
+            if report.minted + report.adopted >= limit or budget_left <= 0:
                 break
 
             if not self._writer.production_capable(cand.anki_note_id):
@@ -1799,41 +1808,40 @@ class AnkiSync:
                 continue
 
             filename = self._db.get_image_filename(cand.collocation_id)
+            if filename is None and self._db.is_image_unavailable(cand.collocation_id):
+                # The pre-stage already looked and found nothing picturable, so
+                # this is the settled "cannot be pictured" case, not an early one.
+                # Same destination as before the fetch moved off the sync: a card
+                # fronted by a meaningless picture is worse than a cloze. Costs a
+                # budget unit, as the fetch that used to reach this verdict did.
+                budget_left -= 1
+                self._fallback_to_cloze(cand, material, report)
+                continue
+
             if filename is None:
-                # No TT image yet: fetch one now, at promotion time. This is the
-                # cost the bulk backfill was rejected for front-loading.
-                fetches_left -= 1
-                media = (
-                    None
-                    if _media_fn is None
-                    else await _media_fn(
-                        unit.text,
-                        unit.translation,
-                        used_image_urls=used_image_urls,
-                        source_sentence=unit.source_sentence or "",
-                        grammar=unit.grammar or "",
-                    )
+                # ⚠️ THE SYNC MAKES NO NETWORK CALL. This used to fetch inline —
+                # an LLM call plus a Pixabay search and download, serially, at a
+                # measured 10.0s median per image and up to `limit` per sync. That
+                # was 88-97%% of a 30-160s sync and the whole of tunatale-byw.
+                # `prestage_production_images` does the fetching off the critical
+                # path; when it has not reached a word yet, the sync says so and
+                # moves on. The word is not lost — deck order is stable, so it is
+                # still at the head next sync, by which time an image exists.
+                #
+                # Deliberately NOT a cloze fallback: "no image yet" and "cannot be
+                # pictured" are different claims, and only the pre-stage can tell
+                # them apart. Clozing here would permanently mis-shape a word that
+                # was merely early.
+                report.awaiting_image += 1
+                _log.warning(
+                    "PRODUCTION_MINT no pre-staged image for %r — skipped (pre-stage has not reached it yet)",
+                    unit.text,
                 )
-                if media is None or media.image_bytes is None:
-                    # The one genuinely new decision in the router: a word that
-                    # cannot be pictured gets a cloze instead of a bad picture.
-                    self._fallback_to_cloze(cand, material, report)
-                    continue
-                # Hash-suffixed, like `replace_item_image` and unlike
-                # `sync_create_new`'s bare `img_<gloss>.jpg`. At 1550 words a
-                # shared gloss is common ("beslutning" and "avgjørelse" are both
-                # "decision"), and the bare name would have the second fetch
-                # overwrite the first word's picture in place — silently changing
-                # a card the learner already knows. Identical bytes still collapse
-                # to one file.
-                digest = _sha256(media.image_bytes).hexdigest()[:8]
-                filename = f"{_safe_stem(unit.translation, 'img')}_{digest}.{media.image_ext or 'jpg'}"
-                self._writer.store_media_file(filename, media.image_bytes)
-                _store_tt_media(self._db, cand.collocation_id, "image", filename, media.image_bytes)
-            else:
-                # Reuse the picture the card already has — a word imaged at add
-                # time must not acquire a second, different one.
-                _copy_tt_media_to_anki(self._writer, filename)
+                continue
+
+            # Reuse the picture the card already has — a word imaged at add time
+            # must not acquire a second, different one.
+            _copy_tt_media_to_anki(self._writer, filename)
 
             minted = self._writer.mint_production_card(cand.anki_note_id, f'<img src="{filename}">')
             self._db.add_production_direction(
@@ -1853,13 +1861,14 @@ class AnkiSync:
         # backlog sat at 1435 with nothing minted since 2026-07-25 and the reason
         # was unreadable rather than unknown (tunatale-byw, 2026-08-19).
         _log.warning(
-            "PRODUCTION_MINT awaiting=%d minted=%d adopted=%d clozed=%d unservable=%d no_template=%d",
+            "PRODUCTION_MINT awaiting=%d minted=%d adopted=%d clozed=%d unservable=%d no_template=%d awaiting_image=%d",
             report.awaiting,
             report.minted,
             report.adopted,
             report.clozed,
             report.unservable,
             report.no_template,
+            report.awaiting_image,
         )
         return report
 
