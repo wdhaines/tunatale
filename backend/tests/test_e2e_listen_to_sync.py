@@ -128,6 +128,12 @@ class TestListenToSyncRoundTrip:
                 )
             ],
             key_phrases=[],
+            # A vocab card with no gloss is held out of Anki since tunatale-1wiw
+            # (an empty back is what shipped the `ferskt` card), and a minimal
+            # fixture carries no token_glosses at all — a test artifact, not a
+            # production shape. Glossed here so this still tests what it means
+            # to test: listen creates, sync mints.
+            generation_metadata={"token_glosses": {"banka": "bank"}},
         )
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
 
@@ -220,6 +226,8 @@ class TestListenToSyncRoundTrip:
                 )
             ],
             key_phrases=[],
+            # See the note above: unglossed vocab no longer reaches Anki.
+            generation_metadata={"token_glosses": {"banka": "bank", "center": "centre", "hotel": "hotel"}},
         )
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
 

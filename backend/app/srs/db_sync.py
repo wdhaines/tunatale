@@ -498,6 +498,36 @@ class DbSyncMixin:
             ).fetchone()
         return (row["dirty_fields"] or "") if row else ""
 
+    def set_translation_dirty(self, guid: str, translation: str) -> None:
+        """Backfill `translation` for `guid` and append it to dirty_fields.
+
+        The gloss-retry path (``cards/gloss_llm``): a word the lesson generator
+        failed to gloss gets its meaning from a targeted call later, and the card
+        may already be in Anki with an empty back — so the write must be marked
+        for push. ``translation`` is an existing dirty field (``sync_engine``
+        rewrites the note's gloss field when it is set), which is why this needs
+        no new sync plumbing.
+
+        Deliberately does NOT recompute the guid, unlike
+        ``update_collocation_fields``: the guid is keyed on the card's FRONT, and
+        a gloss arriving late must not re-key a row that Anki already links to.
+        """
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT dirty_fields FROM collocations WHERE guid = ?",
+                (guid,),
+            ).fetchone()
+            if row is None:
+                return
+            existing = {f for f in (row["dirty_fields"] or "").split(",") if f}
+            existing.add("translation")
+            conn.execute(
+                "UPDATE collocations SET translation = ?, dirty_fields = ?, "
+                "updated_at = datetime('now') WHERE guid = ?",
+                (translation, ",".join(sorted(existing)), guid),
+            )
+            self._commit(conn)
+
     def set_sentence_translation_dirty(self, guid: str, sentence_translation: str) -> None:
         """Update sentence_translation for `guid` and append `sentence_translation` to dirty_fields.
 

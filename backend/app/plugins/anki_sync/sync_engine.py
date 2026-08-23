@@ -1467,6 +1467,34 @@ class AnkiSync:
         _FILTER_OUT = {SRSState.SUSPENDED, SRSState.BURIED}
         items = [(g, i, c) for g, i, c in items if not all(ds.state in _FILTER_OUT for ds in i.directions.values())]
 
+        # Hold back a card with NOTHING on its back. The lesson generator drops
+        # words from its whole-dialogue gloss, so a card can be created with an
+        # empty translation; `cards/gloss_llm` retries per word, but that retry
+        # runs after the response and the free tier can exhaust. Without this
+        # gate a failed retry ships an empty card to Anki, which is exactly how
+        # `ferskt` reached the collection and was failed 12 times
+        # (bd tunatale-1wiw).
+        #
+        # `extras` counts as a back: an imported card can carry IPA / Meaning /
+        # Inflections with the translation column empty and still teach
+        # something. Only the row with neither is held.
+        #
+        # VOCAB ONLY. A cloze card has no gloss BY DESIGN — its front is the
+        # sentence with a blank and its back is the answer plus Back Extra, so
+        # `translation` is empty on every one of them. Gating clozes on it holds
+        # back the entire cloze pipeline; six pre-existing tests caught that on
+        # the first cut of this filter (2026-08-22), which is why this reads
+        # `card_type == "vocab"` rather than a general "has a back".
+        #
+        # HELD, not dropped — the row stays NEW and studiable in TT, and the next
+        # listen retries the gloss. When one lands, this filter stops matching
+        # and the ordinary push path mints the note with no special handling.
+        items = [
+            (g, i, c)
+            for g, i, c in items
+            if i.syntactic_unit.card_type != "vocab" or i.syntactic_unit.translation.strip() or i.syntactic_unit.extras
+        ]
+
         if dry_run:
             return CreateNewReport(count=len(items))
 

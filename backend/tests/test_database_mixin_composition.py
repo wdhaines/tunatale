@@ -73,4 +73,6 @@ def test_public_method_count_pinned() -> None:
     # +get_inflection_candidates (the deck's own Inflections table as a dedup
     #  key — tunatale-qi4b; returns raw extras, NOT hydrated items, because the
     #  Norwegian deck has 2591 such rows and only the one winner is hydrated)
-    assert count == 130
+    # +set_translation_dirty (gloss retry backfills a translation and marks it
+    #  for push, without re-keying the guid — tunatale-1wiw)
+    assert count == 131
