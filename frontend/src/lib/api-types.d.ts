@@ -26,6 +26,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/admin/tts-cache": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Tts Cache Stats
+     * @description Report TTS cache size: ``*.mp3`` count and total bytes.
+     *
+     *     Readout only — no eviction lives here (tunatale-rm6v). A missing or
+     *     non-directory cache path is the fresh-install case and reports as absent,
+     *     never an error.
+     */
+    get: operations["tts_cache_stats_api_admin_tts_cache_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/anki/peer-sync": {
     parameters: {
       query?: never;
@@ -3153,6 +3177,22 @@ export interface components {
       translation: string;
     };
     /**
+     * TtsCacheStatsResponse
+     * @description Response of GET /api/admin/tts-cache.
+     *
+     *     ⚠️ No path field, ever: counts are fine on this authenticated route, but
+     *     the cache location itself would leak the filesystem layout — the same
+     *     reason ``app/api/health.py``'s body carries status only.
+     */
+    TtsCacheStatsResponse: {
+      /** File Count */
+      file_count: number;
+      /** Present */
+      present: boolean;
+      /** Total Bytes */
+      total_bytes: number;
+    };
+    /**
      * UndoGradeResponse
      * @description Response of POST /api/srs/items/{item_id}/direction/{direction}/undo.
      *
@@ -3232,6 +3272,26 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["RefreshMediaResponse"];
+        };
+      };
+    };
+  };
+  tts_cache_stats_api_admin_tts_cache_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TtsCacheStatsResponse"];
         };
       };
     };

@@ -3855,6 +3855,30 @@
         "title": "TranslateResponse",
         "type": "object"
       },
+      "TtsCacheStatsResponse": {
+        "description": "Response of GET /api/admin/tts-cache.\n\n\u26a0\ufe0f No path field, ever: counts are fine on this authenticated route, but\nthe cache location itself would leak the filesystem layout \u2014 the same\nreason ``app/api/health.py``'s body carries status only.",
+        "properties": {
+          "file_count": {
+            "title": "File Count",
+            "type": "integer"
+          },
+          "present": {
+            "title": "Present",
+            "type": "boolean"
+          },
+          "total_bytes": {
+            "title": "Total Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "present",
+          "file_count",
+          "total_bytes"
+        ],
+        "title": "TtsCacheStatsResponse",
+        "type": "object"
+      },
       "UndoGradeResponse": {
         "description": "Response of POST /api/srs/items/{item_id}/direction/{direction}/undo.\n\n``restored_state`` is ``SRSState.value``; ``restored_due_at`` is an ISO-8601\ntimestamp \u2014 both already stringified by the handler.",
         "properties": {
@@ -4004,6 +4028,28 @@
           }
         },
         "summary": "Refresh Media",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/tts-cache": {
+      "get": {
+        "description": "Report TTS cache size: ``*.mp3`` count and total bytes.\n\nReadout only \u2014 no eviction lives here (tunatale-rm6v). A missing or\nnon-directory cache path is the fresh-install case and reports as absent,\nnever an error.",
+        "operationId": "tts_cache_stats_api_admin_tts_cache_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TtsCacheStatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Tts Cache Stats",
         "tags": [
           "admin"
         ]

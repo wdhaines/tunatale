@@ -1170,6 +1170,19 @@ class RefreshMediaResponse(BaseModel):
     errors: int
 
 
+class TtsCacheStatsResponse(BaseModel):
+    """Response of GET /api/admin/tts-cache.
+
+    ⚠️ No path field, ever: counts are fine on this authenticated route, but
+    the cache location itself would leak the filesystem layout — the same
+    reason ``app/api/health.py``'s body carries status only.
+    """
+
+    present: bool
+    file_count: int
+    total_bytes: int
+
+
 class PeerSyncResponse(BaseModel):
     """Response of POST /api/anki/peer-sync (``PeerSyncReport``).
 

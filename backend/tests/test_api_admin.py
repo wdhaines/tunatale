@@ -150,3 +150,45 @@ class TestRefreshMediaEndpoint:
         resp = await _refresh()
         assert resp.status_code == 500
         assert "No Such Deck" in resp.json()["detail"]
+
+
+async def _tts_cache():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        return await client.get("/api/admin/tts-cache")
+
+
+class TestTtsCacheStatsEndpoint:
+    async def test_counts_mp3_sizes_only(self, tmp_path, monkeypatch):
+        """``*.mp3`` under ``settings.tts_cache_dir`` is summed and counted.
+
+        A non-mp3 file sits in the same directory on purpose: the cache is
+        mp3-keyed by construction, and counting strays would misreport it.
+        """
+        cache = tmp_path / "tts-cache"
+        cache.mkdir()
+        (cache / "a.mp3").write_bytes(b"x" * 100)
+        (cache / "b.mp3").write_bytes(b"y" * 250)
+        (cache / "stray.txt").write_text("not audio")
+        monkeypatch.setattr(settings, "tts_cache_dir", cache)
+
+        resp = await _tts_cache()
+        assert resp.status_code == 200
+        assert resp.json() == {"present": True, "file_count": 2, "total_bytes": 350}
+
+    async def test_missing_dir_is_absent_not_error(self, tmp_path, monkeypatch):
+        """Fresh install: no cache dir yet is 200 with zeros, never a 500."""
+        monkeypatch.setattr(settings, "tts_cache_dir", tmp_path / "does-not-exist")
+
+        resp = await _tts_cache()
+        assert resp.status_code == 200
+        assert resp.json() == {"present": False, "file_count": 0, "total_bytes": 0}
+
+    async def test_file_where_dir_expected_is_absent(self, tmp_path, monkeypatch):
+        """A non-directory at the configured path is reported as absent."""
+        blocker = tmp_path / "blocker"
+        blocker.write_text("not a dir")
+        monkeypatch.setattr(settings, "tts_cache_dir", blocker)
+
+        resp = await _tts_cache()
+        assert resp.status_code == 200
+        assert resp.json() == {"present": False, "file_count": 0, "total_bytes": 0}
