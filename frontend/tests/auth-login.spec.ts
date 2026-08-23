@@ -24,6 +24,16 @@ const { email, password } = JSON.parse(readFileSync(CREDENTIALS, 'utf8')) as {
 };
 
 async function signIn(page: import('@playwright/test').Page): Promise<void> {
+	// ⚠️ HYDRATION, NOT POLITENESS. `goto` resolves on document load, but the
+	// form's submit handler only exists after hydration. Filling and clicking an
+	// unhydrated form submits it NATIVELY — a GET to `/login?` with no request to
+	// the API — so the caller's `waitForURL('/')` then waits 30s for a navigation
+	// that will never happen. That bare trailing `?` is the signature.
+	//
+	// This lives in the helper rather than at each call site because every caller
+	// needs it and only one of the three had it (tunatale-vnf.16: 5 CI failures
+	// in 99 suite runs, 5.05%, all with the `/login?` signature).
+	await page.waitForLoadState('networkidle');
 	await page.getByLabel('Email').fill(email);
 	await page.getByLabel('Password').fill(password);
 	await page.getByRole('button', { name: 'Sign in' }).click();
