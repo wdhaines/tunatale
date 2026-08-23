@@ -444,7 +444,7 @@ async def undo_grade(item_id: int, direction: str, request: Request):
     }
 
 
-async def _complete_listen_media(db, llm, *, vocab, clozes, language_code: str) -> None:
+async def _complete_listen_media(db, llm, *, vocab, clozes, reglosses=(), language_code: str) -> None:
     """Fetch the media for cards ``/listen`` just created — AFTER the response.
 
     ``/listen`` had three inline network sites in one request: cloze audio for
@@ -468,8 +468,26 @@ async def _complete_listen_media(db, llm, *, vocab, clozes, language_code: str) 
     Every item is guarded individually. An exception in a background task is
     invisible — no response carries it — so one word that cannot be pictured or
     synthesized must not silently strand the rest of the batch.
+
+    ``reglosses`` runs FIRST, and that ordering is load-bearing: the Pixabay
+    query is built from the translation, so fetching the image before the gloss
+    lands is what produced the real card's ``img_.jpg`` filename (an empty
+    query). See ``cards/gloss_llm``.
     """
     used_image_urls: set[str] = set()
+    for _coll_id, guid, word, sentence in reglosses:
+        if llm is None:
+            break
+        # The existing per-word helper, not a parallel call: it already builds a
+        # POS-aware prompt and fail-softs to "" (llm/translate.py).
+        gloss = await generate_word_gloss(llm, surface=word, lemma=word, source_lang=language_code, sentence=sentence)
+        if gloss:
+            # Marked dirty: the card may already be in Anki with an empty back.
+            db.set_translation_dirty(guid, gloss)
+        else:
+            # Left unglossed on purpose. sync_create_new holds it out of Anki,
+            # and the next listen of this lesson retries.
+            _logger.info("No gloss for %r after retry; card held back from Anki", word)
     for coll_id, sentence, word, lemma in clozes:
         try:
             await synthesize_cloze_audios(db, coll_id, sentence, word, voice=get_tts_voice(language_code))
@@ -999,6 +1017,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     # not pay for a TTS/Pixabay round trip per new word (tunatale-byw's shape).
     pending_vocab: list = []
     pending_cloze: list = []
+    # (collocation_id, guid, word, sentence) for cards with no gloss yet —
+    # created just now, or left unglossed by an earlier listen's failed retry.
+    pending_regloss: list = []
 
     # ── Word-level tracking from NATURAL_SPEED section ──────────────────
     from app.models.lesson import extract_sentence_translations_from_translated
@@ -1187,6 +1208,12 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
                 if sent and not db.get_sentence_audio_filename(existing_id):
                     pending_cloze.append((existing_id, sent, lemma_to_first_surface.get(lemma, lemma), lemma))
                 continue
+
+            # An earlier listen created this card but its gloss retry failed.
+            # The creation branch never runs again for a tracked row, so this is
+            # the only place a permanently-unglossed card gets another attempt.
+            if not existing.syntactic_unit.translation.strip() and not existing.syntactic_unit.extras:
+                pending_regloss.append((existing_id, existing.guid, lemma, lemma_to_sentence.get(lemma, "")))
 
             rec = existing.directions.get(Direction.RECOGNITION)
             if rec is None:
@@ -1383,6 +1410,10 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
         else:
             new_id, _ = db.get_collocation_by_lemma_with_id(card_lemma)
             pending_vocab.append((new_id, unit, card_lemma))
+            # The generator dropped this word from its whole-dialogue gloss
+            # (_resolve_gloss_translation already warned). Retry it per word.
+            if not unit.translation.strip():
+                pending_regloss.append((new_id, db.get_collocation_by_id(new_id)[1].guid, card_lemma, stored_sentence))
         created_count += 1
     remaining_candidates = len(ranked) - created_count
 
@@ -1395,13 +1426,14 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
         advance_learning_cutoff(db, grade_ctx["now"])
 
     # Off the critical path: Starlette runs this after the response is sent.
-    if pending_vocab or pending_cloze:
+    if pending_vocab or pending_cloze or pending_regloss:
         background_tasks.add_task(
             _complete_listen_media,
             db,
             llm,
             vocab=pending_vocab,
             clozes=pending_cloze,
+            reglosses=pending_regloss,
             language_code=lesson.language_code,
         )
 
