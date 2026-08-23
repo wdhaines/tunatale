@@ -19,8 +19,8 @@
 		"test:e2e": "playwright test",
 		"fmt": "oxfmt 'src/**/*.ts' 'src/**/*.js'",
 		"fmt:check": "oxfmt --check 'src/**/*.ts' 'src/**/*.js'",
-		"lint:fast": "oxlint src/ --ignore-pattern=*.svelte",
-		"lint:svelte": "eslint src",
+		"lint:fast": "oxlint src/ --ignore-pattern=*.svelte --deny-warnings",
+		"lint:svelte": "eslint src --max-warnings 0",
 		"lint": "bun run lint:fast && bun run lint:svelte"
 	},
 	"devDependencies": {
