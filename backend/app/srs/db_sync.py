@@ -601,7 +601,29 @@ class DbSyncMixin:
             return conn.execute(f"SELECT COUNT(*) {_AWAITING_PRODUCTION_WHERE}").fetchone()[0]
 
     def list_words_awaiting_production(self, limit: int) -> list[ProductionCandidate]:
-        """Return up to *limit* candidates for the production mint, freshest first.
+        """Return up to *limit* candidates for the production mint, in DECK order.
+
+        Deck order is ``anki_note_id`` ascending — the same rule
+        ``reposition_production_cards`` uses to lay out the reserved production
+        band, so mint order and serve order cannot diverge. For the imported deck
+        that is frequency order: ``Spearman(note_id, zipf) = -0.706`` (n=2987,
+        re-measured 2026-08-23, reproducing 30dd0ec's -0.701).
+
+        ⚠️ Do NOT order by ``c.id``. It looks like a free tiebreaker for deck
+        order and is measurably the REVERSE of it (Spearman +0.514), which mints
+        the rarest words first — the qf6.11 complaint. ``corpus_frequency`` is no
+        substitute either: 100% populated, every value 0. And measure note ids
+        with a RANK correlation; they are epoch millis spanning ~9e10, so Pearson
+        on raw values reads -0.019 and looks like no signal at all.
+
+        ⚠️ The ordering key must be IMMUTABLE, which is the other half of why this
+        is not ``last_review``. The pre-stage (``prestage_production_images``)
+        fetches images for this queue's head off the sync's critical path, and the
+        mint then consumes them. Under "freshest first" any review session
+        rewrote the head, so the mint asked for words the pre-stage never saw and
+        fetched inline instead — a measured 10.0s median per image, up to 10 per
+        sync, which was 88-97%% of a 30-160s sync (tunatale-byw). Ordering on
+        something a review cannot touch is what makes that buffer hit.
 
         Note this cannot filter on whether the word's Anki notetype can actually
         carry a production card — that lives in the collection, not here. The
@@ -613,7 +635,7 @@ class DbSyncMixin:
             rows = conn.execute(
                 f"""
                 SELECT c.* {_AWAITING_PRODUCTION_WHERE}
-                ORDER BY r.last_review DESC NULLS LAST, c.id ASC
+                ORDER BY c.anki_note_id ASC, c.id ASC
                 LIMIT ?
                 """,
                 (limit,),

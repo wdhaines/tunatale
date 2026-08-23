@@ -697,20 +697,35 @@ class TestPromoteProductionCards:
         minted_notes = conn.execute("SELECT COUNT(DISTINCT nid) FROM cards WHERE ord > 0").fetchone()[0]
         assert minted_notes == 2
 
-    async def test_promotes_the_most_recently_graduated_first(self) -> None:
-        """The forward trigger: a word that just graduated jumps the backlog."""
+    async def test_promotes_in_deck_order_not_recency(self) -> None:
+        """Deck order wins over a fresh graduation (tunatale-qf6.11 + tunatale-byw).
+
+        This test asserted the opposite until 2026-08-23: "a word that just
+        graduated jumps the backlog". That WAS the qf6.11 bug written down as an
+        oracle. Recency-first drains the rare end of a frequency deck, because the
+        words you touched most recently are the ones furthest into it.
+
+        It is also what made syncs slow. ``last_review`` is mutable, so any review
+        session rewrote this queue's head; the pre-stage had already fetched images
+        for the OLD head, so the mint missed the buffer and fetched inline — a
+        measured 10.0s median per image, up to 10 per sync (tunatale-byw). Deck
+        order is immutable, so the head holds still and the buffer hits.
+
+        The fixture is deliberately adversarial: ``bil`` is the freshly graduated
+        word AND the higher note id, so recency and deck order disagree.
+        """
         conn = _make_conn()
         db = SRSDatabase(":memory:")
-        old_card = _add_note(conn, 1000, "hus", "house")
-        _add_word(db, "hus", "house", note_id=1000, card_id=old_card, last_review="2026-01-01T12:00:00+00:00")
+        front_card = _add_note(conn, 1000, "hus", "house")
+        _add_word(db, "hus", "house", note_id=1000, card_id=front_card, last_review="2026-01-01T12:00:00+00:00")
         fresh_card = _add_note(conn, 1001, "bil", "car")
         _add_word(db, "bil", "car", note_id=1001, card_id=fresh_card, last_review="2026-08-16T12:00:00+00:00")
 
         report = await _make_sync(conn, db).promote_production_cards(_media_fn=_MediaFn(), limit=1)
 
         assert report.minted == 1
-        assert len(_prod_cards(conn, 1001)) == 1, "the freshly graduated word should be promoted first"
-        assert _prod_cards(conn, 1000) == []
+        assert len(_prod_cards(conn, 1000)) == 1, "the front-of-deck word should be promoted first"
+        assert _prod_cards(conn, 1001) == [], "a fresh graduation must not jump the deck"
 
     async def test_adopts_a_card_anki_already_generated(self) -> None:
         """End-to-end self-heal: Anki minted ord=1 itself; TT adopts and links it."""
