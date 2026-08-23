@@ -688,9 +688,17 @@ jobs:
       # Without this a remote red tells you strictly less than a local re-run
       # would — and a local re-run is exactly what cannot reproduce a CI-only
       # timing failure. `if: failure()` because a green run's report is noise.
+      #
+      # ⚠️ A CONDITIONAL STEP HIDES ITS ACTION FROM THE DEPRECATION SCAN. The
+      # runner only flags an action it actually resolves, so while this was
+      # @v4 it was invisible on every green run and the Node 20 annotation
+      # appeared only when e2e went red. `actions/cache/save` (guarded on
+      # cache-hit) hid the same way. When auditing action versions, read this
+      # file — a clean annotation list on a green run proves nothing about
+      # steps that green run skipped.
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: playwright-report
           path: |
