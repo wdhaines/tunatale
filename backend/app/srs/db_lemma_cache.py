@@ -43,6 +43,26 @@ class DbLemmaCacheMixin:
             ).fetchall()
             return [(row["id"], row["text"], self._row_to_item(conn, row)) for row in rows]
 
+    def get_inflection_candidates(self, language_code: str, label: str) -> list[tuple[int, str]]:
+        """``(id, extras_json)`` for *language_code* rows whose extras carry *label*.
+
+        Feeds the reader's inflected-form index. Returns the raw extras string
+        rather than a hydrated ``SRSItem``: the Norwegian deck has 2591 such rows
+        and hydrating them all would cost a directions query each, where the
+        index only needs the id — the one winner is hydrated on the hit, by
+        ``get_collocation_by_id``.
+
+        The ``LIKE`` narrows on the serialized ``"label"`` key (see
+        ``serialize_extras``), so a language whose deck declares no inflection
+        table (Slovene: 0 rows) pays one indexless scan that returns nothing.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, extras FROM collocations WHERE language_code = ? AND extras LIKE ?",
+                (language_code, f'%"label": "{label}"%'),
+            ).fetchall()
+            return [(row["id"], row["extras"]) for row in rows]
+
     def get_inflection_clozes_for_lemma(self, lemma: str) -> list[tuple[int, SRSItem]]:
         """All morphology (inflection) clozes for a lemma, hydrated with directions.
 

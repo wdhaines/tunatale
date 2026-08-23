@@ -5,10 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
+from app.cards.cloze_source import parse_inflection_forms
+from app.cards.field_map import inflection_labels
 from app.config import settings
 from app.languages import card_surface_variants, get_variant_separator
 from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
+from app.models.syntactic_unit import deserialize_extras
 from app.srs.anki_mirror.rollover import anki_today
 from app.srs.collocation_matcher import match_spans
 from app.srs.database import SRSDatabase
@@ -257,6 +260,64 @@ def _build_variant_index(db: SRSDatabase, language_code: str) -> dict[str, tuple
     return index
 
 
+def _build_inflection_index(db: SRSDatabase, language_code: str) -> dict[str, int]:
+    """Map each inflected form the deck itself lists to the card that lists it.
+
+    The deck's ``Inflections`` table is deck-authored ground truth — ``fersk``'s
+    table spells out ``fersk / ferskt / ferske`` — so it answers "is this surface
+    already carded?" for words no lemmatizer reduces correctly. Stanza returns
+    ``ferskt`` for the neuter ``ferskt`` while reducing the neuter ``helt`` to
+    ``hel`` in the same sentence, so this is a data fallback for an engine defect,
+    not a substitute for lemmatization. It is consulted LAST, after the lemma and
+    surface keys, so a form that is some other card's own headword still resolves
+    to that card (16 forms in the real Norwegian deck are both).
+
+    **Forms claimed by more than one card are dropped, not arbitrated.** That
+    covers two different shapes with one rule: genuine homographs whose notes
+    list the same forms (the noun and verb ``løfte``), and the grammar labels
+    that leak out of noun/determinative ``<tbody>`` cells (``hankjønn``,
+    ``intetkjønn``) — 199 such forms in the real deck. Picking a winner by row
+    order would grade a card the learner never met, which is the expensive error
+    here; declining just leaves the word untracked, exactly as today.
+
+    Empty for a deck that declares no inflection table (every language but
+    Norwegian today), which costs one scan returning no rows.
+    """
+    claims: dict[str, set[int]] = {}
+    for label in inflection_labels():
+        for cid, extras_raw in db.get_inflection_candidates(language_code, label):
+            html = next((e.html for e in deserialize_extras(extras_raw) if e.label == label), "")
+            for form in parse_inflection_forms(html):
+                claims.setdefault(form.casefold(), set()).add(cid)
+    return {form: next(iter(ids)) for form, ids in claims.items() if len(ids) == 1}
+
+
+def resolve_via_inflection_index(
+    db: SRSDatabase,
+    index: dict[str, int],
+    *keys: str,
+) -> tuple[int, SRSItem] | None:
+    """First of *keys* the deck lists as an inflected form, hydrated.
+
+    Shared by the reader and ``/listen`` so both resolve identically — a word the
+    transcript shows as tracked must not be one ``/listen`` mints a card for (the
+    6a5c718 preview↔commit class).
+
+    A key absent from *index* is the ordinary outcome (untracked, or ambiguous
+    and therefore excluded at build time). An entry pointing at a row that is no
+    longer there yields ``None`` too: the index is a snapshot, and a stale entry
+    must leave the word untracked rather than raise.
+    """
+    for key in keys:
+        cid = index.get(key.casefold())
+        if cid is None:
+            continue
+        found = db.get_collocation_by_id(cid)
+        if found is not None:
+            return (found[0], found[1])
+    return None
+
+
 def extract_transcript(
     lesson: Lesson,
     db: SRSDatabase,
@@ -299,6 +360,8 @@ def extract_transcript(
     ignored_lemmas = db.get_ignored_lemmas(lesson.language_code)
     # Spelling-variant cards ('mot, imot') keyed by each accepted surface form
     variant_index = _build_variant_index(db, lesson.language_code)
+    # Inflected surfaces the deck itself lists ('ferskt' on the 'fersk' card)
+    inflection_index = _build_inflection_index(db, lesson.language_code)
     # Persistent cache key — empty for cheap lemmatizers (skips DB round-trip)
     model_version = model_version_for(lemmatizer)
 
@@ -382,6 +445,11 @@ def extract_transcript(
                     # fall back to the per-surface variant index before giving up.
                     if result is None:
                         result = variant_index.get(surface.casefold())
+                    # Step 2c: the deck's own Inflections table ('ferskt' under
+                    # 'fersk'). LAST, so a form that is another card's headword
+                    # still resolves to that card at step 2.
+                    if result is None:
+                        result = resolve_via_inflection_index(db, inflection_index, surface, lemma)
                     if result is not None:
                         item_id, item = result
                         resolved_item = item

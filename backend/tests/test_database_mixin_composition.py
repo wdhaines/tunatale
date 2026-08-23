@@ -70,4 +70,7 @@ def test_public_method_count_pinned() -> None:
     # +count_words_awaiting_production, list_words_awaiting_production (its selection)
     # +set_base_collocation_id, get_base_collocation_id, get_covering_cloze
     #  (the base-cloze link: one word, two rows, one resolver — tunatale-qf6.9)
-    assert count == 129
+    # +get_inflection_candidates (the deck's own Inflections table as a dedup
+    #  key — tunatale-qi4b; returns raw extras, NOT hydrated items, because the
+    #  Norwegian deck has 2591 such rows and only the one winner is hydrated)
+    assert count == 130
