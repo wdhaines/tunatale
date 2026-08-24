@@ -274,6 +274,23 @@ wrong conclusions on 2026-08-18:
   of 58 open issues, which looks exactly like a bug and is not one;
 - `bd show --json` uses a different shape again from `bd list` / `bd export`.
 
+⚠️ **A `parent-child` edge BLOCKS the child when the parent is a `task`, but not
+when it is an `epic`** (verified 2026-08-24). A task parented to another open
+task drops out of `bd ready` and appears in `bd blocked` as *"Blocked by 1 open
+dependencies: [<parent>]"*. Epic children are unaffected — which is why
+`bd ready --exclude-type=epic` works at all, and why this goes unnoticed.
+Parenting a task to an open task **while also** adding `bd dep add <parent>
+<child>` creates a mutual block and the child is silently invisible; the symptom
+is a bead you just filed never appearing in `bd ready`. Use an epic as the
+container, or express the ordering with a `blocks` edge alone and leave the
+parent unset.
+
+⚠️ **`bd comment` succeeds SILENTLY — no output is not failure.** Retrying on the
+apparent silence posts it twice (done, 2026-08-24). Confirm with the
+`comment_count` field; `.comments` comes back empty and is not the field, which
+makes the wrong check look like a confirmed failure. Same clean-negative class as
+the JSON-shape traps above.
+
 ⚠️ **Two upstream bugs, hands-on verified — do not rediscover them blind:**
 - plain `bd show <id>` mangles technical content (strips code fences, garbles
   `Promise<boolean>` into `Promise****`). The stored data is fine; only the
