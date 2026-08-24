@@ -10,11 +10,12 @@ English (``en``) is registered directly in :func:`discover` (no plugin package).
 
 from __future__ import annotations
 
+import enum
 import importlib
 import pkgutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import app.plugins.languages as _plugins_pkg
 from app.audio.preprocessing.base import TextPreprocessor
@@ -49,6 +50,52 @@ class AlignmentConfig:
     vowels: frozenset[str]
     aligner_factory: Callable[[str], CharAligner]
     syllabify_fn: Callable[[str], list[str] | None]
+
+
+class LexiconOutcome(enum.StrEnum):
+    """Why a pronunciation-lexicon lookup ended the way it did.
+
+    A bare ``None`` is what made an encoding bug look like a coverage gap:
+    "this word is not in the lexicon" and "I could not pick a reading" are
+    different situations demanding different responses, so they get distinct
+    outcomes instead of one falsy value.
+    """
+
+    RESOLVED = "RESOLVED"
+    AMBIGUOUS_NO_POS = "AMBIGUOUS_NO_POS"
+    AMBIGUOUS_POS_DIDNT_HELP = "AMBIGUOUS_POS_DIDNT_HELP"
+    ABSENT = "ABSENT"
+
+
+@dataclass(frozen=True)
+class LexiconResolution:
+    """The typed result of a pronunciation-lexicon lookup.
+
+    Payload fields are populated per outcome: ``RESOLVED`` carries
+    ``transcription`` / ``syllables`` / ``pos``; the ``AMBIGUOUS_*`` outcomes
+    carry ``n_entries`` / ``n_readings`` so a caller can tell a two-way homograph
+    from a five-entry proper-noun pile-up without re-querying. Everything else
+    stays at its default.
+    """
+
+    outcome: LexiconOutcome
+    word: str
+    transcription: str = ""
+    syllables: tuple[str, ...] = ()
+    pos: str = ""
+    n_entries: int = 0
+    n_readings: int = 0
+
+
+@runtime_checkable
+class PronunciationLexicon(Protocol):
+    """A pronunciation source that resolves a surface form to ONE reading.
+
+    ``upos`` (a Universal POS tag, or ``None`` when unknown) may narrow a
+    homograph; a resolver must never guess between readings it cannot separate.
+    """
+
+    def resolve(self, word: str, upos: str | None = None) -> LexiconResolution: ...
 
 
 @dataclass
@@ -176,6 +223,12 @@ class LanguageConfig:
     # — the A1-morphology call sites then fall back to the default
     # (Slovene-shaped) vocabulary in ``app.srs.function_words``.
     a1_morphology: A1Morphology | None = None
+    # Zero-arg factory returning the language's pronunciation lexicon (see
+    # ``PronunciationLexicon``). A factory, NOT an instance: opening the backing
+    # store belongs at first use, never on the import path. ``None`` for
+    # languages with no lexicon — callers fall back to TTS's native
+    # pronunciation, never a guess. See ``get_lexicon``.
+    lexicon_factory: Callable[[], PronunciationLexicon] | None = None
 
 
 _CONFIGS: dict[str, LanguageConfig] = {}
@@ -567,6 +620,22 @@ def get_a1_morphology(code: str) -> A1Morphology | None:
     discover()
     config = _CONFIGS.get(code)
     return config.a1_morphology if config else None
+
+
+def get_lexicon(code: str) -> PronunciationLexicon | None:
+    """Return *code*'s pronunciation lexicon, or ``None`` when it has none.
+
+    ``None`` is the honest answer for a language with no lexicon (``en``,
+    ``sl``, an unknown code): callers keep TTS's native pronunciation rather
+    than inventing a fallback. A lexicon that exists but is not BUILT (its data
+    artifact missing) is a different situation — the plugin's factory raises
+    loudly at first use instead of pretending the word is absent.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    if config is None or config.lexicon_factory is None:
+        return None
+    return config.lexicon_factory()
 
 
 @dataclass(frozen=True)

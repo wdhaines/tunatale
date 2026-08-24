@@ -77,6 +77,8 @@ backend/media/
 # — a root-level "backend/scripts/*" glob broke ruff's local file discovery.)
 backend/output/
 frontend/test-results/
+# NST lexicon build artifact (~44 MB), rebuildable from the committed gz via scripts/build_nst_lexicon.py build
+backend/app/plugins/languages/no/data/nst_lexicon.sqlite3
 # Playwright's signed-in cookie, produced per run by tests/global-setup.ts.
 # A session token — never committed.
 frontend/tests/.auth/
