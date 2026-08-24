@@ -660,3 +660,148 @@ async def test_renderer_completes_through_a_throttled_tts_port(tmp_path):
     assert out.exists()
     assert len(cues) > 0
     assert observed_max > 0, "the fake port was never called — the smoke test proves nothing"
+
+
+# ------------------------------------------------------------------
+# Stage 2b: per-token IPA through the <phoneme> seam
+# (brief-phoneme-seam-stage2b-2026-08.md)
+# ------------------------------------------------------------------
+
+_VOICE = "nb-NO-FinnNeural"
+
+# Oracles measured at ed613f7: with phonemes=None OR {} the cache key must
+# still produce these exact digests — an unconditional key change would
+# orphan hundreds of MB of audio under backend/media and backend/output.
+_ORACLE_DIGESTS = [
+    ("hagen", "+0%", "803c3e2e01f51e65"),
+    ("hagen", "-40%", "c6281c5b2791d2b9"),
+    ("Jeg vil gjerne ha en kaffe", "+0%", "4790e4bf997cb0b2"),
+]
+
+_MARKUP_TEXT = '<phoneme alphabet="ipa" ph="hɑː.gən">hagen</phoneme>'
+_MARKUP_SSML = (
+    '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="nb-NO">'
+    '<voice name="nb-NO-FinnNeural"><prosody rate="+0%">'
+    '&lt;phoneme alphabet="ipa" ph="hɑː.gən"&gt;hagen&lt;/phoneme&gt;'
+    "</prosody></voice></speak>"
+)
+_PLAIN_SSML = (
+    '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="nb-NO">'
+    '<voice name="nb-NO-FinnNeural"><prosody rate="+0%">hagen</prosody></voice></speak>'
+)
+
+
+@pytest.mark.parametrize("phonemes", [None, {}], ids=["none", "empty"])
+@pytest.mark.parametrize("text,rate,digest", _ORACLE_DIGESTS)
+def test_cache_digests_unchanged_without_phonemes(tmp_path, phonemes, text, rate, digest):
+    """None and {} must be indistinguishable from pre-stage behaviour."""
+    assert _svc(cache_dir=tmp_path)._cache_path(text, _VOICE, rate, phonemes).name == f"{digest}.mp3"
+
+
+def test_non_empty_mapping_changes_the_cache_key(tmp_path):
+    svc = _svc(cache_dir=tmp_path)
+
+    plain = svc._cache_path("hagen", _VOICE, "+0%")
+    mapped = svc._cache_path("hagen", _VOICE, "+0%", {"hagen": "hɑː.gən"})
+
+    assert mapped.name != plain.name
+
+
+def test_different_mappings_produce_different_keys(tmp_path):
+    svc = _svc(cache_dir=tmp_path)
+
+    a = svc._cache_path("hagen", _VOICE, "+0%", {"hagen": "hɑː.gən"})
+    b = svc._cache_path("hagen", _VOICE, "+0%", {"hagen": "haː.ɡən"})
+
+    assert a.name != b.name
+
+
+def test_mapping_order_does_not_change_the_key(tmp_path):
+    svc = _svc(cache_dir=tmp_path)
+
+    a = svc._cache_path("Jeg vil gjerne ha en kaffe", _VOICE, "+0%", {"kaffe": "kɑf.fə", "vil": "ʋɪl"})
+    b = svc._cache_path("Jeg vil gjerne ha en kaffe", _VOICE, "+0%", {"vil": "ʋɪl", "kaffe": "kɑf.fə"})
+
+    assert a.name == b.name
+
+
+def test_both_adapters_produce_identical_cache_keys(tmp_path):
+    """The key formula lives in both adapters; a divergence would silently split caches."""
+    from app.audio.edge_tts import EdgeTTSService
+
+    azure = _svc(cache_dir=tmp_path)
+    edge = EdgeTTSService(cache_dir=tmp_path)
+
+    cases: list[tuple] = [(t, _VOICE, r) for t, r, _ in _ORACLE_DIGESTS]
+    cases.append(("hagen", _VOICE, "+0%"))
+    for args in cases:
+        assert azure._cache_path(*args).name == edge._cache_path(*args).name
+
+    # ...but WITH a mapping they must DIFFER. Both providers share one
+    # tts_cache_dir and the key carries no provider, so if Edge mirrored the
+    # extension it would write PLAIN audio (it cannot render markup) onto the
+    # key Azure uses for IPA audio — and a later Azure call would cache-hit
+    # and silently serve non-IPA audio. Measured: mirrored, both hashed this
+    # input to 2110be571ffeb4d2.
+    phonemes = {"hagen": "hɑː.gən"}
+    assert azure._cache_path("hagen", _VOICE, "+0%", phonemes).name != edge._cache_path("hagen", _VOICE, "+0%").name
+
+
+def test_ssml_markup_in_text_stays_escaped():
+    """THE injection guard: caller-supplied <phoneme> in text must never survive."""
+    assert AzureTTSService._build_ssml(_MARKUP_TEXT, _VOICE, "+0%") == _MARKUP_SSML
+
+
+@pytest.mark.parametrize("phonemes", [None, {}], ids=["none", "empty"])
+def test_ssml_markup_stays_escaped_without_a_real_mapping(phonemes):
+    assert AzureTTSService._build_ssml(_MARKUP_TEXT, _VOICE, "+0%", phonemes) == _MARKUP_SSML
+
+
+def test_ssml_plain_text_is_byte_identical():
+    assert AzureTTSService._build_ssml("hagen", _VOICE, "+0%") == _PLAIN_SSML
+
+
+def test_single_token_is_wrapped():
+    body = AzureTTSService._build_ssml("hagen", _VOICE, "+0%", {"hagen": "hɑː.gən"})
+
+    assert '<phoneme alphabet="ipa" ph="hɑː.gən">hagen</phoneme>' in body
+
+
+def test_mapped_tokens_wrapped_and_unmapped_left_plain():
+    body = AzureTTSService._build_ssml("Jeg vil gjerne ha en kaffe", _VOICE, "+0%", {"jeg": "jæɪ", "kaffe": "kɑf.fə"})
+
+    assert '<phoneme alphabet="ipa" ph="jæɪ">Jeg</phoneme>' in body
+    assert '<phoneme alphabet="ipa" ph="kɑf.fə">kaffe</phoneme>' in body
+    assert body.count('<phoneme alphabet="ipa" ph="') == 2
+    assert " vil gjerne ha en " in body
+
+
+def test_punctuation_and_spacing_preserved_exactly():
+    body = AzureTTSService._build_ssml("hagen, huset.", _VOICE, "+0%", {"hagen": "hɑː.gən", "huset": "huː.sə"})
+
+    assert (
+        '<phoneme alphabet="ipa" ph="hɑː.gən">hagen</phoneme>, <phoneme alphabet="ipa" ph="huː.sə">huset</phoneme>.'
+    ) in body
+
+
+def test_lookup_is_case_insensitive_and_surface_form_is_kept():
+    body = AzureTTSService._build_ssml("Hagen", _VOICE, "+0%", {"hagen": "hɑː.gən"})
+
+    assert '<phoneme alphabet="ipa" ph="hɑː.gən">Hagen</phoneme>' in body
+
+
+def test_ipa_special_characters_are_escaped_inside_the_ph_attribute():
+    body = AzureTTSService._build_ssml("hagen", _VOICE, "+0%", {"hagen": 'a&b<c>d"e'})
+
+    assert 'ph="a&amp;b&lt;c&gt;d&quot;e"' in body
+
+
+@respx.mock
+async def test_synthesize_sends_the_phoneme_markup_to_the_wire(tmp_path):
+    """The mapping travels from the keyword argument into the posted SSML."""
+    route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"a"))
+
+    await _svc().synthesize("Jeg vil gjerne ha en kaffe", _VOICE, tmp_path / "o.mp3", phonemes={"kaffe": "kɑf.fə"})
+
+    body = route.calls[0].request.content.decode()
+    assert '<phoneme alphabet="ipa" ph="kɑf.fə">kaffe</phoneme>' in body

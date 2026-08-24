@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import logging
 import shutil
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 
 import aiohttp
@@ -56,12 +56,17 @@ class EdgeTTSService:
         # strategy as AzureTTSService — patching asyncio.sleep would mean a
         # mock_allowlist.txt entry for what is really just a tuning knob.
         self._sleep = sleep if sleep is not None else asyncio.sleep
+        # <phoneme> degradation is reported once per instance: a lesson render
+        # would otherwise produce hundreds of identical warnings.
+        self._phonemes_warned = False
 
     # ------------------------------------------------------------------
     # TTSService Protocol implementation
     # ------------------------------------------------------------------
 
-    async def synthesize(self, text: str, voice_id: str, output_path: Path, rate: str = "+0%") -> None:
+    async def synthesize(
+        self, text: str, voice_id: str, output_path: Path, rate: str = "+0%", phonemes: Mapping[str, str] | None = None
+    ) -> None:
         """Synthesize *text* to *output_path* using Edge TTS.
 
         Args:
@@ -69,7 +74,22 @@ class EdgeTTSService:
             voice_id: Edge TTS voice short name (e.g. "sl-SI-PetraNeural").
             output_path: Destination file path for the synthesized audio.
             rate: Speech rate adjustment (e.g. "+0%", "-20%").
+            phonemes: Accepted for TTSService parity but NOT renderable:
+                ``edge_tts.Communicate`` escapes text internally before its
+                own ``mkssml``, so markup never survives. A non-empty mapping
+                is logged once per instance and the call degrades to plain
+                text — never a silent drop, never an error (Azure is the
+                default provider; this is the secondary path).
         """
+        if phonemes and not self._phonemes_warned:
+            self._phonemes_warned = True
+            logger.warning(
+                "EdgeTTS cannot carry <phoneme> markup (the library escapes text "
+                "internally); synthesizing plain text for %r and later calls on "
+                "this adapter",
+                text[:40],
+            )
+
         if self._cache_dir is not None:
             cached = self._cache_path(text, voice_id, rate)
             if cached.exists():
@@ -96,6 +116,25 @@ class EdgeTTSService:
     # ------------------------------------------------------------------
 
     def _cache_path(self, text: str, voice_id: str, rate: str) -> Path:
+        """Cache key for Edge audio — deliberately does NOT include *phonemes*.
+
+        The key must name what actually varies the OUTPUT, and phonemes do not
+        vary Edge's: the library escapes markup internally, so an Edge render
+        is plain audio whether or not a mapping was supplied.
+
+        Mirroring Azure's extension here looks tidier and is a real bug, since
+        both providers share one ``tts_cache_dir`` and the key carries no
+        provider. Measured: with the extension, Edge and Azure both hashed
+        ``hagen``/``+0%``/``{hagen: hɑː.gən}`` to ``2110be571ffeb4d2`` — so an
+        Edge render would write PLAIN audio to the key Azure uses for IPA
+        audio, and a later Azure call would take a cache hit and silently
+        serve non-IPA audio. Omitting it keeps the extended-key namespace
+        writable only by a provider that can actually render IPA, and lets an
+        Edge call reuse the plain clip it is entitled to.
+
+        (Azure and Edge plain renders still share one key. That collision
+        predates this change and is tracked separately.)
+        """
         key = f"{voice_id}|{rate}|{text}"
         digest = hashlib.sha256(key.encode()).hexdigest()[:16]
         return self._cache_dir / f"{digest}.mp3"  # type: ignore[operator]
