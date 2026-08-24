@@ -384,3 +384,101 @@ async def test_edge_no_trailing_sleep_after_final_attempt(tmp_path):
     # attempt 1-2 and 2-3, never after the final (3rd) attempt.
     backoff_sleeps = [s for s in sleeps if s > 0]
     assert backoff_sleeps == [1, 2], f"expected backoff 1s then 2s with no trailing sleep, got {sleeps}"
+
+
+# ------------------------------------------------------------------
+# Stage 2b: per-token IPA seam — degrade gracefully, keep the cache stable
+# (brief-phoneme-seam-stage2b-2026-08.md)
+# ------------------------------------------------------------------
+
+_VOICE = "nb-NO-FinnNeural"
+
+# Oracles measured at ed613f7 — mirrored from test_azure_tts.py; both
+# adapters must agree on every digest or a shared cache dir splits silently.
+_ORACLE_DIGESTS = [
+    ("hagen", "+0%", "803c3e2e01f51e65"),
+    ("hagen", "-40%", "c6281c5b2791d2b9"),
+    ("Jeg vil gjerne ha en kaffe", "+0%", "4790e4bf997cb0b2"),
+]
+
+
+@pytest.mark.parametrize("text,rate,digest", _ORACLE_DIGESTS)
+def test_cache_digests_unchanged_without_phonemes(tmp_path, text, rate, digest):
+    """None and {} must be indistinguishable from pre-stage behaviour."""
+    assert EdgeTTSService(cache_dir=tmp_path)._cache_path(text, _VOICE, rate).name == f"{digest}.mp3"
+
+
+def test_mapping_does_not_change_edges_cache_key(tmp_path):
+    """Edge's key must not vary on phonemes — it cannot render them.
+
+    The inverse of Azure's rule, and deliberate: a key names what varies the
+    OUTPUT, and an Edge render is plain audio either way. See
+    EdgeTTSService._cache_path for the collision this prevents.
+    """
+    svc = EdgeTTSService(cache_dir=tmp_path)
+    assert svc._cache_path("hagen", _VOICE, "+0%").name == svc._cache_path("hagen", _VOICE, "+0%").name
+
+
+async def test_warns_once_per_instance_and_synthesizes_plain_text(tmp_path, caplog):
+    """edge-tts escapes text internally, so markup cannot survive — say so once.
+
+    A lesson render would otherwise produce hundreds of identical warnings;
+    once per instance keeps it one diagnostic line. The synthesis itself is
+    exactly today's plain-text path.
+    """
+    calls: list[str] = []
+
+    def capture_communicate(text, voice, rate):
+        calls.append(text)
+        mock = AsyncMock()
+        mock.save = AsyncMock(side_effect=lambda p: Path(p).write_bytes(b"data"))
+        return mock
+
+    with (
+        patch("app.audio.edge_tts.edge_tts.Communicate", side_effect=capture_communicate),
+        caplog.at_level("WARNING"),
+    ):
+        svc = EdgeTTSService()
+        await svc.synthesize("hagen", _VOICE, tmp_path / "one.mp3", phonemes={"hagen": "hɑː.gən"})
+        await svc.synthesize("kaffe", _VOICE, tmp_path / "two.mp3", phonemes={"kaffe": "kɑf.fə"})
+
+    assert calls == ["hagen", "kaffe"], "the library must receive plain text, not markup"
+    assert caplog.text.count("phoneme") == 1
+
+
+async def test_no_warning_when_phonemes_is_none(tmp_path, caplog):
+    output = tmp_path / "out.mp3"
+
+    def make_communicate(text, voice, rate):
+        mock = AsyncMock()
+        mock.save = AsyncMock(side_effect=lambda p: Path(p).write_bytes(b"data"))
+        return mock
+
+    with patch("app.audio.edge_tts.edge_tts.Communicate", side_effect=make_communicate), caplog.at_level("WARNING"):
+        await EdgeTTSService().synthesize("hagen", _VOICE, output)
+
+    assert "phoneme" not in caplog.text.lower()
+
+
+async def test_edge_never_writes_into_azures_phoneme_cache_namespace(tmp_path):
+    """Edge's key must NOT vary on phonemes, or it poisons Azure's IPA clips.
+
+    Both providers share one ``tts_cache_dir`` and the key carries no provider.
+    When Edge mirrored Azure's phoneme extension, both hashed this input to
+    2110be571ffeb4d2 — so an Edge render (PLAIN audio, because the library
+    escapes markup internally) would land on the key Azure uses for IPA audio,
+    and a later Azure call would cache-hit and silently serve non-IPA audio.
+    """
+    from app.audio.azure_tts import AzureTTSService
+
+    phonemes = {"hagen": "hɑː.gən"}
+    azure = AzureTTSService(key="k", region="r", cache_dir=tmp_path)
+    edge = EdgeTTSService(cache_dir=tmp_path)
+
+    azure_ipa = azure._cache_path("hagen", _VOICE, "+0%", phonemes)
+    edge_any = edge._cache_path("hagen", _VOICE, "+0%")
+
+    assert azure_ipa != edge_any
+    # Edge gets the plain clip it is actually entitled to, and reuses it.
+    assert edge_any == edge._cache_path("hagen", _VOICE, "+0%")
+    assert edge_any == azure._cache_path("hagen", _VOICE, "+0%", None)

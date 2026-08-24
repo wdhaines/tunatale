@@ -14,8 +14,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 import shutil
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -42,6 +43,13 @@ _VOICES_PATH = "/cognitiveservices/voices/list"
 # 401/403 mean the key or region is wrong; retrying cannot fix that and only
 # delays the diagnosis. Everything else transient (5xx, 429, transport) retries.
 _FATAL_STATUSES = frozenset({401, 403})
+
+# Word tokens for <phoneme> interleaving: unicode letters only, no digits, no
+# underscore. Deliberately NOT a per-language letter class — that would be a
+# language literal in core (scripts/check_language_literals.py). Measured to
+# match scripts/local/render_phoneme_ab.py's Norwegian class on its seven
+# documented cases.
+_WORD_RE = re.compile(r"[^\W\d_]+")
 
 
 def _parse_retry_after(value: str | None) -> float | None:
@@ -137,7 +145,9 @@ class AzureTTSService:
     # TTSService Protocol implementation
     # ------------------------------------------------------------------
 
-    async def synthesize(self, text: str, voice_id: str, output_path: Path, rate: str = "+0%") -> None:
+    async def synthesize(
+        self, text: str, voice_id: str, output_path: Path, rate: str = "+0%", phonemes: Mapping[str, str] | None = None
+    ) -> None:
         """Synthesize *text* to *output_path* using Azure Speech.
 
         Args:
@@ -145,24 +155,28 @@ class AzureTTSService:
             voice_id: Azure voice short name (e.g. "sl-SI-PetraNeural").
             output_path: Destination file path for the synthesized audio.
             rate: Speech rate adjustment (e.g. "+0%", "-20%").
+            phonemes: Lowercased surface token -> IPA. Tokens found in *text*
+                are wrapped in ``<phoneme>`` elements; everything else is
+                escaped and emitted exactly as before. ``None``/``{}`` change
+                nothing, including the cache key.
         """
         self._require_credentials()
 
         if self._cache_dir is not None:
-            cached = self._cache_path(text, voice_id, rate)
+            cached = self._cache_path(text, voice_id, rate, phonemes)
             if cached.exists():
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(cached, output_path)
                 logger.debug("Azure TTS cache hit for %r", text[:40])
                 return
 
-        audio = await self._synthesize_with_retry(text, voice_id, rate)
+        audio = await self._synthesize_with_retry(text, voice_id, rate, phonemes)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(audio)
 
         if self._cache_dir is not None:
-            cached = self._cache_path(text, voice_id, rate)
+            cached = self._cache_path(text, voice_id, rate, phonemes)
             cached.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(output_path, cached)
 
@@ -202,32 +216,66 @@ class AzureTTSService:
     def _url(self, path: str) -> str:
         return f"https://{self._region}.tts.speech.microsoft.com{path}"
 
-    def _cache_path(self, text: str, voice_id: str, rate: str) -> Path:
+    def _cache_path(self, text: str, voice_id: str, rate: str, phonemes: Mapping[str, str] | None = None) -> Path:
         key = f"{voice_id}|{rate}|{text}"
+        # Extend the key ONLY when a mapping is present: backend/media and
+        # backend/output hold hundreds of MB keyed on the three-part form, and
+        # an unconditional extension would orphan all of it. Sorted so dict
+        # ordering cannot split one mapping across two entries.
+        if phonemes:
+            key += "|" + ",".join(f"{token}:{ipa}" for token, ipa in sorted(phonemes.items()))
         digest = hashlib.sha256(key.encode()).hexdigest()[:16]
         return self._cache_dir / f"{digest}.mp3"  # type: ignore[operator]
 
     @staticmethod
-    def _build_ssml(text: str, voice_id: str, rate: str) -> str:
+    def _build_ssml(text: str, voice_id: str, rate: str, phonemes: Mapping[str, str] | None = None) -> str:
         """Wrap *text* in SSML.
 
         The locale is sliced off the voice id ("nb-NO-FinnNeural" -> "nb-NO")
         rather than looked up per language, which keeps every language literal
         out of this module — see scripts/check_language_literals.py.
+
+        With a non-empty *phonemes* mapping, each word token whose lowercase
+        form has an entry is wrapped in a ``<phoneme>`` element (structure
+        ported from scripts/local/render_phoneme_ab.py::build_phoneme_body).
+        ALL caller text is still escaped either way — markup can only enter
+        the SSML through the argument, never through *text*.
         """
+        body = AzureTTSService._phoneme_body(text, phonemes) if phonemes else escape(text)
         locale = "-".join(voice_id.split("-")[:2])
         return (
             f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang={quoteattr(locale)}>'
             f"<voice name={quoteattr(voice_id)}>"
-            f"<prosody rate={quoteattr(rate)}>{escape(text)}</prosody>"
+            f"<prosody rate={quoteattr(rate)}>{body}</prosody>"
             f"</voice></speak>"
         )
 
-    async def _synthesize_with_retry(self, text: str, voice_id: str, rate: str) -> bytes:
+    @staticmethod
+    def _phoneme_body(text: str, phonemes: Mapping[str, str]) -> str:
+        parts: list[str] = []
+        last = 0
+        for match in _WORD_RE.finditer(text):
+            parts.append(escape(text[last : match.start()]))
+            token = match.group(0)
+            ipa = phonemes.get(token.lower())
+            if ipa is None:
+                parts.append(escape(token))
+            else:
+                # The ph attribute needs &, <, > and " handled; escape() covers
+                # the first three, the map turns a bare " into &quot;.
+                safe_ipa = escape(ipa, {'"': "&quot;"})
+                parts.append(f'<phoneme alphabet="ipa" ph="{safe_ipa}">{escape(token)}</phoneme>')
+            last = match.end()
+        parts.append(escape(text[last:]))
+        return "".join(parts)
+
+    async def _synthesize_with_retry(
+        self, text: str, voice_id: str, rate: str, phonemes: Mapping[str, str] | None = None
+    ) -> bytes:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
-                return await self._do_synthesize(text, voice_id, rate)
+                return await self._do_synthesize(text, voice_id, rate, phonemes)
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in _FATAL_STATUSES:
                     raise RuntimeError(
@@ -281,7 +329,9 @@ class AzureTTSService:
             response.text,
         )
 
-    async def _do_synthesize(self, text: str, voice_id: str, rate: str) -> bytes:
+    async def _do_synthesize(
+        self, text: str, voice_id: str, rate: str, phonemes: Mapping[str, str] | None = None
+    ) -> bytes:
         async with self._semaphore:
             headers = {
                 "Ocp-Apim-Subscription-Key": self._key,
@@ -302,7 +352,7 @@ class AzureTTSService:
                     response = await http.post(
                         self._url(_SYNTHESIS_PATH),
                         headers=headers,
-                        content=self._build_ssml(text, voice_id, rate).encode("utf-8"),
+                        content=self._build_ssml(text, voice_id, rate, phonemes).encode("utf-8"),
                     )
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
