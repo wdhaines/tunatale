@@ -60,7 +60,7 @@ class NorwegianPhonemePlanner:
             self._lexicon = NstLexicon(self._db_path)
         return self._lexicon
 
-    def plan_chunk(self, source_word: str, span: tuple[int, int]) -> str | None:
+    def plan_chunk(self, source_word: str, span: tuple[int, int], upos: str | None = None) -> str | None:
         """Return IPA for a sub-word syllable range, or ``None`` for plain synthesis.
 
         The gates, in order:
@@ -87,10 +87,10 @@ class NorwegianPhonemePlanner:
             return None
 
         word = source_word.lower()
-        resolution = lex.resolve(word)
+        resolution = lex.resolve(word, upos)
         if resolution.outcome is LexiconOutcome.RESOLVED:
             candidates = [resolution.transcription]
-        elif resolution.outcome is LexiconOutcome.AMBIGUOUS_NO_POS:
+        elif resolution.outcome in (LexiconOutcome.AMBIGUOUS_NO_POS, LexiconOutcome.AMBIGUOUS_POS_DIDNT_HELP):
             # An ambiguity that does not touch THIS span is not an ambiguity for
             # this chunk. Measured over the stored lessons: 4 of 8 ambiguous
             # sub-word chunks are rescued this way — all of them first
@@ -99,7 +99,12 @@ class NorwegianPhonemePlanner:
             # participle /ət/), where the readings genuinely disagree at exactly
             # the syllable being asked for, and those still fall back. Resolving
             # the WHOLE word stays a refusal to guess.
-            candidates = sorted(lex.candidate_transcriptions(word))
+            #
+            # AMBIGUOUS_POS_DIDNT_HELP: the POS tag narrowed but left multiple
+            # readings — fall through to span-agreement, which is the fallback
+            # for when no tag is available. A tag that does not narrow must not
+            # be *worse* than no tag.
+            candidates = sorted(lex.candidate_transcriptions(word, upos))
         else:
             return None
 

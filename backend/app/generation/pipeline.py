@@ -342,11 +342,18 @@ class LessonPipeline:
                 return
 
             lesson_id = mint_id(lesson.title)
+            # Tag BEFORE saving: the tags live on the lesson, so a detached
+            # task would race the write and be thrown away.
+            srs_db_for_upos = self._srs_dbs.get(language_code)
+            if srs_db_for_upos is not None:
+                from app.api.generation import annotate_chunk_upos_for_lesson
+
+                await annotate_chunk_upos_for_lesson(lesson, srs_db_for_upos)
             store.save_lesson(lesson_id, curriculum_id, day, lesson)
             sync_curriculum_day_title(store, curriculum_id, day, lesson.title)
             record["lesson_id"] = lesson_id
 
-            # Pre-warm the analysis cache in the background
+            # Pre-warm the analysis cache and annotate chunks with POS tags
             srs_db = self._srs_dbs.get(language_code)
             if srs_db is not None:
                 from app.api.generation import _prewarm_lesson

@@ -232,7 +232,7 @@ class LessonRenderer:
                 return None
             if phrase.source_word is None or phrase.syllable_span is None:
                 return None
-            result = planner.plan_chunk(phrase.source_word, phrase.syllable_span)
+            result = planner.plan_chunk(phrase.source_word, phrase.syllable_span, upos=phrase.upos or None)
             if result is None:
                 return None
             return {phrase.text.lower(): result}

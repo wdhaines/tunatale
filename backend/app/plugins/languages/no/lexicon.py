@@ -153,7 +153,7 @@ class NstLexicon:
         floor = min(certainty for _pos, _transcription, certainty in rows)
         return w, [row for row in rows if row[2] == floor]
 
-    def candidate_transcriptions(self, word: str) -> frozenset[str]:
+    def candidate_transcriptions(self, word: str, upos: str | None = None) -> frozenset[str]:
         """Every reading :meth:`resolve` would have had to choose between.
 
         Empty when the word is absent. Exposed so a caller that needs only PART
@@ -161,8 +161,16 @@ class NstLexicon:
         readings of ``sporet`` differ at the second syllable (``rə`` vs ``rət``)
         and agree at the first, so a chunk covering only the first is not
         ambiguous at all. Resolving the whole word remains a refusal to guess.
+
+        When *upos* is provided, candidates are filtered to the matching NST POS
+        — so AMBIGUOUS_POS_DIDNT_HELP callers get only the readings the POS tag
+        pointed at, not the full pool.
         """
         _w, finalists = self._finalists(word)
+        if upos:
+            nst = _upos_to_nst(upos)
+            if nst is not None:
+                finalists = [(p, t, c) for p, t, c in finalists if _pos_matches(p, nst)]
         return frozenset(transcription for _pos, transcription, _certainty in finalists)
 
     def resolve(self, word: str, upos: str | None = None) -> LexiconResolution:

@@ -107,7 +107,7 @@ class PhonemePlanner(Protocol):
     ``phonemes=None`` to TTS.
     """
 
-    def plan_chunk(self, source_word: str, span: tuple[int, int]) -> str | None: ...
+    def plan_chunk(self, source_word: str, span: tuple[int, int], upos: str | None = None) -> str | None: ...
 
 
 @dataclass

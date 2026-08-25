@@ -66,7 +66,7 @@ class TestPhonemePlannerProtocol:
 
     @runtime_checkable
     class _PhonemePlanner(Protocol):
-        def plan_chunk(self, source_word: str, span: tuple[int, int]) -> str | None: ...
+        def plan_chunk(self, source_word: str, span: tuple[int, int], upos: str | None = None) -> str | None: ...
 
     def test_satisfies_protocol(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
@@ -100,6 +100,59 @@ class TestSkisporet:
     def test_whole_word_returns_none(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
         assert p.plan_chunk("skisporet", (0, 3)) is None
+
+
+# ---------------------------------------------------------------------------
+# POS-aware oracle tests — plan_chunk(word, span, upos)
+# ---------------------------------------------------------------------------
+
+
+class TestPlanChunkWithUpos:
+    """plan_chunk(word, span, upos) resolves when POS disambiguates."""
+
+    def test_sporet_noun_returns_rə(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path, TestSpanLevelDisambiguation.ROWS)
+        assert p.plan_chunk("sporet", (1, 2), upos="NOUN") == "rə"
+
+    def test_sporet_verb_returns_rət(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path, TestSpanLevelDisambiguation.ROWS)
+        assert p.plan_chunk("sporet", (1, 2), upos="VERB") == "rət"
+
+    def test_huset_noun_returns_sə(self, tmp_path: Path) -> None:
+        rows = [
+            ("huset", "NN", '"h}:$s@', 1),
+            ("huset", "VB", '""h}:$s@t', 1),
+        ]
+        p = _planner(tmp_path, rows)
+        assert p.plan_chunk("huset", (1, 2), upos="NOUN") == "sə"
+
+    def test_dekket_noun_returns_kə(self, tmp_path: Path) -> None:
+        rows = [
+            ("dekket", "NN", '"dE$k@', 1),
+            ("dekket", "VB", '""dE$k@t', 1),
+        ]
+        p = _planner(tmp_path, rows)
+        assert p.plan_chunk("dekket", (1, 2), upos="NOUN") == "kə"
+
+    def test_vitnet_noun_returns_nə(self, tmp_path: Path) -> None:
+        rows = [
+            ("vitnet", "NN", '""vIt$n@', 1),
+            ("vitnet", "VB", '""vIt$n@t', 1),
+        ]
+        p = _planner(tmp_path, rows)
+        assert p.plan_chunk("vitnet", (1, 2), upos="NOUN") == "nə"
+
+    def test_sporet_noun_span_0_1(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path, TestSpanLevelDisambiguation.ROWS)
+        assert p.plan_chunk("sporet", (0, 1), upos="NOUN") == "ˈspuː"
+
+    def test_sporet_none_upos_unchanged(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path, TestSpanLevelDisambiguation.ROWS)
+        assert p.plan_chunk("sporet", (1, 2), upos=None) is None
+
+    def test_unambiguous_word_unchanged_with_upos(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path)
+        assert p.plan_chunk("hagen", (1, 2), upos="NOUN") == "gən"
 
 
 class TestHagen:
@@ -368,3 +421,14 @@ class TestUnsyllabifiableWord:
         """flat_syllables("") is [], so there is no syllable to select."""
         p = _planner(tmp_path)
         assert p.plan_chunk("", (0, 1)) is None
+
+    def test_candidate_transcriptions_unmapped_upos_no_filter(self, tmp_path: Path) -> None:
+        """A UPOS that maps to None (e.g. SCONJ) skips POS filtering in candidate_transcriptions."""
+        rows = [
+            ("sporet", "NN", '"spu:$r@', 1),
+            ("sporet", "VB", '""spu:$r@t', 1),
+        ]
+        lex = _lex(tmp_path, rows)
+        # SCONJ maps to None in UPOS_TO_NST → nst is None → no filter applied
+        candidates = lex.candidate_transcriptions("sporet", upos="SCONJ")
+        assert len(candidates) == 2  # both readings survive unfiltered
