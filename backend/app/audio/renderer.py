@@ -20,7 +20,7 @@ from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.slicer import ChunkSlicer, SliceSpec
 from app.audio.transcode import encode_audio
 from app.languages import PhonemePlanner
-from app.models.lesson import Lesson, Phrase, Section
+from app.models.lesson import Lesson, Phrase, Section, SectionType
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +216,18 @@ class LessonRenderer:
         preprocessor = self._preprocessors[language_code]
         processed_texts = [preprocessor.preprocess(phrase.text, section.section_type) for phrase in section.phrases]
 
-        planner = self._phoneme_planners.get(language_code)
+        # KEY_PHRASES only, and the restriction is evidence-based rather than
+        # cautious: the approved A/B (scripts/local/render_phoneme_ab.py) renders
+        # ONLY that section and raises if a lesson has none, so no narrative
+        # sentence has ever been listened to with <phoneme> markup. There is also
+        # a mechanism to distrust — the lexicon stores CITATION forms, and every
+        # function word comes back stressed and long (i -> ˈɪː, en -> ˈeːn,
+        # og -> ˈoːg). For a drill fragment spoken in isolation that IS the true
+        # pronunciation; inside a natural-speed sentence, where connected speech
+        # reduces exactly those words, it would push delivery toward
+        # over-articulated and word-by-word. Widening this needs an A/B and an
+        # ear, not an edit. See tunatale-s3s3.3.
+        planner = self._phoneme_planners.get(language_code) if section.section_type is SectionType.KEY_PHRASES else None
 
         def _phrase_phonemes(phrase: Phrase, processed_text: str) -> Mapping[str, str] | None:
             """Compute phonemes for one phrase, or None for plain synthesis."""

@@ -17,7 +17,7 @@ import soundfile as sf
 from app.audio.cues import Cue
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.renderer import LessonRenderer
-from app.models.lesson import Lesson, Phrase, Section, SectionType
+from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 from app.plugins.languages.sl.preprocessor import SlovenePreprocessor
 
 # Shared test helpers
@@ -863,19 +863,63 @@ class _NonePlanner:
 
 
 def _no_lesson() -> Lesson:
-    """A minimal Norwegian lesson with mixed L2 + English narrator phrases."""
+    """A Norwegian KEY_PHRASES section with the structure the cue manifest requires.
+
+    KEY_PHRASES because that is the ONLY section planning applies to — the
+    renderer gates on section type, so a NATURAL_SPEED fixture would make every
+    assertion below vacuous.
+
+    The shape is not decorative: ``_build_key_phrases_refs`` consumes one title
+    phrase and then exactly ``2 + len(build_word_breakdown_spans(kp.phrase))``
+    per key phrase, and raises if the arithmetic does not land. Hence the real
+    breakdown counts — 2 for "hei", 5 for "hagen" — and the sub-word chunks
+    carry ``source_word``/``syllable_span`` exactly as the generator gives them,
+    so this one fixture also exercises the stage-2d skip.
+
+    The English title is the string "Natural Speed" deliberately, and it is not
+    a copy-paste of a section name: it is an English phrase that RESOLVES
+    against the Norwegian lexicon, so the leak guard has something real to
+    catch. "Key Phrases", the title this section really carries in production,
+    does not resolve and would make that test pass for the wrong reason.
+
+    Distinct L2 texts that should plan: "hei" and "hagen" (repeats memoise to
+    one synthesis each).
+    """
+    l2, en = "nb-NO-PernilleNeural", "en-US-GuyNeural"
+
+    def _l2(text: str, **kw) -> Phrase:
+        return Phrase(text=text, voice_id=l2, language_code="no", **kw)
+
+    def _en(text: str) -> Phrase:
+        return Phrase(text=text, voice_id=en, language_code="en", role="narrator")
+
     return Lesson(
         title="Day 1",
         language_code="no",
         sections=[
             Section(
-                section_type=SectionType.NATURAL_SPEED,
+                section_type=SectionType.KEY_PHRASES,
                 phrases=[
-                    Phrase(text="Natural Speed", voice_id="en-US-GuyNeural", language_code="en"),
-                    Phrase(text="hei", voice_id="nb-NO-PernilleNeural", language_code="no"),
-                    Phrase(text="hagen", voice_id="nb-NO-PernilleNeural", language_code="no"),
+                    _en("Natural Speed"),
+                    # key phrase 1: "hei" -> 2 + 2 breakdown chunks
+                    _l2("hei"),
+                    _en("hello"),
+                    _l2("hei"),
+                    _l2("hei"),
+                    # key phrase 2: "hagen" -> 2 + 5 breakdown chunks
+                    _l2("hagen"),
+                    _en("the garden"),
+                    _l2("hagen"),
+                    _l2("gen", source_word="hagen", syllable_span=(1, 2)),
+                    _l2("ha", source_word="hagen", syllable_span=(0, 1)),
+                    _l2("hagen"),
+                    _l2("hagen"),
                 ],
             )
+        ],
+        key_phrases=[
+            KeyPhraseInfo(phrase="hei", translation="hello"),
+            KeyPhraseInfo(phrase="hagen", translation="the garden"),
         ],
     )
 
@@ -1063,11 +1107,64 @@ class TestRendererPhonemePlanner:
         assert title_calls[0]["phonemes"] is None
         assert title_calls[0]["voice_id"] == lesson.narrator_voice
 
+    async def test_narrative_sections_are_never_planned(self, tmp_path):
+        """Only KEY_PHRASES gets IPA — narrative sections render as they did.
+
+        The approved A/B (``scripts/local/render_phoneme_ab.py``) renders ONLY
+        the key-phrases section and raises if a lesson has none, so no narrative
+        sentence has ever been listened to with ``<phoneme>`` markup. The
+        lexicon also stores CITATION forms, which put primary stress and full
+        length on function words — right for a drill fragment spoken alone,
+        wrong inside connected speech.
+
+        The phrase here is one that DOES plan in a key-phrases section (the
+        stub maps every token), so this fails if the section gate is removed.
+        """
+        from app.audio.preprocessing.base import TextPreprocessor
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="no",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="hei", voice_id="nb-NO-PernilleNeural", language_code="no")],
+                )
+            ],
+        )
+        fake_audio = _make_wav_bytes()
+        synth_kwargs: list[dict] = []
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
+            synth_kwargs.append({"text": text, "phonemes": phonemes})
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        class _NoPre(TextPreprocessor):
+            def preprocess(self, text, section_type):
+                return text
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"no": _NoPre()},
+            pause_calculator=NaturalPauseCalculator(),
+            phoneme_planners={"no": _StubPlanner()},
+        )
+        await rdr.render(lesson, tmp_path / "out.wav")
+
+        hei = [c for c in synth_kwargs if c["text"] == "hei"]
+        assert len(hei) == 1
+        assert hei[0]["phonemes"] is None, "a natural-speed phrase was given IPA"
+
     async def test_planner_is_pure_function_of_text_for_memo(self, tmp_path):
         """The _synth memo key is (text, voice, rate) — the plan must be a pure
         function of text so the same key always yields the same mapping.
 
-        Two identical phrases must produce identical phoneme mappings."""
+        The fixture repeats "hei" three times at one voice and rate, so the plan
+        must come out identical every time or the memo would serve one phrase's
+        audio for another."""
         from app.audio.preprocessing.base import TextPreprocessor
 
         call_count = 0
@@ -1081,19 +1178,7 @@ class TestRendererPhonemePlanner:
                 tokens = re.findall(r"[^\W\d_]+", text)
                 return {t.lower(): "X" for t in tokens} if tokens else None
 
-        lesson = Lesson(
-            title="T",
-            language_code="no",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[
-                        Phrase(text="hei", voice_id="nb-NO-PernilleNeural", language_code="no"),
-                        Phrase(text="hei", voice_id="nb-NO-PernilleNeural", language_code="no"),
-                    ],
-                )
-            ],
-        )
+        lesson = _no_lesson()
         fake_audio = _make_wav_bytes()
 
         synth_calls: list[dict] = []
@@ -1118,10 +1203,14 @@ class TestRendererPhonemePlanner:
         output = tmp_path / "out.wav"
         await rdr.render(lesson, output)
 
-        # Planner was called for both phrases
-        assert call_count == 2
-        # The two "hei" phrases share (text, voice, rate) so the memo serves
-        # one synthesis — both phoneme dicts must be identical.
+        # Planned once per non-provenance L2 phrase: "hei" x3 + "hagen" x4.
+        assert call_count == 7
+        # All three "hei" phrases share (text, voice, rate), so the memo serves
+        # exactly one synthesis for them — and the mapping that reached TTS is
+        # the one every repeat would have produced.
         hei_calls = [c for c in synth_calls if c["text"] == "hei"]
-        assert len(hei_calls) == 1  # memo served the second one
-        assert hei_calls[0]["phonemes"] is not None
+        assert len(hei_calls) == 1, "the memo stopped collapsing identical (text, voice, rate)"
+        assert hei_calls[0]["phonemes"] == {"hei": "X"}
+        hagen_calls = [c for c in synth_calls if c["text"] == "hagen"]
+        assert len(hagen_calls) == 1
+        assert hagen_calls[0]["phonemes"] == {"hagen": "X"}
