@@ -24,6 +24,10 @@ from app.models.lesson import Lesson, Phrase, Section, SectionType
 
 logger = logging.getLogger(__name__)
 
+# (text, voice_id, rate, phoneme mapping) — the mapping belongs in the key
+# because it, not the text alone, determines the audio. See _synth.
+_MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None]
+
 _SAMPLE_DTYPE = "float32"
 _WAV_SUBTYPE = "PCM_16"
 
@@ -187,7 +191,7 @@ class LessonRenderer:
         tmp: Path,
         section_idx: int,
         language_code: str,
-        synth_memo: dict[tuple[str, str, str], tuple[Path, asyncio.Task]],
+        synth_memo: dict[_MemoKey, tuple[Path, asyncio.Task]],
         memo_lock: asyncio.Lock,
     ) -> tuple[_Audio, list[tuple[int, int, int]]]:
         """Render a single section to an audio buffer (no boundary silence).
@@ -254,7 +258,17 @@ class LessonRenderer:
             the task; later requesters await that same task and reuse the file.
             the TTS adapter's _semaphore still caps global TTS concurrency.
             """
-            key = (text, voice_id, rate)
+            # The mapping is PART of the key, not an attribute of the text.
+            # Two phrases can share (text, voice, rate) and still deserve
+            # different audio: the same surface string appears as a standalone
+            # buildup rung (planned) and as a breakdown chunk carrying slicing
+            # provenance (never planned). Keying on the triple alone lets
+            # whichever is submitted first serve both — measured on a real
+            # lesson, "en" collided six ways and the plain render won, so the
+            # planned rung silently played un-tagged audio. The inverse is
+            # worse: a provenance chunk inheriting IPA audio and then being
+            # sliced. Same class as 2b's cache-key collision, one level up.
+            key = (text, voice_id, rate, tuple(sorted(phonemes.items())) if phonemes else None)
             async with memo_lock:
                 entry = synth_memo.get(key)
                 if entry is None:
@@ -378,7 +392,7 @@ class LessonRenderer:
             # sections (e.g. the shared L2 line + English gloss in the translated
             # and en_translated sections) instead of re-running TTS for each.
             t0 = time.perf_counter()
-            synth_memo: dict[tuple[str, str, str], tuple[Path, asyncio.Task]] = {}
+            synth_memo: dict[_MemoKey, tuple[Path, asyncio.Task]] = {}
             memo_lock = asyncio.Lock()
             section_tasks = [
                 asyncio.ensure_future(

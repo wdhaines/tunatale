@@ -1107,6 +1107,81 @@ class TestRendererPhonemePlanner:
         assert title_calls[0]["phonemes"] is None
         assert title_calls[0]["voice_id"] == lesson.narrator_voice
 
+    async def test_same_text_planned_and_unplanned_gets_two_clips(self, tmp_path):
+        """One surface string, two fates — the memo must not collapse them.
+
+        A buildup rung and a breakdown chunk can carry the SAME text, voice and
+        rate while deserving different audio: the rung is planned, the chunk
+        carries slicing provenance and is never planned. Found on a real lesson,
+        where "en" collided six ways and the plain render won, so the planned
+        rung silently played un-tagged audio. The inverse is worse — a
+        provenance chunk inheriting IPA audio and then being sliced.
+
+        The earlier memo test cannot catch this: its provenance chunks have
+        different text from its planned phrases, so no collision is possible.
+        """
+        from app.audio.preprocessing.base import TextPreprocessor
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="no",
+            sections=[
+                Section(
+                    section_type=SectionType.KEY_PHRASES,
+                    phrases=[
+                        Phrase(text="Key Phrases", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
+                        # The buildup rung: planned.
+                        Phrase(text="en", voice_id="nb-NO-PernilleNeural", language_code="no"),
+                        Phrase(text="a", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
+                        # Its breakdown chunks: same text, voice and rate, but
+                        # provenance-carrying, so never planned. This is the
+                        # collision — build_word_breakdown_spans("en") is
+                        # ["en", "en"], so the real generator emits exactly this.
+                        Phrase(
+                            text="en",
+                            voice_id="nb-NO-PernilleNeural",
+                            language_code="no",
+                            source_word="en",
+                            syllable_span=(0, 1),
+                        ),
+                        Phrase(
+                            text="en",
+                            voice_id="nb-NO-PernilleNeural",
+                            language_code="no",
+                            source_word="en",
+                            syllable_span=(0, 1),
+                        ),
+                    ],
+                )
+            ],
+            key_phrases=[KeyPhraseInfo(phrase="en", translation="a")],
+        )
+        fake_audio = _make_wav_bytes()
+        synth_kwargs: list[dict] = []
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
+            synth_kwargs.append({"text": text, "phonemes": dict(phonemes) if phonemes else None})
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        class _NoPre(TextPreprocessor):
+            def preprocess(self, text, section_type):
+                return text
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"no": _NoPre()},
+            pause_calculator=NaturalPauseCalculator(),
+            phoneme_planners={"no": _StubPlanner()},
+        )
+        await rdr.render(lesson, tmp_path / "out.wav")
+
+        en = [c for c in synth_kwargs if c["text"] == "en"]
+        assert len(en) == 2, "the memo collapsed a planned and an unplanned phrase into one clip"
+        assert {None, ("en", "X")} == {None if c["phonemes"] is None else tuple(*c["phonemes"].items()) for c in en}
+
     async def test_narrative_sections_are_never_planned(self, tmp_path):
         """Only KEY_PHRASES gets IPA — narrative sections render as they did.
 
