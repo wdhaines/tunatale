@@ -20,7 +20,7 @@ from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.slicer import ChunkSlicer, SliceSpec
 from app.audio.transcode import encode_audio
 from app.languages import PhonemePlanner
-from app.models.lesson import Lesson, Phrase, Section, SectionType
+from app.models.lesson import Lesson, Phrase, Section
 
 logger = logging.getLogger(__name__)
 
@@ -220,33 +220,30 @@ class LessonRenderer:
         preprocessor = self._preprocessors[language_code]
         processed_texts = [preprocessor.preprocess(phrase.text, section.section_type) for phrase in section.phrases]
 
-        # KEY_PHRASES only, and the restriction is evidence-based rather than
-        # cautious: the approved A/B (scripts/local/render_phoneme_ab.py) renders
-        # ONLY that section and raises if a lesson has none, so no narrative
-        # sentence has ever been listened to with <phoneme> markup. There is also
-        # a mechanism to distrust — the lexicon stores CITATION forms, and every
-        # function word comes back stressed and long (i -> ˈɪː, en -> ˈeːn,
-        # og -> ˈoːg). For a drill fragment spoken in isolation that IS the true
-        # pronunciation; inside a natural-speed sentence, where connected speech
-        # reduces exactly those words, it would push delivery toward
-        # over-articulated and word-by-word. Widening this needs an A/B and an
-        # ear, not an edit. See tunatale-s3s3.3.
-        planner = self._phoneme_planners.get(language_code) if section.section_type is SectionType.KEY_PHRASES else None
+        # Stage 2d: sub-word chunks get IPA from the lexicon; whole phrases
+        # and whole words are the TTS's job.
+        planner = self._phoneme_planners.get(language_code)
 
-        def _phrase_phonemes(phrase: Phrase, processed_text: str) -> Mapping[str, str] | None:
-            """Compute phonemes for one phrase, or None for plain synthesis."""
+        def _phrase_phonemes(phrase: Phrase) -> Mapping[str, str] | None:
+            """Compute phonemes for a sub-word chunk, or None for plain synthesis."""
             if planner is None:
                 return None
-            # English narrator leak guard: only plan phrases whose language
-            # matches the section's render language.
             if phrase.language_code != language_code:
                 return None
-            # Stage 2d chunks carry slicing provenance — skip them.
-            if phrase.source_word is not None and phrase.syllable_span is not None:
+            if phrase.source_word is None or phrase.syllable_span is None:
                 return None
-            return planner.plan(processed_text)
+            result = planner.plan_chunk(phrase.source_word, phrase.syllable_span)
+            if result is None:
+                return None
+            return {phrase.text.lower(): result}
 
-        phoneme_maps = [_phrase_phonemes(ph, txt) for ph, txt in zip(section.phrases, processed_texts, strict=True)]
+        ipa_indices: set[int] = set()
+        phoneme_maps: list[Mapping[str, str] | None] = []
+        for i, ph in enumerate(section.phrases):
+            ph_map = _phrase_phonemes(ph)
+            phoneme_maps.append(ph_map)
+            if ph_map is not None:
+                ipa_indices.add(i)
 
         async def _synth(
             phrase_idx: int, text: str, voice_id: str, rate: str, phonemes: Mapping[str, str] | None = None
@@ -312,7 +309,7 @@ class LessonRenderer:
         # Offsets are accumulated in frames (not ms) to avoid cumulative drift.
         # Offload the sync assembly (file I/O + numpy) so the event loop stays
         # responsive.
-        play_files = await self._apply_slicing(section, phrase_files, tmp, section_idx, language_code)
+        play_files = await self._apply_slicing(section, phrase_files, tmp, section_idx, language_code, ipa_indices)
 
         assembled = await asyncio.to_thread(
             self._assemble_section_audio,
@@ -330,8 +327,13 @@ class LessonRenderer:
         tmp: Path,
         section_idx: int,
         language_code: str,
+        ipa_indices: set[int] | None = None,
     ) -> list[Path]:
         """Replace provenance-carrying chunks with audio cut from their own word.
+
+        A chunk that received IPA from the lexicon is NOT sliced: the slicer
+        replaces the phrase's audio with a cut from a whole-word parent render,
+        so slicing it would synthesize correct IPA and then discard it.
 
         Returns the files to PLAY. ``phrase_files`` (the isolated TTS renders)
         stay both the fallback and the pacing reference, so a phrase the slicer
@@ -342,8 +344,11 @@ class LessonRenderer:
         if slicer is None:
             return phrase_files
 
+        skip = ipa_indices if ipa_indices is not None else set()
         play_files = list(phrase_files)
         for i, phrase in enumerate(section.phrases):
+            if i in skip:
+                continue
             if phrase.source_word is None or phrase.syllable_span is None:
                 continue
             start, stop = phrase.syllable_span

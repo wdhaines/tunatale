@@ -22,7 +22,7 @@ from app.audio.preprocessing.base import TextPreprocessor
 from app.models.language import Language
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable
 
     from app.audio.alignment import CharAligner
     from app.cards.vocab_notetype import VocabNotetype
@@ -100,13 +100,14 @@ class PronunciationLexicon(Protocol):
 
 @runtime_checkable
 class PhonemePlanner(Protocol):
-    """Maps a phrase's surface tokens to IPA via the pronunciation lexicon.
+    """Maps a sub-word chunk to IPA via the pronunciation lexicon.
 
-    ``None`` (returned from :meth:`plan`) means "synthesize this phrase plainly"
-    and is the only failure signal — the caller passes ``phonemes=None`` to TTS.
+    ``None`` (returned from :meth:`plan_chunk`) means "synthesize the chunk's
+    text plainly" and is the only failure signal — the caller passes
+    ``phonemes=None`` to TTS.
     """
 
-    def plan(self, text: str) -> Mapping[str, str] | None: ...
+    def plan_chunk(self, source_word: str, span: tuple[int, int]) -> str | None: ...
 
 
 @dataclass

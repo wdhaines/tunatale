@@ -1,4 +1,4 @@
-"""LessonRenderer integration tests — base + phoneme planner (stage 2c)."""
+"""LessonRenderer integration tests — base + chunk planner (stage 2d)."""
 
 import asyncio
 import contextlib
@@ -6,8 +6,8 @@ import subprocess
 import threading
 import time
 import wave
-from collections.abc import Mapping
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import numpy as np
@@ -843,47 +843,40 @@ class TestEventLoopResponsiveness:
 # ---------------------------------------------------------------------------
 
 
-class _StubPlanner:
-    """Deterministic planner for renderer tests — maps every word to 'X'."""
+class _StubChunkPlanner:
+    """Deterministic chunk planner for renderer tests.
 
-    def plan(self, text: str) -> Mapping[str, str] | None:
-        import re
+    Maps sub-word chunks to IPA: for a given source word and span, returns
+    the chunk text uppercased as IPA (deterministic, easy to assert on).
+    """
 
-        tokens = re.findall(r"[^\W\d_]+", text)
-        if not tokens:
-            return None
-        return {t.lower(): "X" for t in tokens}
+    def plan_chunk(self, source_word: str, span: tuple[int, int]) -> str | None:
+        # Return the span's "IPA" as a deterministic string
+        return f"{source_word[span[0] : span[1]].upper()}"
 
 
-class _NonePlanner:
-    """Planner that always returns None (simulates a language with no lexicon data)."""
+class _NoneChunkPlanner:
+    """Chunk planner that always returns None (simulates a language with no lexicon data)."""
 
-    def plan(self, text: str) -> Mapping[str, str] | None:
+    def plan_chunk(self, source_word: str, span: tuple[int, int]) -> str | None:
         return None
 
 
 def _no_lesson() -> Lesson:
-    """A Norwegian KEY_PHRASES section with the structure the cue manifest requires.
+    """A Norwegian KEY_PHRASES section for stage 2d renderer tests.
 
-    KEY_PHRASES because that is the ONLY section planning applies to — the
-    renderer gates on section type, so a NATURAL_SPEED fixture would make every
-    assertion below vacuous.
+    Stage 2d inverts 2c: sub-word chunks (with source_word + syllable_span)
+    get IPA from plan_chunk; whole phrases and whole words get None.
 
-    The shape is not decorative: ``_build_key_phrases_refs`` consumes one title
-    phrase and then exactly ``2 + len(build_word_breakdown_spans(kp.phrase))``
-    per key phrase, and raises if the arithmetic does not land. Hence the real
-    breakdown counts — 2 for "hei", 5 for "hagen" — and the sub-word chunks
-    carry ``source_word``/``syllable_span`` exactly as the generator gives them,
-    so this one fixture also exercises the stage-2d skip.
+    The English title "Natural Speed" is an English phrase that WOULD resolve
+    against the Norwegian lexicon — the leak guard has something real to catch.
 
-    The English title is the string "Natural Speed" deliberately, and it is not
-    a copy-paste of a section name: it is an English phrase that RESOLVES
-    against the Norwegian lexicon, so the leak guard has something real to
-    catch. "Key Phrases", the title this section really carries in production,
-    does not resolve and would make that test pass for the wrong reason.
+    Structure per key phrase: 1 whole-word L2, 1 EN translation, 2 L2 repeats,
+    then sub-word breakdown chunks carrying source_word + syllable_span.
 
-    Distinct L2 texts that should plan: "hei" and "hagen" (repeats memoise to
-    one synthesis each).
+    "hei" has no sub-word chunks (monosyllabic). "hagen" has 2 sub-word chunks:
+    span (1,2) and span (0,1). The _StubChunkPlanner maps these to deterministic
+    IPA strings for assertion.
     """
     l2, en = "nb-NO-PernilleNeural", "en-US-GuyNeural"
 
@@ -901,12 +894,12 @@ def _no_lesson() -> Lesson:
                 section_type=SectionType.KEY_PHRASES,
                 phrases=[
                     _en("Natural Speed"),
-                    # key phrase 1: "hei" -> 2 + 2 breakdown chunks
+                    # key phrase 1: "hei" — monosyllabic, no sub-word chunks
                     _l2("hei"),
                     _en("hello"),
                     _l2("hei"),
                     _l2("hei"),
-                    # key phrase 2: "hagen" -> 2 + 5 breakdown chunks
+                    # key phrase 2: "hagen" — 2 sub-word chunks with provenance
                     _l2("hagen"),
                     _en("the garden"),
                     _l2("hagen"),
@@ -925,10 +918,16 @@ def _no_lesson() -> Lesson:
 
 
 class TestRendererPhonemePlanner:
-    """Stage 2c: planner wiring into the renderer."""
+    """Stage 2d: chunk planner wiring into the renderer.
 
-    async def test_planner_passes_mapping_to_synthesize(self, tmp_path):
-        """A plannable L2 phrase has its mapping forwarded to synthesize()."""
+    2d inverts 2c: sub-word chunks (with source_word + syllable_span) get IPA
+    from plan_chunk; whole phrases and whole words get None. The section-type
+    gate is removed — planning applies to any phrase with provenance, regardless
+    of section type.
+    """
+
+    async def test_sub_word_chunk_gets_ipa(self, tmp_path):
+        """A sub-word chunk (source_word + syllable_span) gets phonemes={text: ipa}."""
         from app.audio.preprocessing.base import TextPreprocessor
 
         lesson = _no_lesson()
@@ -943,7 +942,6 @@ class TestRendererPhonemePlanner:
         mock_tts = AsyncMock()
         mock_tts.synthesize = fake_synthesize
 
-        # Norwegian preprocessor (identity for testing)
         class _NoPre(TextPreprocessor):
             def preprocess(self, text, section_type):
                 return text
@@ -952,40 +950,25 @@ class TestRendererPhonemePlanner:
             tts=mock_tts,
             preprocessors={"no": _NoPre()},
             pause_calculator=NaturalPauseCalculator(),
-            phoneme_planners={"no": _StubPlanner()},
+            phoneme_planners={"no": _StubChunkPlanner()},
         )
         output = tmp_path / "out.wav"
         await rdr.render(lesson, output)
 
-        # Find the synthesize calls for L2 phrases
-        l2_calls = [c for c in synth_kwargs if c["phonemes"] is not None]
-        assert len(l2_calls) == 2  # "hei" and "hagen"
-        for c in l2_calls:
-            assert isinstance(c["phonemes"], dict)
-            assert len(c["phonemes"]) > 0
+        # The two sub-word chunks: "gen" (hagen span 1,2) and "ha" (hagen span 0,1)
+        gen_calls = [c for c in synth_kwargs if c["text"] == "gen"]
+        ha_calls = [c for c in synth_kwargs if c["text"] == "ha"]
+        assert len(gen_calls) == 1
+        assert gen_calls[0]["phonemes"] is not None
+        assert isinstance(gen_calls[0]["phonemes"], dict)
+        assert len(ha_calls) == 1
+        assert ha_calls[0]["phonemes"] is not None
 
-    async def test_planner_passes_none_for_provenance_phrase(self, tmp_path):
-        """A phrase with source_word + syllable_span gets phonemes=None."""
+    async def test_whole_phrase_gets_none(self, tmp_path):
+        """A whole L2 phrase (no source_word) gets phonemes=None."""
         from app.audio.preprocessing.base import TextPreprocessor
 
-        lesson = Lesson(
-            title="Day 1",
-            language_code="no",
-            sections=[
-                Section(
-                    section_type=SectionType.KEY_PHRASES,
-                    phrases=[
-                        Phrase(
-                            text="ha",
-                            voice_id="nb-NO-PernilleNeural",
-                            language_code="no",
-                            source_word="hagen",
-                            syllable_span=(0, 1),
-                        ),
-                    ],
-                )
-            ],
-        )
+        lesson = _no_lesson()
         fake_audio = _make_wav_bytes()
 
         synth_kwargs: list[dict] = []
@@ -1005,16 +988,22 @@ class TestRendererPhonemePlanner:
             tts=mock_tts,
             preprocessors={"no": _NoPre()},
             pause_calculator=NaturalPauseCalculator(),
-            phoneme_planners={"no": _StubPlanner()},
+            phoneme_planners={"no": _StubChunkPlanner()},
         )
         output = tmp_path / "out.wav"
         await rdr.render(lesson, output)
 
-        phrase_calls = [c for c in synth_kwargs if c["text"] == "ha"]
-        assert len(phrase_calls) == 1
-        assert phrase_calls[0]["phonemes"] is None
+        # Whole-word phrases: "hei" and "hagen" — no source_word, so None
+        hei_calls = [c for c in synth_kwargs if c["text"] == "hei"]
+        hagen_calls = [c for c in synth_kwargs if c["text"] == "hagen"]
+        assert len(hei_calls) >= 1
+        for c in hei_calls:
+            assert c["phonemes"] is None
+        assert len(hagen_calls) >= 1
+        for c in hagen_calls:
+            assert c["phonemes"] is None
 
-    async def test_planner_passes_none_for_language_without_planner(self, tmp_path):
+    async def test_language_without_planner_gets_none(self, tmp_path):
         """A language with no planner passes phonemes=None to every phrase."""
         lesson = _minimal_lesson()  # language_code="sl"
         fake_audio = _make_wav_bytes()
@@ -1037,14 +1026,11 @@ class TestRendererPhonemePlanner:
         for c in phrase_calls:
             assert c["phonemes"] is None
 
-    async def test_en_narrator_in_l2_section_gets_none(self, tmp_path):
-        """An English narrator phrase in an L2 section gets phonemes=None,
-        even when the English text WOULD have planned against the L2 lexicon.
-
-        This is the English-narrator leak guard (brief § 3a)."""
+    async def test_en_narrator_gets_none(self, tmp_path):
+        """An English narrator phrase gets phonemes=None (language guard)."""
         from app.audio.preprocessing.base import TextPreprocessor
 
-        lesson = _no_lesson()  # Has "Natural Speed" (en) + "hei"/"hagen" (no)
+        lesson = _no_lesson()
         fake_audio = _make_wav_bytes()
 
         synth_kwargs: list[dict] = []
@@ -1064,7 +1050,7 @@ class TestRendererPhonemePlanner:
             tts=mock_tts,
             preprocessors={"no": _NoPre()},
             pause_calculator=NaturalPauseCalculator(),
-            phoneme_planners={"no": _StubPlanner()},
+            phoneme_planners={"no": _StubChunkPlanner()},
         )
         output = tmp_path / "out.wav"
         await rdr.render(lesson, output)
@@ -1097,7 +1083,7 @@ class TestRendererPhonemePlanner:
             tts=mock_tts,
             preprocessors={"no": _NoPre()},
             pause_calculator=NaturalPauseCalculator(),
-            phoneme_planners={"no": _StubPlanner()},
+            phoneme_planners={"no": _StubChunkPlanner()},
         )
         output = tmp_path / "out.wav"
         await rdr.render(lesson, output)
@@ -1107,21 +1093,15 @@ class TestRendererPhonemePlanner:
         assert title_calls[0]["phonemes"] is None
         assert title_calls[0]["voice_id"] == lesson.narrator_voice
 
-    async def test_same_text_planned_and_unplanned_gets_two_clips(self, tmp_path):
-        """One surface string, two fates — the memo must not collapse them.
+    async def test_same_text_whole_word_and_sub_word_gets_two_clips(self, tmp_path):
+        """A whole-word phrase and a sub-word chunk sharing text get different audio.
 
-        A buildup rung and a breakdown chunk can carry the SAME text, voice and
-        rate while deserving different audio: the rung is planned, the chunk
-        carries slicing provenance and is never planned. Found on a real lesson,
-        where "en" collided six ways and the plain render won, so the planned
-        rung silently played un-tagged audio. The inverse is worse — a
-        provenance chunk inheriting IPA audio and then being sliced.
-
-        The earlier memo test cannot catch this: its provenance chunks have
-        different text from its planned phrases, so no collision is possible.
+        The memo key includes phonemes, so a whole-word chunk (None) and a
+        sub-word chunk (with IPA) sharing text/voice/rate must not collapse.
         """
         from app.audio.preprocessing.base import TextPreprocessor
 
+        l2, en = "nb-NO-PernilleNeural", "en-US-GuyNeural"
         lesson = Lesson(
             title="Day 1",
             language_code="no",
@@ -1129,32 +1109,32 @@ class TestRendererPhonemePlanner:
                 Section(
                     section_type=SectionType.KEY_PHRASES,
                     phrases=[
-                        Phrase(text="Key Phrases", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
-                        # The buildup rung: planned.
-                        Phrase(text="en", voice_id="nb-NO-PernilleNeural", language_code="no"),
-                        Phrase(text="a", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
-                        # Its breakdown chunks: same text, voice and rate, but
-                        # provenance-carrying, so never planned. This is the
-                        # collision — build_word_breakdown_spans("en") is
-                        # ["en", "en"], so the real generator emits exactly this.
+                        Phrase(text="Key Phrases", voice_id=en, language_code="en", role="narrator"),
+                        # Whole-word phrase: no source_word → None
+                        Phrase(text="hagen", voice_id=l2, language_code="no"),
+                        Phrase(text="the garden", voice_id=en, language_code="en", role="narrator"),
+                        Phrase(text="hagen", voice_id=l2, language_code="no"),
+                        # Sub-word chunk sharing voice/rate but different fate
                         Phrase(
-                            text="en",
-                            voice_id="nb-NO-PernilleNeural",
+                            text="gen",
+                            voice_id=l2,
                             language_code="no",
-                            source_word="en",
-                            syllable_span=(0, 1),
+                            source_word="hagen",
+                            syllable_span=(1, 2),
                         ),
                         Phrase(
-                            text="en",
-                            voice_id="nb-NO-PernilleNeural",
+                            text="ha",
+                            voice_id=l2,
                             language_code="no",
-                            source_word="en",
+                            source_word="hagen",
                             syllable_span=(0, 1),
                         ),
+                        Phrase(text="hagen", voice_id=l2, language_code="no"),
+                        Phrase(text="hagen", voice_id=l2, language_code="no"),
                     ],
                 )
             ],
-            key_phrases=[KeyPhraseInfo(phrase="en", translation="a")],
+            key_phrases=[KeyPhraseInfo(phrase="hagen", translation="the garden")],
         )
         fake_audio = _make_wav_bytes()
         synth_kwargs: list[dict] = []
@@ -1174,26 +1154,24 @@ class TestRendererPhonemePlanner:
             tts=mock_tts,
             preprocessors={"no": _NoPre()},
             pause_calculator=NaturalPauseCalculator(),
-            phoneme_planners={"no": _StubPlanner()},
+            phoneme_planners={"no": _StubChunkPlanner()},
         )
         await rdr.render(lesson, tmp_path / "out.wav")
 
-        en = [c for c in synth_kwargs if c["text"] == "en"]
-        assert len(en) == 2, "the memo collapsed a planned and an unplanned phrase into one clip"
-        assert {None, ("en", "X")} == {None if c["phonemes"] is None else tuple(*c["phonemes"].items()) for c in en}
+        # "hagen" whole word → None, "gen" sub-word → IPA — different keys
+        hagen_calls = [c for c in synth_kwargs if c["text"] == "hagen"]
+        gen_calls = [c for c in synth_kwargs if c["text"] == "gen"]
+        assert len(hagen_calls) == 1
+        assert hagen_calls[0]["phonemes"] is None
+        assert len(gen_calls) == 1
+        assert gen_calls[0]["phonemes"] is not None
 
-    async def test_narrative_sections_are_never_planned(self, tmp_path):
-        """Only KEY_PHRASES gets IPA — narrative sections render as they did.
+    async def test_narrative_sections_no_sub_word_chunks_get_none(self, tmp_path):
+        """A natural-speed section with no provenance chunks gets phonemes=None.
 
-        The approved A/B (``scripts/local/render_phoneme_ab.py``) renders ONLY
-        the key-phrases section and raises if a lesson has none, so no narrative
-        sentence has ever been listened to with ``<phoneme>`` markup. The
-        lexicon also stores CITATION forms, which put primary stress and full
-        length on function words — right for a drill fragment spoken alone,
-        wrong inside connected speech.
-
-        The phrase here is one that DOES plan in a key-phrases section (the
-        stub maps every token), so this fails if the section gate is removed.
+        Sub-word chunks only appear in KEY_PHRASES breakdowns. A
+        NATURAL_SPEED section with plain phrases has no source_word on any
+        phrase, so every phrase gets None.
         """
         from app.audio.preprocessing.base import TextPreprocessor
 
@@ -1225,33 +1203,24 @@ class TestRendererPhonemePlanner:
             tts=mock_tts,
             preprocessors={"no": _NoPre()},
             pause_calculator=NaturalPauseCalculator(),
-            phoneme_planners={"no": _StubPlanner()},
+            phoneme_planners={"no": _StubChunkPlanner()},
         )
         await rdr.render(lesson, tmp_path / "out.wav")
 
         hei = [c for c in synth_kwargs if c["text"] == "hei"]
         assert len(hei) == 1
-        assert hei[0]["phonemes"] is None, "a natural-speed phrase was given IPA"
+        assert hei[0]["phonemes"] is None
 
-    async def test_planner_is_pure_function_of_text_for_memo(self, tmp_path):
-        """The _synth memo key is (text, voice, rate) — the plan must be a pure
-        function of text so the same key always yields the same mapping.
-
-        The fixture repeats "hei" three times at one voice and rate, so the plan
-        must come out identical every time or the memo would serve one phrase's
-        audio for another."""
+    async def test_chunk_planner_called_per_sub_word_chunk(self, tmp_path):
+        """plan_chunk is called once per sub-word chunk with correct args."""
         from app.audio.preprocessing.base import TextPreprocessor
 
-        call_count = 0
+        call_args: list[tuple[str, tuple[int, int]]] = []
 
         class _RecordingPlanner:
-            def plan(self, text: str) -> Mapping[str, str] | None:
-                nonlocal call_count
-                call_count += 1
-                import re
-
-                tokens = re.findall(r"[^\W\d_]+", text)
-                return {t.lower(): "X" for t in tokens} if tokens else None
+            def plan_chunk(self, source_word: str, span: tuple[int, int]) -> str | None:
+                call_args.append((source_word, span))
+                return f"IPA_{source_word}_{span[0]}_{span[1]}"
 
         lesson = _no_lesson()
         fake_audio = _make_wav_bytes()
@@ -1278,14 +1247,90 @@ class TestRendererPhonemePlanner:
         output = tmp_path / "out.wav"
         await rdr.render(lesson, output)
 
-        # Planned once per non-provenance L2 phrase: "hei" x3 + "hagen" x4.
-        assert call_count == 7
-        # All three "hei" phrases share (text, voice, rate), so the memo serves
-        # exactly one synthesis for them — and the mapping that reached TTS is
-        # the one every repeat would have produced.
-        hei_calls = [c for c in synth_calls if c["text"] == "hei"]
-        assert len(hei_calls) == 1, "the memo stopped collapsing identical (text, voice, rate)"
-        assert hei_calls[0]["phonemes"] == {"hei": "X"}
-        hagen_calls = [c for c in synth_calls if c["text"] == "hagen"]
-        assert len(hagen_calls) == 1
-        assert hagen_calls[0]["phonemes"] == {"hagen": "X"}
+        # Two sub-word chunks: "gen" (hagen, 1,2) and "ha" (hagen, 0,1)
+        assert call_args == [("hagen", (1, 2)), ("hagen", (0, 1))]
+
+        # Both sub-word chunks got IPA
+        gen_calls = [c for c in synth_calls if c["text"] == "gen"]
+        ha_calls = [c for c in synth_calls if c["text"] == "ha"]
+        assert len(gen_calls) == 1
+        assert gen_calls[0]["phonemes"] == {"gen": "IPA_hagen_1_2"}
+        assert len(ha_calls) == 1
+        assert ha_calls[0]["phonemes"] == {"ha": "IPA_hagen_0_1"}
+
+    async def test_ipa_chunk_not_sliced(self, tmp_path):
+        """A chunk that received IPA must NOT be sliced.
+
+        The slicer replaces audio with a cut from a whole-word parent render,
+        which would discard the IPA. This is a sabotage-drill test: verify
+        that IPA-bearing indices are excluded from slicing.
+        """
+        from app.audio.preprocessing.base import TextPreprocessor
+        from app.audio.slicer import SliceSpec
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="no",
+            sections=[
+                Section(
+                    section_type=SectionType.KEY_PHRASES,
+                    phrases=[
+                        Phrase(
+                            text="ha",
+                            voice_id="nb-NO-PernilleNeural",
+                            language_code="no",
+                            source_word="hagen",
+                            syllable_span=(0, 1),
+                        ),
+                    ],
+                )
+            ],
+        )
+        fake_audio = _make_wav_bytes()
+        sliced_audio = _make_wav_bytes(marker=0.99)
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        class _NoPre(TextPreprocessor):
+            def preprocess(self, text, section_type):
+                return text
+
+        # A slicer that would always slice, and records what it was asked for.
+        sliced_words: list[str] = []
+
+        class _FakeSlicer:
+            async def slice_to_file(self, spec: SliceSpec, output_path: Path) -> bool:
+                sliced_words.append(spec.word)
+                output_path.write_bytes(sliced_audio)
+                return True
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"no": _NoPre()},
+            pause_calculator=NaturalPauseCalculator(),
+            phoneme_planners={"no": _StubChunkPlanner()},
+            slicers={"no": _FakeSlicer()},
+        )
+        output = tmp_path / "out.wav"
+        await rdr.render(lesson, output)
+
+        # NEGATIVE: the IPA-bearing chunk was never offered to the slicer.
+        assert sliced_words == [], f"an IPA-bearing chunk was sliced, discarding its IPA: {sliced_words}"
+
+        # POSITIVE CONTROL: the same lesson with a planner that declines IS
+        # sliced — so the assertion above is about the bypass, not about the
+        # slicer being unreachable in this fixture.
+        sliced_words.clear()
+        rdr_plain = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"no": _NoPre()},
+            pause_calculator=NaturalPauseCalculator(),
+            phoneme_planners={"no": _NoneChunkPlanner()},
+            slicers={"no": _FakeSlicer()},
+        )
+        await rdr_plain.render(lesson, tmp_path / "out_plain.wav")
+        assert sliced_words == ["hagen"], "the control did not slice; the fixture cannot reach the slicer"

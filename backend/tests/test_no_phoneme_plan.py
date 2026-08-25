@@ -1,14 +1,14 @@
-"""Norwegian phrase planner (stage 2c): per-token IPA mapping for whole phrases.
+"""Norwegian chunk planner (stage 2d): sub-word IPA via the pronunciation lexicon.
 
-Tests the PhonemePlanner Protocol, the NorwegianPhonemePlanner implementation,
-and the get_phoneme_planner registry accessor. All fixtures are tiny in-test
-lexicons — the committed extract and built database are never touched.
+Tests the PhonemePlanner Protocol (``plan_chunk``), the NorwegianPhonemePlanner
+implementation, and the ``get_phoneme_planner`` registry accessor. All fixtures
+are tiny in-test lexicons — the committed extract and built database are never
+touched.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -23,17 +23,23 @@ from app.plugins.languages.no.lexicon import (
 )
 from app.plugins.languages.no.phoneme_plan import NorwegianPhonemePlanner
 
-# Real-format fixture rows (from test_no_lexicon.py).
+# Oracle-derived fixture rows. SAMPA transcriptions verified against
+# sampa_to_ipa + ipa_syllables to produce the exact IPA syllable sequences
+# stated in the brief's oracle table.
 FIXTURE_ROWS = [
-    ("hei", "IN", '"h@I', 1),
-    ("hagen", "NN", '""hA:$g@n', 1),
-    ("snømann", "NN", '""sn2:$%mAn', 2),
+    # skisporet: lex ['ˈʃɪː', 'ˌspuː', 'rə']
+    ("skisporet", "NN", '"Si:$%spu:$r@', 1),
+    # hagen: lex ['ˈhɑː', 'gən']
+    ("hagen", "NN", '"hA:$g@n', 1),
+    # snøen: lex ['ˈsnøː', 'ən']
+    ("snøen", "NN", '"sn2:$@n', 1),
+    # finne: lex ['ˈfɪ', 'nə'] — chunk text 'finn' must still return 'fɪ'
+    ("finne", "VB", '"fI$n@', 1),
+    # galt: used for AMBIGUOUS_NO_POS (2 POS entries)
     ("galt", "NN", '"gAl', 2),
     ("galt", "VB", '"gAl', 1),
-    ("huset", "NN", '"hu:s@t', 2),
-    ("huset", "VB", '"hy:s@', 1),
-    ("testord", "NN", '"tA:', 1),
-    ("testord", "VB", '"te:s', 1),
+    # snømann: used for tone-stripping tests
+    ("snømann", "NN", '""sn2:$%mAn', 2),
 ]
 
 
@@ -60,53 +66,148 @@ class TestPhonemePlannerProtocol:
 
     @runtime_checkable
     class _PhonemePlanner(Protocol):
-        def plan(self, text: str) -> Mapping[str, str] | None: ...
+        def plan_chunk(self, source_word: str, span: tuple[int, int]) -> str | None: ...
 
     def test_satisfies_protocol(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
         assert isinstance(p, self._PhonemePlanner)
 
 
-class TestPlanResolves:
-    """plan() returns the mapping for an all-resolvable phrase."""
+# ---------------------------------------------------------------------------
+# Oracle tests — each row from the brief's oracle table
+# ---------------------------------------------------------------------------
 
-    def test_single_word(self, tmp_path: Path) -> None:
+
+class TestSkisporet:
+    """skisporet: repo ['ski','spor','et'] lex ['ˈʃɪː','ˌspuː','rə']."""
+
+    def test_span_0_1(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
-        result = p.plan("hagen")
-        assert result is not None
-        assert result == {"hagen": "hɑː.gən"}
+        assert p.plan_chunk("skisporet", (0, 1)) == "ˈʃɪː"
 
-    def test_multi_word_all_resolved(self, tmp_path: Path) -> None:
+    def test_span_1_2(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path)
+        assert p.plan_chunk("skisporet", (1, 2)) == "ˌspuː"
+
+    def test_span_2_3(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path)
+        assert p.plan_chunk("skisporet", (2, 3)) == "rə"
+
+    def test_span_1_3(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path)
+        assert p.plan_chunk("skisporet", (1, 3)) == "ˌspuː.rə"
+
+    def test_whole_word_returns_none(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path)
+        assert p.plan_chunk("skisporet", (0, 3)) is None
+
+
+class TestHagen:
+    """hagen: repo ['ha','gen'] lex ['ˈhɑː','gən']."""
+
+    def test_span_0_1(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path)
+        assert p.plan_chunk("hagen", (0, 1)) == "ˈhɑː"
+
+    def test_span_1_2(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path)
+        assert p.plan_chunk("hagen", (1, 2)) == "gən"
+
+    def test_whole_word_returns_none(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path)
+        assert p.plan_chunk("hagen", (0, 2)) is None
+
+
+class TestSnøen:
+    """snøen: repo ['snø','en'] lex ['ˈsnøː','ən']."""
+
+    def test_span_1_2(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path)
+        assert p.plan_chunk("snøen", (1, 2)) == "ən"
+
+
+class TestFinne:
+    """finne: repo ['fin','ne'] lex ['ˈfɪ','nə'].
+
+    The critical anti-regression test: chunk text is 'finn' (respelled),
+    but plan_chunk takes source_word='finne' and span, so it MUST still
+    return 'fɪ'. This is §3 of the brief — the text-equality check is
+    deliberately dropped.
+    """
+
+    def test_span_0_1(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path)
+        assert p.plan_chunk("finne", (0, 1)) == "ˈfɪ"
+
+    def test_span_1_2(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path)
+        assert p.plan_chunk("finne", (1, 2)) == "nə"
+
+    def test_whole_word_returns_none(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path)
+        assert p.plan_chunk("finne", (0, 2)) is None
+
+
+class TestSyllableCountMismatch:
+    """Repo vs lexicon syllable-count mismatch returns None (rule 4)."""
+
+    def test_etterforskerens_every_span_returns_none(self, tmp_path: Path) -> None:
+        """etterforskerens: repo 5 syllables vs lexicon 4 -> every span is None.
+
+        The transcription is the REAL NST row, not an invented one. An earlier
+        version of this test used made-up X-SAMPA that raised
+        UnknownSegmentError, so it passed at the conversion gate and never
+        reached the syllable-count guard it was written to pin — the guard
+        survived sabotage untouched. Pull real rows from the extract.
+        """
+        rows = [("etterforskerens", "NN", '""E$t@r$%fO$s`k@rn`s`', 1)]
+        p = _planner(tmp_path, rows)
+        # SUB-WORD spans, so the whole-word rule cannot mask the count guard.
+        assert p.plan_chunk("etterforskerens", (0, 1)) is None
+        assert p.plan_chunk("etterforskerens", (1, 3)) is None
+        assert p.plan_chunk("etterforskerens", (2, 4)) is None
+        assert p.plan_chunk("etterforskerens", (0, 5)) is None
+
+    def test_mismatch_in_fixture(self, tmp_path: Path) -> None:
+        """1 repo syllable vs 2 lexicon syllables.
+
+        NOTE: with one repo syllable the only span IS the whole word, so the
+        whole-word rule reaches None first and this cannot discriminate the
+        count guard on its own. It is kept as a shape check; the discriminating
+        case is test_etterforskerens_every_span_returns_none above.
+        """
         rows = [
-            ("hei", "IN", '"h@I', 1),
-            ("hagen", "NN", '""hA:$g@n', 1),
+            # rett: repo ['rett'] (1 syllable) vs lex ['rɛ', 't'] (2)
+            ("rett", "NN", '"rE$t', 1),
         ]
         p = _planner(tmp_path, rows)
-        result = p.plan("hei hagen")
-        assert result is not None
-        assert result == {"hei": "ˈhəɪ", "hagen": "hɑː.gən"}
+        assert p.plan_chunk("rett", (0, 1)) is None
 
 
-class TestAllOrNothing:
-    """Any non-RESOLVED outcome sinks the whole phrase."""
+class TestAbsentWord:
+    """Word absent from the lexicon returns None."""
 
-    def test_ambiguous_no_pos_sinks(self, tmp_path: Path) -> None:
-        """galt: AMBIGUOUS_NO_POS (2 entries, 2 readings, no POS)."""
+    def test_absent_returns_none(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
-        assert p.plan("hagen og galt") is None
+        assert p.plan_chunk("zzqqxx", (0, 1)) is None
 
-    def test_absent_sinks(self, tmp_path: Path) -> None:
+
+class TestAmbiguousNoPos:
+    """AMBIGUOUS_NO_POS returns None."""
+
+    def test_ambiguous_returns_none(self, tmp_path: Path) -> None:
+        """galt: 2 entries, 2 readings, no POS → AMBIGUOUS_NO_POS."""
         p = _planner(tmp_path)
-        assert p.plan("hagen og zzqqxx") is None
+        assert p.plan_chunk("galt", (0, 1)) is None
 
 
 class TestUnknownSegmentError:
-    """UnknownSegmentError from sampa_to_ipa sinks the phrase."""
+    """UnknownSegmentError from sampa_to_ipa returns None."""
 
-    def test_unknown_segment_sinks(self, tmp_path: Path) -> None:
+    def test_unknown_segment_returns_none(self, tmp_path: Path) -> None:
         rows = [("badword", "NN", '"xXxX', 1)]
         p = _planner(tmp_path, rows)
-        assert p.plan("badword") is None
+        assert p.plan_chunk("badword", (0, 1)) is None
 
 
 class TestToneStripping:
@@ -115,87 +216,24 @@ class TestToneStripping:
     def test_tone2_stripped(self, tmp_path: Path) -> None:
         """snømann has tone-2 mark ("); it must not appear in IPA."""
         p = _planner(tmp_path)
-        result = p.plan("snømann")
+        # snømann: lex has 2 syllables, repo has 2 — span (0,1) is sub-word
+        result = p.plan_chunk("snømann", (0, 1))
         assert result is not None
-        ipa = result["snømann"]
-        assert '"' not in ipa
+        assert '"' not in result
 
     def test_primary_stress_survives(self, tmp_path: Path) -> None:
-        rows = [("test", "NN", '"t"A:', 1)]
-        p = _planner(tmp_path, rows)
-        result = p.plan("test")
+        """hagen span (0,1) → 'ˈhɑː' — stress mark survives."""
+        p = _planner(tmp_path)
+        result = p.plan_chunk("hagen", (0, 1))
         assert result is not None
-        assert "ˈ" in result["test"]
+        assert "ˈ" in result
 
     def test_secondary_stress_survives(self, tmp_path: Path) -> None:
-        rows = [("test", "NN", 't"A:%', 1)]
-        p = _planner(tmp_path, rows)
-        result = p.plan("test")
+        """skisporet span (1,2) → 'ˌspuː' — secondary stress survives."""
+        p = _planner(tmp_path)
+        result = p.plan_chunk("skisporet", (1, 2))
         assert result is not None
-        assert "ˌ" in result["test"]
-
-
-class TestTokenisation:
-    """Tokeniser ignores digits, punctuation, underscores."""
-
-    def test_digits_ignored(self, tmp_path: Path) -> None:
-        p = _planner(tmp_path)
-        # "hagen 123" → tokens: ["hagen"]
-        result = p.plan("hagen 123")
-        assert result is not None
-        assert "123" not in result
-        assert result == {"hagen": "hɑː.gən"}
-
-    def test_punctuation_ignored(self, tmp_path: Path) -> None:
-        p = _planner(tmp_path)
-        result = p.plan("hei, hagen!")
-        assert result is not None
-        assert result == {"hei": "ˈhəɪ", "hagen": "hɑː.gən"}
-
-    def test_underscores_ignored(self, tmp_path: Path) -> None:
-        p = _planner(tmp_path)
-        result = p.plan("hei_hagen")
-        assert result is not None
-        assert result == {"hei": "ˈhəɪ", "hagen": "hɑː.gən"}
-
-
-class TestRepeatedToken:
-    """A repeated token appears once in the mapping."""
-
-    def test_dedup(self, tmp_path: Path) -> None:
-        p = _planner(tmp_path)
-        result = p.plan("hagen hagen")
-        assert result is not None
-        assert result == {"hagen": "hɑː.gən"}
-        assert len(result) == 1
-
-
-class TestCaseInsensitive:
-    """Lookup is case-insensitive; mapping is keyed lowercase."""
-
-    def test_capitalised_input(self, tmp_path: Path) -> None:
-        p = _planner(tmp_path)
-        result = p.plan("Hagen")
-        assert result is not None
-        assert result == {"hagen": "hɑː.gən"}
-
-    def test_mixed_case(self, tmp_path: Path) -> None:
-        p = _planner(tmp_path)
-        result = p.plan("HAGEN")
-        assert result is not None
-        assert "hagen" in result
-
-
-class TestEmptyInput:
-    """Empty or whitespace-only input returns None."""
-
-    def test_empty_string(self, tmp_path: Path) -> None:
-        p = _planner(tmp_path)
-        assert p.plan("") is None
-
-    def test_whitespace_only(self, tmp_path: Path) -> None:
-        p = _planner(tmp_path)
-        assert p.plan("   ") is None
+        assert "ˌ" in result
 
 
 class TestRegistry:
@@ -222,40 +260,34 @@ class TestRegistry:
 
 
 class TestLexiconIsOpenedOnce:
-    """One lexicon per planner — ``plan`` is called once per phrase."""
+    """One lexicon per planner — plan_chunk is called per chunk."""
 
-    def test_second_plan_reuses_the_same_lexicon(self, tmp_path: Path) -> None:
-        """A lesson plans hundreds of phrases; each must not reopen the database.
-
-        Asserted by object identity rather than by counting constructor calls,
-        because patching ``NstLexicon`` would be a mock of app code.
-        """
+    def test_second_call_reuses_the_same_lexicon(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
-        assert p.plan("hagen") == {"hagen": "h\u0251\u02d0.g\u0259n"}
+        assert p.plan_chunk("hagen", (0, 1)) == "ˈhɑː"
         first = p._lexicon
         assert first is not None
 
-        assert p.plan("hei") is not None
-        assert p._lexicon is first, "the planner reopened the lexicon on the second phrase"
+        assert p.plan_chunk("skisporet", (0, 1)) == "ˈʃɪː"
+        assert p._lexicon is first, "the planner reopened the lexicon on the second call"
 
 
 class TestUnbuiltLexicon:
-    """An unbuilt lexicon makes plan return None and warn, never raise."""
+    """An unbuilt lexicon makes plan_chunk return None and warn, never raise."""
 
     def test_unbuilt_returns_none(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         missing_db = tmp_path / "nonexistent.sqlite3"
         p = NorwegianPhonemePlanner(missing_db)
         with caplog.at_level(logging.WARNING):
-            result = p.plan("hagen")
+            result = p.plan_chunk("hagen", (0, 1))
         assert result is None
         assert any(
             "not built" in rec.message.lower() or "missing" in rec.message.lower() or "nst" in rec.message.lower()
             for rec in caplog.records
         )
 
-    def test_plan_returns_none_not_raise(self, tmp_path: Path) -> None:
+    def test_returns_none_not_raise(self, tmp_path: Path) -> None:
         missing_db = tmp_path / "nonexistent.sqlite3"
         p = NorwegianPhonemePlanner(missing_db)
-        # Must not raise — all calls return None
-        assert p.plan("anything") is None
-        assert p.plan("something else") is None
+        assert p.plan_chunk("anything", (0, 1)) is None
+        assert p.plan_chunk("something else", (0, 1)) is None
