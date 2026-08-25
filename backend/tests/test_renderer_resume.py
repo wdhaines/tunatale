@@ -179,7 +179,7 @@ class _BlockingTTS:
         self.cancelled = 0
         self.completed = 0
 
-    async def synthesize(self, text: str, voice_id: str, output_path: Path, rate: str = "+0%") -> None:
+    async def synthesize(self, text: str, voice_id: str, output_path: Path, rate: str = "+0%", phonemes=None) -> None:
         self.started += 1
         if text == self._failing:
             raise RuntimeError(f"TTS exploded on {text!r}")

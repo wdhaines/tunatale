@@ -22,7 +22,7 @@ from app.audio.preprocessing.base import TextPreprocessor
 from app.models.language import Language
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from app.audio.alignment import CharAligner
     from app.cards.vocab_notetype import VocabNotetype
@@ -96,6 +96,17 @@ class PronunciationLexicon(Protocol):
     """
 
     def resolve(self, word: str, upos: str | None = None) -> LexiconResolution: ...
+
+
+@runtime_checkable
+class PhonemePlanner(Protocol):
+    """Maps a phrase's surface tokens to IPA via the pronunciation lexicon.
+
+    ``None`` (returned from :meth:`plan`) means "synthesize this phrase plainly"
+    and is the only failure signal — the caller passes ``phonemes=None`` to TTS.
+    """
+
+    def plan(self, text: str) -> Mapping[str, str] | None: ...
 
 
 @dataclass
@@ -229,6 +240,12 @@ class LanguageConfig:
     # languages with no lexicon — callers fall back to TTS's native
     # pronunciation, never a guess. See ``get_lexicon``.
     lexicon_factory: Callable[[], PronunciationLexicon] | None = None
+    # Zero-arg factory returning the language's phrase planner (see
+    # ``PhonemePlanner``). A factory, NOT an instance: opening the backing
+    # store belongs at first use, never on the import path. ``None`` for
+    # languages with no planner — callers pass ``phonemes=None`` to TTS.
+    # See ``get_phoneme_planner``.
+    phoneme_planner_factory: Callable[[], PhonemePlanner] | None = None
 
 
 _CONFIGS: dict[str, LanguageConfig] = {}
@@ -636,6 +653,20 @@ def get_lexicon(code: str) -> PronunciationLexicon | None:
     if config is None or config.lexicon_factory is None:
         return None
     return config.lexicon_factory()
+
+
+def get_phoneme_planner(code: str) -> PhonemePlanner | None:
+    """Return *code*'s phrase planner, or ``None`` when it has none.
+
+    ``None`` is the correct answer for languages without a planner (``en``,
+    ``sl``, an unknown code): callers pass ``phonemes=None`` to TTS for plain
+    synthesis.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    if config is None or config.phoneme_planner_factory is None:
+        return None
+    return config.phoneme_planner_factory()
 
 
 @dataclass(frozen=True)

@@ -43,7 +43,7 @@ class FakeTTS:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def synthesize(self, text, voice_id, output_path, rate="+0%") -> None:
+    async def synthesize(self, text, voice_id, output_path, rate="+0%", phonemes=None) -> None:
         self.calls.append(text)
         output_path.write_bytes(_wav_bytes(_TTS_MS, marker=0.25))
 

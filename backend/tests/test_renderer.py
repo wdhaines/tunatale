@@ -1,4 +1,4 @@
-"""LessonRenderer integration tests."""
+"""LessonRenderer integration tests — base + phoneme planner (stage 2c)."""
 
 import asyncio
 import contextlib
@@ -6,6 +6,7 @@ import subprocess
 import threading
 import time
 import wave
+from collections.abc import Mapping
 from io import BytesIO
 from unittest.mock import AsyncMock
 
@@ -71,7 +72,7 @@ class TestLessonRenderer:
 
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -98,7 +99,7 @@ class TestLessonRenderer:
             ],
         )
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             output_path.write_bytes(_make_wav_bytes())
 
         mock_tts = AsyncMock()
@@ -115,7 +116,7 @@ class TestLessonRenderer:
 
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -134,7 +135,7 @@ class TestLessonRenderer:
         lesson = _minimal_lesson()
         fake_audio = _make_wav_bytes(duration_ms=500)
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             output_path.write_bytes(fake_audio)
 
         mock_tts = AsyncMock()
@@ -168,7 +169,7 @@ class TestLessonRenderer:
         lesson = _minimal_lesson()
         fake_audio = _make_wav_bytes(duration_ms=300)
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             output_path.write_bytes(fake_audio)
 
         mock_tts = AsyncMock()
@@ -193,7 +194,7 @@ class TestLessonRenderer:
 
         synthesize_calls = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             synthesize_calls.append(text)
             output_path.write_bytes(fake_audio)
 
@@ -231,7 +232,7 @@ class TestLessonRenderer:
 
         calls: list[tuple[str, str, str]] = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             calls.append((text, voice_id, rate))
             output_path.write_bytes(_make_wav_bytes())
 
@@ -257,7 +258,7 @@ class TestLessonRenderer:
 
         synthesize_calls = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             synthesize_calls.append((text, voice_id))
             output_path.write_bytes(fake_audio)
 
@@ -277,7 +278,7 @@ class TestLessonRenderer:
         lesson = _minimal_lesson()
         fake_audio = _make_wav_bytes()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             output_path.write_bytes(fake_audio)
 
         mock_tts = AsyncMock()
@@ -312,7 +313,7 @@ class TestLessonRenderer:
         fake_audio = _make_wav_bytes()
         rate_calls = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             rate_calls.append((text, rate))
             output_path.write_bytes(fake_audio)
 
@@ -334,7 +335,7 @@ class TestLessonRenderer:
         """
         lesson = _minimal_lesson()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             # Title at 22.05 kHz, phrases at 11.025 kHz → mismatch in the full mix.
             sample_rate = 22050 if text == lesson.title else 11025
             output_path.write_bytes(_make_wav_bytes(rate=sample_rate))
@@ -372,7 +373,7 @@ class TestLessonRendererSectionOutput:
         fake_audio = _make_wav_bytes(100)
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -394,7 +395,7 @@ class TestLessonRendererSectionOutput:
         fake_audio = _make_wav_bytes(100)
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -414,7 +415,7 @@ class TestLessonRendererSectionOutput:
         fake_audio = _make_wav_bytes(100)
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -433,7 +434,7 @@ class TestLessonRendererSectionOutput:
         fake_audio = _make_wav_bytes(200)
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -456,7 +457,7 @@ class TestLessonRendererSectionOutput:
         fake_audio = _make_wav_bytes(100)
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -527,7 +528,7 @@ class TestLessonRendererCues:
         fake_audio = _make_wav_bytes(duration_ms=_PHRASE_DURATION_MS, marker=0.1)
         mock_tts = AsyncMock()
 
-        async def fake_synth(text, voice_id, output_path, rate="+0%"):
+        async def fake_synth(text, voice_id, output_path, rate="+0%", phonemes=None):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synth
@@ -548,7 +549,7 @@ class TestLessonRendererCues:
         lesson = Lesson(title="Start Here", language_code="sl")
         mock_tts = AsyncMock()
 
-        async def fake_synth(text, voice_id, output_path, rate="+0%"):
+        async def fake_synth(text, voice_id, output_path, rate="+0%", phonemes=None):
             output_path.write_bytes(_make_wav_bytes(duration_ms=_PHRASE_DURATION_MS, marker=0.1))
 
         mock_tts.synthesize = fake_synth
@@ -606,7 +607,7 @@ class TestLessonRendererCues:
         # clip identity must come from the temp-file path, not call order.
         by_key: dict[tuple[int | None, int], dict] = {p["key"]: p for p in all_phrases}
 
-        async def fake_synth(text, voice_id, output_path, rate="+0%"):
+        async def fake_synth(text, voice_id, output_path, rate="+0%", phonemes=None):
             stem = output_path.stem
             if stem == "title":
                 spec = by_key[(None, 0)]
@@ -667,7 +668,7 @@ class TestLessonRendererCues:
 
         markers: dict[str, float] = {"B": 0.1, "prvi": 0.2, "drugi": 0.3}
 
-        async def fake_synth(text, voice_id, output_path, rate="+0%"):
+        async def fake_synth(text, voice_id, output_path, rate="+0%", phonemes=None):
             marker = markers.get(text, 0.5)
             output_path.write_bytes(_make_wav_bytes(duration_ms=_PHRASE_DURATION_MS, marker=marker))
 
@@ -720,7 +721,7 @@ class TestLessonRendererCues:
         fake_audio = _make_wav_bytes()
         mock_tts = AsyncMock()
 
-        async def fake_synth(text, voice_id, output_path, rate="+0%"):
+        async def fake_synth(text, voice_id, output_path, rate="+0%", phonemes=None):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synth
@@ -778,7 +779,7 @@ class TestEventLoopResponsiveness:
 
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%"):
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -835,3 +836,292 @@ class TestEventLoopResponsiveness:
             f"Without to_thread offloading the sync subprocess.run calls starve the loop "
             f"(ticks={state['ticks']})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Stage 2c: Phoneme planner integration
+# ---------------------------------------------------------------------------
+
+
+class _StubPlanner:
+    """Deterministic planner for renderer tests — maps every word to 'X'."""
+
+    def plan(self, text: str) -> Mapping[str, str] | None:
+        import re
+
+        tokens = re.findall(r"[^\W\d_]+", text)
+        if not tokens:
+            return None
+        return {t.lower(): "X" for t in tokens}
+
+
+class _NonePlanner:
+    """Planner that always returns None (simulates a language with no lexicon data)."""
+
+    def plan(self, text: str) -> Mapping[str, str] | None:
+        return None
+
+
+def _no_lesson() -> Lesson:
+    """A minimal Norwegian lesson with mixed L2 + English narrator phrases."""
+    return Lesson(
+        title="Day 1",
+        language_code="no",
+        sections=[
+            Section(
+                section_type=SectionType.NATURAL_SPEED,
+                phrases=[
+                    Phrase(text="Natural Speed", voice_id="en-US-GuyNeural", language_code="en"),
+                    Phrase(text="hei", voice_id="nb-NO-PernilleNeural", language_code="no"),
+                    Phrase(text="hagen", voice_id="nb-NO-PernilleNeural", language_code="no"),
+                ],
+            )
+        ],
+    )
+
+
+class TestRendererPhonemePlanner:
+    """Stage 2c: planner wiring into the renderer."""
+
+    async def test_planner_passes_mapping_to_synthesize(self, tmp_path):
+        """A plannable L2 phrase has its mapping forwarded to synthesize()."""
+        from app.audio.preprocessing.base import TextPreprocessor
+
+        lesson = _no_lesson()
+        fake_audio = _make_wav_bytes()
+
+        synth_kwargs: list[dict] = []
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
+            synth_kwargs.append({"text": text, "phonemes": phonemes})
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        # Norwegian preprocessor (identity for testing)
+        class _NoPre(TextPreprocessor):
+            def preprocess(self, text, section_type):
+                return text
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"no": _NoPre()},
+            pause_calculator=NaturalPauseCalculator(),
+            phoneme_planners={"no": _StubPlanner()},
+        )
+        output = tmp_path / "out.wav"
+        await rdr.render(lesson, output)
+
+        # Find the synthesize calls for L2 phrases
+        l2_calls = [c for c in synth_kwargs if c["phonemes"] is not None]
+        assert len(l2_calls) == 2  # "hei" and "hagen"
+        for c in l2_calls:
+            assert isinstance(c["phonemes"], dict)
+            assert len(c["phonemes"]) > 0
+
+    async def test_planner_passes_none_for_provenance_phrase(self, tmp_path):
+        """A phrase with source_word + syllable_span gets phonemes=None."""
+        from app.audio.preprocessing.base import TextPreprocessor
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="no",
+            sections=[
+                Section(
+                    section_type=SectionType.KEY_PHRASES,
+                    phrases=[
+                        Phrase(
+                            text="ha",
+                            voice_id="nb-NO-PernilleNeural",
+                            language_code="no",
+                            source_word="hagen",
+                            syllable_span=(0, 1),
+                        ),
+                    ],
+                )
+            ],
+        )
+        fake_audio = _make_wav_bytes()
+
+        synth_kwargs: list[dict] = []
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
+            synth_kwargs.append({"text": text, "phonemes": phonemes})
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        class _NoPre(TextPreprocessor):
+            def preprocess(self, text, section_type):
+                return text
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"no": _NoPre()},
+            pause_calculator=NaturalPauseCalculator(),
+            phoneme_planners={"no": _StubPlanner()},
+        )
+        output = tmp_path / "out.wav"
+        await rdr.render(lesson, output)
+
+        phrase_calls = [c for c in synth_kwargs if c["text"] == "ha"]
+        assert len(phrase_calls) == 1
+        assert phrase_calls[0]["phonemes"] is None
+
+    async def test_planner_passes_none_for_language_without_planner(self, tmp_path):
+        """A language with no planner passes phonemes=None to every phrase."""
+        lesson = _minimal_lesson()  # language_code="sl"
+        fake_audio = _make_wav_bytes()
+
+        synth_kwargs: list[dict] = []
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
+            synth_kwargs.append({"text": text, "phonemes": phonemes})
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        rdr = _make_renderer(mock_tts)
+        # No phoneme_planners dict at all — sl has no planner
+        output = tmp_path / "out.wav"
+        await rdr.render(lesson, output)
+
+        phrase_calls = [c for c in synth_kwargs if c["text"] != lesson.title]
+        for c in phrase_calls:
+            assert c["phonemes"] is None
+
+    async def test_en_narrator_in_l2_section_gets_none(self, tmp_path):
+        """An English narrator phrase in an L2 section gets phonemes=None,
+        even when the English text WOULD have planned against the L2 lexicon.
+
+        This is the English-narrator leak guard (brief § 3a)."""
+        from app.audio.preprocessing.base import TextPreprocessor
+
+        lesson = _no_lesson()  # Has "Natural Speed" (en) + "hei"/"hagen" (no)
+        fake_audio = _make_wav_bytes()
+
+        synth_kwargs: list[dict] = []
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
+            synth_kwargs.append({"text": text, "phonemes": phonemes})
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        class _NoPre(TextPreprocessor):
+            def preprocess(self, text, section_type):
+                return text
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"no": _NoPre()},
+            pause_calculator=NaturalPauseCalculator(),
+            phoneme_planners={"no": _StubPlanner()},
+        )
+        output = tmp_path / "out.wav"
+        await rdr.render(lesson, output)
+
+        en_calls = [c for c in synth_kwargs if c["text"] == "Natural Speed"]
+        assert len(en_calls) == 1
+        assert en_calls[0]["phonemes"] is None
+
+    async def test_lesson_title_has_no_phonemes(self, tmp_path):
+        """The lesson title is synthesized with no phonemes at all."""
+        from app.audio.preprocessing.base import TextPreprocessor
+
+        lesson = _no_lesson()
+        fake_audio = _make_wav_bytes()
+
+        synth_kwargs: list[dict] = []
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
+            synth_kwargs.append({"text": text, "voice_id": voice_id, "phonemes": phonemes})
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        class _NoPre(TextPreprocessor):
+            def preprocess(self, text, section_type):
+                return text
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"no": _NoPre()},
+            pause_calculator=NaturalPauseCalculator(),
+            phoneme_planners={"no": _StubPlanner()},
+        )
+        output = tmp_path / "out.wav"
+        await rdr.render(lesson, output)
+
+        title_calls = [c for c in synth_kwargs if c["text"] == lesson.title]
+        assert len(title_calls) == 1
+        assert title_calls[0]["phonemes"] is None
+        assert title_calls[0]["voice_id"] == lesson.narrator_voice
+
+    async def test_planner_is_pure_function_of_text_for_memo(self, tmp_path):
+        """The _synth memo key is (text, voice, rate) — the plan must be a pure
+        function of text so the same key always yields the same mapping.
+
+        Two identical phrases must produce identical phoneme mappings."""
+        from app.audio.preprocessing.base import TextPreprocessor
+
+        call_count = 0
+
+        class _RecordingPlanner:
+            def plan(self, text: str) -> Mapping[str, str] | None:
+                nonlocal call_count
+                call_count += 1
+                import re
+
+                tokens = re.findall(r"[^\W\d_]+", text)
+                return {t.lower(): "X" for t in tokens} if tokens else None
+
+        lesson = Lesson(
+            title="T",
+            language_code="no",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[
+                        Phrase(text="hei", voice_id="nb-NO-PernilleNeural", language_code="no"),
+                        Phrase(text="hei", voice_id="nb-NO-PernilleNeural", language_code="no"),
+                    ],
+                )
+            ],
+        )
+        fake_audio = _make_wav_bytes()
+
+        synth_calls: list[dict] = []
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
+            synth_calls.append({"text": text, "phonemes": dict(phonemes) if phonemes else None})
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        class _NoPre(TextPreprocessor):
+            def preprocess(self, text, section_type):
+                return text
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"no": _NoPre()},
+            pause_calculator=NaturalPauseCalculator(),
+            phoneme_planners={"no": _RecordingPlanner()},
+        )
+        output = tmp_path / "out.wav"
+        await rdr.render(lesson, output)
+
+        # Planner was called for both phrases
+        assert call_count == 2
+        # The two "hei" phrases share (text, voice, rate) so the memo serves
+        # one synthesis — both phoneme dicts must be identical.
+        hei_calls = [c for c in synth_calls if c["text"] == "hei"]
+        assert len(hei_calls) == 1  # memo served the second one
+        assert hei_calls[0]["phonemes"] is not None

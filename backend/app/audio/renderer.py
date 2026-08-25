@@ -6,6 +6,7 @@ import asyncio
 import logging
 import tempfile
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,7 +19,8 @@ from app.audio.ports import TTSService
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.slicer import ChunkSlicer, SliceSpec
 from app.audio.transcode import encode_audio
-from app.models.lesson import Lesson, Section
+from app.languages import PhonemePlanner
+from app.models.lesson import Lesson, Phrase, Section
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +104,7 @@ class LessonRenderer:
         delivery_codec: str = "wav",
         delivery_bitrate: str = "28k",
         slicers: dict[str, ChunkSlicer] | None = None,
+        phoneme_planners: dict[str, PhonemePlanner] | None = None,
     ) -> None:
         self._tts = tts
         self._preprocessors = preprocessors
@@ -115,6 +118,10 @@ class LessonRenderer:
         # default, and whenever the capability gate is closed) leaves every code
         # path below unchanged.
         self._slicers = slicers or {}
+        # Keyed by language for the same reason, and empty by default: a
+        # language with no planner, or a lexicon that was never built, renders
+        # byte-for-byte as it did before <phoneme> existed.
+        self._phoneme_planners = phoneme_planners or {}
 
     def _write_audio(self, path: Path, audio: _Audio) -> None:
         """Write *audio* to *path* in the configured delivery codec.
@@ -209,7 +216,26 @@ class LessonRenderer:
         preprocessor = self._preprocessors[language_code]
         processed_texts = [preprocessor.preprocess(phrase.text, section.section_type) for phrase in section.phrases]
 
-        async def _synth(phrase_idx: int, text: str, voice_id: str, rate: str) -> Path:
+        planner = self._phoneme_planners.get(language_code)
+
+        def _phrase_phonemes(phrase: Phrase, processed_text: str) -> Mapping[str, str] | None:
+            """Compute phonemes for one phrase, or None for plain synthesis."""
+            if planner is None:
+                return None
+            # English narrator leak guard: only plan phrases whose language
+            # matches the section's render language.
+            if phrase.language_code != language_code:
+                return None
+            # Stage 2d chunks carry slicing provenance — skip them.
+            if phrase.source_word is not None and phrase.syllable_span is not None:
+                return None
+            return planner.plan(processed_text)
+
+        phoneme_maps = [_phrase_phonemes(ph, txt) for ph, txt in zip(section.phrases, processed_texts, strict=True)]
+
+        async def _synth(
+            phrase_idx: int, text: str, voice_id: str, rate: str, phonemes: Mapping[str, str] | None = None
+        ) -> Path:
             """Synthesize (or reuse) one phrase; returns its audio file path.
 
             The first requester of a given (text, voice, rate) key synthesizes it
@@ -222,7 +248,9 @@ class LessonRenderer:
                 entry = synth_memo.get(key)
                 if entry is None:
                     canonical = tmp / f"s{section_idx}_p{phrase_idx}.mp3"
-                    task = asyncio.ensure_future(self._tts.synthesize(text, voice_id, canonical, rate=rate))
+                    task = asyncio.ensure_future(
+                        self._tts.synthesize(text, voice_id, canonical, rate=rate, phonemes=phonemes)
+                    )
                     entry = (canonical, task)
                     synth_memo[key] = entry
             canonical, task = entry
@@ -247,8 +275,10 @@ class LessonRenderer:
         phrase_files = list(
             await asyncio.gather(
                 *[
-                    _synth(i, text, phrase.voice_id, phrase.rate)
-                    for i, (text, phrase) in enumerate(zip(processed_texts, section.phrases, strict=True))
+                    _synth(i, text, phrase.voice_id, phrase.rate, phonemes=ph_map)
+                    for i, (text, phrase, ph_map) in enumerate(
+                        zip(processed_texts, section.phrases, phoneme_maps, strict=True)
+                    )
                 ]
             )
         )

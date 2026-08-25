@@ -42,7 +42,7 @@ class FakeTTS:
         self._duration_ms = duration_ms
         self._rate = rate
 
-    async def synthesize(self, text: str, voice_id: str, output_path, rate: str = "+0%") -> None:
+    async def synthesize(self, text: str, voice_id: str, output_path, rate: str = "+0%", phonemes=None) -> None:
         self.calls.append((text, voice_id, rate))
         n = int(self._duration_ms / 1000.0 * self._rate)
         t = np.arange(n, dtype=np.float32) / self._rate
@@ -78,7 +78,7 @@ class NotchedTTS(FakeTTS):
     the case where refinement would destroy the bounds/syllable invariant.
     """
 
-    async def synthesize(self, text: str, voice_id: str, output_path, rate: str = "+0%") -> None:
+    async def synthesize(self, text: str, voice_id: str, output_path, rate: str = "+0%", phonemes=None) -> None:
         self.calls.append((text, voice_id, rate))
         n = int(0.100 * _RATE)
         t = np.arange(n, dtype=np.float32) / _RATE
