@@ -8,7 +8,7 @@ from app.audio.ports import TTSService
 class MockTTSService:
     """Mock implementation satisfying the TTSService Protocol."""
 
-    async def synthesize(self, text: str, voice_id: str, output_path: Path, rate: str = "+0%") -> None:
+    async def synthesize(self, text: str, voice_id: str, output_path: Path, rate: str = "+0%", phonemes=None) -> None:
         output_path.write_bytes(b"fake audio")
 
     async def list_voices(self, language_code: str | None = None) -> list[dict]:

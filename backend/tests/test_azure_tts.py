@@ -591,7 +591,7 @@ async def test_renderer_completes_through_a_throttled_tts_port(tmp_path):
         def __init__(self):
             self._semaphore = asyncio.Semaphore(settings.tts_max_concurrent_requests)
 
-        async def synthesize(self, text, voice_id, output_path, rate="+0%"):
+        async def synthesize(self, text, voice_id, output_path, rate="+0%", phonemes=None):
             nonlocal in_flight, observed_max
             async with self._semaphore:
                 in_flight += 1

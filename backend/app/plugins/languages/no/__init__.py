@@ -15,6 +15,7 @@ from app.plugins.languages.no.norwegian_breakdown import (
     flat_syllables,
     slow_norwegian_word,
 )
+from app.plugins.languages.no.phoneme_plan import create_phoneme_planner
 from app.plugins.languages.no.preprocessor import NorwegianPreprocessor
 from app.plugins.languages.no.syllabify import syllabify_norwegian_word
 
@@ -77,5 +78,6 @@ register(
         ),
         a1_morphology=NORWEGIAN_A1_MORPHOLOGY,
         lexicon_factory=create_nst_lexicon,
+        phoneme_planner_factory=create_phoneme_planner,
     ),
 )

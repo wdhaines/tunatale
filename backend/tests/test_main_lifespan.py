@@ -316,6 +316,50 @@ async def test_lifespan_wires_slicers_when_the_capability_gate_is_open(tmp_path,
         assert set(slicers) <= set(test_app.state.renderer._preprocessors)
 
 
+async def test_lifespan_wires_phoneme_planners_for_a_language_with_a_lexicon(tmp_path, monkeypatch):
+    """The renderer must actually receive planners, or stage 2c is inert.
+
+    Same shape, and the same reason, as the slicer test above: every unit test
+    below this passes with ``_phoneme_planners`` empty, so this is the only
+    place that proves startup connects them and that ``<phoneme>`` reaches a
+    real render at all.
+
+    Norwegian is pinned rather than inherited because only a language with a
+    pronunciation lexicon gets a planner — on a Slovene-default install this
+    would assert nothing and pass for the wrong reason (``project_local_env_
+    diverges_from_ci``). It does NOT depend on the built lexicon database: the
+    factory always returns a planner, and a missing build degrades inside it.
+    """
+    from app.config import settings
+    from app.main import lifespan
+
+    monkeypatch.setattr(settings, "database_urls", {"no": f"sqlite:///{tmp_path / 'no.db'}"})
+    monkeypatch.setattr(settings, "target_language", "no")
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setattr(settings, "llm_mode", "mock")
+
+    test_app = FastAPI()
+    async with lifespan(test_app):
+        planners = test_app.state.renderer._phoneme_planners
+        assert set(planners) == {"no"}, "Norwegian has a lexicon but the renderer got no planner for it"
+        assert set(planners) <= set(test_app.state.renderer._preprocessors)
+
+
+async def test_lifespan_leaves_phoneme_planners_empty_for_a_language_without_one(tmp_path, monkeypatch):
+    """Slovene has no pronunciation lexicon; its render path is untouched."""
+    from app.config import settings
+    from app.main import lifespan
+
+    monkeypatch.setattr(settings, "database_urls", {"sl": f"sqlite:///{tmp_path / 'sl.db'}"})
+    monkeypatch.setattr(settings, "target_language", "sl")
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setattr(settings, "llm_mode", "mock")
+
+    test_app = FastAPI()
+    async with lifespan(test_app):
+        assert test_app.state.renderer._phoneme_planners == {}
+
+
 async def test_lifespan_leaves_slicers_empty_when_not_installed(tmp_path, monkeypatch):
     """Default (no alignment packages) renders exactly as it did before.
 

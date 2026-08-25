@@ -6,6 +6,7 @@ import asyncio
 import logging
 import tempfile
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,9 +19,14 @@ from app.audio.ports import TTSService
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.slicer import ChunkSlicer, SliceSpec
 from app.audio.transcode import encode_audio
-from app.models.lesson import Lesson, Section
+from app.languages import PhonemePlanner
+from app.models.lesson import Lesson, Phrase, Section
 
 logger = logging.getLogger(__name__)
+
+# (text, voice_id, rate, phoneme mapping) — the mapping belongs in the key
+# because it, not the text alone, determines the audio. See _synth.
+_MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None]
 
 _SAMPLE_DTYPE = "float32"
 _WAV_SUBTYPE = "PCM_16"
@@ -102,6 +108,7 @@ class LessonRenderer:
         delivery_codec: str = "wav",
         delivery_bitrate: str = "28k",
         slicers: dict[str, ChunkSlicer] | None = None,
+        phoneme_planners: dict[str, PhonemePlanner] | None = None,
     ) -> None:
         self._tts = tts
         self._preprocessors = preprocessors
@@ -115,6 +122,10 @@ class LessonRenderer:
         # default, and whenever the capability gate is closed) leaves every code
         # path below unchanged.
         self._slicers = slicers or {}
+        # Keyed by language for the same reason, and empty by default: a
+        # language with no planner, or a lexicon that was never built, renders
+        # byte-for-byte as it did before <phoneme> existed.
+        self._phoneme_planners = phoneme_planners or {}
 
     def _write_audio(self, path: Path, audio: _Audio) -> None:
         """Write *audio* to *path* in the configured delivery codec.
@@ -180,7 +191,7 @@ class LessonRenderer:
         tmp: Path,
         section_idx: int,
         language_code: str,
-        synth_memo: dict[tuple[str, str, str], tuple[Path, asyncio.Task]],
+        synth_memo: dict[_MemoKey, tuple[Path, asyncio.Task]],
         memo_lock: asyncio.Lock,
     ) -> tuple[_Audio, list[tuple[int, int, int]]]:
         """Render a single section to an audio buffer (no boundary silence).
@@ -209,7 +220,34 @@ class LessonRenderer:
         preprocessor = self._preprocessors[language_code]
         processed_texts = [preprocessor.preprocess(phrase.text, section.section_type) for phrase in section.phrases]
 
-        async def _synth(phrase_idx: int, text: str, voice_id: str, rate: str) -> Path:
+        # Stage 2d: sub-word chunks get IPA from the lexicon; whole phrases
+        # and whole words are the TTS's job.
+        planner = self._phoneme_planners.get(language_code)
+
+        def _phrase_phonemes(phrase: Phrase) -> Mapping[str, str] | None:
+            """Compute phonemes for a sub-word chunk, or None for plain synthesis."""
+            if planner is None:
+                return None
+            if phrase.language_code != language_code:
+                return None
+            if phrase.source_word is None or phrase.syllable_span is None:
+                return None
+            result = planner.plan_chunk(phrase.source_word, phrase.syllable_span, upos=phrase.upos or None)
+            if result is None:
+                return None
+            return {phrase.text.lower(): result}
+
+        ipa_indices: set[int] = set()
+        phoneme_maps: list[Mapping[str, str] | None] = []
+        for i, ph in enumerate(section.phrases):
+            ph_map = _phrase_phonemes(ph)
+            phoneme_maps.append(ph_map)
+            if ph_map is not None:
+                ipa_indices.add(i)
+
+        async def _synth(
+            phrase_idx: int, text: str, voice_id: str, rate: str, phonemes: Mapping[str, str] | None = None
+        ) -> Path:
             """Synthesize (or reuse) one phrase; returns its audio file path.
 
             The first requester of a given (text, voice, rate) key synthesizes it
@@ -217,12 +255,24 @@ class LessonRenderer:
             the task; later requesters await that same task and reuse the file.
             the TTS adapter's _semaphore still caps global TTS concurrency.
             """
-            key = (text, voice_id, rate)
+            # The mapping is PART of the key, not an attribute of the text.
+            # Two phrases can share (text, voice, rate) and still deserve
+            # different audio: the same surface string appears as a standalone
+            # buildup rung (planned) and as a breakdown chunk carrying slicing
+            # provenance (never planned). Keying on the triple alone lets
+            # whichever is submitted first serve both — measured on a real
+            # lesson, "en" collided six ways and the plain render won, so the
+            # planned rung silently played un-tagged audio. The inverse is
+            # worse: a provenance chunk inheriting IPA audio and then being
+            # sliced. Same class as 2b's cache-key collision, one level up.
+            key = (text, voice_id, rate, tuple(sorted(phonemes.items())) if phonemes else None)
             async with memo_lock:
                 entry = synth_memo.get(key)
                 if entry is None:
                     canonical = tmp / f"s{section_idx}_p{phrase_idx}.mp3"
-                    task = asyncio.ensure_future(self._tts.synthesize(text, voice_id, canonical, rate=rate))
+                    task = asyncio.ensure_future(
+                        self._tts.synthesize(text, voice_id, canonical, rate=rate, phonemes=phonemes)
+                    )
                     entry = (canonical, task)
                     synth_memo[key] = entry
             canonical, task = entry
@@ -247,8 +297,10 @@ class LessonRenderer:
         phrase_files = list(
             await asyncio.gather(
                 *[
-                    _synth(i, text, phrase.voice_id, phrase.rate)
-                    for i, (text, phrase) in enumerate(zip(processed_texts, section.phrases, strict=True))
+                    _synth(i, text, phrase.voice_id, phrase.rate, phonemes=ph_map)
+                    for i, (text, phrase, ph_map) in enumerate(
+                        zip(processed_texts, section.phrases, phoneme_maps, strict=True)
+                    )
                 ]
             )
         )
@@ -257,7 +309,7 @@ class LessonRenderer:
         # Offsets are accumulated in frames (not ms) to avoid cumulative drift.
         # Offload the sync assembly (file I/O + numpy) so the event loop stays
         # responsive.
-        play_files = await self._apply_slicing(section, phrase_files, tmp, section_idx, language_code)
+        play_files = await self._apply_slicing(section, phrase_files, tmp, section_idx, language_code, ipa_indices)
 
         assembled = await asyncio.to_thread(
             self._assemble_section_audio,
@@ -275,8 +327,13 @@ class LessonRenderer:
         tmp: Path,
         section_idx: int,
         language_code: str,
+        ipa_indices: set[int] | None = None,
     ) -> list[Path]:
         """Replace provenance-carrying chunks with audio cut from their own word.
+
+        A chunk that received IPA from the lexicon is NOT sliced: the slicer
+        replaces the phrase's audio with a cut from a whole-word parent render,
+        so slicing it would synthesize correct IPA and then discard it.
 
         Returns the files to PLAY. ``phrase_files`` (the isolated TTS renders)
         stay both the fallback and the pacing reference, so a phrase the slicer
@@ -287,8 +344,11 @@ class LessonRenderer:
         if slicer is None:
             return phrase_files
 
+        skip = ipa_indices if ipa_indices is not None else set()
         play_files = list(phrase_files)
         for i, phrase in enumerate(section.phrases):
+            if i in skip:
+                continue
             if phrase.source_word is None or phrase.syllable_span is None:
                 continue
             start, stop = phrase.syllable_span
@@ -337,7 +397,7 @@ class LessonRenderer:
             # sections (e.g. the shared L2 line + English gloss in the translated
             # and en_translated sections) instead of re-running TTS for each.
             t0 = time.perf_counter()
-            synth_memo: dict[tuple[str, str, str], tuple[Path, asyncio.Task]] = {}
+            synth_memo: dict[_MemoKey, tuple[Path, asyncio.Task]] = {}
             memo_lock = asyncio.Lock()
             section_tasks = [
                 asyncio.ensure_future(

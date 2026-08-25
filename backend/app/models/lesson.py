@@ -60,6 +60,7 @@ class Phrase:
     role: str = ""
     source_word: str | None = None
     syllable_span: tuple[int, int] | None = None
+    upos: str = ""
 
 
 @dataclass
@@ -110,6 +111,7 @@ class Lesson:
                             "role": p.role,
                             "source_word": p.source_word,
                             "syllable_span": list(p.syllable_span) if p.syllable_span is not None else None,
+                            "upos": p.upos,
                         }
                         for p in s.phrases
                     ],

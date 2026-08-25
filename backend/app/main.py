@@ -24,7 +24,7 @@ from app.config import prod_profile_problems, settings  # noqa: E402
 from app.generation.pipeline import LessonPipeline  # noqa: E402
 from app.generation.planner import CurriculumPlanner  # noqa: E402
 from app.generation.story import StoryGenerator  # noqa: E402
-from app.languages import get_language, get_preprocessor  # noqa: E402
+from app.languages import get_language, get_phoneme_planner, get_preprocessor  # noqa: E402
 from app.llm.activity import ActivityLog  # noqa: E402
 from app.llm.cassette import CassetteLLMClient  # noqa: E402
 from app.llm.client import LLMClient, reasoning_params_for_model  # noqa: E402
@@ -196,6 +196,13 @@ async def lifespan(app: FastAPI):
     slicers = build_slicers(preprocessors, tts, settings)
     if slicers:
         logger.info("Syllable slicing enabled for: %s", ", ".join(sorted(slicers)))
+    # Empty for a language with no pronunciation lexicon; a language that HAS
+    # one but whose database was never built degrades inside the planner (one
+    # warning, then plain synthesis), because the database is a build artifact
+    # and a fresh clone must still render.
+    phoneme_planners = {code: planner for code in db_map if (planner := get_phoneme_planner(code)) is not None}
+    if phoneme_planners:
+        logger.info("Lexicon pronunciation enabled for: %s", ", ".join(sorted(phoneme_planners)))
     app.state.renderer = LessonRenderer(
         tts=tts,
         preprocessors=preprocessors,
@@ -203,6 +210,7 @@ async def lifespan(app: FastAPI):
         delivery_codec=settings.audio_delivery_codec,
         delivery_bitrate=settings.audio_delivery_bitrate,
         slicers=slicers,
+        phoneme_planners=phoneme_planners,
     )
     # A setting since Deploy P0.1, so a container can put audio on its data
     # volume. The default reproduces the former `_BACKEND_DIR / "output/audio"`.
