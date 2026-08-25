@@ -137,17 +137,40 @@ class NstLexicon:
             )
         )
 
-    def resolve(self, word: str, upos: str | None = None) -> LexiconResolution:
-        """Resolve *word* (with optional UPOS hint) to ONE typed outcome."""
+    def _finalists(self, word: str) -> tuple[str, list[tuple[str, str, int]]]:
+        """(normalised word, the minimum-certainty rows) — the shared front half.
+
+        Certainty reduction happens FIRST, before any POS narrowing, and both
+        :meth:`resolve` and :meth:`candidate_transcriptions` must apply it
+        identically or they would disagree about what counts as ambiguous.
+        """
         w = word.strip()
         rows = self._rows(w)
         if not rows and w.lower() != w:
             rows = self._rows(w.lower())
         if not rows:
-            return LexiconResolution(LexiconOutcome.ABSENT, w)
-
+            return w, []
         floor = min(certainty for _pos, _transcription, certainty in rows)
-        finalists = [row for row in rows if row[2] == floor]
+        return w, [row for row in rows if row[2] == floor]
+
+    def candidate_transcriptions(self, word: str) -> frozenset[str]:
+        """Every reading :meth:`resolve` would have had to choose between.
+
+        Empty when the word is absent. Exposed so a caller that needs only PART
+        of a word can ask whether the ambiguity actually touches that part: two
+        readings of ``sporet`` differ at the second syllable (``rə`` vs ``rət``)
+        and agree at the first, so a chunk covering only the first is not
+        ambiguous at all. Resolving the whole word remains a refusal to guess.
+        """
+        _w, finalists = self._finalists(word)
+        return frozenset(transcription for _pos, transcription, _certainty in finalists)
+
+    def resolve(self, word: str, upos: str | None = None) -> LexiconResolution:
+        """Resolve *word* (with optional UPOS hint) to ONE typed outcome."""
+        w, finalists = self._finalists(word)
+        if not finalists:
+            return LexiconResolution(LexiconOutcome.ABSENT, w)
+        rows = self._rows(w) or self._rows(w.lower())
         readings = {transcription for _pos, transcription, _certainty in finalists}
         if len(readings) == 1:
             transcription = next(iter(readings))

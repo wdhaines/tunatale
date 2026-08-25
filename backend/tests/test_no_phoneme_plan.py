@@ -184,21 +184,89 @@ class TestSyllableCountMismatch:
         assert p.plan_chunk("rett", (0, 1)) is None
 
 
+class TestSpanLevelDisambiguation:
+    """An ambiguity that does not touch the requested span is not an ambiguity.
+
+    The rows are the REAL NST readings of ``sporet``: as a definite neuter noun
+    it ends /ə/, as an adjective or past participle /ət/. They AGREE on the
+    first syllable (differing only in stress) and DISAGREE on the second, which
+    is the whole point — the first syllable is rescuable and the second is not.
+    """
+
+    ROWS = [
+        ("sporet", "NN", '"spu:$r@', 1),
+        ("sporet", "JJ", '""spu:$r@t', 1),
+        ("sporet", "VB", '""spu:$r@t', 1),
+    ]
+
+    def test_ambiguous_word_still_resolves_a_span_the_readings_agree_on(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path, self.ROWS)
+        assert p.plan_chunk("sporet", (0, 1)) == "ˈspuː"
+
+    def test_span_where_readings_differ_returns_none(self, tmp_path: Path) -> None:
+        """The -et ending: /ə/ (noun) vs /ət/ (participle). Never guess."""
+        p = _planner(tmp_path, self.ROWS)
+        assert p.plan_chunk("sporet", (1, 2)) is None
+
+    def test_whole_word_still_none_even_when_spans_agree(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path, self.ROWS)
+        assert p.plan_chunk("sporet", (0, 2)) is None
+
+    def test_lower_certainty_readings_are_excluded_like_resolve_does(self, tmp_path: Path) -> None:
+        """candidate_transcriptions must apply the SAME certainty floor as resolve.
+
+        Both entry points reduce to minimum certainty BEFORE anything else. If
+        the candidate set skipped that step it would compare readings resolve
+        never considered, and spans that are genuinely unambiguous would start
+        falling back.
+
+        The certainty-2 row carries a real, convertible transcription borrowed
+        from another word — it has to differ at syllable 0 for this to
+        discriminate, and inventing X-SAMPA is how an earlier test in this file
+        ended up passing at the wrong gate.
+        """
+        rows = [
+            ("sporet", "NN", '"spu:$r@', 1),
+            ("sporet", "VB", '""spu:$r@t', 1),
+            ("sporet", "JJ", '""hA:$g@n', 2),  # excluded by the floor
+        ]
+        p = _planner(tmp_path, rows)
+        assert p.plan_chunk("sporet", (0, 1)) == "ˈspuː"
+
+    def test_unambiguous_word_is_unaffected(self, tmp_path: Path) -> None:
+        """The single-reading path must not change behaviour."""
+        p = _planner(tmp_path)
+        assert p.plan_chunk("hagen", (1, 2)) == "gən"
+
+
 class TestAbsentWord:
     """Word absent from the lexicon returns None."""
 
     def test_absent_returns_none(self, tmp_path: Path) -> None:
+        """A MULTI-syllable absent word with a SUB-word span.
+
+        "zzqqxx" is one syllable, so span (0,1) is the whole word and the
+        whole-word rule would answer None first — leaving the ABSENT branch
+        untested. "zzqqxxala" syllabifies as ['zzqqxxa', 'la'], so (0,1) is a
+        genuine sub-word span and the lexicon actually gets consulted.
+        """
         p = _planner(tmp_path)
-        assert p.plan_chunk("zzqqxx", (0, 1)) is None
+        assert p.plan_chunk("zzqqxxala", (0, 1)) is None
 
 
 class TestAmbiguousNoPos:
     """AMBIGUOUS_NO_POS returns None."""
 
     def test_ambiguous_returns_none(self, tmp_path: Path) -> None:
-        """galt: 2 entries, 2 readings, no POS → AMBIGUOUS_NO_POS."""
+        """huset: 2 readings that DISAGREE at the requested syllable.
+
+        Not "galt": it is monosyllabic, so its only span is the whole word and
+        the test would pass at the whole-word rule without ever reaching the
+        ambiguity handling. "huset" splits ['hu', 'set'] and its readings differ
+        at (1,2) — /sə/ (definite noun) vs /sət/ (participle).
+        """
         p = _planner(tmp_path)
-        assert p.plan_chunk("galt", (0, 1)) is None
+        assert p.plan_chunk("huset", (1, 2)) is None
 
 
 class TestUnknownSegmentError:
@@ -291,3 +359,12 @@ class TestUnbuiltLexicon:
         p = NorwegianPhonemePlanner(missing_db)
         assert p.plan_chunk("anything", (0, 1)) is None
         assert p.plan_chunk("something else", (0, 1)) is None
+
+
+class TestUnsyllabifiableWord:
+    """A word the syllabifier cannot split gives None before any lookup."""
+
+    def test_empty_source_word_returns_none(self, tmp_path: Path) -> None:
+        """flat_syllables("") is [], so there is no syllable to select."""
+        p = _planner(tmp_path)
+        assert p.plan_chunk("", (0, 1)) is None
