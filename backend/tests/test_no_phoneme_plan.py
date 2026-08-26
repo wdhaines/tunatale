@@ -85,27 +85,30 @@ class TestPhonemePlannerProtocol:
 
 
 class TestSkisporet:
-    """skisporet is a COMPOUND (ski+sporet), and compounds do not adopt lexicon
-    boundaries yet (deferred — see the compound note in norwegian_breakdown).
-    Its repo split therefore differs from the lexicon's, the identity guard
-    rejects, and no sub-word span gets IPA. When compound adoption lands these
-    become the IPA values again: ˈʃɪː / ˌspuː / rə / ˌspuː.rə."""
+    """skisporet is a COMPOUND (ski+sporet) and it NOW adopts lexicon boundaries.
+
+    Per-part resolution (tunatale-oqxz) resolves each buildup unit against the
+    lexicon as the word it is — ski + spo|ret — instead of slicing the whole
+    compound's connected-speech transcription. Its repo split therefore agrees
+    with the lexicon's and every sub-word span gets IPA. The previous version of
+    this class asserted None on all four spans and predicted, in its own
+    docstring, exactly the values now asserted below."""
 
     def test_span_0_1(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
-        assert p.plan_chunk("skisporet", (0, 1)) is None
+        assert p.plan_chunk("skisporet", (0, 1)) == "ˈʃɪː"
 
     def test_span_1_2(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
-        assert p.plan_chunk("skisporet", (1, 2)) is None
+        assert p.plan_chunk("skisporet", (1, 2)) == "ˌspuː"
 
     def test_span_2_3(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
-        assert p.plan_chunk("skisporet", (2, 3)) is None
+        assert p.plan_chunk("skisporet", (2, 3)) == "rə"
 
     def test_span_1_3(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
-        assert p.plan_chunk("skisporet", (1, 3)) is None
+        assert p.plan_chunk("skisporet", (1, 3)) == "ˌspuː.rə"
 
     def test_whole_word_returns_none(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
@@ -214,22 +217,19 @@ class TestFinne:
 class TestSyllableCountMismatch:
     """Repo vs lexicon syllable-count mismatch returns None (rule 4)."""
 
-    def test_etterforskerens_every_span_returns_none(self, tmp_path: Path) -> None:
-        """etterforskerens: repo 5 syllables vs lexicon 4 -> every span is None.
-
-        The transcription is the REAL NST row, not an invented one. An earlier
-        version of this test used made-up X-SAMPA that raised
-        UnknownSegmentError, so it passed at the conversion gate and never
-        reached the syllable-count guard it was written to pin — the guard
-        survived sabotage untouched. Pull real rows from the extract.
-        """
-        rows = [("etterforskerens", "NN", '""E$t@r$%fO$s`k@rn`s`', 1)]
-        p = _planner(tmp_path, rows)
-        # SUB-WORD spans, so the whole-word rule cannot mask the count guard.
-        assert p.plan_chunk("etterforskerens", (0, 1)) is None
-        assert p.plan_chunk("etterforskerens", (1, 3)) is None
-        assert p.plan_chunk("etterforskerens", (2, 4)) is None
-        assert p.plan_chunk("etterforskerens", (0, 5)) is None
+    # NOTE: this class used to pin 'etterforskerens' as a real-word example of
+    # the count mismatch (repo 5 vs lexicon 4). Per-part resolution retired it:
+    # its parts now resolve to e|tter + fo|rskerens, so repo and lexicon agree
+    # at 4 and there is no mismatch left to pin.
+    #
+    # No real word replaces it, and that is a FACT ABOUT THE GUARD rather than a
+    # gap in the fixtures: orthographic_syllables DERIVES the orthographic split
+    # from the phone syllables, so len(split) == len(ipa_syllables) holds by
+    # construction for anything the aligner accepts. The count guard is
+    # therefore unreachable with a self-consistent lexicon — it guards against
+    # an INCONSISTENT one, where resolve() hands back a different transcription
+    # than the split was cut from. Only a synthetic fixture can express that,
+    # which is what test_mismatch_in_fixture below does.
 
     def test_mismatch_in_fixture(self, tmp_path: Path) -> None:
         """1 repo syllable vs 2 lexicon syllables.
@@ -399,7 +399,7 @@ class TestLexiconIsOpenedOnce:
         first = p._lexicon
         assert first is not None
 
-        assert p.plan_chunk("skisporet", (0, 1)) is None
+        assert p.plan_chunk("snøen", (0, 1)) == "ˈsnøː"
         assert p._lexicon is first, "the planner reopened the lexicon on the second call"
 
 

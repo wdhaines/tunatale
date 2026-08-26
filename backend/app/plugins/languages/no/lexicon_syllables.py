@@ -110,6 +110,34 @@ _add("nn", "n̩")
 _add("ll", "l̩")
 _add("mm", "m̩")
 
+# East Norwegian retroflex assimilation ACROSS a written-but-unpronounced letter.
+# An r fuses with a FOLLOWING coronal even when the spelling keeps a vowel
+# between them: sporene is /'spu:n`=@/, faren /'fA:n`=/, morgen /'mo:n`=/. The
+# plain "rn"/"rl" graphemes above cannot match those, because a grapheme's
+# letters must be ADJACENT -- so the r aligned to nothing, and a silent letter
+# sitting immediately before a cut is exactly what REFUSE_SILENT_AT_CUT rejects.
+# The whole word was therefore refused, which is why 'sporene' got no IPA.
+#
+# Measured over the first 20000 wordlist words: 182 words newly align, ZERO lose
+# their alignment, and only 3 splits change (læreren/føreren/ordføreren, which
+# move from lære|ren to læ|reren -- a correction: the old path needed two silent
+# letters at cost 8, the new one costs 0, and /'l{:r@n`/ does divide after the
+# long vowel).
+for _v in "aeiouyæøå":
+    _add("r" + _v + "n", "ɳ̩", "ɳ")
+    _add("r" + _v + "l", "ɭ̩", "ɭ")
+    _add("r" + _v + "s", "ʂ")
+    _add("r" + _v + "t", "ʈ")
+    _add("r" + _v + "d", "ɖ")
+# Two letters may intervene (morgen, hjernen). These are enumerated rather than
+# looped: the pattern is not productive enough to generate safely, and _MAXG is
+# derived from TABLE below, so a longer grapheme widens the DP for every word.
+_add("rgen", "ɳ̩")
+_add("rnen", "ɳ̩")
+_add("rden", "ɖ̩")
+_add("rten", "ʈ̩")
+_add("rgel", "ɭ̩")
+
 _MAXG = max(len(g) for g in TABLE)
 SILENT_COST = 4
 

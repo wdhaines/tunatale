@@ -628,8 +628,12 @@ class TestNorwegianStoryGeneration:
         )
         kp = next(s for s in lesson.sections if s.section_type == SectionType.KEY_PHRASES)
         texts = [p.text for p in kp.phrases]
-        assert "mor" in texts
-        assert "gen" in texts
+        # 'god morgen' breaks down at the LEXICON's boundaries: morgen is
+        # /ˈmoː.ɳ̩/, so mo|rgen — the r carries the retroflex it causes and goes
+        # with the second syllable (tunatale-4rj5). It was mor|gen while the
+        # aligner refused the word and the repo syllabifier stood in.
+        assert "mo" in texts
+        assert "rgen" in texts
 
     async def test_every_norwegian_phrase_in_every_section_uses_an_nb_no_voice(self, norwegian_generator, norwegian):
         """No Slovene voice leaks into ANY section of a Norwegian lesson.
