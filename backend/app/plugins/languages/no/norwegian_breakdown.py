@@ -18,6 +18,7 @@ _INFLECTIONS: frozenset[str] = frozenset(
         "a",
         "er",
         "ene",
+        "ens",
         "ne",
         "n",
         "t",
@@ -813,6 +814,24 @@ def _build_compound_sequence_spans(word: str, morphemes: list[str]) -> list[Brea
     return seq
 
 
+# Sentence-final punctuation stripped from individual words before they enter
+# segment_compound / lexicon_syllable_split / syllabify_morpheme.  Only the
+# trailing end is affected; internal punctuation (apostrophes, hyphens) and
+# mid-word commas are untouched.  Whole-phrase bookend chunks retain the
+# original punctuation.
+_TRAILING_SENTENCE_PUNCT = ".,!?;:"
+
+
+def _strip_trailing_punct(word: str) -> str:
+    """Strip sentence-final punctuation from a word for breakdown processing.
+
+    Returns the original word unchanged when stripping would empty it
+    (an all-punctuation token like "..." stays whole).
+    """
+    stripped = word.rstrip(_TRAILING_SENTENCE_PUNCT)
+    return stripped or word
+
+
 def build_norwegian_breakdown_spans(phrase: str) -> list[BreakdownChunk]:
     text = " ".join(phrase.strip().split())
     words = text.split()
@@ -823,37 +842,51 @@ def build_norwegian_breakdown_spans(phrase: str) -> list[BreakdownChunk]:
 
     if len(words) == 1:
         word = words[0]
-        lexicon_split = lexicon_syllable_split(word)
-        morphemes = segment_compound(word)
+        core_word = _strip_trailing_punct(word)
+        lexicon_split = lexicon_syllable_split(core_word)
+        morphemes = segment_compound(core_word)
         if len(morphemes) >= 2:
             return _build_compound_sequence_spans(text, morphemes)
-        syllables = syllabify_morpheme(word)
+        syllables = syllabify_morpheme(core_word)
         if lexicon_split is not None:
             syllables = lexicon_split
         if len(syllables) <= 1:
             return [BreakdownChunk(text, None, None), BreakdownChunk(text, None, None)]
-        return _build_syllable_sequence_spans(text, syllables, respell=lexicon_split is None)
+        result = _build_syllable_sequence_spans(text, syllables, respell=lexicon_split is None)
+        # Fix source_word for inner chunks: use core_word (punctuation-stripped)
+        # while bookend text stays as the original phrase with punctuation.
+        return [
+            result[0],
+            *[BreakdownChunk(c.text, core_word, c.span) for c in result[1:-1]],
+            result[-1],
+        ]
 
     breakdown: list[BreakdownChunk] = [BreakdownChunk(text, None, None)]
+    stripped_words = [_strip_trailing_punct(w) for w in words]
     for word_index in range(len(words) - 1, -1, -1):
-        word = words[word_index]
-        lexicon_split = lexicon_syllable_split(word)
-        morphemes = segment_compound(word)
+        core_word = stripped_words[word_index]
+        lexicon_split = lexicon_syllable_split(core_word)
+        morphemes = segment_compound(core_word)
         if len(morphemes) >= 2:
-            word_seq = _build_compound_sequence_spans(word, morphemes)
+            word_seq = _build_compound_sequence_spans(core_word, morphemes)
             word_seq.pop(0)
             word_seq.pop()
             breakdown.extend(word_seq)
         else:
-            syllables = syllabify_morpheme(word)
+            syllables = syllabify_morpheme(core_word)
             if lexicon_split is not None:
                 syllables = lexicon_split
             if len(syllables) > 1:
-                breakdown.extend(_build_syllable_inner_spans(syllables, word, respell=lexicon_split is None))
+                breakdown.extend(_build_syllable_inner_spans(syllables, core_word, respell=lexicon_split is None))
             else:
-                breakdown.append(BreakdownChunk(word, None, None))
+                breakdown.append(BreakdownChunk(core_word, None, None))
 
         if word_index < len(words) - 1:
+            # Partial rungs keep the ORIGINAL punctuation: they are phrases, not
+            # words, and stripping there deletes an internal sentence break
+            # ("Ja. I dag ..." -> "Ja I dag ...", a run-on the TTS mis-prosodies)
+            # or a comma pause. Only the per-WORD chunks below the phrase level
+            # are punctuation-stripped (tunatale-7vxv, tunatale-3q0u).
             partial = " ".join(words[word_index:])
             if partial != text:
                 breakdown.append(BreakdownChunk(partial, None, None))

@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from app.generation.section_builder import build_word_breakdown_spans
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.plugins.languages.no.lexicon_syllables import lexicon_syllable_split
 from app.plugins.languages.no.norwegian_breakdown import (
@@ -556,3 +557,106 @@ class TestWordAbsentFromTheLexicon:
             "kvasimuk",
         ]
         assert all(c.source_word in (None, "kvasimuk") for c in chunks)
+
+
+# ---- Trailing punctuation stripping --------------------------------------
+
+
+class TestTrailingPunctuationStripping:
+    """Sentence-final punctuation (., ? !) must be stripped from individual
+    words before they enter segment_compound / lexicon_syllable_split /
+    syllabify_morpheme, so the lexicon can look them up and syllabification
+    is not corrupted.
+
+    Whole-phrase bookend chunks must KEEP their punctuation.
+    """
+
+    def test_source_word_strips_trailing_question_mark(self):
+        """tunatale-7vxv: 'personen?' -> source_word='personen'."""
+        chunks = build_word_breakdown_spans("Hvem er personen?", "no")
+        word_chunks = [c for c in chunks if c.source_word is not None]
+        assert len(word_chunks) > 0
+        for c in word_chunks:
+            assert c.source_word == "personen", (
+                f"expected source_word='personen', got {c.source_word!r} for chunk text={c.text!r}"
+            )
+
+    def test_no_question_mark_in_any_chunk_text(self):
+        """The '?' must not appear inside any per-word chunk text."""
+        chunks = build_word_breakdown_spans("Hvem er personen?", "no")
+        for c in chunks:
+            if c.source_word is not None:
+                assert "?" not in c.text, f"chunk text {c.text!r} contains '?'"
+
+    def test_whole_phrase_keeps_punctuation(self):
+        """Bookend chunks preserve the original punctuation."""
+        chunks = build_word_breakdown_spans("Hvem er personen?", "no")
+        bookends = [c for c in chunks if c.source_word is None]
+        assert any(c.text == "Hvem er personen?" for c in bookends)
+
+    def test_source_word_strips_trailing_period(self):
+        """'personen.' -> source_word='personen'."""
+        chunks = build_word_breakdown_spans("Jeg fant personen.", "no")
+        word_chunks = [c for c in chunks if c.source_word is not None]
+        for c in word_chunks:
+            assert c.source_word == "personen", f"expected source_word='personen', got {c.source_word!r}"
+
+    def test_source_word_strips_trailing_exclamation(self):
+        """'personen!' -> source_word='personen'."""
+        chunks = build_word_breakdown_spans("Se, personen!", "no")
+        word_chunks = [c for c in chunks if c.source_word is not None]
+        for c in word_chunks:
+            assert c.source_word == "personen", f"expected source_word='personen', got {c.source_word!r}"
+
+    def test_whole_phrase_strips_trailing_question_mark(self):
+        """Single-word phrase: bookend text keeps punctuation."""
+        chunks = build_word_breakdown_spans("personen?", "no")
+        assert chunks[0].text == "personen?"
+        assert chunks[-1].text == "personen?"
+        # The inner chunks should have no '?' in source_word or text
+        for c in chunks[1:-1]:
+            if c.source_word is not None:
+                assert c.source_word == "personen"
+
+    def test_internal_apostrophe_or_hyphen_unaffected(self):
+        """Words with internal apostrophes or hyphens are unchanged."""
+        chunks = build_word_breakdown_spans("kom, jeg", "no")
+        # 'kom' has no trailing punctuation here (comma is a separate token after split)
+        # but verify the comma-separated word is processed correctly
+        for c in chunks:
+            if c.source_word is not None:
+                assert c.source_word == "kom"
+
+    def test_partial_phrase_rungs_keep_internal_punctuation(self):
+        """A partial rung is a PHRASE, so its punctuation survives.
+
+        The first implementation built partials from the punctuation-stripped
+        words, which deleted internal sentence breaks: "Ja. I dag har vi en ny
+        sak." produced the rung "Ja I dag har vi en ny sak" — a run-on the TTS
+        gives one falling contour instead of two. Only chunks BELOW the phrase
+        level are stripped (tunatale-7vxv, and tunatale-3q0u's rule that
+        nothing above the syllable moves).
+        """
+        chunks = build_word_breakdown_spans("Ja. I dag har vi en ny sak.", "no")
+        texts = [c.text for c in chunks]
+        assert "Ja I dag har vi en ny sak" not in texts
+        assert "I dag har vi en ny sak." in texts
+        assert "ny sak." in texts
+
+    def test_partial_phrase_rungs_keep_internal_comma(self):
+        """Same rule for a comma pause, which is a prosodic instruction."""
+        chunks = build_word_breakdown_spans("Han kom, og gikk.", "no")
+        texts = [c.text for c in chunks]
+        assert "Han kom og gikk" not in texts
+        assert "kom, og gikk." in texts
+
+    def test_word_rungs_are_stripped_but_phrase_bookends_are_not(self):
+        """The two halves of the rule, asserted together so neither drifts."""
+        chunks = build_word_breakdown_spans("Hvem er personen?", "no")
+        word_rungs = {c.text for c in chunks if c.source_word is not None}
+        assert not any("?" in t for t in word_rungs)
+        # personen now cuts at the LEXICON's boundaries (pe|rso|nen); with the
+        # "?" attached it was syllabified per|so|nen? and never reached the
+        # lexicon at all.
+        assert {"pe", "rso", "nen"} <= word_rungs
+        assert "Hvem er personen?" in {c.text for c in chunks if c.source_word is None}

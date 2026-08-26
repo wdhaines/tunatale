@@ -162,6 +162,51 @@ def test_segment_compound_politiet_no_gibberish():
     assert segment_compound("politiet") == ["politiet"]
 
 
+def test_genitive_ens_collapses_onto_stem_in_buildup():
+    """tunatale-95zt: genitive -ens merges back onto the final stem.
+
+    'ens' is a real Norwegian adjective but it is NOT a compound constituent.
+    Merging it onto the stem (etterforskerens -> etter|forskerens) is consistent
+    with how every other trailing inflection is already handled.
+    """
+    from app.plugins.languages.no.norwegian_breakdown import (
+        _INFLECTIONS,
+        _compound_buildup_units,
+    )
+
+    assert "ens" in _INFLECTIONS
+
+    # The decisive pair: one letter apart, same treatment
+    seg_en = segment_compound("etterforskeren")
+    seg_ens = segment_compound("etterforskerens")
+    units_en = _compound_buildup_units(seg_en)
+    units_ens = _compound_buildup_units(seg_ens)
+    assert [u for u, _ in units_en] == ["etter", "forskeren"]
+    assert [u for u, _ in units_ens] == ["etter", "forskerens"]
+
+    # kongens: simplex genitive collapses to one unit
+    seg_kongens = segment_compound("kongens")
+    units_kongens = _compound_buildup_units(seg_kongens)
+    assert [u for u, _ in units_kongens] == ["kongens"]
+
+    # statsministerens ALSO re-segments its stem: peeling 'ens' first leaves
+    # 'statsminister', which then segments as stats+minister. That is a
+    # second-order change ABOVE the syllable and it is INTENDED -- 'stats|
+    # minister' is the correct compound split and 'stat|smi|ni|ster|ens' was a
+    # syllabification bug. Pinned so nobody "fixes" it back.
+    assert [u for u, _ in _compound_buildup_units(segment_compound("statsministerens"))] == [
+        "stats",
+        "ministerens",
+    ]
+    assert flat_syllables("statsministerens") == ["stats", "mi", "ni", "ster", "ens"]
+
+    # muligens, overens: lexicalised adverbs collapse to one unit
+    for word in ("muligens", "overens"):
+        seg = segment_compound(word)
+        units = _compound_buildup_units(seg)
+        assert [u for u, _ in units] == [word], f"{word}: expected units [{word!r}], got {[u for u, _ in units]}"
+
+
 def test_segment_compound_mannen_is_single_stem():
     assert segment_compound("mannen") == ["mannen"]
 
