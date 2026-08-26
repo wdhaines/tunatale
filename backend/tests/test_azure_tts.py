@@ -698,6 +698,29 @@ def test_cache_digests_unchanged_without_phonemes(tmp_path, phonemes, text, rate
     assert _svc(cache_dir=tmp_path)._cache_path(text, _VOICE, rate, phonemes).name == f"{digest}.mp3"
 
 
+def test_an_empty_mapping_is_the_same_key_as_no_mapping(tmp_path):
+    """tunatale-3q0u: the guarantee that keeps ~460 MB of audio addressable.
+
+    _cache_path extends the key ONLY when the mapping is non-empty. That is what
+    makes "nothing above the syllable moved" mean BYTE-IDENTICAL rather than
+    merely "probably fine": a phrase the planner declines resolves to the exact
+    pre-IPA three-part key, so its already-rendered clip is still found.
+
+    backend/media and backend/output hold 367 MB and 92 MB of real generated
+    audio keyed on the three-part form. An unconditional extension orphans all
+    of it — silently, because the symptom is a cache miss and a re-render, not
+    an error. Tested at all three spellings a caller can produce, since the
+    renderer passes None and the SSML builder is reached with {}.
+    """
+    svc = _svc(cache_dir=tmp_path)
+
+    omitted = svc._cache_path("hagen", _VOICE, "+0%")
+    explicit_none = svc._cache_path("hagen", _VOICE, "+0%", None)
+    empty_dict = svc._cache_path("hagen", _VOICE, "+0%", {})
+
+    assert omitted.name == explicit_none.name == empty_dict.name
+
+
 def test_non_empty_mapping_changes_the_cache_key(tmp_path):
     svc = _svc(cache_dir=tmp_path)
 

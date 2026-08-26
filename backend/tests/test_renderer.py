@@ -1340,3 +1340,98 @@ class TestRendererPhonemePlanner:
         )
         await rdr_plain.render(lesson, tmp_path / "out_plain.wav")
         assert sliced_words == ["hagen"], "the control did not slice; the fixture cannot reach the slicer"
+
+
+class TestAboveSyllableInvariant:
+    """tunatale-3q0u: nothing above the syllable may move.
+
+    Stated as a property rather than as examples: every phrase that is NOT a
+    provenance-carrying SUB-WORD chunk must reach the TTS with phonemes=None
+    AND resolve to the same cache key it had before <phoneme> existed — so its
+    already-rendered clip is still found and its audio is byte-identical.
+
+    The per-case tests above each pin one phrase. This pins the whole lesson,
+    which is what makes the claim checkable in one pass instead of by listening.
+    It uses the REAL planner over a fixture lexicon, not _StubChunkPlanner:
+    the stub answers every span, including whole-word ones, so the whole-word
+    refusal (plan_chunk gate 2) would be supplied by the stub rather than tested.
+    A whole-word span WITH provenance is the case that matters here — real
+    lessons emit them ('personen', span (0,3)) and they are above the syllable.
+    """
+
+    async def test_every_non_subword_phrase_keeps_its_pre_ipa_cache_key(self, tmp_path: Path) -> None:
+        import gzip
+
+        from app.audio.azure_tts import AzureTTSService
+        from app.audio.preprocessing.base import TextPreprocessor
+        from app.plugins.languages.no.lexicon import build_lexicon_db
+        from app.plugins.languages.no.norwegian_breakdown import flat_syllables
+        from app.plugins.languages.no.phoneme_plan import NorwegianPhonemePlanner
+
+        gz = tmp_path / "fixture.tsv.gz"
+        gz.write_bytes(gzip.compress(b'hagen\tNN\t"hA:$g@n\t1\n', mtime=0))
+        db = tmp_path / "lexicon.sqlite3"
+        build_lexicon_db(gz, db)
+
+        lesson = _no_lesson()
+        # Give an EXISTING whole-word rung its provenance rather than adding a
+        # phrase: the key-phrase cue arithmetic is 2 + len(breakdown) and would
+        # reject an extra one. A whole-word span WITH provenance is the case
+        # that matters — real lessons emit it ('personen', span (0,3)), it is
+        # above the syllable, and a stub planner would silently answer it.
+        whole_word_rung = next(
+            p for p in reversed(lesson.sections[0].phrases) if p.text == "hagen" and p.source_word is None
+        )
+        whole_word_rung.source_word = "hagen"
+        whole_word_rung.syllable_span = (0, 2)
+
+        fake_audio = _make_wav_bytes()
+        seen: list[dict] = []
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
+            seen.append({"text": text, "voice": voice_id, "rate": rate, "phonemes": phonemes})
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        class _NoPre(TextPreprocessor):
+            def preprocess(self, text, section_type):
+                return text
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"no": _NoPre()},
+            pause_calculator=NaturalPauseCalculator(),
+            phoneme_planners={"no": NorwegianPhonemePlanner(db)},
+        )
+        await rdr.render(lesson, tmp_path / "out.wav")
+
+        # Which texts are sub-word chunks, derived from the lesson rather than
+        # hardcoded, so adding a phrase cannot silently escape the assertion.
+        sub_word_texts = {
+            p.text
+            for sec in lesson.sections
+            for p in sec.phrases
+            if p.source_word is not None
+            and p.syllable_span is not None
+            and p.syllable_span != (0, len(flat_syllables(p.source_word) or []))
+        }
+
+        svc = AzureTTSService(key="k", region="r", cache_dir=tmp_path)
+        violations = [c for c in seen if c["text"] not in sub_word_texts and c["phonemes"] is not None]
+        assert violations == [], f"above-syllable phrases were given IPA: {violations}"
+
+        for call in seen:
+            if call["text"] in sub_word_texts:
+                continue
+            pre_ipa = svc._cache_path(call["text"], call["voice"], call["rate"])
+            actual = svc._cache_path(call["text"], call["voice"], call["rate"], call["phonemes"])
+            assert actual.name == pre_ipa.name, (
+                f"{call['text']!r} would resolve to a DIFFERENT cached file than before <phoneme>"
+            )
+
+        # Anti-vacuity: if nothing was planned the loop above proves nothing.
+        planned = [c for c in seen if c["phonemes"] is not None]
+        assert planned, "no chunk was planned — the invariant held vacuously"
+        assert {c["text"] for c in planned} <= sub_word_texts
