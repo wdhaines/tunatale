@@ -210,18 +210,20 @@ def annotate_chunk_upos(lesson: Lesson, srs_db: SRSDatabase, *, lemmatizer: obje
     return count
 
 
-async def _annotate_upos_background(lesson: Lesson, srs_db: SRSDatabase) -> None:
-    """Background UPOS annotation for chunk phrases (best-effort, mirrors _prewarm_lesson)."""
-    try:
-        lemmatizer = get_lemmatizer(lesson.language_code)
-        model_version = model_version_for(lemmatizer)
-        if not model_version:
-            return
-        await anyio.to_thread.run_sync(
-            annotate_chunk_upos, lesson, srs_db, lemmatizer=lemmatizer, model_version=model_version
-        )
-    except Exception:
-        _logger.warning("UPOS annotation failed for lesson", exc_info=True)
+def _injected_lemmatizer(request: Request) -> dict[str, object]:
+    """Lemmatizer overrides from app state, or ``{}`` to resolve for real.
+
+    The same seam ``annotate_chunk_upos_for_lesson`` already exposes as keyword
+    arguments, reached the way every other dependency in this app is reached.
+    Resolving for real loads Stanza, which the default gate deliberately does
+    not run (``--run-stanza``), so without an injection point the ordering these
+    endpoints depend on can only be checked by mocking into ``app.`` — which the
+    mock-boundary rule forbids, and rightly: the fix is a seam, not a patch.
+    """
+    lemmatizer = getattr(request.app.state, "lemmatizer", None)
+    if lemmatizer is None:
+        return {}
+    return {"lemmatizer": lemmatizer, "model_version": getattr(request.app.state, "model_version", None)}
 
 
 @router.post("/generate", status_code=201, response_model=GenerateStoryResponse)
@@ -264,18 +266,30 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
         raise HTTPException(status_code=502, detail=str(e)) from e
 
     lesson_id = mint_id(lesson.title)
+
+    # Tag BEFORE saving. A detached task races the write: the tags land on an
+    # in-memory Lesson nobody persists again, so the stored lesson is untagged
+    # and every ambiguous word falls back to plain synthesis for the life of
+    # that lesson. Observed in production on 2026-08-26 — a freshly generated
+    # lesson had 0 of 47 chunks tagged, and re-running the same annotation over
+    # the stored copy tagged all 47. This is the pipeline's ordering
+    # (LessonPipeline._generate); the two paths must not disagree.
+    #
+    # Cost is bounded and paid on a request that already waits on an LLM story:
+    # 1.85s cold, 34ms once the sentence analyses are cached.
+    srs_db = getattr(request.app.state, "srs_db", None)
+    if srs_db is not None:
+        await annotate_chunk_upos_for_lesson(lesson, srs_db, **_injected_lemmatizer(request))
+
     store.save_lesson(lesson_id, body.curriculum_id, body.day, lesson)
     sync_curriculum_day_title(store, body.curriculum_id, body.day, lesson.title)
 
-    # Pre-warm the analysis cache and annotate chunks off the request path
-    srs_db = getattr(request.app.state, "srs_db", None)
+    # Pre-warming may stay detached: it only fills a cache, and nothing on the
+    # lesson depends on it having finished.
     if srs_db is not None:
         task = asyncio.create_task(_prewarm_lesson(lesson, srs_db))
         _background_tasks.add(task)
         task.add_done_callback(_background_tasks.discard)
-        task2 = asyncio.create_task(_annotate_upos_background(lesson, srs_db))
-        _background_tasks.add(task2)
-        task2.add_done_callback(_background_tasks.discard)
 
     # Enqueue a render job for this day
     pipeline = getattr(request.app.state, "pipeline", None)
@@ -320,11 +334,14 @@ async def import_story(body: ImportLessonRequest, request: Request):
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
-    # Same background pre-warm and UPOS annotation as generation, so the transcript view is warm.
+    # import_lesson already wrote the lesson, so the tags need a second write
+    # rather than an earlier one. Awaited and persisted for the same reason as
+    # /generate above: a detached task tags a copy that is never stored.
     srs_db = getattr(request.app.state, "srs_db", None)
     if srs_db is not None:
+        if await annotate_chunk_upos_for_lesson(lesson, srs_db, **_injected_lemmatizer(request)):
+            store.update_lesson_data(lesson_id, lesson)
         asyncio.create_task(_prewarm_lesson(lesson, srs_db))
-        asyncio.create_task(_annotate_upos_background(lesson, srs_db))
 
     # Enqueue a render job for this day
     pipeline = getattr(request.app.state, "pipeline", None)
