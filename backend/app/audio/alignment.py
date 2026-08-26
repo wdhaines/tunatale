@@ -176,14 +176,19 @@ def derive_syllable_bounds(
     return [0, *cuts, n_samples], onset_ends
 
 
-def resample_to_model_rate(samples: np.ndarray, rate: int) -> np.ndarray:
-    """Resample mono float32 to :data:`MODEL_SAMPLE_RATE` via ffmpeg.
+def resample_to_model_rate(samples: np.ndarray, rate: int, target: int = MODEL_SAMPLE_RATE) -> np.ndarray:
+    """Resample mono float32 to *target* (default :data:`MODEL_SAMPLE_RATE`) via ffmpeg.
 
     ffmpeg rather than a hand-rolled polyphase filter: it is already a hard
     dependency (``app.audio.transcode``) and its resampler is not the thing
-    under test.
+    under test. np.interp is linear interpolation with NO anti-aliasing filter,
+    so any DOWNsample through it aliases — audibly, and silently.
+
+    *target* is a parameter rather than the constant because the delivery path
+    (``render_service._transcode_to_delivery``) needs the section files' rate,
+    not the alignment model's. Default preserves every existing caller.
     """
-    if rate == MODEL_SAMPLE_RATE:
+    if rate == target:
         return samples
     buf = io.BytesIO()
     sf.write(buf, samples, rate, format="WAV", subtype="PCM_16")
@@ -196,7 +201,7 @@ def resample_to_model_rate(samples: np.ndarray, rate: int) -> np.ndarray:
             "-i",
             "pipe:0",
             "-ar",
-            str(MODEL_SAMPLE_RATE),
+            str(target),
             "-f",
             "wav",
             "-",

@@ -538,30 +538,30 @@ class TestConcatAndProbeEdges:
     ffmpeg would be pure overhead), and ffmpeg/ffprobe exiting non-zero."""
 
     def test_concat_refuses_an_empty_list(self, tmp_path: Path) -> None:
-        from app.audio.render_service import _concat_opus_concat_demuxer
+        from app.audio.render_service import _concat_stream_copy
 
         with pytest.raises(ValueError, match="at least one file"):
-            _concat_opus_concat_demuxer([], tmp_path / "out.opus")
+            _concat_stream_copy([], tmp_path / "out.opus")
 
     def test_concat_of_one_file_copies_bytes_verbatim(self, tmp_path: Path) -> None:
         """No ffmpeg for a single input — the bytes are the answer already."""
-        from app.audio.render_service import _concat_opus_concat_demuxer
+        from app.audio.render_service import _concat_stream_copy
 
         src = tmp_path / "a.opus"
         _make_opus_file(src, 0.5)
         out = tmp_path / "nested" / "out.opus"
-        _concat_opus_concat_demuxer([src], out)
+        _concat_stream_copy([src], out)
         assert out.read_bytes() == src.read_bytes()
 
     def test_concat_raises_when_ffmpeg_fails(self, tmp_path: Path) -> None:
-        from app.audio.render_service import _concat_opus_concat_demuxer
+        from app.audio.render_service import _concat_stream_copy
 
         bad = tmp_path / "not-audio.opus"
         bad.write_bytes(b"this is not an opus stream")
         other = tmp_path / "b.opus"
         _make_opus_file(other, 0.5)
         with pytest.raises(RuntimeError, match="ffmpeg concat failed"):
-            _concat_opus_concat_demuxer([bad, other], tmp_path / "out.opus")
+            _concat_stream_copy([bad, other], tmp_path / "out.opus")
 
     def test_duration_raises_when_ffprobe_fails(self, tmp_path: Path) -> None:
         from app.audio.render_service import _read_audio_duration
@@ -736,3 +736,87 @@ class TestTitleTranscode:
         dest = tmp_path / "out.wav"
         _transcode_to_delivery(src, dest, 48000)
         assert sf.info(str(dest)).samplerate == 48000
+
+
+class TestFullManifestMatchesARenderedLesson:
+    """The reassembled full manifest must be indistinguishable from a rendered
+    one. Consumers cannot tell which function last touched a lesson, so any
+    field that differs leaves two kinds of manifest in one database.
+
+    Both assertions below passed against a version that got them WRONG, because
+    the suite only checked offsets. They are here because a real reassembly of
+    the user's 9 lessons shipped both defects.
+    """
+
+    @pytest.mark.asyncio
+    async def test_title_cue_carries_the_narration_ref(self, tmp_path: Path) -> None:
+        """build_cue_manifest gives the title cue ref={"kind": "narration"} and
+        language_code="en". A hand-rolled copy set ref=None and derived the
+        language from the lesson — which agreed only by luck, because the
+        KEY_PHRASES section happens to open with an English narrator line."""
+        from app.audio.render_service import reassemble_lesson_audio
+
+        store = ContentStore(":memory:")
+        lesson = _build_test_lesson()
+        audio_dir = tmp_path / "audio"
+        _populate_store(store, lesson, audio_dir, [2.0, 5.0, 8.0, 5.0])
+        await reassemble_lesson_audio(
+            store=store,
+            renderer=_make_fake_renderer(),
+            tts=_CountingTTS(),
+            audio_dir=audio_dir,
+            lesson_id=lesson.title,
+            lesson=lesson,
+        )
+        row = next(r for r in store.list_audio_files_for_lesson(lesson.title) if r["section_index"] is None)
+        title = json.loads(row["cues_json"])[0]
+        assert title["section_index"] is None
+        assert title["ref"] == {"kind": "narration"}, title
+        assert title["language_code"] == "en"
+        assert title["role"] == "narrator"
+
+    @pytest.mark.asyncio
+    async def test_full_manifest_text_comes_from_the_lesson_not_the_stored_cues(self, tmp_path: Path) -> None:
+        """The stored PER-SECTION cues are ellipsis-scrubbed by
+        derive_section_cues; the FULL manifest is not. Re-offsetting the stored
+        cues into a full manifest therefore imports the scrubbed text and the
+        lesson ends up carrying natural text where a rendered one carries raw.
+
+        Pinned by giving a stored section cue text that appears NOWHERE in the
+        lesson: if the full manifest quotes it back, it was built from the cues
+        instead of from the lesson.
+        """
+        from app.audio.render_service import reassemble_lesson_audio
+
+        store = ContentStore(":memory:")
+        lesson = _build_test_lesson()
+        audio_dir = tmp_path / "audio"
+        _populate_store(store, lesson, audio_dir, [2.0, 5.0, 8.0, 5.0])
+
+        rows = store.list_audio_files_for_lesson(lesson.title)
+        victim = next(r for r in rows if r["section_index"] == 1)
+        cues = json.loads(victim["cues_json"])
+        assert cues, "fixture section 1 has no cues to poison"
+        cues[0]["text"] = "SCRUBBED-SENTINEL-NOT-IN-THE-LESSON"
+        # Poisoned IN PLACE: adding a row instead would trip the section-count
+        # guard, and replacing the row is not what the scenario is about.
+        with store._get_conn() as conn:
+            conn.execute(
+                "UPDATE audio_files SET cues_json = ? WHERE id = ?",
+                (json.dumps(cues), victim["id"]),
+            )
+
+        await reassemble_lesson_audio(
+            store=store,
+            renderer=_make_fake_renderer(),
+            tts=_CountingTTS(),
+            audio_dir=audio_dir,
+            lesson_id=lesson.title,
+            lesson=lesson,
+        )
+        full = next(r for r in store.list_audio_files_for_lesson(lesson.title) if r["section_index"] is None)
+        texts = [c["text"] for c in json.loads(full["cues_json"])]
+        assert "SCRUBBED-SENTINEL-NOT-IN-THE-LESSON" not in texts, (
+            "the full manifest was built from the stored per-section cues, "
+            "so it inherited their scrubbed text instead of the lesson's"
+        )

@@ -38,7 +38,7 @@ from app.audio.slicer import build_slicers  # noqa: E402
 from app.audio.tts_factory import get_tts_service  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.generation.section_builder import build_key_phrases_section  # noqa: E402
-from app.languages import get_phoneme_planner, get_preprocessor  # noqa: E402
+from app.languages import get_phoneme_planner, get_preprocessor, resolve_db_path  # noqa: E402
 from app.srs.database import SRSDatabase  # noqa: E402
 from app.storage.resync_key_phrases import _key_phrases_section, _voices  # noqa: E402
 from app.storage.store import ContentStore  # noqa: E402
@@ -65,6 +65,13 @@ async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--go", action="store_true")
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-render even when the chunk text is already current. For repairing a "
+        "lesson whose AUDIO is fine but whose stored cue manifest was written by a "
+        "buggy version — text_changed cannot see that.",
+    )
     ap.add_argument("--db", default=None, help="content DB path (default: the configured Norwegian DB)")
     ap.add_argument("--audio-dir", default=None)
     ap.add_argument("--language", default="no")
@@ -73,7 +80,10 @@ async def main() -> int:
         ap.error("pass exactly one of --dry-run / --go")
 
     code = args.language
-    db_path = args.db or settings.database_urls[code].removeprefix("sqlite:///")
+    # resolve_db_path, not settings.database_urls[code]: the latter KeyErrors on a
+    # single-language install, where resolve_language_context falls back to the
+    # singular setting. scripts/check_singular_database_url.py names this exact fix.
+    db_path = args.db or str(resolve_db_path(code, settings))
     audio_dir = Path(args.audio_dir) if args.audio_dir else settings.audio_dir
 
     store = ContentStore(db_path)
@@ -104,6 +114,8 @@ async def main() -> int:
             continue
         index, section, text_changed = rebuilt
         tagged_now = sum(1 for s in lesson.sections for p in s.phrases if p.source_word and p.upos)
+        if args.force:
+            text_changed = True
         if not text_changed and tagged_now:
             print(f"  ==  {lesson_id[:52]:54} already current; skipped")
             skipped += 1

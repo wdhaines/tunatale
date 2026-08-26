@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import subprocess
 import tempfile
 import uuid
@@ -14,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from app.audio.alignment import resample_to_model_rate
 from app.audio.cues import Cue, CueTiming, build_cue_manifest
 from app.audio.transcode import CODEC_EXT, encode_audio
 from app.config import settings
@@ -21,13 +21,14 @@ from app.generation.section_builder import SECTION_TITLES
 from app.models.lesson import SectionType
 from app.storage.store import ContentStore
 
-logger = logging.getLogger(__name__)
 
+def _concat_stream_copy(file_paths: list[Path], output_path: Path) -> None:
+    """Concatenate media files byte-for-byte via ffmpeg's concat demuxer, ``-c copy``.
 
-def _concat_opus_concat_demuxer(file_paths: list[Path], output_path: Path) -> None:
-    """Concatenate Opus files byte-for-byte via ffmpeg's concat demuxer with ``-c copy``.
-
-    All input files MUST share stream parameters (codec, sample rate, channels).
+    Codec-agnostic despite what it is usually handed: under
+    ``audio_delivery_codec == "wav"`` every input here is WAV. The precondition
+    is not the codec, it is that all inputs share stream parameters exactly
+    (codec, sample rate, channels).
     The output is a valid Ogg/Opus file. No re-encoding occurs — every packet
     is copied verbatim, so the concatenated file's audio is bit-identical to the
     concatenation of the inputs' decoded audio.
@@ -37,12 +38,11 @@ def _concat_opus_concat_demuxer(file_paths: list[Path], output_path: Path) -> No
     if not file_paths:
         raise ValueError("concat requires at least one file")
 
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     if len(file_paths) == 1:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(file_paths[0].read_bytes())
         return
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", dir=str(output_path.parent), delete=False) as concat_list:
         for fp in file_paths:
             concat_list.write(f"file '{fp}'\n")
@@ -248,18 +248,23 @@ def _transcode_to_delivery(src: Path, dest: Path, rate: int) -> None:
     TTS hands back MP3 whatever the filename says, so its output has to be
     normalised before it can sit beside the Opus section files.
     """
-    samples, src_rate = sf.read(str(src), dtype="float32", always_2d=True)
-    if src_rate != rate:
-        idx = np.linspace(0, len(samples) - 1, num=int(round(len(samples) * rate / src_rate)))
-        samples = np.stack(
-            [np.interp(idx, np.arange(len(samples)), samples[:, c]) for c in range(samples.shape[1])], axis=1
-        ).astype("float32")
-    if samples.shape[1] > 1:
-        samples = samples.mean(axis=1, keepdims=True).astype("float32")
+    # Downmix FIRST so the resample is single-channel, then hand the resample to
+    # ffmpeg via the helper whose docstring already rejects hand-rolled
+    # resamplers — np.interp has no anti-aliasing filter and aliases on any
+    # downsample.
+    raw, src_rate = sf.read(str(src), dtype="float32", always_2d=True)
+    mono = raw.mean(axis=1).astype("float32")
+    samples = resample_to_model_rate(mono, src_rate, rate).reshape(-1, 1).astype("float32")
     if settings.audio_delivery_codec == "wav":
         sf.write(str(dest), samples, rate, subtype="PCM_16")
         return
     dest.write_bytes(encode_audio(samples, rate, settings.audio_delivery_codec, settings.audio_delivery_bitrate))
+
+
+def _ms_to_frames(ms: int, rate: int) -> int:
+    """Milliseconds to frames. build_cue_manifest divides by the same rate, so
+    the value cancels out of the answer; only using ONE rate throughout matters."""
+    return int(round(ms * rate / 1000))
 
 
 def _write_silence(path: Path, duration_ms: int, rate: int) -> None:
@@ -373,14 +378,13 @@ async def reassemble_lesson_audio(
 
         section_paths = [new_kp_path if i == kp_index else Path(r["file_path"]) for i, r in enumerate(section_rows)]
         pieces: list[Path] = [title_path]
-        for i, sec_path in enumerate(section_paths):
+        for sec_path in section_paths:
             pieces.append(boundary_path)
             pieces.append(sec_path)
-            del i
 
         new_full_id = str(uuid.uuid4())
         new_full_path = audio_dir / f"{new_full_id}.{ext}"
-        _concat_opus_concat_demuxer(pieces, new_full_path)
+        _concat_stream_copy(pieces, new_full_path)
 
         # Absolute cue manifest, in MILLISECONDS throughout. Working in frames
         # needs a sample rate, and every rate that appears here cancels out of
@@ -388,40 +392,52 @@ async def reassemble_lesson_audio(
         title_ms = round(_read_audio_duration(title_path) * 1000)
         durations_ms = [round(_read_audio_duration(p) * 1000) for p in section_paths]
 
-    stored_cues: list[list[dict]] = []
-    for i, r in enumerate(section_rows):
-        raw = r.get("cues_json")
-        if i == kp_index:
-            stored_cues.append([asdict(c) for c in _cues_from_relative(lesson, kp_cues, kp_index, kp_rate)])
-        else:
-            stored_cues.append(json.loads(raw) if raw else [])
+    # Per-section cues, in the SAME form derive_section_cues stores: reused
+    # sections keep what they already had; the re-rendered one is rebuilt.
+    stored_cues: list[list[dict]] = [
+        [asdict(c) for c in _cues_from_relative(lesson, kp_cues, kp_index, kp_rate)]
+        if i == kp_index
+        else (json.loads(r["cues_json"]) if r.get("cues_json") else [])
+        for i, r in enumerate(section_rows)
+    ]
 
-    all_cues: list[Cue] = [
-        Cue(
-            index=0,
-            start_ms=0,
-            end_ms=title_ms,
+    # The FULL manifest goes through build_cue_manifest, exactly as
+    # LessonRenderer.render does — it is NOT the per-section cues re-offset.
+    #
+    # ⚠️ Re-offsetting them was the first implementation and it was wrong in two
+    # ways at once, both silent. (1) The stored per-section cues have already
+    # been ellipsis-scrubbed by derive_section_cues, which rewrites SLOW_* L2
+    # text to the natural text from the structural-twin section — so the full
+    # manifest came out carrying natural text where a rendered lesson carries
+    # the raw ellipsis text, leaving two kinds of full manifest in one database.
+    # (2) The title cue was hand-rolled and drifted from build_cue_manifest's:
+    # ref was None instead of {"kind": "narration"}. Building from TIMINGS and
+    # letting build_cue_manifest supply every field from the lesson removes both
+    # by construction, and is why _cues_from_relative already worked this way.
+    #
+    # ms -> frames at kp_rate: build_cue_manifest divides back out by the same
+    # rate, so the value cancels and only its consistency matters.
+    timing: list[CueTiming] = [
+        CueTiming(
             section_index=None,
-            section_type=None,
             phrase_index=0,
-            role="narrator",
-            language_code=lesson.sections[0].phrases[0].language_code if lesson.sections[0].phrases else "",
-            text=lesson.title,
-            ref=None,
+            start_frame=0,
+            end_frame=_ms_to_frames(title_ms, kp_rate),
         )
     ]
     offset_ms = title_ms + boundary_ms
     for i, cue_dicts in enumerate(stored_cues):
         for cd in cue_dicts:
-            all_cues.append(
-                replace(
-                    Cue(**cd),
-                    index=len(all_cues),
-                    start_ms=cd["start_ms"] + offset_ms,
-                    end_ms=cd["end_ms"] + offset_ms,
+            timing.append(
+                CueTiming(
+                    section_index=i,
+                    phrase_index=cd["phrase_index"],
+                    start_frame=_ms_to_frames(cd["start_ms"] + offset_ms, kp_rate),
+                    end_frame=_ms_to_frames(cd["end_ms"] + offset_ms, kp_rate),
                 )
             )
         offset_ms += durations_ms[i] + boundary_ms
+    all_cues = build_cue_manifest(lesson, timing, kp_rate)
     cues_json = json.dumps([asdict(c) for c in all_cues], ensure_ascii=False)
 
     old_kp_path = Path(section_rows[kp_index]["file_path"])

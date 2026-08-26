@@ -706,9 +706,11 @@ def _resolve_compound_parts(morphemes: list[str]) -> list[tuple[str, list[str]]]
     """Resolve each compound part against the lexicon independently.
 
     For each buildup unit, look up its own lexicon split (the PART, not the
-    whole compound).  If the part's lexicon split matches its repo
-    syllabification (``syllabify_morpheme`` of the part), adopt the lexicon's
-    syllables.  Otherwise keep the repo syllables unchanged.
+    whole compound) and adopt it whenever the lexicon HAS one — including, and
+    especially, where it disagrees with the repo syllabifier. A unit the lexicon
+    does not know keeps its repo syllables. (An earlier draft of this docstring
+    described an equality guard the body deliberately does not implement; see
+    the comment in the loop for why one would be self-defeating.)
 
     This avoids the old whole-word transcription slicing, which modelled
     connected-speech assimilation across the compound seam that never occurs
@@ -787,15 +789,9 @@ def _build_syllable_inner_spans(syllables: list[str], word: str, *, respell: boo
     return seq
 
 
-def _build_syllable_sequence_spans(word: str, syllables: list[str], *, respell: bool = True) -> list[BreakdownChunk]:
-    return [
-        BreakdownChunk(word, None, None),
-        *_build_syllable_inner_spans(syllables, word, respell=respell),
-        BreakdownChunk(word, None, None),
-    ]
-
-
-def _build_compound_sequence_spans(word: str, morphemes: list[str]) -> list[BreakdownChunk]:
+def _build_compound_sequence_spans(
+    word: str, morphemes: list[str], *, bookend_text: str | None = None
+) -> list[BreakdownChunk]:
     """Compound buildup carrying provenance into the WHOLE word's syllables.
 
     Spans index :func:`flat_syllables` of ``word`` — the entire compound — not
@@ -825,13 +821,21 @@ def _build_compound_sequence_spans(word: str, morphemes: list[str]) -> list[Brea
         offsets.append(total)
         total += len(pieces)
 
+    # *word* is the BARE surface (no trailing punctuation); *bookend_text* is
+    # what the learner sees on the whole-phrase rungs, which keeps its
+    # punctuation. They differ only for a single-word phrase like "flyplassen."
+    # — and conflating them put the period into source_word, which is exactly
+    # the tunatale-7vxv bug: lexicon_syllable_split("flyplassen.") is None, so
+    # the word silently lost its IPA. The multi-word branch discards the
+    # bookends, which is why it never showed the defect.
+    ends = word if bookend_text is None else bookend_text
     sliceable = flat_syllables(word) is not None
     source = word if sliceable else None
 
     def span(start: int, stop: int) -> tuple[int, int] | None:
         return (start, stop) if sliceable else None
 
-    seq: list[BreakdownChunk] = [BreakdownChunk(word, None, None)]
+    seq: list[BreakdownChunk] = [BreakdownChunk(ends, None, None)]
     for i in range(len(units) - 1, -1, -1):
         part, pieces = units[i]
         base = offsets[i]
@@ -876,22 +880,28 @@ def build_norwegian_breakdown_spans(phrase: str) -> list[BreakdownChunk]:
     if len(words) == 1:
         word = words[0]
         core_word = _strip_trailing_punct(word)
-        lexicon_split = lexicon_syllable_split(core_word)
         morphemes = segment_compound(core_word)
         if len(morphemes) >= 2:
-            return _build_compound_sequence_spans(text, morphemes)
+            # A compound's parts are resolved individually inside
+            # _build_compound_sequence_spans, so the WHOLE word's lexicon split
+            # is never wanted here — computing it before this branch cost a
+            # sqlite open and a full DP alignment per compound, discarded.
+            return _build_compound_sequence_spans(core_word, morphemes, bookend_text=text)
+        lexicon_split = lexicon_syllable_split(core_word)
         syllables = syllabify_morpheme(core_word)
         if lexicon_split is not None:
             syllables = lexicon_split
         if len(syllables) <= 1:
             return [BreakdownChunk(text, None, None), BreakdownChunk(text, None, None)]
-        result = _build_syllable_sequence_spans(text, syllables, respell=lexicon_split is None)
-        # Fix source_word for inner chunks: use core_word (punctuation-stripped)
-        # while bookend text stays as the original phrase with punctuation.
+        # Bookends keep the ORIGINAL punctuated text; the inner chunks are cut
+        # from core_word. _build_syllable_inner_spans already takes the source
+        # word separately from the bookend text, so this needs no rebuild — an
+        # earlier version built every inner chunk with source_word=text and then
+        # allocated a second copy of each to correct it.
         return [
-            result[0],
-            *[BreakdownChunk(c.text, core_word, c.span) for c in result[1:-1]],
-            result[-1],
+            BreakdownChunk(text, None, None),
+            *_build_syllable_inner_spans(syllables, core_word, respell=lexicon_split is None),
+            BreakdownChunk(text, None, None),
         ]
 
     breakdown: list[BreakdownChunk] = [BreakdownChunk(text, None, None)]

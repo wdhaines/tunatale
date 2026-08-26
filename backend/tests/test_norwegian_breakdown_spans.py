@@ -751,6 +751,23 @@ class TestTrailingPunctuationStripping:
             if c.source_word is not None:
                 assert c.source_word == "kom"
 
+    def test_a_single_word_compound_strips_punctuation_from_source_word_too(self):
+        """The single-word branch had its own copy of the tunatale-7vxv bug.
+
+        'flyplassen.' alone in a phrase kept the period in source_word, while
+        'pa flyplassen.' stripped it — so the SAME word got different provenance
+        depending on whether anything else shared the phrase, and the punctuated
+        form silently lost its IPA (lexicon_syllable_split returns None for it).
+        The multi-word branch discards the compound bookends, which is why only
+        the single-word path showed it.
+        """
+        alone = build_word_breakdown_spans("flyplassen.", "no")
+        in_phrase = build_word_breakdown_spans("på flyplassen.", "no")
+        assert {c.source_word for c in alone if c.source_word} == {"flyplassen"}
+        assert {c.source_word for c in in_phrase if c.source_word} == {"flyplassen"}
+        # ...and the whole-phrase rung still shows the punctuation.
+        assert "flyplassen." in {c.text for c in alone if c.source_word is None}
+
     def test_partial_phrase_rungs_keep_internal_punctuation(self):
         """A partial rung is a PHRASE, so its punctuation survives.
 
