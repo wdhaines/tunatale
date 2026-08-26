@@ -233,6 +233,10 @@ def build_lexicon_db(
     not marking an unreachable one. Callers should leave it at the default.
     """
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    # Genuinely overwrite, as the docstring promises. Without this the CREATE
+    # TABLE below raises "table entries already exists" on a rebuild, which
+    # makes the build non-idempotent and unusable as a CI step.
+    db_path.unlink(missing_ok=True)
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(

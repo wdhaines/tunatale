@@ -40,6 +40,10 @@ FIXTURE_ROWS = [
     ("galt", "VB", '"gAl', 1),
     # snømann: used for tone-stripping tests
     ("snømann", "NN", '""sn2:$%mAn', 2),
+    # uansett: SIMPLEX (so it adopts lexicon boundaries) and carries a secondary
+    # stress — every convenient ˌ-bearing word is a compound, and compounds do
+    # not adopt yet, so their spans return None.
+    ("uansett", "AB", '""}:$An$%sEt', 1),
 ]
 
 
@@ -66,7 +70,9 @@ class TestPhonemePlannerProtocol:
 
     @runtime_checkable
     class _PhonemePlanner(Protocol):
-        def plan_chunk(self, source_word: str, span: tuple[int, int], upos: str | None = None) -> str | None: ...
+        def plan_chunk(
+            self, source_word: str, span: tuple[int, int], upos: str | None = None, chunk_text: str | None = None
+        ) -> str | None: ...
 
     def test_satisfies_protocol(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
@@ -79,23 +85,27 @@ class TestPhonemePlannerProtocol:
 
 
 class TestSkisporet:
-    """skisporet: repo ['ski','spor','et'] lex ['ˈʃɪː','ˌspuː','rə']."""
+    """skisporet is a COMPOUND (ski+sporet), and compounds do not adopt lexicon
+    boundaries yet (deferred — see the compound note in norwegian_breakdown).
+    Its repo split therefore differs from the lexicon's, the identity guard
+    rejects, and no sub-word span gets IPA. When compound adoption lands these
+    become the IPA values again: ˈʃɪː / ˌspuː / rə / ˌspuː.rə."""
 
     def test_span_0_1(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
-        assert p.plan_chunk("skisporet", (0, 1)) == "ˈʃɪː"
+        assert p.plan_chunk("skisporet", (0, 1)) is None
 
     def test_span_1_2(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
-        assert p.plan_chunk("skisporet", (1, 2)) == "ˌspuː"
+        assert p.plan_chunk("skisporet", (1, 2)) is None
 
     def test_span_2_3(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
-        assert p.plan_chunk("skisporet", (2, 3)) == "rə"
+        assert p.plan_chunk("skisporet", (2, 3)) is None
 
     def test_span_1_3(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
-        assert p.plan_chunk("skisporet", (1, 3)) == "ˌspuː.rə"
+        assert p.plan_chunk("skisporet", (1, 3)) is None
 
     def test_whole_word_returns_none(self, tmp_path: Path) -> None:
         p = _planner(tmp_path)
@@ -350,9 +360,9 @@ class TestToneStripping:
         assert "ˈ" in result
 
     def test_secondary_stress_survives(self, tmp_path: Path) -> None:
-        """skisporet span (1,2) → 'ˌspuː' — secondary stress survives."""
+        """uansett span (2,3) → 'ˌsɛt' — secondary stress survives."""
         p = _planner(tmp_path)
-        result = p.plan_chunk("skisporet", (1, 2))
+        result = p.plan_chunk("uansett", (2, 3))
         assert result is not None
         assert "ˌ" in result
 
@@ -389,7 +399,7 @@ class TestLexiconIsOpenedOnce:
         first = p._lexicon
         assert first is not None
 
-        assert p.plan_chunk("skisporet", (0, 1)) == "ˈʃɪː"
+        assert p.plan_chunk("skisporet", (0, 1)) is None
         assert p._lexicon is first, "the planner reopened the lexicon on the second call"
 
 
@@ -432,3 +442,39 @@ class TestUnsyllabifiableWord:
         # SCONJ maps to None in UPOS_TO_NST → nst is None → no filter applied
         candidates = lex.candidate_transcriptions("sporet", upos="SCONJ")
         assert len(candidates) == 2  # both readings survive unfiltered
+
+
+class TestGuardsThatRefuse:
+    """Every path that declines to supply IPA, and why it declines.
+
+    These use a fixture database whose transcription for a word DIFFERS from
+    the real lexicon's. The orthographic split still comes from the real
+    lexicon (that is what ``lexicon_syllable_split`` reads), so the fixture can
+    make the phoneme half fail while the boundary half succeeds — which is
+    exactly the crossing the guards exist to catch.
+    """
+
+    def test_unconvertible_sampa_returns_none(self, tmp_path: Path) -> None:
+        """A transcription with an undefined segment must not reach <phoneme>."""
+        p = _planner(tmp_path, [("skygge", "NN", '"QQZZ$XX', 1)])
+        assert p.plan_chunk("skygge", (0, 1)) is None
+
+    def test_syllable_count_disagreement_returns_none(self, tmp_path: Path) -> None:
+        """'skygge' splits sky|gge; a one-syllable reading has no 2nd syllable."""
+        p = _planner(tmp_path, [("skygge", "NN", '"SY', 1)])
+        assert p.plan_chunk("skygge", (0, 1)) is None
+
+    def test_stale_chunk_text_returns_none(self, tmp_path: Path) -> None:
+        """A stored lesson cut at the OLD boundary must degrade, not mis-sound.
+
+        'hadde' is now cut ha|dde. A lesson generated before that carries the
+        chunk text 'had' for span (0,1); serving it 'hɑ' would play a syllable
+        the caption does not name.
+        """
+        p = _planner(tmp_path, [("hadde", "VB", '""hA$d@', 1)])
+        assert p.plan_chunk("hadde", (0, 1), chunk_text="had") is None
+
+    def test_matching_chunk_text_is_served(self, tmp_path: Path) -> None:
+        """The control: the same call with today's chunk text does get IPA."""
+        p = _planner(tmp_path, [("hadde", "VB", '""hA$d@', 1)])
+        assert p.plan_chunk("hadde", (0, 1), chunk_text="ha") == "hɑ"

@@ -850,7 +850,9 @@ class _StubChunkPlanner:
     the chunk text uppercased as IPA (deterministic, easy to assert on).
     """
 
-    def plan_chunk(self, source_word: str, span: tuple[int, int], upos: str | None = None) -> str | None:
+    def plan_chunk(
+        self, source_word: str, span: tuple[int, int], upos: str | None = None, chunk_text: str | None = None
+    ) -> str | None:
         # Return the span's "IPA" as a deterministic string
         return f"{source_word[span[0] : span[1]].upper()}"
 
@@ -858,7 +860,9 @@ class _StubChunkPlanner:
 class _NoneChunkPlanner:
     """Chunk planner that always returns None (simulates a language with no lexicon data)."""
 
-    def plan_chunk(self, source_word: str, span: tuple[int, int], upos: str | None = None) -> str | None:
+    def plan_chunk(
+        self, source_word: str, span: tuple[int, int], upos: str | None = None, chunk_text: str | None = None
+    ) -> str | None:
         return None
 
 
@@ -1218,7 +1222,9 @@ class TestRendererPhonemePlanner:
         call_args: list[tuple[str, tuple[int, int]]] = []
 
         class _RecordingPlanner:
-            def plan_chunk(self, source_word: str, span: tuple[int, int], upos: str | None = None) -> str | None:
+            def plan_chunk(
+                self, source_word: str, span: tuple[int, int], upos: str | None = None, chunk_text: str | None = None
+            ) -> str | None:
                 call_args.append((source_word, span))
                 return f"IPA_{source_word}_{span[0]}_{span[1]}"
 

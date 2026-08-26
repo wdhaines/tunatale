@@ -14,6 +14,7 @@ from pathlib import Path
 
 from app.languages import LexiconOutcome
 from app.plugins.languages.no.lexicon import BUILD_COMMAND, DB_PATH, NstLexicon, nst_lexicon_installed
+from app.plugins.languages.no.lexicon_syllables import lexicon_syllable_split
 from app.plugins.languages.no.norwegian_breakdown import flat_syllables
 from app.plugins.languages.no.sampa import UnknownSegmentError, ipa_syllables, sampa_to_ipa, strip_tone
 
@@ -60,7 +61,13 @@ class NorwegianPhonemePlanner:
             self._lexicon = NstLexicon(self._db_path)
         return self._lexicon
 
-    def plan_chunk(self, source_word: str, span: tuple[int, int], upos: str | None = None) -> str | None:
+    def plan_chunk(
+        self,
+        source_word: str,
+        span: tuple[int, int],
+        upos: str | None = None,
+        chunk_text: str | None = None,
+    ) -> str | None:
         """Return IPA for a sub-word syllable range, or ``None`` for plain synthesis.
 
         The gates, in order:
@@ -68,18 +75,25 @@ class NorwegianPhonemePlanner:
         2. Whole-word span → ``None`` (the TTS's job).
         3. Unbuilt lexicon, or word neither RESOLVED nor AMBIGUOUS_NO_POS → ``None``.
         4. SAMPA→IPA conversion fails, for any candidate → ``None``.
-        5. Repo vs lexicon syllable-count mismatch → ``None``. Without agreement
-           on the count there is no lexicon syllable corresponding to this
-           chunk, and a positional slice would be a different part of the word.
+        5. The breakdown did NOT adopt the lexicon's boundaries for this word
+           → ``None``. Count agreement is not boundary agreement (tunatale-xk1p):
+           ``undersøke`` is 4 syllables both ways, but spelling puts the ``n``
+           with ``un`` while pronunciation puts it with the next syllable, so a
+           positional slice played ``der`` as ``nə``. The only safe test is that
+           the split being sliced IS the split the caption was cut at.
         6. Candidate readings disagree at THIS span (beyond stress) → ``None``.
+        7. *chunk_text* does not match the syllables at *span* → ``None``. A
+           lesson stored before the boundaries moved carries the old text; give
+           it IPA and it plays a syllable its caption does not name.
         """
         # Cheap, word-only gates first: a whole-word chunk never needs the
         # lexicon, so this also avoids opening the database for one.
         repo_syls = flat_syllables(source_word)
-        if not repo_syls:
+        split = lexicon_syllable_split(source_word.lower())
+        if not repo_syls or split is None or split != repo_syls:
             return None
         start, stop = span
-        if (start, stop) == (0, len(repo_syls)):
+        if (start, stop) == (0, len(split)):
             return None
 
         lex = self._lexicon_or_none()
@@ -115,11 +129,14 @@ class NorwegianPhonemePlanner:
             except UnknownSegmentError:
                 return None
             lex_syls = ipa_syllables(ipa)
-            if len(lex_syls) != len(repo_syls):
+            if len(lex_syls) != len(split):
                 return None
             pieces.add(".".join(lex_syls[start:stop]))
 
         if len({_STRESS.sub("", piece) for piece in pieces}) != 1:
+            return None
+
+        if chunk_text is not None and chunk_text.lower() != "".join(split[start:stop]):
             return None
         # They say the same thing; prefer the marked form, since a fragment
         # spoken alone is heard as a citation form.

@@ -95,6 +95,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-groups
 
+      - name: Build NST lexicon
+        run: uv run python scripts/build_nst_lexicon.py build
+
       - name: Lint
         run: uv run ruff check app tests scripts
 
@@ -204,6 +207,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-groups
 
+      - name: Build NST lexicon
+        run: uv run python scripts/build_nst_lexicon.py build
+
       - name: Test at ${{ matrix.tz }}
         run: uv run pytest -n auto --no-cov
         env:
@@ -298,6 +304,9 @@ jobs:
             exit 1
           fi
           echo "HOSTILE_TZ=$tz" >> "$GITHUB_ENV"
+
+      - name: Build NST lexicon
+        run: uv run python scripts/build_nst_lexicon.py build
 
       - name: Test at the rollover hour
         run: TZ="$HOSTILE_TZ" uv run pytest -n auto --no-cov

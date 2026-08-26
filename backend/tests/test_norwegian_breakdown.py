@@ -626,10 +626,10 @@ def test_flat_syllables_vowel_only_inflection_takes_stems_final_consonant():
     assert flat_syllables("allmenne") == ["all", "men", "ne"]
     assert flat_syllables("allerede") == ["al", "le", "re", "de"]
     assert flat_syllables("akerselva") == ["a", "kers", "el", "va"]
-    assert flat_syllables("adelige") == ["a", "de", "li", "ge"]
+    assert flat_syllables("adelige") == ["a", "del", "ig", "e"]
     assert flat_syllables("aldersbestemte") == ["al", "ders", "be", "stem", "te"]
     assert flat_syllables("anerkjente") == ["a", "ner", "kjen", "te"]
-    assert flat_syllables("alvorlige") == ["al", "vor", "li", "ge"]
+    assert flat_syllables("alvorlige") == ["al", "vo", "rlig", "e"]
 
 
 # -- _spoken_syllable ----------------------------------------------------
@@ -673,7 +673,7 @@ def test_spoken_syllable_de_ending_keeps_real_spelling():
 
 def test_de_fragment_matches_the_word_it_came_from():
     seq = build_norwegian_breakdown("hadde")
-    assert "de" in seq
+    assert "dde" in seq
     assert "deh" not in seq
     assert seq[0] == "hadde"  # full word intact
     assert seq[-1] == "hadde"
@@ -777,15 +777,15 @@ def test_breakdown_compound_full_golden_sequence():
 
 
 def test_breakdown_geminate_spoken_as_ett_ter():
-    """The 'etter' morpheme is voiced ett/ter (ambisyllabic geminate), not ett/er."""
+    """The 'etter' morpheme: lexicon e|tter, no geminate respelling (respell=False)."""
     result = build_norwegian_breakdown("etter")
-    assert result == ["etter", "ter", "ett", "etter", "etter"]
+    assert result == ["etter", "tter", "e", "etter", "etter"]
 
 
 def test_breakdown_finne_no_lone_consonant():
-    """finne is fin|ne -> voiced finn/ne, never the bogus f|inne split."""
+    """finne is fi|nne from the lexicon — no geminate respelling."""
     result = build_norwegian_breakdown("finne")
-    assert result == ["finne", "ne", "finn", "finne", "finne"]
+    assert result == ["finne", "nne", "fi", "finne", "finne"]
 
 
 def test_breakdown_compound_without_inflection():
@@ -801,8 +801,8 @@ def test_breakdown_compound_without_inflection():
 def test_breakdown_single_stem_per_syllable():
     assert build_norwegian_breakdown("forskning") == [
         "forskning",
-        "ning",
-        "forsk",
+        "kning",
+        "fors",
         "forskning",
         "forskning",
     ]
@@ -812,9 +812,9 @@ def test_breakdown_single_stem_3_syllables():
     assert build_norwegian_breakdown("kjærlighet") == [
         "kjærlighet",
         "het",
-        "lig",
-        "lighet",
-        "kjær",
+        "rlig",
+        "rlighet",
+        "kjæ",
         "kjærlighet",
         "kjærlighet",
     ]
@@ -862,8 +862,8 @@ def test_breakdown_multi_word_with_compound():
 def test_breakdown_multi_word_non_compound():
     assert build_norwegian_breakdown("på plassen") == [
         "på plassen",
-        "sen",
-        "plass",
+        "ssen",
+        "pla",
         "plassen",
         "på",
         "på plassen",
@@ -882,3 +882,18 @@ def test_breakdown_three_word_phrase():
         "jeg er her",
         "jeg er her",
     ]
+
+
+def test_lexicon_pieces_are_not_geminate_respelled_in_a_multi_word_phrase():
+    """The geminate respelling must stay OFF wherever lexicon pieces are used.
+
+    'hadde' is cut ha|dde by the lexicon, so the doubled consonant already sits
+    whole in the second syllable and _spoken_syllable must not double it again.
+    This pins the MULTI-WORD path specifically: it had its own inverted respell
+    flag, fixed separately from the single-word one, and only a phrase-level
+    test distinguishes them.
+    """
+    chunks = build_norwegian_breakdown("jeg hadde")
+    assert "hadd" not in chunks
+    assert "ha" in chunks
+    assert "dde" in chunks
