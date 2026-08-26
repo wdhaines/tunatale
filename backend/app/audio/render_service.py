@@ -241,6 +241,27 @@ def _read_audio_duration(path: Path) -> float:
         raise RuntimeError(f"invalid duration from ffprobe: {proc.stdout.strip()!r}") from e
 
 
+def _transcode_to_delivery(src: Path, dest: Path, rate: int) -> None:
+    """Re-encode *src* into the delivery codec at *rate*, mono.
+
+    Every input to the concat demuxer must share stream parameters exactly. The
+    TTS hands back MP3 whatever the filename says, so its output has to be
+    normalised before it can sit beside the Opus section files.
+    """
+    samples, src_rate = sf.read(str(src), dtype="float32", always_2d=True)
+    if src_rate != rate:
+        idx = np.linspace(0, len(samples) - 1, num=int(round(len(samples) * rate / src_rate)))
+        samples = np.stack(
+            [np.interp(idx, np.arange(len(samples)), samples[:, c]) for c in range(samples.shape[1])], axis=1
+        ).astype("float32")
+    if samples.shape[1] > 1:
+        samples = samples.mean(axis=1, keepdims=True).astype("float32")
+    if settings.audio_delivery_codec == "wav":
+        sf.write(str(dest), samples, rate, subtype="PCM_16")
+        return
+    dest.write_bytes(encode_audio(samples, rate, settings.audio_delivery_codec, settings.audio_delivery_bitrate))
+
+
 def _write_silence(path: Path, duration_ms: int, rate: int) -> None:
     """Write *duration_ms* of silence in the delivery codec.
 
@@ -328,14 +349,24 @@ async def reassemble_lesson_audio(
     with tempfile.TemporaryDirectory() as scratch_dir:
         scratch = Path(scratch_dir)
 
-        title_path = scratch / f"title.{ext}"
-        await tts.synthesize(lesson.title, lesson.narrator_voice, title_path, rate="+0%")
+        # ⚠️ The TTS writes MP3 BYTES regardless of the filename — its cache is
+        # <digest>.mp3, and LessonRenderer.render names its own temp file
+        # "title.mp3" then DECODES it before assembling. Handing that file
+        # straight to the concat demuxer alongside Opus sections fails with
+        # "Unsupported codec id in stream 0", because one input is a different
+        # codec. So decode it and re-encode it to the delivery codec at the
+        # sections' own rate before it joins the concat list.
+        raw_title = scratch / "title.mp3"
+        await tts.synthesize(lesson.title, lesson.narrator_voice, raw_title, rate="+0%")
 
         new_kp_id = str(uuid.uuid4())
         new_kp_path = audio_dir / f"{new_kp_id}.{ext}"
         kp_cues, kp_rate = await renderer.render_section(
             lesson.sections[kp_index], new_kp_path, kp_index, lesson.language_code
         )
+
+        title_path = scratch / f"title.{ext}"
+        _transcode_to_delivery(raw_title, title_path, kp_rate)
 
         boundary_path = scratch / f"boundary.{ext}"
         _write_silence(boundary_path, boundary_ms, kp_rate)

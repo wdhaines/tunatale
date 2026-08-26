@@ -48,10 +48,15 @@ class _CountingTTS:
         self.call_count += 1
         from app.audio.transcode import encode_audio
 
+        # ⚠️ MP3, NOT the delivery codec, because that is what the real service
+        # does: AzureTTSService caches as <digest>.mp3 and writes those bytes
+        # whatever the caller names the file. An earlier version of this double
+        # wrote Opus, which made the reassembly's concat list look homogeneous
+        # when in production it was not — the run failed on real data with
+        # "Unsupported codec id in stream 0" while every test here was green.
         samples = np.zeros((24000, 1), dtype="float32")  # 1s silence @ 24kHz
-        opus_bytes = encode_audio(samples, 24000, "opus", "28k")
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(opus_bytes)
+        output_path.write_bytes(encode_audio(samples, 24000, "mp3", "64k"))
 
     async def list_voices(self, language_code: str | None = None) -> list[dict]:
         return []
@@ -407,7 +412,13 @@ class TestReassembleDuration:
         # which is the sort of oracle error that gets "fixed" in the
         # implementation instead of the test.
         boundary_ms = NaturalPauseCalculator().get_section_boundary_pause()
-        title_dur = 1.0
+        # Measured, not assumed: the title is synthesized as MP3 and re-encoded
+        # into the delivery codec, and that round trip adds ~114 ms of codec
+        # padding. The first cue IS the title, so the manifest already carries
+        # the answer — and asserting against it also checks that the manifest
+        # agrees with the audio it describes.
+        full_row = next(r for r in store.list_audio_files_for_lesson(lesson.title) if r["section_index"] is None)
+        title_dur = json.loads(full_row["cues_json"])[0]["end_ms"] / 1000
         n_sections = len(lesson.sections)
         expected_total = title_dur + (boundary_ms / 1000) * n_sections + kp_dur + sum(section_durations[1:])
 
@@ -663,3 +674,65 @@ class TestReassembleRefusals:
                 lesson_id=lesson.title,
                 lesson=lesson,
             )
+
+
+class TestTitleTranscode:
+    """_transcode_to_delivery normalises the TTS's MP3 into the delivery codec.
+
+    Every input to the concat demuxer must agree on codec, rate and channel
+    count. The TTS returns MP3 at its own rate whatever the caller names the
+    file, so this is the adapter between the two — and each branch here is a
+    real mismatch it has to absorb.
+    """
+
+    def test_matching_rate_is_not_resampled(self, tmp_path: Path) -> None:
+        """The common case once the TTS and the sections agree: no resample."""
+        import soundfile as sf
+
+        from app.audio.render_service import _transcode_to_delivery
+
+        src = tmp_path / "in.wav"
+        sf.write(str(src), np.zeros((48000, 1), dtype="float32"), 48000, subtype="PCM_16")
+        dest = tmp_path / "out.opus"
+        _transcode_to_delivery(src, dest, 48000)
+        assert abs(_ffprobe_duration(dest) - 1.0) < 0.05
+
+    def test_mismatched_rate_is_resampled_to_the_target(self, tmp_path: Path) -> None:
+        """Duration must survive the rate change — a resample that drops or
+        doubles frames would shift every cue after the title."""
+        import soundfile as sf
+
+        from app.audio.render_service import _transcode_to_delivery
+
+        src = tmp_path / "in.wav"
+        sf.write(str(src), np.zeros((24000, 1), dtype="float32"), 24000, subtype="PCM_16")
+        dest = tmp_path / "out.opus"
+        _transcode_to_delivery(src, dest, 48000)
+        assert abs(_ffprobe_duration(dest) - 1.0) < 0.05
+
+    def test_stereo_is_downmixed_to_mono(self, tmp_path: Path) -> None:
+        """The section files are mono; a stereo title would make the concat
+        demuxer refuse the copy."""
+        import soundfile as sf
+
+        from app.audio.render_service import _transcode_to_delivery
+
+        src = tmp_path / "in.wav"
+        sf.write(str(src), np.zeros((48000, 2), dtype="float32"), 48000, subtype="PCM_16")
+        dest = tmp_path / "out.wav"
+        _transcode_to_delivery(src, dest, 48000)
+        info = sf.info(str(dest))
+        assert info.channels == 1
+
+    def test_wav_delivery_skips_ffmpeg(self, tmp_path: Path, monkeypatch) -> None:
+        import soundfile as sf
+
+        from app.audio import render_service
+        from app.audio.render_service import _transcode_to_delivery
+
+        monkeypatch.setattr(render_service.settings, "audio_delivery_codec", "wav")
+        src = tmp_path / "in.wav"
+        sf.write(str(src), np.zeros((48000, 1), dtype="float32"), 48000, subtype="PCM_16")
+        dest = tmp_path / "out.wav"
+        _transcode_to_delivery(src, dest, 48000)
+        assert sf.info(str(dest)).samplerate == 48000
