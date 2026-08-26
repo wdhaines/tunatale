@@ -247,12 +247,17 @@ class TestAmbiguousPosDidntHelp:
         # (the two NN readings differ at syllable 1).
         assert p.plan_chunk("testword", (1, 2), upos="NOUN") is None
 
-    def test_ambiguous_pos_didnt_help_agreeing_spans_resolve(self, tmp_path: Path) -> None:
+    def test_ambiguous_pos_didnt_help_agreeing_spans_resolve(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """When AMBIGUOUS_POS_DIDNT_HELP readings agree at the span → resolve.
 
         Two NN readings that differ only in stress (first syllable), but
         AGREE at second syllable.
         """
+        import app.plugins.languages.no.phoneme_plan as pp_mod
+
+        monkeypatch.setattr(pp_mod, "lexicon_syllable_split", lambda _w: ["test", "word"])
         rows = [
             ("testword", "NN", '"tE$s@', 1),
             ("testword", "NN", '""tE$s@', 1),
@@ -289,7 +294,7 @@ class TestSabotageDrills:
         # Without POS → ambiguous → None
         assert p.plan_chunk("sporet", (1, 2), upos=None) is None
 
-    def test_ambiguous_pos_didnt_help_drill(self, tmp_path: Path) -> None:
+    def test_ambiguous_pos_didnt_help_drill(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Drill: AMBIGUOUS_POS_DIDNT_HELP must not return None early.
 
         If the implementation returns None on AMBIGUOUS_POS_DIDNT_HELP instead
@@ -297,6 +302,9 @@ class TestSabotageDrills:
         still pass (it expects None). So we test the AGREEING case:
         readings agree at the span → must return IPA, not None.
         """
+        import app.plugins.languages.no.phoneme_plan as pp_mod
+
+        monkeypatch.setattr(pp_mod, "lexicon_syllable_split", lambda _w: ["test", "word"])
         rows = [
             ("testword", "NN", '"tE$s@', 1),
             ("testword", "NN", '""tE$s@', 1),
@@ -808,7 +816,9 @@ class TestRendererPassesUpos:
         recorded_args: list[tuple] = []
 
         class _RecordingPlanner:
-            def plan_chunk(self, source_word: str, span: tuple[int, int], upos: str | None = None) -> str | None:
+            def plan_chunk(
+                self, source_word: str, span: tuple[int, int], upos: str | None = None, chunk_text: str | None = None
+            ) -> str | None:
                 recorded_args.append((source_word, span, upos))
                 return f"IPA_{source_word}"
 

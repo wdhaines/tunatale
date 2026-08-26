@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import os
+from dataclasses import dataclass
 
 from app.models.breakdown import BreakdownChunk
 from app.plugins.languages.no.syllabify import syllabify_norwegian_word
@@ -205,6 +206,30 @@ _GUARD_EXEMPT_PREPOSITIONS: frozenset[str] = frozenset(
 # (the whole word does not outrank all non-exempt parts).  Each entry is a
 # one-off decision — this list must NOT grow into a general dumping ground.
 _LEXICALIZED_WHOLE_OVERRIDES: frozenset[str] = frozenset(["forstand", "forbrytelsens"])
+
+
+@dataclass(frozen=True)
+class SyllablePieces:
+    """The orthographic pieces of a part, plus whether they came from the lexicon."""
+
+    pieces: list[str]
+    from_lexicon: bool
+
+
+def syllable_pieces(part: str, lexicon_split: list[str] | None = None) -> SyllablePieces:
+    """Produce the orthographic syllable pieces for *part*.
+
+    When *lexicon_split* is provided (a split all readings agree on for the
+    **whole word**), adopt it directly — no prefix/loanword/suffix folding.
+    Otherwise fall back to :func:`syllabify_morpheme` unchanged.
+
+    ⚠️ *lexicon_split* is the whole-word split passed in by the caller
+    (``flat_syllables`` or ``build_norwegian_breakdown_spans``). This function
+    does NOT look up the lexicon itself.
+    """
+    if lexicon_split is not None:
+        return SyllablePieces(pieces=lexicon_split, from_lexicon=True)
+    return SyllablePieces(pieces=syllabify_morpheme(part), from_lexicon=False)
 
 
 @functools.cache
@@ -468,7 +493,7 @@ _NORWEGIAN_VOWELS: frozenset[str] = frozenset("aeiouyæøå")
 #
 # The geminate lengthening in :func:`_spoken_syllable` is NOT this and stays:
 # a doubled consonant really is ambisyllabic, and ``ett`` is a real spelling.
-def _spoken_syllable(syllables: list[str], i: int) -> str:
+def _spoken_syllable(syllables: list[str], i: int, *, respell: bool = True) -> str:
     """Spoken form of syllable *i*, lengthening a geminate when spoken alone.
 
     A doubled consonant in Norwegian marks the preceding vowel as *short*, and
@@ -480,19 +505,12 @@ def _spoken_syllable(syllables: list[str], i: int) -> str:
     Reconstruction still uses the raw syllables, so joins remain exact
     (``et`` + ``ter`` = ``etter``, never ``ettter``).
 
-    Nothing else is respelled. ``de`` used to become ``deh`` here, because the
-    nb-NO voice reads an isolated ``de`` as the pronoun /diː/ instead of the
-    schwa — a workaround for synthesising a fragment on its own, which slicing
-    made unnecessary: the chunk is cut out of a whole-word render, so no voice
-    ever sees the fragment. The invented spelling still reached the learner,
-    since ``cues.py`` feeds ``Phrase.text`` straight to the caption.
-
-    The geminate lengthening above stays, and is a different thing: a doubled
-    consonant genuinely is ambisyllabic, and ``ett`` is a real Norwegian
-    spelling rather than a phonetic hint.
+    When *respell* is ``False`` (lexicon-derived pieces), the geminate
+    lengthening is skipped — the lexicon already has the correct phoneme count
+    and respelling would double a consonant the audio already pronounces once.
     """
     s = syllables[i]
-    if i + 1 < len(syllables):
+    if respell and i + 1 < len(syllables):
         nxt = syllables[i + 1]
         if s and nxt and s[-1] == nxt[0] and s[-1] not in _NORWEGIAN_VOWELS:
             return s + s[-1]
@@ -697,34 +715,48 @@ def flat_syllables(word: str) -> list[str] | None:
     if not word_lower:
         return []
 
+    # Lexicon lookup is per WHOLE word — never per part.  The split is adopted
+    # only when it is unambiguous across all candidate readings.
+    from app.plugins.languages.no.lexicon_syllables import lexicon_syllable_split
+
+    lexicon_split = lexicon_syllable_split(word_lower)
+
     morphemes = segment_compound(word_lower)
     if len(morphemes) >= 2:
+        # COMPOUNDS DO NOT ADOPT the lexicon split (deferred; tunatale-3q0u).
+        # The correct shape is to distribute the lexicon's syllables INTO the
+        # existing buildup units. Replacing the units with a flat syllable
+        # sequence instead loses the part chunks and _spoken_part's overlap
+        # restoration ('bus' -> 'buss'), which moves something above the
+        # syllable. Until that is built a compound keeps its repo
+        # syllabification, and plan_chunk's identity guard therefore gives it
+        # no IPA — refusing rather than crossing the two sources.
         units = _compound_buildup_units(morphemes)
-        pieces: list[str] = []
+        pieces = []
         for _, part_pieces in units:
             pieces.extend(part_pieces)
     else:
-        pieces = syllabify_morpheme(word_lower)
+        pieces = syllable_pieces(word_lower, lexicon_split).pieces
 
     if "".join(pieces) != word_lower:
         return None
     return pieces
 
 
-def _build_syllable_inner_spans(syllables: list[str], word: str) -> list[BreakdownChunk]:
+def _build_syllable_inner_spans(syllables: list[str], word: str, *, respell: bool = True) -> list[BreakdownChunk]:
     seq: list[BreakdownChunk] = []
     n = len(syllables)
     for i in range(n - 1, -1, -1):
-        seq.append(BreakdownChunk(_spoken_syllable(syllables, i), word, (i, i + 1)))
+        seq.append(BreakdownChunk(_spoken_syllable(syllables, i, respell=respell), word, (i, i + 1)))
         if i < n - 1:
             seq.append(BreakdownChunk("".join(syllables[i:]), word, (i, n)))
     return seq
 
 
-def _build_syllable_sequence_spans(word: str, syllables: list[str]) -> list[BreakdownChunk]:
+def _build_syllable_sequence_spans(word: str, syllables: list[str], *, respell: bool = True) -> list[BreakdownChunk]:
     return [
         BreakdownChunk(word, None, None),
-        *_build_syllable_inner_spans(syllables, word),
+        *_build_syllable_inner_spans(syllables, word, respell=respell),
         BreakdownChunk(word, None, None),
     ]
 
@@ -787,19 +819,25 @@ def build_norwegian_breakdown_spans(phrase: str) -> list[BreakdownChunk]:
     if not words:
         return []
 
+    from app.plugins.languages.no.lexicon_syllables import lexicon_syllable_split
+
     if len(words) == 1:
         word = words[0]
+        lexicon_split = lexicon_syllable_split(word)
         morphemes = segment_compound(word)
         if len(morphemes) >= 2:
             return _build_compound_sequence_spans(text, morphemes)
         syllables = syllabify_morpheme(word)
+        if lexicon_split is not None:
+            syllables = lexicon_split
         if len(syllables) <= 1:
             return [BreakdownChunk(text, None, None), BreakdownChunk(text, None, None)]
-        return _build_syllable_sequence_spans(text, syllables)
+        return _build_syllable_sequence_spans(text, syllables, respell=lexicon_split is None)
 
     breakdown: list[BreakdownChunk] = [BreakdownChunk(text, None, None)]
     for word_index in range(len(words) - 1, -1, -1):
         word = words[word_index]
+        lexicon_split = lexicon_syllable_split(word)
         morphemes = segment_compound(word)
         if len(morphemes) >= 2:
             word_seq = _build_compound_sequence_spans(word, morphemes)
@@ -808,8 +846,10 @@ def build_norwegian_breakdown_spans(phrase: str) -> list[BreakdownChunk]:
             breakdown.extend(word_seq)
         else:
             syllables = syllabify_morpheme(word)
+            if lexicon_split is not None:
+                syllables = lexicon_split
             if len(syllables) > 1:
-                breakdown.extend(_build_syllable_inner_spans(syllables, word))
+                breakdown.extend(_build_syllable_inner_spans(syllables, word, respell=lexicon_split is None))
             else:
                 breakdown.append(BreakdownChunk(word, None, None))
 

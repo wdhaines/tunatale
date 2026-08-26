@@ -78,6 +78,14 @@ full_log="$ROOT/.git/tt-test-last.log"
   # write is treated as already-scanned, so its violations pass silently (~50%
   # of runs; verified 2026-07-03). CI is immune (fresh checkout, no cache); this
   # brings the local pre-commit gate up to CI's reliability. Cost is sub-second.
+  # The NST pronunciation database is a gitignored BUILD ARTIFACT, and Norwegian
+  # syllable boundaries are read from it. Without this step the lexicon is absent
+  # on a fresh clone and in CI, every lookup degrades to None, and the boundary
+  # tests would pass here (where the file happens to exist) while proving nothing
+  # there. Build takes ~1s from the committed extract, so it is always built.
+  echo "=== Build NST lexicon ==="
+  uv run python scripts/build_nst_lexicon.py build
+
   echo "=== Ruff lint ==="
   uv run ruff check --no-cache app tests scripts
 
