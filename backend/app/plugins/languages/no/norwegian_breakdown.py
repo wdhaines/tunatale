@@ -702,6 +702,44 @@ def _compound_buildup_units(morphemes: list[str]) -> list[tuple[str, list[str]]]
     return units
 
 
+def _resolve_compound_parts(morphemes: list[str]) -> list[tuple[str, list[str]]]:
+    """Resolve each compound part against the lexicon independently.
+
+    For each buildup unit, look up its own lexicon split (the PART, not the
+    whole compound).  If the part's lexicon split matches its repo
+    syllabification (``syllabify_morpheme`` of the part), adopt the lexicon's
+    syllables.  Otherwise keep the repo syllables unchanged.
+
+    This avoids the old whole-word transcription slicing, which modelled
+    connected-speech assimilation across the compound seam that never occurs
+    in a buildup drill where parts are spoken separately.
+    """
+    from app.plugins.languages.no.lexicon_syllables import lexicon_syllable_split
+
+    units = _compound_buildup_units(morphemes)
+    resolved: list[tuple[str, list[str]]] = []
+    for surface, pieces in units:
+        split = lexicon_syllable_split(surface)
+        # Adopt UNCONDITIONALLY when the lexicon has a split, mirroring the
+        # simplex path in flat_syllables. An equality guard here would only
+        # adopt when adopting changes nothing, which is the identity guard's
+        # shape applied where it does not belong: the whole point is to take
+        # the lexicon's boundaries WHERE THEY DIFFER (etterforskerens ->
+        # e|tter + fo|rskerens, not et|ter|for|sker|ens).
+        # lexicon_syllable_split only ever CUTS the surface, so
+        # "".join(split) == surface and _build_compound_sequence_spans' offset
+        # arithmetic is unaffected.
+        resolved.append((surface, split if split is not None else pieces))
+    # NOTE: the fold (_fold_vowel_only_inflections) is deliberately NOT re-applied
+    # to an adopted split. It would undo the lexicon's boundary to avoid a
+    # vowel-only rung -- 'lange' is /'laN@/, so lang|e is right and the fold's
+    # lan|ge implies /lan.g@/, a different sound. The pre-existing rule (see
+    # test_vowel_only_inflection_never_stranded_inside_a_morpheme) is already
+    # "lexicon boundaries win even when a vowel-only inflection is stranded";
+    # per-part resolution only widens WHERE the lexicon speaks.
+    return resolved
+
+
 def build_norwegian_breakdown(phrase: str) -> list[str]:
     """Build a Pimsleur-style breakdown for Norwegian.
 
@@ -716,28 +754,23 @@ def flat_syllables(word: str) -> list[str] | None:
     if not word_lower:
         return []
 
-    # Lexicon lookup is per WHOLE word — never per part.  The split is adopted
-    # only when it is unambiguous across all candidate readings.
-    from app.plugins.languages.no.lexicon_syllables import lexicon_syllable_split
-
-    lexicon_split = lexicon_syllable_split(word_lower)
-
     morphemes = segment_compound(word_lower)
     if len(morphemes) >= 2:
-        # COMPOUNDS DO NOT ADOPT the lexicon split (deferred; tunatale-3q0u).
-        # The correct shape is to distribute the lexicon's syllables INTO the
-        # existing buildup units. Replacing the units with a flat syllable
-        # sequence instead loses the part chunks and _spoken_part's overlap
-        # restoration ('bus' -> 'buss'), which moves something above the
-        # syllable. Until that is built a compound keeps its repo
-        # syllabification, and plan_chunk's identity guard therefore gives it
-        # no IPA — refusing rather than crossing the two sources.
-        units = _compound_buildup_units(morphemes)
+        # Per-part lexicon resolution: each buildup unit is resolved against
+        # the lexicon AS THE WORD IT IS.  The whole compound's connected-speech
+        # transcription is never consulted — assimilation across the seam does
+        # not occur in a buildup drill where parts are spoken separately.
+        units = _resolve_compound_parts(morphemes)
         pieces = []
         for _, part_pieces in units:
             pieces.extend(part_pieces)
     else:
-        pieces = syllable_pieces(word_lower, lexicon_split).pieces
+        # Simplex: the lexicon is consulted for the WHOLE word. (A compound
+        # never reaches here — its parts are resolved individually above, and
+        # the compound's own transcription is deliberately never consulted.)
+        from app.plugins.languages.no.lexicon_syllables import lexicon_syllable_split
+
+        pieces = syllable_pieces(word_lower, lexicon_syllable_split(word_lower)).pieces
 
     if "".join(pieces) != word_lower:
         return None
@@ -783,7 +816,7 @@ def _build_compound_sequence_spans(word: str, morphemes: list[str]) -> list[Brea
     word, so the emitted text stays byte-identical to
     :func:`build_norwegian_breakdown`.
     """
-    units = _compound_buildup_units(morphemes)
+    units = _resolve_compound_parts(morphemes)
     parts_list = [part for part, _ in units]
 
     offsets: list[int] = []
@@ -930,7 +963,7 @@ def slow_norwegian_word(word: str) -> str:
 
     morphemes = segment_compound(core)
     if len(morphemes) >= 2:
-        units = _compound_buildup_units(morphemes)
+        units = _resolve_compound_parts(morphemes)
         parts_list = [part for part, _ in units]
         core = ", ".join(_spoken_part(parts_list, i) for i in range(len(parts_list)))
 
