@@ -677,87 +677,14 @@ class TestAnnotateChunkUpos:
 
 
 # ---------------------------------------------------------------------------
-# Coverage: _annotate_upos_background
+# _annotate_upos_background is GONE (2026-08-26). It was the bug: both
+# /api/story endpoints saved the lesson and THEN fired it as a detached task,
+# so it tagged an in-memory Lesson nobody wrote again. Its three tests are
+# removed with it rather than retargeted — annotate_chunk_upos_for_lesson
+# covers the same three paths (empty model_version, success, swallowed
+# exception) and is what both endpoints now await BEFORE saving. See
+# TestTaggedBeforeSaved for the ordering guard.
 # ---------------------------------------------------------------------------
-
-
-class TestAnnotateUposBackground:
-    """_annotate_upos_background calls annotate_chunk_upos via anyio."""
-
-    async def test_background_returns_early_without_model(self, srs_db: SRSDatabase) -> None:
-        """When model_version is empty, returns immediately."""
-        from app.api.generation import _annotate_upos_background
-
-        lesson = Lesson(
-            title="Day 1",
-            language_code="no",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[
-                        Phrase(text="Hello", voice_id="v", language_code="no"),
-                    ],
-                )
-            ],
-        )
-
-        await _annotate_upos_background(lesson, srs_db)
-        # No crash, no tags applied — early return path
-
-    async def test_background_success_path(self, srs_db: SRSDatabase) -> None:
-        """With a real lemmatizer and a lesson with no KEY_PHRASES, annotate_chunk_upos returns 0."""
-        from unittest.mock import patch
-
-        from app.api.generation import _annotate_upos_background
-
-        lesson = Lesson(
-            title="Day 1",
-            language_code="no",
-            sections=[
-                Section(
-                    section_type=SectionType.NATURAL_SPEED,
-                    phrases=[
-                        Phrase(text="Hello", voice_id="v", language_code="no"),
-                    ],
-                )
-            ],
-        )
-
-        # Provide a fake lemmatizer with a non-empty model_version to reach the await
-        class _FakeLem:
-            _cache_version = "fake-v1"
-
-            def lemmatize(self, w, lc):
-                return w
-
-            def analyze(self, w, lc):
-                return w, "", ""
-
-            def analyze_sentence(self, s, lc):
-                return []
-
-        with patch("app.api.generation.get_lemmatizer", return_value=_FakeLem()):
-            await _annotate_upos_background(lesson, srs_db)
-        # annotate_chunk_upos ran (returned 0 because no KEY_PHRASES)
-
-    async def test_background_logs_failure(self, srs_db: SRSDatabase, caplog: pytest.LogCaptureFixture) -> None:
-        """_annotate_upos_background swallows exceptions with a warning log."""
-        from unittest.mock import patch
-
-        from app.api.generation import _annotate_upos_background
-
-        lesson = Lesson(
-            title="Day 1",
-            language_code="no",
-            sections=[],
-        )
-
-        def _raise(code):
-            raise RuntimeError("no such language")
-
-        with patch("app.api.generation.get_lemmatizer", side_effect=_raise), caplog.at_level("WARNING"):
-            await _annotate_upos_background(lesson, srs_db)
-        assert "UPOS annotation failed" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -965,3 +892,185 @@ class TestAnnotateSuccessPath:
         assert tagged >= 1
         chunk = next(p for sec in lesson.sections for p in sec.phrases if p.source_word == "sporet")
         assert chunk.upos == "NOUN"
+
+
+class TestTaggedBeforeSaved:
+    """tunatale-bxhl: the tags must be in what STORAGE receives.
+
+    A property of the stored lesson, not of source order. The bug it guards
+    computes the right tags and then throws them away, so every assertion about
+    ``annotate_chunk_upos`` itself stays green while production stores an
+    untagged lesson — which is exactly how it survived until now.
+
+    OBSERVED IN PRODUCTION 2026-08-26: a freshly generated Norwegian lesson had
+    0 of 47 chunks tagged, and re-running the same annotation over the stored
+    copy tagged all 47. ``LessonPipeline._generate`` had been fixed to await
+    before saving, but both ``/api/story`` endpoints still saved first and then
+    fired a detached task that mutated an in-memory Lesson nobody wrote again.
+    """
+
+    async def test_stored_lesson_already_carries_upos(self, tmp_path: Path) -> None:
+        import copy as _copy
+
+        from httpx import ASGITransport, AsyncClient
+
+        from app.languages import get_language
+        from app.main import app
+        from app.models.curriculum import Curriculum, CurriculumDay
+        from app.srs.database import SRSDatabase
+        from app.srs.lemmatizer import TokenAnalysis
+        from app.storage.store import ContentStore
+
+        captured: list[Lesson] = []
+
+        class _CapturingStore(ContentStore):
+            def save_lesson(self, lesson_id, curriculum_id, day, lesson):  # type: ignore[override]
+                # Deep-copied at the moment storage sees it, so a LATER mutation
+                # of the same object cannot make an untagged save look tagged.
+                captured.append(_copy.deepcopy(lesson))
+                super().save_lesson(lesson_id, curriculum_id, day, lesson)
+
+        class _StubGenerator:
+            async def generate(self, **kwargs):
+                return _story_lesson()
+
+        def _story_lesson() -> Lesson:
+            """Built by the REAL section builder, so annotate_chunk_upos's
+            phrase arithmetic (2 + len(breakdown) per key phrase) matches."""
+            from app.generation.section_builder import build_key_phrases_section
+
+            section = build_key_phrases_section(
+                [{"phrase": "sporet er kaldt", "translation": "the track is cold"}],
+                {"female-1": "nb-NO-PernilleNeural"},
+                "en-US-GuyNeural",
+                "no",
+            )
+            return Lesson(
+                title="Day 1",
+                language_code="no",
+                sections=[section],
+                key_phrases=[KeyPhraseInfo(phrase="sporet er kaldt", translation="the track is cold")],
+            )
+
+        curriculum = Curriculum(
+            id="c1",
+            topic="t",
+            language_code="no",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(
+                    day=1,
+                    title="Day 1",
+                    focus="tracks",
+                    learning_objective="describe a track",
+                    story_guidance="a cold track",
+                    collocations=["sporet er kaldt"],
+                )
+            ],
+        )
+
+        store = _CapturingStore(":memory:")
+        store.save_curriculum("c1", curriculum)
+        app.state.content_store = store
+        app.state.story_generator = _StubGenerator()
+        app.state.language = get_language("no")
+        app.state.srs_db = SRSDatabase(":memory:")
+        app.state.pipeline = None
+        # The seam: without it the endpoint resolves Stanza for real, which the
+        # default gate does not run (--run-stanza).
+        app.state.lemmatizer = _UposLemmatizer(
+            {"sporet er kaldt": [TokenAnalysis(surface="sporet", lemma="spor", upos="NOUN")]}
+        )
+        app.state.model_version = "test-v1"
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post(
+                    "/api/story/generate",
+                    json={"curriculum_id": "c1", "day": 1, "strategy": "WIDER"},
+                )
+            assert response.status_code == 201, response.text
+        finally:
+            app.state.srs_db.close()
+            for attr in ("lemmatizer", "model_version"):
+                if hasattr(app.state, attr):
+                    delattr(app.state, attr)
+
+        assert captured, "save_lesson was never called"
+        stored = [p for sec in captured[0].sections for p in sec.phrases if p.source_word is not None]
+        assert stored, "fixture produced no provenance-carrying chunks"
+        sporet = [p for p in stored if p.source_word == "sporet"]
+        assert sporet, f"no 'sporet' chunks in {[p.source_word for p in stored]}"
+        assert all(p.upos == "NOUN" for p in sporet), (
+            "the lesson reached storage untagged — annotation ran after the save; "
+            f"got {[(p.text, p.upos) for p in sporet]}"
+        )
+
+    async def test_imported_lesson_is_re_saved_with_its_tags(self, tmp_path: Path) -> None:
+        """/import writes the lesson before it can be tagged, so the tags need
+        a SECOND write. Without it the import path has the same silent bug the
+        generate path had — the difference is only where the save happens."""
+        import copy as _copy
+
+        from httpx import ASGITransport, AsyncClient
+
+        from app.languages import get_language
+        from app.main import app
+        from app.models.curriculum import Curriculum, CurriculumDay
+        from app.srs.database import SRSDatabase
+        from app.srs.lemmatizer import TokenAnalysis
+        from app.storage.store import ContentStore
+
+        updates: list[Lesson] = []
+
+        class _RecordingStore(ContentStore):
+            def update_lesson_data(self, lesson_id, lesson):  # type: ignore[override]
+                updates.append(_copy.deepcopy(lesson))
+                return super().update_lesson_data(lesson_id, lesson)
+
+        curriculum = Curriculum(
+            id="c1",
+            topic="t",
+            language_code="no",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(
+                    day=1,
+                    title="Day 1",
+                    focus="tracks",
+                    learning_objective="describe a track",
+                    story_guidance="a cold track",
+                    collocations=["sporet er kaldt"],
+                )
+            ],
+        )
+        store = _RecordingStore(":memory:")
+        store.save_curriculum("c1", curriculum)
+        app.state.content_store = store
+        app.state.language = get_language("no")
+        app.state.srs_db = SRSDatabase(":memory:")
+        app.state.pipeline = None
+        app.state.lemmatizer = _UposLemmatizer(
+            {"sporet er kaldt": [TokenAnalysis(surface="sporet", lemma="spor", upos="NOUN")]}
+        )
+        app.state.model_version = "test-v1"
+        story = {
+            "title": "Day 1",
+            "key_phrases": [{"phrase": "sporet er kaldt", "translation": "the track is cold"}],
+            "dialogue": [{"speaker": "female-1", "text": "sporet er kaldt", "translation": "the track is cold"}],
+        }
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post(
+                    "/api/story/import",
+                    json={"curriculum_id": "c1", "day": 1, "story": story},
+                )
+            assert response.status_code == 201, response.text
+        finally:
+            app.state.srs_db.close()
+            for attr in ("lemmatizer", "model_version"):
+                if hasattr(app.state, attr):
+                    delattr(app.state, attr)
+
+        assert updates, "the tagged lesson was never written back — the tags are lost"
+        sporet = [p for sec in updates[-1].sections for p in sec.phrases if p.source_word == "sporet"]
+        assert sporet and all(p.upos == "NOUN" for p in sporet), [(p.text, p.upos) for p in sporet]

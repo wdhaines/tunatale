@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from app.generation.section_builder import build_word_breakdown_spans
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.plugins.languages.no.lexicon_syllables import lexicon_syllable_split
 from app.plugins.languages.no.norwegian_breakdown import (
@@ -68,7 +69,7 @@ class TestFlatSyllables:
     def test_compound(self):
         pieces = flat_syllables("etterforskningsteamet")
         assert pieces is not None
-        assert pieces == ["et", "ter", "forsk", "nings", "team", "et"]
+        assert pieces == ["e", "tter", "fors", "knings", "team", "et"]
 
     def test_overlap_compound_rejoins(self):
         """s-overlap busstasjon: pieces rejoin despite truncated morpheme."""
@@ -96,7 +97,7 @@ class TestFlatSyllables:
         of the whole-word render at a CTC-peaky stop. Pieces stay speakable.
         """
         assert flat_syllables("oppklart") == ["opp", "klart"]
-        assert flat_syllables("velkommen") == ["vel", "kom", "men"]
+        assert flat_syllables("velkommen") == ["vel", "ko", "mmen"]
 
     def test_no_wordlist_entry_yields_an_unspeakable_chunk(self):
         """The invariant, over all 50k wordlist entries: every piece has a nucleus.
@@ -155,6 +156,17 @@ class TestFlatSyllables:
             if len(word) < 3:
                 continue
             if lexicon_syllable_split(word) is not None:
+                continue
+            # Skip any word whose pieces came from the LEXICON rather than the
+            # repo syllabifier — the lexicon's boundaries are authoritative even
+            # when they strand a vowel-only inflection (see the docstring above).
+            # The lexicon is consulted per WHOLE word for a simplex and per PART
+            # for a compound, so both must be checked; testing only the whole
+            # word let per-part adoption through and reported 17 false stranders.
+            if any(
+                lexicon_syllable_split(surface) is not None
+                for surface, _ in _compound_buildup_units(segment_compound(word))
+            ):
                 continue
             pieces = flat_syllables(word)
             assert pieces is not None, f"flat_syllables({word!r}) does not rejoin"
@@ -238,8 +250,84 @@ class TestFlatSyllables:
         monkeypatch.setattr(ls, "lexicon_syllable_split", lambda _w: None)
         assert flat_syllables("jeg") is None
 
+    def test_compound_per_part_lexicon_adopted_busstasjon(self):
+        """busstasjon: both parts match lexicon → adopted syllables."""
+        pieces = flat_syllables("busstasjon")
+        assert pieces is not None
+        assert pieces == ["bus", "sta", "sjon"]
 
-# ---- build_norwegian_breakdown_spans text equality oracle ----------------
+    def test_compound_per_part_lexicon_adopted_skisporet(self):
+        """skisporet: both parts match lexicon → adopted syllables.
+
+        The repo syllabifies 'sporet' as ['spo', 'ret'], which happens to
+        match the lexicon split.  The lexicon's whole-word split is
+        ['ski', 'spo', 'ret'] — the adopted pieces must match it.
+        """
+        pieces = flat_syllables("skisporet")
+        assert pieces is not None
+        assert pieces == ["ski", "spo", "ret"]
+
+    def test_compound_per_part_lexicon_adopted_stortinget(self):
+        """stortinget: 'tinget' lexicon split matches repo syllables → adopted.
+
+        _compound_buildup_units splits off inflection 'et', syllabifies stem
+        'ting' → ['ting'], appends 'et' → ['ting', 'et'].  The lexicon also
+        gives ['ting', 'et'] for 'tinget', so the part adopts.
+        """
+        pieces = flat_syllables("stortinget")
+        assert pieces is not None
+        assert pieces == ["stor", "ting", "et"]
+
+    def test_compound_single_syllable_parts_keep_going(self):
+        """Monosyllabic parts must remain whole-word spans for TTS.
+
+        forstår = for + står, both monosyllabic.  Neither gets IPA; they go
+        to plan_chunk gate 2 (TTS) as whole-word spans.
+        """
+        pieces = flat_syllables("forstår")
+        assert pieces is not None
+        assert pieces == ["for", "står"]
+
+    def test_compound_partial_adoption_undersøke(self):
+        """undersøke: 'under' has no lexicon split, 'søke' adopts.
+
+        Partial adoption within one word MUST be allowed.
+        """
+        pieces = flat_syllables("undersøke")
+        assert pieces is not None
+        # 'under' lexicon=None → repo ['un', 'der']; 'søke' matches → ['sø', 'ke']
+        assert pieces == ["un", "der", "sø", "ke"]
+
+    # ---- build_norwegian_breakdown_spans text equality oracle ----------------
+
+    def test_per_part_adoption_takes_boundaries_that_DIFFER(self):
+        """The discriminating case: adoption must not require agreement.
+
+        Every other per-part test above passes under BOTH a correct
+        implementation and one that adopts only when the lexicon agrees with
+        the repo syllabifier — because for those words the two coincide.
+        'etterforskerens' is the case that separates them: both its parts have
+        a lexicon split that DIFFERS from the repo's, which is exactly when
+        adopting is worth doing.
+
+            etter       repo et|ter      lexicon e|tter
+            forskerens  repo for|sker|ens  lexicon fo|rskerens
+
+        An equality guard here adopts only when adopting changes nothing.
+        """
+        assert flat_syllables("etterforskerens") == ["e", "tter", "fo", "rskerens"]
+
+    def test_per_part_never_uses_the_whole_word_transcription(self):
+        """Morphological units survive; the compound's own split is not consulted.
+
+        The whole-word NST transcription of these encodes connected-speech
+        assimilation ACROSS the compound seam (hverandre -> hve|ran|dre,
+        forstår -> fo|rstår), which never happens in a drill where the parts
+        are spoken separately. Adopting it would be the superseded design.
+        """
+        assert flat_syllables("hverandre") == ["hver", "an", "dre"]
+        assert flat_syllables("forstår") == ["for", "står"]
+        assert flat_syllables("tyskland") == ["tysk", "land"]
 
 
 class TestBreakdownSpansTextEquality:
@@ -351,17 +439,17 @@ class TestBreakdownSpansCorrectness:
         """A compound's syllables are spans of the whole compound's render."""
         chunks = build_norwegian_breakdown_spans("etterforskningsteamet")
         assert flat_syllables("etterforskningsteamet") == [
-            "et",
-            "ter",
-            "forsk",
-            "nings",
+            "e",
+            "tter",
+            "fors",
+            "knings",
             "team",
             "et",
         ]
         by_text = {(c.text, c.span) for c in chunks if c.span is not None}
         assert ("team", (4, 5)) in by_text
-        assert ("nings", (3, 4)) in by_text
-        assert ("ter", (1, 2)) in by_text
+        assert ("knings", (3, 4)) in by_text
+        assert ("tter", (1, 2)) in by_text
         assert {c.source_word for c in chunks if c.span is not None} == {"etterforskningsteamet"}
 
     def test_compound_of_monosyllables_is_still_sliceable(self):
@@ -376,16 +464,53 @@ class TestBreakdownSpansCorrectness:
         assert ("snø", "snømann", (0, 1)) in spans
         assert ("mann", "snømann", (1, 2)) in spans
 
+    def test_busstasjon_buss_chunk_adopted_span(self):
+        """busstasjon: 'buss' chunk must be present (geminate restoration) and
+        its span must index the adopted syllables, not the repo ones.
+
+        The acceptance test for per-part lexicon adoption: _spoken_part
+        restores the geminate so the learner hears 'buss', and the span
+        (0, 1) maps to the adopted syllable 'bus' in flat_syllables.
+        """
+        chunks = build_norwegian_breakdown_spans("busstasjon")
+        adopted = flat_syllables("busstasjon")
+        assert adopted == ["bus", "sta", "sjon"]
+        spans = {(c.text, c.span) for c in chunks if c.span is not None}
+        # 'buss' chunk (geminate-doubled from 'bus') at span (0, 1)
+        assert ("buss", (0, 1)) in spans, f"'buss' chunk missing from spans {spans} — geminate restoration broken?"
+        # Part chunks at correct adopted-syllable offsets
+        assert ("stasjon", (1, 3)) in spans
+        assert ("sjon", (2, 3)) in spans
+        assert ("sta", (1, 2)) in spans
+        assert ("ski", (0, 1)) not in spans  # 'ski' is for skisporet, not busstasjon
+
+    def test_skisporet_adopted_spans(self):
+        """skisporet: spans index adopted syllables ['ski', 'spo', 'ret'].
+
+        The repo syllabifies 'sporet' as ['spo', 'ret'], matching the lexicon,
+        so the adopted flat_syllables is ['ski', 'spo', 'ret'] — not
+        ['ski', 'spor', 'et'].
+        """
+        chunks = build_norwegian_breakdown_spans("skisporet")
+        adopted = flat_syllables("skisporet")
+        assert adopted == ["ski", "spo", "ret"]
+        spans = {(c.text, c.span) for c in chunks if c.span is not None}
+        assert ("ski", (0, 1)) in spans
+        assert ("sporet", (1, 3)) in spans
+        assert ("ret", (2, 3)) in spans
+        assert ("spo", (1, 2)) in spans
+
     def test_compound_inside_multi_word_phrase_indexes_its_word(self):
         chunks = build_norwegian_breakdown_spans("på flyplassen")
-        # Inside the compound the inflection is its own piece (``plass|en``),
-        # unlike the standalone word (``plas|sen``) — the whole-word flatten is
-        # what the spans index, so that is what Stage 3 must render and cut.
-        assert flat_syllables("flyplassen") == ["fly", "plass", "en"]
+        # Per-part resolution (tunatale-oqxz) resolves the 'plassen' unit
+        # against the lexicon as the word it is: /ˈplɑ.sn̩/, so pla|ssen. The
+        # standalone word and the unit inside the compound now agree, which the
+        # old comment here noted they did NOT — that divergence is gone.
+        assert flat_syllables("flyplassen") == ["fly", "pla", "ssen"]
         spans = {(c.text, c.source_word, c.span) for c in chunks if c.span is not None}
         assert ("fly", "flyplassen", (0, 1)) in spans
         assert ("plassen", "flyplassen", (1, 3)) in spans
-        assert ("en", "flyplassen", (2, 3)) in spans
+        assert ("ssen", "flyplassen", (2, 3)) in spans
 
     def test_source_word_for_non_compound_stem(self):
         """Single-stem word: non-bookend chunks carry source_word."""
@@ -556,3 +681,123 @@ class TestWordAbsentFromTheLexicon:
             "kvasimuk",
         ]
         assert all(c.source_word in (None, "kvasimuk") for c in chunks)
+
+
+# ---- Trailing punctuation stripping --------------------------------------
+
+
+class TestTrailingPunctuationStripping:
+    """Sentence-final punctuation (., ? !) must be stripped from individual
+    words before they enter segment_compound / lexicon_syllable_split /
+    syllabify_morpheme, so the lexicon can look them up and syllabification
+    is not corrupted.
+
+    Whole-phrase bookend chunks must KEEP their punctuation.
+    """
+
+    def test_source_word_strips_trailing_question_mark(self):
+        """tunatale-7vxv: 'personen?' -> source_word='personen'."""
+        chunks = build_word_breakdown_spans("Hvem er personen?", "no")
+        word_chunks = [c for c in chunks if c.source_word is not None]
+        assert len(word_chunks) > 0
+        for c in word_chunks:
+            assert c.source_word == "personen", (
+                f"expected source_word='personen', got {c.source_word!r} for chunk text={c.text!r}"
+            )
+
+    def test_no_question_mark_in_any_chunk_text(self):
+        """The '?' must not appear inside any per-word chunk text."""
+        chunks = build_word_breakdown_spans("Hvem er personen?", "no")
+        for c in chunks:
+            if c.source_word is not None:
+                assert "?" not in c.text, f"chunk text {c.text!r} contains '?'"
+
+    def test_whole_phrase_keeps_punctuation(self):
+        """Bookend chunks preserve the original punctuation."""
+        chunks = build_word_breakdown_spans("Hvem er personen?", "no")
+        bookends = [c for c in chunks if c.source_word is None]
+        assert any(c.text == "Hvem er personen?" for c in bookends)
+
+    def test_source_word_strips_trailing_period(self):
+        """'personen.' -> source_word='personen'."""
+        chunks = build_word_breakdown_spans("Jeg fant personen.", "no")
+        word_chunks = [c for c in chunks if c.source_word is not None]
+        for c in word_chunks:
+            assert c.source_word == "personen", f"expected source_word='personen', got {c.source_word!r}"
+
+    def test_source_word_strips_trailing_exclamation(self):
+        """'personen!' -> source_word='personen'."""
+        chunks = build_word_breakdown_spans("Se, personen!", "no")
+        word_chunks = [c for c in chunks if c.source_word is not None]
+        for c in word_chunks:
+            assert c.source_word == "personen", f"expected source_word='personen', got {c.source_word!r}"
+
+    def test_whole_phrase_strips_trailing_question_mark(self):
+        """Single-word phrase: bookend text keeps punctuation."""
+        chunks = build_word_breakdown_spans("personen?", "no")
+        assert chunks[0].text == "personen?"
+        assert chunks[-1].text == "personen?"
+        # The inner chunks should have no '?' in source_word or text
+        for c in chunks[1:-1]:
+            if c.source_word is not None:
+                assert c.source_word == "personen"
+
+    def test_internal_apostrophe_or_hyphen_unaffected(self):
+        """Words with internal apostrophes or hyphens are unchanged."""
+        chunks = build_word_breakdown_spans("kom, jeg", "no")
+        # 'kom' has no trailing punctuation here (comma is a separate token after split)
+        # but verify the comma-separated word is processed correctly
+        for c in chunks:
+            if c.source_word is not None:
+                assert c.source_word == "kom"
+
+    def test_a_single_word_compound_strips_punctuation_from_source_word_too(self):
+        """The single-word branch had its own copy of the tunatale-7vxv bug.
+
+        'flyplassen.' alone in a phrase kept the period in source_word, while
+        'pa flyplassen.' stripped it — so the SAME word got different provenance
+        depending on whether anything else shared the phrase, and the punctuated
+        form silently lost its IPA (lexicon_syllable_split returns None for it).
+        The multi-word branch discards the compound bookends, which is why only
+        the single-word path showed it.
+        """
+        alone = build_word_breakdown_spans("flyplassen.", "no")
+        in_phrase = build_word_breakdown_spans("på flyplassen.", "no")
+        assert {c.source_word for c in alone if c.source_word} == {"flyplassen"}
+        assert {c.source_word for c in in_phrase if c.source_word} == {"flyplassen"}
+        # ...and the whole-phrase rung still shows the punctuation.
+        assert "flyplassen." in {c.text for c in alone if c.source_word is None}
+
+    def test_partial_phrase_rungs_keep_internal_punctuation(self):
+        """A partial rung is a PHRASE, so its punctuation survives.
+
+        The first implementation built partials from the punctuation-stripped
+        words, which deleted internal sentence breaks: "Ja. I dag har vi en ny
+        sak." produced the rung "Ja I dag har vi en ny sak" — a run-on the TTS
+        gives one falling contour instead of two. Only chunks BELOW the phrase
+        level are stripped (tunatale-7vxv, and tunatale-3q0u's rule that
+        nothing above the syllable moves).
+        """
+        chunks = build_word_breakdown_spans("Ja. I dag har vi en ny sak.", "no")
+        texts = [c.text for c in chunks]
+        assert "Ja I dag har vi en ny sak" not in texts
+        assert "I dag har vi en ny sak." in texts
+        assert "ny sak." in texts
+
+    def test_partial_phrase_rungs_keep_internal_comma(self):
+        """Same rule for a comma pause, which is a prosodic instruction."""
+        chunks = build_word_breakdown_spans("Han kom, og gikk.", "no")
+        texts = [c.text for c in chunks]
+        assert "Han kom og gikk" not in texts
+        assert "kom, og gikk." in texts
+
+    def test_word_rungs_are_stripped_but_phrase_bookends_are_not(self):
+        """The two halves of the rule, asserted together so neither drifts."""
+        chunks = build_word_breakdown_spans("Hvem er personen?", "no")
+        word_rungs = {c.text for c in chunks if c.source_word is not None}
+        assert not any("?" in t for t in word_rungs)
+        # personen now cuts at the LEXICON's boundaries (pe|rso|nen); with the
+        # "?" attached it was syllabified per|so|nen? and never reached the
+        # lexicon at all.
+        assert {"pe", "rso", "nen"} <= word_rungs
+        assert "Hvem er personen?" in {c.text for c in chunks if c.source_word is None}

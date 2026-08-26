@@ -127,6 +127,17 @@ class LessonRenderer:
         # byte-for-byte as it did before <phoneme> existed.
         self._phoneme_planners = phoneme_planners or {}
 
+    @property
+    def pause_calculator(self) -> NaturalPauseCalculator:
+        """The pause calculator, read-only.
+
+        Public so a caller reassembling a lesson can reproduce the SAME boundary
+        silence this renderer puts between sections, without reaching for
+        ``_calc`` — a private name a test double would not think to imitate, so
+        the double would pass while production raised AttributeError.
+        """
+        return self._calc
+
     def _write_audio(self, path: Path, audio: _Audio) -> None:
         """Write *audio* to *path* in the configured delivery codec.
 
@@ -359,6 +370,36 @@ class LessonRenderer:
             if await slicer.slice_to_file(spec, sliced):
                 play_files[i] = sliced
         return play_files
+
+    async def render_section(
+        self,
+        section: Section,
+        output_path: Path,
+        section_idx: int,
+        language_code: str,
+    ) -> tuple[list[tuple[int, int, int]], int]:
+        """Render ONE section to *output_path*; returns (relative cues, sample rate).
+
+        The per-section half of :meth:`render`, exposed so a caller can rebuild a
+        single section's audio without re-synthesizing the rest of the lesson.
+        Without it the only way to refresh one section is a full ``render()``,
+        which re-synthesizes every phrase of every section — and, if handed the
+        existing section paths, overwrites them in place.
+
+        Emits no boundary silence and no title: those belong to the assembly,
+        not to a section, and the caller is responsible for reproducing
+        ``title + boundary + sec0 + boundary + sec1 + ...`` (tunatale-1d85).
+
+        Cues are RELATIVE to the section start, exactly as ``_render_section``
+        returns them, because that is the form ``derive_section_cues`` stores.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            synth_memo: dict[_MemoKey, tuple[Path, asyncio.Task]] = {}
+            audio, cues = await self._render_section(
+                section, Path(tmp_dir), section_idx, language_code, synth_memo, asyncio.Lock()
+            )
+        await asyncio.to_thread(self._write_audio, output_path, audio)
+        return cues, int(audio.rate)
 
     async def render(
         self,

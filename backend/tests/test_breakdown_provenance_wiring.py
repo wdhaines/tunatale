@@ -87,10 +87,10 @@ class TestRegistryWiring:
         or the renderer cuts at the wrong place."""
         alignment = get_alignment("no")
         assert alignment.syllabify_fn("etterforskningsteamet") == [
-            "et",
-            "ter",
-            "forsk",
-            "nings",
+            "e",
+            "tter",
+            "fors",
+            "knings",
             "team",
             "et",
         ]

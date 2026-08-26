@@ -1340,3 +1340,182 @@ class TestRendererPhonemePlanner:
         )
         await rdr_plain.render(lesson, tmp_path / "out_plain.wav")
         assert sliced_words == ["hagen"], "the control did not slice; the fixture cannot reach the slicer"
+
+
+class TestAboveSyllableInvariant:
+    """tunatale-3q0u: nothing above the syllable may move.
+
+    Stated as a property rather than as examples: every phrase that is NOT a
+    provenance-carrying SUB-WORD chunk must reach the TTS with phonemes=None
+    AND resolve to the same cache key it had before <phoneme> existed — so its
+    already-rendered clip is still found and its audio is byte-identical.
+
+    The per-case tests above each pin one phrase. This pins the whole lesson,
+    which is what makes the claim checkable in one pass instead of by listening.
+    It uses the REAL planner over a fixture lexicon, not _StubChunkPlanner:
+    the stub answers every span, including whole-word ones, so the whole-word
+    refusal (plan_chunk gate 2) would be supplied by the stub rather than tested.
+    A whole-word span WITH provenance is the case that matters here — real
+    lessons emit them ('personen', span (0,3)) and they are above the syllable.
+    """
+
+    async def test_every_non_subword_phrase_keeps_its_pre_ipa_cache_key(self, tmp_path: Path) -> None:
+        import gzip
+
+        from app.audio.azure_tts import AzureTTSService
+        from app.audio.preprocessing.base import TextPreprocessor
+        from app.plugins.languages.no.lexicon import build_lexicon_db
+        from app.plugins.languages.no.norwegian_breakdown import flat_syllables
+        from app.plugins.languages.no.phoneme_plan import NorwegianPhonemePlanner
+
+        gz = tmp_path / "fixture.tsv.gz"
+        gz.write_bytes(gzip.compress(b'hagen\tNN\t"hA:$g@n\t1\n', mtime=0))
+        db = tmp_path / "lexicon.sqlite3"
+        build_lexicon_db(gz, db)
+
+        lesson = _no_lesson()
+        # Give an EXISTING whole-word rung its provenance rather than adding a
+        # phrase: the key-phrase cue arithmetic is 2 + len(breakdown) and would
+        # reject an extra one. A whole-word span WITH provenance is the case
+        # that matters — real lessons emit it ('personen', span (0,3)), it is
+        # above the syllable, and a stub planner would silently answer it.
+        whole_word_rung = next(
+            p for p in reversed(lesson.sections[0].phrases) if p.text == "hagen" and p.source_word is None
+        )
+        whole_word_rung.source_word = "hagen"
+        whole_word_rung.syllable_span = (0, 2)
+
+        fake_audio = _make_wav_bytes()
+        seen: list[dict] = []
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
+            seen.append({"text": text, "voice": voice_id, "rate": rate, "phonemes": phonemes})
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        class _NoPre(TextPreprocessor):
+            def preprocess(self, text, section_type):
+                return text
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"no": _NoPre()},
+            pause_calculator=NaturalPauseCalculator(),
+            phoneme_planners={"no": NorwegianPhonemePlanner(db)},
+        )
+        await rdr.render(lesson, tmp_path / "out.wav")
+
+        # Which texts are sub-word chunks, derived from the lesson rather than
+        # hardcoded, so adding a phrase cannot silently escape the assertion.
+        sub_word_texts = {
+            p.text
+            for sec in lesson.sections
+            for p in sec.phrases
+            if p.source_word is not None
+            and p.syllable_span is not None
+            and p.syllable_span != (0, len(flat_syllables(p.source_word) or []))
+        }
+
+        svc = AzureTTSService(key="k", region="r", cache_dir=tmp_path)
+        violations = [c for c in seen if c["text"] not in sub_word_texts and c["phonemes"] is not None]
+        assert violations == [], f"above-syllable phrases were given IPA: {violations}"
+
+        for call in seen:
+            if call["text"] in sub_word_texts:
+                continue
+            pre_ipa = svc._cache_path(call["text"], call["voice"], call["rate"])
+            actual = svc._cache_path(call["text"], call["voice"], call["rate"], call["phonemes"])
+            assert actual.name == pre_ipa.name, (
+                f"{call['text']!r} would resolve to a DIFFERENT cached file than before <phoneme>"
+            )
+
+        # Anti-vacuity: if nothing was planned the loop above proves nothing.
+        planned = [c for c in seen if c["phonemes"] is not None]
+        assert planned, "no chunk was planned — the invariant held vacuously"
+        assert {c["text"] for c in planned} <= sub_word_texts
+
+
+class TestRenderSection:
+    """LessonRenderer.render_section: the per-section half of render().
+
+    Exists so a caller can rebuild ONE section without re-synthesizing the rest
+    of the lesson. Tested against the real renderer, because the thing it must
+    not do — emit a title or boundary silence — is invisible to a double.
+    """
+
+    async def test_renders_only_the_named_section(self, tmp_path: Path) -> None:
+        from app.audio.preprocessing.base import TextPreprocessor
+
+        lesson = _no_lesson()
+        fake_audio = _make_wav_bytes()
+        synthesized: list[str] = []
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
+            synthesized.append(text)
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        class _NoPre(TextPreprocessor):
+            def preprocess(self, text, section_type):
+                return text
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"no": _NoPre()},
+            pause_calculator=NaturalPauseCalculator(),
+        )
+        out = tmp_path / "section.wav"
+        cues, rate = await rdr.render_section(lesson.sections[0], out, 0, "no")
+
+        assert out.exists()
+        assert rate > 0
+        # One cue per phrase in the section, and NOTHING from outside it: the
+        # lesson title is never synthesized, which is what separates this from
+        # render().
+        assert len(cues) == len(lesson.sections[0].phrases)
+        assert lesson.title not in synthesized
+
+    async def test_emits_no_leading_boundary_silence(self, tmp_path: Path) -> None:
+        """The section file must start at the section's first phrase.
+
+        render() prepends `title + boundary` when it ASSEMBLES; a section file
+        carries neither. If render_section leaked the boundary, every section
+        would gain 3s and a reassembled lesson would drift by 3s per section.
+        """
+        from app.audio.preprocessing.base import TextPreprocessor
+
+        lesson = _no_lesson()
+        fake_audio = _make_wav_bytes()
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        class _NoPre(TextPreprocessor):
+            def preprocess(self, text, section_type):
+                return text
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"no": _NoPre()},
+            pause_calculator=NaturalPauseCalculator(),
+        )
+        cues, _rate = await rdr.render_section(lesson.sections[0], tmp_path / "s.wav", 0, "no")
+        assert cues[0][1] == 0, f"section audio starts at frame {cues[0][1]}, not 0"
+
+    def test_pause_calculator_is_readable(self) -> None:
+        """Public so a reassembling caller reproduces the SAME boundary silence.
+
+        Reaching for `_calc` instead works, but a test double would not think to
+        imitate a private name — so the double passes and production raises
+        AttributeError. That happened during tunatale-1d85.
+        """
+        calc = NaturalPauseCalculator()
+        rdr = LessonRenderer(tts=AsyncMock(), preprocessors={}, pause_calculator=calc)
+        assert rdr.pause_calculator is calc

@@ -18,6 +18,7 @@ _INFLECTIONS: frozenset[str] = frozenset(
         "a",
         "er",
         "ene",
+        "ens",
         "ne",
         "n",
         "t",
@@ -701,6 +702,46 @@ def _compound_buildup_units(morphemes: list[str]) -> list[tuple[str, list[str]]]
     return units
 
 
+def _resolve_compound_parts(morphemes: list[str]) -> list[tuple[str, list[str]]]:
+    """Resolve each compound part against the lexicon independently.
+
+    For each buildup unit, look up its own lexicon split (the PART, not the
+    whole compound) and adopt it whenever the lexicon HAS one — including, and
+    especially, where it disagrees with the repo syllabifier. A unit the lexicon
+    does not know keeps its repo syllables. (An earlier draft of this docstring
+    described an equality guard the body deliberately does not implement; see
+    the comment in the loop for why one would be self-defeating.)
+
+    This avoids the old whole-word transcription slicing, which modelled
+    connected-speech assimilation across the compound seam that never occurs
+    in a buildup drill where parts are spoken separately.
+    """
+    from app.plugins.languages.no.lexicon_syllables import lexicon_syllable_split
+
+    units = _compound_buildup_units(morphemes)
+    resolved: list[tuple[str, list[str]]] = []
+    for surface, pieces in units:
+        split = lexicon_syllable_split(surface)
+        # Adopt UNCONDITIONALLY when the lexicon has a split, mirroring the
+        # simplex path in flat_syllables. An equality guard here would only
+        # adopt when adopting changes nothing, which is the identity guard's
+        # shape applied where it does not belong: the whole point is to take
+        # the lexicon's boundaries WHERE THEY DIFFER (etterforskerens ->
+        # e|tter + fo|rskerens, not et|ter|for|sker|ens).
+        # lexicon_syllable_split only ever CUTS the surface, so
+        # "".join(split) == surface and _build_compound_sequence_spans' offset
+        # arithmetic is unaffected.
+        resolved.append((surface, split if split is not None else pieces))
+    # NOTE: the fold (_fold_vowel_only_inflections) is deliberately NOT re-applied
+    # to an adopted split. It would undo the lexicon's boundary to avoid a
+    # vowel-only rung -- 'lange' is /'laN@/, so lang|e is right and the fold's
+    # lan|ge implies /lan.g@/, a different sound. The pre-existing rule (see
+    # test_vowel_only_inflection_never_stranded_inside_a_morpheme) is already
+    # "lexicon boundaries win even when a vowel-only inflection is stranded";
+    # per-part resolution only widens WHERE the lexicon speaks.
+    return resolved
+
+
 def build_norwegian_breakdown(phrase: str) -> list[str]:
     """Build a Pimsleur-style breakdown for Norwegian.
 
@@ -715,28 +756,23 @@ def flat_syllables(word: str) -> list[str] | None:
     if not word_lower:
         return []
 
-    # Lexicon lookup is per WHOLE word — never per part.  The split is adopted
-    # only when it is unambiguous across all candidate readings.
-    from app.plugins.languages.no.lexicon_syllables import lexicon_syllable_split
-
-    lexicon_split = lexicon_syllable_split(word_lower)
-
     morphemes = segment_compound(word_lower)
     if len(morphemes) >= 2:
-        # COMPOUNDS DO NOT ADOPT the lexicon split (deferred; tunatale-3q0u).
-        # The correct shape is to distribute the lexicon's syllables INTO the
-        # existing buildup units. Replacing the units with a flat syllable
-        # sequence instead loses the part chunks and _spoken_part's overlap
-        # restoration ('bus' -> 'buss'), which moves something above the
-        # syllable. Until that is built a compound keeps its repo
-        # syllabification, and plan_chunk's identity guard therefore gives it
-        # no IPA — refusing rather than crossing the two sources.
-        units = _compound_buildup_units(morphemes)
+        # Per-part lexicon resolution: each buildup unit is resolved against
+        # the lexicon AS THE WORD IT IS.  The whole compound's connected-speech
+        # transcription is never consulted — assimilation across the seam does
+        # not occur in a buildup drill where parts are spoken separately.
+        units = _resolve_compound_parts(morphemes)
         pieces = []
         for _, part_pieces in units:
             pieces.extend(part_pieces)
     else:
-        pieces = syllable_pieces(word_lower, lexicon_split).pieces
+        # Simplex: the lexicon is consulted for the WHOLE word. (A compound
+        # never reaches here — its parts are resolved individually above, and
+        # the compound's own transcription is deliberately never consulted.)
+        from app.plugins.languages.no.lexicon_syllables import lexicon_syllable_split
+
+        pieces = syllable_pieces(word_lower, lexicon_syllable_split(word_lower)).pieces
 
     if "".join(pieces) != word_lower:
         return None
@@ -753,15 +789,9 @@ def _build_syllable_inner_spans(syllables: list[str], word: str, *, respell: boo
     return seq
 
 
-def _build_syllable_sequence_spans(word: str, syllables: list[str], *, respell: bool = True) -> list[BreakdownChunk]:
-    return [
-        BreakdownChunk(word, None, None),
-        *_build_syllable_inner_spans(syllables, word, respell=respell),
-        BreakdownChunk(word, None, None),
-    ]
-
-
-def _build_compound_sequence_spans(word: str, morphemes: list[str]) -> list[BreakdownChunk]:
+def _build_compound_sequence_spans(
+    word: str, morphemes: list[str], *, bookend_text: str | None = None
+) -> list[BreakdownChunk]:
     """Compound buildup carrying provenance into the WHOLE word's syllables.
 
     Spans index :func:`flat_syllables` of ``word`` — the entire compound — not
@@ -782,7 +812,7 @@ def _build_compound_sequence_spans(word: str, morphemes: list[str]) -> list[Brea
     word, so the emitted text stays byte-identical to
     :func:`build_norwegian_breakdown`.
     """
-    units = _compound_buildup_units(morphemes)
+    units = _resolve_compound_parts(morphemes)
     parts_list = [part for part, _ in units]
 
     offsets: list[int] = []
@@ -791,13 +821,21 @@ def _build_compound_sequence_spans(word: str, morphemes: list[str]) -> list[Brea
         offsets.append(total)
         total += len(pieces)
 
+    # *word* is the BARE surface (no trailing punctuation); *bookend_text* is
+    # what the learner sees on the whole-phrase rungs, which keeps its
+    # punctuation. They differ only for a single-word phrase like "flyplassen."
+    # — and conflating them put the period into source_word, which is exactly
+    # the tunatale-7vxv bug: lexicon_syllable_split("flyplassen.") is None, so
+    # the word silently lost its IPA. The multi-word branch discards the
+    # bookends, which is why it never showed the defect.
+    ends = word if bookend_text is None else bookend_text
     sliceable = flat_syllables(word) is not None
     source = word if sliceable else None
 
     def span(start: int, stop: int) -> tuple[int, int] | None:
         return (start, stop) if sliceable else None
 
-    seq: list[BreakdownChunk] = [BreakdownChunk(word, None, None)]
+    seq: list[BreakdownChunk] = [BreakdownChunk(ends, None, None)]
     for i in range(len(units) - 1, -1, -1):
         part, pieces = units[i]
         base = offsets[i]
@@ -813,6 +851,24 @@ def _build_compound_sequence_spans(word: str, morphemes: list[str]) -> list[Brea
     return seq
 
 
+# Sentence-final punctuation stripped from individual words before they enter
+# segment_compound / lexicon_syllable_split / syllabify_morpheme.  Only the
+# trailing end is affected; internal punctuation (apostrophes, hyphens) and
+# mid-word commas are untouched.  Whole-phrase bookend chunks retain the
+# original punctuation.
+_TRAILING_SENTENCE_PUNCT = ".,!?;:"
+
+
+def _strip_trailing_punct(word: str) -> str:
+    """Strip sentence-final punctuation from a word for breakdown processing.
+
+    Returns the original word unchanged when stripping would empty it
+    (an all-punctuation token like "..." stays whole).
+    """
+    stripped = word.rstrip(_TRAILING_SENTENCE_PUNCT)
+    return stripped or word
+
+
 def build_norwegian_breakdown_spans(phrase: str) -> list[BreakdownChunk]:
     text = " ".join(phrase.strip().split())
     words = text.split()
@@ -823,37 +879,57 @@ def build_norwegian_breakdown_spans(phrase: str) -> list[BreakdownChunk]:
 
     if len(words) == 1:
         word = words[0]
-        lexicon_split = lexicon_syllable_split(word)
-        morphemes = segment_compound(word)
+        core_word = _strip_trailing_punct(word)
+        morphemes = segment_compound(core_word)
         if len(morphemes) >= 2:
-            return _build_compound_sequence_spans(text, morphemes)
-        syllables = syllabify_morpheme(word)
+            # A compound's parts are resolved individually inside
+            # _build_compound_sequence_spans, so the WHOLE word's lexicon split
+            # is never wanted here — computing it before this branch cost a
+            # sqlite open and a full DP alignment per compound, discarded.
+            return _build_compound_sequence_spans(core_word, morphemes, bookend_text=text)
+        lexicon_split = lexicon_syllable_split(core_word)
+        syllables = syllabify_morpheme(core_word)
         if lexicon_split is not None:
             syllables = lexicon_split
         if len(syllables) <= 1:
             return [BreakdownChunk(text, None, None), BreakdownChunk(text, None, None)]
-        return _build_syllable_sequence_spans(text, syllables, respell=lexicon_split is None)
+        # Bookends keep the ORIGINAL punctuated text; the inner chunks are cut
+        # from core_word. _build_syllable_inner_spans already takes the source
+        # word separately from the bookend text, so this needs no rebuild — an
+        # earlier version built every inner chunk with source_word=text and then
+        # allocated a second copy of each to correct it.
+        return [
+            BreakdownChunk(text, None, None),
+            *_build_syllable_inner_spans(syllables, core_word, respell=lexicon_split is None),
+            BreakdownChunk(text, None, None),
+        ]
 
     breakdown: list[BreakdownChunk] = [BreakdownChunk(text, None, None)]
+    stripped_words = [_strip_trailing_punct(w) for w in words]
     for word_index in range(len(words) - 1, -1, -1):
-        word = words[word_index]
-        lexicon_split = lexicon_syllable_split(word)
-        morphemes = segment_compound(word)
+        core_word = stripped_words[word_index]
+        lexicon_split = lexicon_syllable_split(core_word)
+        morphemes = segment_compound(core_word)
         if len(morphemes) >= 2:
-            word_seq = _build_compound_sequence_spans(word, morphemes)
+            word_seq = _build_compound_sequence_spans(core_word, morphemes)
             word_seq.pop(0)
             word_seq.pop()
             breakdown.extend(word_seq)
         else:
-            syllables = syllabify_morpheme(word)
+            syllables = syllabify_morpheme(core_word)
             if lexicon_split is not None:
                 syllables = lexicon_split
             if len(syllables) > 1:
-                breakdown.extend(_build_syllable_inner_spans(syllables, word, respell=lexicon_split is None))
+                breakdown.extend(_build_syllable_inner_spans(syllables, core_word, respell=lexicon_split is None))
             else:
-                breakdown.append(BreakdownChunk(word, None, None))
+                breakdown.append(BreakdownChunk(core_word, None, None))
 
         if word_index < len(words) - 1:
+            # Partial rungs keep the ORIGINAL punctuation: they are phrases, not
+            # words, and stripping there deletes an internal sentence break
+            # ("Ja. I dag ..." -> "Ja I dag ...", a run-on the TTS mis-prosodies)
+            # or a comma pause. Only the per-WORD chunks below the phrase level
+            # are punctuation-stripped (tunatale-7vxv, tunatale-3q0u).
             partial = " ".join(words[word_index:])
             if partial != text:
                 breakdown.append(BreakdownChunk(partial, None, None))
@@ -897,7 +973,7 @@ def slow_norwegian_word(word: str) -> str:
 
     morphemes = segment_compound(core)
     if len(morphemes) >= 2:
-        units = _compound_buildup_units(morphemes)
+        units = _resolve_compound_parts(morphemes)
         parts_list = [part for part, _ in units]
         core = ", ".join(_spoken_part(parts_list, i) for i in range(len(parts_list)))
 

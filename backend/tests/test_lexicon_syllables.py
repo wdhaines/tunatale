@@ -123,15 +123,23 @@ class TestUnchangedAdoption:
 class TestRefusals:
     """Refused words: each pins one guard."""
 
-    def test_sporene_silent_letter_merges_right(self):
-        """sporene: lexicon spuː.ɳ̩.ə — r merged into the retroflex."""
-        result, reason = orthographic_syllables("sporene", '""spu:$n`=$@')
+    def test_gården_silent_letter_merges_right(self):
+        """gården: a silent letter still sits immediately before the cut.
+
+        Subject changed from 'sporene'/'morgen' (tunatale-4rj5): those now
+        ALIGN, because r+vowel+coronal graphemes let the r carry the retroflex
+        it causes instead of aligning to nothing. See
+        TestRetroflexAcrossAWrittenVowel. This guard is NOT decorative — 488
+        words in the first 20000 still refuse for this reason — so it keeps a
+        live subject rather than being deleted.
+        """
+        result, reason = orthographic_syllables("gården", '"go:$n`=')
         assert result is None
         assert reason == REFUSE_SILENT_AT_CUT
 
-    def test_morgen_silent_letter_merges_right(self):
-        """morgen: lexicon moː.ɳ̩"""
-        result, reason = orthographic_syllables("morgen", '""mo:$n`=')
+    def test_ordene_silent_letter_merges_right(self):
+        """A second live subject, so one lexicon edit cannot empty this class."""
+        result, reason = orthographic_syllables("ordene", '"u:$n`=$@')
         assert result is None
         assert reason == REFUSE_SILENT_AT_CUT
 
@@ -186,13 +194,10 @@ class TestLexiconSyllableSplit:
     def test_absent_word_returns_none(self):
         assert lexicon_syllable_split("zzqqxx") is None
 
-    def test_sporene_refuses(self):
-        """sporene: r merged into retroflex — must be refused."""
-        assert lexicon_syllable_split("sporene") is None
-
-    def test_morgen_refuses(self):
-        """morgen: r merged into retroflex — must be refused."""
-        assert lexicon_syllable_split("morgen") is None
+    def test_gården_refuses(self):
+        """Still refused after tunatale-4rj5 (sporene/morgen no longer are)."""
+        assert lexicon_syllable_split("gården") is None
+        assert lexicon_syllable_split("standarden") is None
 
 
 class TestRefusalGuards:
@@ -225,3 +230,49 @@ class TestMissingDatabaseDegrades:
     def test_unbuilt_lexicon_returns_none(self, tmp_path: Path) -> None:
         missing = tmp_path / "nope.sqlite3"
         assert lexicon_syllable_split.__wrapped__("skygge", missing) is None
+
+
+class TestRetroflexAcrossAWrittenVowel:
+    """tunatale-4rj5: an r fuses with a following coronal across a written letter.
+
+    'sporene' is /'spu:n`=@/. The r produces the retroflex but is separated from
+    its n by an e that is not pronounced, so the adjacent-only "rn" grapheme
+    cannot match, the r aligns to nothing, and a silent letter immediately
+    before a cut is what REFUSE_SILENT_AT_CUT rejects. The word was refused
+    entirely and got no IPA.
+    """
+
+    def test_sporene_now_cuts_before_the_r(self):
+        assert lexicon_syllable_split("sporene") == ["spo", "ren", "e"]
+
+    def test_two_letters_may_intervene(self):
+        """morgen /'mo:n`=/ and hjernen /'j{:n`=/ need a 4-letter grapheme.
+
+        _MAXG is derived from TABLE, so these only work when added at module
+        level -- adding them at runtime leaves _MAXG stale and silently does
+        nothing, which is how they were missed on the first pass.
+        """
+        assert lexicon_syllable_split("morgen") == ["mo", "rgen"]
+        assert lexicon_syllable_split("hjernen") == ["hje", "rnen"]
+
+    def test_adjacent_rn_is_unchanged(self):
+        """The control that separates this class from ordinary retroflexes.
+
+        barnet already aligned because its r and n are adjacent; bilene has no
+        r at all and takes the plain syllabic n̩. Neither may move.
+        """
+        assert lexicon_syllable_split("barnet") == ["ba", "rnet"]
+        assert lexicon_syllable_split("gjerne") == ["gje", "rne"]
+        assert lexicon_syllable_split("bilene") == ["bi", "len", "e"]
+
+    def test_the_r_goes_with_the_sound_it_causes(self):
+        """The property, stated once: no piece may end in a silent r.
+
+        Cutting 'spor|ene' would show a chunk whose r makes no sound followed
+        by a chunk opening with a retroflex containing no visible r.
+        """
+        for word in ("sporene", "faren", "morgen", "hjernen", "dørene"):
+            pieces = lexicon_syllable_split(word)
+            assert pieces is not None, word
+            assert "".join(pieces) == word
+            assert not any(p.endswith("r") for p in pieces[:-1]), (word, pieces)
