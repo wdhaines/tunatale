@@ -1435,3 +1435,87 @@ class TestAboveSyllableInvariant:
         planned = [c for c in seen if c["phonemes"] is not None]
         assert planned, "no chunk was planned — the invariant held vacuously"
         assert {c["text"] for c in planned} <= sub_word_texts
+
+
+class TestRenderSection:
+    """LessonRenderer.render_section: the per-section half of render().
+
+    Exists so a caller can rebuild ONE section without re-synthesizing the rest
+    of the lesson. Tested against the real renderer, because the thing it must
+    not do — emit a title or boundary silence — is invisible to a double.
+    """
+
+    async def test_renders_only_the_named_section(self, tmp_path: Path) -> None:
+        from app.audio.preprocessing.base import TextPreprocessor
+
+        lesson = _no_lesson()
+        fake_audio = _make_wav_bytes()
+        synthesized: list[str] = []
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
+            synthesized.append(text)
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        class _NoPre(TextPreprocessor):
+            def preprocess(self, text, section_type):
+                return text
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"no": _NoPre()},
+            pause_calculator=NaturalPauseCalculator(),
+        )
+        out = tmp_path / "section.wav"
+        cues, rate = await rdr.render_section(lesson.sections[0], out, 0, "no")
+
+        assert out.exists()
+        assert rate > 0
+        # One cue per phrase in the section, and NOTHING from outside it: the
+        # lesson title is never synthesized, which is what separates this from
+        # render().
+        assert len(cues) == len(lesson.sections[0].phrases)
+        assert lesson.title not in synthesized
+
+    async def test_emits_no_leading_boundary_silence(self, tmp_path: Path) -> None:
+        """The section file must start at the section's first phrase.
+
+        render() prepends `title + boundary` when it ASSEMBLES; a section file
+        carries neither. If render_section leaked the boundary, every section
+        would gain 3s and a reassembled lesson would drift by 3s per section.
+        """
+        from app.audio.preprocessing.base import TextPreprocessor
+
+        lesson = _no_lesson()
+        fake_audio = _make_wav_bytes()
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None):
+            output_path.write_bytes(fake_audio)
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+
+        class _NoPre(TextPreprocessor):
+            def preprocess(self, text, section_type):
+                return text
+
+        rdr = LessonRenderer(
+            tts=mock_tts,
+            preprocessors={"no": _NoPre()},
+            pause_calculator=NaturalPauseCalculator(),
+        )
+        cues, _rate = await rdr.render_section(lesson.sections[0], tmp_path / "s.wav", 0, "no")
+        assert cues[0][1] == 0, f"section audio starts at frame {cues[0][1]}, not 0"
+
+    def test_pause_calculator_is_readable(self) -> None:
+        """Public so a reassembling caller reproduces the SAME boundary silence.
+
+        Reaching for `_calc` instead works, but a test double would not think to
+        imitate a private name — so the double passes and production raises
+        AttributeError. That happened during tunatale-1d85.
+        """
+        calc = NaturalPauseCalculator()
+        rdr = LessonRenderer(tts=AsyncMock(), preprocessors={}, pause_calculator=calc)
+        assert rdr.pause_calculator is calc

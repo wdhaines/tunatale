@@ -3,17 +3,76 @@
 from __future__ import annotations
 
 import json
+import logging
+import subprocess
+import tempfile
 import uuid
 from collections import defaultdict
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from app.audio.cues import Cue
-from app.audio.transcode import CODEC_EXT
+import numpy as np
+import soundfile as sf
+
+from app.audio.cues import Cue, CueTiming, build_cue_manifest
+from app.audio.transcode import CODEC_EXT, encode_audio
 from app.config import settings
 from app.generation.section_builder import SECTION_TITLES
 from app.models.lesson import SectionType
 from app.storage.store import ContentStore
+
+logger = logging.getLogger(__name__)
+
+
+def _concat_opus_concat_demuxer(file_paths: list[Path], output_path: Path) -> None:
+    """Concatenate Opus files byte-for-byte via ffmpeg's concat demuxer with ``-c copy``.
+
+    All input files MUST share stream parameters (codec, sample rate, channels).
+    The output is a valid Ogg/Opus file. No re-encoding occurs — every packet
+    is copied verbatim, so the concatenated file's audio is bit-identical to the
+    concatenation of the inputs' decoded audio.
+
+    Raises ``RuntimeError`` if ffmpeg exits non-zero.
+    """
+    if not file_paths:
+        raise ValueError("concat requires at least one file")
+
+    if len(file_paths) == 1:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(file_paths[0].read_bytes())
+        return
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", dir=str(output_path.parent), delete=False) as concat_list:
+        for fp in file_paths:
+            concat_list.write(f"file '{fp}'\n")
+        concat_list_path = concat_list.name
+
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                concat_list_path,
+                "-c",
+                "copy",
+                str(output_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"ffmpeg concat failed ({proc.returncode}): {proc.stderr}")
+    finally:
+        Path(concat_list_path).unlink(missing_ok=True)
+
 
 # Map from slow section type → the structural-twin section type whose L2 line
 # cues provide the natural-text scrub source.  slow_speed numbers its L2 lines
@@ -151,5 +210,223 @@ async def render_lesson_audio(
         "audio_id": audio_id,
         "lesson_id": lesson_id,
         "sections": sections,
+        "cues": json.loads(cues_json),
+    }
+
+
+def _read_audio_duration(path: Path) -> float:
+    """Read the duration of an audio file in seconds via ffprobe.
+
+    Raises ``RuntimeError`` if ffprobe fails or the duration is invalid.
+    """
+    proc = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffprobe failed ({proc.returncode}): {proc.stderr}")
+    try:
+        return float(proc.stdout.strip())
+    except ValueError as e:
+        raise RuntimeError(f"invalid duration from ffprobe: {proc.stdout.strip()!r}") from e
+
+
+def _write_silence(path: Path, duration_ms: int, rate: int) -> None:
+    """Write *duration_ms* of silence in the delivery codec.
+
+    Must match the section files' stream parameters EXACTLY — same codec, rate,
+    channel count and bitrate — or ffmpeg's concat demuxer refuses the copy. The
+    rate is passed in from the freshly rendered section rather than assumed, and
+    the buffer is mono because that is what the renderer produces.
+    """
+    frames = int(round(rate * duration_ms / 1000))
+    samples = np.zeros((frames, 1), dtype="float32")
+    if settings.audio_delivery_codec == "wav":
+        sf.write(str(path), samples, rate, subtype="PCM_16")
+        return
+    path.write_bytes(encode_audio(samples, rate, settings.audio_delivery_codec, settings.audio_delivery_bitrate))
+
+
+def _cues_from_relative(lesson, rel_cues: list[tuple[int, int, int]], section_idx: int, rate: int) -> list[Cue]:
+    """Section-relative Cue objects from ``render_section``'s frame triples.
+
+    Goes through the same build_cue_manifest / derive_section_cues pair the full
+    render uses, rather than constructing Cue objects by hand: those two carry
+    the slow-section text scrubbing and the key-phrase ref wiring, and a
+    hand-rolled cue would silently lack both.
+    """
+    timing = [
+        CueTiming(section_index=section_idx, phrase_index=ph_idx, start_frame=start, end_frame=end)
+        for ph_idx, start, end in rel_cues
+    ]
+    manifest = build_cue_manifest(lesson, timing, rate)
+    return derive_section_cues(manifest, lesson).get(section_idx, [])
+
+
+async def reassemble_lesson_audio(
+    store: ContentStore,
+    renderer,
+    tts,
+    audio_dir: Path,
+    lesson_id: str,
+    lesson,
+) -> dict:
+    """Rebuild a lesson's audio by re-rendering ONLY its KEY_PHRASES section.
+
+    Every other section's file is reused byte-for-byte and the full lesson is
+    stitched with ffmpeg's concat demuxer under ``-c copy``, so no audio outside
+    KEY_PHRASES is re-synthesized OR re-encoded (tunatale-1d85). The title is
+    re-synthesized — one TTS call per lesson, the only such call — because it is
+    not persisted separately from the full-lesson file.
+
+    ⚠️ It calls ``renderer.render_section``, NOT ``renderer.render``. ``render``
+    renders the WHOLE lesson: it would synthesize every phrase of every section,
+    write the full mix into the file registered as KEY_PHRASES, and — when handed
+    the existing section paths — OVERWRITE the user's real audio in place.
+
+    Returns the same payload shape as :func:`render_lesson_audio`.
+    """
+    old_rows = store.list_audio_files_for_lesson(lesson_id)
+    old_full = next((r for r in old_rows if r["section_index"] is None), None)
+    if old_full is None:
+        raise ValueError(f"Full lesson audio not found for lesson {lesson_id!r}")
+
+    section_rows = sorted(
+        (r for r in old_rows if r["section_index"] is not None),
+        key=lambda r: r["section_index"],
+    )
+    if len(section_rows) != len(lesson.sections):
+        raise ValueError(
+            f"{lesson_id!r} has {len(section_rows)} section audio rows for "
+            f"{len(lesson.sections)} sections — re-render the lesson instead"
+        )
+
+    kp_index = next(
+        (i for i, sec in enumerate(lesson.sections) if sec.section_type == SectionType.KEY_PHRASES),
+        None,
+    )
+    if kp_index is None:
+        raise ValueError(f"No KEY_PHRASES section in lesson {lesson_id!r}")
+
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    ext = CODEC_EXT.get(settings.audio_delivery_codec, "wav")
+    boundary_ms = renderer.pause_calculator.get_section_boundary_pause()
+
+    # Scratch lives OUTSIDE audio_dir: that directory is the user's real content
+    # (hundreds of MB), and a stray temp file there is indistinguishable from a
+    # rendered clip once the process that named it is gone.
+    with tempfile.TemporaryDirectory() as scratch_dir:
+        scratch = Path(scratch_dir)
+
+        title_path = scratch / f"title.{ext}"
+        await tts.synthesize(lesson.title, lesson.narrator_voice, title_path, rate="+0%")
+
+        new_kp_id = str(uuid.uuid4())
+        new_kp_path = audio_dir / f"{new_kp_id}.{ext}"
+        kp_cues, kp_rate = await renderer.render_section(
+            lesson.sections[kp_index], new_kp_path, kp_index, lesson.language_code
+        )
+
+        boundary_path = scratch / f"boundary.{ext}"
+        _write_silence(boundary_path, boundary_ms, kp_rate)
+
+        section_paths = [new_kp_path if i == kp_index else Path(r["file_path"]) for i, r in enumerate(section_rows)]
+        pieces: list[Path] = [title_path]
+        for i, sec_path in enumerate(section_paths):
+            pieces.append(boundary_path)
+            pieces.append(sec_path)
+            del i
+
+        new_full_id = str(uuid.uuid4())
+        new_full_path = audio_dir / f"{new_full_id}.{ext}"
+        _concat_opus_concat_demuxer(pieces, new_full_path)
+
+        # Absolute cue manifest, in MILLISECONDS throughout. Working in frames
+        # needs a sample rate, and every rate that appears here cancels out of
+        # the final answer — carrying one only creates a constant to get wrong.
+        title_ms = round(_read_audio_duration(title_path) * 1000)
+        durations_ms = [round(_read_audio_duration(p) * 1000) for p in section_paths]
+
+    stored_cues: list[list[dict]] = []
+    for i, r in enumerate(section_rows):
+        raw = r.get("cues_json")
+        if i == kp_index:
+            stored_cues.append([asdict(c) for c in _cues_from_relative(lesson, kp_cues, kp_index, kp_rate)])
+        else:
+            stored_cues.append(json.loads(raw) if raw else [])
+
+    all_cues: list[Cue] = [
+        Cue(
+            index=0,
+            start_ms=0,
+            end_ms=title_ms,
+            section_index=None,
+            section_type=None,
+            phrase_index=0,
+            role="narrator",
+            language_code=lesson.sections[0].phrases[0].language_code if lesson.sections[0].phrases else "",
+            text=lesson.title,
+            ref=None,
+        )
+    ]
+    offset_ms = title_ms + boundary_ms
+    for i, cue_dicts in enumerate(stored_cues):
+        for cd in cue_dicts:
+            all_cues.append(
+                replace(
+                    Cue(**cd),
+                    index=len(all_cues),
+                    start_ms=cd["start_ms"] + offset_ms,
+                    end_ms=cd["end_ms"] + offset_ms,
+                )
+            )
+        offset_ms += durations_ms[i] + boundary_ms
+    cues_json = json.dumps([asdict(c) for c in all_cues], ensure_ascii=False)
+
+    old_kp_path = Path(section_rows[kp_index]["file_path"])
+    store.delete_audio_files_for_lesson(lesson_id)
+    store.save_audio_file(new_full_id, lesson_id, str(new_full_path), cues_json=cues_json)
+    new_section_ids = [str(uuid.uuid4()) for _ in section_rows]
+    for i, (sid, r) in enumerate(zip(new_section_ids, section_rows, strict=True)):
+        sec_cues_json = json.dumps(stored_cues[i], ensure_ascii=False) if stored_cues[i] else None
+        store.save_audio_file(
+            sid,
+            lesson_id,
+            str(section_paths[i]),
+            section_index=i,
+            section_type=r["section_type"],
+            cues_json=sec_cues_json,
+        )
+
+    # Only the files this function REPLACED are removed, and only after the new
+    # rows are committed. Every other section file is still referenced.
+    Path(old_full["file_path"]).unlink(missing_ok=True)
+    # Unconditional: new_kp_path always carries a fresh uuid4, so it can never
+    # be the path we are deleting. A `!=` guard here would be a branch nothing
+    # can take.
+    old_kp_path.unlink(missing_ok=True)
+
+    return {
+        "audio_id": new_full_id,
+        "lesson_id": lesson_id,
+        "sections": [
+            {
+                "audio_id": new_section_ids[i],
+                "section_index": i,
+                "section_type": r["section_type"],
+                "title": SECTION_TITLES.get(SectionType(r["section_type"]), r["section_type"]),
+            }
+            for i, r in enumerate(section_rows)
+        ],
         "cues": json.loads(cues_json),
     }
