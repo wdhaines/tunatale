@@ -17,7 +17,6 @@ from app.api.health import STATUS_OK, check_health  # noqa: E402
 from app.api.models import HealthResponse, LanguagesResponse  # noqa: E402
 from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
 from app.audio.renderer import LessonRenderer  # noqa: E402
-from app.audio.slicer import build_slicers  # noqa: E402
 from app.audio.tts_factory import get_tts_service  # noqa: E402
 from app.auth.database import AuthDatabase  # noqa: E402
 from app.config import prod_profile_problems, settings  # noqa: E402
@@ -189,13 +188,17 @@ async def lifespan(app: FastAPI):
     app.state.story_generator = StoryGenerator(llm)
     preprocessors = {code: get_preprocessor(code) for code in db_map}
     tts = get_tts_service(cache_dir=settings.tts_cache_dir)
-    # Empty unless ``alignment_installed()`` says the forced-alignment packages
-    # are present, in which case breakdown chunks are cut from one whole-word
-    # render instead of synthesized fragment-by-fragment. Building a slicer does
-    # not load the model; the first chunk that needs it does, once per process.
-    slicers = build_slicers(preprocessors, tts, settings)
-    if slicers:
-        logger.info("Syllable slicing enabled for: %s", ", ".join(sorted(slicers)))
+    # NOT WIRED, deliberately (tunatale-k318.4). The audio slicer cut breakdown
+    # chunks out of one whole-word render; the lexicon <phoneme> path replaced it
+    # for every chunk that wants IPA, and the one chunk still left over was
+    # judged BY EAR to sound better from plain synthesis than from a slice --
+    # the slice had audible speed artifacts (tunatale-k318.2).
+    #
+    # ``app.audio.slicer`` and ``app/plugins/languages/no/alignment.py`` remain
+    # in the tree, tested, and are reachable by re-adding ``build_slicers`` here
+    # and passing the result to the renderer. Keep them: combining the lexicon
+    # with the slicer is a live future idea, just not one that has been designed.
+    # ``test_main_lifespan`` asserts this stays unwired so it cannot creep back.
     # Empty for a language with no pronunciation lexicon; a language that HAS
     # one but whose database was never built degrades inside the planner (one
     # warning, then plain synthesis), because the database is a build artifact
@@ -209,7 +212,6 @@ async def lifespan(app: FastAPI):
         pause_calculator=NaturalPauseCalculator(),
         delivery_codec=settings.audio_delivery_codec,
         delivery_bitrate=settings.audio_delivery_bitrate,
-        slicers=slicers,
         phoneme_planners=phoneme_planners,
     )
     # A setting since Deploy P0.1, so a container can put audio on its data

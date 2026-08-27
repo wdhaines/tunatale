@@ -491,7 +491,7 @@ class TestGuardsThatRefuse:
 DESCENT_ROWS = [
     ("etter", "AB", '""E$t@r', 1),  # ['ɛ', 'tər']
     ("forsknings", "NN", '""fOs`$knINs', 1),  # ['fɔʂ', 'knɪŋs']
-    ("teamet", "NN", '"ti:$m@', 1),  # present, but its BOUNDARIES refuse
+    ("teamet", "NN", '"ti:$m@', 1),  # tea|met once ``ea`` may spell /ɪː/
     ("søke", "VB", '""s2:$k@', 1),  # ['søː', 'kə']
     ("under", "PP", '"u0$n@r', 1),  # two readings that disagree on boundaries
     ("under", "AB", '"u0n$d@r', 1),
@@ -566,35 +566,82 @@ class TestConstituentDescent:
         p = _planner(tmp_path, DESCENT_ROWS)
         assert p.plan_chunk("etterforskningsteamet", (2, 6)) is None
 
-    @pytest.mark.parametrize("span", [(4, 5), (5, 6), (4, 6)])
-    def test_part_whose_own_boundaries_refuse(self, tmp_path: Path, span: tuple[int, int]) -> None:
-        """'teamet' IS in the fixture, and still refuses — boundaries, not absence.
+    def test_part_with_a_loanword_digraph_now_resolves(self, tmp_path: Path) -> None:
+        """'teamet' resolves once ``ea`` may spell /ɪː/ (tunatale-d4td).
 
-        The real lexicon's readings of 'teamet' do not agree on an orthographic
-        split, so ``lexicon_syllable_split`` returns None for it and there is no
-        split the caption was cut at. Descending does not lower the boundary
-        guard; it only asks it about a smaller word.
+        The ``ea`` grapheme lets the single reading /ˈtɪː.mə/ cut tea|met, so the
+        part that hosts spans (4,5)/(5,6)/(4,6) now resolves and the descent
+        serves it IPA. ORACLE 1.2 of that brief — measured against the real
+        lexicon, whose teamet reading is identical to this fixture's.
         """
         p = _planner(tmp_path, DESCENT_ROWS)
-        assert p.plan_chunk("etterforskningsteamet", span) is None
+        assert p.plan_chunk("etterforskningsteamet", (4, 5), "NOUN", "tea") == "ˈtɪː"
+        assert p.plan_chunk("etterforskningsteamet", (5, 6), "NOUN", "met") == "mə"
+        assert p.plan_chunk("etterforskningsteamet", (4, 6), "NOUN", "teamet") == "ˈtɪː.mə"
+
+    def test_span_still_crossing_two_parts_refuses(self, tmp_path: Path) -> None:
+        """'forskningsteamet' still has no single host part — a DELIBERATE refusal.
+
+        The span crosses the forsknings|teamet seam, so no part hosts it; it must
+        stay None even though both parts resolve (ORACLE 1.2).
+        """
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("etterforskningsteamet", (2, 6), "NOUN", "forskningsteamet") is None
 
     def test_refusal_is_per_part_not_per_word(self, tmp_path: Path) -> None:
-        """undersøke: 'søke' resolves even though 'under' cannot.
+        """undersøke: 'søke' resolves, and 'under' now resolves via its tiebreak.
 
-        This corrects a claim made repeatedly while the whole-word path was the
-        only one: that undersøke was 'the one principled refusal'. Only its
-        UNDER half is — under's two readings disagree on where the n goes
-        (u|nder vs un|der), so no split survives. søke has one reading.
+        Each buildup part is resolved as the word it is. søke has one reading;
+        under's two readings disagree on where the n goes, and since tunatale-
+        k318.5 the most-enunciated winner is used for both boundaries AND sound.
         """
         p = _planner(tmp_path, DESCENT_ROWS)
         assert p.plan_chunk("undersøke", (2, 4)) == "søː.kə"
         assert p.plan_chunk("undersøke", (2, 3)) == "søː"
         assert p.plan_chunk("undersøke", (3, 4)) == "kə"
 
-    @pytest.mark.parametrize("span", [(0, 1), (1, 2), (0, 2)])
-    def test_undersøke_under_half_still_refuses(self, tmp_path: Path, span: tuple[int, int]) -> None:
+    def test_undersøke_under_half_resolves_to_most_enunciated(self, tmp_path: Path) -> None:
+        """undersøke's under half now resolves to the most-enunciated reading.
+
+        tunatale-k318 taught lexicon_syllable_split to pick /ˈʉn.dər/ (which
+        keeps the d) over /ˈʉ.nər/ (which elides it) for the BOUNDARIES. This
+        bead extends that same decision to the PHONEME side: plan_chunk uses the
+        chosen reading for sound too. The fixture DESCENT_ROWS gives under both
+        readings (PP 'u0$n@r' = ʉ.nər, AB 'u0n$d@r' = ʉn.dər); only the latter
+        can produce the d. Failing the assertion that the d IS present means the
+        phoneme gate went back to refusing (the old behaviour this bead deletes)
+        or picked the unenunciated /ʉ.nər/ reading and crossed the invariant.
+        """
         p = _planner(tmp_path, DESCENT_ROWS)
-        assert p.plan_chunk("undersøke", span) is None
+        assert p.plan_chunk("undersøke", (0, 1), "VERB", "un") == "ˈʉn"
+        assert p.plan_chunk("undersøke", (1, 2), "VERB", "der") == "dər"
+        assert p.plan_chunk("undersøke", (0, 2), "VERB", "under") == "ˈʉn.dər"
+
+    def test_under_half_resolves_without_upos(self, tmp_path: Path) -> None:
+        """The chosen reading is POS-independent, so no upos is needed either.
+
+        lexicon_reading carries NO upos (the tiebreak cannot depend on a tag the
+        breakdown builder may not have). plan_chunk with upos=None must resolve
+        exactly as the tagged call does. Failing here means the phoneme side
+        depended on POS to settle a disagreement the boundary side settled
+        without it — the two halves drifting apart again.
+        """
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("undersøke", (1, 2)) == "dər"
+
+    def test_agree_on_split_but_differ_in_sound_still_refuses(self, tmp_path: Path) -> None:
+        """tunatale-k318.5 lowers NO gate: agreed-on-split sound conflicts stay None.
+
+        sporet's readings CUT the spelling identically (['spo','ret']) but
+        differ in sound at the -et syllable (/ə/ vs /ət/). lexicon_reading
+        returns ('spo','ret'], None) — no reading was chosen — so the
+        all-candidates-agree gate must still fire and refuse. Returning a sound
+        here would mean the tiebreak leaked a pin into a word whose readings
+        genuinely disagree, the exact drift this bead exists to keep from spread
+        the other way.
+        """
+        p = _planner(tmp_path, TestSpanLevelDisambiguation.ROWS)
+        assert p.plan_chunk("sporet", (1, 2)) is None
 
     def test_descent_still_honours_stale_chunk_text(self, tmp_path: Path) -> None:
         """Gate 7 survives the rebase: a caption that names another syllable refuses."""

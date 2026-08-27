@@ -46,6 +46,7 @@ _add("æ", "æ", "æː", "ɛ")
 _add("ø", "øː", "œ", "ə")
 _add("å", "oː", "ɔ")
 _add("ei", "æ͡ɪ")
+_add("ea", "ɪː")
 _add("eu", "æ͡ʉ", "ɔ͡ʊ")
 _add("øu", "æ͡ʉ")
 _add("eg", "æ͡ɪ")
@@ -307,13 +308,24 @@ def _pieces_from_cuts(word: str, cuts: list[int]) -> tuple[list[str] | None, str
 
 
 @functools.lru_cache(maxsize=4096)
-def lexicon_syllable_split(word: str, db_path: Path | None = None) -> list[str] | None:
-    """The orthographic split EVERY candidate reading agrees on, or ``None``.
+def lexicon_reading(word: str, db_path: Path | None = None) -> tuple[list[str], str | None] | None:
+    """The orthographic split plus the reading that produced it, or ``None``.
 
     No UPOS parameter, deliberately: boundaries must not depend on a POS tag
-    the breakdown builder does not have.  Phonemes still use POS (that is
-    ``phoneme_plan.py``, already shipped) — but only within a split all readings
-    already agree on, so the two can never cross.
+    the breakdown builder does not have, and the tiebreak below is
+    POS-independent.  This is the SINGLE fact both consumers share —
+    ``phoneme_plan.py`` uses the SAME reading for sound that the caption's cut
+    used — so **boundaries and phonemes can never cross** (the module invariant).
+
+    Three-way contract (tunatale-k318.5):
+    - ``None``: no adoptable split — every case where
+      :func:`lexicon_syllable_split` returns ``None``.
+    - ``(split, None)``: every candidate reading AGREED on *split*. No single
+      reading was chosen; they may still differ in SOUND, so a phoneme consumer
+      must keep applying the all-candidates-agree gate.
+    - ``(split, <transcription>)``: the readings DISAGREED on the split and the
+      most-enunciated tiebreak CHOSE one reading; *transcription* is that
+      winner's raw X-SAMPA. Boundaries and sound BOTH come from this reading.
 
     Opens a fresh :class:`NstLexicon` per call (the function is cached, so
     this only runs once per distinct word).  Never opens the database on the
@@ -338,16 +350,109 @@ def lexicon_syllable_split(word: str, db_path: Path | None = None) -> list[str] 
         return None
 
     # Align every candidate; adopt only the split all readings agree on.
-    splits: list[list[str]] = []
+    pairs: list[tuple[str, list[str]]] = []
     for transcription in candidates:
         pieces, reason = orthographic_syllables(word, transcription)
         if pieces is None:
             return None
-        splits.append(pieces)
+        pairs.append((transcription, pieces))
 
-    # `splits` cannot be empty: `candidates` is non-empty above and the loop
+    # `pairs` cannot be empty: `candidates` is non-empty above and the loop
     # either returns or appends for each one.
-    first = splits[0]
-    if all(s == first for s in splits[1:]):
-        return first
+    first = pairs[0][1]
+    if all(split == first for _transcription, split in pairs[1:]):
+        # Every reading agrees on the split; none was chosen.
+        return first, None
+
+    # Readings cut the word differently, so the agree-or-refuse rule is out of
+    # answers. tunatale-k318: pick the most-enunciated reading — the one that
+    # elides least. Measured over the whole 50006-word wordlist, this decides
+    # 43 of the 54 disagreeing words and leaves 11 ties as refusals.
+    vowels = frozenset("aeiouyæøå")
+
+    def _vowelless(split: list[str]) -> bool:
+        """Whether any piece would caption a syllable with no vowel."""
+        return any(not any(ch in vowels for ch in piece) for piece in split)
+
+    # Stress marks and syllable dots are NOT segments. Counting them measured
+    # stress-mark count and syllable count rather than elision, which decided
+    # gylden/tanger/grunder on the stress mark alone — the one signal this
+    # project explicitly does not caption on.
+    _MARKS = frozenset("ˈˌ.")
+
+    def _segments(transcription: str) -> int:
+        return sum(1 for phone in _parse_sampa_to_phones(transcription) if phone not in _MARKS)
+
+    # The vowelless discard is load-bearing: without it the naive count picks
+    # flat -> ['fla','t'], studerte -> ['stu','de','rt','e'], tekstil ->
+    # ['tek','sti','l'] — all with a clean alternative. Fall back to the full
+    # set when discarding empties it.
+    remaining = [(t, s) for t, s in pairs if not _vowelless(s)]
+    if not remaining:
+        remaining = pairs
+
+    def _one_winner(lvl: list[tuple[str, list[str]]]) -> tuple[list[str], str | None]:
+        """Return ``(split, transcription)`` when one reading won, else ``(split, None)``.
+
+        Callers guarantee every pair in ``lvl`` shares ONE distinct split (the
+        winning one).  When several readings share that split — same length,
+        but possibly different sounds — the split is decided but no single
+        SOUND won, so return ``(winning, None)``: the phoneme gate keeps the
+        right to refuse rather than pin an arbitrary sound.  This keeps
+        ``lexicon_syllable_split``'s answer identical in every case (LOST=0)
+        while never crossing boundaries with a sound a different reading
+        produced.
+        """
+        winning = lvl[0][1]
+        same = [t for t, s in lvl if tuple(s) == tuple(winning)]
+        return (winning, same[0]) if len(same) == 1 else (winning, None)
+
+    # Level 1 — fewer phonemic segments = more elision, so the most-segments
+    # reading is the careful citation form a fragment heard alone should be.
+    most = max(_segments(t) for t, _s in remaining)
+    l1 = [(t, s) for t, s in remaining if _segments(t) == most]
+    if len({tuple(s) for _t, s in l1}) == 1:
+        return _one_winner(l1)
+
+    # Level 2 — the readings say the SAME sounds and disagree only on where the
+    # boundary falls, so no caption built from either can lie about the audio.
+    # Prefer the finer split: a buildup drill wants the smaller rungs.
+    finest = max(len(s) for _t, s in l1)
+    l2 = [(t, s) for t, s in l1 if len(s) == finest]
+    if len({tuple(s) for _t, s in l2}) == 1:
+        return _one_winner(l2)
+
+    # Still tied: same sounds, same syllable count, different cut. The rule does
+    # not decide, and refusing stays correct.
     return None
+
+
+@functools.lru_cache(maxsize=4096)
+def lexicon_syllable_split(word: str, db_path: Path | None = None) -> list[str] | None:
+    """The split every reading agrees on — or, when they disagree, the most
+    enunciated one — else ``None``.
+
+    Thin wrapper over :func:`lexicon_reading` returning only the split, so the
+    most-enunciated tiebreak has exactly ONE implementation: the boundary half
+    and the phoneme half (``phoneme_plan.py``) consume the same decision, and
+    two copies cannot drift.  Signature, caching, and every existing behaviour
+    are identical to the old standalone implementation.
+
+    No UPOS parameter, deliberately: boundaries must not depend on a POS tag
+    the breakdown builder does not have.  Phonemes may still use POS (that is
+    ``phoneme_plan.py``) — but only on the ``(split, None)`` path, where readings
+    agreed.  Where the tiebreak CHOSE a reading, ``phoneme_plan`` takes its
+    sound from that same reading, so boundaries and phonemes still cannot cross.
+
+    Opens a fresh :class:`NstLexicon` per call (the function is cached, so
+    this only runs once per distinct word).  Never opens the database on the
+    import path.
+
+    *db_path* exists so a test can point at a fixture database or at a missing
+    one; production callers leave it ``None`` and get ``DB_PATH``.
+    """
+    reading = lexicon_reading(word, db_path)
+    if reading is None:
+        return None
+    split, _transcription = reading
+    return split

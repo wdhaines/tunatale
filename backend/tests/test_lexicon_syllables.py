@@ -8,13 +8,16 @@ source. All oracles below were measured against the real built lexicon
 
 from __future__ import annotations
 
+import gzip
 from pathlib import Path
 
+from app.plugins.languages.no.lexicon import build_lexicon_db
 from app.plugins.languages.no.lexicon_syllables import (
     REFUSE_EMPTY,
     REFUSE_NO_PATH,
     REFUSE_SILENT_AT_CUT,
     _pieces_from_cuts,
+    lexicon_reading,
     lexicon_syllable_split,
     orthographic_syllables,
 )
@@ -173,6 +176,36 @@ class TestUnchangedControlWords:
 # ---------------------------------------------------------------------------
 
 
+class TestEaDigraph:
+    """tunatale-d4td: the English digraph ``ea`` may spell /ɪː/.
+
+    Without a rule saying ``ea`` can spell /ɪː/, ``teamet`` (ONE lexicon reading,
+    /ˈtɪː.mə/) refused with ``no-path`` and got no boundaries at all. The
+    grapheme follows the lexicon, not a hardcoded cut: ``teamleder`` has the same
+    ``ea`` but the /m/ really sits in syllable 1 (/ˈtɪːm.ˌleː.dər/), so it cuts
+    differently.
+    """
+
+    def test_teamet_cuts_after_the_digraph(self) -> None:
+        result, reason = orthographic_syllables("teamet", '"ti:$m@')
+        assert result == ["tea", "met"]
+        assert reason == ""
+
+    def test_teamleder_keeps_the_m_in_syllable_one(self) -> None:
+        """The discriminating control: same rule, opposite result."""
+        result, reason = orthographic_syllables("teamleder", '"ti:m$%le:$d@r')
+        assert result == ["team", "le", "der"]
+        assert reason == ""
+
+    def test_sporet_unchanged_control(self) -> None:
+        result, reason = orthographic_syllables("sporet", '"spu:$r@')
+        assert result == ["spo", "ret"]
+        assert reason == ""
+
+    def test_teamet_lexicon_split(self) -> None:
+        assert lexicon_syllable_split("teamet") == ["tea", "met"]
+
+
 class TestLexiconSyllableSplit:
     """The whole-word split all candidate readings agree on."""
 
@@ -276,3 +309,205 @@ class TestRetroflexAcrossAWrittenVowel:
             assert pieces is not None, word
             assert "".join(pieces) == word
             assert not any(p.endswith("r") for p in pieces[:-1]), (word, pieces)
+
+
+class TestMostEnunciatedTiebreak:
+    """tunatale-k318: when readings cut differently, adopt the most-enunciated.
+
+    The old rule (agree-or-refuse) returned None on disagreement and the word
+    fell to the audio slicer. The user decided instead to pick the reading that
+    elides least. Rule, in brief:
+    1. any reading that fails to align -> None, unchanged;
+    2. all aligned splits agree -> that split, unchanged;
+    3. drop readings whose split has a vowelless piece (fall back to the full
+       set if that empties it);
+    4. among what remains, take the reading with the most phonemic segments;
+    5. one distinct split at that maximum -> return it; otherwise break the tie
+       toward the FINER split (same phones, so no caption can lie about the
+       audio), and refuse only when that ties too.
+
+    ⚠ 'segments' means PHONES. Stress marks and syllable dots are excluded:
+    counting them decided gylden/tanger/grunder on the stress mark alone.
+    """
+
+    def test_under_keeps_the_d(self):
+        """under -> ["un","der"], never None.
+
+        The decisive case that motivated the rule: /'ʉ.nər/ elides the d (4
+        segments) while /'ʉn.dər/ keeps it (5), so the enunciated reading must
+        win. Failing here is the whole tiebreak misbehaving (steps 4-5).
+        """
+        assert lexicon_syllable_split("under") == ["un", "der"]
+
+    def test_flat_does_not_strand_a_vowelless_piece(self):
+        """flat -> ["flat"], not ["fla","t"].
+
+        Pins step 3: without discarding readings whose split contains a
+        vowelless piece, the most-segments rule would caption a chunk with no
+        vowel ("t"). The measured naive-winner flat -> ['fla','t'] must not
+        survive the discard step.
+        """
+        assert lexicon_syllable_split("flat") == ["flat"]
+
+    def test_studerte_does_not_strand_a_vowelless_piece(self):
+        """studerte -> ["stu","de","rte"], not ["stu","de","rt","e"].
+
+        Same step-3 guard as test_flat, multi-syllable: pieces without a vowel
+        identify the candidate to discard before the count decides.
+        """
+        assert lexicon_syllable_split("studerte") == ["stu", "de", "rte"]
+
+    def test_videre_wins_by_phonemic_count(self):
+        """videre -> ["vi","de","re"].
+
+        Pins step 4 with no vowelless complication: every candidate split is
+        clean, so the win rests purely on which reading has the most phonemic
+        segments.
+        """
+        assert lexicon_syllable_split("videre") == ["vi", "de", "re"]
+
+    def test_beskjeden_still_refuses_on_a_tie(self):
+        """beskjeden -> None.
+
+        Pins step 5: when two or more distinct splits tie at the most-segments
+        maximum the rule refuses, exactly as agree-or-refuse did. Resolving any
+        Tied word would mean the tie guard is broken.
+        """
+        assert lexicon_syllable_split("beskjeden") is None
+
+    def test_gylden_refuses_when_only_the_stress_mark_differs(self):
+        """gylden -> None.
+
+        The second tie guard, and the one that pins WHAT COUNTS as a segment.
+        gylden's readings say the same phones in the same number of syllables
+        and differ only in stress marking. Counting 'ˈ' or '.' as segments would
+        resolve it on the stress mark alone — the one signal this project
+        explicitly does not caption on. Resolving this word means _segments has
+        started counting marks again.
+        """
+        assert lexicon_syllable_split("gylden") is None
+
+    def test_mønstre_resolves_on_the_phone_count(self):
+        """mønstre -> ["møns","tre"].
+
+        The companion to test_gylden: here the readings genuinely differ in how
+        many phones they contain, so level 1 decides and refusing would be
+        wrong. Pins that stripping the marks did not turn the rule into a
+        blanket refusal.
+        """
+        assert lexicon_syllable_split("mønstre") == ["møns", "tre"]
+
+    def test_tittelen_resolves_on_the_finer_split(self):
+        """tittelen -> ["ti","tte","len"], not ["ti","ttelen"].
+
+        Pins LEVEL 2. Both readings carry the same phones — the sound is
+        identical — so neither caption could lie about the audio, and the tie is
+        broken toward the finer split because a buildup drill wants the smaller
+        rungs. Returning None here would mean level 2 was dropped.
+        """
+        assert lexicon_syllable_split("tittelen") == ["ti", "tte", "len"]
+
+    def test_sporet_unchanged_control(self):
+        """sporet -> ["spo","ret"], still.
+
+        Control from the unchanged mass: sporet's two readings differ
+        phonemically (rə vs rət) but cut the spelling identically, so the
+        tiebreak must not move it (step 2, agree-on-split, unchanged).
+        """
+        assert lexicon_syllable_split("sporet") == ["spo", "ret"]
+
+    def test_every_reading_vowelless_falls_back_to_the_full_set(self, tmp_path: Path) -> None:
+        """The discard must not empty the pool it then takes a maximum over.
+
+        No word in the real 50006-word lexicon has EVERY reading strand a
+        vowelless piece, so this shape needs a fixture. 'att' gets two readings
+        that both do — a|tt and at|t. Without the fall-back-to-the-full-set
+        line, `remaining` is empty and `max()` raises ValueError instead of
+        returning; the two readings then tie at every level, so the correct
+        answer is a refusal.
+        """
+        gz = tmp_path / "fixture.tsv.gz"
+        payload = 'att\tNN\t"A$tt\t1\natt\tNN\t"At$t\t1\n'
+        gz.write_bytes(gzip.compress(payload.encode("utf-8"), mtime=0))
+        db = tmp_path / "lexicon.sqlite3"
+        build_lexicon_db(gz, db)
+
+        assert lexicon_syllable_split("att", db) is None
+
+
+class TestLexiconReading:
+    """tunatale-k318.5: the three-way contract that lets phonemes reuse the split's reading.
+
+    lexicon_syllable_split and the phoneme planner (phoneme_plan.py) must consume
+    the SAME decision. lexicon_reading is that single fact: it returns the split
+    AND, when the most-enunciated tiebreak chose one reading over others, that
+    winner's transcription — so boundaries and sound cannot cross (the module's
+    invariant). The three-way distinction is the whole point:
+    ``None`` (no adoptable split) vs ``(split, None)`` (readings agreed on the
+    split, may still differ in sound) vs ``(split, transcription)`` (a reading
+    was chosen). Collapsing the middle and empty cases is the exact drift this
+    bead exists to prevent.
+    """
+
+    def test_tiebreak_chosen_word_returns_transcription(self) -> None:
+        """under -> (['un','der'], <X-SAMPA·of·/ʉn.dər/>).
+
+        under's two readings cut differently (u|nder vs un|der) and the tiebreak
+        picks the more enunciated /ˈʉn.dər/ — the reading that keeps the d. The
+        transcription half must be that winner's, so a phoneme consumer can play
+        the SAME sound the caption's cut was built on. Failing here —
+        transcription None — would send under back to the phoneme gate that
+        refuses the ʉndər-vs-ʉnər disagreement, undoing the bead's one payoff.
+        """
+        result = lexicon_reading("under")
+        assert result is not None
+        split, transcription = result
+        assert split == ["un", "der"]
+        assert transcription is not None
+        assert "d" in transcription
+
+    def test_agree_on_split_word_returns_none_transcription(self) -> None:
+        """sporet -> (['spo','ret'], None).
+
+        sporet's two readings cut the spelling identically but sound differently
+        at the -et syllable (/rə/ vs /rət/). No single reading was chosen, so
+        the phoneme consumer MUST keep the all-candidates-agree gate. Returning
+        a transcription here would pin one sound and lower the tunatale-d4td gate
+        this bead must not touch.
+        """
+        assert lexicon_reading("sporet") == (["spo", "ret"], None)
+
+    def test_no_adoptable_split_returns_none(self) -> None:
+        """gylden -> None, and so does lexicon_reading.
+
+        A word the tiebreak cannot settle (readings tie, or an alignment fails)
+        has no adoptable split at all. Returning the empty case as anything but
+        None would be confused with the agree-on-split ``(split, None)`` case the
+        phoneme gate treats completely differently.
+        """
+        assert lexicon_reading("gylden") is None
+
+    def test_disagreeing_readings_share_the_winning_split_returns_none_transcription(self, tmp_path: Path) -> None:
+        """mata -> (['ma','ta'], None) when two equal readings tie for the split.
+
+        Three readings: two cut ma|ta with the SAME phone count but a different
+        vowel (/mɑ.tɑ/ vs /mæ.tɑ/ — both ɑ and æ align to the letter ``a``), one
+        cuts the whole word mata as a single syllable. The tiebreak picks the
+        winning SPLIT (ma|ta, the finer one) but two equally-enunciated readings
+        own it and differ in SOUND, so no single reading was chosen — the
+        transcription half must be None and the phoneme gate keeps the right to
+        refuse. Failing here means lexicon_reading pinned an arbitrary sound,
+        crossing the invariant.
+
+        No real word in the 50006-word list has two max-segments readings sharing
+        the winning split (measured 0), so this shape needs a fixture.
+        """
+        gz = tmp_path / "fixture.tsv.gz"
+        payload = 'mata\tNN\t"mA$tA\t1\nmata\tNN\t"m{$tA\t1\nmata\tNN\t"mAtA\t1\n'
+        gz.write_bytes(gzip.compress(payload.encode("utf-8"), mtime=0))
+        db = tmp_path / "lexicon.sqlite3"
+        build_lexicon_db(gz, db)
+
+        assert lexicon_reading("mata", db) == (["ma", "ta"], None)
+        # lexicon_syllable_split still returns the decided split (LOST must be 0).
+        assert lexicon_syllable_split("mata", db) == ["ma", "ta"]

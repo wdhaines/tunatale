@@ -280,18 +280,29 @@ async def test_warm_lemmatizer_skips_cheap_lemmatizer():
         store.close()
 
 
-async def test_lifespan_wires_slicers_when_the_capability_gate_is_open(tmp_path, monkeypatch):
-    """The renderer must actually receive slicers, or the feature is inert.
+async def test_lifespan_leaves_the_slicer_unwired_even_when_it_COULD_be_wired(tmp_path, monkeypatch):
+    """The audio slicer is dormant on purpose, and stays dormant with the gate OPEN.
 
-    Every unit below this is green with the renderer holding an empty dict, so
-    this is the one place that proves startup connects them. Exercised through
-    the real import machinery (``find_spec``) rather than by patching app code.
+    Replaces test_lifespan_wires_slicers_when_the_capability_gate_is_open, which
+    asserted the opposite. tunatale-k318.4 retired the slicer from the default
+    render path: the lexicon <phoneme> route covers every chunk that wants IPA,
+    and the one chunk left over was judged BY EAR to sound better from plain
+    synthesis than from a slice (tunatale-k318.2 — the slice had audible speed
+    artifacts).
 
-    ``target_language``/``database_urls`` are pinned rather than inherited: only
-    a language with alignment wiring gets a slicer, so on a Slovene-default
-    install this asserted nothing and passed for the wrong reason. It first went
-    red in CI while passing locally off a Norwegian ``.env`` — exactly the
-    environment-dependent green this pin exists to prevent.
+    The setup is inherited verbatim from the test this replaces, and the reason
+    is its reason: ``target_language``/``database_urls`` are pinned and
+    ``find_spec`` is faked so the capability gate is genuinely OPEN. Without
+    that, a Slovene-default install would wire no slicer anyway and this would
+    assert nothing while passing — the environment-dependent green that test
+    was hardened against. Here it proves something stronger: the slicer is
+    absent BECAUSE startup no longer asks for it, not because it was
+    unavailable.
+
+    app.audio.slicer and the language alignment adapters remain in the tree and
+    tested; re-wiring is one ``build_slicers`` call away. If this test fails,
+    either the slicer crept back, or it was rewired deliberately — in which case
+    delete this test in the same commit and say why.
     """
     import importlib.util
 
@@ -311,9 +322,7 @@ async def test_lifespan_wires_slicers_when_the_capability_gate_is_open(tmp_path,
 
     test_app = FastAPI()
     async with lifespan(test_app):
-        slicers = test_app.state.renderer._slicers
-        assert set(slicers) == {"no"}, "slicing was enabled but the renderer got no slicer for it"
-        assert set(slicers) <= set(test_app.state.renderer._preprocessors)
+        assert test_app.state.renderer._slicers == {}, "the slicer was rewired into the default render path"
 
 
 async def test_lifespan_wires_phoneme_planners_for_a_language_with_a_lexicon(tmp_path, monkeypatch):

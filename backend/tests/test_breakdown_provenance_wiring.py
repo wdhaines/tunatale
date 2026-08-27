@@ -91,8 +91,8 @@ class TestRegistryWiring:
             "tter",
             "fors",
             "knings",
-            "team",
-            "et",
+            "tea",
+            "met",
         ]
 
     def test_slovene_registers_no_alignment(self):

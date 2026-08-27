@@ -712,6 +712,15 @@ def _resolve_compound_parts(morphemes: list[str]) -> list[tuple[str, list[str]]]
     described an equality guard the body deliberately does not implement; see
     the comment in the loop for why one would be self-defeating.)
 
+    When at least one part could not resolve, fall back to the WHOLE word's
+    lexicon split — but only when every morpheme seam falls on one of the
+    whole-word cuts (the seam guard). Then the split partitions cleanly across
+    the parts, and redistributing it at the seams preserves the invariant that
+    concatenating the returned per-part syllables reproduces ``flat_syllables``
+    exactly. When a whole-word cut would instead CROSS a seam, the fallback
+    does not fire — adopting it would put a rung (e.g. ``nde`` in
+    ``u|nde|rsø|ke``) that spans no morpheme.
+
     This avoids the old whole-word transcription slicing, which modelled
     connected-speech assimilation across the compound seam that never occurs
     in a buildup drill where parts are spoken separately.
@@ -720,6 +729,7 @@ def _resolve_compound_parts(morphemes: list[str]) -> list[tuple[str, list[str]]]
 
     units = _compound_buildup_units(morphemes)
     resolved: list[tuple[str, list[str]]] = []
+    all_resolved = True
     for surface, pieces in units:
         split = lexicon_syllable_split(surface)
         # Adopt UNCONDITIONALLY when the lexicon has a split, mirroring the
@@ -731,6 +741,8 @@ def _resolve_compound_parts(morphemes: list[str]) -> list[tuple[str, list[str]]]
         # lexicon_syllable_split only ever CUTS the surface, so
         # "".join(split) == surface and _build_compound_sequence_spans' offset
         # arithmetic is unaffected.
+        if split is None:
+            all_resolved = False
         resolved.append((surface, split if split is not None else pieces))
     # NOTE: the fold (_fold_vowel_only_inflections) is deliberately NOT re-applied
     # to an adopted split. It would undo the lexicon's boundary to avoid a
@@ -739,7 +751,53 @@ def _resolve_compound_parts(morphemes: list[str]) -> list[tuple[str, list[str]]]
     # test_vowel_only_inflection_never_stranded_inside_a_morpheme) is already
     # "lexicon boundaries win even when a vowel-only inflection is stranded";
     # per-part resolution only widens WHERE the lexicon speaks.
-    return resolved
+
+    # Seam-guarded whole-word fallback (tunatale-nlhh). Only when a part could
+    # not resolve is the whole word's own split worth consulting —
+    # every-part-resolved is the ordinary, already-optimal path and must stay.
+    if all_resolved:
+        return resolved
+
+    whole = "".join(surface for surface, _ in units)
+    whole_split = lexicon_syllable_split(whole)
+    if whole_split is None:
+        return resolved
+
+    # Morpheme seams: cumulative part lengths, excluding the word end.
+    seams: list[int] = []
+    acc = 0
+    for i in range(len(units) - 1):
+        acc += len(units[i][0])
+        seams.append(acc)
+
+    # Whole-word cut offsets: cumulative piece lengths, excluding the word end.
+    cuts: list[int] = []
+    acc = 0
+    for i in range(len(whole_split) - 1):
+        acc += len(whole_split[i])
+        cuts.append(acc)
+
+    # The guard: every seam must be a cut, or a whole-word piece would span a
+    # morpheme boundary. This is the whole point of the fallback.
+    if not set(seams).issubset(cuts):
+        return resolved
+
+    # Redistribute the whole-word split across the parts at the seam offsets.
+    # Because every seam is a cut, each part's character range coincides with a
+    # contiguous run of whole-word pieces, so the pieces partition cleanly and
+    # concatenating per-part syllables still reproduces ``flat_syllables``.
+    piece_bounds = [0] + cuts + [len(whole)]
+    out: list[tuple[str, list[str]]] = []
+    part_start = 0
+    for surface, _ in units:
+        part_end = part_start + len(surface)
+        collected: list[str] = []
+        for k in range(len(piece_bounds) - 1):
+            if piece_bounds[k] >= part_start and piece_bounds[k + 1] <= part_end:
+                collected.append(whole_split[k])
+        out.append((surface, collected))
+        part_start = part_end
+    return out
 
 
 def resolved_buildup_units(word: str) -> list[tuple[str, list[str]]] | None:
