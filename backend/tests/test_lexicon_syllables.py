@@ -173,6 +173,36 @@ class TestUnchangedControlWords:
 # ---------------------------------------------------------------------------
 
 
+class TestEaDigraph:
+    """tunatale-d4td: the English digraph ``ea`` may spell /ɪː/.
+
+    Without a rule saying ``ea`` can spell /ɪː/, ``teamet`` (ONE lexicon reading,
+    /ˈtɪː.mə/) refused with ``no-path`` and got no boundaries at all. The
+    grapheme follows the lexicon, not a hardcoded cut: ``teamleder`` has the same
+    ``ea`` but the /m/ really sits in syllable 1 (/ˈtɪːm.ˌleː.dər/), so it cuts
+    differently.
+    """
+
+    def test_teamet_cuts_after_the_digraph(self) -> None:
+        result, reason = orthographic_syllables("teamet", '"ti:$m@')
+        assert result == ["tea", "met"]
+        assert reason == ""
+
+    def test_teamleder_keeps_the_m_in_syllable_one(self) -> None:
+        """The discriminating control: same rule, opposite result."""
+        result, reason = orthographic_syllables("teamleder", '"ti:m$%le:$d@r')
+        assert result == ["team", "le", "der"]
+        assert reason == ""
+
+    def test_sporet_unchanged_control(self) -> None:
+        result, reason = orthographic_syllables("sporet", '"spu:$r@')
+        assert result == ["spo", "ret"]
+        assert reason == ""
+
+    def test_teamet_lexicon_split(self) -> None:
+        assert lexicon_syllable_split("teamet") == ["tea", "met"]
+
+
 class TestLexiconSyllableSplit:
     """The whole-word split all candidate readings agree on."""
 

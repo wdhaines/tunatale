@@ -69,7 +69,7 @@ class TestFlatSyllables:
     def test_compound(self):
         pieces = flat_syllables("etterforskningsteamet")
         assert pieces is not None
-        assert pieces == ["e", "tter", "fors", "knings", "team", "et"]
+        assert pieces == ["e", "tter", "fors", "knings", "tea", "met"]
 
     def test_overlap_compound_rejoins(self):
         """s-overlap busstasjon: pieces rejoin despite truncated morpheme."""
@@ -298,6 +298,50 @@ class TestFlatSyllables:
         # 'under' lexicon=None → repo ['un', 'der']; 'søke' matches → ['sø', 'ke']
         assert pieces == ["un", "der", "sø", "ke"]
 
+    # ---- seam-guarded whole-word fallback (tunatale-nlhh) -------
+
+    def test_seam_guarded_fallback_boundaries_that_MOVE(self):
+        """ORACLE 2.1: whole-word cuts that meet (not cross) a seam are adopted.
+
+        Each of these has a part the lexicon cannot resolve ('sident' in
+        pre+sident, 'under' in under+kant). The whole word HAS a lexicon split,
+        and every morpheme seam falls on one of its cuts — so the split is
+        redistributed back across the parts at the seams, fixing the stuck
+        per-part guess. In each row: current flat_syllables -> authoritative
+        target.
+        """
+        targets = {
+            "deltaker": ["del", "ta", "ker"],
+            "profeten": ["pro", "fe", "ten"],
+            "lanserer": ["lan", "se", "rer"],
+            "plassering": ["pla", "sse", "ring"],
+            "underkant": ["u", "nder", "kant"],
+            "etterkommere": ["e", "tter", "ko", "mme", "re"],
+        }
+        for word, expected in targets.items():
+            pieces = flat_syllables(word)
+            assert pieces == expected, f"{word}: got {pieces!r}, want {expected!r}"
+
+    def test_seam_guarded_fallback_boundaries_that_do_NOT_move(self):
+        """ORACLE 2.2: words that must NOT move.
+
+        undersøke is the load-bearing one: its whole-word cut u|nde|rsø|ke
+        (cuts at 1,4,7) CROSSES the under|søke seam (at 5), so adopting it
+        would put nde/rsø rungs that span no morpheme. A change that "fixes"
+        undersøke has broken the guard.
+        """
+        stays = {
+            "undersøke": ["un", "der", "sø", "ke"],
+            "samarbeid": ["sam", "ar", "beid"],
+            "timevis": ["ti", "me", "vis"],
+            "president": ["pre", "si", "dent"],
+            "hverken": ["hver", "ken"],
+            "torsdag": ["tors", "dag"],
+            "skygge": ["sky", "gge"],
+        }
+        for word, expected in stays.items():
+            assert flat_syllables(word) == expected, f"{word} must not move"
+
     # ---- build_norwegian_breakdown_spans text equality oracle ----------------
 
     def test_per_part_adoption_takes_boundaries_that_DIFFER(self):
@@ -443,11 +487,12 @@ class TestBreakdownSpansCorrectness:
             "tter",
             "fors",
             "knings",
-            "team",
-            "et",
+            "tea",
+            "met",
         ]
         by_text = {(c.text, c.span) for c in chunks if c.span is not None}
-        assert ("team", (4, 5)) in by_text
+        assert ("tea", (4, 5)) in by_text
+        assert ("met", (5, 6)) in by_text
         assert ("knings", (3, 4)) in by_text
         assert ("tter", (1, 2)) in by_text
         assert {c.source_word for c in chunks if c.span is not None} == {"etterforskningsteamet"}

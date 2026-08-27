@@ -491,7 +491,7 @@ class TestGuardsThatRefuse:
 DESCENT_ROWS = [
     ("etter", "AB", '""E$t@r', 1),  # ['ɛ', 'tər']
     ("forsknings", "NN", '""fOs`$knINs', 1),  # ['fɔʂ', 'knɪŋs']
-    ("teamet", "NN", '"ti:$m@', 1),  # present, but its BOUNDARIES refuse
+    ("teamet", "NN", '"ti:$m@', 1),  # tea|met once ``ea`` may spell /ɪː/
     ("søke", "VB", '""s2:$k@', 1),  # ['søː', 'kə']
     ("under", "PP", '"u0$n@r', 1),  # two readings that disagree on boundaries
     ("under", "AB", '"u0n$d@r', 1),
@@ -566,17 +566,27 @@ class TestConstituentDescent:
         p = _planner(tmp_path, DESCENT_ROWS)
         assert p.plan_chunk("etterforskningsteamet", (2, 6)) is None
 
-    @pytest.mark.parametrize("span", [(4, 5), (5, 6), (4, 6)])
-    def test_part_whose_own_boundaries_refuse(self, tmp_path: Path, span: tuple[int, int]) -> None:
-        """'teamet' IS in the fixture, and still refuses — boundaries, not absence.
+    def test_part_with_a_loanword_digraph_now_resolves(self, tmp_path: Path) -> None:
+        """'teamet' resolves once ``ea`` may spell /ɪː/ (tunatale-d4td).
 
-        The real lexicon's readings of 'teamet' do not agree on an orthographic
-        split, so ``lexicon_syllable_split`` returns None for it and there is no
-        split the caption was cut at. Descending does not lower the boundary
-        guard; it only asks it about a smaller word.
+        The ``ea`` grapheme lets the single reading /ˈtɪː.mə/ cut tea|met, so the
+        part that hosts spans (4,5)/(5,6)/(4,6) now resolves and the descent
+        serves it IPA. ORACLE 1.2 of that brief — measured against the real
+        lexicon, whose teamet reading is identical to this fixture's.
         """
         p = _planner(tmp_path, DESCENT_ROWS)
-        assert p.plan_chunk("etterforskningsteamet", span) is None
+        assert p.plan_chunk("etterforskningsteamet", (4, 5), "NOUN", "tea") == "ˈtɪː"
+        assert p.plan_chunk("etterforskningsteamet", (5, 6), "NOUN", "met") == "mə"
+        assert p.plan_chunk("etterforskningsteamet", (4, 6), "NOUN", "teamet") == "ˈtɪː.mə"
+
+    def test_span_still_crossing_two_parts_refuses(self, tmp_path: Path) -> None:
+        """'forskningsteamet' still has no single host part — a DELIBERATE refusal.
+
+        The span crosses the forsknings|teamet seam, so no part hosts it; it must
+        stay None even though both parts resolve (ORACLE 1.2).
+        """
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("etterforskningsteamet", (2, 6), "NOUN", "forskningsteamet") is None
 
     def test_refusal_is_per_part_not_per_word(self, tmp_path: Path) -> None:
         """undersøke: 'søke' resolves even though 'under' cannot.
