@@ -17,6 +17,7 @@ from app.plugins.languages.no.lexicon_syllables import (
     REFUSE_NO_PATH,
     REFUSE_SILENT_AT_CUT,
     _pieces_from_cuts,
+    lexicon_reading,
     lexicon_syllable_split,
     orthographic_syllables,
 )
@@ -432,3 +433,81 @@ class TestMostEnunciatedTiebreak:
         build_lexicon_db(gz, db)
 
         assert lexicon_syllable_split("att", db) is None
+
+
+class TestLexiconReading:
+    """tunatale-k318.5: the three-way contract that lets phonemes reuse the split's reading.
+
+    lexicon_syllable_split and the phoneme planner (phoneme_plan.py) must consume
+    the SAME decision. lexicon_reading is that single fact: it returns the split
+    AND, when the most-enunciated tiebreak chose one reading over others, that
+    winner's transcription — so boundaries and sound cannot cross (the module's
+    invariant). The three-way distinction is the whole point:
+    ``None`` (no adoptable split) vs ``(split, None)`` (readings agreed on the
+    split, may still differ in sound) vs ``(split, transcription)`` (a reading
+    was chosen). Collapsing the middle and empty cases is the exact drift this
+    bead exists to prevent.
+    """
+
+    def test_tiebreak_chosen_word_returns_transcription(self) -> None:
+        """under -> (['un','der'], <X-SAMPA·of·/ʉn.dər/>).
+
+        under's two readings cut differently (u|nder vs un|der) and the tiebreak
+        picks the more enunciated /ˈʉn.dər/ — the reading that keeps the d. The
+        transcription half must be that winner's, so a phoneme consumer can play
+        the SAME sound the caption's cut was built on. Failing here —
+        transcription None — would send under back to the phoneme gate that
+        refuses the ʉndər-vs-ʉnər disagreement, undoing the bead's one payoff.
+        """
+        result = lexicon_reading("under")
+        assert result is not None
+        split, transcription = result
+        assert split == ["un", "der"]
+        assert transcription is not None
+        assert "d" in transcription
+
+    def test_agree_on_split_word_returns_none_transcription(self) -> None:
+        """sporet -> (['spo','ret'], None).
+
+        sporet's two readings cut the spelling identically but sound differently
+        at the -et syllable (/rə/ vs /rət/). No single reading was chosen, so
+        the phoneme consumer MUST keep the all-candidates-agree gate. Returning
+        a transcription here would pin one sound and lower the tunatale-d4td gate
+        this bead must not touch.
+        """
+        assert lexicon_reading("sporet") == (["spo", "ret"], None)
+
+    def test_no_adoptable_split_returns_none(self) -> None:
+        """gylden -> None, and so does lexicon_reading.
+
+        A word the tiebreak cannot settle (readings tie, or an alignment fails)
+        has no adoptable split at all. Returning the empty case as anything but
+        None would be confused with the agree-on-split ``(split, None)`` case the
+        phoneme gate treats completely differently.
+        """
+        assert lexicon_reading("gylden") is None
+
+    def test_disagreeing_readings_share_the_winning_split_returns_none_transcription(self, tmp_path: Path) -> None:
+        """mata -> (['ma','ta'], None) when two equal readings tie for the split.
+
+        Three readings: two cut ma|ta with the SAME phone count but a different
+        vowel (/mɑ.tɑ/ vs /mæ.tɑ/ — both ɑ and æ align to the letter ``a``), one
+        cuts the whole word mata as a single syllable. The tiebreak picks the
+        winning SPLIT (ma|ta, the finer one) but two equally-enunciated readings
+        own it and differ in SOUND, so no single reading was chosen — the
+        transcription half must be None and the phoneme gate keeps the right to
+        refuse. Failing here means lexicon_reading pinned an arbitrary sound,
+        crossing the invariant.
+
+        No real word in the 50006-word list has two max-segments readings sharing
+        the winning split (measured 0), so this shape needs a fixture.
+        """
+        gz = tmp_path / "fixture.tsv.gz"
+        payload = 'mata\tNN\t"mA$tA\t1\nmata\tNN\t"m{$tA\t1\nmata\tNN\t"mAtA\t1\n'
+        gz.write_bytes(gzip.compress(payload.encode("utf-8"), mtime=0))
+        db = tmp_path / "lexicon.sqlite3"
+        build_lexicon_db(gz, db)
+
+        assert lexicon_reading("mata", db) == (["ma", "ta"], None)
+        # lexicon_syllable_split still returns the decided split (LOST must be 0).
+        assert lexicon_syllable_split("mata", db) == ["ma", "ta"]

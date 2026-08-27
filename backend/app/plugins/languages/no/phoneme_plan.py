@@ -14,7 +14,7 @@ from pathlib import Path
 
 from app.languages import LexiconOutcome
 from app.plugins.languages.no.lexicon import BUILD_COMMAND, DB_PATH, NstLexicon, nst_lexicon_installed
-from app.plugins.languages.no.lexicon_syllables import lexicon_syllable_split
+from app.plugins.languages.no.lexicon_syllables import lexicon_reading
 from app.plugins.languages.no.norwegian_breakdown import flat_syllables, resolved_buildup_units
 from app.plugins.languages.no.sampa import UnknownSegmentError, ipa_syllables, sampa_to_ipa, strip_tone
 
@@ -168,40 +168,61 @@ class NorwegianPhonemePlanner:
            positional slice played ``der`` as ``nə``. The only safe test is that
            the split being sliced IS the split the caption was cut at. Asking it
            per part is what lets undersøke's ``søke`` half through while its
-           ``under`` half — whose two readings disagree on where the n goes —
-           still refuses.
+           ``under`` half — whose most-enunciated reading the tiebreak chose —
+           resolves through that chosen reading (tunatale-k318.5).
         2. The word is neither RESOLVED nor ambiguous-but-agreeing → ``None``.
         3. SAMPA→IPA conversion fails, for any candidate → ``None``.
-        4. Candidate readings disagree at THIS span (beyond stress) → ``None``.
+        4. Candidate readings disagree at THIS span (beyond stress) → ``None`` —
+           UNLESS the most-enunciated tiebreak already CHOSE one reading for
+           both boundaries and sound. Then that single reading is used directly
+           and gate 4 is skipped: the disagreement it would have refused was
+           deliberately settled by the same decision that set the caption's cut.
+           The all-candidates gate stays load-bearing for the ``(split, None)``
+           case, where readings agreed on the split but may still differ in
+           sound (tunatale-d4td).
         5. *chunk_text* does not match the syllables at *span* → ``None``. A
            lesson stored before the boundaries moved carries the old text; give
            it IPA and it plays a syllable its caption does not name.
         """
-        split = lexicon_syllable_split(surface)
-        if split is None or split != syllables:
+        reading = lexicon_reading(surface)
+        if reading is None:
+            return None
+        split, chosen_transcription = reading
+        if split != syllables:
             return None
         start, stop = span
 
-        resolution = lex.resolve(surface, upos)
-        if resolution.outcome is LexiconOutcome.RESOLVED:
-            candidates = [resolution.transcription]
-        elif resolution.outcome in (LexiconOutcome.AMBIGUOUS_NO_POS, LexiconOutcome.AMBIGUOUS_POS_DIDNT_HELP):
-            # An ambiguity that does not touch THIS span is not an ambiguity for
-            # this chunk. Measured over the stored lessons: 4 of 8 ambiguous
-            # sub-word chunks are rescued this way — all of them first
-            # syllables, where the readings differ only in stress. The other 4
-            # are the regular Norwegian -et split (definite noun /ə/ vs past
-            # participle /ət/), where the readings genuinely disagree at exactly
-            # the syllable being asked for, and those still fall back. Resolving
-            # the WHOLE word stays a refusal to guess.
-            #
-            # AMBIGUOUS_POS_DIDNT_HELP: the POS tag narrowed but left multiple
-            # readings — fall through to span-agreement, which is the fallback
-            # for when no tag is available. A tag that does not narrow must not
-            # be *worse* than no tag.
-            candidates = sorted(lex.candidate_transcriptions(surface, upos))
+        if chosen_transcription is not None:
+            # The tiebreak CHOSE one reading for BOTH boundaries and sound, so
+            # that reading alone is the candidate pool (tunatale-k318.5). The
+            # all-candidates-agree check below then cannot refute it — a single
+            # candidate disagrees with nothing — which is exactly the "skip the
+            # agree check" the brief asks for, done structurally. Every other
+            # guard below (unknown segment, syllable count, chunk text) still
+            # binds, unchanged.
+            candidates = [chosen_transcription]
         else:
-            return None
+            resolution = lex.resolve(surface, upos)
+            if resolution.outcome is LexiconOutcome.RESOLVED:
+                candidates = [resolution.transcription]
+            elif resolution.outcome in (LexiconOutcome.AMBIGUOUS_NO_POS, LexiconOutcome.AMBIGUOUS_POS_DIDNT_HELP):
+                # An ambiguity that does not touch THIS span is not an ambiguity
+                # for this chunk. Measured over the stored lessons: 4 of 8
+                # ambiguous sub-word chunks are rescued this way — all of them
+                # first syllables, where the readings differ only in stress. The
+                # other 4 are the regular Norwegian -et split (definite noun /ə/
+                # vs past participle /ət/), where the readings genuinely
+                # disagree at exactly the syllable being asked for, and those
+                # still fall back. Resolving the WHOLE word stays a refusal to
+                # guess.
+                #
+                # AMBIGUOUS_POS_DIDNT_HELP: the POS tag narrowed but left
+                # multiple readings — fall through to span-agreement, which is
+                # the fallback for when no tag is available. A tag that does not
+                # narrow must not be *worse* than no tag.
+                candidates = sorted(lex.candidate_transcriptions(surface, upos))
+            else:
+                return None
 
         pieces: set[str] = set()
         for transcription in candidates:
