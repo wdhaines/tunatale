@@ -478,3 +478,169 @@ class TestGuardsThatRefuse:
         """The control: the same call with today's chunk text does get IPA."""
         p = _planner(tmp_path, [("hadde", "VB", '""hA$d@', 1)])
         assert p.plan_chunk("hadde", (0, 1), chunk_text="ha") == "hɑ"
+
+
+# ---------------------------------------------------------------------------
+# Constituent descent — the compound the lexicon does not contain
+# ---------------------------------------------------------------------------
+
+# Rows for the descent tests. The compound itself is DELIBERATELY absent: these
+# fixtures make the whole-word path fail the way the real lexicon fails it, so
+# only the descent can satisfy them. SAMPA copied from the real lexicon so the
+# fixture and production agree on what the parts sound like.
+DESCENT_ROWS = [
+    ("etter", "AB", '""E$t@r', 1),  # ['ɛ', 'tər']
+    ("forsknings", "NN", '""fOs`$knINs', 1),  # ['fɔʂ', 'knɪŋs']
+    ("teamet", "NN", '"ti:$m@', 1),  # present, but its BOUNDARIES refuse
+    ("søke", "VB", '""s2:$k@', 1),  # ['søː', 'kə']
+    ("under", "PP", '"u0$n@r', 1),  # two readings that disagree on boundaries
+    ("under", "AB", '"u0n$d@r', 1),
+]
+
+
+class TestConstituentDescent:
+    """A compound absent from the lexicon resolves through the part that hosts the span.
+
+    ``plan_chunk`` used to look up the WHOLE ``source_word`` only, so a compound
+    the lexicon does not contain refused every one of its chunks — even where
+    the PARTS resolve cleanly. That was an asymmetry left behind by per-part
+    boundary resolution (``_resolve_compound_parts``): the boundary half already
+    resolved each buildup unit as the word it is, and the phoneme half did not.
+
+    etterforskningsteamet is the worked example. It is absent from the lexicon,
+    its buildup units are etter | forsknings | teamet, and the first two resolve.
+    """
+
+    def test_first_part_whole(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("etterforskningsteamet", (0, 2)) == "ɛ.tər"
+
+    def test_first_part_first_syllable(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("etterforskningsteamet", (0, 1)) == "ɛ"
+
+    def test_first_part_second_syllable(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("etterforskningsteamet", (1, 2)) == "tər"
+
+    def test_middle_part_whole(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("etterforskningsteamet", (2, 4)) == "fɔʂ.knɪŋs"
+
+    def test_middle_part_first_syllable(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("etterforskningsteamet", (2, 3)) == "fɔʂ"
+
+    def test_middle_part_second_syllable(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("etterforskningsteamet", (3, 4)) == "knɪŋs"
+
+    def test_whole_compound_still_returns_none(self, tmp_path: Path) -> None:
+        """Gate 2 is asked about the SOURCE WORD, not about the part.
+
+        Rebasing the span into its host part must not make a whole-word span
+        look sub-word: the whole compound is the TTS's job however many parts
+        it decomposes into.
+        """
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("etterforskningsteamet", (0, 6)) is None
+
+    def test_whole_part_is_not_a_whole_word(self, tmp_path: Path) -> None:
+        """The converse control: a whole PART is a sub-word chunk and does get IPA.
+
+        'etter' fills its host part exactly — span (0, 2) rebases to (0, 2) of a
+        2-syllable unit. Applying gate 2 to the REBASED span would refuse it,
+        which would silently delete the largest rung of every compound buildup.
+        """
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("etterforskningsteamet", (0, 2)) is not None
+
+    def test_span_crossing_two_parts_returns_none(self, tmp_path: Path) -> None:
+        """'forskningsteamet' is a partial rung with no single host part.
+
+        Spans (2, 6) covers all of 'forsknings' and all of 'teamet'. No part
+        hosts it, and stitching two parts' transcriptions together would
+        reintroduce exactly the cross-seam splice per-part resolution exists to
+        avoid. Its constituent rungs are covered on their own.
+        """
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("etterforskningsteamet", (2, 6)) is None
+
+    @pytest.mark.parametrize("span", [(4, 5), (5, 6), (4, 6)])
+    def test_part_whose_own_boundaries_refuse(self, tmp_path: Path, span: tuple[int, int]) -> None:
+        """'teamet' IS in the fixture, and still refuses — boundaries, not absence.
+
+        The real lexicon's readings of 'teamet' do not agree on an orthographic
+        split, so ``lexicon_syllable_split`` returns None for it and there is no
+        split the caption was cut at. Descending does not lower the boundary
+        guard; it only asks it about a smaller word.
+        """
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("etterforskningsteamet", span) is None
+
+    def test_refusal_is_per_part_not_per_word(self, tmp_path: Path) -> None:
+        """undersøke: 'søke' resolves even though 'under' cannot.
+
+        This corrects a claim made repeatedly while the whole-word path was the
+        only one: that undersøke was 'the one principled refusal'. Only its
+        UNDER half is — under's two readings disagree on where the n goes
+        (u|nder vs un|der), so no split survives. søke has one reading.
+        """
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("undersøke", (2, 4)) == "søː.kə"
+        assert p.plan_chunk("undersøke", (2, 3)) == "søː"
+        assert p.plan_chunk("undersøke", (3, 4)) == "kə"
+
+    @pytest.mark.parametrize("span", [(0, 1), (1, 2), (0, 2)])
+    def test_undersøke_under_half_still_refuses(self, tmp_path: Path, span: tuple[int, int]) -> None:
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("undersøke", span) is None
+
+    def test_descent_still_honours_stale_chunk_text(self, tmp_path: Path) -> None:
+        """Gate 7 survives the rebase: a caption that names another syllable refuses."""
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("etterforskningsteamet", (0, 1), chunk_text="ett") is None
+        assert p.plan_chunk("etterforskningsteamet", (0, 1), chunk_text="e") == "ɛ"
+
+    def test_simplex_word_absent_from_lexicon_still_returns_none(self, tmp_path: Path) -> None:
+        """Descent needs a compound. A simplex word has no part to descend to."""
+        p = _planner(tmp_path, DESCENT_ROWS)
+        assert p.plan_chunk("skygge", (0, 1)) is None
+
+
+class TestWholeWordWinsOverItsParts:
+    """The descent is a FALLBACK. A compound the lexicon HAS keeps its own reading.
+
+    This is the ordering test, and it is the one that keeps the change additive.
+    Resolving every compound per-part instead — which is what the boundary half
+    does — was measured over the nine stored lessons and is NOT additive: it
+    loses 10 chunks outright (skisporet's 'sporet' and 'ret' among them, where
+    the standalone part is ambiguous between the definite-noun and
+    past-participle -et readings but the compound is not) and re-stresses 22
+    more, turning a compound's secondary stress into a citation-form primary.
+
+    Whether a fragment heard alone WANTS its citation stress is an ear question,
+    not a code question. Answering it silently, as a side effect of a coverage
+    change, is what this test prevents.
+    """
+
+    ROWS = [
+        # The compound: ski|spo|ret with the tail on SECONDARY stress.
+        ("skisporet", "NN", '"Si:$%spu:$r@', 1),
+        # The bare part, deliberately given the OTHER -et reading. If the part
+        # were consulted first, span (2, 3) would come back 'rət'.
+        ("sporet", "NN", '"spu:$r@t', 1),
+    ]
+
+    def test_compound_reading_wins_for_a_tail_syllable(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path, self.ROWS)
+        assert p.plan_chunk("skisporet", (2, 3)) == "rə"
+
+    def test_compound_reading_wins_for_the_whole_tail_part(self, tmp_path: Path) -> None:
+        p = _planner(tmp_path, self.ROWS)
+        assert p.plan_chunk("skisporet", (1, 3)) == "ˌspuː.rə"
+
+    def test_compound_secondary_stress_is_not_upgraded(self, tmp_path: Path) -> None:
+        """'spo' keeps the compound's ˌ; standalone 'sporet' would give it ˈ."""
+        p = _planner(tmp_path, self.ROWS)
+        assert p.plan_chunk("skisporet", (1, 2)) == "ˌspuː"
