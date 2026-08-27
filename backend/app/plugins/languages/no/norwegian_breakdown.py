@@ -742,6 +742,26 @@ def _resolve_compound_parts(morphemes: list[str]) -> list[tuple[str, list[str]]]
     return resolved
 
 
+def resolved_buildup_units(word: str) -> list[tuple[str, list[str]]] | None:
+    """The lexicon-resolved buildup units of a COMPOUND, or ``None`` for a simplex word.
+
+    The public face of :func:`_resolve_compound_parts` for callers outside the
+    breakdown builder. Each element is ``(part surface, part syllables)``, and
+    concatenating the syllables reproduces :func:`flat_syllables` of *word*
+    exactly — both derive from the same :func:`segment_compound` output, so a
+    running offset over this list indexes straight into the whole word's
+    syllables. That invariant is what lets a caller holding a whole-word
+    syllable span find the part that hosts it.
+
+    ``None`` (rather than a one-element list) for a simplex word, so a caller
+    can tell "no part to descend to" from "one part that is the word".
+    """
+    morphemes = segment_compound(word.lower().strip())
+    if len(morphemes) < 2:
+        return None
+    return _resolve_compound_parts(morphemes)
+
+
 def build_norwegian_breakdown(phrase: str) -> list[str]:
     """Build a Pimsleur-style breakdown for Norwegian.
 
