@@ -8,8 +8,10 @@ source. All oracles below were measured against the real built lexicon
 
 from __future__ import annotations
 
+import gzip
 from pathlib import Path
 
+from app.plugins.languages.no.lexicon import build_lexicon_db
 from app.plugins.languages.no.lexicon_syllables import (
     REFUSE_EMPTY,
     REFUSE_NO_PATH,
@@ -306,3 +308,127 @@ class TestRetroflexAcrossAWrittenVowel:
             assert pieces is not None, word
             assert "".join(pieces) == word
             assert not any(p.endswith("r") for p in pieces[:-1]), (word, pieces)
+
+
+class TestMostEnunciatedTiebreak:
+    """tunatale-k318: when readings cut differently, adopt the most-enunciated.
+
+    The old rule (agree-or-refuse) returned None on disagreement and the word
+    fell to the audio slicer. The user decided instead to pick the reading that
+    elides least. Rule, in brief:
+    1. any reading that fails to align -> None, unchanged;
+    2. all aligned splits agree -> that split, unchanged;
+    3. drop readings whose split has a vowelless piece (fall back to the full
+       set if that empties it);
+    4. among what remains, take the reading with the most phonemic segments;
+    5. one distinct split at that maximum -> return it; otherwise break the tie
+       toward the FINER split (same phones, so no caption can lie about the
+       audio), and refuse only when that ties too.
+
+    ⚠ 'segments' means PHONES. Stress marks and syllable dots are excluded:
+    counting them decided gylden/tanger/grunder on the stress mark alone.
+    """
+
+    def test_under_keeps_the_d(self):
+        """under -> ["un","der"], never None.
+
+        The decisive case that motivated the rule: /'ʉ.nər/ elides the d (4
+        segments) while /'ʉn.dər/ keeps it (5), so the enunciated reading must
+        win. Failing here is the whole tiebreak misbehaving (steps 4-5).
+        """
+        assert lexicon_syllable_split("under") == ["un", "der"]
+
+    def test_flat_does_not_strand_a_vowelless_piece(self):
+        """flat -> ["flat"], not ["fla","t"].
+
+        Pins step 3: without discarding readings whose split contains a
+        vowelless piece, the most-segments rule would caption a chunk with no
+        vowel ("t"). The measured naive-winner flat -> ['fla','t'] must not
+        survive the discard step.
+        """
+        assert lexicon_syllable_split("flat") == ["flat"]
+
+    def test_studerte_does_not_strand_a_vowelless_piece(self):
+        """studerte -> ["stu","de","rte"], not ["stu","de","rt","e"].
+
+        Same step-3 guard as test_flat, multi-syllable: pieces without a vowel
+        identify the candidate to discard before the count decides.
+        """
+        assert lexicon_syllable_split("studerte") == ["stu", "de", "rte"]
+
+    def test_videre_wins_by_phonemic_count(self):
+        """videre -> ["vi","de","re"].
+
+        Pins step 4 with no vowelless complication: every candidate split is
+        clean, so the win rests purely on which reading has the most phonemic
+        segments.
+        """
+        assert lexicon_syllable_split("videre") == ["vi", "de", "re"]
+
+    def test_beskjeden_still_refuses_on_a_tie(self):
+        """beskjeden -> None.
+
+        Pins step 5: when two or more distinct splits tie at the most-segments
+        maximum the rule refuses, exactly as agree-or-refuse did. Resolving any
+        Tied word would mean the tie guard is broken.
+        """
+        assert lexicon_syllable_split("beskjeden") is None
+
+    def test_gylden_refuses_when_only_the_stress_mark_differs(self):
+        """gylden -> None.
+
+        The second tie guard, and the one that pins WHAT COUNTS as a segment.
+        gylden's readings say the same phones in the same number of syllables
+        and differ only in stress marking. Counting 'ˈ' or '.' as segments would
+        resolve it on the stress mark alone — the one signal this project
+        explicitly does not caption on. Resolving this word means _segments has
+        started counting marks again.
+        """
+        assert lexicon_syllable_split("gylden") is None
+
+    def test_mønstre_resolves_on_the_phone_count(self):
+        """mønstre -> ["møns","tre"].
+
+        The companion to test_gylden: here the readings genuinely differ in how
+        many phones they contain, so level 1 decides and refusing would be
+        wrong. Pins that stripping the marks did not turn the rule into a
+        blanket refusal.
+        """
+        assert lexicon_syllable_split("mønstre") == ["møns", "tre"]
+
+    def test_tittelen_resolves_on_the_finer_split(self):
+        """tittelen -> ["ti","tte","len"], not ["ti","ttelen"].
+
+        Pins LEVEL 2. Both readings carry the same phones — the sound is
+        identical — so neither caption could lie about the audio, and the tie is
+        broken toward the finer split because a buildup drill wants the smaller
+        rungs. Returning None here would mean level 2 was dropped.
+        """
+        assert lexicon_syllable_split("tittelen") == ["ti", "tte", "len"]
+
+    def test_sporet_unchanged_control(self):
+        """sporet -> ["spo","ret"], still.
+
+        Control from the unchanged mass: sporet's two readings differ
+        phonemically (rə vs rət) but cut the spelling identically, so the
+        tiebreak must not move it (step 2, agree-on-split, unchanged).
+        """
+        assert lexicon_syllable_split("sporet") == ["spo", "ret"]
+
+    def test_every_reading_vowelless_falls_back_to_the_full_set(self, tmp_path: Path) -> None:
+        """The discard must not empty the pool it then takes a maximum over.
+
+        No word in the real 50006-word lexicon has EVERY reading strand a
+        vowelless piece, so this shape needs a fixture. 'att' gets two readings
+        that both do — a|tt and at|t. Without the fall-back-to-the-full-set
+        line, `remaining` is empty and `max()` raises ValueError instead of
+        returning; the two readings then tie at every level, so the correct
+        answer is a refusal.
+        """
+        gz = tmp_path / "fixture.tsv.gz"
+        payload = 'att\tNN\t"A$tt\t1\natt\tNN\t"At$t\t1\n'
+        gz.write_bytes(gzip.compress(payload.encode("utf-8"), mtime=0))
+        db = tmp_path / "lexicon.sqlite3"
+        build_lexicon_db(gz, db)
+
+        assert lexicon_syllable_split("att", db) is None

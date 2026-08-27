@@ -304,23 +304,39 @@ class TestFlatSyllables:
         """ORACLE 2.1: whole-word cuts that meet (not cross) a seam are adopted.
 
         Each of these has a part the lexicon cannot resolve ('sident' in
-        pre+sident, 'under' in under+kant). The whole word HAS a lexicon split,
-        and every morpheme seam falls on one of its cuts — so the split is
-        redistributed back across the parts at the seams, fixing the stuck
-        per-part guess. In each row: current flat_syllables -> authoritative
-        target.
+        pre+sident). The whole word HAS a lexicon split, and every morpheme seam
+        falls on one of its cuts — so the split is redistributed back across the
+        parts at the seams, fixing the stuck per-part guess. In each row:
+        current flat_syllables -> authoritative target.
+
+        ⚠️ 'underkant' USED to be in this list (u|nder|kant) and has GRADUATED
+        out of it (tunatale-k318.1). It was only ever here because the part
+        'under' could not resolve; now that the most-enunciated tiebreak gives
+        it un|der, per-part resolution fires and the fallback is never reached.
+        Its new value is asserted below — losing that assertion would let the
+        word slide back without anything noticing.
         """
         targets = {
             "deltaker": ["del", "ta", "ker"],
             "profeten": ["pro", "fe", "ten"],
             "lanserer": ["lan", "se", "rer"],
             "plassering": ["pla", "sse", "ring"],
-            "underkant": ["u", "nder", "kant"],
             "etterkommere": ["e", "tter", "ko", "mme", "re"],
         }
         for word, expected in targets.items():
             pieces = flat_syllables(word)
             assert pieces == expected, f"{word}: got {pieces!r}, want {expected!r}"
+
+    def test_underkant_graduated_from_the_fallback_to_per_part(self):
+        """ORACLE 2.1 addendum: per-part resolution outranks the seam fallback.
+
+        'under' resolves to un|der since tunatale-k318.1, so under+kant is
+        settled by per-part resolution and never consults the whole word's
+        u|nde|rkant cut. This is the designed precedence, not a regression: a
+        buildup drill speaks the parts separately, so each part should be
+        resolved as the word it is.
+        """
+        assert flat_syllables("underkant") == ["un", "der", "kant"]
 
     def test_seam_guarded_fallback_boundaries_that_do_NOT_move(self):
         """ORACLE 2.2: words that must NOT move.

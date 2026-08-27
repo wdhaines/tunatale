@@ -339,16 +339,62 @@ def lexicon_syllable_split(word: str, db_path: Path | None = None) -> list[str] 
         return None
 
     # Align every candidate; adopt only the split all readings agree on.
-    splits: list[list[str]] = []
+    pairs: list[tuple[str, list[str]]] = []
     for transcription in candidates:
         pieces, reason = orthographic_syllables(word, transcription)
         if pieces is None:
             return None
-        splits.append(pieces)
+        pairs.append((transcription, pieces))
 
-    # `splits` cannot be empty: `candidates` is non-empty above and the loop
+    # `pairs` cannot be empty: `candidates` is non-empty above and the loop
     # either returns or appends for each one.
-    first = splits[0]
-    if all(s == first for s in splits[1:]):
+    first = pairs[0][1]
+    if all(split == first for _transcription, split in pairs[1:]):
         return first
+
+    # Readings cut the word differently, so the agree-or-refuse rule is out of
+    # answers. tunatale-k318: pick the most-enunciated reading — the one that
+    # elides least. Measured over the whole 50006-word wordlist, this decides
+    # 43 of the 54 disagreeing words and leaves 11 ties as refusals.
+    vowels = frozenset("aeiouyæøå")
+
+    def _vowelless(split: list[str]) -> bool:
+        """Whether any piece would caption a syllable with no vowel."""
+        return any(not any(ch in vowels for ch in piece) for piece in split)
+
+    # Stress marks and syllable dots are NOT segments. Counting them measured
+    # stress-mark count and syllable count rather than elision, which decided
+    # gylden/tanger/grunder on the stress mark alone — the one signal this
+    # project explicitly does not caption on.
+    _MARKS = frozenset("ˈˌ.")
+
+    def _segments(transcription: str) -> int:
+        return sum(1 for phone in _parse_sampa_to_phones(transcription) if phone not in _MARKS)
+
+    # The vowelless discard is load-bearing: without it the naive count picks
+    # flat -> ['fla','t'], studerte -> ['stu','de','rt','e'], tekstil ->
+    # ['tek','sti','l'] — all with a clean alternative. Fall back to the full
+    # set when discarding empties it.
+    remaining = [(t, s) for t, s in pairs if not _vowelless(s)]
+    if not remaining:
+        remaining = pairs
+
+    # Level 1 — fewer phonemic segments = more elision, so the most-segments
+    # reading is the careful citation form a fragment heard alone should be.
+    most = max(_segments(t) for t, _s in remaining)
+    winners = [s for t, s in remaining if _segments(t) == most]
+    distinct = {tuple(s) for s in winners}
+    if len(distinct) == 1:
+        return winners[0]
+
+    # Level 2 — the readings say the SAME sounds and disagree only on where the
+    # boundary falls, so no caption built from either can lie about the audio.
+    # Prefer the finer split: a buildup drill wants the smaller rungs.
+    finest = max(len(s) for s in winners)
+    finalists = {tuple(s) for s in winners if len(s) == finest}
+    if len(finalists) == 1:
+        return [*next(iter(finalists))]
+
+    # Still tied: same sounds, same syllable count, different cut. The rule does
+    # not decide, and refusing stays correct.
     return None
