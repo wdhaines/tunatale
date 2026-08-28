@@ -203,6 +203,18 @@ class Settings(BaseSettings):
     # Unbounded — nothing evicts from it; see tunatale-rm6v.
     tts_cache_dir: Path = Path("~/.tunatale/tts-cache").expanduser()
 
+    # A render that dies on ONE exhausted clip re-runs itself rather than
+    # waiting for a human to notice and press the button again (tunatale-uxm0).
+    # The cache above is what makes this converge: every clip that DID
+    # synthesize is on disk, so pass 2 only does what pass 1 missed and each
+    # pass strictly advances. Bounded, because "try hard" is not "try forever".
+    tts_render_max_attempts: int = 3
+    # Paid BETWEEN passes, never on the happy path. Throttling is exogenous and
+    # driven by load on a shared downstream service
+    # (findings-tts-pacing-2026-08-21.md), so an immediate re-run walks straight
+    # back into the same window; the cooldown is there to let it pass.
+    tts_render_retry_cooldown_s: float = 15.0
+
     pipeline_autostart: bool = True
 
     # A listen only offers cards due within this many days; beyond it the word is

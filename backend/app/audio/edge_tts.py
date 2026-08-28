@@ -12,12 +12,16 @@ from pathlib import Path
 import aiohttp
 import edge_tts
 
+from app.audio.ports import TTSExhausted
+
 logger = logging.getLogger(__name__)
 
 # Rate limiting constants (ported from prototype)
 MIN_REQUEST_DELAY_S = 0.2
 MAX_CONCURRENT_REQUESTS = 10
-MAX_RETRIES = 3
+# Kept in step with AzureTTSService — see the note on its MAX_RETRIES for the
+# measurement that sized it. A provider switch must not also be a patience change.
+MAX_RETRIES = 6
 
 
 class EdgeTTSService:
@@ -158,7 +162,7 @@ class EdgeTTSService:
                 # to every terminal failure.
                 if attempt < MAX_RETRIES - 1:
                     await self._sleep(self._retry_base_delay * (2**attempt))
-        raise RuntimeError(f"EdgeTTS synthesis failed after {MAX_RETRIES} attempts") from last_error
+        raise TTSExhausted(f"EdgeTTS synthesis failed after {MAX_RETRIES} attempts") from last_error
 
     async def _do_synthesize(self, text: str, voice_id: str, output_path: Path, rate: str) -> None:
         async with self._semaphore:

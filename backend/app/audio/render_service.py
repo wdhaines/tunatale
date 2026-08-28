@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import subprocess
 import tempfile
 import uuid
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -15,11 +18,14 @@ import soundfile as sf
 
 from app.audio.alignment import resample_to_model_rate
 from app.audio.cues import Cue, CueTiming, build_cue_manifest
+from app.audio.ports import TTSExhausted
 from app.audio.transcode import CODEC_EXT, encode_audio
 from app.config import settings
 from app.generation.section_builder import SECTION_TITLES
 from app.models.lesson import SectionType
 from app.storage.store import ContentStore
+
+logger = logging.getLogger(__name__)
 
 
 def _concat_stream_copy(file_paths: list[Path], output_path: Path) -> None:
@@ -149,6 +155,60 @@ def derive_section_cues(cues: list[Cue], lesson) -> dict[int, list[Cue]]:
     return result
 
 
+async def _with_render_retries[T](
+    attempt: Callable[[], Awaitable[T]],
+    what: str,
+    *,
+    max_attempts: int | None = None,
+    cooldown_s: float | None = None,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> T:
+    """Re-run *attempt* while it keeps exhausting its TTS ladder.
+
+    One clip out of ~169 running out of retries used to abort a whole lesson,
+    and a human had to notice and re-trigger it (tunatale-uxm0). Since
+    ``settings.tts_cache_dir`` was wired (tunatale-5lp6) that re-trigger was the
+    ONLY thing standing between "failed" and "finished": every clip that did
+    synthesize is already on disk, so a later pass is a pile of cache hits plus
+    whatever the earlier one missed. Each pass therefore strictly advances, and
+    the passes converge.
+
+    ⚠️ Retries ``TTSExhausted`` and nothing else. A bare ``RuntimeError`` from
+    the adapter means a missing key or region, which will not fix itself in
+    fifteen seconds — retrying it only buries the message under two warnings.
+
+    The cooldown is paid strictly BETWEEN passes: a render that succeeds first
+    time (which, at the shipped concurrency of 1, is every render measured so
+    far) pays nothing at all.
+    """
+    if max_attempts is None:
+        max_attempts = settings.tts_render_max_attempts
+    if cooldown_s is None:
+        cooldown_s = settings.tts_render_retry_cooldown_s
+
+    for pass_no in range(1, max_attempts + 1):
+        try:
+            return await attempt()
+        except TTSExhausted as exc:
+            if pass_no == max_attempts:
+                raise
+            # Loud on purpose. "Trying hard" that prints nothing for two
+            # minutes is indistinguishable from a hang, and the operator has
+            # no other way to tell a converging render from a stuck one.
+            logger.warning(
+                "Render of %s exhausted its TTS ladder on pass %d of %d (%s); "
+                "retrying in %.0fs — cached clips are kept, so this pass only "
+                "synthesizes what the last one missed",
+                what,
+                pass_no,
+                max_attempts,
+                exc,
+                cooldown_s,
+            )
+            await sleep(cooldown_s)
+    raise AssertionError("unreachable: the final pass either returns or re-raises")  # pragma: no cover
+
+
 async def render_lesson_audio(
     store: ContentStore,
     renderer,
@@ -174,7 +234,10 @@ async def render_lesson_audio(
     section_ids = [str(uuid.uuid4()) for _ in lesson.sections]
     section_paths = [audio_dir / f"{sid}.{ext}" for sid in section_ids]
 
-    cues = await renderer.render(lesson, full_path, section_paths=section_paths)
+    cues = await _with_render_retries(
+        lambda: renderer.render(lesson, full_path, section_paths=section_paths),
+        f"lesson {lesson_id!r}",
+    )
     cues_json = json.dumps([asdict(c) for c in cues], ensure_ascii=False)
 
     section_cues = derive_section_cues(cues, lesson)
@@ -366,8 +429,9 @@ async def reassemble_lesson_audio(
 
         new_kp_id = str(uuid.uuid4())
         new_kp_path = audio_dir / f"{new_kp_id}.{ext}"
-        kp_cues, kp_rate = await renderer.render_section(
-            lesson.sections[kp_index], new_kp_path, kp_index, lesson.language_code
+        kp_cues, kp_rate = await _with_render_retries(
+            lambda: renderer.render_section(lesson.sections[kp_index], new_kp_path, kp_index, lesson.language_code),
+            f"the KEY_PHRASES section of {lesson_id!r}",
         )
 
         title_path = scratch / f"title.{ext}"

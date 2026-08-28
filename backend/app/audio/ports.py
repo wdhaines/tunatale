@@ -7,6 +7,20 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 
+class TTSExhausted(RuntimeError):
+    """A clip's retry ladder ran out — the provider kept pushing back.
+
+    Distinct from the bare ``RuntimeError`` an adapter raises for a missing key
+    or region, because only THIS one is worth re-running: a throttling episode
+    is exogenous and passes, a missing ``AZURE_SPEECH_KEY`` does not. The
+    render-level retry loop
+    (``render_service._with_render_retries``) retries this and nothing else.
+
+    Still a ``RuntimeError``, so ``api/audio.py``'s mapping to a 503 carrying
+    the adapter's own message is unchanged.
+    """
+
+
 @runtime_checkable
 class TTSService(Protocol):
     """Protocol for text-to-speech synthesis services."""

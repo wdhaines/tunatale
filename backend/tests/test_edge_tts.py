@@ -374,16 +374,16 @@ async def test_edge_no_trailing_sleep_after_final_attempt(tmp_path):
 
     with (
         patch("app.audio.edge_tts.edge_tts.Communicate", side_effect=always_fail),
-        pytest.raises(RuntimeError, match="after 3 attempts"),
+        pytest.raises(RuntimeError, match="after 6 attempts"),
     ):
         await svc.synthesize("test", "sl-SI-PetraNeural", tmp_path / "out.mp3")
 
     # min_delay=0 (from _svc), so the pacing sleep after each failed attempt
-    # records 0 and the backoff sleeps record 1, 2 — three attempts, three
-    # pacing sleeps (item 1's fix), but only two backoff sleeps: between
-    # attempt 1-2 and 2-3, never after the final (3rd) attempt.
+    # records 0 and the backoff sleeps record the ladder — six attempts, six
+    # pacing sleeps (item 1's fix), but only FIVE backoff sleeps: one between
+    # each pair of attempts, never after the final one.
     backoff_sleeps = [s for s in sleeps if s > 0]
-    assert backoff_sleeps == [1, 2], f"expected backoff 1s then 2s with no trailing sleep, got {sleeps}"
+    assert backoff_sleeps == [1, 2, 4, 8, 16], f"expected five backoffs with no trailing sleep, got {sleeps}"
 
 
 # ------------------------------------------------------------------
