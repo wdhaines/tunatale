@@ -10,6 +10,7 @@ export interface PlaybackController {
   readonly duration: number;
   readonly playbackRate: number;
   readonly sentenceSkip: boolean;
+  readonly repeatLatched: boolean;
   readonly activeSectionType: string | null;
   readonly activeCues: Cue[] | null;
 
@@ -25,6 +26,7 @@ export interface PlaybackController {
   nextCue(): void;
   prevCue(): void;
   repeatCue(): void;
+  toggleRepeatLatch(): void;
   selectTrack(sectionType: string, seekRef?: CueRef | null): void;
   findPlayableCue(ref: CueRef): Cue | null;
   playRef(ref: CueRef): void;
@@ -128,6 +130,20 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   let rate = $state(1);
   let enunciationRate = 1;
   let sentenceSkip = $state(false);
+  let repeatLatched = $state(false);
+  // The cue captured when the latch engaged — pinned, never re-read from
+  // currentCue, so the loop cannot drift onto the next sentence.
+  //
+  // ⚠️ HONEST LIMIT, measured by sabotage drill 2026-08-28: with the loop check
+  // placed BEFORE the reactive currentTime copy (see the timeupdate listener),
+  // re-reading currentCue here instead of pinning is behaviourally IDENTICAL —
+  // currentCue is derived from the reactive copy, which is still one tick
+  // stale at that point, so it resolves to this same cue. No behavioural test
+  // can therefore guard the pin on its own, and none does: the suite guards
+  // the ORDERING, and it guards the two defects TOGETHER. The pin is
+  // defence-in-depth against someone later moving that check. Do not delete it
+  // on the grounds that no test fails.
+  let latchedCue: Cue | null = null;
   // Browsers QUEUE the pause event, so destroy()'s own pause() fires the
   // listener AFTER src="" has reset currentTime to 0 — without this flag the
   // listener would overwrite the resume position destroy just saved.
@@ -219,6 +235,11 @@ export function createPlaybackController(deps: Deps): PlaybackController {
 
   // Audio event listeners
   audioEl.addEventListener("timeupdate", () => {
+    // The loop check runs BEFORE the playhead is copied into the reactive
+    // currentTime: a latch-seek must land in the reactive, or a derived read
+    // (currentCue) would resolve from the pre-loop position and, past the
+    // pinned cue's end, report the NEXT sentence.
+    latchLoopCheck();
     currentTime = audioEl.currentTime;
     applyEnunciationRate();
     if (pendingResume === null && Math.abs(audioEl.currentTime - lastSavedPosition) >= 5) {
@@ -263,6 +284,14 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     updatePositionState();
   });
   audioEl.addEventListener("ended", () => {
+    // A latched loop over the LAST sentence of a track never sees a timeupdate
+    // past the end, so "ended" is its only signal — and seeking alone would
+    // leave the element paused at the cue start. The latch would go silent
+    // exactly where drilling one line matters most, so resume playback.
+    if (latchLoopCheck()) {
+      void audioEl.play();
+      return;
+    }
     playing = false;
     if (mediaSession) mediaSession.playbackState = "none";
     updatePositionState();
@@ -365,6 +394,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // --- Section navigation ---
 
   function nextSection(): void {
+    cancelRepeatLatch();
     if (!activeCues) return;
     if (currentSectionIndex === null) {
       const firstCue = activeCues.find((c) => c.section_index != null);
@@ -382,6 +412,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   }
 
   function prevSection(): void {
+    cancelRepeatLatch();
     if (!activeCues) return;
     if (currentSectionIndex === null) {
       doSeek(0);
@@ -396,6 +427,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   }
 
   function restartSection(): void {
+    cancelRepeatLatch();
     if (!activeCues) return;
     if (currentSectionIndex === null) {
       doSeek(0);
@@ -418,6 +450,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   }
 
   function nextCueAction(): void {
+    cancelRepeatLatch();
     const groupIdx = findCurrentGroupIdx();
     if (groupIdx < 0) return;
     const nextCueIndex = findGroupStart(refGroups, groupIdx, "next");
@@ -429,6 +462,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   }
 
   function prevCueAction(): void {
+    cancelRepeatLatch();
     const groupIdx = findCurrentGroupIdx();
     if (groupIdx < 0) return;
     const prevCueIndex = findGroupStart(refGroups, groupIdx, "prev");
@@ -442,6 +476,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // --- Track selection (B2) ---
 
   function selectTrack(sectionType: string, seekRef: CueRef | null = null): void {
+    cancelRepeatLatch();
     const section = audioSections.find((s) => s.section_type === sectionType);
     if (!section) return;
 
@@ -532,6 +567,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // there — no track change, preserving the chosen variant. Otherwise switch to
   // the ref's canonical section and seek to it.
   function playRef(ref: CueRef): void {
+    cancelRepeatLatch();
     const here =
       activeCues?.find(
         (c) => c.ref && c.ref.kind === ref.kind && c.ref.target_index === ref.target_index,
@@ -552,6 +588,41 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   function repeatCue(): void {
     const cue = currentCue;
     if (!cue) return;
+    doSeek(cue.start_ms / 1000);
+  }
+
+  // --- Latching repeat (tunatale-b23x) ---
+
+  function cancelRepeatLatch(): void {
+    repeatLatched = false;
+    latchedCue = null;
+  }
+
+  // Shared by the timeupdate and ended listeners — the condition is the same
+  // and seek is the whole payload. The ended path is a real case: a latched
+  // LAST sentence of a track may never see another timeupdate past its end.
+  // Returns whether it actually looped, which is what lets the ended listener
+  // resume playback WITHOUT making every track ending restart itself.
+  function latchLoopCheck(): boolean {
+    if (!repeatLatched || !latchedCue) return false;
+    if (audioEl.currentTime * 1000 < latchedCue.end_ms) return false;
+    doSeek(latchedCue.start_ms / 1000);
+    return true;
+  }
+
+  function toggleRepeatLatch(): void {
+    if (repeatLatched) {
+      cancelRepeatLatch();
+      return;
+    }
+    // Engaging pins the CURRENT cue — captured once, never re-read on a tick,
+    // or the loop would start drilling the NEXT sentence the moment playback
+    // crosses into it.
+    const cue = currentCue;
+    if (!cue) return;
+    latchedCue = cue;
+    repeatLatched = true;
+    // Engaging is itself the first repetition: rewind the sentence.
     doSeek(cue.start_ms / 1000);
   }
 
@@ -581,6 +652,9 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     },
     get sentenceSkip() {
       return sentenceSkip;
+    },
+    get repeatLatched() {
+      return repeatLatched;
     },
     get activeSectionType() {
       return activeSectionType;
@@ -621,6 +695,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     nextCue: nextCueAction,
     prevCue: prevCueAction,
     repeatCue,
+    toggleRepeatLatch,
     selectTrack,
     findPlayableCue,
     playRef,

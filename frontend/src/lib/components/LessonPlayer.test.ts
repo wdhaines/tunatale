@@ -844,11 +844,16 @@ describe("LessonPlayer", () => {
       fireEvent.click(btn);
     });
 
-    it("fires repeatCue on repeat click", () => {
+    it("repeat click engages the latch", () => {
+      // ⚠️ This was named "fires repeatCue on repeat click" and asserted only
+      // that the button existed — it passed no matter what the click did, and
+      // in fact the button never called repeatCue at all (it chunk-seeked
+      // inline). Renamed and given a real assertion.
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
       const btn = container.querySelector<HTMLButtonElement>('button[title="Repeat current"]')!;
-      expect(btn).toBeTruthy();
+      expect(btn.getAttribute("aria-pressed")).toBe("false");
       fireEvent.click(btn);
+      expect(btn.getAttribute("aria-pressed")).toBe("true");
     });
 
     it("fires nextCue on sentence forward click", () => {
@@ -1179,54 +1184,77 @@ describe("LessonPlayer", () => {
 
   // --- Item B wiring: Repeat seeks to chunk start ---
 
-  describe("repeat seeks to chunk start (Item B wiring)", () => {
-    it("clicking Repeat on a multi-chunk cue seeks to current chunk start, not whole cue start", async () => {
+  // ── Repeat is a LATCH now (tunatale-b23x) ────────────────────────────
+  //
+  // ⚠️ THE CHUNK-REPEAT BEHAVIOUR IS DELIBERATELY RETIRED, which the bead
+  // required a decision on. The button used to seek to the start of the
+  // current CAPTION CHUNK; it now toggles a loop over the current CUE.
+  //
+  // Why retire rather than keep both: a chunk is a caption-layout artifact,
+  // not a unit of speech, and the consumer this epic is for cannot look at the
+  // screen. Looping a fragment of a sentence hands-free is worse than looping
+  // the sentence, and a second affordance would add a button to a row that is
+  // already too crowded to use in a car. Nothing is lost, because ENGAGING the
+  // latch seeks to the cue start — the old single press is now the first
+  // repetition of the new one.
+  describe("repeat latch (Item B chunk-seek retired)", () => {
+    async function renderWith(audio: LessonAudio) {
       let ctrl: PlaybackController | null = null;
-      const { container } = render(PillSyncHarness, {
+      const result = render(PillSyncHarness, {
         props: {
-          audio: audioForRepeatChunk,
+          audio,
           onController: (c: PlaybackController) => {
             ctrl = c;
           },
         },
       });
       await tick();
-      // Seek into the middle of the cue so we're on chunk 1 (second chunk)
-      ctrl!.seekTo(20);
+      return { ctrl: ctrl as unknown as PlaybackController, ...result };
+    }
+
+    function repeatBtn(container: HTMLElement) {
+      return container.querySelector<HTMLButtonElement>('button[title="Repeat current"]')!;
+    }
+
+    it("the Repeat button is a toggle that reports its state", async () => {
+      // A latch whose state is invisible is exactly the failure this epic names:
+      // "a button whose meaning depends on invisible state is worse than a
+      // button that always does one thing." aria-pressed is the machine-readable
+      // half of making it visible.
+      const { container } = await renderWith(audioWithCues);
+      const btn = repeatBtn(container);
+      expect(btn.getAttribute("aria-pressed")).toBe("false");
+
+      fireEvent.click(btn);
       await tick();
-      const beforeMs = ctrl!.currentTime * 1000;
-      // Click repeat — should seek to chunk 1's start (well after 0ms)
-      const repeatBtn = container.querySelector<HTMLButtonElement>(
-        'button[title="Repeat current"]',
-      )!;
-      fireEvent.click(repeatBtn);
+      expect(btn.getAttribute("aria-pressed")).toBe("true");
+
+      fireEvent.click(btn);
       await tick();
-      const afterMs = ctrl!.currentTime * 1000;
-      // The chunk start should be > 0 (not the whole cue start)
-      expect(afterMs).toBeGreaterThan(0);
-      // And it should be close to where we were (same chunk), not back to 0
-      expect(afterMs).toBeGreaterThan(beforeMs * 0.3);
+      expect(btn.getAttribute("aria-pressed")).toBe("false");
     });
 
-    it("single-chunk cue: Repeat seeks to cue start (same as before)", async () => {
-      let ctrl: PlaybackController | null = null;
-      const { container } = render(PillSyncHarness, {
-        props: {
-          audio: audioWithCues,
-          onController: (c: PlaybackController) => {
-            ctrl = c;
-          },
-        },
-      });
+    it("clicking Repeat engages the controller latch", async () => {
+      const { ctrl, container } = await renderWith(audioWithCues);
+      expect(ctrl.repeatLatched).toBe(false);
+
+      fireEvent.click(repeatBtn(container));
       await tick();
-      ctrl!.seekTo(0.5);
+
+      expect(ctrl.repeatLatched).toBe(true);
+    });
+
+    it("on a multi-chunk cue it now restarts the whole sentence, not the chunk", async () => {
+      // The inverse of the retired Item B oracle, kept as a test so the
+      // retirement is recorded as a decision rather than a deletion.
+      const { ctrl, container } = await renderWith(audioForRepeatChunk);
+      ctrl.seekTo(20); // deep inside the single 0-30s cue, on a later chunk
       await tick();
-      const repeatBtn = container.querySelector<HTMLButtonElement>(
-        'button[title="Repeat current"]',
-      )!;
-      fireEvent.click(repeatBtn);
+
+      fireEvent.click(repeatBtn(container));
       await tick();
-      expect(ctrl!.currentTime).toBeLessThanOrEqual(0.1);
+
+      expect(ctrl.currentTime).toBeLessThanOrEqual(0.1);
     });
   });
 });

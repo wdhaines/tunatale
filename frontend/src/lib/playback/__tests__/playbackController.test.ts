@@ -494,6 +494,174 @@ describe("playbackController", () => {
     });
   });
 
+  // ── Latching repeat (tunatale-b23x) ────────────────────────────────────
+  //
+  // USER, while listening: "I wonder if it could be a toggle that repeats the
+  // current sentence over and over again rather than just a single time."
+  // Repetition is the whole pedagogy and a driver cannot press a button once
+  // per repetition, so the latch turns N presses into one.
+  //
+  // DECIDED by the user 2026-08-28, both questions the bead left open:
+  //   - the latch means "loop THIS sentence": next/previous CANCEL it;
+  //   - pure on/off, no repeat count.
+  //
+  // ⚠️ Every assertion here reads audioEl.currentTime, never ctrl.currentTime.
+  // The reactive copy is not what doSeek writes, and asserting on it is how a
+  // whole block of resume tests went green against dead code (tunatale-9idn).
+  describe("repeat latch", () => {
+    // Drive playback to a wall-clock position and let the controller see it.
+    function advanceTo(ctrl: ReturnType<typeof createController>, seconds: number) {
+      audioEl.currentTime = seconds;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      return ctrl;
+    }
+
+    it("starts disengaged", () => {
+      expect(createController().repeatLatched).toBe(false);
+    });
+
+    it("engaging mid-sentence restarts that sentence from its beginning", () => {
+      // Acceptance: "loops from the cue's start, not from where playback
+      // happened to be." Engaging is itself the first repetition, which is why
+      // retiring the old single-press button loses the user nothing.
+      const ctrl = createController();
+      advanceTo(ctrl, 1.2); // inside cue 1 (800-1500ms)
+      expect(ctrl.currentCue?.index).toBe(1);
+
+      ctrl.toggleRepeatLatch();
+
+      expect(ctrl.repeatLatched).toBe(true);
+      expect(audioEl.currentTime).toBeCloseTo(0.8, 3);
+    });
+
+    it("loops: reaching the end of the latched sentence seeks back to its start", () => {
+      const ctrl = createController();
+      advanceTo(ctrl, 1.0);
+      ctrl.toggleRepeatLatch();
+
+      advanceTo(ctrl, 1.5); // cue 1 ends at 1500ms
+      expect(audioEl.currentTime).toBeCloseTo(0.8, 3);
+
+      // ...and again, because "over and over" is the whole request.
+      advanceTo(ctrl, 1.6);
+      expect(audioEl.currentTime).toBeCloseTo(0.8, 3);
+    });
+
+    it("disengaging resumes forward playback rather than jumping", () => {
+      const ctrl = createController();
+      advanceTo(ctrl, 1.0);
+      ctrl.toggleRepeatLatch();
+      advanceTo(ctrl, 1.2);
+
+      ctrl.toggleRepeatLatch();
+
+      expect(ctrl.repeatLatched).toBe(false);
+      expect(audioEl.currentTime).toBeCloseTo(1.2, 3); // no seek on release
+      advanceTo(ctrl, 1.6); // now free to run past the old cue end
+      expect(audioEl.currentTime).toBeCloseTo(1.6, 3);
+    });
+
+    it("next sentence cancels the latch", () => {
+      const ctrl = createController();
+      advanceTo(ctrl, 1.0);
+      ctrl.toggleRepeatLatch();
+
+      ctrl.nextCue();
+
+      expect(ctrl.repeatLatched).toBe(false);
+    });
+
+    it("previous sentence cancels the latch", () => {
+      const ctrl = createController();
+      advanceTo(ctrl, 1.0);
+      ctrl.toggleRepeatLatch();
+
+      ctrl.prevCue();
+
+      expect(ctrl.repeatLatched).toBe(false);
+    });
+
+    it("moving to another section cancels the latch", () => {
+      // Acceptance: "a latched loop does not cross a section boundary." A cue
+      // belongs to one section, so leaving the section abandons the loop
+      // rather than dragging it along.
+      const ctrl = createController();
+      advanceTo(ctrl, 1.0);
+      ctrl.toggleRepeatLatch();
+
+      ctrl.nextSection();
+
+      expect(ctrl.repeatLatched).toBe(false);
+    });
+
+    it("the loop never advances to the next sentence on its own", () => {
+      // The discriminating case for "loop THIS sentence" rather than "loop
+      // whatever is current": an implementation that re-read currentCue on
+      // every tick would, the instant playback crossed into cue 2, start
+      // looping cue 2 instead — silently drilling the wrong line.
+      const ctrl = createController();
+      advanceTo(ctrl, 1.0);
+      ctrl.toggleRepeatLatch();
+
+      advanceTo(ctrl, 1.5);
+      advanceTo(ctrl, 1.5);
+
+      expect(audioEl.currentTime).toBeCloseTo(0.8, 3);
+      expect(ctrl.currentCue?.index).toBe(1);
+    });
+
+    it("a latched last sentence keeps PLAYING when the track ends", () => {
+      // Flagged by the executor rather than guessed at, and it is a real hole:
+      // the brief said only "handle ended the same way", and seeking alone
+      // leaves the element paused. A latch that goes silent on the last
+      // sentence of a section fails exactly where drilling one line matters
+      // most — and "ended" is the only signal there, because timeupdate never
+      // reports past the end of the track.
+      const ctrl = createController();
+      advanceTo(ctrl, 1.0);
+      ctrl.toggleRepeatLatch();
+      audioEl.dispatchEvent(new Event("play")); // as real playback would
+      expect(ctrl.playing).toBe(true);
+      (audioEl.play as ReturnType<typeof vi.fn>).mockClear();
+
+      audioEl.currentTime = 1.5; // the pinned cue's end
+      audioEl.dispatchEvent(new Event("ended"));
+
+      expect(audioEl.currentTime).toBeCloseTo(0.8, 3);
+      expect(audioEl.play).toHaveBeenCalled();
+      // ⚠️ Asserted as "was not torn down to false", NOT as "play() set it
+      // true": the fake's play() is a vi.fn() that dispatches no "play" event,
+      // and the real controller only ever learns it is playing FROM that event
+      // (see the "play" listener). An expect(playing).toBe(true) here would be
+      // testing the double, not the code.
+      expect(ctrl.playing).toBe(true);
+    });
+
+    it("an UNLATCHED track ending still stops, as it always has", () => {
+      // The control for the test above: the resume must be conditional on the
+      // latch, not an unconditional "always restart at the end".
+      const ctrl = createController();
+      advanceTo(ctrl, 1.0);
+      (audioEl.play as ReturnType<typeof vi.fn>).mockClear();
+
+      audioEl.dispatchEvent(new Event("ended"));
+
+      expect(audioEl.play).not.toHaveBeenCalled();
+      expect(ctrl.playing).toBe(false);
+    });
+
+    it("engaging with no cue under the playhead does nothing", () => {
+      const noCuesAudio: LessonAudio = { ...lessonAudio, cues: null };
+      const ctrl = createController({ audio: noCuesAudio });
+      audioEl.currentTime = 1.0;
+
+      ctrl.toggleRepeatLatch();
+
+      expect(ctrl.repeatLatched).toBe(false);
+      expect(audioEl.currentTime).toBe(1.0);
+    });
+  });
+
   describe("MediaSession", () => {
     it("defaults to navigator.mediaSession when no dep provided", () => {
       const fakeMs = makeFakeMediaSession();

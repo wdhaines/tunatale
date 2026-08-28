@@ -11,7 +11,7 @@
 	import { createPlaybackController } from '$lib/playback/playbackController.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { captionBlurPref } from '$lib/stores/captionBlurPref.svelte';
-	import { splitCaption, activeChunkIndex, chunkStartMs } from '$lib/captionChunks';
+	import { splitCaption, activeChunkIndex } from '$lib/captionChunks';
 
 	interface Props {
 		audio: LessonAudio;
@@ -341,12 +341,13 @@
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="12,2 4,8 12,14" fill="currentColor"/></svg>
 				Sentence
 			</button>
-			<button class="ctrl-btn small" onclick={() => {
-				if (ctrl.currentCue && captionChunks.length > 0) {
-					const ms = chunkStartMs(captionChunks, ctrl.currentCue.start_ms, ctrl.currentCue.end_ms, captionIdx);
-					ctrl.seekTo(ms / 1000);
-				}
-			}} title="Repeat current">
+			<button
+				class="ctrl-btn small"
+				class:active={ctrl.repeatLatched}
+				aria-pressed={ctrl.repeatLatched}
+				onclick={() => ctrl.toggleRepeatLatch()}
+				title="Repeat current"
+			>
 				Repeat
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><path d="M4 8a4 4 0 0 1 7.5-2L10 8h3V4l-1 1a5 5 0 0 0-9 3h1zm8 0a4 4 0 0 1-7.5 2L6 8H3v4l1-1a5 5 0 0 0 9-3h-1z" fill="currentColor"/></svg>
 			</button>
@@ -500,6 +501,12 @@
 		transition: background 0.15s ease;
 	}
 	.ctrl-btn:hover {
+		background: var(--color-primary);
+		color: var(--color-on-primary);
+	}
+	/* Engaged Repeat latch: held in the primary colour so the loop state stays
+	   visible when not hovering, mirroring the phase pills' .active treatment. */
+	.ctrl-btn.active {
 		background: var(--color-primary);
 		color: var(--color-on-primary);
 	}
