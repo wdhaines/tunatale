@@ -169,3 +169,86 @@ class TestRenameDryRunMutatesNothing:
         assert before_rows == after_rows
         assert before_files == after_files
         assert before_blobs == after_blobs
+
+
+def _run_go(store: ContentStore, audio_dir: Path, monkeypatch, capsys) -> str:
+    """Drive the script's --go path with a renderer fake that writes real audio.
+
+    Unlike _run_dry_run this must REACH the renderer, so the stub that raises is
+    replaced by test_reassemble_lesson's fake — the same one that would blow up
+    if the script ever called renderer.render() instead of render_section().
+    """
+    import asyncio
+
+    from tests.test_reassemble_lesson import _CountingTTS, _make_fake_renderer
+
+    fake = _make_fake_renderer()
+    monkeypatch.setattr(rename_mod, "get_tts_service", lambda **kw: _CountingTTS())
+    monkeypatch.setattr(rename_mod, "LessonRenderer", lambda **kw: fake)
+    monkeypatch.setattr(rename_mod, "build_slicers", lambda codes, tts, settings: [])
+    monkeypatch.setattr(rename_mod, "get_preprocessor", lambda code: object())
+    monkeypatch.setattr(rename_mod, "get_phoneme_planner", lambda code: None)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "rename_section_titles",
+            "--go",
+            "--db",
+            str(store._path),
+            "--audio-dir",
+            str(audio_dir),
+            "--language",
+            "sl",
+        ],
+    )
+    rc = asyncio.run(rename_mod.main())
+    return f"rc={rc}\n{capsys.readouterr().out}"
+
+
+class TestRenameGoActuallyRetitles:
+    """⚠️ THE OUTCOME ORACLE, added after the first real run did nothing.
+
+    On 2026-08-28 the backfill reported `converted=9 failed=0`, re-rendered and
+    replaced 45 files, and changed NOTHING: the title is a Phrase INSIDE the
+    stored lesson JSON, and SECTION_TITLES is consumed at generation time, so
+    re-rendering faithfully reproduced the OLD title. The dry-run afterwards
+    still reported all 9 stale.
+
+    The O9 tests could not catch it because the "already current" fixture seeded
+    the NEW title into the lesson phrase AND the mirrored cue together, so the
+    missing retitle step was invisible. These assert the END STATE instead.
+    """
+
+    def test_go_rewrites_the_stored_lesson_title_phrase(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        store, audio_dir = _seed_store(tmp_path, stale_titles=True)
+        report = _run_go(store, audio_dir, monkeypatch, capsys)
+        assert "converted=1" in report, report
+
+        lesson = store.get_lesson("Inside the Cabin")
+        titles = {sec.section_type: sec.phrases[0].text for sec in lesson.sections}
+        assert titles[SectionType.TRANSLATED] == "English After", titles
+        assert titles[SectionType.SLOW_SPEED] == "Enunciated", titles
+
+    def test_go_rewrites_the_stored_title_cue_text(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        store, audio_dir = _seed_store(tmp_path, stale_titles=True)
+        _run_go(store, audio_dir, monkeypatch, capsys)
+
+        seen = {}
+        for row in store.list_audio_files_for_lesson("Inside the Cabin"):
+            if row["section_index"] is None or not row["cues_json"]:
+                continue
+            title_cue = next((c for c in json.loads(row["cues_json"]) if c["phrase_index"] == 0), None)
+            seen[row["section_type"]] = title_cue and title_cue.get("text")
+        assert seen == {"translated": "English After", "slow_speed": "Enunciated"}, seen
+
+    def test_go_then_dry_run_reports_already_current(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """The resume signal must CLOSE. A --go that leaves the next --dry-run
+        still reporting the lesson stale is the exact signature of the 2026-08-28
+        no-op run."""
+        store, audio_dir = _seed_store(tmp_path, stale_titles=True)
+        _run_go(store, audio_dir, monkeypatch, capsys)
+
+        report = _run_dry_run(store, audio_dir, monkeypatch, capsys)
+        assert "already current; skipped" in report, report
+        assert "would convert=0" in report, report

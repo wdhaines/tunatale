@@ -16,12 +16,19 @@ needs no schema migration, no resync and no UPOS re-annotation. Rendering the
 renamed sections re-synthesizes ONLY their audio (every other section is
 stream-copied, not re-encoded):
 
-    1. render  reassemble_lesson_audio(..., section_types=RENAMED) — re-render
+    1. retitle point each renamed section's title phrase at the NEW name. The
+               title lives as ordinary Phrase text inside the stored lesson JSON
+               (SECTION_TITLES is consumed by the BUILDERS at generation time),
+               so without this the re-render re-synthesizes the OLD title and
+               the run is a no-op — measured, 2026-08-28.
+    2. render  reassemble_lesson_audio(..., section_types=RENAMED) — re-render
                the five renamed sections and stream-copy the rest.
+    3. persist store.update_lesson_data, AFTER the render.
 
-RESUMABLE. The stored per-section cues_json carries the title cue's text, so a
-lesson is "already current" when every renamed section's stored title cue already
-spells the NEW title — the render re-writes that cue text. A run that dies
+RESUMABLE. A lesson is "already current" only when BOTH the stored lesson's title
+phrase text AND its stored per-section title cue already spell the NEW title.
+Requiring both is what makes the signal honest: the cue alone reported success on
+a run that changed nothing. A run that dies
 partway through can simply be run again (the TTS provider throttles; a real
 render has been measured failing 27.3% of clips).
 
@@ -62,12 +69,19 @@ RENAMED = (
 )
 
 
-def _stale_renamed_sections(store: ContentStore, lesson_id: str, renamed: list[int]) -> list[int]:
-    """Return the renamed section indices whose stored title cue text is stale.
+def _stale_renamed_sections(store: ContentStore, lesson_id: str, lesson, renamed: list[int]) -> list[int]:
+    """Return the renamed section indices that are not yet on the new title.
 
-    The resume signal is the stored per-section cues_json: the title phrase sits
-    at phrase_index 0, so a section is current iff its title cue text already
-    equals the NEW title. Missing cues_json counts as stale — re-render.
+    TWO signals, and BOTH are required — checking only the cue text is the bug
+    that made the 2026-08-28 run a no-op (it reported converted=9, replaced 45
+    files, and changed nothing):
+
+      1. the stored LESSON's title phrase text (``sections[i].phrases[0].text``),
+         which is what the renderer actually speaks; and
+      2. the stored per-section cues_json title cue at phrase_index 0.
+
+    A section is current only when both already spell the NEW title. Missing
+    cues_json counts as stale — re-render.
     """
     rows = {
         r["section_index"]: r for r in store.list_audio_files_for_lesson(lesson_id) if r["section_index"] is not None
@@ -75,6 +89,8 @@ def _stale_renamed_sections(store: ContentStore, lesson_id: str, renamed: list[i
     stale: list[int] = []
     for i in renamed:
         row = rows.get(i)
+        section = lesson.sections[i]
+        phrase_current = bool(section.phrases) and section.phrases[0].text == SECTION_TITLES[section.section_type]
         current = False
         if row is not None and row.get("cues_json"):
             try:
@@ -87,9 +103,24 @@ def _stale_renamed_sections(store: ContentStore, lesson_id: str, renamed: list[i
                 )
             except TypeError, ValueError, KeyError:
                 current = False
-        if not current:
+        if not (current and phrase_current):
             stale.append(i)
     return stale
+
+
+def _retitle(lesson, renamed: list[int]) -> None:
+    """Point each renamed section's title phrase at the NEW name, in memory.
+
+    ⚠️ THIS IS THE STEP THE FIRST VERSION MISSED. SECTION_TITLES is consumed by
+    the section BUILDERS at generation time; the title then lives on as ordinary
+    Phrase text inside the stored lesson JSON. reassemble_lesson_audio renders
+    the Phrase objects it is handed, so without this the re-render faithfully
+    re-synthesizes the OLD title and the whole backfill is a no-op.
+    """
+    for i in renamed:
+        section = lesson.sections[i]
+        if section.phrases:
+            section.phrases[0].text = SECTION_TITLES[section.section_type]
 
 
 async def main() -> int:
@@ -140,7 +171,7 @@ async def main() -> int:
             print(f"  --  {lesson_id[:52]:54} no renamed sections; skipped")
             skipped += 1
             continue
-        if not args.force and not _stale_renamed_sections(store, lesson_id, renamed):
+        if not args.force and not _stale_renamed_sections(store, lesson_id, lesson, renamed):
             print(f"  ==  {lesson_id[:52]:54} already current; skipped")
             skipped += 1
             continue
@@ -150,10 +181,17 @@ async def main() -> int:
             converted += 1
             continue
         try:
-            # AUDIO FIRST. The render does not need the lesson persisted: it is
-            # handed the in-memory one and reads only the audio rows. The stored
-            # cues are rewritten by reassemble itself, so the title-cue resume
-            # signal comes true only once the audio actually changed.
+            # Retitle IN MEMORY first: the render speaks the Phrase objects it is
+            # handed, so this is what makes the new name reach the audio at all.
+            _retitle(lesson, renamed)
+            # AUDIO FIRST, then the lesson text — the same ordering, and the same
+            # reason, as scripts/regen_key_phrases.py. The render is handed the
+            # in-memory lesson and reads only the audio rows, so it needs no
+            # persist; and if it dies (the TTS provider throttles — this run hit
+            # HTTP 429 repeatedly) the stored lesson still holds the OLD title,
+            # so the next run sees the section stale and retries. Persisting
+            # first would make a half-converted lesson look current forever,
+            # leaving its transcript naming a title its audio never says.
             await reassemble_lesson_audio(
                 store=store,
                 renderer=renderer,
@@ -163,6 +201,7 @@ async def main() -> int:
                 lesson=lesson,
                 section_types=RENAMED,
             )
+            store.update_lesson_data(lesson_id, lesson)
             print(f"  OK  {lesson_id[:52]:54} {action}")
             converted += 1
         except Exception as e:  # noqa: BLE001 - one bad lesson must not abort the rest
