@@ -185,11 +185,33 @@
 	// Dialogue is selected); this keeps the phase/enunciation/English controls
 	// truthful. Idempotent for the player's own clicks (they set the pills first,
 	// then select the matching track).
+	//
+	// It also PERSISTS what it mirrored (tunatale-zz58) — otherwise a track
+	// chosen by a transcript tap is shown on the pills and then forgotten, and
+	// since tunatale-9idn made the saved position section-aware, the next mount
+	// restores the stale section and correctly discards the position. The user
+	// reads that as "it forgot my place".
+	//
+	// ⚠️ untrack() is load-bearing. This effect WRITES phase/enunLevel/
+	// englishMode, and persistSelection() READS all three, so persisting
+	// without untrack makes the effect depend on its own output. That does not
+	// run away — the writes are idempotent, so it settles on a second pass —
+	// but it settles by luck rather than by construction, and any future change
+	// that makes the mirror non-idempotent turns it into a real cycle
+	// (effect_update_depth_exceeded). Measured 2026-08-28: 2 localStorage
+	// writes per track change without untrack, 1 with. The write-count test
+	// pins the 1.
+	let mounted = false;
 	$effect(() => {
 		const p = pillsForSection(ctrl.activeSectionType);
 		if (p.phase !== undefined) phase = p.phase;
 		if (p.enunciation !== undefined) enunLevel = p.enunciation;
 		if (p.english !== undefined) englishMode = p.english;
+		// Merging with the CURRENT pill values, not with p, is what preserves
+		// the fields a section type cannot carry — pillsForSection omits the
+		// enunciation LEVEL for the slow_* sections, and both level and English
+		// for key_phrases.
+		if (mounted) untrack(() => persistSelection());
 	});
 
 	// --- Prefetch section URLs ---
@@ -245,6 +267,12 @@
 			englishMode = sel.english;
 			applyTrack();
 		}
+
+		// The mirror $effect above must not persist during its first run, which
+		// happens before onMount seeds from storage — writing the defaults then
+		// would clobber the user's persisted selection. From here on, the effect
+		// may persist a mirrored selection the way a pill click would.
+		mounted = true;
 
 		const nav = navigator as Navigator & { connection?: NetworkInformationLike };
 		const urls = computePrefetchUrls(

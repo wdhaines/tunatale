@@ -518,6 +518,8 @@ describe("LessonPlayer", () => {
   });
 
   describe("pills mirror an external track change (transcript ▶)", () => {
+    const KEY = "lessonPlayerSelection";
+
     async function renderWithController(audio: LessonAudio) {
       let ctrl: PlaybackController | null = null;
       const result = render(PillSyncHarness, {
@@ -554,6 +556,108 @@ describe("LessonPlayer", () => {
       ctrl.selectTrack("natural_speed");
       await tick();
       expect(container.querySelector(".enunciation-btn")!.textContent).toContain("Natural");
+    });
+
+    // ── zz58: the mirrored selection must also be PERSISTED ──────────────
+    //
+    // lessonPlayerPref is written only by persistSelection(), which is called
+    // only from the pill handlers. So a track chosen by a transcript ▶ tap was
+    // mirrored onto the pills and then forgotten. Since tunatale-9idn made the
+    // saved position section-aware, that gap surfaces as "it forgot my place":
+    // the mount restores the STALE section, the resume position's section does
+    // not match it, and the position is correctly-but-annoyingly discarded.
+
+    it("persists a track chosen from outside the player, not just the pills", async () => {
+      const { ctrl } = await renderWithController(audioWithAllSections);
+      expect(JSON.parse(localStorage.getItem(KEY)!).phase).toBe("dialogue");
+
+      ctrl.selectTrack("key_phrases"); // as a key-phrase ▶ tap would
+      await tick();
+
+      expect(JSON.parse(localStorage.getItem(KEY)!).phase).toBe("key_phrases");
+    });
+
+    it("a remount restores the externally-chosen section, not the stale pill selection", async () => {
+      // The user-visible property, asserted end to end rather than on the store:
+      // tap ▶ on a key phrase while Dialogue is selected, then refresh.
+      const { ctrl, unmount } = await renderWithController(audioWithAllSections);
+      ctrl.selectTrack("key_phrases");
+      await tick();
+      unmount();
+
+      const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
+      const kpBtn = container.querySelector<HTMLButtonElement>(".phase-btn:first-child")!;
+      expect(kpBtn.classList.contains("active")).toBe(true);
+    });
+
+    it("keeps the enunciation LEVEL that the section type cannot carry", async () => {
+      // pillsForSection("slow_speed") deliberately returns no `enunciation`:
+      // natural vs the three enunciated rates is not recoverable from the
+      // section type, so the pill is the only thing that knows. Persisting the
+      // mirror must therefore merge with the CURRENT level, never default it —
+      // writing `p.enunciation` straight through would silently demote a 0.8
+      // listener to Natural every time they tapped a transcript line.
+      const { ctrl, container } = await renderWithController(audioWithAllSections);
+      const enunBtn = container.querySelector<HTMLButtonElement>(".enunciation-btn")!;
+      fireEvent.click(enunBtn);
+      fireEvent.click(enunBtn);
+      await tick();
+      const level = JSON.parse(localStorage.getItem(KEY)!).enunciation;
+      expect(level).not.toBe("natural");
+      // Two clicks with English off resolve to slow_speed, so the track is
+      // ALREADY there. Switching to slow_speed would be a no-op that never
+      // re-runs the mirror — which is exactly how the first version of this
+      // test passed against an implementation that defaulted the level
+      // (sabotage drill, 2026-08-28). Move to a DIFFERENT section that also
+      // omits the level.
+      expect(ctrl.activeSectionType).toBe("slow_speed");
+
+      ctrl.selectTrack("slow_translated"); // carries phase + english, NOT the level
+      await tick();
+      expect(ctrl.activeSectionType).toBe("slow_translated"); // the mirror really ran
+
+      expect(JSON.parse(localStorage.getItem(KEY)!).enunciation).toBe(level);
+    });
+
+    it("does not loop: one external track change writes storage a bounded number of times", async () => {
+      // ⚠️ THE TRAP THIS BEAD EXISTS TO CATCH. The mirror $effect WRITES phase,
+      // enunLevel and englishMode. persistSelection() READS all three, so
+      // calling it naively inside that effect makes the effect depend on state
+      // it writes — a self-triggering cycle. Svelte 5 aborts that with
+      // effect_update_depth_exceeded, but a test asserting only on store
+      // CONTENTS would pass even while it re-ran forever, because the final
+      // value is correct.
+      //
+      // Counting writes discriminates: a settled implementation writes a
+      // handful of times, a cycling one writes without bound.
+      const setItem = vi.spyOn(Storage.prototype, "setItem");
+      const { ctrl } = await renderWithController(audioWithAllSections);
+      setItem.mockClear();
+
+      ctrl.selectTrack("key_phrases");
+      await tick();
+      await tick();
+
+      const writes = setItem.mock.calls.filter((c) => c[0] === KEY).length;
+      expect(writes).toBeGreaterThan(0); // it did persist — else this proves nothing
+      // Exactly one. Two is not "close enough": it is the measured signature of
+      // persisting WITHOUT untrack, where the effect depends on state it writes
+      // and settles on a second pass only because the mirror happens to be
+      // idempotent. Pinning 1 keeps that from creeping back unnoticed.
+      expect(writes).toBe(1);
+      setItem.mockRestore();
+    });
+
+    it("a pill click still persists exactly what was clicked", async () => {
+      // Regression guard for the fix itself: the mirror runs after the pill
+      // handler's own persistSelection(), so an implementation that writes the
+      // PRE-mirror values would clobber the click with a stale selection.
+      const { container } = await renderWithController(audioWithAllSections);
+      fireEvent.click(container.querySelector<HTMLButtonElement>(".phase-btn:first-child")!);
+      await tick();
+      await tick();
+
+      expect(JSON.parse(localStorage.getItem(KEY)!).phase).toBe("key_phrases");
     });
   });
 
