@@ -820,7 +820,10 @@ describe("playbackController", () => {
       });
       audioEl.currentTime = 15.5;
       audioEl.dispatchEvent(new Event("pause"));
-      expect(fakeLocalStorage.setItem).toHaveBeenCalledWith("tt-resume-l1", "15.5");
+      expect(fakeLocalStorage.setItem).toHaveBeenCalledWith(
+        "tt-resume-l1",
+        JSON.stringify({ section: "key_phrases", position: 15.5 }),
+      );
       expect(mediaSession.playbackState).toBe("paused");
     });
   });
@@ -886,7 +889,10 @@ describe("playbackController", () => {
       const ctrl = createController({ audioEl: zeroesOnClear, storage: fakeLocalStorage });
       ctrl.destroy();
       // The stored position should be 42.5 (the pre-src-clear value), not 0
-      expect(fakeLocalStorage.setItem).toHaveBeenCalledWith("tt-resume-l1", "42.5");
+      expect(fakeLocalStorage.setItem).toHaveBeenCalledWith(
+        "tt-resume-l1",
+        JSON.stringify({ section: "key_phrases", position: 42.5 }),
+      );
     });
 
     it("a pause event queued behind destroy() does not clobber the saved resume", async () => {
@@ -920,7 +926,9 @@ describe("playbackController", () => {
       const ctrl = createController({ audioEl: el, storage: fakeLocalStorage });
       ctrl.destroy();
       await Promise.resolve(); // flush the queued pause event
-      expect(fakeLocalStorage.getItem("tt-resume-l1")).toBe("42.5");
+      expect(fakeLocalStorage.getItem("tt-resume-l1")).toBe(
+        JSON.stringify({ section: "key_phrases", position: 42.5 }),
+      );
     });
   });
 
@@ -929,7 +937,10 @@ describe("playbackController", () => {
       const _ctrl = createController({ storage: fakeLocalStorage, lessonId: "l1" });
       audioEl.currentTime = 12.5;
       audioEl.dispatchEvent(new Event("pause"));
-      expect(fakeLocalStorage.setItem).toHaveBeenCalledWith("tt-resume-l1", "12.5");
+      expect(fakeLocalStorage.setItem).toHaveBeenCalledWith(
+        "tt-resume-l1",
+        JSON.stringify({ section: "key_phrases", position: 12.5 }),
+      );
     });
 
     it("does NOT touch position before loadedmetadata (scrubber would desync)", () => {

@@ -197,23 +197,42 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // loadedmetadata delivers the real duration. Restoring at init raced the
   // scrubber (max still 1, value clamped) so the thumb showed the resume
   // position as the track start and back-scrubbing clamped to it.
-  const savedResume = storage.getItem(`tt-resume-${lessonId}`);
-  let pendingResume: number | null = savedResume ? parseFloat(savedResume) : null;
-  if (pendingResume !== null && (isNaN(pendingResume) || pendingResume <= 0)) {
-    pendingResume = null;
+  const savedResumeRaw = storage.getItem(`tt-resume-${lessonId}`);
+  let pendingResume: number | null = null;
+  let pendingResumeSection: string | null = null;
+  if (savedResumeRaw !== null) {
+    try {
+      const parsed = JSON.parse(savedResumeRaw);
+      if (typeof parsed === "object" && parsed !== null) {
+        pendingResumeSection = parsed.section ?? null;
+        const pos = Number(parsed.position);
+        if (Number.isFinite(pos) && pos > 0) pendingResume = pos;
+      } else if (typeof parsed === "number" && Number.isFinite(parsed) && parsed > 0) {
+        pendingResume = parsed;
+        pendingResumeSection = null;
+      }
+    } catch {
+      // Malformed value — discard
+    }
   }
+  let lastSavedPosition = pendingResume ?? 0;
 
   // Audio event listeners
   audioEl.addEventListener("timeupdate", () => {
     currentTime = audioEl.currentTime;
     applyEnunciationRate();
+    if (pendingResume === null && Math.abs(audioEl.currentTime - lastSavedPosition) >= 5) {
+      saveResume();
+    }
   });
   audioEl.addEventListener("loadedmetadata", () => {
     duration = audioEl.duration;
     if (pendingResume !== null) {
-      if (pendingResume < audioEl.duration) {
+      const applies = pendingResumeSection === null || pendingResumeSection === activeSectionType;
+      if (applies && pendingResume < audioEl.duration) {
         audioEl.currentTime = pendingResume;
         currentTime = pendingResume;
+        if (pendingSeek !== null) pendingSeek = pendingResume;
       }
       pendingResume = null;
     }
@@ -322,8 +341,26 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     // While a restore is still pending (metadata never arrived), position 0
     // is meaningless — writing it would clobber the real saved spot.
     if (pendingResume !== null) return;
-    storage.setItem(RESUME_KEY, String(audioEl.currentTime));
+    storage.setItem(
+      RESUME_KEY,
+      JSON.stringify({ section: activeSectionType, position: audioEl.currentTime }),
+    );
+    lastSavedPosition = audioEl.currentTime;
   }
+
+  // Saving without a pause: a hard refresh never fires pause, so store the
+  // spot on tab-hide (mobile refresh / app switch) and pagehide (desktop).
+  // beforeunload is deliberately NOT used — unreliable on mobile Safari.
+  function onVisibilityChange() {
+    if (document.visibilityState === "hidden") {
+      saveResume();
+    }
+  }
+  function onPageHide() {
+    saveResume();
+  }
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  window.addEventListener("pagehide", onPageHide);
 
   // --- Section navigation ---
 
@@ -601,6 +638,8 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     },
     destroy() {
       destroyed = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pagehide", onPageHide);
       audioEl.pause();
       saveResume();
       audioEl.src = "";
