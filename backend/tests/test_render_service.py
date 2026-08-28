@@ -149,7 +149,7 @@ class TestDeriveSectionCuesOverwrite:
                 Section(
                     section_type=SectionType.SLOW_SPEED,
                     phrases=[
-                        Phrase(text="Slow Speed", voice_id="n", language_code="en", role="narrator"),
+                        Phrase(text="Enunciated", voice_id="n", language_code="en", role="narrator"),
                         Phrase(text="Dober ... dan", voice_id="v", language_code="sl", role="f1"),
                     ],
                 ),
@@ -191,7 +191,7 @@ class TestDeriveSectionCuesOverwrite:
                 phrase_index=0,
                 role="narrator",
                 language_code="en",
-                text="Slow Speed",
+                text="Enunciated",
                 ref={"kind": "narration"},
             ),
             _cue(
@@ -229,7 +229,7 @@ class TestDeriveSectionCuesOverwrite:
                 Section(
                     section_type=SectionType.TRANSLATED,
                     phrases=[
-                        Phrase(text="Translated", voice_id="n", language_code="en", role="narrator"),
+                        Phrase(text="English After", voice_id="n", language_code="en", role="narrator"),
                         Phrase(text="Dober dan", voice_id="v", language_code="sl", role="f1"),
                         Phrase(text="Good day!", voice_id="n", language_code="en", role="narrator"),
                     ],
@@ -237,7 +237,7 @@ class TestDeriveSectionCuesOverwrite:
                 Section(
                     section_type=SectionType.SLOW_TRANSLATED,
                     phrases=[
-                        Phrase(text="Slow Translated", voice_id="n", language_code="en", role="narrator"),
+                        Phrase(text="Enunciated, English After", voice_id="n", language_code="en", role="narrator"),
                         Phrase(text="Dober ... dan", voice_id="v", language_code="sl", role="f1"),
                         Phrase(text="Good day!", voice_id="n", language_code="en", role="narrator"),
                     ],
@@ -280,7 +280,7 @@ class TestDeriveSectionCuesOverwrite:
                 phrase_index=0,
                 role="narrator",
                 language_code="en",
-                text="Translated",
+                text="English After",
                 ref={"kind": "narration"},
             ),
             _cue(
@@ -317,7 +317,7 @@ class TestDeriveSectionCuesOverwrite:
                 phrase_index=0,
                 role="narrator",
                 language_code="en",
-                text="Slow Translated",
+                text="Enunciated, English After",
                 ref={"kind": "narration"},
             ),
             _cue(
@@ -382,7 +382,7 @@ class TestDeriveSectionCuesUntranslatedLineNoTranslation:
                 Section(
                     section_type=SectionType.TRANSLATED,
                     phrases=[
-                        Phrase(text="Translated", voice_id="n", language_code="en", role="narrator"),
+                        Phrase(text="English After", voice_id="n", language_code="en", role="narrator"),
                         Phrase(text="Dober dan", voice_id="v", language_code="sl", role="f1"),
                         Phrase(text="Good day!", voice_id="n", language_code="en", role="narrator"),
                         # Line 2 (Kava prosim) has no translation → skipped by section_builder
@@ -391,7 +391,7 @@ class TestDeriveSectionCuesUntranslatedLineNoTranslation:
                 Section(
                     section_type=SectionType.SLOW_TRANSLATED,
                     phrases=[
-                        Phrase(text="Slow Translated", voice_id="n", language_code="en", role="narrator"),
+                        Phrase(text="Enunciated, English After", voice_id="n", language_code="en", role="narrator"),
                         Phrase(text="Dober ... dan", voice_id="v", language_code="sl", role="f1"),
                         Phrase(text="Good day!", voice_id="n", language_code="en", role="narrator"),
                         # Line 2 (Kava prosim) also skipped here
@@ -447,7 +447,7 @@ class TestDeriveSectionCuesUntranslatedLineNoTranslation:
                 phrase_index=0,
                 role="narrator",
                 language_code="en",
-                text="Translated",
+                text="English After",
                 ref={"kind": "narration"},
             ),
             _cue(
@@ -484,7 +484,7 @@ class TestDeriveSectionCuesUntranslatedLineNoTranslation:
                 phrase_index=0,
                 role="narrator",
                 language_code="en",
-                text="Slow Translated",
+                text="Enunciated, English After",
                 ref={"kind": "narration"},
             ),
             _cue(
@@ -535,7 +535,7 @@ class TestDeriveSectionCuesUntranslatedLineNoTranslation:
                 Section(
                     section_type=SectionType.TRANSLATED,
                     phrases=[
-                        Phrase(text="Translated", voice_id="n", language_code="en", role="narrator"),
+                        Phrase(text="English After", voice_id="n", language_code="en", role="narrator"),
                         Phrase(text="Dober dan", voice_id="v", language_code="sl", role="f1"),
                         Phrase(text="Good day!", voice_id="n", language_code="en", role="narrator"),
                     ],
@@ -543,7 +543,7 @@ class TestDeriveSectionCuesUntranslatedLineNoTranslation:
                 Section(
                     section_type=SectionType.SLOW_TRANSLATED,
                     phrases=[
-                        Phrase(text="Slow Translated", voice_id="n", language_code="en", role="narrator"),
+                        Phrase(text="Enunciated, English After", voice_id="n", language_code="en", role="narrator"),
                         Phrase(text="Dober ... dan", voice_id="v", language_code="sl", role="f1"),
                         Phrase(text="Good day!", voice_id="n", language_code="en", role="narrator"),
                     ],
@@ -560,7 +560,7 @@ class TestDeriveSectionCuesUntranslatedLineNoTranslation:
                 phrase_index=0,
                 role="narrator",
                 language_code="en",
-                text="Translated",
+                text="English After",
                 ref={"kind": "narration"},
             ),
             _cue(
@@ -596,7 +596,7 @@ class TestDeriveSectionCuesUntranslatedLineNoTranslation:
                 phrase_index=0,
                 role="narrator",
                 language_code="en",
-                text="Slow Translated",
+                text="Enunciated, English After",
                 ref={"kind": "narration"},
             ),
             _cue(
@@ -657,7 +657,7 @@ class TestDeriveSectionCuesUntranslatedLineNoTranslation:
                 Section(
                     section_type=SectionType.TRANSLATED,
                     phrases=[
-                        Phrase(text="Translated", voice_id="n", language_code="en", role="narrator"),
+                        Phrase(text="English After", voice_id="n", language_code="en", role="narrator"),
                         Phrase(text="Dober dan", voice_id="v", language_code="sl", role="f1"),
                         Phrase(text="Good day!", voice_id="n", language_code="en", role="narrator"),
                         # Line B "Hvala lepa" has no translation → skipped
@@ -668,7 +668,7 @@ class TestDeriveSectionCuesUntranslatedLineNoTranslation:
                 Section(
                     section_type=SectionType.SLOW_TRANSLATED,
                     phrases=[
-                        Phrase(text="Slow Translated", voice_id="n", language_code="en", role="narrator"),
+                        Phrase(text="Enunciated, English After", voice_id="n", language_code="en", role="narrator"),
                         Phrase(text="Dober ... dan", voice_id="v", language_code="sl", role="f1"),
                         Phrase(text="Good day!", voice_id="n", language_code="en", role="f1"),
                         Phrase(text="A ... dijo", voice_id="v", language_code="sl", role="f1"),
@@ -737,7 +737,7 @@ class TestDeriveSectionCuesUntranslatedLineNoTranslation:
                 phrase_index=0,
                 role="narrator",
                 language_code="en",
-                text="Translated",
+                text="English After",
                 ref={"kind": "narration"},
             ),
             _cue(
@@ -798,7 +798,7 @@ class TestDeriveSectionCuesUntranslatedLineNoTranslation:
                 phrase_index=0,
                 role="narrator",
                 language_code="en",
-                text="Slow Translated",
+                text="Enunciated, English After",
                 ref={"kind": "narration"},
             ),
             _cue(
@@ -922,7 +922,7 @@ class TestDeriveSectionCuesExactness:
                 Section(
                     section_type=SectionType.SLOW_SPEED,
                     phrases=[
-                        Phrase(text="Slow Speed", voice_id="n", language_code="en", role="narrator"),
+                        Phrase(text="Enunciated", voice_id="n", language_code="en", role="narrator"),
                         Phrase(text="Dober ... dan", voice_id="v", language_code="sl", role="f1"),
                     ],
                 ),
@@ -962,7 +962,7 @@ class TestDeriveSectionCuesExactness:
                 phrase_index=0,
                 role="narrator",
                 language_code="en",
-                text="Slow Speed",
+                text="Enunciated",
                 ref={"kind": "narration"},
             ),
             _cue(
@@ -981,7 +981,7 @@ class TestDeriveSectionCuesExactness:
         result = derive_section_cues(cues, lesson)
         slow_cues = result[1]
         narrator_cues = [c for c in slow_cues if c.ref and c.ref.get("kind") == "narration"]
-        assert narrator_cues[0].text == "Slow Speed"
+        assert narrator_cues[0].text == "Enunciated"
 
 
 class TestDeriveSectionCuesEdgeCases:
@@ -996,7 +996,7 @@ class TestDeriveSectionCuesEdgeCases:
                 Section(
                     section_type=SectionType.SLOW_SPEED,
                     phrases=[
-                        Phrase(text="Slow Speed", voice_id="n", language_code="en", role="narrator"),
+                        Phrase(text="Enunciated", voice_id="n", language_code="en", role="narrator"),
                         Phrase(text="Dober ... dan", voice_id="v", language_code="sl", role="f1"),
                     ],
                 ),
@@ -1012,7 +1012,7 @@ class TestDeriveSectionCuesEdgeCases:
                 phrase_index=0,
                 role="narrator",
                 language_code="en",
-                text="Slow Speed",
+                text="Enunciated",
                 ref={"kind": "narration"},
             ),
             _cue(
@@ -1048,7 +1048,7 @@ class TestDeriveSectionCuesEdgeCases:
                 Section(
                     section_type=SectionType.SLOW_SPEED,
                     phrases=[
-                        Phrase(text="Slow Speed", voice_id="n", language_code="en", role="narrator"),
+                        Phrase(text="Enunciated", voice_id="n", language_code="en", role="narrator"),
                         Phrase(text="Dober ... dan", voice_id="v", language_code="sl", role="f1"),
                     ],
                 ),
@@ -1076,7 +1076,7 @@ class TestDeriveSectionCuesEdgeCases:
                 phrase_index=0,
                 role="narrator",
                 language_code="en",
-                text="Slow Speed",
+                text="Enunciated",
                 ref={"kind": "narration"},
             ),
             _cue(
@@ -1112,7 +1112,7 @@ class TestDeriveSectionCuesEdgeCases:
                 Section(
                     section_type=SectionType.SLOW_SPEED,
                     phrases=[
-                        Phrase(text="Slow Speed", voice_id="n", language_code="en", role="narrator"),
+                        Phrase(text="Enunciated", voice_id="n", language_code="en", role="narrator"),
                         Phrase(text="Dober ... dan", voice_id="v", language_code="sl", role="f1"),
                         Phrase(text="Kava ... prosim", voice_id="v", language_code="sl", role="f1"),
                     ],
@@ -1153,7 +1153,7 @@ class TestDeriveSectionCuesEdgeCases:
                 phrase_index=0,
                 role="narrator",
                 language_code="en",
-                text="Slow Speed",
+                text="Enunciated",
                 ref={"kind": "narration"},
             ),
             _cue(

@@ -20,15 +20,17 @@ KeyPhrase = dict  # {"phrase": str, "translation": str}
 DialogueLine = dict  # {"speaker": str, "text": str, "translation": str}
 Scene = dict  # {"label": str, "lines": list[DialogueLine]}
 
-# Narrator-spoken section titles matching the demo format
+# Narrator-spoken section titles matching the demo format.
+# The "Slow" pass is enunciated speech — respelled text with pauses, no rate
+# change (tunatale-v3ri) — and the English gloss sits after/before the L2 line.
 SECTION_TITLES: dict[SectionType, str] = {
     SectionType.KEY_PHRASES: "Key Phrases",
     SectionType.NATURAL_SPEED: "Natural Speed",
-    SectionType.SLOW_SPEED: "Slow Speed",
-    SectionType.TRANSLATED: "Translated",
-    SectionType.SLOW_TRANSLATED: "Slow Translated",
-    SectionType.EN_TRANSLATED: "English Translated",
-    SectionType.SLOW_EN_TRANSLATED: "Slow English Translated",
+    SectionType.SLOW_SPEED: "Enunciated",
+    SectionType.TRANSLATED: "English After",
+    SectionType.SLOW_TRANSLATED: "Enunciated, English After",
+    SectionType.EN_TRANSLATED: "English Before",
+    SectionType.SLOW_EN_TRANSLATED: "Enunciated, English Before",
 }
 
 

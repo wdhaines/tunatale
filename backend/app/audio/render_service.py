@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import uuid
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -369,14 +369,18 @@ async def reassemble_lesson_audio(
     audio_dir: Path,
     lesson_id: str,
     lesson,
+    section_types: Collection[SectionType] = (SectionType.KEY_PHRASES,),
 ) -> dict:
-    """Rebuild a lesson's audio by re-rendering ONLY its KEY_PHRASES section.
+    """Rebuild a lesson's audio by re-rendering the requested sections.
 
-    Every other section's file is reused byte-for-byte and the full lesson is
-    stitched with ffmpeg's concat demuxer under ``-c copy``, so no audio outside
-    KEY_PHRASES is re-synthesized OR re-encoded (tunatale-1d85). The title is
-    re-synthesized — one TTS call per lesson, the only such call — because it is
-    not persisted separately from the full-lesson file.
+    Every section named in *section_types* is re-rendered; every other section's
+    file is reused byte-for-byte and the full lesson is stitched with ffmpeg's
+    concat demuxer under ``-c copy``, so no audio outside the requested sections
+    is re-synthesized OR re-encoded (tunatale-1d85). The title is
+    re-synthesized — one TTS call per lesson for the lesson title, plus one per
+    re-rendered section title, since the TTS cache is keyed (voice, rate, text)
+    and a renamed title misses — because it is not persisted separately from the
+    full-lesson file.
 
     ⚠️ It calls ``renderer.render_section``, NOT ``renderer.render``. ``render``
     renders the WHOLE lesson: it would synthesize every phrase of every section,
@@ -400,12 +404,15 @@ async def reassemble_lesson_audio(
             f"{len(lesson.sections)} sections — re-render the lesson instead"
         )
 
-    kp_index = next(
-        (i for i, sec in enumerate(lesson.sections) if sec.section_type == SectionType.KEY_PHRASES),
-        None,
-    )
-    if kp_index is None:
-        raise ValueError(f"No KEY_PHRASES section in lesson {lesson_id!r}")
+    targets = [i for i, sec in enumerate(lesson.sections) if sec.section_type in section_types]
+    if not targets:
+        # The default set keeps the exact legacy message, byte for byte; the
+        # generic phrase avoids an f-string whose "No " would be its own
+        # constant and trip the language-literal checker (bare code "no").
+        if section_types == (SectionType.KEY_PHRASES,):
+            raise ValueError(f"No KEY_PHRASES section in lesson {lesson_id!r}")
+        requested = ", ".join(t.name for t in section_types)
+        raise ValueError(f"lesson {lesson_id!r} has no {requested} section(s)")
 
     audio_dir.mkdir(parents=True, exist_ok=True)
     ext = CODEC_EXT.get(settings.audio_delivery_codec, "wav")
@@ -427,20 +434,38 @@ async def reassemble_lesson_audio(
         raw_title = scratch / "title.mp3"
         await tts.synthesize(lesson.title, lesson.narrator_voice, raw_title, rate="+0%")
 
-        new_kp_id = str(uuid.uuid4())
-        new_kp_path = audio_dir / f"{new_kp_id}.{ext}"
-        kp_cues, kp_rate = await _with_render_retries(
-            lambda: renderer.render_section(lesson.sections[kp_index], new_kp_path, kp_index, lesson.language_code),
-            f"the KEY_PHRASES section of {lesson_id!r}",
-        )
+        new_target_paths = {i: audio_dir / f"{str(uuid.uuid4())}.{ext}" for i in targets}
+        target_rel_cues: dict[int, list[tuple[int, int, int]]] = {}
+        target_rates: dict[int, int] = {}
+        for i in targets:
+            rel_cues, rate = await _with_render_retries(
+                lambda i=i: renderer.render_section(lesson.sections[i], new_target_paths[i], i, lesson.language_code),
+                f"section {i} ({lesson.sections[i].section_type.value}) of {lesson_id!r}",
+            )
+            target_rel_cues[i] = rel_cues
+            target_rates[i] = rate
+
+        # The concat demuxer runs under -c copy and FAILS on heterogeneous
+        # streams, so a rate disagreement is real breakage. One assembly rate for
+        # the title clip, the boundary and the ms->frames conversion; each
+        # target's OWN rate still goes into its own per-section cues.
+        rates = sorted(set(target_rates.values()))
+        if len(rates) > 1:
+            raise ValueError(
+                f"re-rendered sections {[t.name for t in section_types]} report differing "
+                f"rates {rates}; a concat under -c copy cannot join heterogeneous streams"
+            )
+        assembly_rate = rates[0]
 
         title_path = scratch / f"title.{ext}"
-        _transcode_to_delivery(raw_title, title_path, kp_rate)
+        _transcode_to_delivery(raw_title, title_path, assembly_rate)
 
         boundary_path = scratch / f"boundary.{ext}"
-        _write_silence(boundary_path, boundary_ms, kp_rate)
+        _write_silence(boundary_path, boundary_ms, assembly_rate)
 
-        section_paths = [new_kp_path if i == kp_index else Path(r["file_path"]) for i, r in enumerate(section_rows)]
+        section_paths = [
+            new_target_paths[i] if i in targets else Path(r["file_path"]) for i, r in enumerate(section_rows)
+        ]
         pieces: list[Path] = [title_path]
         for sec_path in section_paths:
             pieces.append(boundary_path)
@@ -457,10 +482,10 @@ async def reassemble_lesson_audio(
         durations_ms = [round(_read_audio_duration(p) * 1000) for p in section_paths]
 
     # Per-section cues, in the SAME form derive_section_cues stores: reused
-    # sections keep what they already had; the re-rendered one is rebuilt.
+    # sections keep what they already had; the re-rendered ones are rebuilt.
     stored_cues: list[list[dict]] = [
-        [asdict(c) for c in _cues_from_relative(lesson, kp_cues, kp_index, kp_rate)]
-        if i == kp_index
+        [asdict(c) for c in _cues_from_relative(lesson, target_rel_cues[i], i, target_rates[i])]
+        if i in targets
         else (json.loads(r["cues_json"]) if r.get("cues_json") else [])
         for i, r in enumerate(section_rows)
     ]
@@ -479,14 +504,14 @@ async def reassemble_lesson_audio(
     # letting build_cue_manifest supply every field from the lesson removes both
     # by construction, and is why _cues_from_relative already worked this way.
     #
-    # ms -> frames at kp_rate: build_cue_manifest divides back out by the same
-    # rate, so the value cancels and only its consistency matters.
+    # ms -> frames at assembly_rate: build_cue_manifest divides back out by the
+    # same rate, so the value cancels and only its consistency matters.
     timing: list[CueTiming] = [
         CueTiming(
             section_index=None,
             phrase_index=0,
             start_frame=0,
-            end_frame=_ms_to_frames(title_ms, kp_rate),
+            end_frame=_ms_to_frames(title_ms, assembly_rate),
         )
     ]
     offset_ms = title_ms + boundary_ms
@@ -496,15 +521,14 @@ async def reassemble_lesson_audio(
                 CueTiming(
                     section_index=i,
                     phrase_index=cd["phrase_index"],
-                    start_frame=_ms_to_frames(cd["start_ms"] + offset_ms, kp_rate),
-                    end_frame=_ms_to_frames(cd["end_ms"] + offset_ms, kp_rate),
+                    start_frame=_ms_to_frames(cd["start_ms"] + offset_ms, assembly_rate),
+                    end_frame=_ms_to_frames(cd["end_ms"] + offset_ms, assembly_rate),
                 )
             )
         offset_ms += durations_ms[i] + boundary_ms
-    all_cues = build_cue_manifest(lesson, timing, kp_rate)
+    all_cues = build_cue_manifest(lesson, timing, assembly_rate)
     cues_json = json.dumps([asdict(c) for c in all_cues], ensure_ascii=False)
 
-    old_kp_path = Path(section_rows[kp_index]["file_path"])
     store.delete_audio_files_for_lesson(lesson_id)
     store.save_audio_file(new_full_id, lesson_id, str(new_full_path), cues_json=cues_json)
     new_section_ids = [str(uuid.uuid4()) for _ in section_rows]
@@ -522,10 +546,11 @@ async def reassemble_lesson_audio(
     # Only the files this function REPLACED are removed, and only after the new
     # rows are committed. Every other section file is still referenced.
     Path(old_full["file_path"]).unlink(missing_ok=True)
-    # Unconditional: new_kp_path always carries a fresh uuid4, so it can never
-    # be the path we are deleting. A `!=` guard here would be a branch nothing
-    # can take.
-    old_kp_path.unlink(missing_ok=True)
+    # Unconditional: every new target path carries a fresh uuid4, so it can never
+    # be the path being deleted. A `!=` guard here would be a branch nothing can
+    # take.
+    for i in targets:
+        Path(section_rows[i]["file_path"]).unlink(missing_ok=True)
 
     return {
         "audio_id": new_full_id,

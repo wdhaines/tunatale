@@ -13,7 +13,28 @@ export interface Scene {
   lines: UnifiedLine[];
 }
 
-const SECTION_TITLES = new Set(["Natural Speed", "Slow Speed", "Translated", "Key Phrases"]);
+// ⚠️ Duplicate of backend `section_builder.py::SECTION_TITLES`. Keep the
+// two lists in lockstep (tunatale-v3ri).
+//
+// Measured 2026-08-28, because the obvious reading of this set is wrong. Only
+// ONE of the two consumers is live against today's phrase order:
+//   - buildScenes (natural_speed): LIVE. The section title is the first
+//     narrator L1 phrase, and without it here it becomes a spurious scene
+//     heading. Dropping "Natural Speed" reds 4 tests.
+//   - extractTranslations (translated): NOT currently reachable. The builders
+//     emit [title, scene_label, l2, gloss, ...], so every title and scene label
+//     is already skipped by the `awaiting` guard before this set is consulted.
+//     The entries are defence-in-depth against a phrase order where a title
+//     follows an L2 line; see the test named for that shape.
+const SECTION_TITLES = new Set([
+  "Key Phrases",
+  "Natural Speed",
+  "Enunciated",
+  "English After",
+  "English Before",
+  "Enunciated, English After",
+  "Enunciated, English Before",
+]);
 
 function extractTranslations(
   phrases: LessonDetail["sections"][number]["phrases"],
