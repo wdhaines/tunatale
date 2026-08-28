@@ -183,7 +183,7 @@ def test_slow_speed_scene_labels_not_slowed():
     section = build_slow_speed_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
     narrator_phrases = [p for p in section.phrases if p.role == "narrator"]
     # narrator_phrases[0] is the section title; scene label is at [1]
-    assert narrator_phrases[0].text == "Slow Speed"
+    assert narrator_phrases[0].text == "Enunciated"
     assert narrator_phrases[1].text == "At the Riverside Café"
 
 
@@ -194,7 +194,7 @@ def test_translated_interleaves_narrator():
     section = build_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
     assert section.section_type == SectionType.TRANSLATED
     # Skip section title and scene label; then L2, narrator, L2, narrator...
-    body = [p for p in section.phrases if p.text not in ("Translated", "At the Riverside Café")]
+    body = [p for p in section.phrases if p.text not in ("English After", "At the Riverside Café")]
     for i, phrase in enumerate(body):
         if i % 2 == 0:
             assert phrase.language_code == L2_CODE
@@ -214,6 +214,28 @@ def test_translated_preserves_scene_labels():
 
 def test_section_titles_maps_all_types():
     assert set(SECTION_TITLES.keys()) == set(SectionType)
+
+
+def test_section_titles_say_what_happens():
+    """tunatale-v3ri — the renamed set is DECIDED; regressions get no debate.
+
+    The "Slow" pass is enunciated speech (respelled text, no rate change), and
+    the English gloss sits before/after the L2 line. No value may still describe
+    the slow pass.
+    """
+    renamed = {
+        SectionType.SLOW_SPEED: "Enunciated",
+        SectionType.TRANSLATED: "English After",
+        SectionType.EN_TRANSLATED: "English Before",
+        SectionType.SLOW_TRANSLATED: "Enunciated, English After",
+        SectionType.SLOW_EN_TRANSLATED: "Enunciated, English Before",
+    }
+    for sec_type, title in renamed.items():
+        assert SECTION_TITLES[sec_type] == title
+    for title in SECTION_TITLES.values():
+        assert "Slow" not in title, f"{title!r} still describes the slow pass"
+    assert SECTION_TITLES[SectionType.KEY_PHRASES] == "Key Phrases"
+    assert SECTION_TITLES[SectionType.NATURAL_SPEED] == "Natural Speed"
 
 
 def test_key_phrases_section_starts_with_title_phrase():
@@ -237,7 +259,7 @@ def test_natural_speed_section_starts_with_title_phrase():
 def test_slow_speed_section_starts_with_title_phrase():
     section = build_slow_speed_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
     first = section.phrases[0]
-    assert first.text == "Slow Speed"
+    assert first.text == "Enunciated"
     assert first.role == "narrator"
     assert first.voice_id == NARRATOR_VOICE
     assert first.language_code == "en"
@@ -246,7 +268,7 @@ def test_slow_speed_section_starts_with_title_phrase():
 def test_translated_section_starts_with_title_phrase():
     section = build_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
     first = section.phrases[0]
-    assert first.text == "Translated"
+    assert first.text == "English After"
     assert first.role == "narrator"
     assert first.voice_id == NARRATOR_VOICE
     assert first.language_code == "en"
@@ -389,7 +411,7 @@ def test_slow_speed_slovene_unchanged():
 
 
 def test_translated_skips_line_without_translation():
-    """Translated-section builder skips malformed scenes and lines (non-dict, missing fields)."""
+    """build_translated_section skips malformed scenes and lines (non-dict, missing fields)."""
     scenes = [
         {"label": "S1", "lines": [{"speaker": "f1", "text": "Dober dan", "translation": "Good day"}]},
         {"not_a_label": True},
@@ -422,7 +444,7 @@ def test_slow_translated_section_type():
 def test_slow_translated_starts_with_title_phrase():
     section = build_slow_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
     first = section.phrases[0]
-    assert first.text == "Slow Translated"
+    assert first.text == "Enunciated, English After"
     assert first.role == "narrator"
     assert first.voice_id == NARRATOR_VOICE
     assert first.language_code == "en"
@@ -440,7 +462,7 @@ def test_slow_translated_has_ellipsis_slowed_l2():
 
 def test_slow_translated_interleaves_narrator_after_l2():
     section = build_slow_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
-    body = [p for p in section.phrases if p.text not in ("Slow Translated", "At the Riverside Café")]
+    body = [p for p in section.phrases if p.text not in ("Enunciated, English After", "At the Riverside Café")]
     for i, phrase in enumerate(body):
         if i % 2 == 0:
             assert phrase.language_code == L2_CODE
@@ -520,7 +542,7 @@ def test_en_translated_section_type():
 def test_en_translated_starts_with_title_phrase():
     section = build_en_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
     first = section.phrases[0]
-    assert first.text == "English Translated"
+    assert first.text == "English Before"
     assert first.role == "narrator"
     assert first.voice_id == NARRATOR_VOICE
     assert first.language_code == "en"
@@ -529,7 +551,7 @@ def test_en_translated_starts_with_title_phrase():
 def test_en_translated_narrator_before_l2():
     """Each dialogue line is the English narrator translation FIRST, then the L2 line."""
     section = build_en_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
-    body = [p for p in section.phrases if p.text not in ("English Translated", "At the Riverside Café")]
+    body = [p for p in section.phrases if p.text not in ("English Before", "At the Riverside Café")]
     for i, phrase in enumerate(body):
         if i % 2 == 0:
             assert phrase.role == "narrator"
@@ -609,14 +631,14 @@ def test_slow_en_translated_section_type():
 def test_slow_en_translated_starts_with_title_phrase():
     section = build_slow_en_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
     first = section.phrases[0]
-    assert first.text == "Slow English Translated"
+    assert first.text == "Enunciated, English Before"
     assert first.role == "narrator"
     assert first.language_code == "en"
 
 
 def test_slow_en_translated_narrator_before_ellipsis_l2():
     section = build_slow_en_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
-    body = [p for p in section.phrases if p.text not in ("Slow English Translated", "At the Riverside Café")]
+    body = [p for p in section.phrases if p.text not in ("Enunciated, English Before", "At the Riverside Café")]
     for i, phrase in enumerate(body):
         if i % 2 == 0:
             assert phrase.role == "narrator"

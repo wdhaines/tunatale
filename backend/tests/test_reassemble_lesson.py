@@ -145,14 +145,14 @@ def _build_test_lesson(title: str = "Inside the Cabin", n_sections: int = 4) -> 
         elif i == 2:
             sec_type = SectionType.TRANSLATED
             phrases = [
-                Phrase(text="Translated", voice_id="narrator", language_code="en", role="narrator"),
+                Phrase(text="English After", voice_id="narrator", language_code="en", role="narrator"),
                 Phrase(text="Dober dan", voice_id="v", language_code="sl", role="f1"),
                 Phrase(text="Good day", voice_id="narrator", language_code="en", role="narrator"),
             ]
         else:
             sec_type = SectionType.SLOW_SPEED
             phrases = [
-                Phrase(text="Slow Speed", voice_id="narrator", language_code="en", role="narrator"),
+                Phrase(text="Enunciated", voice_id="narrator", language_code="en", role="narrator"),
                 Phrase(text="Dober dan", voice_id="v", language_code="sl", role="f1"),
             ]
         sections.append(Section(section_type=sec_type, phrases=phrases))
@@ -820,3 +820,248 @@ class TestFullManifestMatchesARenderedLesson:
             "the full manifest was built from the stored per-section cues, "
             "so it inherited their scrubbed text instead of the lesson's"
         )
+
+
+class TestReassembleArbitrarySectionSet:
+    """reassemble_lesson_audio takes an explicit SectionType set to re-render.
+
+    Fixture section order is [KEY_PHRASES(0), NATURAL_SPEED(1), TRANSLATED(2),
+    SLOW_SPEED(3)]. Every pre-existing test in this file exercises the offset
+    arithmetic with the target at index 0, where an off-by-one is invisible;
+    O3 re-renders TRANSLATED (index 2) specifically because it has sections on
+    BOTH sides.
+    """
+
+    @pytest.mark.asyncio
+    async def test_o1_single_middle_target_is_selective(self, tmp_path: Path) -> None:
+        """Re-render {SLOW_SPEED} only: KEY_PHRASES path+bytes untouched, the
+        SLOW_SPEED file is replaced and its old file unlinked."""
+        from app.audio.render_service import reassemble_lesson_audio
+
+        store = ContentStore(":memory:")
+        lesson = _build_test_lesson()
+        audio_dir = tmp_path / "audio"
+        _populate_store(store, lesson, audio_dir, [2.0, 5.0, 8.0, 5.0])
+
+        rows_before = {r["section_index"]: r for r in store.list_audio_files_for_lesson(lesson.title)}
+        kp_path_before = rows_before[0]["file_path"]
+        kp_sha_before = _sha256(Path(kp_path_before))
+        slow_path_before = rows_before[3]["file_path"]
+
+        await reassemble_lesson_audio(
+            store=store,
+            renderer=_make_fake_renderer(),
+            tts=_CountingTTS(),
+            audio_dir=audio_dir,
+            lesson_id=lesson.title,
+            lesson=lesson,
+            section_types={SectionType.SLOW_SPEED},
+        )
+
+        rows_after = {r["section_index"]: r for r in store.list_audio_files_for_lesson(lesson.title)}
+        assert rows_after[0]["file_path"] == kp_path_before, "KEY_PHRASES row's file_path must be unchanged"
+        assert _sha256(Path(rows_after[0]["file_path"])) == kp_sha_before, "KEY_PHRASES file must be byte-identical"
+        assert rows_after[3]["file_path"] != slow_path_before, "SLOW_SPEED row must point at a NEW path"
+        assert not Path(slow_path_before).exists(), "the old SLOW_SPEED file must be unlinked"
+
+    @pytest.mark.asyncio
+    async def test_o2_multiple_targets(self, tmp_path: Path) -> None:
+        """Re-render {KEY_PHRASES, SLOW_SPEED}: both get new paths, the two
+        untouched sections keep byte-identical files."""
+        from app.audio.render_service import reassemble_lesson_audio
+
+        store = ContentStore(":memory:")
+        lesson = _build_test_lesson()
+        audio_dir = tmp_path / "audio"
+        _populate_store(store, lesson, audio_dir, [2.0, 5.0, 8.0, 5.0])
+
+        rows_before = {r["section_index"]: r for r in store.list_audio_files_for_lesson(lesson.title)}
+        sha_before = {i: _sha256(Path(r["file_path"])) for i, r in rows_before.items() if r is not None}
+
+        await reassemble_lesson_audio(
+            store=store,
+            renderer=_make_fake_renderer(),
+            tts=_CountingTTS(),
+            audio_dir=audio_dir,
+            lesson_id=lesson.title,
+            lesson=lesson,
+            section_types={SectionType.KEY_PHRASES, SectionType.SLOW_SPEED},
+        )
+
+        rows_after = {r["section_index"]: r for r in store.list_audio_files_for_lesson(lesson.title)}
+        for i in (0, 3):
+            assert rows_after[i]["file_path"] != rows_before[i]["file_path"], f"section {i} must be re-rendered"
+        for i in (1, 2):
+            assert _sha256(Path(rows_after[i]["file_path"])) == sha_before[i], f"section {i} must stay byte-identical"
+
+    @pytest.mark.asyncio
+    async def test_o3_discriminator_middle_target_offset_arithmetic(self, tmp_path: Path) -> None:
+        """Re-render TRANSLATED alone (index 2, sections on both sides) and pin
+        every cue position against a ffprobe-consistent 'before' manifest.
+
+        The seeded manifest records IDEAL durations (2.0/5.0/8.0/5.0s), but the
+        actual on-disk files each carry ~6.5ms of codec container padding and the
+        re-synthesised title carries ~62ms of MP3 round-trip padding. So the
+        'before' baseline is reconstructed from the SAME measured quantities
+        reassemble uses — its own title round-trip and round(ffprobe(...)*1000)
+        per section — which makes the 'identical'/'shifted by exactly' claims
+        exact, not approximate. An implementation that gets the target offset
+        wrong (invisible at index 0) breaks section 3's shift.
+        """
+        from app.audio.render_service import _read_audio_duration, _transcode_to_delivery, reassemble_lesson_audio
+
+        store = ContentStore(":memory:")
+        lesson = _build_test_lesson()
+        audio_dir = tmp_path / "audio"
+        seeded = [2.0, 5.0, 8.0, 5.0]
+        _populate_store(store, lesson, audio_dir, seeded)
+
+        rate = 48000
+        renderer = _make_fake_renderer(kp_seconds=1.5, rate=rate)
+        tts = _CountingTTS()
+
+        rows = {r["section_index"]: r for r in store.list_audio_files_for_lesson(lesson.title)}
+        rows_ordered = [rows[i] for i in range(len(lesson.sections))]
+
+        # The duration reassemble WILL use for each section (round(ffprobe)),
+        # measured from the seeded files — the container padding is included.
+        dur_ms = [round(_ffprobe_duration(Path(r["file_path"])) * 1000) for r in rows_ordered]
+
+        # The title reassemble will measure: same bytes, same round trip.
+        rt_mp3 = tmp_path / "title-roundtrip.mp3"
+        await tts.synthesize(lesson.title, lesson.narrator_voice, rt_mp3, rate="+0%")
+        rt_opus = tmp_path / "title-roundtrip.opus"
+        _transcode_to_delivery(rt_mp3, rt_opus, rate)
+        title_ms = round(_read_audio_duration(rt_opus) * 1000)
+
+        boundary_ms = NaturalPauseCalculator().get_section_boundary_pause()
+
+        # Reconstructed "before" full manifest: title + boundary, then each
+        # section's STORED cues rebased onto ffprobe-realistic section starts.
+        before: list[dict] = [{"section_index": None, "phrase_index": 0, "start_ms": 0, "end_ms": title_ms}]
+        section_cues_before: dict[int, list[dict]] = {}
+        cursor = title_ms + boundary_ms
+        for i, r in enumerate(rows_ordered):
+            rebased = json.loads(r["cues_json"])
+            section_cues_before[i] = [
+                {
+                    "section_index": i,
+                    "phrase_index": cd["phrase_index"],
+                    "start_ms": cd["start_ms"] + cursor,
+                    "end_ms": cd["end_ms"] + cursor,
+                }
+                for cd in rebased
+            ]
+            before.extend(section_cues_before[i])
+            cursor += dur_ms[i] + boundary_ms
+
+        # Store the reconstructed manifest so the app's view of "before" is
+        # coherent with what the rows on disk actually measure.
+        with store._get_conn() as conn:
+            full_row = next(r for r in rows.values() if r["section_index"] is None)
+            conn.execute("UPDATE audio_files SET cues_json = ? WHERE id = ?", (json.dumps(before), full_row["id"]))
+
+        payload = await reassemble_lesson_audio(
+            store=store,
+            renderer=renderer,
+            tts=tts,
+            audio_dir=audio_dir,
+            lesson_id=lesson.title,
+            lesson=lesson,
+            section_types={SectionType.TRANSLATED},
+        )
+        after = payload["cues"]
+
+        # The re-rendered title must reproduce the measured one byte-for-byte;
+        # otherwise sections 0/1 could not be identical to before.
+        assert after[0]["end_ms"] == title_ms, (after[0]["end_ms"], title_ms)
+
+        after_by_sec: dict[int, list[dict]] = {}
+        for c in after:
+            if c["section_index"] is not None:
+                after_by_sec.setdefault(c["section_index"], []).append(c)
+
+        # (a) Sections BEFORE the middle target: identical start/end ms.
+        for i in (0, 1):
+            got = [(c["start_ms"], c["end_ms"]) for c in after_by_sec[i]]
+            expected = [(c["start_ms"], c["end_ms"]) for c in section_cues_before[i]]
+            assert got == expected, (i, got, expected)
+
+        # (b) Section AFTER the target shifts by exactly the target's duration
+        #     delta — the section at index 2 was 8.0s, now it is 1.5s.
+        new_rows = {r["section_index"]: r for r in store.list_audio_files_for_lesson(lesson.title)}
+        new_sec2_dur_ms = round(_ffprobe_duration(Path(new_rows[2]["file_path"])) * 1000)
+        delta_ms = new_sec2_dur_ms - dur_ms[2]
+        sec3_before = sorted(section_cues_before[3], key=lambda c: c["phrase_index"])
+        sec3_after = sorted(after_by_sec[3], key=lambda c: c["phrase_index"])
+        assert len(sec3_after) == len(sec3_before)
+        for b_cue, a_cue in zip(sec3_before, sec3_after, strict=True):
+            assert a_cue["start_ms"] - b_cue["start_ms"] == delta_ms, (b_cue, a_cue, delta_ms)
+            assert a_cue["end_ms"] - b_cue["end_ms"] == delta_ms, (b_cue, a_cue, delta_ms)
+
+        # (c) The full-lesson file's duration equals title + 4*boundary + the
+        #     four (re-derived) section durations, within 60ms.
+        expected_total = (
+            title_ms
+            + 4 * boundary_ms
+            + sum(round(_ffprobe_duration(Path(r["file_path"])) * 1000) for r in (new_rows[i] for i in range(4)))
+        )
+        actual_total = _ffprobe_duration(_full_path(store, lesson.title)) * 1000
+        assert abs(actual_total - expected_total) < 60, (actual_total, expected_total)
+
+    @pytest.mark.asyncio
+    async def test_o4_no_matching_section(self, tmp_path: Path) -> None:
+        """{EN_TRANSLATED} on a lesson without one must raise with the lesson id."""
+        from app.audio.render_service import reassemble_lesson_audio
+
+        store = ContentStore(":memory:")
+        lesson = _build_test_lesson()
+        audio_dir = tmp_path / "audio"
+        _populate_store(store, lesson, audio_dir, [2.0, 5.0, 8.0, 5.0])
+
+        with pytest.raises(ValueError, match=lesson.title):
+            await reassemble_lesson_audio(
+                store=store,
+                renderer=_make_fake_renderer(),
+                tts=_CountingTTS(),
+                audio_dir=audio_dir,
+                lesson_id=lesson.title,
+                lesson=lesson,
+                section_types={SectionType.EN_TRANSLATED},
+            )
+
+    @pytest.mark.asyncio
+    async def test_o6_rate_disagreement_raises(self, tmp_path: Path) -> None:
+        """Two targets reporting different rates must FAIL loudly — the concat
+        demuxer runs under -c copy and cannot join heterogeneous streams."""
+        from app.audio.render_service import reassemble_lesson_audio
+
+        store = ContentStore(":memory:")
+        lesson = _build_test_lesson()
+        audio_dir = tmp_path / "audio"
+        _populate_store(store, lesson, audio_dir, [2.0, 5.0, 8.0, 5.0])
+
+        base = _make_fake_renderer()
+
+        class _RateDisagreeingRenderer:
+            pause_calculator = base.pause_calculator
+
+            async def render(self, *a, **kw):
+                return await base.render(*a, **kw)
+
+            async def render_section(self, section, output_path, section_idx, language_code):
+                cues, _ = await base.render_section(section, output_path, section_idx, language_code)
+                return cues, 48000 if section_idx == 0 else 44100
+
+        with pytest.raises(ValueError) as exc_info:
+            await reassemble_lesson_audio(
+                store=store,
+                renderer=_RateDisagreeingRenderer(),
+                tts=_CountingTTS(),
+                audio_dir=audio_dir,
+                lesson_id=lesson.title,
+                lesson=lesson,
+                section_types={SectionType.KEY_PHRASES, SectionType.SLOW_SPEED},
+            )
+        message = str(exc_info.value)
+        assert "48000" in message and "44100" in message, message

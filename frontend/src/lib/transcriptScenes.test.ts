@@ -84,6 +84,36 @@ describe("buildScenes", () => {
     expect(scenes[1].lines[0].naturalText).toBe("hvala");
   });
 
+  // Defence-in-depth, and labelled as such on purpose. Today's builders emit
+  // [title, scene_label, l2, gloss, ...], so extractTranslations' `awaiting`
+  // guard skips the title BEFORE SECTION_TITLES is consulted — a fixture with
+  // the title first passes identically whether or not the set is correct
+  // (verified: the whole file stayed green against the pre-rename set). This
+  // fixture puts the title AFTER an L2 line, the one shape where the set is
+  // load-bearing, so it actually discriminates.
+  it("skips a section title that follows an L2 line instead of using it as that line's translation (tunatale-v3ri)", () => {
+    const lesson = baseLesson({
+      sections: [
+        {
+          type: "natural_speed",
+          phrases: [narrator("Natural Speed"), narrator("Scene"), l2("zdravo"), l2("hvala")],
+        },
+        {
+          type: "translated",
+          phrases: [l2("zdravo"), narrator("English After"), l2("hvala"), narrator("the gloss")],
+        },
+      ],
+    });
+    const scenes = buildScenes(lesson, [
+      { role: "female-1", words: [word("zdravo")] },
+      { role: "female-1", words: [word("hvala")] },
+    ]);
+    // "English After" is a title, not a translation: line 0 has none, and the
+    // real gloss stays attached to line 1 rather than shifting up.
+    expect(scenes[0].lines[0].translatedText).toBe("");
+    expect(scenes[0].lines[1].translatedText).toBe("the gloss");
+  });
+
   it("attaches translated text when present", () => {
     const lesson = baseLesson({
       sections: [
@@ -93,7 +123,7 @@ describe("buildScenes", () => {
         },
         {
           type: "translated",
-          phrases: [narrator("Translated"), l2("zdravo"), narrator("Hello")],
+          phrases: [narrator("English After"), l2("zdravo"), narrator("Hello")],
         },
       ],
     });
@@ -111,7 +141,7 @@ describe("buildScenes", () => {
         {
           type: "translated",
           // second L2 line has no translation after it
-          phrases: [narrator("Translated"), l2("zdravo"), narrator("Hello"), l2("hvala")],
+          phrases: [narrator("English After"), l2("zdravo"), narrator("Hello"), l2("hvala")],
         },
       ],
     });
@@ -132,7 +162,7 @@ describe("buildScenes", () => {
         },
         {
           type: "translated",
-          phrases: [narrator("Translated"), l2("zdravo"), l2("hvala"), narrator("Thanks")],
+          phrases: [narrator("English After"), l2("zdravo"), l2("hvala"), narrator("Thanks")],
         },
       ],
     });

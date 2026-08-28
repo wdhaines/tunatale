@@ -53,7 +53,7 @@ class TestBuildCueManifestDialogue:
                 Section(
                     section_type=SectionType.TRANSLATED,
                     phrases=[
-                        Phrase(text="Translated", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
+                        Phrase(text="English After", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
                         Phrase(text="Dober dan", voice_id="sl-SI-PetraNeural", language_code="sl", role="female-1"),
                         Phrase(text="Good day", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
                         Phrase(text="Hvala", voice_id="sl-SI-PetraNeural", language_code="sl", role="female-1"),
@@ -118,7 +118,7 @@ class TestBuildCueManifestDialogue:
                 Section(
                     section_type=SectionType.SLOW_SPEED,
                     phrases=[
-                        Phrase(text="Slow Speed", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
+                        Phrase(text="Enunciated", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
                         Phrase(text="Dober dan", voice_id="sl-SI-PetraNeural", language_code="sl", role="female-1"),
                     ],
                 )
@@ -142,7 +142,12 @@ class TestBuildCueManifestDialogue:
                 Section(
                     section_type=SectionType.SLOW_TRANSLATED,
                     phrases=[
-                        Phrase(text="Slow Translated", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
+                        Phrase(
+                            text="Enunciated, English After",
+                            voice_id="en-US-GuyNeural",
+                            language_code="en",
+                            role="narrator",
+                        ),
                         Phrase(
                             text="Dober ... dan!", voice_id="sl-SI-PetraNeural", language_code="sl", role="female-1"
                         ),
@@ -186,9 +191,7 @@ class TestBuildCueManifestDialogue:
                 Section(
                     section_type=SectionType.EN_TRANSLATED,
                     phrases=[
-                        Phrase(
-                            text="English Translated", voice_id="en-US-GuyNeural", language_code="en", role="narrator"
-                        ),
+                        Phrase(text="English Before", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
                         Phrase(text="At the cafe", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
                         Phrase(text="Good day", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
                         Phrase(text="Dober dan", voice_id="sl-SI-PetraNeural", language_code="sl", role="female-1"),
@@ -221,7 +224,7 @@ class TestBuildCueManifestDialogue:
                     section_type=SectionType.SLOW_EN_TRANSLATED,
                     phrases=[
                         Phrase(
-                            text="Slow English Translated",
+                            text="Enunciated, English Before",
                             voice_id="en-US-GuyNeural",
                             language_code="en",
                             role="narrator",
@@ -253,9 +256,7 @@ class TestBuildCueManifestDialogue:
                 Section(
                     section_type=SectionType.EN_TRANSLATED,
                     phrases=[
-                        Phrase(
-                            text="English Translated", voice_id="en-US-GuyNeural", language_code="en", role="narrator"
-                        ),
+                        Phrase(text="English Before", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
                         Phrase(text="At the cafe", voice_id="en-US-GuyNeural", language_code="en", role="narrator"),
                     ],
                 )

@@ -33,9 +33,9 @@ class NaturalPauseCalculator:
 
         - Key Phrases + L2: audio-duration-based (1:1), floor 500 ms.
         - Key Phrases + English narrator: base 500 ms.
-        - Slow Speed + L2: base 500 ms × 1.2.
-        - Slow Speed + English narrator: base 500 ms (no slow factor).
-        - Natural Speed / Translated (any language): base 500 ms.
+        - Enunciated (SLOW_SPEED) + L2: base 500 ms × 1.2.
+        - Enunciated (SLOW_SPEED) + English narrator: base 500 ms (no slow factor).
+        - Natural Speed / English After (any language): base 500 ms.
 
         `word_count` is retained for backward compatibility with the renderer
         call site and is currently unused.
