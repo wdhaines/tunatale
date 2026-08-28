@@ -209,6 +209,254 @@ class TestExtractTranscript:
         result = extract_transcript(lesson, self.db, self.lemmatizer)
         assert result.dialogue_lines[0].words[0].srs_state == "review"
 
+    def _add_variant_pair(self):
+        """The real shape from the Norwegian deck: ONE variant card that has ALSO
+        been given its production as a cloze, so TWO rows carry the same front.
+
+        ⚠️ Every other test in this class adds a single row per variant text, and
+        that is precisely why none of them could see tunatale-xmnv. A one-row
+        fixture passes whatever the index does with duplicates.
+
+        Faithful to collocations 1534/3059 in tunatale_no.db: the vocab row
+        carries a disambig ('preposition') and recognition only; the cloze
+        carries an empty disambig, a production direction, and points back via
+        base_collocation_id. The differing disambig is load-bearing — with both
+        empty, add_collocation would MERGE the second into the first and there
+        would be no pair to test.
+        """
+        from app.common.guid import compute_guid
+
+        base_unit = SyntacticUnit(
+            text="mellom, imellom",
+            translation="between",
+            word_count=1,
+            difficulty=1,
+            source="anki",
+            disambig_key="preposition",
+        )
+        base_id = self.db.upsert_by_guid(
+            base_unit,
+            "no",
+            {
+                Direction.RECOGNITION: DirectionState(
+                    direction=Direction.RECOGNITION,
+                    due_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    state=SRSState.REVIEW,
+                    stability=120.0,
+                    reps=52,
+                    last_review=datetime(2025, 9, 1, tzinfo=UTC),
+                )
+            },
+            anki_note_id=9200,
+        )
+        cloze_unit = SyntacticUnit(
+            text="mellom, imellom",
+            translation="between",
+            word_count=1,
+            difficulty=1,
+            source="anki",
+            card_type="cloze",
+            source_sentence="Det er en hemmelighet {{c1::mellom}} oss",
+        )
+        self.db.add_collocation(cloze_unit, language_code="no")
+        cloze_guid = compute_guid(cloze_unit.text, "no", cloze_unit.disambig_key or "")
+        cloze_id = self.db.get_collocation_id_by_guid(cloze_guid)
+        self.db.set_base_collocation_id(cloze_id, base_id)
+        return base_id, cloze_id
+
+    def test_a_cloze_does_not_shadow_the_vocab_card_it_belongs_to(self):
+        """tunatale-xmnv. USER: "Why can't mellom be reviewed? It's 0% learned
+        but no review option."
+
+        `_build_variant_index` fills surface -> (id, item) from a query with no
+        ORDER BY and no dedupe, so when a variant card also has a cloze BOTH
+        rows carry the same front and the last write wins — the cloze, because
+        its id is higher. The reader then binds the word to an unstarted
+        production cloze and never sees the recognition card that is actually
+        due.
+
+        ⚠️ Asserted on the RESOLVED ID, not on "some card was found": binding to
+        the cloze also finds a card, with a translation and a state, which is
+        why this looked like working software.
+        """
+        base_id, cloze_id = self._add_variant_pair()
+        lesson = _make_lesson([("female-1", "mellom")], lang="no")
+
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=date(2026, 8, 28))
+        word = result.dialogue_lines[0].words[0]
+
+        assert word.srs_item_id == base_id, (
+            f"bound to {word.srs_item_id} (cloze is {cloze_id}); the vocab row is the lexical item"
+        )
+        assert word.card_type != "cloze"
+
+    def test_the_shadowed_recognition_card_is_still_reviewable(self):
+        """The user-visible half: binding to the cloze hid a due recognition card.
+
+        The id assertion above can be satisfied while the reader still reports
+        nothing to review, so pin the consequence too.
+        """
+        self._add_variant_pair()
+        lesson = _make_lesson([("female-1", "mellom")], lang="no")
+
+        word = extract_transcript(lesson, self.db, self.lemmatizer, today=date(2026, 8, 28)).dialogue_lines[0].words[0]
+
+        assert word.recognition_state == "review"
+        assert word.recognition_is_due is True
+
+    def test_either_spelling_resolves_to_the_vocab_card_of_a_cloze_covered_variant(self):
+        """The second spelling must not resolve differently from the first."""
+        base_id, _ = self._add_variant_pair()
+        lesson = _make_lesson([("female-1", "mellom"), ("female-1", "imellom")], lang="no")
+
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=date(2026, 8, 28))
+
+        assert result.dialogue_lines[0].words[0].srs_item_id == base_id
+        assert result.dialogue_lines[1].words[0].srs_item_id == base_id
+
+    def _add_lemma_card(self, text: str, lemma: str, translation: str) -> int:
+        from app.common.guid import compute_guid
+
+        unit = SyntacticUnit(text=text, translation=translation, word_count=1, difficulty=1, source="llm", lemma=lemma)
+        self.db.add_collocation(unit, language_code="no")
+        return self.db.get_collocation_id_by_guid(compute_guid(text, "no", ""))
+
+    def _flip_lesson(self, verb_first: bool):
+        """Two lines sharing the surface 'gaar' but NOT its lemma, either order.
+
+        Line V: the verb, lemma 'gaa'.  Line N: the noun, lemma 'gaar'.
+        A StubLemmatizer supplies the differing lemmas, because the whole point
+        is a surface whose lemma depends on its sentence.
+        """
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        verb_line, noun_line = "Han gaar hjem", "Det var i gaar"
+        stub = StubLemmatizer()
+        stub.set_sentence(
+            verb_line,
+            [
+                TokenAnalysis(surface="Han", lemma="han"),
+                TokenAnalysis(surface="gaar", lemma="gaa"),
+                TokenAnalysis(surface="hjem", lemma="hjem"),
+            ],
+        )
+        stub.set_sentence(
+            noun_line,
+            [
+                TokenAnalysis(surface="Det", lemma="det"),
+                TokenAnalysis(surface="var", lemma="vaere"),
+                TokenAnalysis(surface="i", lemma="i"),
+                TokenAnalysis(surface="gaar", lemma="gaar"),
+            ],
+        )
+        lines = [verb_line, noun_line] if verb_first else [noun_line, verb_line]
+        return _make_lesson([("female-1", t) for t in lines], lang="no"), stub, lines.index(noun_line)
+
+    def _noun_binding(self, verb_first: bool):
+        lesson, stub, noun_idx = self._flip_lesson(verb_first)
+        result = extract_transcript(lesson, self.db, stub, today=date(2026, 8, 28))
+        line = result.dialogue_lines[noun_idx]
+        return next(w for w in line.words if w.surface == "gaar").srs_item_id
+
+    def test_a_words_card_does_not_depend_on_what_came_earlier_in_the_lesson(self):
+        """tunatale-klh. `base_cache` is READ by lemma but WRITTEN by surface as a
+        fallback, so the two namespaces collide: a verb token (surface 'gaar',
+        lemma 'gaa') writes base_cache['gaar'] = verb-card, and a later token
+        whose LEMMA is genuinely 'gaar' reads it and gets the verb's card.
+
+        The same sentence then renders a different card purely by position.
+
+        ⚠️ This bead's original oracle used the real Norwegian deck ('i gaar' vs
+        'Da gaar vi videre') and NO LONGER REPRODUCES — re-measured 2026-08-28,
+        all three of its rows now agree, because the deck gained an 'i gaar' row
+        and the inflection index resolves the surface anyway. A data-dependent
+        oracle rotted in thirteen days. This one is synthetic on purpose: it
+        cannot rot, and it tests the mechanism rather than one deck's contents.
+        """
+        verb_id = self._add_lemma_card("gaa", "gaa", "to go")
+        noun_id = self._add_lemma_card("gaar", "gaar", "yesterday")
+        assert verb_id != noun_id
+
+        assert self._noun_binding(verb_first=False) == noun_id, "control: alone, the noun resolves correctly"
+        assert self._noun_binding(verb_first=True) == noun_id, (
+            "the verb earlier in the lesson poisoned the cache and the noun took its card"
+        )
+
+    def test_an_uncarded_word_stays_unknown_however_often_it_appears(self):
+        """Baseline: no card at all resolves to nothing, every time.
+
+        ⚠️ This does NOT exercise the surface fallback — 'ukjent' lemmatizes to
+        itself, so `surface.lower() != lemma` is false and the fallback never
+        runs. It was written as the guard for that path and could not have been;
+        the real guard is the test below. Kept as the plain no-card baseline.
+        """
+        lesson = _make_lesson([("female-1", "ukjent"), ("female-1", "ukjent")], lang="no")
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=date(2026, 8, 28))
+        for line in result.dialogue_lines:
+            assert line.words[0].srs_state == "unknown"
+            assert line.words[0].srs_item_id is None
+
+    def test_the_surface_fallback_is_memoised_and_still_cannot_leak_across_lemmas(self):
+        """The surface fallback must be cached, and its cache must stay separate.
+
+        Two tokens share the surface 'gaar' with DIFFERENT lemmas, and neither
+        lemma has a card — so both fall through to the surface lookup. That is
+        the only shape that reaches the surface memo, and it is exactly the
+        shape klh got wrong: one shared dict let the first token's answer
+        satisfy the second token's *lemma* read.
+
+        Asserts both halves — one DB query for the repeated surface (the memo
+        does its job) AND both tokens resolving to the surface's own card
+        (nothing leaked). Counting queries via a subclass, not a patch: the DB
+        is our own code, so a `patch("app.…")` here would need a
+        mock_allowlist.txt entry for what is really just a call counter.
+        """
+        from app.common.guid import compute_guid
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        class CountingDB(SRSDatabase):
+            lemma_queries: list[str] = []
+
+            def get_collocation_by_lemma_with_id(self, lemma):
+                CountingDB.lemma_queries.append(lemma)
+                return super().get_collocation_by_lemma_with_id(lemma)
+
+        CountingDB.lemma_queries = []
+        db = CountingDB(":memory:")
+        unit = SyntacticUnit(
+            text="gaar", translation="yesterday", word_count=1, difficulty=1, source="llm", lemma="gaar"
+        )
+        db.add_collocation(unit, language_code="no")
+        card_id = db.get_collocation_id_by_guid(compute_guid("gaar", "no", ""))
+
+        line_a, line_b = "Han gaar hjem", "Hun gaar ut"
+        stub = StubLemmatizer()
+        stub.set_sentence(
+            line_a,
+            [
+                TokenAnalysis(surface="Han", lemma="han"),
+                TokenAnalysis(surface="gaar", lemma="gaa"),
+                TokenAnalysis(surface="hjem", lemma="hjem"),
+            ],
+        )
+        stub.set_sentence(
+            line_b,
+            [
+                TokenAnalysis(surface="Hun", lemma="hun"),
+                TokenAnalysis(surface="gaar", lemma="ga"),
+                TokenAnalysis(surface="ut", lemma="ut"),
+            ],
+        )
+        lesson = _make_lesson([("female-1", line_a), ("female-1", line_b)], lang="no")
+
+        result = extract_transcript(lesson, db, stub, today=date(2026, 8, 28))
+
+        bound = [next(w for w in line.words if w.surface == "gaar").srs_item_id for line in result.dialogue_lines]
+        assert bound == [card_id, card_id], f"surface fallback did not resolve both tokens: {bound}"
+        assert CountingDB.lemma_queries.count("gaar") == 1, (
+            f"the surface lookup was repeated instead of memoised: {CountingDB.lemma_queries}"
+        )
+
     def test_non_variant_word_still_unknown(self):
         """The variant index must not accidentally match unrelated words."""
         self._add_variant_card()

@@ -252,6 +252,13 @@ def _build_variant_index(db: SRSDatabase, language_code: str) -> dict[str, tuple
         return {}
     index: dict[str, tuple[int, SRSItem]] = {}
     for cid, text, item in db.get_variant_candidates_with_items(language_code, sep):
+        # A production cloze shares its base card's front ("mellom, imellom").
+        # The cloze row is the base's mastery component, not a second lexical
+        # item — resolving the front to the cloze (higher id, last write wins)
+        # hides the recognition card that is actually reviewable. The base row
+        # is the lexical item; skip its cloze twins. (tunatale-xmnv)
+        if item.syntactic_unit.card_type == "cloze":
+            continue
         variants = card_surface_variants(language_code, text)
         if len(variants) <= 1:
             continue  # contained the separator but isn't a variant list (real phrase)
@@ -372,6 +379,13 @@ def extract_transcript(
         inflection_cache: dict[str, list[tuple[int, object]]] = {}
         # Cache base-collocation lookups per lemma (finding #6)
         base_cache: dict[str, tuple | None] = {}
+        # Surface-fallback lookups (lemma missed, surface hit) in their OWN
+        # cache: base_cache is read by lemma, so a surface key must never be
+        # able to satisfy a lemma read. Sharing one dict let a verb surface
+        # ('gaar', lemma 'gaa') hand its card to a later token whose lemma is
+        # genuinely 'gaar' — the same sentence rendered a different card by
+        # position alone. (tunatale-klh)
+        surface_base_cache: dict[str, tuple | None] = {}
         # Cache "does this word have a base cloze carrying its production?" per
         # collocation id. Keyed by id rather than lemma because that is what the
         # link records — a lemma cannot tell two homographs apart. `None` is a
@@ -436,10 +450,13 @@ def extract_transcript(
                     else:
                         result = db.get_collocation_by_lemma_with_id(lemma)
                         if result is None and surface.lower() != lemma:
-                            result = db.get_collocation_by_lemma_with_id(surface.lower())
+                            surface_key = surface.lower()
+                            if surface_key in surface_base_cache:
+                                result = surface_base_cache[surface_key]
+                            else:
+                                result = db.get_collocation_by_lemma_with_id(surface_key)
+                                surface_base_cache[surface_key] = result
                         base_cache[lemma] = result
-                        if result is not None and surface.lower() != lemma:
-                            base_cache[surface.lower()] = result
                     # Step 2b: spelling-variant card ('mot, imot') keyed by surface.
                     # The lemma lookup misses these (their lemma column is unset), so
                     # fall back to the per-surface variant index before giving up.
