@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import random
 import re
 import shutil
 from collections.abc import Awaitable, Callable, Mapping
@@ -24,13 +25,32 @@ from xml.sax.saxutils import escape, quoteattr
 
 import httpx
 
+from app.audio.ports import TTSExhausted
+
 logger = logging.getLogger(__name__)
 
 # Kept in step with EdgeTTSService so the provider switch is not also a
 # throughput or pacing change. Overridden by app/config.py settings.
 MIN_REQUEST_DELAY_S = 0.2
 MAX_CONCURRENT_REQUESTS = 10
-MAX_RETRIES = 3
+# Six, not three. Measured 2026-08-28 on a real cold day-8 render at
+# concurrency 3: 76 x 429 spread across EVERY second of the run (1-6 per
+# second, no quiet window) while 64% of requests succeeded anyway. So a
+# throttle is a sustained condition to keep drawing against, not a burst to
+# wait out. At a 64% per-request success rate a 3-rung ladder leaves a clip a
+# 0.36^3 = 4.7% chance of exhausting — over 169 clips that is a near-certain
+# render abort, and it is what killed the control run. Six rungs make it
+# 0.36^6 = 0.22%, a 20x reduction in the event that ends a render.
+#
+# The rungs cost nothing when nothing is failing, and a clip in backoff does
+# NOT hold the semaphore, so patience here is not throughput lost.
+MAX_RETRIES = 6
+# Jitter, as a fraction ADDED to a backoff. All 169 clips exist as tasks from
+# the start and any number can sit in backoff at once, so a deterministic
+# ladder wakes them as a stampede onto one semaphore slot
+# (findings-tts-pacing-2026-08-21.md, defect 2). Additive only: the ladder is
+# a floor, and shortening a wait would undo the patience above.
+RETRY_JITTER = 0.5
 
 # Edge Read Aloud returns 24 kHz / 48 kbit mono mp3. Matching it means audio
 # rendered after the cutover is byte-comparable in format to the ~400 MB already
@@ -299,6 +319,7 @@ class AzureTTSService:
                     # header (findings-tts-pacing-2026-08-21.md), but honour
                     # it when present. max() means it can only LENGTHEN the
                     # wait, never shorten it below the ladder.
+                    delay += delay * random.random() * RETRY_JITTER
                     retry_after = _parse_retry_after(exc.response.headers.get("Retry-After"))
                     if retry_after is not None:
                         delay = max(delay, retry_after)
@@ -312,7 +333,7 @@ class AzureTTSService:
             # every terminal failure.
             if attempt < MAX_RETRIES - 1:
                 await self._sleep(delay)
-        raise RuntimeError(f"Azure TTS synthesis failed after {MAX_RETRIES} attempts") from last_error
+        raise TTSExhausted(f"Azure TTS synthesis failed after {MAX_RETRIES} attempts") from last_error
 
     def _log_429_once(self, response: httpx.Response) -> None:
         """Log the 429 body AND headers — the only signal the provider gives.

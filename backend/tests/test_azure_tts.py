@@ -159,7 +159,7 @@ async def test_retry_exhaustion_raises_and_names_the_status(tmp_path, caplog):
     """Persistent failure raises rather than leaving a silently empty file."""
     respx.post(SYNTH_URL).mock(return_value=httpx.Response(503))
 
-    with pytest.raises(RuntimeError, match="after 3 attempts"):
+    with pytest.raises(RuntimeError, match="after 6 attempts"):
         await _svc().synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
 
     assert not (tmp_path / "o.mp3").exists()
@@ -415,7 +415,9 @@ async def test_retry_after_seconds_below_ladder_is_ignored(tmp_path):
     await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
 
     assert route.call_count == 2
-    assert sleeps[1] == pytest.approx(2.0)
+    # The ladder rung is 2.0s and jitter only ever ADDS, so the wait sits in
+    # [2.0, 3.0) — anything at or below 2.0 would mean the header shortened it.
+    assert 2.0 <= sleeps[1] < 3.0, f"the 0.1s header shortened the 2.0s ladder rung: {sleeps}"
 
 
 @respx.mock
@@ -507,7 +509,7 @@ async def test_retry_after_malformed_is_ignored_not_raised(tmp_path):
     await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
 
     assert route.call_count == 2
-    assert sleeps[1] == pytest.approx(2.0)
+    assert 2.0 <= sleeps[1] < 3.0, f"a malformed header did not fall back to the 2.0s ladder rung: {sleeps}"
 
 
 # ------------------------------------------------------------------
@@ -540,23 +542,29 @@ async def test_azure_per_provider_override_wins_over_shared(monkeypatch):
 async def test_no_trailing_sleep_after_final_attempt(tmp_path):
     """The retry ladder does not sleep after the final (failed) attempt.
 
-    With retry_base_delay=1 the exponential backoff is 1s, 2s between attempts,
-    and a trailing sleep would add a third 1s delay after the final failure.
-    The total elapsed time must be under 3.5s (sum of 1+2 backoff sleeps).
+    A trailing sleep adds dead time to every terminal failure — and with a
+    six-rung ladder that is a 32-second rung nobody is waiting for.
+
+    ⚠️ Asserted on the injected sleep SEQUENCE, not on wall-clock as this test
+    used to be: at retry_base_delay=1 the real ladder is 1+2+4+8+16 = 31s, so
+    the old elapsed-time form would have turned into a half-minute test that
+    still could not say WHERE the extra sleep was. This is the shape the
+    edge_tts twin already used.
     """
-    import time
-
     respx.post(SYNTH_URL).mock(return_value=httpx.Response(503))
+    sleeps: list[float] = []
 
-    svc = _svc(retry_base_delay=1)
-    t0 = time.monotonic()
-    with pytest.raises(RuntimeError, match="after 3 attempts"):
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    svc = _svc(min_delay=0, retry_base_delay=1, sleep=fake_sleep)
+    with pytest.raises(RuntimeError, match="after 6 attempts"):
         await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
-    elapsed = time.monotonic() - t0
 
-    # Backoff sleeps: 1s + 2s = 3s total. If a trailing sleep exists,
-    # elapsed would be ~4s. Use 3.5s as the boundary.
-    assert elapsed < 3.5, f"elapsed {elapsed:.1f}s suggests a trailing sleep after final attempt"
+    # 503 is a plain transient, so no 429 jitter: the ladder is exactly
+    # 2**attempt. Five backoffs for six attempts — never one after the last.
+    backoffs = [s for s in sleeps if s > 0]
+    assert backoffs == [1, 2, 4, 8, 16], f"expected five backoffs and no trailing sleep, got {sleeps}"
 
 
 # ------------------------------------------------------------------
@@ -828,3 +836,96 @@ async def test_synthesize_sends_the_phoneme_markup_to_the_wire(tmp_path):
 
     body = route.calls[0].request.content.decode()
     assert '<phoneme alphabet="ipa" ph="kɑf.fə">kaffe</phoneme>' in body
+
+
+# ---------------------------------------------------------------------------
+# A ladder patient enough to outlast a throttling episode (tunatale-uxm0)
+# ---------------------------------------------------------------------------
+#
+# Measured 2026-08-28, real cold day-8 render at concurrency 3: 76 x 429 spread
+# across EVERY second of a 29 s render (1-6 per second, no quiet window), and
+# 64% of requests succeeded anyway. The throttle is a sustained condition, not
+# a burst — so the ladder's job is to keep re-drawing from a 64% urn, not to
+# wait for the sky to clear. Three attempts left a clip a 0.36^3 = 4.7% chance
+# of exhausting; over 169 clips that is a near-certain render abort, and it is
+# what killed the control run.
+
+
+@respx.mock
+async def test_a_clip_survives_five_consecutive_429s(tmp_path):
+    """Five 429s then a 200 must yield audio, not a RuntimeError.
+
+    At the measured 64% per-request success rate, a 3-attempt ladder exhausts
+    on 4.7% of clips and a 6-attempt ladder on 0.22% — a 20x reduction in the
+    thing that aborts a render. This is the discriminating case: it passes with
+    MAX_RETRIES >= 6 and fails with 3.
+    """
+    route = respx.post(SYNTH_URL).mock(
+        side_effect=[
+            httpx.Response(429),
+            httpx.Response(429),
+            httpx.Response(429),
+            httpx.Response(429),
+            httpx.Response(429),
+            httpx.Response(200, content=b"ok"),
+        ]
+    )
+
+    await _svc().synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
+
+    assert route.call_count == 6
+    assert (tmp_path / "o.mp3").read_bytes() == b"ok"
+
+
+@respx.mock
+async def test_the_429_ladder_spans_tens_of_seconds_not_six(tmp_path):
+    """The backoffs must total ~a minute of patience at the production base delay.
+
+    The old ladder was 2 s + 4 s = 6 s, sized when 429s were believed to be
+    self-inflicted bursts. They are exogenous (`server: istio-envoy`,
+    "Downstream Service Throttled") and the observed windows run tens of
+    seconds, so 6 s cannot outlast one.
+    """
+    respx.post(SYNTH_URL).mock(return_value=httpx.Response(429))
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    # min_delay 0 so the pacing sleeps do not pollute the ladder measurement.
+    svc = _svc(min_delay=0, retry_base_delay=0.5, sleep=fake_sleep)
+    with pytest.raises(RuntimeError):
+        await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
+
+    backoffs = [s for s in sleeps if s > 0]
+    assert sum(backoffs) >= 60, f"the ladder offers only {sum(backoffs):.0f}s of patience; got {backoffs}"
+
+
+@respx.mock
+async def test_429_backoffs_are_jittered_so_waking_is_not_a_stampede(tmp_path):
+    """Two clips backing off together must not wake in the same instant.
+
+    `_synthesize_with_retry` sleeps OUTSIDE the semaphore, so any number of
+    clips can sit in backoff at once — and with a purely deterministic ladder
+    they all wake and rush the single slot together
+    (findings-tts-pacing-2026-08-21.md, defect 2). Jitter may only LENGTHEN a
+    wait: shortening it below the ladder would undo the patience above.
+    """
+    respx.post(SYNTH_URL).mock(return_value=httpx.Response(429))
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    for _ in range(6):
+        svc = _svc(min_delay=0, retry_base_delay=0.5, sleep=fake_sleep)
+        with pytest.raises(RuntimeError):
+            await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
+
+    # Five backoffs per clip, with the min_delay=0 pacing sleeps filtered out.
+    backoffs = [s for s in sleeps if s > 0]
+    assert len(backoffs) == 30, f"expected 6 clips x 5 backoffs, got {len(backoffs)}: {backoffs}"
+    first_rung = backoffs[::5]
+    assert len(set(first_rung)) > 1, f"every clip's first backoff was identical: {first_rung}"
+    # The ladder is the FLOOR; jitter adds, never subtracts.
+    assert all(s >= 2.0 for s in first_rung), f"jitter shortened a wait below the ladder: {first_rung}"
