@@ -1299,7 +1299,7 @@ describe("ListenPreviewModal", () => {
     expect(details).toBeTruthy();
     // Terminology alignment (2026-08): the stats line's bucket is "known".
     // The API field stays `well_known`; only the label changed.
-    expect(getByText("1 known word")).toBeTruthy();
+    expect(getByText("1 well recognized word")).toBeTruthy();
 
     // It starts on Skip
     expect(isActive(gradeBtn(container, "word:hvala", "skip"))).toBe(true);
@@ -2187,7 +2187,7 @@ describe("NEW-state rows and the shared introduction budget", () => {
     expect(segments(container)).toEqual([
       ["1", "now"],
       ["1", "later"],
-      ["0", "known"],
+      ["0", "well recognized"],
     ]);
     expect(gradeBtn(container, "word:hansen", "good")).toBeTruthy();
 

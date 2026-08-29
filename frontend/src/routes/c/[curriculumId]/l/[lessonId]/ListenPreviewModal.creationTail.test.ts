@@ -260,7 +260,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     expect(segments(container)).toEqual([
       ["2", "now"],
       ["3", "later"],
-      ["0", "known"],
+      ["0", "well recognized"],
     ]);
     // The F-13 summary counts tail rows; the old "N more — next listen" line
     // is gone for good (and the new summary is pinned in the test above).
@@ -291,7 +291,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     expect(segments(container)).toEqual([
       ["2", "now"],
       ["3", "later"],
-      ["0", "known"],
+      ["0", "well recognized"],
     ]);
 
     // The skipped row stays live and stays skipped — legible and reversible.
@@ -333,7 +333,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     expect(segments(container)).toEqual([
       ["2", "now"],
       ["3", "later"],
-      ["0", "known"],
+      ["0", "well recognized"],
     ]);
     expect(isAboveDivider(container, "brød")).toBe(false);
   });
@@ -398,7 +398,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     expect(segments(container)).toEqual([
       ["2", "now"],
       ["3", "later"],
-      ["0", "known"],
+      ["0", "well recognized"],
     ]);
 
     await fireEvent.click(getByText("Mark as listened"));
@@ -432,7 +432,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     expect(segments(container)).toEqual([
       ["2", "now"],
       ["3", "later"],
-      ["0", "known"],
+      ["0", "well recognized"],
     ]);
   });
 
@@ -453,7 +453,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     expect(segments(container)).toEqual([
       ["0", "now"],
       ["2", "later"],
-      ["0", "known"],
+      ["0", "well recognized"],
     ]);
     expect(getByText("Mark as listened")).toBeTruthy();
   });
@@ -483,7 +483,7 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     expect(segments(container)).toEqual([
       ["2", "now"],
       ["0", "later"],
-      ["0", "known"],
+      ["0", "well recognized"],
     ]);
   });
 });

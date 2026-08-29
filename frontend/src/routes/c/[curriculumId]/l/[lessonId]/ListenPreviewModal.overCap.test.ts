@@ -403,7 +403,7 @@ describe("ListenPreviewModal — opting past the daily new-card cap", () => {
     expect(segments(container)).toEqual([
       ["2", "now"],
       ["3", "later"],
-      ["0", "known"],
+      ["0", "well recognized"],
     ]);
 
     await fireEvent.click(getByText("Mark 2 as listened"));

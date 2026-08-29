@@ -203,7 +203,7 @@ describe("F-5 — learning rows are deferred exactly like known rows", () => {
       ["3", "now"],
       ["0", "later"],
       ["2", "learning"],
-      ["1", "known"],
+      ["1", "well recognized"],
     ]);
     const total = segments(container).reduce((n, [count]) => n + Number(count), 0);
     expect(total).toBe(preview().candidates.length);

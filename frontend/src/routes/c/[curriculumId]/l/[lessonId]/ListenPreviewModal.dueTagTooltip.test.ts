@@ -191,7 +191,7 @@ describe("F-4 — the day tag names its exact mastery on hover", () => {
     const { container } = await open();
     // 0.95 would render as "95%"; asserting both halves is what makes this a
     // carve-out test rather than a rounding test.
-    expect(tagTooltipMastery(container, "takk")).toBe("known");
+    expect(tagTooltipMastery(container, "takk")).toBe("well recognized");
     expect(tagTooltipMastery(container, "takk")).not.toContain("%");
   });
 

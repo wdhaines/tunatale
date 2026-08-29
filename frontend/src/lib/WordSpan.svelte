@@ -77,8 +77,15 @@
 		if (word.active_state === 'ignored') return 'ignored';
 		// Scheduled past the listen horizon — the listen preview has already
 		// stopped asking about it, so reporting a work-in-progress percentage
-		// here would contradict that. Same word as an explicitly known card.
-		if (word.well_known) return 'known';
+		// here would contradict that. Deliberately NOT the word used for an
+		// explicitly known card above: `well_known` is derived from the
+		// RECOGNITION direction alone (`mastery.py::is_well_known`), so it
+		// cannot claim the word is known in production — which is often still
+		// NEW with reps=0. `active_state === 'known'` DOES cover both
+		// directions, so it keeps the stronger word. Must stay identical to
+		// ListenPreviewModal's `masteryLabel`; the two surfaces are not allowed
+		// to describe the same card differently.
+		if (word.well_known) return 'well recognized';
 		if (word.progress != null) return `${Math.round(word.progress * 100)}%`;
 		// suspended, etc. — no mastery line
 		return null;

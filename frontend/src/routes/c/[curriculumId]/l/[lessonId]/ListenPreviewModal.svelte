@@ -339,8 +339,11 @@
 		// Scheduled past the listen horizon. WordSpan suppresses the percentage
 		// here because this flow has already stopped asking about the card;
 		// quoting a work-in-progress number would contradict the row's own
-		// "known" grouping in the disclosure below.
-		if (c.deferred_reason === 'known') return 'known';
+		// "well recognized" grouping in the disclosure below. The wording is
+		// recognition-scoped on purpose: `deferred_reason === 'known'` is
+		// computed from the RECOGNITION direction alone, so it must not be
+		// stated as plain "known" — production is frequently still NEW.
+		if (c.deferred_reason === 'known') return 'well recognized';
 		// `progress: null` IS the server's "no mastery to report" signal — it
 		// stamps null on NEW-state rows and a real float on every other tracked
 		// row. Testing the null rather than `grade_class === 'new'` keeps this
@@ -689,7 +692,7 @@
 					{#if learningCandidates.length > 0}
 						<span class="seg"><span class="n">{learningCandidates.length}</span><span class="l">learning</span></span>
 					{/if}
-					<span class="seg"><span class="n">{wellKnownCandidates.length}</span><span class="l">known</span></span>
+					<span class="seg"><span class="n">{wellKnownCandidates.length}</span><span class="l">well recognized</span></span>
 				</div>
 				{#if optedTailCount > 0}
 					<!-- The over-cap opt-in keeps its voice: opted rows ARE being
@@ -746,9 +749,14 @@
 
 				{#if wellKnownCandidates.length > 0}
 					<details class="well-known-group disclosure-group">
-						<!-- "known", matching the lesson stats line's bucket. The API field
-					     is still `well_known`; only the label changed. -->
-					<summary>{wellKnownCandidates.length} known word{wellKnownCandidates.length !== 1 ? 's' : ''}</summary>
+						<!-- "well recognized", NOT "known": the population is defined by
+					     `is_well_known`, which reads the RECOGNITION direction only, so
+					     the old label overclaimed for words whose production direction
+					     has never been studied. The lesson stats line still says
+					     "known" because its bucket merges this population with
+					     explicitly marked-known cards. The API fields are unchanged
+					     (`well_known`, `deferred_reason: 'known'`); only the label moved. -->
+					<summary>{wellKnownCandidates.length} well recognized word{wellKnownCandidates.length !== 1 ? 's' : ''}</summary>
 						<ul class="list">
 							{#each wellKnownCandidates as c (candidateKey(c))}
 								{@render candidateRow(c)}

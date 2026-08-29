@@ -186,7 +186,7 @@ describe("F-20 — the three-count summary replaces the cut line", () => {
     expect(segments(container)).toEqual([
       ["5", "now"],
       ["2", "later"],
-      ["3", "known"],
+      ["3", "well recognized"],
     ]);
   });
 
@@ -257,7 +257,7 @@ describe("F-20 — the over-cap opt-in keeps its voice", () => {
     expect(segments(container)).toEqual([
       ["6", "now"],
       ["1", "later"],
-      ["3", "known"],
+      ["3", "well recognized"],
     ]);
     // PINNED VERBATIM, spacing included.
     expect(container.textContent).toContain("+1 past today's limit");
@@ -291,7 +291,7 @@ describe("F-20 — the over-cap opt-in keeps its voice", () => {
     expect(segments(container)).toEqual([
       ["5", "now"],
       ["2", "later"],
-      ["3", "known"],
+      ["3", "well recognized"],
     ]);
     expect(container.textContent).not.toContain("past today's limit");
   });

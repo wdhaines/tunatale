@@ -282,10 +282,15 @@ describe("WordSpan", () => {
       expect(el.className).not.toContain("word-known");
     });
 
-    it('labels a well-known word "known", not a percentage', () => {
+    it('labels a well-known word "well recognized", not a percentage', () => {
       // A card scheduled past the listen horizon: the preview already stops
       // asking about it, so the popover must not report it as a work-in-
-      // progress percentage. Same wording as an explicitly marked-known word.
+      // progress percentage. Deliberately NOT the same wording as an explicitly
+      // marked-known word: `well_known` is derived from the RECOGNITION
+      // direction alone, so it cannot claim the word is known in production.
+      // An `active_state === "known"` card still reads "known" (that mark
+      // covers both directions). Same wording as the listen preview, which is
+      // the invariant ListenPreviewModal's `masteryLabel` comment states.
       const { getByRole } = render(WordSpan, {
         props: {
           word: makeWordToken({
@@ -295,7 +300,7 @@ describe("WordSpan", () => {
           }),
         },
       });
-      expect(getByRole("tooltip").textContent).toContain("known");
+      expect(getByRole("tooltip").textContent).toContain("well recognized");
       expect(getByRole("tooltip").textContent).not.toContain("82%");
     });
 
