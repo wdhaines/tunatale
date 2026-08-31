@@ -27,16 +27,31 @@ on:
 env:
   TZ: UTC
 
-# ⚠️ Every install step is a plain `uv sync --all-groups`, and the `--no-group
-# slovene --no-group norwegian --no-group alignment` flags that used to follow it
-# were DELETED on 2026-08-14 because they did nothing (tunatale-as5).
+# ⚠️ CI NOW RUNS LEAN (tunatale-ouk.6): every backend job installs only
+# `--no-default-groups --group dev`, so classla/stanza/torch/transformers are
+# NOT installed, and the local/CI divergence this file used to only warn about
+# is now real and deliberate. It sticks because each of those jobs sets
+# `UV_NO_SYNC: "1"` at JOB level (not a `--no-sync` flag, which does not
+# propagate): the suite shells out to a bare `uv run python -c`
+# (tests/test_anki_extra_isolation.py) that would otherwise re-sync the env back
+# to `[tool.uv] default-groups` MID-RUN and re-fatten it (~140 M -> ~876 M).
+# Lean, measured: full suite 6325 passed / 57 skipped / 100.00% coverage, venv
+# ~155 M. The failure set for a lean env is empty — byte-identical skip list to
+# fat — so a NEW failure or CHANGED skip count is a finding, not a prompt to
+# widen the groups. If a post-sync step (a `scripts/check_*.py`, or the NST
+# lexicon build) ever needs a package the lean env lacks, that is a separate
+# finding to surface by name, not a reason to add a group back here.
 #
-# They looked like they made CI lean, and `tunatale-as5` was filed on the belief
-# that they did — that CI ran without classla/stanza/torch/transformers, so the
-# syllable-slicing paths were never exercised for real. Measured, that is false:
-# `pyproject.toml` sets `[tool.uv] default-groups = ['dev','slovene','norwegian',
-# 'alignment']`, and a bare `uv run` re-syncs the environment to the DEFAULT
-# groups before running anything. So the very next step put all of it back.
+# Historical context, kept so no one re-adds the old flags: the `--no-group
+# slovene --no-group norwegian --no-group alignment` flags that used to follow
+# a plain `uv sync --all-groups` were DELETED on 2026-08-14 because they did
+# nothing (tunatale-as5). They looked like they made CI lean, and tunatale-as5
+# was filed on the belief that they did — that CI ran without
+# classla/stanza/torch/transformers, so the syllable-slicing paths were never
+# exercised for real. Measured, that is false: `pyproject.toml` sets
+# `[tool.uv] default-groups = ['dev','slovene','norwegian','alignment']`, and a
+# bare `uv run` re-syncs the environment to the DEFAULT groups before running
+# anything. So the very next step put all of it back.
 #
 # Proven, not reasoned: after running CI's exact former sync into a throwaway
 # env, `find_spec` reported transformers=False torch=False; one bare `uv run`
@@ -47,16 +62,22 @@ env:
 # dict the flags were believed to produce.
 #
 # Net effect of the flags: an extra partial install per job, then a full one.
-# They cost time and bought nothing. If you ever want CI to genuinely run lean,
-# the flags are not the lever — `default-groups` or `--no-sync` is, and that
-# would create a real local/CI divergence to document. See
-# `.claude/rules/testing.md` § "What a green gate means".
+# They cost time and bought nothing. The real lever is `default-groups` /
+# `--no-sync`, and THIS pass pulled it. The `e2e` job deliberately keeps its own
+# older spelling (`--no-group …`) and a separate lean cache scope; do not
+# harmonise them. See `.claude/rules/testing.md` § "What a green gate means".
 jobs:
   backend:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
+
+    # ⚠️ Required for the lean sync below to STICK, and it must be job-level —
+    # a `--no-sync` flag does not propagate to the bare `uv run` the suite
+    # shells out to. Full reasoning in the header block (tunatale-ouk.6).
+    env:
+      UV_NO_SYNC: "1"
 
     steps:
       - uses: actions/checkout@v7
@@ -93,7 +114,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --no-default-groups --group dev
 
       - name: Build NST lexicon
         run: uv run python scripts/build_nst_lexicon.py build
@@ -212,6 +233,12 @@ jobs:
       run:
         working-directory: backend
 
+    # ⚠️ Required for the lean sync below to STICK, and it must be job-level —
+    # a `--no-sync` flag does not propagate to the bare `uv run` the suite
+    # shells out to. Full reasoning in the header block (tunatale-ouk.6).
+    env:
+      UV_NO_SYNC: "1"
+
     steps:
       - uses: actions/checkout@v7
 
@@ -239,7 +266,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --no-default-groups --group dev
 
       - name: Build NST lexicon
         run: uv run python scripts/build_nst_lexicon.py build
@@ -291,6 +318,12 @@ jobs:
       run:
         working-directory: backend
 
+    # ⚠️ Required for the lean sync below to STICK, and it must be job-level —
+    # a `--no-sync` flag does not propagate to the bare `uv run` the suite
+    # shells out to. Full reasoning in the header block (tunatale-ouk.6).
+    env:
+      UV_NO_SYNC: "1"
+
     steps:
       - uses: actions/checkout@v7
 
@@ -318,7 +351,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --no-default-groups --group dev
 
       # Etc/GMT signs are INVERTED (Etc/GMT-9 is UTC+9), hence the negation.
       # The local-hour assertion is not ceremony: without it a bad offset would
@@ -756,6 +789,12 @@ jobs:
       run:
         working-directory: backend
 
+    # ⚠️ Required for the lean sync below to STICK, and it must be job-level —
+    # a `--no-sync` flag does not propagate to the bare `uv run` the suite
+    # shells out to. Full reasoning in the header block (tunatale-ouk.6).
+    env:
+      UV_NO_SYNC: "1"
+
     steps:
       - uses: actions/checkout@v7
 
@@ -768,7 +807,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --no-default-groups --group dev
 
       - name: Warm anki subprocess env
         run: uv run --isolated --no-project --python 3.14 --with anki==26.8.1 python -c "import anki"
@@ -783,6 +822,12 @@ jobs:
       run:
         working-directory: backend
 
+    # ⚠️ Required for the lean sync below to STICK, and it must be job-level —
+    # a `--no-sync` flag does not propagate to the bare `uv run` the suite
+    # shells out to. Full reasoning in the header block (tunatale-ouk.6).
+    env:
+      UV_NO_SYNC: "1"
+
     steps:
       - uses: actions/checkout@v7
 
@@ -795,7 +840,7 @@ jobs:
         run: uv python install 3.14
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --no-default-groups --group dev
 
       - name: Warm anki subprocess env
         run: uv run --isolated --no-project --python 3.14 --with anki==26.8.1 python -c "import anki"
