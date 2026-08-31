@@ -322,8 +322,12 @@ which is the failure this project has already had twice.
 
 ### What it ships, and why not the rolling snapshots
 
-Sources are a **fresh** snapshot of each configured language DB, plus
-`backend/media` and `backend/output`.
+Sources are a **fresh** snapshot of each configured language DB, plus the Anki
+collection (`settings.anki_collection_path`, by default
+`~/Library/Application Support/Anki2/Will/collection.anki2`), plus `backend/media`
+and `backend/output`. Pass `--no-anki-collection` to skip the collection on a
+deployment with no Anki, or `--anki-collection PATH` to override the default
+path.
 
 It deliberately does **not** back up `~/.tunatale/db-backups`. Those are written
 at most once per calendar day, earliest-wins — a rule that exists so an

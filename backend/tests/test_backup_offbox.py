@@ -48,6 +48,7 @@ from backup_offbox import (  # noqa: E402
     notify_failure,
     redacted,
     restic_env,
+    stage_anki_collection,
     stage_db_snapshots,
 )
 
@@ -71,6 +72,17 @@ def _count(path: Path) -> int:
         return con.execute("SELECT COUNT(*) FROM t").fetchone()[0]
     finally:
         con.close()
+
+
+def _make_collection(path: Path, rows: int = 3) -> None:
+    """A fake Anki collection: a real SQLite DB in WAL mode with a `notes` table,
+    which is the only schema `snapshot_collection` reads."""
+    con = sqlite3.connect(path)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("CREATE TABLE notes (id INTEGER PRIMARY KEY, text TEXT)")
+    con.executemany("INSERT INTO notes (text) VALUES (?)", [(f"note{i}",) for i in range(rows)])
+    con.commit()
+    con.close()
 
 
 class FakeRun:
@@ -324,6 +336,79 @@ class TestStageDbSnapshots:
 # ── the CLI ───────────────────────────────────────────────────────────────────
 
 
+class TestStageAnkiCollection:
+    def test_writes_a_dated_collection_and_returns_the_path(self, tmp_path):
+        src = tmp_path / "collection.anki2"
+        _make_collection(src)
+        staging = tmp_path / "staging"
+
+        written = stage_anki_collection(src, staging, today="2026-08-31")
+
+        assert written == staging / "collection.2026-08-31.anki2"
+        assert written.exists()
+
+    def test_folds_in_an_open_wal(self, tmp_path):
+        """Same freshness property as the DB half: committed rows sitting in a
+        -wal must be in the snapshot."""
+        src = tmp_path / "collection.anki2"
+        _make_collection(src, rows=1)
+        con = sqlite3.connect(src)
+        con.execute("INSERT INTO notes (text) VALUES ('in-the-wal')")
+        con.commit()
+        try:
+            written = stage_anki_collection(src, tmp_path / "staging", today="2026-08-31")
+            with sqlite3.connect(written) as dst:
+                count = dst.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+            assert count == 2
+        finally:
+            con.close()
+
+    def test_removes_stale_dated_collections(self, tmp_path):
+        """A stale dated collection must not linger in staging — restic's own
+        history supplies the depth, and a second 'newest' would be ambiguous."""
+        src = tmp_path / "collection.anki2"
+        _make_collection(src)
+        staging = tmp_path / "staging"
+        stage_anki_collection(src, staging, today="2026-08-20")
+
+        stage_anki_collection(src, staging, today="2026-08-31")
+
+        assert not (staging / "collection.2026-08-20.anki2").exists()
+        assert (staging / "collection.2026-08-31.anki2").exists()
+
+    def test_an_undated_collection_survives_the_sweep(self, tmp_path):
+        """Same name-fence rationale as the .db sweep: only date-shaped names are
+        ever a deletion candidate."""
+        src = tmp_path / "collection.anki2"
+        _make_collection(src)
+        staging = tmp_path / "staging"
+        stage_anki_collection(src, staging, today="2026-08-31")
+        stray = staging / "collection.pre-v41.anki2"
+        _make_collection(stray, rows=1)
+
+        stage_anki_collection(src, staging, today="2026-08-31")
+
+        assert stray.exists()
+
+    def test_the_db_and_anki_sweeps_do_not_eat_each_other(self, tmp_path):
+        """Oracle 4: neither sweep's glob may match the other's files."""
+        db = tmp_path / "tunatale_no.db"
+        _make_db(db)
+        col = tmp_path / "collection.anki2"
+        _make_collection(col)
+        staging = tmp_path / "staging"
+        stage_db_snapshots([db], staging, today="2026-08-31")
+
+        stage_anki_collection(col, staging, today="2026-08-31")
+
+        assert (staging / "tunatale_no.2026-08-31.db").exists()
+        assert (staging / "collection.2026-08-31.anki2").exists()
+
+    def test_a_missing_collection_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError, match="collection.anki2"):
+            stage_anki_collection(tmp_path / "collection.anki2", tmp_path / "staging", today="2026-08-31")
+
+
 class TestBackupCommand:
     def test_uploads_the_staged_dbs_and_both_content_trees(self, tmp_path, secrets, monkeypatch):
         run = FakeRun(0)
@@ -347,6 +432,7 @@ class TestBackupCommand:
                 str(output),
                 "--staging",
                 str(tmp_path / "staging"),
+                "--no-anki-collection",
             ]
         )
 
@@ -378,6 +464,7 @@ class TestBackupCommand:
                 str(tmp_path / "also-gone"),
                 "--staging",
                 str(tmp_path / "staging"),
+                "--no-anki-collection",
             ]
         )
 
@@ -405,6 +492,7 @@ class TestBackupCommand:
                 str(tmp_path / "output"),
                 "--staging",
                 str(tmp_path / "staging"),
+                "--no-anki-collection",
             ]
         )
 
@@ -437,6 +525,7 @@ class TestBackupCommand:
                 str(tmp_path / "output"),
                 "--staging",
                 str(tmp_path / "staging"),
+                "--no-anki-collection",
             ]
         )
 
@@ -465,6 +554,7 @@ class TestBackupCommand:
                 str(tmp_path / "output"),
                 "--staging",
                 str(tmp_path / "staging"),
+                "--no-anki-collection",
             ]
         )
 
@@ -492,6 +582,7 @@ class TestBackupCommand:
                 str(tmp_path / "output"),
                 "--staging",
                 str(tmp_path / "staging"),
+                "--no-anki-collection",
             ]
         )
 
@@ -528,11 +619,87 @@ class TestBackupCommand:
                 str(tmp_path / "output"),
                 "--staging",
                 str(tmp_path / "staging"),
+                "--no-anki-collection",
             ]
         )
 
         assert rc != 0
         assert any("backup" in c for c in calls), "the upload itself must still have been attempted"
+
+
+class TestBackupCommandAnkiCollection:
+    def _argv(self, tmp_path, *, extra=()):
+        db = tmp_path / "tunatale_no.db"
+        _make_db(db)
+        (tmp_path / "media").mkdir()
+        (tmp_path / "output").mkdir()
+        return [
+            "backup",
+            "--bucket",
+            "b",
+            "--db",
+            str(db),
+            "--media-src",
+            str(tmp_path / "media"),
+            "--output-src",
+            str(tmp_path / "output"),
+            "--staging",
+            str(tmp_path / "staging"),
+            *extra,
+        ]
+
+    def test_no_anki_collection_flag_stages_no_collection(self, tmp_path, secrets, monkeypatch):
+        run = FakeRun(0)
+        monkeypatch.setattr("backup_offbox._run", run)
+
+        rc = main(self._argv(tmp_path, extra=["--no-anki-collection"]))
+
+        assert rc == 0
+        assert not list((tmp_path / "staging").glob("collection.*.anki2"))
+
+    def test_default_stages_the_configured_collection(self, tmp_path, secrets, monkeypatch):
+        run = FakeRun(0)
+        monkeypatch.setattr("backup_offbox._run", run)
+        col = tmp_path / "collection.anki2"
+        _make_collection(col)
+        monkeypatch.setattr("backup_offbox.settings.anki_collection_path", col)
+
+        rc = main(self._argv(tmp_path))
+
+        assert rc == 0
+        assert list((tmp_path / "staging").glob("collection.*.anki2"))
+
+    def test_missing_anki_collection_is_refused_before_any_upload(self, tmp_path, secrets, monkeypatch, capsys):
+        run = FakeRun(0)
+        monkeypatch.setattr("backup_offbox._run", run)
+
+        rc = main(self._argv(tmp_path, extra=["--anki-collection", str(tmp_path / "nope.anki2")]))
+
+        assert rc != 0
+        assert "BACKUP FAILED" in capsys.readouterr().out
+        assert not any("backup" in c for c in run.argvs), "must not upload a partial set"
+
+        # ⚠️ The three assertions above ALSO pass if the collection is left out of
+        # the pre-staging validation entirely — the run still fails, just later,
+        # from stage_anki_collection. Sabotage-drilled 2026-08-31: dropping the
+        # `sources.append(anki_collection)` line reddened nothing. What the check
+        # actually buys is refusing BEFORE anything is written, which is the
+        # "refuses to run at all" the script's own comment claims; without it,
+        # stage_db_snapshots has already populated staging by the time we fail.
+        staging = tmp_path / "staging"
+        assert not list(staging.glob("*.db")), "staging was written before the source check refused"
+
+    def test_a_non_database_collection_is_refused(self, tmp_path, secrets, monkeypatch, capsys):
+        run = FakeRun(0)
+        monkeypatch.setattr("backup_offbox._run", run)
+        junk = tmp_path / "collection.anki2"
+        junk.write_bytes(b"this is not a database" * 100)
+
+        rc = main(self._argv(tmp_path, extra=["--anki-collection", str(junk)]))
+
+        assert rc != 0
+        assert "BACKUP FAILED" in capsys.readouterr().out
+        assert not any("backup" in c for c in run.argvs)
 
 
 class TestFailureNotification:
@@ -569,6 +736,7 @@ class TestFailureNotification:
             str(tmp_path / "output"),
             "--staging",
             str(tmp_path / "staging"),
+            "--no-anki-collection",
         ]
         if notify:
             argv.append("--notify")
@@ -688,6 +856,7 @@ class TestDurableFailureMarker:
                 str(tmp_path / "output"),
                 "--staging",
                 str(tmp_path / "staging"),
+                "--no-anki-collection",
                 "--notify",
             ]
         )
@@ -723,6 +892,7 @@ class TestDurableFailureMarker:
                 str(tmp_path / "output"),
                 "--staging",
                 str(tmp_path / "staging"),
+                "--no-anki-collection",
             ]
         )
 
