@@ -127,6 +127,24 @@ class NstLexicon:
         self._conn = sqlite3.connect(self._db_path.as_uri() + "?mode=ro", uri=True)
         return self._conn
 
+    def close(self) -> None:
+        """Close the lazily-opened connection, if one was ever made.
+
+        The connection is opened on first use and was previously released only
+        by garbage collection, which emits a ResourceWarning and — at a call
+        site that constructs a lexicon per word — can exhaust file descriptors
+        before the collector runs (tunatale-a5p2).  Idempotent.
+        """
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+    def __enter__(self) -> NstLexicon:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
     def _rows(self, word: str) -> list[tuple[str, str, int]]:
         conn = self._conn if self._conn is not None else self._connect()
         return list(

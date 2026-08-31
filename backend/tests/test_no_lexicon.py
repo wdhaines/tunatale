@@ -228,3 +228,38 @@ class TestRegistryWiring:
     def test_canonical_db_path_sits_in_plugin_data_dir(self) -> None:
         assert DB_PATH.parent == Path(lexicon_module.__file__).parent / "data"
         assert DB_PATH.suffix == ".sqlite3"
+
+
+class TestCloseReleasesTheConnection:
+    """``close()`` is what stops a per-word call site exhausting file descriptors.
+
+    ``lexicon_syllables.lexicon_reading`` constructs an ``NstLexicon`` PER WORD
+    behind an lru_cache of 4096, so a whole-wordlist sweep (~50k entries)
+    constructs tens of thousands of them.  Before ``close()`` existed the
+    connection was released only by the garbage collector, which emits a
+    ResourceWarning per instance and — measured on
+    ``test_norwegian_breakdown_spans`` — exhausted file descriptors before the
+    collector ran, failing with ``sqlite3.OperationalError: unable to open
+    database file`` (tunatale-a5p2).
+    """
+
+    def test_close_is_safe_before_the_connection_is_ever_opened(self) -> None:
+        # The lazy-open contract means a lexicon that is never queried holds no
+        # connection; close() must not care. This is the branch a `with` block
+        # takes whenever the body raises before the first lookup.
+        lex = NstLexicon(DB_PATH)
+        lex.close()
+
+    def test_close_is_idempotent(self) -> None:
+        lex = NstLexicon(DB_PATH)
+        lex.candidate_transcriptions("hus")  # force the lazy open
+        lex.close()
+        lex.close()  # second call must be a no-op, not an error
+
+    def test_context_manager_closes_and_reopens_on_next_use(self) -> None:
+        with NstLexicon(DB_PATH) as lex:
+            first = lex.candidate_transcriptions("hus")
+        # Closed, but the object stays usable — _connect() re-opens lazily, so a
+        # cached instance is not poisoned by having been closed once.
+        assert lex.candidate_transcriptions("hus") == first
+        lex.close()

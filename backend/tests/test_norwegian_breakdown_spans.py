@@ -62,6 +62,38 @@ _CORPUS_PHRASES: list[str] = [
 # ---- flat_syllables -----------------------------------------------------
 
 
+@pytest.fixture(scope="session")
+def repo_syllabified_wordlist():
+    """One pass over the ~50k lexicon, shared by the three invariant sweeps.
+
+    Each of the three whole-wordlist invariants below used to walk the lexicon
+    itself, recomputing ``flat_syllables`` (and ``segment_compound``) from
+    scratch — three identical passes costing ~40s of a 55s suite
+    (``--durations`` profile, 2026-08-31; tunatale-a5p2). They ask DIFFERENT
+    questions of the SAME data, so the data is computed once here and each test
+    keeps its own assertion and its own failure message.
+
+    Yields ``(word, pieces, morphemes)`` for every entry that is in scope for
+    the folds: at least 3 characters, and NOT lexicon-adopted as a whole word
+    (the lexicon's boundaries are authoritative, so the folds are not applied
+    to it — see the individual docstrings).
+
+    ``flat_syllables`` returning None means the pieces would not rejoin to the
+    word. That is a precondition of all three invariants rather than one of
+    them, so it is asserted here; a failure legitimately stops all three.
+    """
+    out: list[tuple[str, list[str], list[str]]] = []
+    for word in load_no_lexicon():
+        if len(word) < 3:
+            continue
+        if lexicon_syllable_split(word) is not None:
+            continue
+        pieces = flat_syllables(word)
+        assert pieces is not None, f"flat_syllables({word!r}) does not rejoin"
+        out.append((word, pieces, segment_compound(word)))
+    return out
+
+
 class TestFlatSyllables:
     def test_simple_stem(self):
         assert flat_syllables("forskning") == ["fors", "kning"]
@@ -99,7 +131,7 @@ class TestFlatSyllables:
         assert flat_syllables("oppklart") == ["opp", "klart"]
         assert flat_syllables("velkommen") == ["vel", "ko", "mmen"]
 
-    def test_no_wordlist_entry_yields_an_unspeakable_chunk(self):
+    def test_no_wordlist_entry_yields_an_unspeakable_chunk(self, repo_syllabified_wordlist):
         """The invariant, over all 50k wordlist entries: every piece has a nucleus.
 
         A multi-piece split whose pieces don't all contain a vowel puts a bare
@@ -112,18 +144,12 @@ class TestFlatSyllables:
         boundaries are authoritative even when a piece has no vowel.
         """
         offenders = []
-        for word in load_no_lexicon():
-            if len(word) < 3:
-                continue
-            if lexicon_syllable_split(word) is not None:
-                continue
-            pieces = flat_syllables(word)
-            assert pieces is not None, f"flat_syllables({word!r}) does not rejoin"
+        for word, pieces, _morphemes in repo_syllabified_wordlist:
             if len(pieces) > 1 and any(not set(p) & _NORWEGIAN_VOWELS for p in pieces):
                 offenders.append((word, pieces))
         assert offenders == [], f"{len(offenders)} unspeakable chunks, e.g. {offenders[:5]}"
 
-    def test_vowel_only_inflection_never_stranded_inside_a_morpheme(self):
+    def test_vowel_only_inflection_never_stranded_inside_a_morpheme(self, repo_syllabified_wordlist):
         """The invariant, over all 50k entries: a vowel-only inflection is never
         stranded behind a consonant-final piece **of its own morpheme**.
 
@@ -152,25 +178,17 @@ class TestFlatSyllables:
         stranded.
         """
         stranded = []
-        for word in load_no_lexicon():
-            if len(word) < 3:
-                continue
-            if lexicon_syllable_split(word) is not None:
-                continue
+        for word, pieces, morphemes in repo_syllabified_wordlist:
             # Skip any word whose pieces came from the LEXICON rather than the
             # repo syllabifier — the lexicon's boundaries are authoritative even
             # when they strand a vowel-only inflection (see the docstring above).
             # The lexicon is consulted per WHOLE word for a simplex and per PART
-            # for a compound, so both must be checked; testing only the whole
-            # word let per-part adoption through and reported 17 false stranders.
-            if any(
-                lexicon_syllable_split(surface) is not None
-                for surface, _ in _compound_buildup_units(segment_compound(word))
-            ):
+            # for a compound, so both must be checked; the fixture applies the
+            # whole-word half, and this is the per-PART half. Testing only the
+            # whole word let per-part adoption through and reported 17 false
+            # stranders.
+            if any(lexicon_syllable_split(surface) is not None for surface, _ in _compound_buildup_units(morphemes)):
                 continue
-            pieces = flat_syllables(word)
-            assert pieces is not None, f"flat_syllables({word!r}) does not rejoin"
-            morphemes = segment_compound(word)
             # Piece indices that begin a buildup unit — the seams the fold cannot
             # and must not cross.
             seam_starts = set()
@@ -189,7 +207,7 @@ class TestFlatSyllables:
                     stranded.append((word, pieces))
         assert stranded == [], f"{len(stranded)} vowel-only inflections stranded inside a morpheme, e.g. {stranded[:5]}"
 
-    def test_non_inflection_all_vowel_pieces_untouched(self):
+    def test_non_inflection_all_vowel_pieces_untouched(self, repo_syllabified_wordlist):
         """All-vowel pieces that are NOT inflections keep their slots.
 
         arbeids·u·ke, and·øy·a, alle·manns·ei·e: a vowel-only piece at a
@@ -202,13 +220,7 @@ class TestFlatSyllables:
         """
         offenders = []
         words = set()
-        for word in load_no_lexicon():
-            if len(word) < 3:
-                continue
-            if lexicon_syllable_split(word) is not None:
-                continue
-            pieces = flat_syllables(word)
-            assert pieces is not None, f"flat_syllables({word!r}) does not rejoin"
+        for word, pieces, _morphemes in repo_syllabified_wordlist:
             for i in range(1, len(pieces)):
                 piece = pieces[i]
                 if (

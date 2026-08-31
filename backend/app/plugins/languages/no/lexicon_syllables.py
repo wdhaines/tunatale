@@ -345,7 +345,11 @@ def lexicon_reading(word: str, db_path: Path | None = None) -> tuple[list[str], 
     # is absent. The remaining window — the file vanishing between the probe and
     # the query — is not reachable through this function, and an untested
     # except: is worse than no except:.
-    candidates = NstLexicon(path).candidate_transcriptions(word)
+    # Context-managed: this constructs a lexicon PER WORD, so leaking the
+    # connection to the collector exhausts file descriptors on a whole-
+    # wordlist sweep (the lru_cache below is 4096 against ~50k entries).
+    with NstLexicon(path) as _lex:
+        candidates = _lex.candidate_transcriptions(word)
     if not candidates:
         return None
 
