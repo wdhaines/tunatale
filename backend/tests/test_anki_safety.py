@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.plugins.anki_sync.safety import safe_open
+from app.plugins.anki_sync.safety import probe_lock, safe_open, snapshot_collection
 
 
 class TestSafeOpen:
@@ -369,3 +369,130 @@ def test_anki_running_error_is_runtime_error():
 
     err = AnkiRunningError("test")
     assert isinstance(err, RuntimeError)
+
+
+class TestSnapshotCollection:
+    """``snapshot_collection`` — the off-box backup's read-only copy path.
+
+    This is the one sanctioned way to read ``collection.anki2`` WITHOUT the
+    exclusive-lock probe, and the tests below are what justify that carve-out
+    rather than asserting it. See the function's docstring for the reasoning;
+    ``tunatale-pj9l`` for why the nightly job needs it.
+    """
+
+    @staticmethod
+    def _seed(path):
+        """A minimal WAL-mode collection with one checkpointed note."""
+        conn = sqlite3.connect(str(path))
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("CREATE TABLE notes (id INTEGER PRIMARY KEY, flds TEXT)")
+            conn.execute("INSERT INTO notes VALUES (1, 'checkpointed')")
+            conn.commit()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _flds(path, uri_extra=""):
+        conn = sqlite3.connect(f"file:{path}?mode=ro{uri_extra}", uri=True)
+        try:
+            return sorted(r[0] for r in conn.execute("SELECT flds FROM notes"))
+        finally:
+            conn.close()
+
+    def test_folds_in_uncheckpointed_wal_content(self, tmp_path):
+        """A row committed into the -wal but not yet checkpointed must be captured.
+
+        ⚠️ The control is the whole test. ``immutable=1`` is the plausible way to
+        read a file another process holds, and it silently reads the main DB file
+        ONLY — so it MISSES this row and ships a stale collection while looking
+        like a clean success. Asserting the snapshot alone would pass under that
+        bug too; asserting that immutable=1 disagrees is what makes it evidence.
+        """
+        src = tmp_path / "collection.anki2"
+        self._seed(src)
+
+        writer = sqlite3.connect(str(src))
+        try:
+            writer.execute("INSERT INTO notes VALUES (2, 'in-wal')")
+            writer.commit()
+            assert (tmp_path / "collection.anki2-wal").stat().st_size > 0, "no -wal; test is vacuous"
+
+            dest = tmp_path / "snap.anki2"
+            snapshot_collection(src, dest)
+
+            # ⚠️ Both reads MUST happen while the writer is still open. Closing it
+            # checkpoints the -wal into the main file, after which immutable=1 sees
+            # the row too and the control silently stops discriminating.
+            assert self._flds(dest) == ["checkpointed", "in-wal"]
+            assert self._flds(src, "&immutable=1") == ["checkpointed"], (
+                "control failed: immutable=1 saw the -wal row, so this test can no "
+                "longer tell a WAL-folding snapshot from a stale one"
+            )
+        finally:
+            writer.close()
+
+    def test_succeeds_while_the_collection_is_write_locked(self, tmp_path):
+        """The case the nightly job actually hits: Anki open at 03:30.
+
+        ``safe_open`` refuses here (Gate 1 is an unconditional lock probe, in ro
+        mode too), which is correct for a WRITER and wrong for a backup. The
+        assertion pairs the two: the probe reports locked AND the snapshot still
+        succeeds, which is exactly the carve-out being claimed.
+        """
+        src = tmp_path / "collection.anki2"
+        self._seed(src)
+
+        holder = sqlite3.connect(str(src))
+        try:
+            holder.execute("INSERT INTO notes VALUES (2, 'in-wal')")
+            holder.commit()
+            holder.execute("BEGIN IMMEDIATE")  # hold the write lock open
+            holder.execute("INSERT INTO notes VALUES (3, 'uncommitted')")
+
+            assert probe_lock(src) is True, "test is vacuous unless the probe sees a lock"
+
+            dest = tmp_path / "snap.anki2"
+            snapshot_collection(src, dest)
+        finally:
+            holder.rollback()
+            holder.close()
+
+        # Committed WAL content in; the open transaction's row out.
+        assert self._flds(dest) == ["checkpointed", "in-wal"]
+
+    def test_overwrites_a_previous_snapshot(self, tmp_path):
+        """Same-day reruns must replace, not merge into, an existing file."""
+        src = tmp_path / "collection.anki2"
+        self._seed(src)
+        dest = tmp_path / "snap.anki2"
+
+        stale = sqlite3.connect(str(dest))
+        try:
+            stale.execute("CREATE TABLE notes (id INTEGER PRIMARY KEY, flds TEXT)")
+            stale.execute("INSERT INTO notes VALUES (99, 'yesterday')")
+            stale.commit()
+        finally:
+            stale.close()
+
+        snapshot_collection(src, dest)
+        assert self._flds(dest) == ["checkpointed"]
+
+    def test_refuses_a_missing_source(self, tmp_path):
+        with pytest.raises(FileNotFoundError, match="collection not found"):
+            snapshot_collection(tmp_path / "nope.anki2", tmp_path / "snap.anki2")
+
+    def test_refuses_a_corrupt_source_and_leaves_no_snapshot(self, tmp_path):
+        """A source that is not a database must fail loudly, writing nothing.
+
+        The caller (``backup_offbox``) catches ``sqlite3.DatabaseError`` and
+        refuses the whole upload, so this is the contract that keeps a corrupt
+        collection from being staged as though it were a backup.
+        """
+        src = tmp_path / "collection.anki2"
+        src.write_bytes(b"this is not a sqlite database")
+        dest = tmp_path / "snap.anki2"
+
+        with pytest.raises(sqlite3.DatabaseError):
+            snapshot_collection(src, dest)
+        assert not dest.exists(), "a snapshot was left on disk for a corrupt source"

@@ -47,6 +47,7 @@ from pathlib import Path
 
 from app.config import settings
 from app.languages import resolve_db_path
+from app.plugins.anki_sync.safety import snapshot_collection
 from app.storage.db_backup import _DATE_GLOB, _snapshot
 
 SERVICE_B2 = "tunatale-b2"
@@ -195,6 +196,40 @@ def stage_db_snapshots(db_paths: Iterable[Path | str], staging: Path | str, toda
     return written
 
 
+def stage_anki_collection(collection_path: Path | str, staging: Path | str, today: str | None = None) -> Path:
+    """A fresh, dated read-only snapshot of the Anki collection into ``staging``.
+
+    The Anki collection is the production system the off-box job exists to
+    protect, and it is the one thing the earlier backup script deliberately did
+    not ship. This mirrors ``stage_db_snapshots``: it takes a **fresh** snapshot
+    at backup time (overwriting a same-day file), raises on a missing source
+    instead of skipping, and sweeps stale dated snapshots afterwards.
+
+    It uses the sanctioned ``snapshot_collection`` (never ``sqlite3`` on the
+    collection here, never ``shutil.copy``, never ``immutable=1``): a read-only
+    online backup that folds in the ``-wal``, validates the result, and — by not
+    running the exclusive-lock probe — works while Anki is open, which is the
+    whole point of the 03:30 job.
+
+    The sweep is fenced twice, exactly as the ``.db`` sweep is: by the ownership
+    marker ``_claim_staging`` writes and by name — only ``collection.{YYYY-MM-DD}.anki2``
+    is ever a candidate, reusing ``_DATE_GLOB`` so an undated
+    ``collection.pre-v41.anki2`` parked in the same directory survives. The two
+    sweeps never match each other's files (``.db`` vs ``.anki2``).
+
+    Returns the path written.
+    """
+    day = today or date.today().isoformat()
+    staging = Path(staging)
+    _claim_staging(staging)
+    dest = staging / f"collection.{day}.anki2"
+    snapshot_collection(Path(collection_path), dest)
+    for stale in staging.glob(f"collection.{_DATE_GLOB}.anki2"):
+        if stale != dest:
+            stale.unlink()
+    return dest
+
+
 def _default_db_paths() -> list[Path]:
     """Every configured language's DB, resolved through the registry.
 
@@ -289,23 +324,33 @@ def _cmd_backup(args, env) -> int:
     media = args.media_src.expanduser()
     output = args.output_src.expanduser()
     staging = args.staging.expanduser()
+    skip_anki = args.no_anki_collection
+    anki_collection = (args.anki_collection or settings.anki_collection_path).expanduser()
 
     # Validate EVERY source before staging, before anything reaches restic.
     # Restic treats a vanished path as a warning and exits 3 having backed up
     # the rest — a silent partial backup is precisely what this script exists
     # to prevent, so a missing tree refuses to run at all.
-    missing = [str(p) for p in [*db_paths, media, output] if not p.exists()]
+    sources = [*db_paths, media, output]
+    if not skip_anki:
+        sources.append(anki_collection)
+    missing = [str(p) for p in sources if not p.exists()]
     if missing:
         return _fail(f"missing sources (refusing to upload a partial set): {', '.join(missing)}", notify=args.notify)
 
     try:
         snapshots = stage_db_snapshots(db_paths, staging)
+        collection_dest = None if skip_anki else stage_anki_collection(anki_collection, staging)
     except (OSError, RuntimeError, ValueError, sqlite3.DatabaseError) as exc:
         # Same banner as every other failure: an operator scanning a log should
         # not have to tell a refusal apart from a traceback.
-        return _fail(f"cannot stage a DB snapshot: {exc}", notify=args.notify)
+        return _fail(f"cannot stage a DB or Anki snapshot: {exc}", notify=args.notify)
 
     print(f"staged {len(snapshots)} fresh DB snapshot(s) to {staging}")
+    if collection_dest is not None:
+        print(f"staged Anki collection to {collection_dest}")
+    else:
+        print("Anki collection skipped (--no-anki-collection)")
     # Only the repository, never the environment: this stdout is a log that
     # outlives the run, and `redacted` masks restic's four keys — not whatever
     # unrelated API keys the invoking shell happened to be carrying.
@@ -373,6 +418,17 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_STAGING,
         help="staging dir for fresh DB snapshots (default: ~/.tunatale/offbox-staging)",
+    )
+    p_backup.add_argument(
+        "--anki-collection",
+        type=Path,
+        default=None,
+        help=f"Anki collection to ship off-box (default: {settings.anki_collection_path})",
+    )
+    p_backup.add_argument(
+        "--no-anki-collection",
+        action="store_true",
+        help="skip the Anki collection entirely (for a deployment with no Anki)",
     )
     p_backup.add_argument(
         "--notify",

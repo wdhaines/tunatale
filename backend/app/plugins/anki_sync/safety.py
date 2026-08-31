@@ -285,3 +285,63 @@ def safe_open(
                     f"Backup: {backup_path}\n"
                     f"Pre-run: {source_sha256}  Post-run: {post_sha256}"
                 )
+
+
+def snapshot_collection(collection_path: Path, dest: Path) -> Path:
+    """A consistent read-only copy of the collection, taken WITHOUT the lock probe.
+
+    The one sanctioned exception to "every caller goes through ``safe_open``",
+    and narrow on purpose: it only ever *reads* the collection, and the file it
+    writes is a fresh destination, never the source.
+
+    **Why the lock probe is deliberately not run here.** Gate 1 of ``safe_open``
+    aborts whenever Anki is running — correctly, because every other caller is
+    about to write, or to read state that a concurrent write would make
+    incoherent. A backup is neither. The off-box job fires from a LaunchAgent at
+    03:30, when Anki may well be open; gating it on the lock means the one
+    production system with no other automated off-box copy is skipped on exactly
+    the nights someone left Anki running, and the job still reports success.
+    That is the failure ``tunatale-pj9l`` exists to remove.
+
+    **Why this is safe rather than merely convenient.** ``Connection.backup()``
+    against a ``mode=ro`` URI takes SQLite's own read snapshot: the ``-wal`` is
+    folded in and the copy is transactionally consistent even mid-write. It is
+    the same mechanism ``app.storage.db_backup._snapshot`` already uses for TT's
+    live per-language DBs, which the dev server holds open the whole time. The
+    result is validated (``integrity_check`` + note-count match) before it is
+    returned, and deleted if it does not validate — a torn copy that looks like
+    a backup is worse than no copy, because you find out at restore time.
+
+    ⚠️ **Never add ``immutable=1``.** It is the plausible-looking way to read a
+    file another process holds, and it reads the main database file ONLY —
+    silently missing every committed-but-uncheckpointed ``-wal`` page. That
+    ships a stale collection with no error anywhere. Pinned by
+    ``TestSnapshotCollection::test_folds_in_uncheckpointed_wal_content``, whose
+    control asserts that an ``immutable=1`` read *disagrees* with this one.
+
+    Returns the destination path.
+    """
+    if not collection_path.exists():
+        raise FileNotFoundError(f"collection not found: {collection_path}")
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # A previous run's file must be replaced outright, not backed into: a stale
+    # snapshot with a different schema would otherwise survive in the pages the
+    # new copy does not reach.
+    dest.unlink(missing_ok=True)
+
+    src_conn = sqlite3.connect(f"file:{collection_path}?mode=ro", uri=True)
+    _register_anki_collations(src_conn)
+    try:
+        source_note_count = src_conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        dst_conn = sqlite3.connect(str(dest))
+        try:
+            src_conn.backup(dst_conn)
+        finally:
+            dst_conn.close()
+    finally:
+        src_conn.close()
+
+    # Raises and unlinks `dest` on any mismatch.
+    _validate_backup(dest, source_note_count)
+    return dest
