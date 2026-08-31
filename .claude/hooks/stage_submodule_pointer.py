@@ -162,7 +162,15 @@ def main():
     try:
         if not should_stage(command):
             return 0
-        added = _git(["add", "--", SUBMODULE], REPO_ROOT)
+        # `-c submodule.<name>.ignore=none` for the duration of this one add.
+        # `ignore = all` in .gitmodules is what keeps the gitlink out of the
+        # commit gate's fingerprint, but git 2.55 also lets it suppress the ADD
+        # — the staging silently becomes a no-op and `git commit` then reports
+        # "nothing to commit, working tree clean". git 2.50 (Apple git, what
+        # this machine ships) stages regardless, so the break is invisible
+        # locally and showed up only on the CI runner. Overriding the setting
+        # for this invocation makes the hook behave the same on both.
+        added = _git(["-c", f"submodule.{SUBMODULE}.ignore=none", "add", "--", SUBMODULE], REPO_ROOT)
         if added.returncode != 0:
             return 0
         head = _out(_git(["rev-parse", "--short", "HEAD"], os.path.join(REPO_ROOT, SUBMODULE)))

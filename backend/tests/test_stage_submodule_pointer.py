@@ -68,6 +68,17 @@ _GIT_ENV = {
 }
 
 
+def _stage_pointer(repo):
+    """Stage the gitlink the way the hook does — with the ignore override.
+
+    A plain `git add -- .beads-tasks` is version-dependent: git 2.50 stages it,
+    git 2.55 lets `ignore = all` suppress the add entirely. Tests that stage the
+    pointer must use the same invocation the hook uses, or they assert a
+    behaviour the hook does not have.
+    """
+    _run(["-c", "submodule..beads-tasks.ignore=none", "add", "--", ".beads-tasks"], repo)
+
+
 def _run(args, cwd):
     proc = subprocess.run(["git", *args], capture_output=True, cwd=cwd, timeout=60, text=True, env=_GIT_ENV)
     assert proc.returncode == 0, f"git {' '.join(args)} failed: {proc.stderr}"
@@ -183,7 +194,7 @@ class TestPreexistingGuardsStillHold:
         assert hook.should_stage("git add -A && git commit --dry-run -m 'x'") is False
 
     def test_declines_when_the_pointer_is_not_drifted(self, hook, repo):
-        _run(["add", "--", ".beads-tasks"], repo)
+        _stage_pointer(repo)
         _run(["commit", "-qm", "bump pointer"], repo)
         assert not _run(["submodule", "status"], repo).startswith("+")
         (repo / "code.py").write_text("x = 1")
@@ -213,9 +224,15 @@ class TestTheMechanismTheBeadGotWrong:
         Pinned because the bead asserts the opposite, and that claim — if true
         — would rule out every PreToolUse fix. `ignore = all` keeps the gitlink
         out of `add -A`'s view, so it is left alone rather than reset.
+
+        Staging goes through _stage_pointer (with the ignore override) rather
+        than a plain `git add`, because the plain form is itself
+        version-dependent — see that helper. Without the override this fails on
+        git 2.55 for a reason that has nothing to do with `add -A`, which is
+        how the version split was found at all.
         """
         (repo / "code.py").write_text("x = 1")
-        _run(["add", "--", ".beads-tasks"], repo)
+        _stage_pointer(repo)
         _run(["add", "-A"], repo)
         _run(["commit", "-qm", "compound"], repo)
 
