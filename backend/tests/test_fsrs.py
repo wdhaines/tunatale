@@ -795,14 +795,33 @@ class TestShortTermStability:
         # exp(0.51 * 0.435) ≈ 1.248; clamp max(1.248, 1) = 1.248
         assert abs(new_s - 1.248) < 0.01
 
-    def test_short_term_fsrs5_hard(self):
-        """HARD on FSRS-5: sinc < 1, rating < 3 so no clamp, new_s < last_s."""
+    def test_short_term_fsrs5_hard_is_clamped_and_cannot_decrease(self):
+        """HARD on FSRS-5: sinc ≈ 0.749 < 1, but the clamp holds new_s at last_s.
+
+        This test asserted the opposite until 2026-08-31 (``rating=2 < 3, no
+        clamp``, expecting 0.749). Anki 26.08.1 adopted the non-decreasing
+        ``SInc(Hard)`` and returns exactly ``last_s`` for HARD at every state
+        probed against the oracle; TT mirrors the Anki it syncs with, so the old
+        expectation is now the wrong answer rather than a stale one.
+        """
         from app.srs.fsrs import _stability_short_term
 
-        new_s = _stability_short_term(1.0, Rating.HARD, self._FSRS5_DEFAULT)
-        # exp(0.51 * (-1 + 0.435)) = exp(-0.28815) ≈ 0.749
-        # rating=2 < 3, no clamp
-        assert abs(new_s - 0.749) < 0.01
+        # exp(0.51 * (2 - 3 + 0.435)) = exp(-0.28815) ≈ 0.749, then max(., 1.0) = 1.0
+        assert _stability_short_term(1.0, Rating.HARD, self._FSRS5_DEFAULT) == pytest.approx(1.0)
+        # Scale-free: the clamp binds at every stability, so HARD is a no-op on s.
+        for last_s in (0.5, 2.0, 10.0, 365.0):
+            assert _stability_short_term(last_s, Rating.HARD, self._FSRS5_DEFAULT) == pytest.approx(last_s)
+
+    def test_short_term_again_is_still_unclamped(self):
+        """AGAIN must remain able to DECREASE stability — it is a lapse.
+
+        Guards the clamp widening (``>= 3`` → ``>= 2``) from being widened once
+        more to ``>= 1``, which would make every same-day grade non-decreasing
+        and silently disable lapse penalties.
+        """
+        from app.srs.fsrs import _stability_short_term
+
+        assert _stability_short_term(10.0, Rating.AGAIN, self._FSRS5_DEFAULT) < 10.0
 
     def test_short_term_fsrs5_easy(self):
         """EASY on FSRS-5: sinc = exp(0.51*1.435) ≈ 2.084."""

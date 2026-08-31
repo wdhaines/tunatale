@@ -677,19 +677,37 @@ def _next_stability_lapse(d: float, s: float, r: float, w: tuple[float, ...]) ->
 def _stability_short_term(last_s: float, rating: Rating, params: FSRSParams) -> float:
     """FSRS short-term stability update for same-day grades (f32 throughout).
 
-    Mirrors ``model.rs:107-115`` in fsrs-rs:
+    Mirrors ``model.rs`` in fsrs-rs:
       ``sinc = exp(w[17] * (rating - 3 + w[18])) * last_s^(-w[19])``
-      ``if rating >= 3: sinc = max(sinc, 1.0)``
+      ``if rating >= 2: sinc = max(sinc, 1.0)``
       ``new_s = last_s * sinc``
 
     For FSRS-5 the ``last_s^(-w[19])`` term vanishes (``w[19]`` effectively 0).
     For FSRS-6 ``w[19]`` is a learned parameter.
+
+    ⚠️ The clamp covers HARD as of 2026-08-31 — it read ``rating >= 3`` until
+    then, so a same-day HARD grade could DECREASE stability. Upstream fsrs made
+    ``SInc(Hard)`` non-decreasing, and desktop Anki adopted it in **26.08.1**;
+    26.05 still had the old behaviour. Since TT mirrors the Anki we sync with
+    (``.claude/rules/anki-queue-parity.md``, "trust the binary"), this moved when
+    the pin moved, not before.
+
+    Derived from the oracle rather than from the upstream diff. Anki 26.08.1
+    returns EXACTLY ``last_s`` for HARD at every probed state — 0.5, 2.0, 10.0
+    (at d=4 and d=8), 100.0, 365.0 — while ``again``/``good``/``easy`` are
+    bit-identical between 26.05 and 26.08.1. That is ``max(sinc, 1.0)`` binding
+    for HARD, because FSRS-5's HARD ``sinc`` is always < 1.
+
+    Note the clamp is on ``sinc``, not on the result: under FSRS-6 a large
+    ``w[19]`` can push HARD's ``sinc`` above 1, and then it applies unchanged.
+    AGAIN is deliberately still unclamped — a lapse must be able to reduce
+    stability.
     """
     w32 = _w32(params.weights)
     last_s32 = _F32(last_s)
     w19 = w32[19] if params.version == 6 else _F32(0.0)
     sinc = np.exp(w32[17] * (rating.value - 3 + w32[18])) * np.power(last_s32, -w19)
-    if rating.value >= 3:
+    if rating.value >= 2:
         sinc = max(sinc, _F32(1.0))
     return float(last_s32 * sinc)
 
