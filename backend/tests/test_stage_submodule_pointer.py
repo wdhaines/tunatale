@@ -21,6 +21,7 @@ here so the wrong mechanism cannot be re-derived from the bead text.
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 from pathlib import Path
 
@@ -38,8 +39,37 @@ def _load_hook():
     return module
 
 
+# A git environment that reads NO ambient config, developer or runner.
+#
+# This fixture drives real git, and git's behaviour is configurable almost
+# everywhere — so anything left unpinned is read from whoever runs the suite.
+# Two separate CI failures came from exactly that, both green locally:
+#   * init.defaultBranch — main here, master on the runner, so the bare origin's
+#     HEAD named a branch the push never created and `submodule add` died with
+#     "fatal: You are on a branch yet to be born"
+#   * user.name / user.email — set per-repo on `sub` and `parent`, but NOT on
+#     the submodule working tree that `submodule add` creates, and the runner
+#     has no global identity: "fatal: empty ident name ... not allowed"
+#
+# Patching those one at a time is whack-a-mole; commit.gpgsign, core.hooksPath
+# and init.templateDir are all still out there. Pointing both config scopes at
+# os.devnull and supplying the identity through the environment closes the
+# class instead of the two instances. `-b main` stays explicit rather than
+# relying on git's built-in default, so the branch name is stated where it is
+# used.
+_GIT_ENV = {
+    **os.environ,
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_SYSTEM": os.devnull,
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@t.t",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@t.t",
+}
+
+
 def _run(args, cwd):
-    proc = subprocess.run(["git", *args], capture_output=True, cwd=cwd, timeout=60, text=True)
+    proc = subprocess.run(["git", *args], capture_output=True, cwd=cwd, timeout=60, text=True, env=_GIT_ENV)
     assert proc.returncode == 0, f"git {' '.join(args)} failed: {proc.stderr}"
     return proc.stdout.strip()
 
@@ -52,20 +82,14 @@ def repo(tmp_path):
     remote-tracking branch, and the recorded pointer one commit behind. That is
     the exact state in which the hook is supposed to act.
 
-    ⚠️ Every `git init` here pins `-b main` explicitly. Without it the branch
-    name comes from the ambient `init.defaultBranch`, which differs between this
-    machine (main) and the CI runner (master) — the bare origin's HEAD then
-    names a branch the push never created, and `submodule add` dies with
-    "fatal: You are on a branch yet to be born". That passed ./test.sh locally
-    and failed CI, which is the "CI is authoritative" rule earning its keep.
+    Every git call runs under `_GIT_ENV`, which reads no ambient config — see
+    the comment there for the two CI failures that bought that rule.
     """
     sub_origin = tmp_path / "sub-origin.git"
     _run(["init", "-q", "--bare", "-b", "main", str(sub_origin)], tmp_path)
 
     sub = tmp_path / "sub"
     _run(["init", "-q", "-b", "main", str(sub)], tmp_path)
-    _run(["config", "user.email", "t@t.t"], sub)
-    _run(["config", "user.name", "t"], sub)
     (sub / "f").write_text("one")
     _run(["add", "f"], sub)
     _run(["commit", "-qm", "one"], sub)
@@ -74,8 +98,6 @@ def repo(tmp_path):
 
     parent = tmp_path / "parent"
     _run(["init", "-q", "-b", "main", str(parent)], tmp_path)
-    _run(["config", "user.email", "t@t.t"], parent)
-    _run(["config", "user.name", "t"], parent)
     (parent / "README").write_text("base")
     _run(["add", "README"], parent)
     _run(["commit", "-qm", "base"], parent)
