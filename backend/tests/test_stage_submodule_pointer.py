@@ -51,23 +51,29 @@ def repo(tmp_path):
     Mirrors production: `ignore = all`, the submodule's HEAD contained in a
     remote-tracking branch, and the recorded pointer one commit behind. That is
     the exact state in which the hook is supposed to act.
+
+    ⚠️ Every `git init` here pins `-b main` explicitly. Without it the branch
+    name comes from the ambient `init.defaultBranch`, which differs between this
+    machine (main) and the CI runner (master) — the bare origin's HEAD then
+    names a branch the push never created, and `submodule add` dies with
+    "fatal: You are on a branch yet to be born". That passed ./test.sh locally
+    and failed CI, which is the "CI is authoritative" rule earning its keep.
     """
     sub_origin = tmp_path / "sub-origin.git"
-    _run(["init", "-q", "--bare", str(sub_origin)], tmp_path)
+    _run(["init", "-q", "--bare", "-b", "main", str(sub_origin)], tmp_path)
 
     sub = tmp_path / "sub"
-    _run(["init", "-q", str(sub)], tmp_path)
+    _run(["init", "-q", "-b", "main", str(sub)], tmp_path)
     _run(["config", "user.email", "t@t.t"], sub)
     _run(["config", "user.name", "t"], sub)
     (sub / "f").write_text("one")
     _run(["add", "f"], sub)
     _run(["commit", "-qm", "one"], sub)
-    _run(["branch", "-M", "main"], sub)
     _run(["remote", "add", "origin", str(sub_origin)], sub)
     _run(["push", "-q", "origin", "main"], sub)
 
     parent = tmp_path / "parent"
-    _run(["init", "-q", str(parent)], tmp_path)
+    _run(["init", "-q", "-b", "main", str(parent)], tmp_path)
     _run(["config", "user.email", "t@t.t"], parent)
     _run(["config", "user.name", "t"], parent)
     (parent / "README").write_text("base")
