@@ -771,7 +771,7 @@ jobs:
         run: uv sync --all-groups
 
       - name: Warm anki subprocess env
-        run: uv run --isolated --no-project --python 3.14 --with anki==26.5 python -c "import anki"
+        run: uv run --isolated --no-project --python 3.14 --with anki==26.8.1 python -c "import anki"
 
       - name: Oracle parity gate
         run: uv run pytest -m oracle --run-oracle -n auto --no-cov
@@ -798,7 +798,7 @@ jobs:
         run: uv sync --all-groups
 
       - name: Warm anki subprocess env
-        run: uv run --isolated --no-project --python 3.14 --with anki==26.5 python -c "import anki"
+        run: uv run --isolated --no-project --python 3.14 --with anki==26.8.1 python -c "import anki"
 
       - name: Peer-sync gate
         run: uv run pytest tests/test_anki_peer_sync_selfhost.py --run-peer-sync --no-cov -v

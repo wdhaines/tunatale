@@ -55,15 +55,24 @@ dev = [
     # instead and idles at ~0%. Dev-only: nothing under app/ imports it, and
     # `--reload` is only ever passed by start-dev.sh.
     "watchfiles>=1.1.0",
-    # HELD at 0.8.x deliberately. fsrs-rs-python is the bit-exact precision oracle for
-    # TT's FSRS math (tests/test_parity_fsrs_f32.py, test_parity_same_day_review.py, …).
-    # 0.9.2 changed the same-day HARD short-term stability formula (returns 132.667 where
-    # 0.8.2/TT give 99.4537), which is AHEAD of the fsrs crate bundled in the user's Anki
-    # 25.09.5 — TT still mirrors that older formula (soak-verified bit-exact). Adopting
-    # 0.9.x would make the precision oracle disagree with the Anki we mirror. The `<0.9`
-    # cap stops `uv lock --upgrade` from silently re-pulling it. Bump this (and re-verify
-    # the test_parity_* suite) only when desktop Anki ships the 0.9.x short-term formula.
-    "fsrs-rs-python>=0.8.2,<0.9",
+    # Bit-exact precision oracle for TT's FSRS math (tests/test_parity_fsrs_f32.py,
+    # test_parity_same_day_review.py, …).
+    #
+    # ⚠️ HELD at <0.9 from 2026-07 to 2026-08-31, then RELEASED — read this before
+    # re-pinning it. The hold existed because 0.9.x made the same-day HARD
+    # short-term stability non-decreasing (SInc(Hard)), which was AHEAD of the
+    # desktop Anki TT mirrors: 0.8.2 and TT both returned 99.4537 where 0.9.x
+    # returned 132.667. Adopting 0.9.x then would have put the precision oracle
+    # ahead of the binary we sync with.
+    #
+    # Desktop Anki 26.08.1 adopted that formula (26.05 had not — measured by
+    # running the parity suite against both via ANKI_PKG_VERSION). So the
+    # relationship inverted: 0.8.x is now the one that disagrees with Anki, and
+    # 0.9.x is the correct oracle. TT's `_stability_short_term` moved in the same
+    # commit. The cap is gone because the condition it guarded is gone; if a
+    # future fsrs release again runs ahead of desktop Anki, re-cap it and say
+    # which Anki version is the reference.
+    "fsrs-rs-python>=0.9.3",
 ]
 # Per-language morphological analyzers (sentence-aware lemmas + A1 morphology
 # features), split into per-language dependency groups: classla for Slovene,

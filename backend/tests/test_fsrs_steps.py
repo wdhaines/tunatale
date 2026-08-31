@@ -486,17 +486,27 @@ class TestShortTermAppliesInSteps:
     @pytest.mark.parametrize(
         ("name", "ratings", "expected_stabilities"),
         [
-            # Ground truth captured by running grades in Anki 25.09.4
-            # (fsrs-rs 5.1.0) with the Slovene weights above. The capture
-            # script lives in PR notes; reproduce via:
-            #   uv run --with anki python -c "<see SCRIPT in docstring>"
-            # Anki produces identical stability evolution regardless of the
+            # Ground truth captured by grading a card in a synthetic collection
+            # through the oracle harness (answer_card x4, one process) with the
+            # Slovene weights above and learn steps [1, 10]. Anki produces
+            # identical stability evolution regardless of the
             # fsrsShortTermWithStepsEnabled deck option — the flag only
             # governs card-state transitions, not memory_state updates.
+            #
+            # ⚠️ RE-CAPTURED 2026-08-31 against Anki 26.08.1 (was 25.09.4).
+            # Grade 2 is HARD, and 26.08.1 made SInc(Hard) non-decreasing, so it
+            # is now clamped to grade 1's value; grades 3-4 shift because they
+            # inherit the higher stability, not because their own rule changed.
+            #   25.09.4 / 26.05: [0.4026, 0.3381, 0.4760, 0.2385]
+            #   26.08.1:         [0.4026, 0.4026, 0.5668, 0.2840]
+            # The re-derivation was CONTROLLED rather than fitted to the code:
+            # the same capture run against anki==26.5 reproduced the old row
+            # exactly, which is what makes the new row trustworthy. Reproduce
+            # either with ANKI_PKG_VERSION=<version>.
             (
                 "again_hard_good_again",
                 [Rating.AGAIN, Rating.HARD, Rating.GOOD, Rating.AGAIN],
-                [0.4026, 0.3381, 0.4760, 0.2385],
+                [0.4026, 0.4026, 0.5668, 0.2840],
             ),
             (
                 "four_lapses",
@@ -635,8 +645,13 @@ class TestShortTermAppliesInSteps:
         expected = _quantize_stability(_stability_short_term(0.5, Rating.AGAIN, DEFAULT_FSRS5_PARAMS))
         assert new_dir.stability == expected
 
-    def test_learning_hard_no_clamp(self):
-        """LEARNING + HARD with sinc < 1, rating=2 < 3 → no clamp, stability decreases."""
+    def test_learning_hard_is_clamped_not_decreased(self):
+        """LEARNING + HARD with sinc < 1: the clamp holds stability flat.
+
+        Was ``test_learning_hard_no_clamp``, asserting ``stability < 1.0``.
+        Anki 26.08.1 made SInc(Hard) non-decreasing, so a same-day HARD in a
+        learning step no longer loses stability.
+        """
         from app.srs.fsrs import _quantize_stability, _stability_short_term
 
         item = _make_item(state=SRSState.LEARNING, left=2)
@@ -653,8 +668,10 @@ class TestShortTermAppliesInSteps:
         new_dir = result.directions[Direction.RECOGNITION]
         expected = _quantize_stability(_stability_short_term(1.0, Rating.HARD, DEFAULT_FSRS5_PARAMS))
         assert new_dir.stability == expected
-        # HARD with rating=2 < 3, no clamp → stability decreases
-        assert new_dir.stability < 1.0
+        # HARD is clamped at sinc=1.0, so stability is held, never reduced.
+        # (The `== expected` line above cannot catch a regression here — it
+        # compares against the same helper. This line is the discriminator.)
+        assert new_dir.stability == 1.0
 
     def test_relearning_again_short_term_same_day(self):
         """REVIEW + AGAIN on same day → short-term applied, not lapse formula."""
