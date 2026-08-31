@@ -7,19 +7,19 @@ name = "tunatale-backend"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "fastapi>=0.140.0",
-    "uvicorn>=0.51.0",
-    "pydantic>=2.13.4",
-    "pydantic-settings>=2.14.2",
+    "fastapi>=0.141.1",
+    "uvicorn>=0.52.4",
+    "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
     "httpx>=0.28.1",
-    "python-dotenv>=1.2.2",
+    "python-dotenv>=1.2.3",
     "python-multipart>=0.0.32",
     "edge-tts>=7.2.8",
     "soundfile>=0.14.0",
     "aiofiles>=25.1.0",
-    "numpy>=2.5.1",
+    "numpy>=2.5.2",
     "wordfreq>=3.1.1",
-    "argon2-cffi>=23.1.0",
+    "argon2-cffi>=25.1.0",
 ]
 
 [project.optional-dependencies]
@@ -45,7 +45,7 @@ dev = [
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0",
     "respx>=0.23.1",
-    "ruff>=0.16.0",
+    "ruff>=0.16.5",
     "anyio>=4.14.2",
     # Dev-server reload backend. We depend on plain `uvicorn` (not
     # `uvicorn[standard]`, which would also drag in httptools/uvloop/websockets we
@@ -54,7 +54,7 @@ dev = [
     # idled at ~59% of a core (measured 2026-07-26); watchfiles uses FSEvents
     # instead and idles at ~0%. Dev-only: nothing under app/ imports it, and
     # `--reload` is only ever passed by start-dev.sh.
-    "watchfiles>=1.1.0",
+    "watchfiles>=1.2.0",
     # Bit-exact precision oracle for TT's FSRS math (tests/test_parity_fsrs_f32.py,
     # test_parity_same_day_review.py, …).
     #
@@ -121,7 +121,7 @@ norwegian = [
 # different capabilities that happen to share torch today. (The original second
 # half of this sentence — "and CI's opt-out list stays readable as a list of
 # capabilities it declines" — described an opt-out list that no longer exists.)
-alignment = ["transformers>=4.57"]
+alignment = ["transformers>=5.16.1"]
 
 [tool.uv]
 # The slovene/norwegian/alignment groups are DEFAULT groups, so a bare
