@@ -1510,3 +1510,123 @@ class TestReconcileManualMode:
         record = pipeline._jobs.get(("sl", cid, 1))
         assert record is not None
         assert record["kind"] == "generate"
+
+
+class _UposLemmatizer:
+    """Test lemmatizer that returns canned TokenAnalysis with upos tags."""
+
+    def __init__(self, analyses: dict[str, list]) -> None:
+        self._analyses = analyses
+        self._cache_version = "test-v1"
+
+    def lemmatize(self, word: str, language_code: str) -> str:
+        return word.lower()
+
+    def analyze(self, word: str, language_code: str) -> tuple[str, str, str]:
+        return word.lower(), "", ""
+
+    def analyze_sentence(self, sentence: str, language_code: str) -> list:
+        from app.srs.lemmatizer import TokenAnalysis
+
+        if sentence in self._analyses:
+            return self._analyses[sentence]
+        return [TokenAnalysis(surface=t, lemma=t.lower(), upos="") for t in sentence.split()]
+
+
+class TestPipelineTaggedBeforeSaved:
+    """tunatale-bxhl: the pipeline must tag chunks BEFORE storage receives them.
+
+    Drives LessonPipeline._generate directly (not the HTTP endpoint) with a
+    capturing ContentStore that deep-copies at save time.  The captured snapshot
+    must already carry upos tags — proving the annotation landed on the lesson
+    object *before* it was persisted, not after on a detached in-memory copy.
+    """
+
+    async def test_pipeline_tags_chunks_before_save(self, tmp_path):
+        import copy as _copy
+
+        from app.generation.section_builder import build_key_phrases_section
+        from app.llm.activity import ActivityLog
+        from app.srs.database import SRSDatabase
+        from app.srs.lemmatizer import TokenAnalysis
+
+        captured: list[Lesson] = []
+
+        class _CapturingStore(ContentStore):
+            def save_lesson(self, lesson_id, curriculum_id, day, lesson):  # type: ignore[override]
+                captured.append(_copy.deepcopy(lesson))
+                super().save_lesson(lesson_id, curriculum_id, day, lesson)
+
+        class _PipelineStoryGenerator:
+            async def generate(self, **kwargs):
+                section = build_key_phrases_section(
+                    [{"phrase": "sporet er kaldt", "translation": "the track is cold"}],
+                    {"female-1": "nb-NO-PernilleNeural"},
+                    "en-US-GuyNeural",
+                    "no",
+                )
+                return Lesson(
+                    title="Day 1",
+                    language_code="no",
+                    sections=[section],
+                    key_phrases=[KeyPhraseInfo(phrase="sporet er kaldt", translation="the track is cold")],
+                )
+
+        class _FakeRenderer:
+            async def render(self, lesson, full_path, section_paths=None):
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+                full_path.write_bytes(b"audio")
+                return []
+
+        store = _CapturingStore(":memory:")
+        cid = "c1"
+        curriculum = Curriculum(
+            id=cid,
+            topic="t",
+            language_code="no",
+            cefr_level="A2",
+            days=[
+                CurriculumDay(
+                    day=1,
+                    title="Day 1",
+                    focus="tracks",
+                    learning_objective="describe a track",
+                    story_guidance="a cold track",
+                    collocations=["sporet er kaldt"],
+                )
+            ],
+        )
+        store.save_curriculum(cid, curriculum)
+
+        from app.models.lesson import KeyPhraseInfo
+
+        lemmatizer = _UposLemmatizer({"sporet er kaldt": [TokenAnalysis(surface="sporet", lemma="spor", upos="NOUN")]})
+        srs_db = SRSDatabase(":memory:")
+
+        pipeline = LessonPipeline(
+            story_generator=_PipelineStoryGenerator(),
+            renderer=_FakeRenderer(),
+            audio_dir=tmp_path,
+            content_stores={"no": store},
+            languages={"no": get_language("no")},
+            srs_dbs={"no": srs_db},
+            activity_log=ActivityLog(maxlen=100),
+            llm_client=FakeLLMClient(),
+            lemmatizer=lemmatizer,
+            model_version="test-v1",
+        )
+
+        pipeline.start()
+        pipeline.enqueue("no", cid, 1, "generate")
+        record = await wait_for_job(pipeline, "no", cid, 1, "ready")
+
+        assert record["state"] == "ready"
+        assert captured, "save_lesson was never called"
+        stored = [p for sec in captured[0].sections for p in sec.phrases if p.source_word is not None]
+        assert stored, "fixture produced no provenance-carrying chunks"
+        sporet = [p for p in stored if p.source_word == "sporet"]
+        assert sporet, f"no 'sporet' chunks in {[p.source_word for p in stored]}"
+        assert all(p.upos == "NOUN" for p in sporet), (
+            "the pipeline reached storage untagged — annotation ran after the save; "
+            f"got {[(p.text, p.upos) for p in sporet]}"
+        )

@@ -40,6 +40,8 @@ class LessonPipeline:
         sleep: Callable[[float], object] | None = None,
         max_attempts: int = 4,
         max_wait_s: float = 90.0,
+        lemmatizer: object | None = None,
+        model_version: str | None = None,
     ) -> None:
         self._story_generator = story_generator
         self._renderer = renderer
@@ -52,6 +54,8 @@ class LessonPipeline:
         self._sleep = sleep or asyncio.sleep
         self._max_attempts = max_attempts
         self._max_wait_s = max_wait_s
+        self._lemmatizer = lemmatizer
+        self._model_version = model_version
 
         self._queue: asyncio.Queue[tuple[str, str, int]] = asyncio.Queue()
         self._jobs: dict[tuple[str, str, int], dict] = {}
@@ -348,7 +352,11 @@ class LessonPipeline:
             if srs_db_for_upos is not None:
                 from app.api.generation import annotate_chunk_upos_for_lesson
 
-                await annotate_chunk_upos_for_lesson(lesson, srs_db_for_upos)
+                upos_kwargs: dict[str, object] = {}
+                if self._lemmatizer is not None:
+                    upos_kwargs["lemmatizer"] = self._lemmatizer
+                    upos_kwargs["model_version"] = self._model_version
+                await annotate_chunk_upos_for_lesson(lesson, srs_db_for_upos, **upos_kwargs)
             store.save_lesson(lesson_id, curriculum_id, day, lesson)
             sync_curriculum_day_title(store, curriculum_id, day, lesson.title)
             record["lesson_id"] = lesson_id
