@@ -9,26 +9,28 @@ in, and correctly declined rather than manufacture a pointer-only commit.
 
 ⚠️ The bead recorded TWO mechanisms for this and they imply different fixes. The
 second ("the staging it performs is overtaken by the `git add -A` that runs
-first in the same shell") is FALSE **on this machine**, measured 2026-08-31 in
-a throwaway repo: a gitlink staged before `git add -A` survives it and is
-recorded correctly. That is what justifies fixing this in a PreToolUse hook at
-all — if `add -A` really did clobber the gitlink, only a real `pre-commit` git
-hook could work.
+first in the same shell") is FALSE: a gitlink staged before `git add -A`
+survives it and is recorded correctly. That is what justifies fixing this in a
+PreToolUse hook at all — if `add -A` really did clobber the gitlink, only a real
+`pre-commit` git hook could work.
 
-⚠️ **That measurement does NOT reproduce on the CI runner, and why is UNKNOWN.**
-There, `git add -- .beads-tasks` appears to stage nothing: the following commit
-reports "nothing to commit, working tree clean" even though `git submodule
-status` shows the pointer drifted. A first hypothesis — that `ignore = all` was
-suppressing the add on the runner's newer git (2.55.0 vs 2.50.1 here) — was
-DISCONFIRMED: overriding it with `-c submodule.<name>.ignore=none` changed
-nothing, and a command-line override outranks .gitmodules, so the ignore
-setting is not the mechanism.
+⚠️ SECOND BUG, found while testing the first (tunatale-ov0m). From git 2.55 the
+`ignore = all` that keeps the gitlink out of the commit gate's fingerprint ALSO
+suppresses `git add` of that submodule:
 
-The test that pinned the `add -A` claim lived here and was removed rather than
-left red or quarantined behind a guess. The hook's own logic is fully covered
-by what remains — every test below drives `should_stage` and none stages a
-gitlink. Tracked in tunatale-ov0m; do not re-add a gitlink-staging test until
-the runner behaviour is understood.
+    hint: Skipping submodule due to ignore=all: .beads-tasks
+    hint: Use --force if you really want to add the submodule.
+
+The add exits 0 having staged nothing. Apple git 2.50.1 — what this machine
+ships — stages without --force, so the whole class is invisible locally and
+surfaced only on the CI runner. The hook now passes --force, which is a no-op on
+the older git. `_stage_pointer` below uses the same invocation, so a test can
+never assert a staging the hook cannot perform.
+
+⚠️ `-c submodule.<name>.ignore=none` does NOT override this and looks like it
+disproves the diagnosis — the runner still logs `ignore=all` with the override
+in place. Do not re-derive "the ignore setting is not the mechanism" from that;
+it is, and --force is the documented escape hatch.
 """
 
 from __future__ import annotations
@@ -79,6 +81,17 @@ _GIT_ENV = {
     "GIT_COMMITTER_NAME": "t",
     "GIT_COMMITTER_EMAIL": "t@t.t",
 }
+
+
+def _stage_pointer(repo):
+    """Stage the gitlink exactly the way the hook does — with --force.
+
+    A plain `git add -- .beads-tasks` is version-dependent: git 2.50 stages it,
+    git 2.55 lets `ignore = all` suppress the add entirely (tunatale-ov0m).
+    Tests that stage the pointer must use the hook's own invocation, or they
+    assert a behaviour the hook does not have.
+    """
+    _run(["add", "--force", "--", ".beads-tasks"], repo)
 
 
 def _run(args, cwd):
@@ -196,13 +209,8 @@ class TestPreexistingGuardsStillHold:
         assert hook.should_stage("git add -A && git commit --dry-run -m 'x'") is False
 
     def test_declines_when_the_pointer_is_not_drifted(self, hook, repo):
-        # Un-drift by moving the submodule BACK to the recorded commit, rather
-        # than staging the gitlink forward. Same end state, and it avoids
-        # `git add`-ing a gitlink — which behaves differently on the CI runner
-        # than it does here, for reasons not yet diagnosed (see the module
-        # docstring). The hook behaviour under test is unaffected either way.
-        recorded = _run(["rev-parse", "HEAD:.beads-tasks"], repo)
-        _run(["checkout", "-q", recorded], repo / ".beads-tasks")
+        _stage_pointer(repo)
+        _run(["commit", "-qm", "bump pointer"], repo)
         assert not _run(["submodule", "status"], repo).startswith("+")
         (repo / "code.py").write_text("x = 1")
         assert hook.should_stage("git add -A && git commit -m 'x'") is False
@@ -222,3 +230,72 @@ class TestPreexistingGuardsStillHold:
         the same way — a filename containing the word must not count."""
         (repo / "code.py").write_text("x = 1")
         assert hook.should_stage("git log -- .pre-commit-config.yaml") is False
+
+
+class TestTheMechanismTheBeadGotWrong:
+    def test_add_dash_A_does_not_clobber_a_prestaged_gitlink(self, repo):
+        """A gitlink staged BEFORE `git add -A` survives it and is recorded.
+
+        Pinned because the bead asserts the opposite, and that claim — if true
+        — would rule out every PreToolUse fix. `ignore = all` keeps the gitlink
+        out of `add -A`'s view, so it is left alone rather than reset.
+        """
+        (repo / "code.py").write_text("x = 1")
+        _stage_pointer(repo)
+        _run(["add", "-A"], repo)
+        _run(["commit", "-qm", "compound"], repo)
+
+        recorded = _run(["rev-parse", "HEAD:.beads-tasks"], repo)
+        head = _run(["rev-parse", "HEAD"], repo / ".beads-tasks")
+        assert recorded == head, "add -A clobbered the pre-staged gitlink"
+        assert not _run(["submodule", "status"], repo).startswith("+")
+
+
+class TestTheHookActuallyStages:
+    """End-to-end through main(), not just should_stage.
+
+    Nothing covered this before, which is how the git 2.55 `ignore = all` break
+    (tunatale-ov0m) got as far as it did: every other test here stops at the
+    DECISION and none of them performed the staging the decision leads to.
+
+    ⚠️ Vacuous on git 2.50 — a plain add would pass it too. It discriminates
+    only on git >= 2.55, i.e. on the CI runner, which is exactly where the bug
+    lives. Kept because CI is the authoritative gate; the whitebox assertion
+    below is what gives local coverage of the same requirement.
+    """
+
+    def _fire(self, hook, repo, monkeypatch, command="git commit -m 'x'"):
+        import io
+        import json as _json
+
+        monkeypatch.setattr(hook, "REPO_ROOT", _run(["rev-parse", "--show-toplevel"], repo))
+        payload = _json.dumps({"tool_input": {"command": command}, "cwd": str(repo)})
+        monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+        return hook.main()
+
+    def test_the_gitlink_really_lands_in_the_index(self, hook, repo, monkeypatch):
+        (repo / "code.py").write_text("x = 1")
+        _run(["add", "code.py"], repo)
+
+        assert self._fire(hook, repo, monkeypatch) == 0
+
+        staged_sha = _run(["ls-files", "-s", ".beads-tasks"], repo).split()[1]
+        assert staged_sha == _run(["rev-parse", "HEAD"], repo / ".beads-tasks")
+        # And it survives into the commit, which is the property that actually
+        # matters — `git commit` is what reported "nothing to commit" on 2.55.
+        _run(["commit", "-qm", "code"], repo)
+        assert _run(["rev-parse", "HEAD:.beads-tasks"], repo) == _run(["rev-parse", "HEAD"], repo / ".beads-tasks")
+
+    def test_the_staging_add_passes_force(self, hook):
+        """Whitebox, and deliberately so.
+
+        The requirement is "must stage even when ignore = all suppresses add",
+        and on git 2.50 no outcome test can distinguish a hook that meets it
+        from one that does not. Asserting the flag is the only check that goes
+        red on THIS machine if someone removes it — an outcome test would stay
+        green here and break the pointer for every reader on a newer git.
+        """
+        import inspect
+
+        src = inspect.getsource(hook.main)
+        assert '"add", "--force", "--", SUBMODULE' in src, "the staging add must pass --force"

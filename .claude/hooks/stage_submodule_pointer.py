@@ -162,7 +162,20 @@ def main():
     try:
         if not should_stage(command):
             return 0
-        added = _git(["add", "--", SUBMODULE], REPO_ROOT)
+        # --force is REQUIRED, and only on newer git. `ignore = all` is what
+        # keeps the gitlink out of the commit gate's fingerprint (see above),
+        # but from git 2.55 it also suppresses `git add` of that submodule:
+        #
+        #   hint: Skipping submodule due to ignore=all: .beads-tasks
+        #   hint: Use --force if you really want to add the submodule.
+        #
+        # The add then exits 0 having staged nothing, and the commit reports
+        # "nothing to commit, working tree clean" — so the hook fails open and
+        # the pointer silently goes stale, which is indistinguishable from it
+        # correctly declining. Apple git 2.50.1 stages without --force, so this
+        # is invisible on this machine and was caught only on the CI runner
+        # (tunatale-ov0m). --force is a no-op on the older git.
+        added = _git(["add", "--force", "--", SUBMODULE], REPO_ROOT)
         if added.returncode != 0:
             return 0
         head = _out(_git(["rev-parse", "--short", "HEAD"], os.path.join(REPO_ROOT, SUBMODULE)))
