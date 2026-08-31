@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from app.audio import assembly as _assembly
 from app.audio.cues import Cue, CueTiming, build_cue_manifest
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.ports import TTSService
@@ -483,17 +484,32 @@ class LessonRenderer:
                     await asyncio.to_thread(self._write_audio, sp, sec_audio)
                     logger.debug("Section %d export → %.0f ms", section_idx, (time.perf_counter() - t0) * 1000)
 
-            # Assemble full lesson: title + bs + sec0 + bs + sec1 + ...
-            boundary = _silence(self._calc.get_section_boundary_pause(), title_audio)
-            parts: list[_Audio] = [title_audio, boundary]
-            for i, sec_audio in enumerate(section_audios):
-                if i > 0:
+            # Assemble full lesson using the shared layout.
+            # lesson_layout owns the piece order, the boundary count (N for N
+            # sections) AND the boundary value.  The actual frame offsets come
+            # from the audio objects themselves, not from the ms-based layout —
+            # this avoids rounding differences between the two domains.
+            boundary_ms = self._calc.get_section_boundary_pause()
+            sec_durations_ms = [round(len(s.samples) / title_audio.rate * 1000) for s in section_audios]
+            layout = _assembly.lesson_layout(
+                sec_durations_ms, round(len(title_audio.samples) / title_audio.rate * 1000), boundary_ms
+            )
+
+            boundary = _silence(layout.boundary_ms, title_audio)
+            # piece_descriptions starts with "title"; everything after it is a
+            # boundary or a section, stitched in the shared order.
+            parts: list[_Audio] = [title_audio]
+            for desc in layout.piece_descriptions[1:]:
+                if desc == "boundary":
                     parts.append(boundary)
-                parts.append(sec_audio)
+                else:
+                    parts.append(section_audios[int(desc.split("_")[1])])
             combined = await asyncio.to_thread(_concat, parts)
 
-            # Build cue manifest with absolute frame offsets.
-            # Accumulate offsets in frames (never sum float ms per phrase).
+            # Build cue manifest with absolute frame offsets.  Walk the shared
+            # layout's piece order once, accumulating frame offsets so the
+            # section boundary-count logic is owned by the layout (never
+            # restated here).
             timing_entries: list[CueTiming] = [
                 CueTiming(
                     section_index=None,
@@ -502,8 +518,18 @@ class LessonRenderer:
                     end_frame=len(title_audio.samples),
                 )
             ]
-            current_abs_frame = len(title_audio.samples) + len(boundary.samples)
-            for sec_idx, (sec_audio, sec_cues) in enumerate(zip(section_audios, section_cue_lists, strict=True)):
+            current_abs_frame = len(title_audio.samples)
+            boundary_frames = len(boundary.samples)
+            for desc in layout.piece_descriptions[1:]:
+                if desc == "boundary":
+                    current_abs_frame += boundary_frames
+                    continue
+                # Index by sec_idx, never by iteration order: pairing cues to a
+                # separate iterator would silently attach section i's cues to
+                # section j if the layout ever emitted sections out of order —
+                # the exact drift class this module exists to prevent.
+                sec_idx = int(desc.split("_")[1])
+                sec_cues = section_cue_lists[sec_idx]
                 for ph_idx, rel_start, rel_end in sec_cues:
                     timing_entries.append(
                         CueTiming(
@@ -513,9 +539,7 @@ class LessonRenderer:
                             end_frame=current_abs_frame + rel_end,
                         )
                     )
-                current_abs_frame += len(sec_audio.samples)
-                if sec_idx < len(section_audios) - 1:
-                    current_abs_frame += len(boundary.samples)
+                current_abs_frame += len(section_audios[sec_idx].samples)
 
             rate = int(title_audio.rate)
             cues = build_cue_manifest(lesson, timing_entries, rate)

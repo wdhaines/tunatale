@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from app.audio import assembly as _assembly
 from app.audio.alignment import resample_to_model_rate
 from app.audio.cues import Cue, CueTiming, build_cue_manifest
 from app.audio.ports import TTSExhausted
@@ -466,20 +467,29 @@ async def reassemble_lesson_audio(
         section_paths = [
             new_target_paths[i] if i in targets else Path(r["file_path"]) for i, r in enumerate(section_rows)
         ]
+
+        # Absolute timing in MILLISECONDS throughout. Working in frames needs a
+        # sample rate, and every rate that appears here cancels out of the final
+        # answer — carrying one only creates a constant to get wrong.
+        title_ms = round(_read_audio_duration(title_path) * 1000)
+        durations_ms = [round(_read_audio_duration(p) * 1000) for p in section_paths]
+
+        # Shared layout owns the piece order and the N-vs-N-1 boundary count for
+        # BOTH the file concatenation and the cue manifest below.  piece_
+        # descriptions starts with "title"; everything after it is stitched in
+        # the shared order exactly as LessonRenderer.render does.
+        layout = _assembly.lesson_layout(durations_ms, title_ms, boundary_ms)
         pieces: list[Path] = [title_path]
-        for sec_path in section_paths:
-            pieces.append(boundary_path)
-            pieces.append(sec_path)
+        for desc in layout.piece_descriptions[1:]:  # skip title
+            if desc == "boundary":
+                pieces.append(boundary_path)
+            else:
+                sec_idx = int(desc.split("_")[1])
+                pieces.append(section_paths[sec_idx])
 
         new_full_id = str(uuid.uuid4())
         new_full_path = audio_dir / f"{new_full_id}.{ext}"
         _concat_stream_copy(pieces, new_full_path)
-
-        # Absolute cue manifest, in MILLISECONDS throughout. Working in frames
-        # needs a sample rate, and every rate that appears here cancels out of
-        # the final answer — carrying one only creates a constant to get wrong.
-        title_ms = round(_read_audio_duration(title_path) * 1000)
-        durations_ms = [round(_read_audio_duration(p) * 1000) for p in section_paths]
 
     # Per-section cues, in the SAME form derive_section_cues stores: reused
     # sections keep what they already had; the re-rendered ones are rebuilt.
@@ -514,18 +524,19 @@ async def reassemble_lesson_audio(
             end_frame=_ms_to_frames(title_ms, assembly_rate),
         )
     ]
-    offset_ms = title_ms + boundary_ms
+    section_cue_timings: dict[int, list[CueTiming]] = {}
     for i, cue_dicts in enumerate(stored_cues):
-        for cd in cue_dicts:
-            timing.append(
-                CueTiming(
-                    section_index=i,
-                    phrase_index=cd["phrase_index"],
-                    start_frame=_ms_to_frames(cd["start_ms"] + offset_ms, assembly_rate),
-                    end_frame=_ms_to_frames(cd["end_ms"] + offset_ms, assembly_rate),
-                )
+        section_cue_timings[i] = [
+            CueTiming(
+                section_index=i,
+                phrase_index=cd["phrase_index"],
+                start_frame=_ms_to_frames(cd["start_ms"], assembly_rate),
+                end_frame=_ms_to_frames(cd["end_ms"], assembly_rate),
             )
-        offset_ms += durations_ms[i] + boundary_ms
+            for cd in cue_dicts
+        ]
+    merged = _assembly.merge_section_cues(section_cue_timings, title_ms, durations_ms, boundary_ms, assembly_rate)
+    timing.extend(merged)
     all_cues = build_cue_manifest(lesson, timing, assembly_rate)
     cues_json = json.dumps([asdict(c) for c in all_cues], ensure_ascii=False)
 
