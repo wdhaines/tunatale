@@ -137,9 +137,35 @@ jobs:
   # and CI (UTC) both sat inside the passing band, so it survived every gate
   # until someone went looking (tunatale-3oz).
   #
-  # UTC+14 and UTC-12 are the two extreme zones that exist, and the matrix is
-  # prophylactic symmetric coverage of both — NOT two probes for one failure
-  # mode. The extremes did not catch the bug that forced this matrix: a test
+  # ⚠️ THIS JOB PROBED UTC+14 AND UTC-12 UNTIL 2026-08-31, AND THAT WAS WRONG.
+  # It ran two instances at the two extreme zones as "prophylactic symmetric
+  # coverage" of an offset-regime theory that vnf.6 had already falsified. The
+  # extremes were then MEASURED against the one real offset bug this repo has
+  # (tunatale-vnf.9): reintroduce the pre-fix form of
+  # `test_unbury_idempotent_across_midnight_same_anki_day` (stamp its two naive
+  # datetimes `tzinfo=UTC`) and run it across offsets:
+  #
+  #   UTC (the `backend` job) .......... PASSES  — misses it
+  #   Pacific/Kiritimati (UTC+14) ...... PASSES  — the old matrix missed it
+  #   Etc/GMT+12 (UTC-12) .............. PASSES  — the old matrix missed it
+  #   Etc/GMT-2 / -3 / -4, Europe/Berlin  FAILS  — caught
+  #   Etc/GMT-5 (UTC+5), America/New_York PASSES
+  #
+  # So both old instances were blind to the only offset bug we have ever found,
+  # and the populated CEST/Moscow/Gulf band that DOES catch it went unprobed.
+  # The job now runs ONE instance inside that band. This is strictly better
+  # coverage than the pair it replaced AND one job instance cheaper, which
+  # matters because job COUNT drives the CI tail: eight jobs do not all get
+  # runners at once and serialize (run-level p90 586s with a max JOB of 125s).
+  #
+  # Redundancy check before cutting it — `backend-hostile-hour` computes, on
+  # every run, a zone whose LOCAL time is inside [04:00, 05:00), so the rollover
+  # BAND that originally forced this job into existence is covered there
+  # deterministically. That is what makes the extremes droppable rather than
+  # merely expensive. The two jobs are still orthogonal: hostile-hour pins the
+  # local hour and lets the offset fall where it may, this one pins the offset.
+  #
+  # The original bug that forced this job into existence: a test
   # seeding revlog timestamps at `now`/`now-1h` straddles the 4 AM Anki-day
   # rollover inside [04:00, 05:00) local, a wall-clock flake that hits every
   # timezone for one hour a day. UTC+14 alone missed it only because the run
@@ -149,15 +175,18 @@ jobs:
   # wall-clock assumption — look for a fixture doing date arithmetic across
   # ANKI_ROLLOVER_HOUR before suspecting product code.
   #
-  # ⚠️ THE EXTREMES ARE NOT A MAXIMAL PROBE, and assuming they were hid a real
-  # bug. `test_unbury_idempotent_across_midnight_same_anki_day` expressed two
-  # LOCAL wall-clock times as UTC literals 3 hours apart; a 4 AM local rollover
-  # falls between them only at UTC+2, +3 and +4, so it failed hard at CEST,
-  # Moscow and Gulf offsets while passing at BOTH extremes this matrix probes
-  # (found 2026-08-14 by a full 27-offset sweep, fixed in the same commit).
-  # A mid-range band is invisible to an endpoints-only matrix. Do not widen this
-  # matrix reflexively — a full sweep is a local command, not a CI job — but do
-  # not read "green here" as "green everywhere" either. The sweep, ~8 min:
+  # History of the offset bug named above, kept because it is the reason this
+  # job's zone is what it is: `test_unbury_idempotent_across_midnight_same_anki_day`
+  # expressed two LOCAL wall-clock times as UTC literals 3 hours apart, so a
+  # 4 AM local rollover falls between them only at UTC+2, +3 and +4 (found
+  # 2026-08-14 by the 27-offset sweep below, fixed in the same commit).
+  #
+  # ONE FIXED ZONE IS STILL NOT A MAXIMAL PROBE. It is chosen to cover the one
+  # band with a demonstrated failure, not to prove the suite is offset-clean.
+  # Do not widen this matrix reflexively — a full sweep is a local command, not
+  # a CI job — but do not read "green here" as "green everywhere" either. When
+  # touching anything that does date arithmetic across ANKI_ROLLOVER_HOUR, run
+  # the sweep locally. ~8 min:
   #
   #   cd backend
   #   for o in $(seq -14 12); do
@@ -173,7 +202,12 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        tz: [Pacific/Kiritimati, Etc/GMT+12]
+        # ONE zone, in the band that actually catches things — see the
+        # 2026-08-31 measurement in the comment above. Etc/GMT-3 is UTC+3 and
+        # has NO DST, so the offset this job probes is the same every run;
+        # Europe/Berlin also reproduces the bug but swings +1/+2 across the
+        # year, which would make the probe's offset a function of the date.
+        tz: [Etc/GMT-3]
     defaults:
       run:
         working-directory: backend
