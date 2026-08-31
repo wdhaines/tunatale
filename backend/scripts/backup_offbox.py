@@ -48,7 +48,7 @@ from pathlib import Path
 from app.config import settings
 from app.languages import resolve_db_path
 from app.plugins.anki_sync.safety import snapshot_collection
-from app.storage.db_backup import _DATE_GLOB, _snapshot
+from app.storage.db_backup import _DATE_GLOB, _SIDECAR_SUFFIXES, _snapshot
 
 SERVICE_B2 = "tunatale-b2"
 ACCOUNT_KEY_ID = "key-id"
@@ -193,7 +193,36 @@ def stage_db_snapshots(db_paths: Iterable[Path | str], staging: Path | str, toda
     for stale in staging.glob(f"*.{_DATE_GLOB}.db"):
         if stale.name not in kept:
             stale.unlink()
+    _sweep_sidecars(staging, f"*.{_DATE_GLOB}.db", kept)
     return written
+
+
+def _sweep_sidecars(staging: Path, base_glob: str, kept: set[str]) -> None:
+    """Unlink ``-wal``/``-shm``/``-journal`` files whose base snapshot is not kept.
+
+    SQLite grows a sidecar the moment anything OPENS a staged snapshot — a
+    restore drill, an ad-hoc ``sqlite3`` read. Neither snapshot sweep's glob
+    matches them (``*.{DATE}.db`` and ``collection.{DATE}.anki2`` both stop at
+    the extension), so before this existed a sidecar that appeared once was
+    never removed again and restic shipped it every night thereafter.
+
+    Swept by NAME rather than by walking the snapshots just deleted, mirroring
+    ``db_backup._prune``: an interrupted writer can leave a sidecar whose base
+    snapshot is already gone, and such an orphan is unreachable from the
+    snapshot list forever — that is exactly how 2026-07-16…21 accumulated in the
+    real rolling-backup directory.
+
+    ``kept`` guards the live case: deleting a ``-wal`` out from under a snapshot
+    we are retaining would truncate its data. In this staging flow that case is
+    unreachable, because ``_snapshot`` / ``snapshot_collection`` close the
+    destination connection and SQLite checkpoints the sidecars away itself — see
+    ``TestStagingSidecarSweep::test_sqlite_clears_the_current_snapshots_sidecars_itself``,
+    which pins that reasoning so this guard does not later read as dead code.
+    """
+    for suffix in _SIDECAR_SUFFIXES:
+        for sidecar in staging.glob(f"{base_glob}{suffix}"):
+            if sidecar.name.removesuffix(suffix) not in kept:
+                sidecar.unlink()
 
 
 def stage_anki_collection(collection_path: Path | str, staging: Path | str, today: str | None = None) -> Path:
@@ -227,6 +256,7 @@ def stage_anki_collection(collection_path: Path | str, staging: Path | str, toda
     for stale in staging.glob(f"collection.{_DATE_GLOB}.anki2"):
         if stale != dest:
             stale.unlink()
+    _sweep_sidecars(staging, f"collection.{_DATE_GLOB}.anki2", {dest.name})
     return dest
 
 

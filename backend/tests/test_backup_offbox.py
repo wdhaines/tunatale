@@ -409,6 +409,138 @@ class TestStageAnkiCollection:
             stage_anki_collection(tmp_path / "collection.anki2", tmp_path / "staging", today="2026-08-31")
 
 
+class TestStagingSidecarSweep:
+    """``-wal`` / ``-shm`` must be pruned with — and only with — their snapshot.
+
+    SQLite grows a sidecar the moment anything OPENS a staged snapshot: a restore
+    drill, an ad-hoc ``sqlite3`` read. Neither sweep's glob matched them, so once
+    one appeared nothing ever removed it and restic shipped it every night.
+
+    The sweep is by NAME, not by walking the snapshots being deleted — mirroring
+    ``db_backup._prune``, whose docstring records why: an interrupted writer can
+    leave a sidecar whose base snapshot is already gone, and such an orphan is
+    unreachable from the snapshot list forever (that is how 2026-07-16…21
+    accumulated in the real backup dir).
+    """
+
+    @staticmethod
+    def _touch(*paths):
+        for p in paths:
+            p.write_bytes(b"")
+
+    def test_stale_anki_sidecars_go_with_their_snapshot(self, tmp_path):
+        staging = tmp_path / "staging"
+        src = tmp_path / "collection.anki2"
+        _make_collection(src)
+        stage_anki_collection(src, staging, today="2026-08-20")
+        self._touch(
+            staging / "collection.2026-08-20.anki2-wal",
+            staging / "collection.2026-08-20.anki2-shm",
+        )
+
+        stage_anki_collection(src, staging, today="2026-08-31")
+
+        assert not (staging / "collection.2026-08-20.anki2").exists()
+        assert not (staging / "collection.2026-08-20.anki2-wal").exists()
+        assert not (staging / "collection.2026-08-20.anki2-shm").exists()
+
+    def test_an_orphaned_sidecar_is_still_swept(self, tmp_path):
+        """No base snapshot — the case walking the deleted list would miss forever."""
+        staging = tmp_path / "staging"
+        src = tmp_path / "collection.anki2"
+        _make_collection(src)
+        stage_anki_collection(src, staging, today="2026-08-31")
+        self._touch(staging / "collection.2026-08-20.anki2-wal")
+
+        stage_anki_collection(src, staging, today="2026-08-31")
+
+        assert not (staging / "collection.2026-08-20.anki2-wal").exists()
+
+    def test_sqlite_clears_the_current_snapshots_sidecars_itself(self, tmp_path):
+        """Why the "retained snapshot" case cannot arise in THIS flow.
+
+        Measured 2026-08-31 while writing the sweep: a placeholder
+        ``collection.{today}.anki2-wal`` is gone after a re-stage, and the sweep
+        is not what removed it — ``snapshot_collection`` closes the destination
+        connection, and SQLite checkpoints and unlinks the sidecars on a clean
+        close. So by the time the sweep runs, the current snapshot has none.
+
+        The implementation still refuses to sweep the current snapshot's
+        sidecars. That guard is unreachable here and deliberately kept: it
+        mirrors ``db_backup._prune``, where deleting a live ``-wal`` under a
+        retained snapshot WOULD truncate real data, and it keeps this sweep
+        correct if the ordering ever changes. This test pins the reason, so the
+        guard does not later look like dead code and get removed.
+        """
+        staging = tmp_path / "staging"
+        src = tmp_path / "collection.anki2"
+        _make_collection(src)
+        stage_anki_collection(src, staging, today="2026-08-31")
+        self._touch(staging / "collection.2026-08-31.anki2-wal")
+
+        stage_anki_collection(src, staging, today="2026-08-31")
+
+        assert not (staging / "collection.2026-08-31.anki2-wal").exists()
+        assert (staging / "collection.2026-08-31.anki2").exists()
+
+    def test_an_undated_sidecar_survives(self, tmp_path):
+        staging = tmp_path / "staging"
+        src = tmp_path / "collection.anki2"
+        _make_collection(src)
+        stage_anki_collection(src, staging, today="2026-08-31")
+        undated = staging / "collection.pre-v41.anki2-wal"
+        self._touch(undated)
+
+        stage_anki_collection(src, staging, today="2026-08-31")
+
+        assert undated.exists()
+
+    def test_stale_db_sidecars_go_with_their_snapshot(self, tmp_path):
+        staging = tmp_path / "staging"
+        db = tmp_path / "tunatale_no.db"
+        _make_db(db)
+        stage_db_snapshots([db], staging, today="2026-08-20")
+        self._touch(
+            staging / "tunatale_no.2026-08-20.db-wal",
+            staging / "tunatale_no.2026-08-20.db-shm",
+        )
+
+        stage_db_snapshots([db], staging, today="2026-08-31")
+
+        assert not (staging / "tunatale_no.2026-08-20.db-wal").exists()
+        assert not (staging / "tunatale_no.2026-08-20.db-shm").exists()
+        assert (staging / "tunatale_no.2026-08-31.db").exists()
+
+    def test_neither_sidecar_sweep_reaches_the_others_files(self, tmp_path):
+        """Same separation the snapshot sweeps have: .db-wal vs .anki2-wal."""
+        staging = tmp_path / "staging"
+        db = tmp_path / "tunatale_no.db"
+        _make_db(db)
+        col = tmp_path / "collection.anki2"
+        _make_collection(col)
+        stage_db_snapshots([db], staging, today="2026-08-31")
+        stage_anki_collection(col, staging, today="2026-08-31")
+
+        anki_side = staging / "collection.2026-08-20.anki2-wal"
+        db_side = staging / "tunatale_no.2026-08-20.db-wal"
+        self._touch(anki_side, db_side)
+
+        stage_db_snapshots([db], staging, today="2026-08-31")
+        assert not db_side.exists(), "the .db sweep did not take its own sidecar"
+        assert anki_side.exists(), "the .db sweep reached into the .anki2 sidecars"
+
+        # ⚠️ Re-create the .db sidecar BEFORE the anki sweep. Without this the db
+        # sweep above has already removed it, so a too-wide anki glob has nothing
+        # left to wrongly eat and the assertion below cannot fail. Sabotage-drilled
+        # 2026-08-31: widening the anki sweep to `*.{DATE}.*` reddened nothing
+        # until this line existed.
+        self._touch(db_side)
+
+        stage_anki_collection(col, staging, today="2026-08-31")
+        assert not anki_side.exists(), "the .anki2 sweep did not take its own sidecar"
+        assert db_side.exists(), "the .anki2 sweep reached into the .db sidecars"
+
+
 class TestBackupCommand:
     def test_uploads_the_staged_dbs_and_both_content_trees(self, tmp_path, secrets, monkeypatch):
         run = FakeRun(0)
