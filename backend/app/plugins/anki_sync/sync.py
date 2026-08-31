@@ -209,6 +209,21 @@ def _write_sync_soak_log(
     ``no_template=200``, ``clozed=200`` and ``minted=10`` are three different
     diagnoses of the same promote wall time, and telling them apart after the
     fact is the whole point (tunatale-byw, 2026-08-19).
+
+    ⚠️ **This line and the ``_log.warning`` in ``sync_engine.promote_production_cards``
+    are two hand-maintained copies of one field list, and they drifted.** The
+    logging copy carried ``awaiting_image``; this one stopped at ``no_template``
+    for eight days, so the counter whose docstring calls it "the one thing this
+    counter exists to make visible" appeared in the durable log exactly zero
+    times. That is the whole failure this function exists to prevent — the
+    logging copy goes to the dev server's terminal, which ``start-dev.sh``
+    redirects nowhere, so a field present only there is a field nobody can read
+    after the fact. ``awaiting_image`` is also the stated oracle for
+    tunatale-7wsv, which could not be settled for exactly this reason: a reader
+    checking it found ``awaiting=1183`` and had no way to tell that the field
+    they wanted was absent rather than flat. **Add new PromotionReport counters
+    to BOTH lines**, or the new one is invisible in the only place it is looked
+    for (tunatale-7wsv, 2026-08-31).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().isoformat(timespec="seconds")
@@ -222,7 +237,8 @@ def _write_sync_soak_log(
         lines.append(
             f"{ts} PRODUCTION_MINT awaiting={promotion.awaiting} minted={promotion.minted} "
             f"adopted={promotion.adopted} clozed={promotion.clozed} "
-            f"unservable={promotion.unservable} no_template={promotion.no_template}"
+            f"unservable={promotion.unservable} no_template={promotion.no_template} "
+            f"awaiting_image={promotion.awaiting_image}"
         )
     for d in pull.recompute_divergences:
         lines.append(

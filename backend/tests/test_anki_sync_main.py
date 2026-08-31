@@ -1035,12 +1035,63 @@ class TestPromotionHeartbeat:
             log_path,
             pull=PullReport(),
             push=PushReport(),
-            promotion=PromotionReport(awaiting=1435, minted=10, adopted=1, clozed=2, unservable=3, no_template=4),
+            promotion=PromotionReport(
+                awaiting=1435,
+                minted=10,
+                adopted=1,
+                clozed=2,
+                unservable=3,
+                no_template=4,
+                awaiting_image=5,
+            ),
         )
 
         line = next(ln for ln in log_path.read_text().splitlines() if "PRODUCTION_MINT" in ln)
-        for field in ("awaiting=1435", "minted=10", "adopted=1", "clozed=2", "unservable=3", "no_template=4"):
+        for field in (
+            "awaiting=1435",
+            "minted=10",
+            "adopted=1",
+            "clozed=2",
+            "unservable=3",
+            "no_template=4",
+            "awaiting_image=5",
+        ):
             assert field in line, f"{field} missing from {line!r}"
+
+        # awaiting=N must not be able to satisfy an awaiting_image=N assertion:
+        # the substring "awaiting=" is a prefix of "awaiting_image=", so a
+        # regression that drops the second field would still match a naive
+        # `"awaiting_image=5" in line` if the counts happened to collide.
+        assert line.count("awaiting_image=") == 1
+
+    def test_every_promotion_counter_reaches_the_durable_log(self, tmp_path):
+        """No PromotionReport field may exist only in the `logging` copy.
+
+        The field list is maintained by hand in TWO places — this file's
+        f-string and the `_log.warning` in
+        `sync_engine.promote_production_cards` — and they drifted for eight
+        days: `awaiting_image` was in the logging copy and not here, so it
+        reached the dev server's terminal (which start-dev.sh redirects
+        nowhere) and never the file anyone greps. It was simultaneously the
+        stated oracle for tunatale-7wsv, which therefore could not be settled.
+
+        Enumerating the dataclass rather than restating the field names is the
+        point: a hand-written list is what failed, so a second hand-written
+        list is not the fix. A new counter added to PromotionReport reddens
+        this test until it is logged.
+        """
+        import dataclasses
+
+        # Distinct values per field, so a field printed with the wrong value —
+        # or two fields collapsed onto one — cannot pass.
+        report = PromotionReport(**{f.name: i + 11 for i, f in enumerate(dataclasses.fields(PromotionReport))})
+        _write_sync_soak_log(log_path := tmp_path / "sync.log", pull=PullReport(), push=PushReport(), promotion=report)
+
+        line = next(ln for ln in log_path.read_text().splitlines() if "PRODUCTION_MINT" in ln)
+        missing = [
+            f.name for f in dataclasses.fields(PromotionReport) if f"{f.name}={getattr(report, f.name)}" not in line
+        ]
+        assert not missing, f"PromotionReport fields absent from the durable log line: {missing} — got {line!r}"
 
     def test_a_sync_with_nothing_awaiting_still_writes_the_heartbeat(self, tmp_path):
         """Written even at awaiting=0, exactly like SYNC_SOAK.
@@ -1076,7 +1127,7 @@ class TestPromotionHeartbeat:
         sync.sync_pull = MagicMock(return_value=PullReport())
 
         async def _promote(**kwargs):
-            return PromotionReport(awaiting=1435, no_template=200)
+            return PromotionReport(awaiting=1435, no_template=200, awaiting_image=7)
 
         sync.promote_production_cards = _promote
         _patch_all_refreshes(monkeypatch)
@@ -1094,6 +1145,7 @@ class TestPromotionHeartbeat:
         text = log_path.read_text()
         assert "PRODUCTION_MINT awaiting=1435" in text
         assert "no_template=200" in text
+        assert "awaiting_image=7" in text
 
 
 class TestReconcileTiming:
