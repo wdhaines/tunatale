@@ -90,7 +90,7 @@ Most `.claude/rules/*.md` carry `paths:` frontmatter — Claude Code auto-loads 
 
 ## Hooks (`.claude/settings.json`)
 
-- **Commit gate** (PreToolUse): `git commit` asks for confirmation unless `./test.sh` has passed on the exact current tree — `test.sh` records a tree fingerprint via `.claude/hooks/commit_gate.py --record` on success. A *failing* run deletes the fingerprint, so a flaky green cannot outlive a red on the same tree.
+- **Commit gate** (PreToolUse): `git commit` asks for confirmation unless `./test.sh` has passed on the exact current tree — `test.sh` records a tree fingerprint via `.claude/hooks/commit_gate.py --record` on success. A *failing* run deletes the fingerprint, so a flaky green cannot outlive a red on the same tree. It matches `git commit` only in **command position**, ignoring quoted arguments — `opencode run ... "Run: git commit"` commits nothing and is not gated (fixed 2026-08-31; a shell `-c` argument is exempt from that narrowing, since there the quoted string is a command line).
 - **Pipe guard** (PreToolUse): `.claude/hooks/gate_pipe_guard.py` **denies** any command that pipes `./test.sh` (`| tail`, `| tee`, `| grep`). A pipeline's `$?` is the last command's, so a failed gate reads as 0, and `tail -n` throws away the failure detail you piped in order to see. Searching for the string (`grep test.sh …`, `cat test.sh | head`) is unaffected. test.sh also tees every run to `.git/tt-test-last.log` and names it in the FAILED banner.
 - ⚠️ **Canonical gate invocation — absolute path, gate LAST, and the LOG is the
   only evidence:**

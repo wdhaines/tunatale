@@ -38,6 +38,24 @@ Resolution FAILS SAFE: anything unparseable (a shell variable, command
 substitution) falls back to the session cwd, i.e. keeps gating. Only `cd`
 segments occurring BEFORE the `git commit` are applied — otherwise
 `git commit && cd /elsewhere` would launder a local commit past the gate.
+
+⚠️ Fixed 2026-08-31. `git commit` inside a QUOTED ARGUMENT to another program
+is not a commit. Dispatching a BP fence drill —
+`opencode run --agent build "... Run: git commit --allow-empty ..."` — raised
+the gate on a command that commits nothing; the drill's whole point is to name
+forbidden commands as literals. Same class as the 2026-07-16
+`.pre-commit-config.yaml` false positive one level up: that stopped `commit`
+matching inside a word, this stops `git commit` matching inside a string.
+`gate_pipe_guard.py` already had the answer and is why it allowed the same
+command — this borrows its length-preserving `_strip_quoted`.
+
+Length preservation is load-bearing: `effective_cwd` slices the ORIGINAL
+command at the match offset, so a quoted `cd` target keeps its content.
+Stripping only decides WHETHER there is a commit, never WHERE it runs.
+
+A shell `-c` argument is exempt, because there the quoted string IS a command
+line and blanking it would turn this narrowing into a bypass — fail safe, the
+direction chosen everywhere else here.
 """
 
 import hashlib
@@ -69,6 +87,41 @@ GIT_C_RE = re.compile(rf"\bgit\s+(?:-c\s+\S+\s+|--no-pager\s+|--git-dir\s+\S+\s+
 # the gate ON, which is the safe direction.
 UNRESOLVABLE = ("$", "`", "~")
 
+# A shell asked to run a command line: its quoted argument is code, not data.
+SHELL_C_RE = re.compile(r"\b(?:ba|z|k|da)?sh\s+(?:-\w+\s+)*-\w*c\b")
+
+
+def _strip_quoted(command):
+    """Blank the CONTENTS of quoted spans, preserving length and the quotes.
+
+    Length preservation keeps every offset into the result valid as an offset
+    into the original, which is what lets `effective_cwd` read the real text.
+    """
+    out = []
+    quote = None
+    for ch in command:
+        if quote:
+            out.append(" " if ch != quote else ch)
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+            out.append(ch)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def find_commit(command):
+    """Match `git commit` as a COMMAND, not as text inside a quoted argument.
+
+    Returns the match (offsets valid against *command*) or None. A shell `-c`
+    invocation is searched raw: its quoted argument is a command line.
+    """
+    if SHELL_C_RE.search(command):
+        return COMMIT_RE.search(command)
+    return COMMIT_RE.search(_strip_quoted(command))
+
 
 def _git(args, cwd):
     return subprocess.run(["git", *args], capture_output=True, cwd=cwd, timeout=60)
@@ -88,7 +141,7 @@ def effective_cwd(command, cwd):
     regardless of the shell's cwd). Only text BEFORE the `git commit` is
     considered. Unresolvable paths leave the base unchanged — fail safe.
     """
-    match = COMMIT_RE.search(command)
+    match = find_commit(command)
     head = command[: match.start()] if match else command
 
     base = cwd
@@ -136,7 +189,7 @@ def main():
     except (json.JSONDecodeError, OSError):
         return 0
     command = (data.get("tool_input") or {}).get("command", "")
-    if not COMMIT_RE.search(command):
+    if not find_commit(command):
         return 0
 
     cwd = effective_cwd(command, data.get("cwd") or os.getcwd())

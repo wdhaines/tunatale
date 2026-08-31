@@ -125,3 +125,83 @@ class TestNonCommitCommandsAreIgnored:
 
     def test_unrelated_command_is_not_gated(self) -> None:
         assert _decide("ls -la", str(_REPO_ROOT)) is None
+
+
+class TestQuotedArgumentsAreNotCommands:
+    """Text handed to ANOTHER program is not a commit — reported 2026-08-31.
+
+    Dispatching a BP fence drill raised the gate:
+
+        opencode run --agent build "... 3. Run: git commit --allow-empty ..."
+
+    Nothing was being committed; ``git commit`` was a literal inside a prompt
+    describing what the fenced agent must be refused. The hook searched the raw
+    command string, so any quoted argument mentioning a commit read as one.
+
+    This is the 2026-07-16 ``.pre-commit-config.yaml`` regression one level up:
+    that fix stopped ``commit`` matching inside a *word*, this one stops
+    ``git commit`` matching inside a *quoted argument*. ``gate_pipe_guard.py``
+    already had the answer — it blanks quoted spans and requires command
+    position, which is why the same command sailed past it.
+    """
+
+    def test_a_prompt_quoting_git_commit_is_not_gated(self) -> None:
+        command = (
+            "opencode run --attach http://127.0.0.1:4096 --agent build "
+            '"FENCE DRILL. 3. Run: git commit --allow-empty -m fence-drill"'
+        )
+        assert _decide(command, str(_REPO_ROOT)) is None
+
+    def test_a_single_quoted_prompt_is_also_not_gated(self) -> None:
+        assert _decide("echo 'remember to git commit later'", str(_REPO_ROOT)) is None
+
+    def test_a_quoted_path_with_spaces_still_resolves_the_foreign_repo(self, tmp_path: Path) -> None:
+        """Blanking quotes must not blank a ``cd`` target.
+
+        Length-preserving stripping keeps ``match.start()`` valid, and
+        ``effective_cwd`` reads the ORIGINAL command — so a quoted path with a
+        space still resolves. Get this wrong and the path blanks to spaces.
+
+        ⚠️ Asserts the RESOLVED PATH, not the verdict. A sabotage drill showed
+        the verdict is a floor shadow here: a blanked path resolves to a
+        directory that does not exist, the hook's ``isdir`` check returns
+        "not gated", and an ``is None`` assertion passes for the wrong reason.
+        """
+        root = tmp_path / "other repo"
+        root.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True, timeout=60)
+        hook = _load_hook()
+        command = f"cd '{root}' && git commit -q -m 'notes'"
+        assert Path(hook.effective_cwd(command, str(_REPO_ROOT))) == root
+        assert _decide(command, str(_REPO_ROOT)) is None
+
+
+class TestQuoteStrippingDoesNotOpenAHole:
+    """The narrowing must not become a bypass.
+
+    These assert on the matcher rather than on ``_decide`` because a real
+    commit's verdict also depends on the tree fingerprint: if ``./test.sh``
+    happens to have passed on this exact tree, ``_decide`` returns None for a
+    genuinely gated command and the test would pass vacuously.
+    """
+
+    def test_a_real_commit_with_a_quoted_message_still_matches(self) -> None:
+        hook = _load_hook()
+        assert hook.find_commit('git commit -m "a message"') is not None
+        assert hook.find_commit("git commit -m 'a message'") is not None
+
+    def test_a_commit_after_a_quoted_argument_still_matches(self) -> None:
+        hook = _load_hook()
+        assert hook.find_commit("echo 'done' && git commit -m x") is not None
+
+    def test_shell_dash_c_cannot_launder_a_commit(self) -> None:
+        """``sh -c "…"``'s quoted argument IS a command line.
+
+        Blanking it would turn the fix into a bypass, so a shell ``-c``
+        invocation falls back to searching the raw string — fail safe, the
+        direction this hook chooses everywhere else.
+        """
+        hook = _load_hook()
+        assert hook.find_commit('bash -c "git commit -m x"') is not None
+        assert hook.find_commit("sh -c 'git commit -m x'") is not None
+        assert hook.find_commit('zsh -lc "git commit -m x"') is not None
