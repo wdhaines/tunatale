@@ -32,8 +32,18 @@ Guards:
   * the submodule is initialised, and actually drifted
   * the submodule's HEAD is contained in some remote-tracking branch — staging an
     unpushed SHA hands everyone else a pointer they cannot resolve
-  * the commit already carries other content, so this can never manufacture the
+  * the commit carries other content — either already staged, or about to be by
+    a `git add` / `-a` in the same command — so this can never manufacture the
     pointer-only commit AGENTS.md forbids
+
+⚠️ PreToolUse fires BEFORE the command runs, so the index this hook reads is not
+the index the commit will use. `git add … && git commit …` in one Bash call
+therefore looked exactly like an empty commit and was silently skipped for two
+weeks (tunatale-0hj). The last guard predicts the staging rather than reading a
+non-final index; it does not relax, because "nothing for the add to stage" still
+declines. Do not "fix" a future variant of this by relaxing the pointer-only
+guard — refusing to manufacture a commit that would need its own ./test.sh run
+is correct and load-bearing.
 """
 
 import json
@@ -42,9 +52,28 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from commit_gate import COMMIT_RE, REPO_ROOT, _git  # noqa: E402
+import re  # noqa: E402
+
+from commit_gate import COMMIT_RE, REPO_ROOT, SHELL_C_RE, _git, _strip_quoted  # noqa: E402
 
 SUBMODULE = ".beads-tasks"
+
+# `add` read exactly like COMMIT_RE reads `commit`: only as git's subcommand,
+# never as a later word. Same regression class as `.pre-commit-config.yaml`
+# matching `\bcommit\b` — a path or ref must never trip this.
+ADD_RE = re.compile(r"\bgit(\s+-\S+(\s+[^\s-]\S*)?)*\s+add\b")
+
+
+def _self_stages(command):
+    """True when *command* will populate the index itself, after this hook runs.
+
+    Quoted arguments are blanked first, so `git commit -m "run git add first"`
+    is not read as staging anything. A shell `-c` argument is searched raw,
+    because there the quoted string IS a command line — the same split
+    commit_gate.find_commit makes, for the same reason.
+    """
+    haystack = command if SHELL_C_RE.search(command) else _strip_quoted(command)
+    return bool(ADD_RE.search(haystack))
 
 
 def _out(text):
@@ -83,8 +112,33 @@ def should_stage(command):
     others = [p for p in _out(staged).splitlines() if p and p != SUBMODULE]
     if others:
         return True
+    # The command may stage its OWN content after this hook returns: PreToolUse
+    # fires BEFORE the shell runs. `git add … && git commit …` is the shape an
+    # agent writes by default, and reading the index here sees it still empty,
+    # so the hook declined on every such commit (tunatale-0hj — f33abc1 shipped
+    # to main via PR #16 with a pointer two commits stale). Predict what the
+    # staging will pick up instead of trusting an index that is not final.
+    #
+    # This cannot weaken the pointer-only guard, which is the load-bearing one:
+    # when there is nothing for the add to stage, the commit WOULD carry the
+    # pointer alone, and we still decline.
+    #
+    # ⚠️ The bead also claimed a staged gitlink is "overtaken" by a later
+    # `git add -A` in the same shell, which would make every PreToolUse fix
+    # futile. That is FALSE — measured, and pinned by
+    # tests/test_stage_submodule_pointer.py::test_add_dash_A_does_not_clobber_a
+    # _prestaged_gitlink. `ignore = all` keeps the gitlink out of `add -A`'s
+    # view, so it is left alone rather than reset. Same property that keeps it
+    # out of the commit gate's fingerprint.
+    if _self_stages(command):
+        # `git add` takes untracked files as well as tracked modifications, so
+        # the question is whether the tree holds anything at all. The submodule
+        # cannot show up here — `ignore = all` hides the gitlink from status.
+        pending = _git(["status", "--porcelain"], REPO_ROOT)
+        return bool(_out(pending))
     # `git commit -a` stages tracked modifications at commit time, so an empty
-    # index does not mean an empty commit.
+    # index does not mean an empty commit. Unlike `git add`, it does NOT pick
+    # up untracked files, so this asks the narrower question deliberately.
     if " -a" in f" {command}" or "--all" in command:
         tracked = _git(["diff", "--name-only"], REPO_ROOT)
         return bool(_out(tracked))
