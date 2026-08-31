@@ -61,7 +61,7 @@ runs:
 
     - name: Restore the ffmpeg package cache
       id: apt-cache
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         # ⚠️ ABSOLUTE, via github.workspace, and that is load-bearing. Every job
         # here sets `defaults.run.working-directory: backend`, while
