@@ -494,3 +494,179 @@ class TestTheSummaryReachesTheDurableLog:
         assert report.fetched == 1
         assert db.get_image_filename(coll_id) is not None
         assert "could not be persisted" in caplog.text
+
+
+class TestTheFailureCauseIsNamed:
+    """tunatale-ouk.11 — `failed=N` says something broke, not what.
+
+    The count shipped in cc0a18a; the traceback went to `logger.warning(...,
+    exc_info=...)`, which is the ephemeral channel uvicorn filters and
+    start-dev.sh redirects nowhere. So the same defect this whole thread was
+    about still applied to the REASON, one level down. Diagnosing ouk.10 took a
+    copy of the production DB, a pass-1 probe and a process-tree check; with the
+    exception type on the durable line it would have been one read.
+
+    It also gates a real decision: PRESTAGE_CONCURRENCY = 5 is documented as "a
+    deliberate compromise, not a measurement", capped to avoid 429s. Whether an
+    observed failure IS a 429 decides whether 5 is too high or merely unmeasured,
+    and those point opposite ways.
+    """
+
+    async def _run(self, db, tmp_path, monkeypatch, media_fn, limit=10):
+        from app.config import settings
+
+        log_path = tmp_path / "logs" / "sync.log"
+        monkeypatch.setattr(settings, "sync_log", log_path)
+        report = await prestage_production_images(db, media_fn, language_code=LANG, limit=limit)
+        line = next(ln for ln in log_path.read_text().splitlines() if "PRESTAGE_IMAGES" in ln)
+        return report, line
+
+    async def test_the_exception_type_and_message_reach_the_durable_line(self, db, tmp_path, monkeypatch):
+        _add_word(db, "bil", "car", note_id=100, card_id=200)
+
+        _, line = await self._run(db, tmp_path, monkeypatch, _RaisingMediaFn(raise_on={"bil"}))
+
+        assert "failed=1" in line
+        assert "RuntimeError" in line, f"exception type missing from {line!r}"
+        assert "pixabay exploded" in line, f"exception message missing from {line!r}"
+
+    async def test_no_failures_means_no_failures_field(self, db, tmp_path, monkeypatch):
+        """A clean pass must not carry an empty `failures=` tail — `failed=0`
+        already says it, and a dangling field invites a reader to wonder."""
+        _add_word(db, "hus", "house", note_id=100, card_id=200)
+
+        report, line = await self._run(db, tmp_path, monkeypatch, _MediaFn(_Media()))
+
+        assert report.failed == 0
+        assert "failed=0" in line
+        assert "failures=" not in line
+
+    async def test_a_systematic_failure_cannot_flood_the_log(self, db, tmp_path, monkeypatch):
+        """20 identical failures must not write 20 messages into sync.log EVERY
+        pass. The pre-stage runs after every sync, so an unbounded tail here is a
+        slow-motion disk filler on the one file the operator greps."""
+        words = [(f"ord{i}", f"word{i}") for i in range(12)]
+        for i, (w, e) in enumerate(words):
+            _add_word(db, w, e, note_id=100 + i, card_id=200 + i)
+
+        report, line = await self._run(
+            db, tmp_path, monkeypatch, _RaisingMediaFn(raise_on={w for w, _ in words}), limit=12
+        )
+
+        assert report.failed == 12
+        assert len(report.failures) <= 3, "the reason list must be capped"
+        assert len(line) < 400, f"line is {len(line)} chars: {line!r}"
+
+    async def test_a_long_message_is_truncated(self, db, tmp_path, monkeypatch):
+        class _Long:
+            calls: list[str] = []
+
+            async def __call__(self, word, english, **kwargs):
+                raise RuntimeError("x" * 5000)
+
+        _add_word(db, "bil", "car", note_id=100, card_id=200)
+
+        report, line = await self._run(db, tmp_path, monkeypatch, _Long())
+
+        assert report.failed == 1
+        assert len(report.failures[0]) <= 100
+        assert len(line) < 400
+
+    async def test_a_url_query_string_is_redacted(self, db, tmp_path, monkeypatch):
+        """⚠️ The fetch chain is an LLM call plus a Pixabay request, and this
+        text is written to a file on disk. An exception whose message echoes the
+        request URL would persist the API key with it. Truncation alone is not a
+        defence — the key can sit inside the first 80 characters."""
+
+        class _Leaky:
+            calls: list[str] = []
+
+            async def __call__(self, word, english, **kwargs):
+                raise RuntimeError("GET https://pixabay.com/api/?key=SECRETKEY123&q=car failed with 429")
+
+        _add_word(db, "bil", "car", note_id=100, card_id=200)
+
+        report, line = await self._run(db, tmp_path, monkeypatch, _Leaky())
+
+        assert "SECRETKEY123" not in line, f"API key leaked into the durable log: {line!r}"
+        assert "SECRETKEY123" not in report.failures[0]
+        # The diagnostic value must survive the redaction.
+        assert "RuntimeError" in line
+        assert "429" in line
+
+    async def test_a_query_param_outside_the_keyword_list_is_still_redacted(self, db, tmp_path, monkeypatch):
+        """Discriminates the URL rule from the keyword rule.
+
+        Written because the first version of the leak test above did NOT: its
+        `?key=…` is caught by _KEYED_SECRET alone, so deleting _URL_QUERY left
+        the whole suite green and the URL rule was decoration by accident. A
+        credential does not have to be spelled `key` — `?auth=`, `?sig=`,
+        `?t=` are all real — so the URL rule carries its own weight and needs its
+        own oracle.
+        """
+
+        class _Leaky:
+            calls: list[str] = []
+
+            async def __call__(self, word, english, **kwargs):
+                raise RuntimeError("GET https://api.example.com/v1/img?auth=LEAKEDVALUE99&q=car -> 500")
+
+        _add_word(db, "bil", "car", note_id=100, card_id=200)
+
+        report, line = await self._run(db, tmp_path, monkeypatch, _Leaky())
+
+        assert "LEAKEDVALUE99" not in line, f"query-string credential leaked: {line!r}"
+        assert "LEAKEDVALUE99" not in report.failures[0]
+        assert "RuntimeError" in line
+
+    async def test_a_bare_keyed_credential_with_no_url_is_redacted(self, db, tmp_path, monkeypatch):
+        """Discriminates the keyword rule from the URL rule — the mirror of the
+        test above.
+
+        The two redactions cover each other on a `?key=…` inside a URL, so each
+        needs a case only IT can catch or the pair is untested by accident. Here
+        there is no URL, so _URL_QUERY cannot fire and only _KEYED_SECRET can
+        keep the value out of the log.
+        """
+
+        class _Leaky:
+            calls: list[str] = []
+
+            async def __call__(self, word, english, **kwargs):
+                raise RuntimeError("authentication rejected: api_key=BARESECRET77 is not valid")
+
+        _add_word(db, "bil", "car", note_id=100, card_id=200)
+
+        report, line = await self._run(db, tmp_path, monkeypatch, _Leaky())
+
+        assert "BARESECRET77" not in line, f"bare credential leaked: {line!r}"
+        assert "BARESECRET77" not in report.failures[0]
+        assert "RuntimeError" in line
+
+    async def test_identical_failures_collapse_to_one_reason(self, db, tmp_path, monkeypatch):
+        """De-duplication, which is what makes a systematic fault READABLE.
+
+        The realistic shape is not twelve different errors — it is one cause
+        hitting every fetch in the batch (a 429, an expired key, DNS). Twelve
+        copies of one string would spend the whole cap restating it and crowd
+        out any second, different cause. `failed=12` already carries the
+        multiplicity; the list carries the KIND.
+
+        Distinct from the flood test above, which raises a DIFFERENT message per
+        word and so only exercises the cap. This exercises the dedupe.
+        """
+
+        class _SameError:
+            calls: list[str] = []
+
+            async def __call__(self, word, english, **kwargs):
+                raise RuntimeError("429 Too Many Requests")
+
+        for i in range(6):
+            _add_word(db, f"ord{i}", f"word{i}", note_id=300 + i, card_id=400 + i)
+
+        report, line = await self._run(db, tmp_path, monkeypatch, _SameError(), limit=6)
+
+        assert report.failed == 6
+        assert report.failures == ("RuntimeError:429 Too Many Requests",)
+        assert line.count("429 Too Many Requests") == 1
