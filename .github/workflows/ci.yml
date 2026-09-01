@@ -50,8 +50,10 @@ env:
 # median of 23-39s, against e2e's ~90 MB and 3s — e2e being the only job that
 # had a `cache-suffix`. Same key but for the suffix; save-cache is on, so the fat
 # cache was also being re-saved every run. Self-perpetuating until the key moves.
-# Hence `cache-suffix: lean-py` on all five, which orphans the fat cache and lets
-# it age out of the repo's cache quota.
+# Hence `cache-suffix: lean-py` on all of them, which orphans the fat cache and
+# lets it age out of the repo's cache quota. (It reads as four jobs today, not
+# five: oracle-parity and peer-sync were merged into `anki-gates` in the same
+# pass — tunatale-ej8.2.)
 #
 # THE DIAGNOSTIC THAT MATTERS, if this is ever revisited: read the restored
 # `Cache Size:` in the job log, NOT the step duration. Duration cannot separate
@@ -462,8 +464,8 @@ jobs:
   # uv, Python and the backend dependency set all have to be present alongside bun. Its own job keeps that cost off `frontend`
   # and runs it in parallel, adding no wall-clock to the fleet.
   #
-  # ffmpeg is installed because the backends are the real app; `oracle-parity` and
-  # `peer-sync` deliberately omit it (they never touch the audio pipeline).
+  # ffmpeg is installed because the backends are the real app; `anki-gates`
+  # deliberately omits it (neither of its two gates touches the audio pipeline).
   #
   # The lemmatizer groups stay EXCLUDED here and the suite still passes because
   # the config pins `lemmatizer_type: lowercase` — E2E does not test lemmatization
@@ -820,7 +822,28 @@ jobs:
             frontend/test-results/
           retention-days: 7
 
-  oracle-parity:
+  # ⚠️ TWO GATES, ONE JOB (tunatale-ej8.2). These were separate jobs until
+  # 2026-09-01 and were byte-identical apart from their final step — same
+  # runner, timeout, working-directory, UV_NO_SYNC, checkout, setup-uv,
+  # python install, sync, and the same anki warm step, which is now paid once
+  # instead of twice.
+  #
+  # WHY MERGE: job COUNT drives this repo's CI tail, not job duration. The
+  # tunatale-ouk profile found three runs at 586s / 706s / 936s whose MAX JOB
+  # was only 125s / 166s / 126s — no job was slow, the jobs simply did not all
+  # get runners at once and serialized. This removes a job without removing a
+  # test.
+  #
+  # WHY IT IS FREE: measured post-lean-cache on run 33518636535, oracle-parity
+  # was 34s and peer-sync 33s against e2e's 113s, which is the pole. Serialised
+  # they are ~57s (~10s shared setup + ~24s + ~23s), still well under the pole,
+  # so total CI ≈ MAX(job) does not move.
+  #
+  # ⚠️ DO NOT EXTEND THIS TO THE backend-* JOBS. They look similarly duplicative
+  # and are not: they run the same suite under DIFFERENT ambient clocks, so
+  # serialising them would defeat their entire purpose. See the redundancy
+  # argument in the comment block above `backend-hostile-tz`.
+  anki-gates:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -840,12 +863,12 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9/v10 alias exists)
         with:
           version: "latest"
-          # Same fix as the e2e job below/above, extended to this job: the uv
-          # cache key hashes platform + python + LOCKFILE, never the install
-          # flags, so `--no-default-groups --group dev` shrank what is INSTALLED
-          # while this job kept restoring (and re-saving) the pre-lean 2.5 GB
-          # cache. Measured 2026-09-01 over 11 main runs: 2517 MB restored here
-          # vs 90 MB in e2e, `Install uv` median 23-39s vs 3s.
+          # Same fix as the e2e job above: the uv cache key hashes platform +
+          # python + LOCKFILE, never the install flags, so
+          # `--no-default-groups --group dev` shrank what is INSTALLED while
+          # this job kept restoring (and re-saving) the pre-lean 2.5 GB cache.
+          # Measured 2026-09-01 over 11 main runs: 2517 MB restored here vs
+          # 90 MB in e2e, `Install uv` median 23-39s vs 3s.
           cache-suffix: lean-py
 
       - name: Set up Python
@@ -854,48 +877,20 @@ jobs:
       - name: Install dependencies
         run: uv sync --no-default-groups --group dev
 
+      # `id:` is load-bearing — the peer-sync gate keys its `if:` on THIS step,
+      # not on the oracle gate, so a failing oracle run still reports peer-sync
+      # while a broken SETUP correctly skips it.
       - name: Warm anki subprocess env
+        id: warm
         run: uv run --isolated --no-project --python 3.14 --with anki==26.8.1 python -c "import anki"
 
       - name: Oracle parity gate
         run: uv run pytest -m oracle --run-oracle -n auto --no-cov
 
-  peer-sync:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: backend
-
-    # ⚠️ Required for the lean sync below to STICK, and it must be job-level —
-    # a `--no-sync` flag does not propagate to the bare `uv run` the suite
-    # shells out to. Full reasoning in the header block (tunatale-ouk.6).
-    env:
-      UV_NO_SYNC: "1"
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9/v10 alias exists)
-        with:
-          version: "latest"
-          # Same fix as the e2e job below/above, extended to this job: the uv
-          # cache key hashes platform + python + LOCKFILE, never the install
-          # flags, so `--no-default-groups --group dev` shrank what is INSTALLED
-          # while this job kept restoring (and re-saving) the pre-lean 2.5 GB
-          # cache. Measured 2026-09-01 over 11 main runs: 2517 MB restored here
-          # vs 90 MB in e2e, `Install uv` median 23-39s vs 3s.
-          cache-suffix: lean-py
-
-      - name: Set up Python
-        run: uv python install 3.14
-
-      - name: Install dependencies
-        run: uv sync --no-default-groups --group dev
-
-      - name: Warm anki subprocess env
-        run: uv run --isolated --no-project --python 3.14 --with anki==26.8.1 python -c "import anki"
-
+      # ⚠️ Runs even when the oracle gate above FAILED. Without this the merge
+      # would quietly cost a diagnostic: two jobs always reported on both
+      # suites, and a naive single job reports one failure per run. Guarded on
+      # the warm step so a setup failure still short-circuits both gates.
       - name: Peer-sync gate
+        if: always() && steps.warm.outcome == 'success'
         run: uv run pytest tests/test_anki_peer_sync_selfhost.py --run-peer-sync --no-cov -v
