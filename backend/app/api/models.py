@@ -1220,3 +1220,27 @@ class DrillFeedbackResponse(BaseModel):
     new_due_at: str
     new_state: str
     left: int | None = None
+
+
+class ClientLogRequest(BaseModel):
+    """Body for POST /api/client-log — a batch of already-formatted lines.
+
+    Deliberately opaque strings rather than a typed event schema. The endpoint's
+    job is to make browser-side evidence DURABLE, not to understand it; a schema
+    here would have to change every time a new thing needs tracing, and the
+    whole point is that the next mobile-only bug is one nobody predicted.
+    """
+
+    lines: list[str]
+
+
+class ClientLogResponse(BaseModel):
+    """Response of POST /api/client-log.
+
+    ``accepted`` is how many lines were actually written, which can be fewer
+    than were sent — the endpoint caps a batch rather than rejecting it, so a
+    client that oversends still gets its earliest (most relevant) entries
+    persisted. Reported so a caller can tell truncation from success.
+    """
+
+    accepted: int

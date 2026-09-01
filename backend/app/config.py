@@ -88,6 +88,15 @@ class Settings(BaseSettings):
     # SYNC_SOAK heartbeat + one RECOMPUTE_DIVERGENCE line per divergence.
     sync_log: Path = Path("~/.tunatale/logs/sync.log").expanduser()
 
+    # The browser's equivalent of sync.log. OFF by default and pinned so by a
+    # test: this is a write endpoint that appends browser-supplied text to a
+    # file, so it is opt-in for a debugging session, never ambient. Exists
+    # because a bug that only reproduces on a real phone currently leaves no
+    # evidence anywhere — Playwright's tap() cannot reproduce a fingertip losing
+    # a hit-test, and a device console dies with the tab.
+    client_log: Path = Path("~/.tunatale/logs/client.log").expanduser()
+    client_log_enabled: bool = False
+
     # Peer-sync (anki subprocess) config — see sync_orchestrator.py. Also the
     # master toggle main.py reads (alongside plugin importability) to decide
     # whether to mount app.api.anki.router at all — defaults True to preserve

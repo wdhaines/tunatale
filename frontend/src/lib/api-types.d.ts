@@ -290,6 +290,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/client-log": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Client Log
+     * @description Append browser-supplied lines to ``settings.client_log``.
+     *
+     *     404 rather than 403 when disabled: a debug channel that is switched off
+     *     should not advertise that it exists.
+     */
+    post: operations["client_log_api_client_log_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/curriculum": {
     parameters: {
       query?: never;
@@ -1581,6 +1604,32 @@ export interface components {
     BulkDeleteResponse: {
       /** Deleted */
       deleted: number;
+    };
+    /**
+     * ClientLogRequest
+     * @description Body for POST /api/client-log — a batch of already-formatted lines.
+     *
+     *     Deliberately opaque strings rather than a typed event schema. The endpoint's
+     *     job is to make browser-side evidence DURABLE, not to understand it; a schema
+     *     here would have to change every time a new thing needs tracing, and the
+     *     whole point is that the next mobile-only bug is one nobody predicted.
+     */
+    ClientLogRequest: {
+      /** Lines */
+      lines: string[];
+    };
+    /**
+     * ClientLogResponse
+     * @description Response of POST /api/client-log.
+     *
+     *     ``accepted`` is how many lines were actually written, which can be fewer
+     *     than were sent — the endpoint caps a batch rather than rejecting it, so a
+     *     client that oversends still gets its earliest (most relevant) entries
+     *     persisted. Reported so a caller can tell truncation from success.
+     */
+    ClientLogResponse: {
+      /** Accepted */
+      accepted: number;
     };
     /**
      * CommitPendingResponse
@@ -3542,6 +3591,39 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["AuthStatusResponse"];
+        };
+      };
+    };
+  };
+  client_log_api_client_log_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ClientLogRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ClientLogResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };

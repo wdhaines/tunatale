@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { setClientLogEnabled, flushClientLog } from '$lib/clientLog';
+	import { startTouchTrace } from '$lib/touchTrace';
 	import favicon from '$lib/assets/favicon.png';
 	import logo from '$lib/assets/logo.png';
 	import { page } from '$app/stores';
@@ -30,12 +32,24 @@
 	// — the badge just doesn't render.
 	let healthTimer: ReturnType<typeof setInterval> | undefined;
 
+	let stopTouchTrace: (() => void) | null = null;
+
 	onMount(() => {
 		// Local preferences first, unconditionally: they need no session, and the
 		// login page should be themed like the rest of the app.
 		themeStore.init();
 		prefetchPrefStore.init();
 		listenCountdownPref.init();
+
+		// Touch/click tracing to the durable client log, off unless asked for.
+		// ⚠️ The URL switch is the POINT, not a convenience: this exists to debug
+		// bugs that only happen on a real phone, where there is no console to
+		// set localStorage from and no way to attach a debugger. `?clientlog=on`
+		// is the only affordance a phone actually has. It persists, so the flag
+		// survives the navigations the bug may need.
+		const flag = new URLSearchParams(window.location.search).get('clientlog');
+		if (flag === 'on' || flag === 'off') setClientLogEnabled(flag === 'on');
+		stopTouchTrace = startTouchTrace();
 
 		// Every data request in the app funnels through api.ts, so one handler
 		// covers a session that dies mid-visit — including on pages whose only
@@ -44,6 +58,8 @@
 		void boot();
 
 		return () => {
+			stopTouchTrace?.();
+			void flushClientLog();
 			setUnauthorizedHandler(null);
 			clearInterval(healthTimer);
 		};
