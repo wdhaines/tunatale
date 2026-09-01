@@ -74,7 +74,7 @@ const STORY = {
 	morphology_focus: [],
 };
 
-let seeded: { curriculumId: string } | null = null;
+let seeded: { curriculumId: string; lessonId: string } | null = null;
 
 async function seed(request: import("@playwright/test").APIRequestContext) {
 	if (seeded !== null) return seeded;
@@ -114,7 +114,7 @@ async function seed(request: import("@playwright/test").APIRequestContext) {
 	if (!listenRes.ok())
 		throw new Error(`listen failed: ${listenRes.status()} ${await listenRes.text()}`);
 
-	seeded = { curriculumId: curriculum.id };
+	seeded = { curriculumId: curriculum.id, lessonId: lesson.id ?? lesson.lesson_id };
 	return seeded;
 }
 
@@ -122,17 +122,14 @@ test.describe.configure({ mode: "serial" });
 
 test("lesson page: Read mode never overflows horizontally", async ({ page, request }) => {
 	test.skip(!(await backendAvailable(request)), "Backend not available");
-	const { curriculumId } = await seed(request);
+	const { curriculumId, lessonId } = await seed(request);
+
+	await page.addInitScript(() => localStorage.setItem("lessonMode", "read"));
 
 	const failures: string[] = [];
 	for (const width of [390, 412, 432]) {
 		await page.setViewportSize({ width, height: 844 });
-		await page.goto(`/c/${curriculumId}`);
-		await page.getByRole("button", { name: "Day 1" }).click();
-		await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({
-			timeout: 15000,
-		});
-		await page.getByRole("button", { name: "Read", exact: true }).click();
+		await page.goto(`/c/${curriculumId}/l/${lessonId}`);
 		// The transcript is fetched client-side; without this the measurement
 		// lands on an empty page and passes for the wrong reason.
 		await expect(page.locator(".tt-wrap").first()).toBeVisible({ timeout: 15000 });
@@ -208,7 +205,9 @@ test("lesson page: a HOVER-revealed tooltip near the right margin never overflow
 	request,
 }) => {
 	test.skip(!(await backendAvailable(request)), "Backend not available");
-	const { curriculumId } = await seed(request);
+	const { curriculumId, lessonId } = await seed(request);
+
+	await page.addInitScript(() => localStorage.setItem("lessonMode", "read"));
 
 	const failures: string[] = [];
 	// Phone widths plus desktop widths. The desktop ones are the important
@@ -216,12 +215,7 @@ test("lesson page: a HOVER-revealed tooltip near the right margin never overflow
 	// report was from a desktop browser.
 	for (const width of [390, 432, 800, 1280]) {
 		await page.setViewportSize({ width, height: 700 });
-		await page.goto(`/c/${curriculumId}`);
-		await page.getByRole("button", { name: "Day 1" }).click();
-		await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({
-			timeout: 15000,
-		});
-		await page.getByRole("button", { name: "Read", exact: true }).click();
+		await page.goto(`/c/${curriculumId}/l/${lessonId}`);
 		await expect(page.locator(".tt-wrap").first()).toBeVisible({ timeout: 15000 });
 
 		// Words closest to the right margin are the ones whose popovers have to be
@@ -336,9 +330,11 @@ test.describe("coarse pointer (touch phone)", () => {
 		request,
 	}) => {
 		test.skip(!(await backendAvailable(request)), "Backend not available");
-		const { curriculumId } = await seed(request);
+		const { curriculumId, lessonId } = await seed(request);
 
-		await page.goto(`/c/${curriculumId}`);
+	await page.addInitScript(() => localStorage.setItem("lessonMode", "read"));
+
+		await page.goto(`/c/${curriculumId}/l/${lessonId}`);
 		// Proves the emulation actually took. If this ever reads `false` the whole
 		// test is measuring desktop CSS again and F-12 has silently returned.
 		const mq = await page.evaluate(() => ({
@@ -348,11 +344,7 @@ test.describe("coarse pointer (touch phone)", () => {
 		expect(mq.coarse, "pointer is not coarse — this test would measure desktop CSS").toBe(true);
 		expect(mq.hoverHover, "(hover: hover) is true — .hover() would open the popover and this test would not be testing the touch path").toBe(false);
 
-		await page.getByRole("button", { name: "Day 1" }).click();
-		await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({
-			timeout: 15000,
-		});
-		await page.getByRole("button", { name: "Read", exact: true }).click();
+
 		await expect(page.locator(".tt-wrap").first()).toBeVisible({ timeout: 15000 });
 
 		// Words nearest the right margin are the ones whose popovers must clamp.
@@ -463,17 +455,14 @@ test("lesson page: a HOVER-revealed tooltip near the left margin never leaves th
 	request,
 }) => {
 	test.skip(!(await backendAvailable(request)), "Backend not available");
-	const { curriculumId } = await seed(request);
+	const { curriculumId, lessonId } = await seed(request);
+
+	await page.addInitScript(() => localStorage.setItem("lessonMode", "read"));
 
 	const failures: string[] = [];
 	for (const width of [390, 432, 800, 1280]) {
 		await page.setViewportSize({ width, height: 700 });
-		await page.goto(`/c/${curriculumId}`);
-		await page.getByRole("button", { name: "Day 1" }).click();
-		await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({
-			timeout: 15000,
-		});
-		await page.getByRole("button", { name: "Read", exact: true }).click();
+		await page.goto(`/c/${curriculumId}/l/${lessonId}`);
 		await expect(page.locator(".tt-wrap").first()).toBeVisible({ timeout: 15000 });
 
 		// Words closest to the LEFT margin are the ones whose popovers have to

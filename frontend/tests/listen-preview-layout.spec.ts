@@ -54,6 +54,7 @@ const STORY = {
 // Seeded once for the whole file; the suite is serial so the first test does
 // the work and the rest reuse it.
 let seededCurriculumId: string | null = null;
+let seededLessonId: string | null = null;
 
 async function curriculumId(
 	request: import("@playwright/test").APIRequestContext,
@@ -88,13 +89,30 @@ async function curriculumId(
 
 	const id: string = curriculum.id;
 	seededCurriculumId = id;
+	// The lesson page is reachable directly, so no spec here needs to walk the
+	// curriculum page and click "Day 1" to reach it — see `lessonURL`.
+	const imported = await impRes.json();
+	seededLessonId = imported.id ?? imported.lesson_id;
 	return id;
 }
 
+/** The lesson page itself.
+ *
+ * Every spec in this file is about the LISTEN PREVIEW MODAL, never about how you
+ * navigate to the lesson — `lesson-navigation.spec.ts` owns that journey and is
+ * the only spec that should be walking it. Going direct drops one page load, one
+ * click and a 15s-timeout wait per test.
+ *
+ * ⚠️ It does not weaken these specs, and that is measured rather than asserted:
+ * the modal is still opened by the same real click on the same real page, and a
+ * sabotage drill (Tooltip.svelte's `clampBounds` forced never to clamp) reddens
+ * exactly the same specs before and after the change. */
+function lessonURL(curriculumId: string): string {
+	return `/c/${curriculumId}/l/${seededLessonId}`;
+}
+
 async function openPreview(page: import("@playwright/test").Page, curriculumId: string) {
-	await page.goto(`/c/${curriculumId}`);
-	await page.getByRole("button", { name: "Day 1" }).click();
-	await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({ timeout: 15000 });
+	await page.goto(lessonURL(curriculumId));
 	await page.getByRole("button", { name: "Mark as Listened" }).click();
 
 	const modal = page.locator(".overlay .modal");
@@ -442,9 +460,7 @@ test("listen preview: cancelling the countdown shifts no rows", async ({ page, r
 	await page.addInitScript(() => localStorage.setItem("listenCountdown", "60"));
 	await page.setViewportSize(PHONE);
 
-	await page.goto(`/c/${cid}`);
-	await page.getByRole("button", { name: "Day 1" }).click();
-	await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({ timeout: 15000 });
+	await page.goto(lessonURL(cid));
 	await page.getByRole("button", { name: "Mark as Listened" }).click();
 
 	const modal = page.locator(".overlay .modal");
@@ -537,9 +553,7 @@ test("listen preview: the countdown rides Grade All and never resizes it", async
 	await page.addInitScript(() => localStorage.setItem("listenCountdown", "10"));
 	await page.setViewportSize(PHONE);
 
-	await page.goto(`/c/${cid}`);
-	await page.getByRole("button", { name: "Day 1" }).click();
-	await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({ timeout: 15000 });
+	await page.goto(lessonURL(cid));
 	await page.getByRole("button", { name: "Mark as Listened" }).click();
 
 	const modal = page.locator(".overlay .modal");
@@ -739,9 +753,7 @@ test("listen preview: with the countdown pref off, Grade All's label is truly ce
 
 	await page.addInitScript(() => localStorage.setItem("listenCountdown", "off"));
 	await page.setViewportSize(PHONE);
-	await page.goto(`/c/${cid}`);
-	await page.getByRole("button", { name: "Day 1" }).click();
-	await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({ timeout: 15000 });
+	await page.goto(lessonURL(cid));
 	await page.getByRole("button", { name: "Mark as Listened" }).click();
 
 	const modal = page.locator(".overlay .modal");
@@ -769,9 +781,7 @@ test("listen preview: with the countdown pref on, cancelling still shifts no gly
 
 	await page.addInitScript(() => localStorage.setItem("listenCountdown", "60"));
 	await page.setViewportSize(PHONE);
-	await page.goto(`/c/${cid}`);
-	await page.getByRole("button", { name: "Day 1" }).click();
-	await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({ timeout: 15000 });
+	await page.goto(lessonURL(cid));
 	await page.getByRole("button", { name: "Mark as Listened" }).click();
 
 	const modal = page.locator(".overlay .modal");
