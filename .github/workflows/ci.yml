@@ -42,6 +42,23 @@ env:
 # lexicon build) ever needs a package the lean env lacks, that is a separate
 # finding to surface by name, not a reason to add a group back here.
 #
+# ⚠️ THE LEAN INSTALL IS ONLY HALF THE CHANGE, and for a month it was the half
+# that did nothing visible. The uv cache key hashes platform + python version +
+# LOCKFILE — never the install flags — so shrinking what a job INSTALLS does not
+# shrink what it RESTORES. Measured 2026-09-01 across 11 successful main runs:
+# the five python jobs restored `Cache Size: ~2517 MB` and spent an `Install uv`
+# median of 23-39s, against e2e's ~90 MB and 3s — e2e being the only job that
+# had a `cache-suffix`. Same key but for the suffix; save-cache is on, so the fat
+# cache was also being re-saved every run. Self-perpetuating until the key moves.
+# Hence `cache-suffix: lean-py` on all five, which orphans the fat cache and lets
+# it age out of the repo's cache quota.
+#
+# THE DIAGNOSTIC THAT MATTERS, if this is ever revisited: read the restored
+# `Cache Size:` in the job log, NOT the step duration. Duration cannot separate
+# "restoring a fat cache" from "a lean cache is simply slow here", and reasoning
+# from the step time is how tunatale-ouk.3 spent a month believing caching was
+# off (it was on; `enable-cache` defaults to `auto`).
+#
 # Historical context, kept so no one re-adds the old flags: the `--no-group
 # slovene --no-group norwegian --no-group alignment` flags that used to follow
 # a plain `uv sync --all-groups` were DELETED on 2026-08-14 because they did
@@ -109,6 +126,13 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9/v10 alias exists)
         with:
           version: "latest"
+          # Same fix as the e2e job below/above, extended to this job: the uv
+          # cache key hashes platform + python + LOCKFILE, never the install
+          # flags, so `--no-default-groups --group dev` shrank what is INSTALLED
+          # while this job kept restoring (and re-saving) the pre-lean 2.5 GB
+          # cache. Measured 2026-09-01 over 11 main runs: 2517 MB restored here
+          # vs 90 MB in e2e, `Install uv` median 23-39s vs 3s.
+          cache-suffix: lean-py
 
       - name: Set up Python
         run: uv python install 3.14
@@ -261,6 +285,13 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9/v10 alias exists)
         with:
           version: "latest"
+          # Same fix as the e2e job below/above, extended to this job: the uv
+          # cache key hashes platform + python + LOCKFILE, never the install
+          # flags, so `--no-default-groups --group dev` shrank what is INSTALLED
+          # while this job kept restoring (and re-saving) the pre-lean 2.5 GB
+          # cache. Measured 2026-09-01 over 11 main runs: 2517 MB restored here
+          # vs 90 MB in e2e, `Install uv` median 23-39s vs 3s.
+          cache-suffix: lean-py
 
       - name: Set up Python
         run: uv python install 3.14
@@ -346,6 +377,13 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9/v10 alias exists)
         with:
           version: "latest"
+          # Same fix as the e2e job below/above, extended to this job: the uv
+          # cache key hashes platform + python + LOCKFILE, never the install
+          # flags, so `--no-default-groups --group dev` shrank what is INSTALLED
+          # while this job kept restoring (and re-saving) the pre-lean 2.5 GB
+          # cache. Measured 2026-09-01 over 11 main runs: 2517 MB restored here
+          # vs 90 MB in e2e, `Install uv` median 23-39s vs 3s.
+          cache-suffix: lean-py
 
       - name: Set up Python
         run: uv python install 3.14
@@ -802,6 +840,13 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9/v10 alias exists)
         with:
           version: "latest"
+          # Same fix as the e2e job below/above, extended to this job: the uv
+          # cache key hashes platform + python + LOCKFILE, never the install
+          # flags, so `--no-default-groups --group dev` shrank what is INSTALLED
+          # while this job kept restoring (and re-saving) the pre-lean 2.5 GB
+          # cache. Measured 2026-09-01 over 11 main runs: 2517 MB restored here
+          # vs 90 MB in e2e, `Install uv` median 23-39s vs 3s.
+          cache-suffix: lean-py
 
       - name: Set up Python
         run: uv python install 3.14
@@ -835,6 +880,13 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9/v10 alias exists)
         with:
           version: "latest"
+          # Same fix as the e2e job below/above, extended to this job: the uv
+          # cache key hashes platform + python + LOCKFILE, never the install
+          # flags, so `--no-default-groups --group dev` shrank what is INSTALLED
+          # while this job kept restoring (and re-saving) the pre-lean 2.5 GB
+          # cache. Measured 2026-09-01 over 11 main runs: 2517 MB restored here
+          # vs 90 MB in e2e, `Install uv` median 23-39s vs 3s.
+          cache-suffix: lean-py
 
       - name: Set up Python
         run: uv python install 3.14
