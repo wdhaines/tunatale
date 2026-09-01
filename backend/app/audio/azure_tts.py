@@ -118,7 +118,7 @@ class AzureTTSService:
         region: str | None = None,
         timeout: float = 30.0,
         min_delay: float | None = None,
-        retry_base_delay: float = 0.5,
+        retry_base_delay: float | None = None,
         max_concurrent_requests: int | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
@@ -143,6 +143,10 @@ class AzureTTSService:
             from app.config import settings
 
             max_concurrent_requests = settings.tts_max_concurrent_requests
+        if retry_base_delay is None:
+            from app.config import settings
+
+            retry_base_delay = settings.tts_retry_base_delay_s
         self._key = key
         self._region = region
         self._cache_dir = cache_dir

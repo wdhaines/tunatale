@@ -184,6 +184,15 @@ class Settings(BaseSettings):
     # here; see the "OUT of scope" note above.
     tts_azure_min_request_delay_s: float | None = None
     tts_edge_min_request_delay_s: float | None = None
+    # Base of the retry ladder both adapters climb: rung N waits
+    # tts_retry_base_delay_s * 2**N, so with MAX_RETRIES = 6 an exhausted clip
+    # spends 0.5 * (1+2+4+8+16) = 15.5s in backoff. 0.5 is the spacing
+    # MAX_RETRIES was sized against — see app/audio/azure_tts.py::MAX_RETRIES —
+    # so lowering it shortens the patience that note argues for, and is a
+    # tuning decision, not a free speed-up. Configurable because production
+    # builds its adapters through get_tts_service(), which never passed one:
+    # the ladder was the only pacing knob no caller could reach.
+    tts_retry_base_delay_s: float = 0.5
     # Azure Speech (TTS). Replaces the unofficial Edge Read Aloud endpoint that
     # `edge-tts` talks to — same underlying neural voices, but an official API with
     # terms and a support channel. F0 (free tier) allows 500K chars/month and

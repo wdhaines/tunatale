@@ -538,6 +538,44 @@ async def test_azure_per_provider_override_wins_over_shared(monkeypatch):
     assert svc._min_delay == 0.05
 
 
+# ------------------------------------------------------------------
+# Retry ladder base delay: configurable, like every other pacing knob
+# ------------------------------------------------------------------
+
+
+async def test_azure_retry_base_delay_comes_from_settings(monkeypatch):
+    """The ladder's base delay resolves from settings, like min_delay beside it.
+
+    It was the one pacing knob a caller could not reach without constructing the
+    adapter by hand — and production never does, it goes through
+    ``get_tts_service()``. So a render's worst case was a hardcoded 15.5s of
+    backoff per exhausted clip with no way to tune it, in production or in a test.
+    """
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "tts_retry_base_delay_s", 0.03)
+
+    assert AzureTTSService(key="k", region="r")._retry_base_delay == 0.03
+
+
+async def test_azure_explicit_retry_base_delay_wins_over_settings(monkeypatch):
+    """An explicit argument still beats the setting — same precedence as min_delay."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "tts_retry_base_delay_s", 0.03)
+
+    assert AzureTTSService(key="k", region="r", retry_base_delay=0.25)._retry_base_delay == 0.25
+
+
+def test_retry_base_delay_default_preserves_the_shipped_ladder():
+    """0.5 is load-bearing, not arbitrary — it is the rung spacing MAX_RETRIES was
+    sized against (azure_tts.py's MAX_RETRIES note). Making the value configurable
+    must not quietly re-tune the ladder it feeds."""
+    from app.config import settings
+
+    assert settings.tts_retry_base_delay_s == 0.5
+
+
 @respx.mock
 async def test_no_trailing_sleep_after_final_attempt(tmp_path):
     """The retry ladder does not sleep after the final (failed) attempt.

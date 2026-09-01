@@ -101,6 +101,12 @@ async def test_rerun_after_a_failed_render_does_not_resynthesize_what_succeeded(
     monkeypatch.setattr(settings, "azure_speech_region", "eastus")
     monkeypatch.setattr(settings, "tts_min_request_delay_s", 0.0)
     monkeypatch.setattr(settings, "tts_cache_dir", tmp_path / "tts-cache")
+    # The broken clip exhausts the ladder, and at the shipped 0.5s base that is
+    # 0.5 * (1+2+4+8+16) = 15.5s of pure backoff — which WAS this test's entire
+    # runtime, and 46% of the backend suite's floor (tunatale-90iq). Zeroing the
+    # base runs every one of the MAX_RETRIES rungs, just without the waiting: the
+    # ladder is still exercised in full, nothing here asserts less than it did.
+    monkeypatch.setattr(settings, "tts_retry_base_delay_s", 0.0)
 
     audio = _wav_bytes()
     broken = "delta"
