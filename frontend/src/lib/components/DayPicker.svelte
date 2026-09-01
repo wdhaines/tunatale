@@ -67,6 +67,13 @@
 	}
 	.day-btn {
 		padding: 0.5rem 1.25rem;
+		/* A <button>'s UA stylesheet centres its text. Harmless on one line, but
+		   a long title wraps and every wrapped line then centres — the ragged
+		   block reported for "Day 7 · <long title>". Left-aligning changes
+		   nothing for single-line labels: with min-width 5rem and 1.25rem of
+		   padding each side, essentially every label already exceeds the
+		   min-width, so there is no slack for alignment to act on. */
+		text-align: left;
 		color: var(--color-on-primary);
 		border: none;
 		border-radius: var(--radius-pill);
