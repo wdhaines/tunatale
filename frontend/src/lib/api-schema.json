@@ -78,6 +78,37 @@
         "title": "BulkDeleteResponse",
         "type": "object"
       },
+      "ClientLogRequest": {
+        "description": "Body for POST /api/client-log \u2014 a batch of already-formatted lines.\n\nDeliberately opaque strings rather than a typed event schema. The endpoint's\njob is to make browser-side evidence DURABLE, not to understand it; a schema\nhere would have to change every time a new thing needs tracing, and the\nwhole point is that the next mobile-only bug is one nobody predicted.",
+        "properties": {
+          "lines": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Lines",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lines"
+        ],
+        "title": "ClientLogRequest",
+        "type": "object"
+      },
+      "ClientLogResponse": {
+        "description": "Response of POST /api/client-log.\n\n``accepted`` is how many lines were actually written, which can be fewer\nthan were sent \u2014 the endpoint caps a batch rather than rejecting it, so a\nclient that oversends still gets its earliest (most relevant) entries\npersisted. Reported so a caller can tell truncation from success.",
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "accepted"
+        ],
+        "title": "ClientLogResponse",
+        "type": "object"
+      },
       "CommitPendingResponse": {
         "description": "Response of POST /lesson/{id}/commit-pending.",
         "properties": {
@@ -4354,6 +4385,48 @@
           }
         },
         "summary": "Auth Status"
+      }
+    },
+    "/api/client-log": {
+      "post": {
+        "description": "Append browser-supplied lines to ``settings.client_log``.\n\n404 rather than 403 when disabled: a debug channel that is switched off\nshould not advertise that it exists.",
+        "operationId": "client_log_api_client_log_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientLogRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientLogResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Client Log",
+        "tags": [
+          "client-log"
+        ]
       }
     },
     "/api/curriculum": {

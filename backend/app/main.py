@@ -320,6 +320,7 @@ async def _resolve_language_state(request, call_next):
 
 from app.api import admin, anki, audio, curriculum, generation, srs  # noqa: E402
 from app.api import auth as auth_api  # noqa: E402
+from app.api import client_log as client_log_api  # noqa: E402
 from app.api import llm as llm_api  # noqa: E402
 from app.api import pipeline as pipeline_api  # noqa: E402
 from app.api import srs_images as srs_images_api  # noqa: E402
@@ -350,6 +351,11 @@ app.include_router(audio.router, dependencies=[Depends(require_user)])
 if settings.sync_enabled and _anki_sync_importable():
     app.include_router(anki.router, dependencies=[Depends(require_user)])
 app.include_router(admin.router, dependencies=[Depends(require_user)])
+# Authenticated like every other write path: it appends browser-supplied text to
+# a file on disk. It is ALSO off by default (settings.client_log_enabled) — auth
+# says who may write, the flag says whether the channel exists at all, and a
+# debug channel wants both.
+app.include_router(client_log_api.router, dependencies=[Depends(require_user)])
 app.include_router(llm_api.router, dependencies=[Depends(require_user)])
 app.include_router(auth_api.router)  # NO router-level dependency — login/logout are unauthenticated
 
