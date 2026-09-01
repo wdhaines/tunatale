@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -65,6 +66,42 @@ SCAN_LIMIT = 200
 PRESTAGE_CONCURRENCY = 5
 
 
+#: How many DISTINCT failure reasons ride the durable log line, and how much of
+#: each. The pre-stage runs after every sync, so an unbounded tail here fills the
+#: one file the operator greps. Reasons are de-duplicated first: a systematic
+#: fault produces twenty copies of one message, and ``failed=20`` already carries
+#: the multiplicity — the list is there for the KIND, not the count.
+MAX_FAILURE_REASONS = 3
+MAX_FAILURE_REASON_CHARS = 80
+
+#: Redactions applied before a failure message is written to disk. The fetch
+#: chain is an LLM call plus a Pixabay request, so an exception that echoes its
+#: request URL would persist the API key into ~/.tunatale/logs/sync.log.
+#: Truncation is NOT a defence — a key sits comfortably inside 80 characters.
+#:
+#: ⚠️ BOUNDED, deliberately. This catches the two shapes a credential actually
+#: takes in an exception message — a URL query string and a `key=VALUE`
+#: assignment — and NOT an arbitrary high-entropy token sitting bare in prose.
+#: Chasing that would mean guessing which words are secrets and mangling the
+#: diagnostic text to do it. The real containment is upstream: only the
+#: exception's own message is ever written, capped, and never the request or a
+#: traceback frame.
+_URL_QUERY = re.compile(r"(https?://[^\s?]+)\?\S*")
+_KEYED_SECRET = re.compile(r"\b((?:api[-_]?key|key|token|secret|password)\s*[=:]\s*)\S+", re.IGNORECASE)
+
+
+def _failure_reason(exc: BaseException) -> str:
+    """A one-line, redacted, length-capped description of a failed fetch.
+
+    Keeps the exception TYPE, which is the part that decides things — a 429 says
+    PRESTAGE_CONCURRENCY is at its limit, a timeout says something else entirely
+    (tunatale-ouk.11). The message is best-effort context after that.
+    """
+    message = _URL_QUERY.sub(r"\1?<redacted>", " ".join(str(exc).split()))
+    message = _KEYED_SECRET.sub(r"\1<redacted>", message)
+    return f"{type(exc).__name__}:{message[:MAX_FAILURE_REASON_CHARS]}"
+
+
 class PreStageReport(NamedTuple):
     """What one pre-stage pass did. Counts, so a log line can be read at a glance."""
 
@@ -77,6 +114,9 @@ class PreStageReport(NamedTuple):
     #: which routes the word to a permanent cloze. A 429 or a timeout is not
     #: evidence about the word, so it must never reach that marker.
     failed: int = 0
+    #: Up to MAX_FAILURE_REASONS distinct redacted reasons, so the durable line
+    #: names the CAUSE and not merely the count. Empty on a clean pass.
+    failures: tuple[str, ...] = ()
 
 
 def _log_prestage_summary(report: PreStageReport) -> None:
@@ -109,6 +149,10 @@ def _log_prestage_summary(report: PreStageReport) -> None:
         f"function_word={report.skipped_function_word} no_image={report.no_image} "
         f"failed={report.failed}"
     )
+    # Only when there ARE failures: `failed=0` already says a pass was clean, and
+    # a dangling empty field just invites the reader to wonder what it means.
+    if report.failures:
+        line += " failures=" + " | ".join(report.failures)
     logger.warning(line)
     try:
         from app.config import settings
@@ -147,6 +191,7 @@ async def prestage_production_images(
     # a curated word list, so there is nothing here worth overlapping; doing it up
     # front means the fetch batch is exactly the words that need a live call.
     failed = 0
+    failure_reasons: list[str] = []
     wanted = []
     for cand in db.list_words_awaiting_production(limit=SCAN_LIMIT):
         if len(wanted) >= limit:
@@ -213,6 +258,9 @@ async def prestage_production_images(
             # mark_image_unavailable — see PreStageReport.failed. The word stays
             # at the head and is retried next pass.
             failed += 1
+            reason = _failure_reason(result)
+            if reason not in failure_reasons:
+                failure_reasons.append(reason)
             logger.warning(
                 "PRESTAGE_IMAGES fetch failed for %r: %s: %s",
                 unit.text,
@@ -257,6 +305,7 @@ async def prestage_production_images(
         skipped_function_word=skipped,
         no_image=missing,
         failed=failed,
+        failures=tuple(failure_reasons[:MAX_FAILURE_REASONS]),
     )
     _log_prestage_summary(report)
     return report
