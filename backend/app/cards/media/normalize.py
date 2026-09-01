@@ -30,6 +30,18 @@ def _measure_loudness(path: Path) -> dict:
         ],
         capture_output=True,
         text=True,
+        # ⚠️ errors="replace" is REQUIRED, not defensive tidying. With text=True
+        # the decode happens INSIDE subprocess.run, so undecodable bytes raise
+        # THERE — before the `except json.JSONDecodeError` below, which would not
+        # catch a UnicodeDecodeError anyway. ffmpeg echoes the input filename and
+        # its metadata to stderr, and ID3v1 tags are Latin-1 BY SPECIFICATION, so
+        # a Norwegian word in a downloaded MP3's tags emits a bare 0xe5 ('å').
+        # The escape reached the pre-stage's fetch and, under the old
+        # return_exceptions=False, discarded the entire batch (tunatale-ouk.12;
+        # observed byte-identical on three consecutive passes at position 1554).
+        # Safe: the loudnorm JSON parsed below is ASCII, so replacing bytes
+        # elsewhere in stderr cannot affect it.
+        errors="replace",
     )
     stderr = result.stderr
     json_start = stderr.rfind("{")
@@ -61,6 +73,10 @@ def _apply_normalization(src: Path, dst: Path, stats: dict, target_lufs: float) 
         ["ffmpeg", "-y", "-i", str(src), "-af", af, "-ar", "44100", "-b:a", "128k", str(dst)],
         capture_output=True,
         text=True,
+        # Same reason as _measure_loudness — and this one interpolates
+        # result.stderr into its RuntimeError, so a strict decode would turn a
+        # reportable ffmpeg failure into an unrelated UnicodeDecodeError.
+        errors="replace",
     )
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg loudnorm failed ({result.returncode}): {result.stderr[-300:]}")
