@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>TT voice probe</title>
+<!--
+  THROWAWAY PROBE for tunatale-qi5.1. Not part of the app.
+
+  A static file under frontend/static/, deliberately: it is served by the dev
+  server at /voice-probe.html with no route, no Svelte component, and no import
+  from src/. It cannot regress LessonPlayer because nothing links the two.
+
+  WHAT IT MEASURES, in the bead's order:
+    1. False positives with NOBODY SPEAKING. This is the kill criterion. Every
+       result logged during a silent run is a false positive by construction, so
+       the headline counter IS the measurement.
+    2. True positives — spoken commands are marked by tapping MARK first.
+    3. Session lifecycle — Android Chrome ends recognition on silence; the
+       restart loop and its storm guard are instrumented.
+    4. Ducking — if a lesson file is loaded here, pause/volume/stall events on
+       the <audio> element are logged, so "did the mic duck the audio" has
+       evidence instead of a recollection.
+    5. Screen policy — wake lock state and visibility changes are logged.
+
+  Delete after the findings- doc lands.
+-->
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 10px;
+    font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #111; color: #eee;
+  }
+  h1 { font-size: 15px; margin: 0 0 8px; color: #9cf; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  button {
+    font: inherit; padding: 14px 16px; min-height: 48px;
+    background: #223; color: #eee; border: 1px solid #558; border-radius: 6px;
+  }
+  button:disabled { opacity: .4; }
+  #mark { background: #143; border-color: #4a7; flex: 1; }
+  #start { background: #253; border-color: #5a5; }
+  #stop  { background: #422; border-color: #a55; }
+  /* The car readout: legible at a glance, no scrolling needed. */
+  #big { display: flex; gap: 10px; margin: 8px 0; }
+  #big div {
+    flex: 1; text-align: center; padding: 10px 4px;
+    border: 1px solid #444; border-radius: 6px; background: #1a1a1a;
+  }
+  #big b { display: block; font-size: 30px; line-height: 1.1; }
+  #big span { font-size: 11px; color: #999; }
+  #fp b { color: #f66; }
+  #pre { border: 1px solid #444; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+  #pre div { margin: 2px 0; }
+  .ok { color: #6d6; } .bad { color: #f66; } .warn { color: #fc6; }
+  #log {
+    border: 1px solid #444; border-radius: 6px; padding: 6px;
+    height: 42vh; overflow-y: auto; font-size: 12px; white-space: pre-wrap;
+    overflow-wrap: anywhere; background: #0c0c0c;
+  }
+  #log div { border-bottom: 1px solid #1e1e1e; padding: 1px 0; }
+  .final { color: #ffd479; } .interim { color: #777; }
+  .evt { color: #7bf; } .err { color: #f66; } .mark { color: #6f6; font-weight: bold; }
+  label { font-size: 12px; color: #aaa; }
+  input[type=text] { font: inherit; background: #1a1a1a; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 6px; }
+</style>
+</head>
+<body>
+
+<h1>TT voice probe — qi5.1</h1>
+
+<div id="pre">preflight…</div>
+
+<div class="row">
+  <label>run label <input type="text" id="label" size="14" value="car-audio" /></label>
+  <label>lang <input type="text" id="lang" size="7" value="en-US" /></label>
+</div>
+
+<div class="row">
+  <button id="start">START</button>
+  <button id="stop" disabled>STOP</button>
+  <button id="mark" disabled>MARK — I am about to speak</button>
+</div>
+
+<div id="big">
+  <div id="fp"><b>0</b><span>RESULTS WHILE SILENT</span></div>
+  <div><b id="c-final">0</b><span>finals</span></div>
+  <div><b id="c-restart">0</b><span>restarts</span></div>
+  <div><b id="c-elapsed">0:00</b><span>elapsed</span></div>
+</div>
+
+<div class="row">
+  <label>lesson audio (optional, for the ducking test)
+    <input type="file" id="audiofile" accept="audio/*" />
+  </label>
+</div>
+<audio id="audio" controls loop style="width:100%; margin-bottom:8px;"></audio>
+
+<div class="row">
+  <button id="copy">COPY LOG</button>
+  <button id="clear">CLEAR</button>
+</div>
+
+<div id="log"></div>
+
+<script>
+"use strict";
+
+// ── Durable sink ────────────────────────────────────────────────────────────
+// Same contract as src/lib/clientLog.ts, reimplemented rather than imported:
+// this page is static and never goes through the Svelte build. The server caps
+// a batch at 50 lines of 300 chars, so those bounds are mirrored here — a batch
+// that oversends is truncated server-side, silently, and the dropped lines are
+// exactly the ones you wanted.
+//
+// Relative URL on purpose: Vite proxies /api to the backend, so this works from
+// the phone over Tailscale without knowing the backend's host or port.
+const MAX_BATCH = 50, MAX_CHARS = 300;
+let sink = [], sinkTimer = null, sinkState = "unknown";
+
+async function flush() {
+  if (sinkTimer) { clearTimeout(sinkTimer); sinkTimer = null; }
+  if (!sink.length) return;
+  const lines = sink.splice(0, MAX_BATCH).map((l) => l.slice(0, MAX_CHARS));
+  try {
+    const r = await fetch("/api/client-log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lines }),
+      keepalive: true,
+    });
+    // 404 is the documented "switched off" answer, not an error to chase.
+    const next = r.ok ? "on" : (r.status === 404 ? "off" : "err" + r.status);
+    if (next !== sinkState) { sinkState = next; preflight(); }
+  } catch {
+    if (sinkState !== "unreachable") { sinkState = "unreachable"; preflight(); }
+  }
+}
+function sinkPush(line) {
+  sink.push("VOICEPROBE " + line);
+  if (sink.length >= MAX_BATCH) flush();
+  else if (!sinkTimer) sinkTimer = setTimeout(flush, 1000);
+}
+
+// ── On-screen log ───────────────────────────────────────────────────────────
+const logEl = document.getElementById("log");
+const all = [];
+let t0 = 0;
+
+function stamp() {
+  if (!t0) return "0.0";
+  return ((Date.now() - t0) / 1000).toFixed(1);
+}
+function log(cls, text) {
+  const line = `[${stamp()}s] ${text}`;
+  all.push(line);
+  const d = document.createElement("div");
+  d.className = cls;
+  d.textContent = line;
+  logEl.appendChild(d);
+  // Only autoscroll when already near the bottom, so reading history at a red
+  // light does not fight the incoming stream.
+  if (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 80) {
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  sinkPush(`${label()} ${line}`);
+  while (logEl.childElementCount > 400) logEl.removeChild(logEl.firstChild);
+}
+const label = () => document.getElementById("label").value.trim() || "unlabelled";
+
+// ── Counters ────────────────────────────────────────────────────────────────
+// `silent` is the kill criterion: results that arrived while the operator had
+// NOT pressed MARK. MARK opens a 10s window in which results are attributed to
+// a deliberate utterance instead.
+let nFinal = 0, nRestart = 0, nSilent = 0, markUntil = 0;
+const $ = (id) => document.getElementById(id);
+function paint() {
+  $("fp").firstElementChild.textContent = nSilent;
+  $("c-final").textContent = nFinal;
+  $("c-restart").textContent = nRestart;
+  const s = t0 ? Math.floor((Date.now() - t0) / 1000) : 0;
+  $("c-elapsed").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+setInterval(paint, 1000);
+
+// ── Preflight ───────────────────────────────────────────────────────────────
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+function preflight() {
+  const rows = [];
+  const add = (ok, text) => rows.push(`<div class="${ok}">${text}</div>`);
+  add(window.isSecureContext ? "ok" : "bad",
+      `secure context: ${window.isSecureContext}` +
+      (window.isSecureContext ? "" : " — SpeechRecognition WILL refuse"));
+  add(SR ? "ok" : "bad",
+      `SpeechRecognition: ${SR ? "available" : "MISSING — this browser cannot run the probe"}`);
+  add(navigator.onLine ? "ok" : "bad",
+      `online: ${navigator.onLine} (Android sends audio to a Google endpoint; offline = no results)`);
+  const sinkMsg = { on: ["ok", "durable log: ON — lines land in ~/.tunatale/logs/client.log"],
+                    off: ["warn", "durable log: OFF (404) — set client_log_enabled=true in backend/.env AND restart the server; on-screen only until then"],
+                    unreachable: ["warn", "durable log: backend unreachable — on-screen only"],
+                    unknown: ["warn", "durable log: not yet probed"] }[sinkState]
+                 || ["bad", `durable log: ${sinkState}`];
+  add(sinkMsg[0], sinkMsg[1]);
+  $("pre").innerHTML = rows.join("");
+}
+preflight();
+flush();   // probes the sink immediately, so the banner is truthful before you drive off
+
+// ── Recognition ─────────────────────────────────────────────────────────────
+let rec = null, running = false, restartAt = 0, backoff = 250;
+
+function start() {
+  if (!SR) { log("err", "ABORT no SpeechRecognition in this browser"); return; }
+  running = true; backoff = 250;
+  if (!t0) t0 = Date.now();
+  $("start").disabled = true; $("stop").disabled = false; $("mark").disabled = false;
+  log("evt", `START label=${label()} lang=${$("lang").value} ua=${navigator.userAgent.slice(0, 120)}`);
+  spin();
+  wakeLock();
+}
+
+function spin() {
+  if (!running) return;
+  rec = new SR();
+  rec.lang = $("lang").value.trim() || "en-US";
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.maxAlternatives = 1;
+
+  rec.onstart = () => log("evt", "recognition.onstart");
+  rec.onaudiostart = () => log("evt", "audiostart");
+  rec.onspeechstart = () => log("evt", "speechstart (recognizer thinks speech began)");
+  rec.onspeechend = () => log("evt", "speechend");
+  rec.onaudioend = () => log("evt", "audioend");
+  rec.onnomatch = () => log("evt", "nomatch");
+
+  rec.onerror = (e) => {
+    log("err", `error=${e.error} ${e.message || ""}`);
+    // These are terminal: retrying just storms.
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+      log("err", "PERMISSION/SERVICE DENIED — stopping. On Android this is also what a browser with the Google speech endpoint removed looks like.");
+      stop();
+    }
+  };
+
+  rec.onresult = (e) => {
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      const alt = r[0];
+      const marked = Date.now() < markUntil;
+      const conf = typeof alt.confidence === "number" ? alt.confidence.toFixed(3) : "n/a";
+      if (r.isFinal) {
+        nFinal++;
+        if (!marked) nSilent++;
+        log("final", `FINAL${marked ? " [MARKED]" : ""} conf=${conf} "${alt.transcript.trim()}"`);
+      } else {
+        if (!marked) nSilent++;
+        log("interim", `interim${marked ? " [MARKED]" : ""} conf=${conf} "${alt.transcript.trim()}"`);
+      }
+    }
+    paint();
+  };
+
+  rec.onend = () => {
+    log("evt", "recognition.onend");
+    if (!running) return;
+    // Storm guard. Android ends the session on silence, so a naive
+    // onend->start() loop is correct behaviour AND a busy-loop risk; the
+    // backoff makes a storm visible in the restart counter instead of
+    // invisible in CPU.
+    const now = Date.now();
+    backoff = now - restartAt < 1000 ? Math.min(backoff * 2, 8000) : 250;
+    restartAt = now;
+    nRestart++;
+    paint();
+    setTimeout(() => { if (running) spin(); }, backoff);
+  };
+
+  try { rec.start(); }
+  catch (err) { log("err", `start() threw: ${err}`); }
+}
+
+function stop() {
+  running = false;
+  $("start").disabled = false; $("stop").disabled = true; $("mark").disabled = true;
+  try { rec && rec.stop(); } catch { /* already dead */ }
+  log("evt", `STOP finals=${nFinal} silentResults=${nSilent} restarts=${nRestart}`);
+  flush();
+}
+
+// ── Wake lock + visibility (measurement 5) ──────────────────────────────────
+let lock = null;
+async function wakeLock() {
+  if (!("wakeLock" in navigator)) { log("evt", "wakeLock: unsupported"); return; }
+  try {
+    lock = await navigator.wakeLock.request("screen");
+    log("evt", "wakeLock: acquired");
+    lock.addEventListener("release", () => log("evt", "wakeLock: released"));
+  } catch (e) { log("err", `wakeLock failed: ${e}`); }
+}
+document.addEventListener("visibilitychange", () => {
+  log("evt", `visibility=${document.visibilityState}`);
+  if (document.visibilityState === "visible" && running && !lock) wakeLock();
+});
+
+// ── Audio ducking (measurement 4) ───────────────────────────────────────────
+// Evidence, not recollection: if the platform ducks or pauses the element when
+// the mic opens, it shows up here as a pause/volumechange/stalled event, or as
+// currentTime failing to advance while not paused.
+const audio = $("audio");
+$("audiofile").addEventListener("change", (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  audio.src = URL.createObjectURL(f);
+  log("evt", `audio loaded: ${f.name}`);
+});
+for (const ev of ["play", "pause", "stalled", "waiting", "volumechange", "ratechange", "ended"]) {
+  audio.addEventListener(ev, () => log("evt", `audio.${ev} paused=${audio.paused} vol=${audio.volume.toFixed(2)} t=${audio.currentTime.toFixed(1)}`));
+}
+let lastT = -1;
+setInterval(() => {
+  if (!audio.src || audio.paused) { lastT = -1; return; }
+  const t = audio.currentTime;
+  if (lastT >= 0 && Math.abs(t - lastT) < 0.15) {
+    log("err", `audio STALLED WHILE PLAYING t=${t.toFixed(1)} (progress < 0.15s over 2s)`);
+  }
+  lastT = t;
+}, 2000);
+
+// ── Wiring ──────────────────────────────────────────────────────────────────
+$("start").onclick = start;
+$("stop").onclick = stop;
+$("mark").onclick = () => {
+  markUntil = Date.now() + 10000;
+  log("mark", "MARK — next 10s of results attributed to a deliberate utterance");
+};
+$("copy").onclick = async () => {
+  try { await navigator.clipboard.writeText(all.join("\n")); log("evt", "log copied"); }
+  catch (e) { log("err", `clipboard failed: ${e}`); }
+};
+$("clear").onclick = () => {
+  all.length = 0; logEl.innerHTML = "";
+  nFinal = nRestart = nSilent = 0; t0 = 0; paint();
+  log("evt", "cleared");
+};
+window.addEventListener("pagehide", flush);
+</script>
+</body>
+</html>
