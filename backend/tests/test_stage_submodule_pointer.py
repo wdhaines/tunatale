@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -100,9 +101,9 @@ def _run(args, cwd):
     return proc.stdout.strip()
 
 
-@pytest.fixture
-def repo(tmp_path):
-    """A parent repo with a drifted, pushed `.beads-tasks` submodule.
+@pytest.fixture(scope="session")
+def _repo_template(tmp_path_factory):
+    """Built ONCE. Every test gets a fresh copy of it — see `repo` below.
 
     Mirrors production: `ignore = all`, the submodule's HEAD contained in a
     remote-tracking branch, and the recorded pointer one commit behind. That is
@@ -110,7 +111,13 @@ def repo(tmp_path):
 
     Every git call runs under `_GIT_ENV`, which reads no ambient config — see
     the comment there for the two CI failures that bought that rule.
+
+    This was function-scoped until 2026-09-01. Building it costs ~20 git
+    subprocesses, and at 13 tests that was 12.2s — the single largest module in
+    the backend suite's aggregate profile, and the suite is work-bound at CI's
+    four workers, so aggregate is the only thing that moves the wall clock.
     """
+    tmp_path = tmp_path_factory.mktemp("hook-repo-template")
     sub_origin = tmp_path / "sub-origin.git"
     _run(["init", "-q", "--bare", "-b", "main", str(sub_origin)], tmp_path)
 
@@ -142,6 +149,25 @@ def repo(tmp_path):
     _run(["fetch", "-q", "origin"], subdir)
 
     assert _run(["submodule", "status"], parent).startswith("+"), "fixture must start drifted"
+    return parent
+
+
+@pytest.fixture
+def repo(_repo_template, tmp_path):
+    """A private copy of the template, so tests still mutate freely in isolation.
+
+    ⚠️ THE ASSERTION BELOW IS THE CONTROL, and it is why the copy is safe to make.
+    A git repo carries absolute paths (`remote.origin.url`, and the parent's
+    `submodule..beads-tasks.url`), so a copied tree still points at the TEMPLATE's
+    `sub-origin.git`. That is fine because nothing here writes to the origin —
+    the fixture's one push happens during template construction, and the hook
+    itself only ever stages. If that ever stops being true, or a copy lands
+    subtly wrong, re-asserting the drifted state on the COPY is what catches it
+    rather than letting every hook test pass vacuously against a clean repo.
+    """
+    parent = tmp_path / "parent"
+    shutil.copytree(_repo_template, parent, symlinks=True)
+    assert _run(["submodule", "status"], parent).startswith("+"), "the copy must start drifted"
     return parent
 
 

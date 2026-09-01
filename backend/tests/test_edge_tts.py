@@ -126,7 +126,7 @@ async def test_list_voices_filters_by_language():
 
 async def test_synthesize_retries_on_transient_error(tmp_path):
     """transient errors trigger retry."""
-    svc = EdgeTTSService()
+    svc = _svc()
     output = tmp_path / "out.mp3"
     attempt = 0
 
@@ -152,7 +152,7 @@ async def test_synthesize_retries_on_transient_error(tmp_path):
 
 async def test_synthesize_retries_on_edge_tts_exception(tmp_path):
     """EdgeTTSException (e.g. NoAudioReceived) triggers retry."""
-    svc = EdgeTTSService()
+    svc = _svc()
     output = tmp_path / "out.mp3"
     attempt = 0
 
@@ -178,7 +178,7 @@ async def test_synthesize_retries_on_edge_tts_exception(tmp_path):
 
 async def test_synthesize_retries_on_aiohttp_client_error(tmp_path):
     """aiohttp.ClientError triggers retry."""
-    svc = EdgeTTSService()
+    svc = _svc()
     output = tmp_path / "out.mp3"
     attempt = 0
 
