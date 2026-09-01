@@ -66,7 +66,34 @@ export default defineConfig({
 	},
 	test: {
 		include: ['src/**/*.{test,spec}.{js,ts}', 'tests/**/*.test.ts'],
-		environment: 'jsdom',
+		// NOT plain 'jsdom' — see tests/jsdom-storage-env.ts, which is jsdom with
+		// Node's built-in Storage globals removed first.
+		//
+		// Node 26 (arrived here via brew, 2026-09-01) defines `localStorage` and
+		// `sessionStorage` on globalThis. Vitest's jsdom environment copies a jsdom
+		// window property onto the worker's globalThis only when the runtime does
+		// not already define it, so from Node 26 on those two names keep resolving
+		// to Node's stubs — which are `undefined` unless the process was started
+		// with `--localstorage-file`. Every `localStorage.setItem(...)` in a test
+		// then throws, and 522 of 1726 tests failed on a tree nobody had touched.
+		//
+		// Two repairs that do NOT work, both measured 2026-09-01 — do not retry them:
+		//   - a setupFile: those run AFTER the environment, and by then
+		//     `document.defaultView === globalThis`, so jsdom's real window (the
+		//     only holder of the working Storage objects) is unreachable.
+		//   - `poolOptions.forks.execArgv: ['--import', ...]`: vitest's fork pool
+		//     silently ignores execArgv. A preload that does nothing but `throw`
+		//     produced zero errors, which is how it was caught — a config that is
+		//     dropped on the floor looks exactly like a fix that did not help.
+		// A custom environment is the only hook that runs early enough.
+		//
+		// Diagnostic signature if this regresses: hundreds of
+		// `TypeError: Cannot read properties of undefined (reading 'setItem')`
+		// beside `ExperimentalWarning: localStorage is not available because
+		// --localstorage-file was not provided`, with no source change — only a
+		// different Node on PATH. Drop this once vitest ships its own fix
+		// (4.1.11 is latest and does not have one).
+		environment: './tests/jsdom-storage-env.ts',
 		setupFiles: ['@testing-library/svelte/vitest', './tests/vitest-setup.ts'],
 		coverage: {
 			provider: 'v8',
