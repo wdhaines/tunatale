@@ -990,11 +990,25 @@
 		min-width: 0;
 		background: none;
 		border: none;
-		padding: 0;
 		margin: 0;
 		font-family: inherit;
 		text-align: left;
 		cursor: pointer;
+		/* ⚠️ TOUCH TARGET, not decoration. Measured on a 390px viewport the
+		   gloss button was 93x14 CSS px inside a 47px row, against the ~48px
+		   minimum Android and Material both specify. A fingertip is far larger,
+		   so Chromium's fuzzy tap-targeting resolved real taps to the nearest
+		   OTHER candidate — the Skip button — and because `.skip` was
+		   selectable while `.gloss` is not, the visible result was Skip's label
+		   highlighting and no reveal at all. Reported on Android Brave, and a
+		   deliberate motionless tap failed too: this was never finger drift,
+		   the target simply could not win.
+		   `flex: 1` claims the dead space to the right of a short gloss, which
+		   is where most mis-hits landed; the padding buys height out of the
+		   row's existing slack. */
+		flex: 1 1 auto;
+		padding: 0.35rem 0;
+		touch-action: manipulation;
 	}
 	/* Glosses are hidden by default so the lesson is a listening exercise
 	   first. Blur rather than omission keeps the row's shape stable and shows
@@ -1016,6 +1030,14 @@
 	.gloss.empty {
 		color: var(--color-border);
 		cursor: default;
+	}
+	/* A mis-aimed tap must not leave the row's controls selected. `.gloss` was
+	   already user-select:none while these were not, which is why a tap that
+	   missed the gloss highlighted Skip's label instead of doing nothing. */
+	.grade button {
+		-webkit-user-select: none;
+		user-select: none;
+		touch-action: manipulation;
 	}
 
 	.tag {

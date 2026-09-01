@@ -377,6 +377,27 @@ test("listen preview: a blurred gloss resolves to a real blur filter", async ({ 
 	expect(await glosses.count()).toBeGreaterThanOrEqual(1);
 
 	expect(await glosses.first().evaluate((el) => getComputedStyle(el).filter)).toContain("blur");
+
+	// ⚠️ TAP TARGET. Measured on Android Brave: the gloss button was 93x14 CSS
+	// px inside a 47px row, so a real fingertip could not win it — Chromium's
+	// fuzzy tap-targeting resolved taps to the nearest OTHER candidate, the Skip
+	// button, which highlighted its label instead of revealing anything. A
+	// deliberate motionless tap failed too, so this was never finger drift.
+	//
+	// Asserted here rather than in a new spec: the modal is already open, so it
+	// costs no fixture and no extra Playwright slot.
+	//
+	// ⚠️ This tier is the ONLY one that can see it, and emulation alone cannot:
+	// Playwright's tap() dispatches at the exact geometric centre with no fuzzy
+	// targeting, so a touch-emulated reveal test passes against the broken code.
+	// Geometry is the evidence; the interaction is not.
+	//
+	// 24px is a REGRESSION FLOOR, not the goal. Android and Material both call
+	// for ~48px; reaching that costs row height the list cannot currently spend,
+	// which is a design decision, not a test's to make.
+	const box = await glosses.first().boundingBox();
+	expect(box, "the blurred gloss must have a box").not.toBeNull();
+	expect(box!.height).toBeGreaterThanOrEqual(24);
 });
 
 /**
