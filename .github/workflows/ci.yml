@@ -816,11 +816,18 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report
+          # Per ATTEMPT, not per run: a rerun uploads its own artifact, so the
+          # failing attempt's report survives a later green one.
+          name: playwright-report-${{ github.run_attempt }}
           path: |
             frontend/playwright-report/
             frontend/test-results/
-          retention-days: 7
+          # 90, not 7 (tunatale-1l26). The e2e flake rate is ~3.3% of attempts,
+          # so at ~10 runs/day a week's retention expires the evidence roughly
+          # as fast as it accumulates — you can never hold two occurrences at
+          # once, which is what turns a flake into a diagnosable pattern rather
+          # than a series of unrelated anecdotes. 90 is GitHub's cap.
+          retention-days: 90
 
   # ⚠️ TWO GATES, ONE JOB (tunatale-ej8.2). These were separate jobs until
   # 2026-09-01 and were byte-identical apart from their final step — same
