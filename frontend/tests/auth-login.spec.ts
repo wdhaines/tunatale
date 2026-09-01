@@ -83,6 +83,21 @@ test('a session that dies mid-visit lands on the login page, not a broken one', 
 	await signIn(page);
 	await page.waitForURL('/');
 
+	// ⚠️ A DISCRIMINATOR, NOT A FIX — and the click below would wait for this
+	// element anyway, so it changes no outcome. It exists to split one
+	// ambiguous timeout into two distinct signals.
+	//
+	// The whole <nav> sits inside `{#if !onLogin}` in +layout.svelte, so when
+	// the app is on /login the Review link is not hidden, it is ABSENT — and
+	// `.click()` then burns its full 30s auto-wait on a locator that will never
+	// appear. That is what a 2026-09-01 CI failure looked like (run
+	// 33519951048), and from the timeout alone there is no way to tell whether
+	// the nav never rendered after signing in or was removed after the cookies
+	// were cleared. Asserting here answers that on the next occurrence:
+	//   fails HERE          -> the app never left /login after signIn;
+	//   fails at the CLICK  -> the nav was up and something took it away.
+	await expect(page.getByRole('link', { name: 'Review' })).toBeVisible();
+
 	// The cookie expiring is indistinguishable, from the browser's side, from
 	// this. The layout guard cannot catch it — it already ran and passed — so
 	// what is being tested here is the 401 interceptor in api.ts.
