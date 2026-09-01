@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import { rmSync } from 'node:fs';
 
 import { defineConfig, devices } from '@playwright/test';
@@ -24,6 +25,20 @@ if (!process.env.TT_E2E_DBS_CLEANED) {
 		'../backend/tunatale-test-no-0.db',
 		'../backend/tunatale-test-no-1.db'
 	]) rmSync(f, { force: true });
+
+	// Build ONCE, here, for both worker frontends to serve (see their webServer
+	// entries below for why they are `vite preview` and not `vite dev`). This sits
+	// inside the same guard as the rm above: the config is evaluated by every
+	// worker too, and an unguarded build would have each worker rebuild into the
+	// directory the running preview servers are serving.
+	//
+	// 2s for a 1.4 MB static SPA (adapter-static, SPA fallback), against the ~8s
+	// the two dev servers cost the suite. `bun install` runs before Playwright
+	// both locally and in CI's e2e job, so `bun run build` is available in both.
+	execSync('bun run build', {
+		stdio: 'inherit',
+		env: { ...process.env, SVELTEKIT_OUT_DIR: '.svelte-kit-e2e' }
+	});
 }
 
 export default defineConfig({
@@ -148,17 +163,39 @@ export default defineConfig({
 			}
 		},
 		{
-			// Test frontend: proxies /api to port 8001, dedicated port
-			command: 'SVELTEKIT_OUT_DIR=.svelte-kit-e2e npm run dev -- --port 5174',
+			// Test frontend: serves the PRODUCTION BUILD, proxies /api to :8001.
+			//
+			// This was `npm run dev` until 2026-09-01. Two Vite dev servers
+			// transform the whole app on demand, once each, and that work landed on
+			// an already-saturated box: the gate is CPU-throughput-bound, not
+			// schedule-bound (measured — backend pytest 32s alone / 56s in-gate,
+			// vitest 16s / 34s, peer-sync 18s / 39s). Swapping both for `vite
+			// preview` over one shared build took e2e 50s -> 42s and the whole
+			// gate 93s -> 86s, with all 52 specs passing unchanged.
+			//
+			// ⚠️ WHAT THIS TRADES AWAY, stated rather than hidden: the gate no
+			// longer exercises `vite dev`. A dev-server-only regression — Vite
+			// pre-bundling deps at boot is the known class — is now invisible to
+			// it. Accepted because the deployed shape is what this suite is FOR:
+			// AUTH_ENABLED is on for the same reason, and the service-worker spec
+			// now runs against a build where service workers actually activate
+			// (vite.config.ts notes HMR and SWs conflict), which is where it
+			// belongs.
+			//
+			// `--strictPort` so a port already in use FAILS instead of silently
+			// serving worker 1's app to worker 0.
+			command: 'SVELTEKIT_OUT_DIR=.svelte-kit-e2e bun run preview -- --port 5174 --strictPort',
 			url: 'http://localhost:5174',
 			reuseExistingServer: false,
 			timeout: 30000,
 			env: { API_PORT: '8001' }
 		},
 		{
-			// Worker-1 test frontend: proxies /api to :8003. Distinct SVELTEKIT_OUT_DIR
-			// or the two dev servers clobber each other's build output.
-			command: 'SVELTEKIT_OUT_DIR=.svelte-kit-e2e-1 npm run dev -- --port 5175',
+			// Worker-1 test frontend: same build, proxies /api to :8003. The two
+			// used to need distinct SVELTEKIT_OUT_DIRs because two dev servers
+			// clobber each other's output; two preview servers only READ the build
+			// directory, so they share one.
+			command: 'SVELTEKIT_OUT_DIR=.svelte-kit-e2e bun run preview -- --port 5175 --strictPort',
 			url: 'http://localhost:5175',
 			reuseExistingServer: false,
 			timeout: 30000,

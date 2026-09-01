@@ -51,7 +51,12 @@ const serverOptions = {
 	// which is how a newly-added route reaches a running dev server — ignoring
 	// that would trade a visible reload for a dev server that silently misses
 	// new routes.
-	watch: { ignored: ['**/.svelte-kit-test/**', '**/.svelte-kit-e2e/**'] },
+	// `build/` joined the list on 2026-09-01, when the e2e webServers became
+	// `vite preview` over a real build: the e2e step now writes a bundle into the
+	// project root mid-run, and without this the developer's dev server reloads
+	// the page for output it never reads. Same reasoning, and the same limit, as
+	// the two out-dirs — do NOT extend this to `.svelte-kit/generated`.
+	watch: { ignored: ['**/.svelte-kit-test/**', '**/.svelte-kit-e2e/**', '**/build/**'] },
 	proxy: USE_SSL
 		? { '/api': { target: `${API_PROTO}://localhost:${process.env.API_PORT ?? 8000}`, secure: false } }
 		: { '/api': `http://localhost:${process.env.API_PORT ?? 8000}` }
