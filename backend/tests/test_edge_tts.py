@@ -319,6 +319,25 @@ def test_edge_adapter_uses_settings_throttle_defaults():
     assert svc._min_delay == settings.tts_min_request_delay_s
 
 
+def test_edge_retry_base_delay_comes_from_settings(monkeypatch):
+    """Kept in step with Azure: both adapters resolve the ladder's base delay from
+    the same shared setting, so tuning it cannot silently apply to one provider."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "tts_retry_base_delay_s", 0.03)
+
+    assert EdgeTTSService()._retry_base_delay == 0.03
+
+
+def test_edge_explicit_retry_base_delay_wins_over_settings(monkeypatch):
+    """An explicit argument still beats the setting — same precedence as min_delay."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "tts_retry_base_delay_s", 0.03)
+
+    assert EdgeTTSService(retry_base_delay=0.25)._retry_base_delay == 0.25
+
+
 async def test_edge_adapter_respects_configured_concurrency_limit(tmp_path):
     """Semaphore caps in-flight requests; the adapter never exceeds the limit."""
     max_concurrent = 2

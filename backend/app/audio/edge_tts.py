@@ -37,7 +37,7 @@ class EdgeTTSService:
         self,
         cache_dir: Path | None = None,
         min_delay: float | None = None,
-        retry_base_delay: float = 0.5,
+        retry_base_delay: float | None = None,
         max_concurrent_requests: int | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
@@ -52,6 +52,8 @@ class EdgeTTSService:
             min_delay = settings.tts_edge_min_request_delay_s
             if min_delay is None:
                 min_delay = settings.tts_min_request_delay_s
+        if retry_base_delay is None:
+            retry_base_delay = settings.tts_retry_base_delay_s
         self._max_concurrent = max_concurrent_requests
         self._min_delay = min_delay
         self._retry_base_delay = retry_base_delay
