@@ -355,3 +355,142 @@ class TestUnpicturableWords:
 
         assert again.calls == [], "a word already known to be unpicturable cost another live fetch"
         assert report.fetched == 0
+
+
+class _RaisingMediaFn:
+    """Fetches that raise for named words, and succeed for the rest.
+
+    The real failure this models is a live one: the fetch is an LLM call plus a
+    Pixabay round trip, either of which can raise on a 429, a timeout or a
+    transport error, and it runs inside a FastAPI BackgroundTask where an escaped
+    exception is swallowed with no trace.
+    """
+
+    def __init__(self, *, raise_on: set[str]) -> None:
+        self.raise_on = raise_on
+        self.calls: list[str] = []
+
+    async def __call__(self, word: str, english: str, **kwargs):
+        self.calls.append(word)
+        if word in self.raise_on:
+            raise RuntimeError(f"pixabay exploded for {word}")
+        # Distinct bytes per word. Identical bytes hash to one filename and trip
+        # the duplicate-image guard, which would count a successful fetch as
+        # no_image and quietly weaken what this class is testing.
+        return _Media(image_bytes=f"PNG-{word}".encode())
+
+
+class TestAFailingFetchIsCountedNotSwallowed:
+    """tunatale-ouk.10 — the pre-stage stalled and left no evidence anywhere.
+
+    Symptom on the real deck: awaiting_image=173 with minted=0 across six syncs,
+    ~4 images produced in a day against a limit of 20 PER SYNC, and
+    image_unavailable_at set on 0 of 3100 collocations.
+
+    Cause: `asyncio.gather(..., return_exceptions=False)`. One raising fetch
+    abandons the whole batch — the other words are never stored, pass 3 never
+    runs so no word is marked unpicturable, and the exception escapes into a
+    background task that discards it. The pass leaves the DB and the log exactly
+    as it found them, which is indistinguishable from never having run.
+    """
+
+    async def test_one_raising_fetch_does_not_discard_the_rest_of_the_batch(self, db, tmp_path):
+        ids = {
+            word: _add_word(db, word, eng, note_id=100 + i, card_id=200 + i)
+            for i, (word, eng) in enumerate([("hus", "house"), ("bil", "car"), ("bok", "book")])
+        }
+
+        media_fn = _RaisingMediaFn(raise_on={"bil"})
+        report = await prestage_production_images(db, media_fn, language_code=LANG, limit=10)
+
+        assert report.failed == 1
+        # The other two must still be stored. Under return_exceptions=False they
+        # were not — that is the whole bug.
+        assert report.fetched == 2
+        stored = [w for w, cid in ids.items() if db.get_image_filename(cid) is not None]
+        assert stored == ["hus", "bok"]
+
+    async def test_a_raising_fetch_is_never_marked_unpicturable(self, db):
+        """A crash must not be recorded as "cannot be pictured".
+
+        The existing `return_exceptions=False` comment chose to let failures
+        surface precisely so they were not "silently counted as no_image and
+        turned into a cloze by the mint" — that reasoning is right and survives.
+        Catching the exception must therefore count it apart from `no_image`,
+        because `mark_image_unavailable` is what routes a word to a permanent
+        cloze, and a transient 429 is not evidence a word cannot be pictured.
+        """
+        coll_id = _add_word(db, "bil", "car", note_id=100, card_id=200)
+
+        report = await prestage_production_images(db, _RaisingMediaFn(raise_on={"bil"}), language_code=LANG, limit=10)
+
+        assert report.failed == 1
+        assert report.no_image == 0
+        assert db.is_image_unavailable(coll_id) is False
+
+
+class TestTheSummaryReachesTheDurableLog:
+    """The counters must survive in ~/.tunatale/logs/sync.log.
+
+    They were `logger.info`, and start-dev.sh runs uvicorn at `--log-level
+    warning` and redirects it nowhere — so the line was filtered out AND had
+    nowhere to land. Measured on the real log before this change:
+    `grep -c PRESTAGE ~/.tunatale/logs/sync.log` -> 0, ever.
+
+    Identical defect to the one fixed for PRODUCTION_MINT in b7211aa
+    (tunatale-7wsv), one component over. Same fix: persist beside SYNC_SOAK and
+    grep the file, not the scrollback.
+    """
+
+    async def test_the_counters_are_appended_to_the_sync_log(self, db, tmp_path, monkeypatch):
+        from app.config import settings
+
+        log_path = tmp_path / "logs" / "sync.log"
+        monkeypatch.setattr(settings, "sync_log", log_path)
+        _add_word(db, "hus", "house", note_id=100, card_id=200)
+
+        await prestage_production_images(db, _MediaFn(_Media()), language_code=LANG, limit=10)
+
+        line = next(ln for ln in log_path.read_text().splitlines() if "PRESTAGE_IMAGES" in ln)
+        for field in ("fetched=1", "already=0", "function_word=0", "no_image=0", "failed=0"):
+            assert field in line, f"{field} missing from {line!r}"
+
+    async def test_a_pass_that_did_nothing_still_writes_a_line(self, db, tmp_path, monkeypatch):
+        """The all-zero pass is the MOST diagnostic one and used to be the only
+        one guaranteed silent: the emit was guarded on `if fetched or missing`.
+
+        "The pre-stage ran and found nothing to do" and "the pre-stage never ran"
+        are the two hypotheses a reader needs to separate, and the guard made
+        them produce identical evidence. That ambiguity is exactly what left
+        ouk.10 undiagnosable.
+        """
+        from app.config import settings
+
+        log_path = tmp_path / "logs" / "sync.log"
+        monkeypatch.setattr(settings, "sync_log", log_path)
+
+        report = await prestage_production_images(db, _MediaFn(_Media()), language_code=LANG, limit=10)
+
+        assert report == report.__class__()  # all zeros
+        assert "PRESTAGE_IMAGES fetched=0" in log_path.read_text()
+
+    async def test_an_unwritable_log_does_not_break_the_pass(self, db, tmp_path, monkeypatch, caplog):
+        """Observability is best-effort and must never take down a pre-stage pass.
+
+        The whole point of this change is diagnosing a pass that fails silently;
+        introducing a NEW way for it to die — a full disk, a read-only home, a
+        path whose parent is a file — would be a poor trade. The failure is
+        logged rather than raised.
+        """
+        from app.config import settings
+
+        blocker = tmp_path / "not-a-dir"
+        blocker.write_text("i am a file")
+        monkeypatch.setattr(settings, "sync_log", blocker / "logs" / "sync.log")
+        coll_id = _add_word(db, "hus", "house", note_id=100, card_id=200)
+
+        report = await prestage_production_images(db, _MediaFn(_Media()), language_code=LANG, limit=10)
+
+        assert report.fetched == 1
+        assert db.get_image_filename(coll_id) is not None
+        assert "could not be persisted" in caplog.text
