@@ -37,7 +37,9 @@ def strategy(request):
 class TestEmptySetIsUnchanged:
     @pytest.mark.parametrize("pressure", list(ReviewPressure))
     def test_no_review_words_renders_exactly_the_old_literal(self, language, strategy, pressure):
-        _, user = build_story_prompts(_make_curriculum_day(), language, strategy, "A2", review_pressure=pressure)
+        user = build_story_prompts(
+            _make_curriculum_day(), language, strategy, "A2", review_pressure=pressure
+        ).user_prompt
         assert EMPTY_SLOT in user
 
     def test_pressure_leaks_nothing_when_there_is_nothing_to_review(self, language, strategy):

@@ -688,7 +688,9 @@ class TestBuildStoryPrompts:
         from app.generation.story import build_story_prompts
 
         day = _make_curriculum_day()
-        system, user = build_story_prompts(day, language, ContentStrategy.WIDER, "A2")
+        prompts = build_story_prompts(day, language, ContentStrategy.WIDER, "A2")
+        system = prompts.system_prompt
+        user = prompts.user_prompt
         assert isinstance(system, str) and len(system) > 0
         assert isinstance(user, str) and len(user) > 0
 
@@ -696,7 +698,7 @@ class TestBuildStoryPrompts:
         from app.generation.story import build_story_prompts
 
         day = _make_curriculum_day()
-        _, user = build_story_prompts(day, language, ContentStrategy.WIDER, "A2")
+        user = build_story_prompts(day, language, ContentStrategy.WIDER, "A2").user_prompt
         for c in day.collocations:
             assert c in user
 
@@ -704,12 +706,12 @@ class TestBuildStoryPrompts:
         from app.generation.story import build_story_prompts
 
         day = _make_curriculum_day()
-        _, user = build_story_prompts(day, language, ContentStrategy.WIDER, "B1")
+        user = build_story_prompts(day, language, ContentStrategy.WIDER, "B1").user_prompt
         assert "B1" in user
 
     def test_deeper_strategy_user_prompt_contains_source_transcript_marker(self, language):
         from app.generation.story import build_story_prompts
 
         day = _make_curriculum_day()
-        _, user = build_story_prompts(day, language, ContentStrategy.DEEPER, "A2")
+        user = build_story_prompts(day, language, ContentStrategy.DEEPER, "A2").user_prompt
         assert "source_day_transcript" in user or "SOURCE TRANSCRIPT" in user

@@ -390,7 +390,7 @@ async def get_story_prompt(
         raise HTTPException(status_code=404, detail=f"Day {day} not found in curriculum")
 
     language = request.state.language
-    system_prompt, user_prompt = build_story_prompts(
+    prompts = build_story_prompts(
         days[0],
         language,
         ContentStrategy[strategy],
@@ -398,7 +398,7 @@ async def get_story_prompt(
         srs_db=request.state.srs_db,
         review_pressure=ReviewPressure[review_pressure],
     )
-    return {"system_prompt": system_prompt, "user_prompt": user_prompt}
+    return {"system_prompt": prompts.system_prompt, "user_prompt": prompts.user_prompt}
 
 
 @router.get("/{lesson_id}/source", status_code=200, response_model=LessonSourceResponse)

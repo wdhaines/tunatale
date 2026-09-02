@@ -119,26 +119,30 @@ def stored_curriculum():
 
 class TestBuildStoryPrompts:
     def test_a_db_puts_real_review_words_in_the_prompt(self, seeded_db, language):
-        _, user = build_story_prompts(_curriculum_day(), language, ContentStrategy.WIDER, "A2", srs_db=seeded_db)
+        user = build_story_prompts(
+            _curriculum_day(), language, ContentStrategy.WIDER, "A2", srs_db=seeded_db
+        ).user_prompt
         assert SL_WORD in user
         assert "(none yet)" not in user
 
     def test_no_db_is_the_old_prompt_byte_for_byte(self, language):
         """Every story cassette was recorded without a db. `srs_db=None` must
         still key identically, or the whole recorded corpus is orphaned."""
-        _, user = build_story_prompts(_curriculum_day(), language, ContentStrategy.WIDER, "A2")
+        user = build_story_prompts(_curriculum_day(), language, ContentStrategy.WIDER, "A2").user_prompt
         assert "**Review Collocations to Include:**\n(none yet)\n" in user
 
     def test_pressure_reaches_the_rendered_block(self, seeded_db, language):
-        _, natural = build_story_prompts(_curriculum_day(), language, ContentStrategy.WIDER, "A2", srs_db=seeded_db)
-        _, insistent = build_story_prompts(
+        natural = build_story_prompts(
+            _curriculum_day(), language, ContentStrategy.WIDER, "A2", srs_db=seeded_db
+        ).user_prompt
+        insistent = build_story_prompts(
             _curriculum_day(),
             language,
             ContentStrategy.WIDER,
             "A2",
             srs_db=seeded_db,
             review_pressure=ReviewPressure.INSISTENT,
-        )
+        ).user_prompt
         assert natural != insistent
         assert "candidates, not requirements" in natural
         assert "candidates, not requirements" not in insistent

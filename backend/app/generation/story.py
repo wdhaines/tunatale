@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 import logging
+from collections.abc import Sequence
+from typing import NamedTuple
 
 from app.generation.json_parsing import parse_json_object
 from app.generation.prompts import (
@@ -12,6 +14,7 @@ from app.generation.prompts import (
     build_story_system_prompt,
     get_strategy_prompt,
 )
+from app.generation.review_coverage import review_word_usage
 from app.generation.section_builder import (
     build_en_translated_section,
     build_key_phrases_section,
@@ -55,6 +58,37 @@ def _missing_log(missing: list[str], language_code: str) -> None:
     )
 
 
+class StoryPrompts(NamedTuple):
+    """What build_story_prompts produces.
+
+    `review_words` is the set the prompt ACTUALLY asked for, carried out so
+    the caller can later check whether the generated lesson used any of them
+    — 'we asked the model' is not 'it happened'.
+    """
+
+    system_prompt: str
+    user_prompt: str
+    review_words: tuple[str, ...]
+
+
+def _review_usage_log(used: list[str], unused: list[str], language_code: str) -> None:
+    """Report how much of the requested review vocabulary the story actually used.
+
+    ⚠️ INFO, NOT WARNING, and that is a decision rather than an oversight. The
+    prompt explicitly licenses the model to skip a word that does not fit the
+    scene — at the default NATURAL pressure, skipping IS a correct answer — so a
+    warning would fire on a perfectly good generation and train the reader to
+    ignore the line. The RATIO is the product here, not an alarm.
+    """
+    logger.info(
+        "Review words used %d/%d (%s); unused: %s",
+        len(used),
+        len(used) + len(unused),
+        language_code,
+        ", ".join(unused) or "-",
+    )
+
+
 def build_story_prompts(
     curriculum_day: CurriculumDay,
     language: Language,
@@ -63,7 +97,7 @@ def build_story_prompts(
     *,
     srs_db: SRSDatabase | None = None,
     review_pressure: ReviewPressure = ReviewPressure.NATURAL,
-) -> tuple[str, str]:
+) -> StoryPrompts:
     """Build the (system_prompt, user_prompt) pair for story generation.
 
     Shared by ``StoryGenerator.generate`` and the ``GET /api/story/prompt``
@@ -97,7 +131,7 @@ def build_story_prompts(
         source_day_transcript="(not available)",
         cefr_block=_build_cefr_block(cefr_level),
     )
-    return system_prompt, user_prompt
+    return StoryPrompts(system_prompt, user_prompt, tuple(review_words))
 
 
 class StoryGenerator:
@@ -129,7 +163,7 @@ class StoryGenerator:
         Returns:
             Parsed Lesson with 4 Pimsleur sections built mechanically from LLM JSON.
         """
-        system_prompt, user_prompt = build_story_prompts(
+        prompts = build_story_prompts(
             curriculum_day,
             language,
             strategy,
@@ -137,6 +171,8 @@ class StoryGenerator:
             srs_db=srs_db,
             review_pressure=review_pressure,
         )
+        system_prompt = prompts.system_prompt
+        user_prompt = prompts.user_prompt
 
         logger.info("Generating story for day %d (%s)", curriculum_day.day, strategy.value)
         # 4096, NOT 5500. gpt-oss-120b's free-tier budget is 8000 tokens/request and
@@ -166,7 +202,7 @@ class StoryGenerator:
                     max_tokens = self._bump_max_tokens_after_truncation(max_tokens)
                 logger.warning("Story JSON parse failed on attempt %d/2: %s", attempt + 1, failure)
                 continue
-            return self._parse_response(data, language=language)
+            return self._parse_response(data, language=language, review_words=prompts.review_words)
         raise failure
 
     def _enrich_parse_failure(
@@ -198,16 +234,23 @@ class StoryGenerator:
         except ValueError as e:
             raise StoryGenerationError(str(e)) from e
 
-    def _parse_response(self, data: dict, language: Language) -> Lesson:
-        return build_lesson_from_story(data, language=language)
+    def _parse_response(self, data: dict, language: Language, *, review_words: Sequence[str] = ()) -> Lesson:
+        return build_lesson_from_story(data, language=language, review_words=review_words)
 
 
-def build_lesson_from_story(data: dict, language: Language) -> Lesson:
+def build_lesson_from_story(data: dict, language: Language, *, review_words: Sequence[str] = ()) -> Lesson:
     """Build a Lesson from Story JSON — the ONE Story-JSON → Lesson build step.
 
     Used by generation (via ``StoryGenerator._parse_response``) and by lesson
     authoring import (``app.storage.lesson_io``), so authored and generated
     lessons are identical in shape. See docs/lesson-authoring.md.
+
+    *review_words* is what the PROMPT asked the model to work in. It is measured
+    here rather than at the call site because the surface→lemma map this function
+    already builds from the real dialogue is exactly the matcher the check needs,
+    and rebuilding it outside would mean a second lemmatiser pass. The authoring
+    import passes nothing — recording what a hand-pasted prompt requested is
+    tunatale-g4c9's job.
     """
     key_phrases = data.get("key_phrases", [])
     scenes = data.get("scenes", [])
@@ -247,11 +290,15 @@ def build_lesson_from_story(data: dict, language: Language) -> Lesson:
     # where single-word lemmatize miskeys e.g. "hotel" → as verb "hoteti"
     # instead of noun "hotel").
     surface_lemma: dict[str, str] = {}
+    # Collected in the SAME pass: a multi-word collocation has no entry in a
+    # token map, so the review meter falls back to a phrase search over this.
+    dialogue_lines: list[str] = []
     for scene in scenes:
         for line in scene.get("lines", []):
             text = line.get("text", "").strip()
             if not text:
                 continue
+            dialogue_lines.append(text)
             surfaces = tokenize(text)
             lemmas = lemmatize_surfaces_in_context(surfaces, text, lemmatizer, language.code)
             for s, lem in zip(surfaces, lemmas, strict=True):
@@ -295,6 +342,10 @@ def build_lesson_from_story(data: dict, language: Language) -> Lesson:
     if missing:
         _missing_log(missing, language.code)
 
+    review_used, review_unused = review_word_usage(review_words, surface_lemma, "\n".join(dialogue_lines))
+    if review_words:
+        _review_usage_log(review_used, review_unused, language.code)
+
     sentence_translations: dict[str, str] = {}
     for scene in scenes:
         for line in scene.get("lines", []):
@@ -314,6 +365,10 @@ def build_lesson_from_story(data: dict, language: Language) -> Lesson:
             "verb_base_glosses": verb_base_glosses,
             "sentence_translations": sentence_translations,
             "morphology_focus": data.get("morphology_focus", []),
+            # What the prompt ASKED for and what the story actually used. Kept
+            # on the lesson so the answer survives the log buffer.
+            "review_requested": list(review_words),
+            "review_used": review_used,
             # Exact Story-JSON source (docs/lesson-authoring.md decision #4):
             # export returns this verbatim; reconstruction is only the fallback
             # for lessons stored before it existed. Deep copy so later caller
