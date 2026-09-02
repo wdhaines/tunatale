@@ -29,10 +29,12 @@ from app.audio.ports import TTSExhausted
 
 logger = logging.getLogger(__name__)
 
-# Kept in step with EdgeTTSService so the provider switch is not also a
-# throughput or pacing change. Overridden by app/config.py settings.
-MIN_REQUEST_DELAY_S = 0.2
-MAX_CONCURRENT_REQUESTS = 10
+# The "kept in step with EdgeTTSService" pacing invariant is real, but it lives
+# in app/config.py — both providers read `tts_min_request_delay_s` and
+# `tts_max_concurrent_requests`, with `tts_azure_min_request_delay_s` as the
+# per-provider override. Duplicating the numbers here read as documentation and
+# was worse than nothing: nothing imported them, and MAX_CONCURRENT_REQUESTS = 10
+# contradicted the setting it claimed to mirror (which is 1, deliberately).
 # Six, not three. Measured 2026-08-28 on a real cold day-8 render at
 # concurrency 3: 76 x 429 spread across EVERY second of the run (1-6 per
 # second, no quiet window) while 64% of requests succeeded anyway. So a

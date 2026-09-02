@@ -16,9 +16,11 @@ from app.audio.ports import TTSExhausted
 
 logger = logging.getLogger(__name__)
 
-# Rate limiting constants (ported from prototype)
-MIN_REQUEST_DELAY_S = 0.2
-MAX_CONCURRENT_REQUESTS = 10
+# Pacing and concurrency live in app/config.py, NOT here — see
+# `tts_min_request_delay_s` / `tts_edge_min_request_delay_s` and
+# `tts_max_concurrent_requests`. Two module constants used to sit here
+# ("ported from prototype"), read by nothing, and one of them said
+# MAX_CONCURRENT_REQUESTS = 10 while the setting that actually governs is 1.
 # Kept in step with AzureTTSService — see the note on its MAX_RETRIES for the
 # measurement that sized it. A provider switch must not also be a patience change.
 MAX_RETRIES = 6

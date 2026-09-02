@@ -184,7 +184,13 @@ _DEFAULT_WEIGHTS: tuple[float, ...] = (
     0.4350,  # w18: (unused in v5)
 )
 
-FACTOR = 19 / 81  # = 0.234...
+# NO `FACTOR = 19 / 81` HERE ANY MORE. It was a precomputed approximation of the
+# power-forgetting-curve factor, superseded when this module moved to computing
+# it exactly as `exp(ln(0.9) / decay) - 1` (see `_factor` above and the
+# `power_forgetting_curve` note below). Nothing read it, and leaving it in place
+# advertised a constant the scheduler does not use — which is exactly the sort of
+# thing test_parity_fsrs_f32.py's prose warns a reader to check when hunting an
+# op-order/FACTOR divergence.
 
 
 @dataclass(frozen=True)
