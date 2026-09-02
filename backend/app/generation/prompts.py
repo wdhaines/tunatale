@@ -7,6 +7,7 @@ All prompts request JSON responses for deterministic parsing.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 
 from app.languages import (
     PlannerExample,
@@ -16,7 +17,7 @@ from app.languages import (
     get_style_notes,
 )
 from app.models.language import Language
-from app.models.strategy import ContentStrategy
+from app.models.strategy import ContentStrategy, ReviewPressure
 
 # Cap for individual chat messages rendered in the planner prompt (section 5).
 # Keeps the prompt within Groq's per-request token budget when pasted Claude
@@ -263,6 +264,61 @@ STORY_PROMPT_DEEPER_TEMPLATE = """\
 - Each collocation should demonstrate enhanced language complexity
 - Each scene must have 5-12 lines of dialogue
 """
+
+
+# ── The review-vocabulary block ───────────────────────────────────────────
+
+# Unconditional, and deliberately the LAST line of every rendered block so it is
+# the most recent instruction the model reads. Theme is what gives way under
+# pressure; a scene that stops making sense is a failure at every setting.
+COHERENCE_FLOOR = (
+    "Whatever you include, the scene must still be one real people could plausibly be "
+    "having — never trade coherence to place a word."
+)
+
+# The literal every story cassette was recorded with. An empty review set must
+# still render exactly this, at every pressure, or sha256(system + user) moves
+# and every recorded story replay is silently orphaned.
+NO_REVIEW_WORDS = "(none yet)"
+
+_REVIEW_LEAD = "These are the words this learner is closest to forgetting, most urgent first."
+
+# ⚠️ The section HEADER stays in the templates and still reads "Review
+# Collocations to Include". Keeping it there is a maintainability call — a
+# template whose section is `{review_collocations}` alone can no longer be read
+# as a prompt — so the scoping is done in the first line of the body instead,
+# which is why NATURAL opens by naming the list "candidates, not requirements".
+_REVIEW_INSTRUCTIONS = {
+    ReviewPressure.NATURAL: (
+        "Treat them as candidates, not requirements: work in the ones that fit the scene "
+        "naturally and leave out any that would bend the dialogue out of shape. Including "
+        "none of them is a correct answer."
+    ),
+    ReviewPressure.BALANCED: (
+        "Look actively for openings — reshape a line, add a beat, or choose a detail that "
+        "gives one of these words a natural home. Leave out only the ones that would still "
+        "distort the scene."
+    ),
+    ReviewPressure.INSISTENT: (
+        "Fitting as many of them as possible into the dialogue matters MORE than staying "
+        "close to the stated theme — bend the scenario if that is what it takes."
+    ),
+}
+
+
+def build_review_block(
+    review_words: Sequence[str],
+    pressure: ReviewPressure = ReviewPressure.NATURAL,
+) -> str:
+    """Render the value substituted into a story template's review slot.
+
+    Order is preserved: the selector hands these over most-urgent-first and the
+    model should read them that way.
+    """
+    if not review_words:
+        return NO_REVIEW_WORDS
+    listed = "\n".join(f"- {word}" for word in review_words)
+    return f"{_REVIEW_LEAD}\n{listed}\n{_REVIEW_INSTRUCTIONS[pressure]}\n{COHERENCE_FLOOR}"
 
 
 def get_strategy_prompt(strategy: ContentStrategy) -> str:

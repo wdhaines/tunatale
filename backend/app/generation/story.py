@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import copy
 import logging
+from collections.abc import Sequence
 
 from app.generation.json_parsing import parse_json_object
-from app.generation.prompts import _build_cefr_block, build_story_system_prompt, get_strategy_prompt
+from app.generation.prompts import (
+    _build_cefr_block,
+    build_review_block,
+    build_story_system_prompt,
+    get_strategy_prompt,
+)
 from app.generation.section_builder import (
     build_en_translated_section,
     build_key_phrases_section,
@@ -19,7 +25,7 @@ from app.generation.section_builder import (
 from app.models.curriculum import CurriculumDay
 from app.models.language import NARRATOR_VOICE, Language
 from app.models.lesson import KeyPhraseInfo, Lesson
-from app.models.strategy import ContentStrategy
+from app.models.strategy import ContentStrategy, ReviewPressure
 from app.srs.lemmatizer import get_lemmatizer, lemmatize_surfaces_in_context
 from app.srs.tokenizer import tokenize
 
@@ -53,11 +59,20 @@ def build_story_prompts(
     language: Language,
     strategy: ContentStrategy,
     cefr_level: str,
+    *,
+    review_words: Sequence[str] = (),
+    review_pressure: ReviewPressure = ReviewPressure.NATURAL,
 ) -> tuple[str, str]:
     """Build the (system_prompt, user_prompt) pair for story generation.
 
     Shared by ``StoryGenerator.generate`` and the ``GET /api/story/prompt``
     export endpoint so the manual-paste path can never drift from the Groq path.
+
+    *review_words* is the learner's decaying vocabulary, most urgent first (see
+    ``srs.review_selector``); *review_pressure* is how hard the prompt should
+    push to use it. Both default to the pre-feature behaviour — with no words,
+    the rendered prompt is byte-identical to what every story cassette was
+    recorded against, at every pressure setting.
     """
     system_prompt = build_story_system_prompt(language)
 
@@ -70,7 +85,7 @@ def build_story_prompts(
         focus=curriculum_day.focus,
         story_guidance=curriculum_day.story_guidance,
         new_collocations=new_collocations,
-        review_collocations="(none yet)",
+        review_collocations=build_review_block(review_words, review_pressure),
         source_day_transcript="(not available)",
         cefr_block=_build_cefr_block(cefr_level),
     )
