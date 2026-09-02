@@ -77,6 +77,23 @@
   <label>lang <input type="text" id="lang" size="7" value="en-US" /></label>
 </div>
 
+<!--
+  The two hypotheses that could still save the epic after the 2026-09-02 run
+  showed continuous cloud recognition pauses lesson audio ~80% of the time.
+    SINGLE SHOT — one session, no restart loop. Answers whether push-to-talk
+                  survives: does it cost ONE pause instead of a rolling one?
+    LOCAL       — processLocally. Does on-device recognition take exclusive
+                  audio focus the same way the cloud path does? (tunatale-qi5.2)
+  Both are toggles, so one trip can compare all four combinations.
+-->
+<div class="row">
+  <label><input type="checkbox" id="single" /> SINGLE SHOT (one session, no restart)</label>
+  <label><input type="checkbox" id="local" /> LOCAL (processLocally) — ⚠ may crash the tab; the log records the attempt</label>
+  <button id="miconly">MIC ONLY (getUserMedia, no recognizer)</button>
+  <button id="checklocal">CHECK LOCAL (may crash — not while driving)</button>
+  <button id="install" hidden>INSTALL LOCAL MODEL</button>
+</div>
+
 <div class="row">
   <button id="start">START</button>
   <button id="stop" disabled>STOP</button>
@@ -129,6 +146,12 @@
 //
 // Relative URL on purpose: Vite proxies /api to the backend, so this works from
 // the phone over Tailscale without knowing the backend's host or port.
+// Bump on EVERY edit. A stale tab on the phone is invisible otherwise: on
+// 2026-09-02 an AIMP focus test was run against a page version that predated the
+// toggles, and the only tell was a missing field in one log line. The version is
+// announced in the preflight AND written to disk at load, so "which build was
+// that run?" is never a reconstruction again.
+const PROBE_VERSION = "2026-09-02.7";
 const MAX_BATCH = 50, MAX_CHARS = 300;
 let sink = [], sinkTimer = null, sinkState = "unknown";
 
@@ -187,6 +210,11 @@ const label = () => document.getElementById("label").value.trim() || "unlabelled
 // NOT pressed MARK. MARK opens a 10s window in which results are attributed to
 // a deliberate utterance instead.
 let nFinal = 0, nRestart = 0, nSilent = 0, markUntil = 0;
+// Counters run for the life of the TAB (CLEAR resets them), but a STOP line that
+// reports lifetime totals reads as this run's result and is silently wrong —
+// aimp-comply-foreground logged "finals=4 restarts=24" for a single 3s session
+// (2026-09-02). Snapshot at START so STOP can report BOTH.
+let runBase = { f: 0, r: 0, s: 0 };
 const $ = (id) => document.getElementById(id);
 function paint() {
   $("fp").firstElementChild.textContent = nSilent;
@@ -199,6 +227,51 @@ setInterval(paint, 1000);
 
 // ── Preflight ───────────────────────────────────────────────────────────────
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+// ── On-device recognition (tunatale-qi5.2) ──────────────────────────────────
+// Chrome exposes processLocally on the instance plus static available()/install().
+// All three are feature-detected: assigning processLocally on a browser that
+// lacks it is a SILENT no-op, which would label a cloud run "LOCAL" and produce
+// a confidently wrong finding.
+const LOCAL_SUPPORTED = !!(SR && "processLocally" in SR.prototype);
+let localState = LOCAL_SUPPORTED ? "probing" : "unsupported";
+
+// ⚠️ SR.available() IS NOT CALLED ON LOAD, and that is deliberate.
+//
+// Measured 2026-09-02 in headless Chromium 152: every feature detection passes
+// ("processLocally" in prototype, typeof available === "function"), and then
+// calling SR.available({langs, processLocally}) CRASHES THE RENDERER. A crash is
+// not catchable — no try/catch, no error event, the page is simply gone. On load
+// that would have killed the probe before it could be used; mid-run it would
+// destroy an in-progress measurement at speed.
+//
+// Whether real Chrome on Android crashes the same way is UNKNOWN and untested.
+// The cheap, safe assumption is that it might, so the call is behind an explicit
+// button that is never pressed by accident and never while driving.
+function probeLocal() {
+  if (!LOCAL_SUPPORTED) localState = "unsupported";
+  else if (localState === "probing") localState = "present, not yet checked";
+  preflight();
+}
+
+// The deliberate, opt-in version of the same question.
+async function checkLocalAvailability() {
+  if (!LOCAL_SUPPORTED || typeof SR.available !== "function") {
+    localState = "unsupported"; preflight(); return;
+  }
+  log("evt", "CHECK LOCAL: calling SR.available() — if the page dies here, that IS the finding");
+  await flush();   // get that line to disk FIRST; a crash takes the tab with it
+  try {
+    localState = await SR.available({ langs: [$("lang").value.trim() || "en-US"], processLocally: true });
+    log("evt", `SR.available() returned "${localState}" — survived, no crash`);
+  } catch (e) {
+    localState = `available() threw: ${e && e.name ? e.name : e}`;
+    log("err", `SR.available() threw: ${e}`);
+  }
+  // The model download is explicit and user-initiated, never implicit in the car.
+  $("install").hidden = !(localState === "downloadable" || localState === "downloading");
+  preflight();
+}
 
 // Real reachability of the Google edge, from THIS phone on THIS network.
 // no-cors gives an opaque response we cannot read — but resolve-vs-reject is the
@@ -234,6 +307,8 @@ document.addEventListener("visibilitychange", () => {
 function preflight() {
   const rows = [];
   const add = (ok, text) => rows.push(`<div class="${ok}">${text}</div>`);
+  add("ok", `display-mode: ${matchMedia("(display-mode: standalone)").matches ? "STANDALONE (installed PWA)" : "browser tab"}`);
+  add("ok", `probe version: ${PROBE_VERSION} — if this is not the version you expect, HARD RELOAD`);
   add(window.isSecureContext ? "ok" : "bad",
       `secure context: ${window.isSecureContext}` +
       (window.isSecureContext ? "" : " — SpeechRecognition WILL refuse"));
@@ -260,6 +335,16 @@ function preflight() {
     probing:     ["warn", "google reachable: probing…"],
   }[netState] || ["warn", `google reachable: ${netState}`];
   add(netMsg[0], netMsg[1]);
+  const localMsg = {
+    available:    ["ok",   "on-device (processLocally): READY — tick LOCAL to use it"],
+    downloadable: ["warn", "on-device: model NOT installed — tap INSTALL LOCAL MODEL (do it on wifi, not in the car)"],
+    downloading:  ["warn", "on-device: model downloading… re-check in a minute"],
+    unavailable:  ["warn", "on-device: unavailable for this language — LOCAL runs will fall back to CLOUD"],
+    unsupported:  ["warn", "on-device: this browser has no processLocally — CLOUD only"],
+    "present, not yet checked": ["warn", "on-device: processLocally EXISTS. Ticking LOCAL will use it; the errors row will say if it fell back. Press CHECK LOCAL (parked) to ask outright."],
+    probing:      ["warn", "on-device: probing…"],
+  }[localState] || ["warn", `on-device: ${localState}`];
+  add(localMsg[0], localMsg[1]);
   const sinkMsg = { on: ["ok", "durable log: ON — lines land in ~/.tunatale/logs/client.log"],
                     off: ["warn", "durable log: OFF (404) — set client_log_enabled=true in backend/.env AND restart the server; on-screen only until then"],
                     unreachable: ["warn", "durable log: backend unreachable — on-screen only"],
@@ -281,30 +366,56 @@ preflight();
 // with a 200 and writes nothing — that would prove the route answers while
 // leaving the append path (settings.client_log, mkdir, open-for-write) untested.
 // It also timestamps the page load, which dates every run that follows it.
-sinkPush(`${label()} page loaded — preflight probe ua=${navigator.userAgent.slice(0, 80)}`);
+sinkPush(`${label()} page loaded v=${PROBE_VERSION} display=${matchMedia("(display-mode: standalone)").matches ? "standalone" : "tab"} — preflight probe ua=${navigator.userAgent.slice(0, 80)}`);
 flush();
 probeNet();
+probeLocal();
 
 // ── Recognition ─────────────────────────────────────────────────────────────
 let rec = null, running = false, restartAt = 0, backoff = 250;
 
-function start() {
+async function start() {
   if (!SR) { log("err", "ABORT no SpeechRecognition in this browser"); return; }
   running = true; backoff = 250;
+  runBase = { f: nFinal, r: nRestart, s: nSilent };
   if (!t0) t0 = Date.now();
   $("start").disabled = true; $("stop").disabled = false; $("mark").disabled = false;
-  log("evt", `START label=${label()} lang=${$("lang").value} ua=${navigator.userAgent.slice(0, 120)}`);
+  log("evt", `START v=${PROBE_VERSION} label=${label()} lang=${$("lang").value} mode=${$("single").checked ? "SINGLE" : "CONTINUOUS"}/${$("local").checked && LOCAL_SUPPORTED ? "LOCAL" : "CLOUD"} ua=${navigator.userAgent.slice(0, 120)}`);
+  // A LOCAL session can take the whole tab with it — setting processLocally
+  // crashed the renderer in headless Chromium 151 (2026-09-02), uncatchably.
+  // Get the intent to DISK before trying, so a crash is a dated line in
+  // client.log saying exactly what was attempted, rather than a vanished tab
+  // and a guess. If the next line in the log is a page load, it crashed here.
+  if ($("local").checked && LOCAL_SUPPORTED) {
+    log("evt", "ABOUT TO START A LOCAL SESSION — if the log ends here, processLocally crashed the tab");
+    await flush();
+  }
   spin();
   wakeLock();
 }
 
 function spin() {
   if (!running) return;
+  const single = $("single").checked;
   rec = new SR();
   rec.lang = $("lang").value.trim() || "en-US";
-  rec.continuous = true;
+  // continuous:false for the single-shot pass — the session should end on its
+  // own after one utterance rather than being held open.
+  rec.continuous = !single;
   rec.interimResults = true;
   rec.maxAlternatives = 1;
+
+  // Feature-detected, never assumed: on a browser without it, assigning the
+  // property is silently a no-op and the run would be mislabelled as LOCAL
+  // while quietly using the cloud. Report what was actually set.
+  if ($("local").checked) {
+    if (LOCAL_SUPPORTED) {
+      rec.processLocally = true;
+      log("evt", "processLocally=true requested for this session");
+    } else {
+      log("err", "LOCAL checked but processLocally is UNSUPPORTED here — this session is CLOUD. Untick it so the run is not mislabelled.");
+    }
+  }
 
   rec.onstart = () => log("evt", "recognition.onstart");
   rec.onaudiostart = () => log("evt", "audiostart");
@@ -316,6 +427,9 @@ function spin() {
   rec.onerror = (e) => {
     log("err", `error=${e.error} ${e.message || ""}`);
     // These are terminal: retrying just storms.
+    if (e.error === "language-not-supported") {
+      log("err", "language-not-supported — on-device model missing for this lang; this run was NOT local.");
+    }
     if (e.error === "not-allowed" || e.error === "service-not-allowed") {
       log("err", "PERMISSION/SERVICE DENIED — stopping. On Android this is also what a browser with the Google speech endpoint removed looks like.");
       stop();
@@ -343,6 +457,13 @@ function spin() {
   rec.onend = () => {
     log("evt", "recognition.onend");
     if (!running) return;
+    // SINGLE SHOT: stop here. The whole point is to count how many pauses ONE
+    // session costs, so restarting would destroy the measurement.
+    if (single) {
+      log("evt", "SINGLE SHOT — session over, not restarting");
+      stop();
+      return;
+    }
     // Storm guard. Android ends the session on silence, so a naive
     // onend->start() loop is correct behaviour AND a busy-loop risk; the
     // backoff makes a storm visible in the restart counter instead of
@@ -363,7 +484,7 @@ function stop() {
   running = false;
   $("start").disabled = false; $("stop").disabled = true; $("mark").disabled = true;
   try { rec && rec.stop(); } catch { /* already dead */ }
-  log("evt", `STOP finals=${nFinal} silentResults=${nSilent} restarts=${nRestart}`);
+  log("evt", `STOP thisRun finals=${nFinal - runBase.f} silentResults=${nSilent - runBase.s} restarts=${nRestart - runBase.r} (tabTotals ${nFinal}/${nSilent}/${nRestart}) mode=${$("single").checked ? "SINGLE" : "CONTINUOUS"}/${$("local").checked && LOCAL_SUPPORTED ? "LOCAL" : "CLOUD"}`);
   flush();
 }
 
@@ -396,6 +517,7 @@ $("loadurl").onclick = () => {
   if (!u) return;
   audio.src = u;
   audio.load();
+  registerMediaSession();
   log("evt", `audio src set from URL: ${u}`);
 };
 
@@ -415,7 +537,29 @@ $("audiofile").addEventListener("change", (e) => {
   log("evt", `audio file: ${f.name} bytes=${f.size} reportedType="${f.type}" -> using "${blob.type}"`);
   audio.src = URL.createObjectURL(blob);
   audio.load();
+  registerMediaSession();
 });
+
+// ── MediaSession, mirroring the real player ─────────────────────────────────
+// The probe used a bare <audio>; playbackController.svelte.ts registers metadata,
+// playbackState and action handlers. An app that declares itself a media session
+// may be treated differently by Android's focus policy, so without this the probe
+// is not a faithful stand-in for LessonPlayer. Same handler set as the real one.
+function registerMediaSession() {
+  const ms = navigator.mediaSession;
+  if (!ms) { log("evt", "mediaSession: unsupported"); return; }
+  try {
+    ms.metadata = new MediaMetadata({ title: "TT voice probe", artist: "TunaTale", album: "qi5.1" });
+  } catch { /* MediaMetadata missing in some browsers */ }
+  ms.setActionHandler("play", () => { audio.play(); });
+  ms.setActionHandler("pause", () => { audio.pause(); });
+  ms.setActionHandler("seekbackward", () => { audio.currentTime = Math.max(0, audio.currentTime - 10); });
+  ms.setActionHandler("seekforward", () => { audio.currentTime += 10; });
+  ms.setActionHandler("previoustrack", () => { audio.currentTime = 0; });
+  log("evt", "mediaSession: registered (metadata + 5 handlers), as LessonPlayer does");
+}
+audio.addEventListener("play",  () => { if (navigator.mediaSession) navigator.mediaSession.playbackState = "playing"; });
+audio.addEventListener("pause", () => { if (navigator.mediaSession) navigator.mediaSession.playbackState = "paused"; });
 
 for (const ev of ["play", "pause", "stalled", "waiting", "volumechange", "ratechange", "ended"]) {
   audio.addEventListener(ev, () => log("evt", `audio.${ev} paused=${audio.paused} vol=${audio.volume.toFixed(2)} t=${audio.currentTime.toFixed(1)}`));
@@ -456,7 +600,54 @@ $("copy").onclick = async () => {
   try { await navigator.clipboard.writeText(all.join("\n")); log("evt", "log copied"); }
   catch (e) { log("err", `clipboard failed: ${e}`); }
 };
+// Deliberately does NOT call SR.available() — RE-CHECK must stay safe to press.
 $("recheck").onclick = () => { probeNet(); flush(); };
+// ── MIC ONLY (the "Hey Google" question) ────────────────────────────────────
+// Opens a raw capture stream and NOTHING else — no SpeechRecognition, so no
+// recognition session and (hypothesis) no audio-focus request. Every run so far
+// showed audio.pause landing at recognition.onstart with audiostart trailing
+// ~100ms later, which says the focus request belongs to the SESSION, not to the
+// microphone. If that is right, this button opens the mic and the lesson keeps
+// playing — and a WASM keyword spotter on this stream is a wake word inside the
+// PWA, with SpeechRecognition invoked (and its one pause paid) only afterwards.
+// If the audio pauses here too, the mic itself is the trigger and the web path
+// is finished.
+let micStream = null;
+$("miconly").onclick = async () => {
+  if (micStream) {
+    micStream.getTracks().forEach((t) => t.stop());
+    micStream = null;
+    $("miconly").textContent = "MIC ONLY (getUserMedia, no recognizer)";
+    log("evt", "MIC ONLY: stream stopped");
+    return;
+  }
+  log("evt", `MIC ONLY: requesting getUserMedia — audio is ${audio.paused ? "PAUSED" : "PLAYING"} t=${audio.currentTime.toFixed(1)}`);
+  await flush();
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const tr = micStream.getAudioTracks()[0];
+    $("miconly").textContent = "STOP MIC";
+    log("evt", `MIC ONLY: stream OPEN label="${tr && tr.label}" — watch for an audio.pause in the next second`);
+    setTimeout(() => log("evt", `MIC ONLY: +1s audio is ${audio.paused ? "PAUSED — the MIC is the trigger" : "STILL PLAYING — the mic is NOT the trigger; it is the recognition session"} t=${audio.currentTime.toFixed(1)}`), 1000);
+    setTimeout(() => log("evt", `MIC ONLY: +5s audio is ${audio.paused ? "PAUSED" : "STILL PLAYING"} t=${audio.currentTime.toFixed(1)}`), 5000);
+  } catch (e) {
+    log("err", `MIC ONLY: getUserMedia failed: ${e && e.name ? e.name : e}`);
+  }
+};
+$("checklocal").onclick = checkLocalAvailability;
+$("install").onclick = async () => {
+  const lang = $("lang").value.trim() || "en-US";
+  log("evt", `install: requesting on-device model for ${lang}…`);
+  $("install").disabled = true;
+  try {
+    const ok = await SR.install({ langs: [lang], processLocally: true });
+    log("evt", `install: returned ${ok}`);
+  } catch (e) {
+    log("err", `install failed: ${e}`);
+  }
+  $("install").disabled = false;
+  probeLocal();
+};
 $("clear").onclick = () => {
   all.length = 0; logEl.innerHTML = "";
   nFinal = nRestart = nSilent = 0; t0 = 0; paint();

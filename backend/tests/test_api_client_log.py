@@ -38,13 +38,25 @@ class TestDisabledByDefault:
         assert resp.status_code == 404
         assert not log.exists()
 
-    async def test_the_default_is_off(self):
+    async def test_the_default_is_off(self, monkeypatch):
         """Pinned as a value, not a habit. An always-on endpoint that appends
         attacker-controlled text to a file on disk is not something to enable by
-        forgetting to disable it."""
+        forgetting to disable it.
+
+        ``_env_file=None`` and the ``delenv`` are what make that claim true. A
+        bare ``Settings()`` reads ``backend/.env``, so this asserted "the default,
+        as overridden by whatever is on this developer's disk" — green in CI,
+        which has no ``.env``, and red for anyone who switched the channel on for
+        a debugging session. That is backwards twice over: it cannot see the
+        declared default it exists to pin, and it makes the gate unrunnable
+        exactly while the channel is in use (hit for real 2026-09-02, enabling it
+        for the qi5.1 voice probe).
+        """
         from app.config import Settings
 
-        assert Settings().client_log_enabled is False
+        monkeypatch.delenv("CLIENT_LOG_ENABLED", raising=False)
+
+        assert Settings(_env_file=None).client_log_enabled is False
 
 
 class TestAppending:
