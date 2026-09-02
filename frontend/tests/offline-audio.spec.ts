@@ -17,7 +17,8 @@ import { test, expect } from "./fixtures";
  * cache-served from network-served. Instead `context.setOffline(true)` makes the
  * discriminator unambiguous — a cached fetch resolves, an uncached one throws.
  *
- * e2e is local-only (not CI); needs ffmpeg + uv (already dev deps).
+ * Needs uv only. It needed ffmpeg too until the opus fixture was committed;
+ * that was the last thing making ffmpeg a dependency of the e2e CI job.
  */
 
 const BACKEND_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../backend");
@@ -29,16 +30,26 @@ const CACHED_ID = "e2e-fixture-id";
 const CACHED_PATH = `/api/audio/${CACHED_ID}`;
 const UNCACHED_PATH = "/api/audio/e2e-never-fetched-id";
 
-// Seed a 3s silent opus + its audio_files row into this worker's backend (APP_DB above).
+// The 3s silent opus this suite serves. It used to be generated per run by
+// shelling out to ffmpeg, which made ffmpeg a dependency of the WHOLE e2e job —
+// measured 2026-09-01 with a failing-ffmpeg shim on PATH: 51 of 52 specs passed,
+// so this one fixture was the only thing in e2e that needed it, and the CI job
+// was installing a 94 MB dependency closure to build 847 bytes of silence.
+//
+// Committed instead. It is deterministic output (silence at a fixed rate and
+// bitrate), it is the smallest thing that is still a real Ogg/Opus container,
+// and the assertions here are about HTTP range serving and service-worker
+// caching — none of them care how the bytes were produced. Regenerate with:
+//   ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t 3 \
+//          -c:a libopus -b:a 28k -f ogg frontend/tests/fixtures/silence-3s.opus
+const SILENCE_OPUS = fileURLToPath(new URL("./fixtures/silence-3s.opus", import.meta.url));
+
+// Seed the opus + its audio_files row into this worker's backend (APP_DB above).
 const SEED_PY = `
-import os, sqlite3, subprocess, pathlib
+import os, sqlite3, shutil, pathlib
 fixture = pathlib.Path("output/audio/e2e-fixture.opus").resolve()
 fixture.parent.mkdir(parents=True, exist_ok=True)
-subprocess.run(
-    ["ffmpeg","-y","-f","lavfi","-i","anullsrc=r=24000:cl=mono","-t","3",
-     "-c:a","libopus","-b:a","28k","-f","ogg",str(fixture)],
-    check=True, capture_output=True,
-)
+shutil.copyfile(${JSON.stringify(SILENCE_OPUS)}, fixture)
 con = sqlite3.connect("${APP_DB}")
 con.execute(
     "INSERT OR REPLACE INTO audio_files (id, lesson_id, file_path, section_index, section_type)"
