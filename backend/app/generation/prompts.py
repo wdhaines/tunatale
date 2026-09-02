@@ -321,12 +321,39 @@ def build_review_block(
     return f"{_REVIEW_LEAD}\n{listed}\n{_REVIEW_INSTRUCTIONS[pressure]}\n{COHERENCE_FLOOR}"
 
 
+STORY_PROMPT_REVIEW_TEMPLATE = """\
+**Review Session Content Generation Request**
+
+**Language:** {language_name} ({language_code})
+**Strategy:** REVIEW (No Theme — Reinforce Decaying Vocabulary)
+
+{cefr_block}
+
+**Review Collocations to Include:**
+{review_collocations}
+
+**REVIEW STRATEGY RULES**
+- There is NO theme or scenario to honour. The words above are the content.
+- Invent whatever everyday situation gives the most of them a natural home
+- Work in as many as you can; leaving one out is a real cost here, unlike in a
+  themed lesson
+- The result must still be a scene real people could plausibly be having. A list
+  of sentences wearing a thin coat of dialogue is a FAILURE, not a compromise —
+  with no theme left to trade away, coherence is the only constraint remaining
+  and it is not negotiable
+- Each scene must have 5-12 lines of dialogue
+- Use 80%+ dialogue between characters
+"""
+
+
 def get_strategy_prompt(strategy: ContentStrategy) -> str:
     """Return the user prompt template for the given content strategy."""
     if strategy == ContentStrategy.WIDER:
         return STORY_PROMPT_WIDER_TEMPLATE
     if strategy == ContentStrategy.DEEPER:
         return STORY_PROMPT_DEEPER_TEMPLATE
+    if strategy == ContentStrategy.REVIEW:
+        return STORY_PROMPT_REVIEW_TEMPLATE
     raise ValueError(f"Unknown strategy: {strategy}")
 
 

@@ -143,7 +143,7 @@ class IgnoreLemmaRequest(BaseModel):
 class GenerateStoryRequest(BaseModel):
     curriculum_id: str
     day: int = 1
-    strategy: Literal["WIDER", "DEEPER"] = "WIDER"
+    strategy: Literal["WIDER", "DEEPER", "REVIEW"] = "WIDER"
     # None = inherit the curriculum's setting; a value overrides it.
     review_pressure: Literal["NATURAL", "BALANCED", "INSISTENT"] | None = None
 
@@ -241,7 +241,7 @@ class PipelineRetryRequest(BaseModel):
 
 class PipelineRegenerateRequest(BaseModel):
     day: int
-    strategy: Literal["WIDER", "DEEPER"] = "WIDER"
+    strategy: Literal["WIDER", "DEEPER", "REVIEW"] = "WIDER"
 
 
 class CreateBaseCardRequest(BaseModel):

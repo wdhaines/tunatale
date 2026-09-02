@@ -22,7 +22,7 @@ from app.api.models import (
 )
 from app.generation.ids import mint_id
 from app.generation.json_parsing import parse_json_object
-from app.generation.story import StoryGenerationError, build_story_prompts
+from app.generation.story import NoReviewVocabularyError, StoryGenerationError, build_story_prompts
 from app.llm.client import LLMError, LLMQuotaExceededError
 from app.models.language import Language
 from app.models.lesson import Lesson, SectionType
@@ -251,6 +251,10 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
             srs_db=request.state.srs_db,
             review_pressure=curriculum.review_pressure(body.review_pressure),
         )
+    except NoReviewVocabularyError as e:
+        # 409, not the neighbouring 502: nothing upstream failed and nothing is
+        # malformed — a REVIEW story was asked for with nothing due to review.
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except StoryGenerationError as e:
         # Malformed LLM output — nothing persisted; the user retries.
         raise HTTPException(status_code=502, detail=str(e)) from e
@@ -376,7 +380,7 @@ async def get_story_prompt(
     request: Request,
     curriculum_id: str,
     day: int,
-    strategy: Literal["WIDER", "DEEPER"] = "WIDER",
+    strategy: Literal["WIDER", "DEEPER", "REVIEW"] = "WIDER",
     review_pressure: Literal["NATURAL", "BALANCED", "INSISTENT"] | None = None,
 ):
     """Export the exact prompts that the generate path would send to the LLM."""
@@ -390,14 +394,19 @@ async def get_story_prompt(
         raise HTTPException(status_code=404, detail=f"Day {day} not found in curriculum")
 
     language = request.state.language
-    prompts = build_story_prompts(
-        days[0],
-        language,
-        ContentStrategy[strategy],
-        curriculum.cefr_level,
-        srs_db=request.state.srs_db,
-        review_pressure=curriculum.review_pressure(review_pressure),
-    )
+    try:
+        prompts = build_story_prompts(
+            days[0],
+            language,
+            ContentStrategy[strategy],
+            curriculum.cefr_level,
+            srs_db=request.state.srs_db,
+            review_pressure=curriculum.review_pressure(review_pressure),
+        )
+    except NoReviewVocabularyError as e:
+        # 409, not 422 or 502: the request is well-formed and nothing upstream
+        # failed — the collection simply has nothing due to review right now.
+        raise HTTPException(status_code=409, detail=str(e)) from e
     return {"system_prompt": prompts.system_prompt, "user_prompt": prompts.user_prompt}
 
 

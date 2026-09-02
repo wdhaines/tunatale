@@ -10,10 +10,15 @@ class ContentStrategy(Enum):
 
     WIDER: Generate new scenarios using familiar vocabulary (breadth).
     DEEPER: Enhance existing scenarios with more advanced L2 expressions (depth).
+    REVIEW: No scenario at all — the content IS the learner's decaying
+        vocabulary. A strategy rather than a ReviewPressure setting because
+        WIDER and DEEPER both take Theme/Focus/Story Guidance and REVIEW has
+        none to trade against.
     """
 
     WIDER = "wider"
     DEEPER = "deeper"
+    REVIEW = "review"
 
 
 class ReviewPressure(Enum):

@@ -1914,7 +1914,7 @@ export interface components {
        * @default WIDER
        * @enum {string}
        */
-      strategy: "WIDER" | "DEEPER";
+      strategy: "WIDER" | "DEEPER" | "REVIEW";
     };
     /**
      * GenerateStoryResponse
@@ -2676,7 +2676,7 @@ export interface components {
        * @default WIDER
        * @enum {string}
        */
-      strategy: "WIDER" | "DEEPER";
+      strategy: "WIDER" | "DEEPER" | "REVIEW";
     };
     /** PipelineRetryRequest */
     PipelineRetryRequest: {
@@ -5626,7 +5626,7 @@ export interface operations {
       query: {
         curriculum_id: string;
         day: number;
-        strategy?: "WIDER" | "DEEPER";
+        strategy?: "WIDER" | "DEEPER" | "REVIEW";
         review_pressure?: ("NATURAL" | "BALANCED" | "INSISTENT") | null;
       };
       header?: never;

@@ -651,7 +651,8 @@
             "default": "WIDER",
             "enum": [
               "WIDER",
-              "DEEPER"
+              "DEEPER",
+              "REVIEW"
             ],
             "title": "Strategy",
             "type": "string"
@@ -2376,7 +2377,8 @@
             "default": "WIDER",
             "enum": [
               "WIDER",
-              "DEEPER"
+              "DEEPER",
+              "REVIEW"
             ],
             "title": "Strategy",
             "type": "string"
@@ -7236,7 +7238,8 @@
               "default": "WIDER",
               "enum": [
                 "WIDER",
-                "DEEPER"
+                "DEEPER",
+                "REVIEW"
               ],
               "title": "Strategy",
               "type": "string"

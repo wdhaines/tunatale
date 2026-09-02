@@ -43,6 +43,16 @@ _TRUNCATION_RETRY_MARGIN = 128
 _STORY_MAX_TOKENS = 4096
 
 
+class NoReviewVocabularyError(Exception):
+    """A REVIEW story was asked for with nothing due to review.
+
+    Its own type, and NOT a StoryGenerationError: nothing upstream failed and
+    nothing is malformed. The request is valid and the current state simply
+    cannot satisfy it, so the API answers 409 rather than the 502 that
+    StoryGenerationError maps to.
+    """
+
+
 class StoryGenerationError(Exception):
     pass
 
@@ -115,6 +125,17 @@ def build_story_prompts(
     default — it is what keeps the recorded corpus valid.
     """
     review_words = select_review_collocations(srs_db) if srs_db is not None else ()
+    if strategy is ContentStrategy.REVIEW:
+        # A REVIEW story has no theme to fall back on, so an empty set is not
+        # "nothing to add" — it is a prompt with no content. This is the one
+        # place that cannot reuse the empty-set-is-byte-identical rule the other
+        # strategies hold to, because there is no prior behaviour to match.
+        if not review_words:
+            raise NoReviewVocabularyError("REVIEW needs due review vocabulary and none is due for this language today")
+        # The strategy sets BOTH axes. NATURAL's wording ("candidates, not
+        # requirements", "including none of them is a correct answer") is
+        # self-contradictory in a story whose only content is those words.
+        review_pressure = ReviewPressure.INSISTENT
 
     system_prompt = build_story_system_prompt(language)
 

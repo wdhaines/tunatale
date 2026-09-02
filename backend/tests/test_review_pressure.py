@@ -29,7 +29,13 @@ EMPTY_SLOT = "**Review Collocations to Include:**\n(none yet)\n"
 WORDS = ["sjelden", "å bidra", "likevel"]
 
 
-@pytest.fixture(params=list(ContentStrategy))
+# The THEMED strategies only. ContentStrategy.REVIEW is deliberately excluded:
+# it has no cassettes to protect (it postdates every recording) and it REFUSES an
+# empty review set rather than rendering "(none yet)", because a themeless story
+# with nothing to review is a prompt with no content at all. That refusal is
+# pinned in test_review_strategy.py; sweeping REVIEW in here would assert the
+# opposite of it.
+@pytest.fixture(params=[ContentStrategy.WIDER, ContentStrategy.DEEPER])
 def strategy(request):
     return request.param
 
