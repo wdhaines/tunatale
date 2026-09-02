@@ -982,11 +982,16 @@
 	   Due column. Borrowing it (grid-column: 1 / 3) placed the gloss in the same
 	   cell as the dueness pill, which occupies column 2 across rows 1-2 — CSS
 	   Grid stacks two items in one cell rather than reflowing, so a long gloss
-	   painted straight through the pill. A full-width row 3 gives the gloss MORE
-	   room than the ~50px it was borrowing and leaves the pill's two-row
-	   centring (rows 1-2, column 2) untouched. */
+	   painted straight through the pill.
+
+	   It takes column 1 ONLY, not the full width. Spanning every column fixed
+	   the overlap but left the text running underneath the Due track, which
+	   still reads as encroaching on it even though nothing overlaps (user,
+	   2026-09-01). Confined to the word column the gloss simply wraps, the Due
+	   track stays visually clear, and the pill keeps its two-row centring
+	   (rows 1-2, column 2) untouched. */
 	.sub.revealed {
-		grid-column: 1 / -1;
+		grid-column: 1;
 		grid-row: 3;
 	}
 	.gloss {
@@ -1276,7 +1281,7 @@
 		   three-column arm, and clear of both the pill (rows 1-2) and the grade
 		   (row 3). */
 		.sub.revealed {
-			grid-column: 1 / -1;
+			grid-column: 1;
 			grid-row: 4;
 		}
 	}

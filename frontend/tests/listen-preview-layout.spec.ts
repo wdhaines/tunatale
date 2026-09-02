@@ -889,4 +889,16 @@ test("listen preview: a revealed long gloss does not overlap the Due pill", asyn
 	// destroying the content, so this is what forbids that shortcut.
 	const lineHeight = await gloss.evaluate((el) => parseFloat(getComputedStyle(el).lineHeight));
 	expect(g!.height).toBeGreaterThan(lineHeight * 1.5);
+
+	// ...and it must stay OUT of the Due column entirely, not merely below the
+	// pill. Dropping to its own row while still spanning the full width leaves
+	// the text running underneath the Due track, which reads as encroachment
+	// even though nothing overlaps. The gloss wraps inside the word column.
+	const cell = row.locator(".day-cell");
+	const c = await cell.boundingBox();
+	expect(c, "day cell must have a box").not.toBeNull();
+	expect(
+		g!.x + g!.width,
+		`gloss right edge ${g!.x + g!.width} must not cross into the Due column at ${c!.x}`,
+	).toBeLessThanOrEqual(c!.x);
 });
