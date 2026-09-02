@@ -27,6 +27,24 @@
 	let listError = $state('');
 	let showForm = $state(false);
 
+	// ── Review sessions ────────────────────────────────────────────────────
+	// Their own dated list, under the curricula. NOT a curriculum day: no theme,
+	// no position in a sequence, content drawn from the whole language deck.
+	interface ReviewSession {
+		id: string;
+		session_date: string;
+		title: string;
+		review_requested: string[] | null;
+		review_used: string[] | null;
+	}
+	let sessions: ReviewSession[] = $state([]);
+	let creatingSession = $state(false);
+	let sessionError = $state('');
+	// Held apart from sessionError on purpose: a 409 is not a failure. With
+	// nothing due there is genuinely nothing to review today, and styling that as
+	// an error trains the learner to read a working feature as broken.
+	let nothingDue = $state('');
+
 	// C3: raw day-lists fetched once per curriculum; progress is derived from
 	// listenedStore so it reacts to late hydration / in-session markListened.
 	let daysById: Record<string, Array<{ day: number; position: number; lesson_id: string }>> =
@@ -101,6 +119,14 @@
 			listLoading = false;
 		}
 
+		try {
+			sessions = await api.listReviewSessions();
+		} catch {
+			// A failed session list must not take the curricula down with it —
+			// they are independent surfaces that happen to share a page.
+			sessions = [];
+		}
+
 		const entries = await Promise.all(
 			curricula.map(async (c) => {
 				try {
@@ -117,6 +143,69 @@
 		}
 		daysById = next;
 	});
+
+	const MONTHS = [
+		'January',
+		'February',
+		'March',
+		'April',
+		'May',
+		'June',
+		'July',
+		'August',
+		'September',
+		'October',
+		'November',
+		'December'
+	];
+
+	/**
+	 * "2 September" from "2026-09-02", without going through Date.
+	 *
+	 * ⚠️ `new Date('2026-09-02')` is parsed as UTC MIDNIGHT, which renders as
+	 * 1 September in every negative-offset timezone — a wrong date for half the
+	 * world, and a bug that passes every test run in London. The value is a
+	 * calendar date, not an instant, so it is formatted as one.
+	 */
+	function formatSessionDate(iso: string): string {
+		const [, month, day] = iso.split('-').map(Number);
+		return `${day} ${MONTHS[month - 1]}`;
+	}
+
+	function coverageLine(s: ReviewSession): string | null {
+		// null is "never measured" and gets NO line. [] is a measured zero and
+		// gets one — "reused 0 of 5" is a real observation.
+		if (s.review_requested === null || s.review_used === null) return null;
+		return `reused ${s.review_used.length} of ${s.review_requested.length}`;
+	}
+
+	async function handleNewReviewSession() {
+		creatingSession = true;
+		sessionError = '';
+		nothingDue = '';
+		try {
+			const created = await api.createReviewSession();
+			sessions = [
+				{
+					id: created.id,
+					session_date: created.session_date,
+					title: created.title,
+					review_requested: created.review_requested,
+					review_used: created.review_used
+				},
+				...sessions
+			];
+		} catch (e) {
+			const status = (e as Error & { status?: number }).status;
+			if (status === 409) {
+				nothingDue = 'Nothing to review right now — no vocabulary is due in this language today.';
+			} else {
+				sessionError = e instanceof Error ? e.message : String(e);
+			}
+		} finally {
+			creatingSession = false;
+		}
+	}
 
 	function computeProgress(
 		curriculumId: string,
@@ -240,9 +329,109 @@
 			<p class="error delete-error">{deleteError}</p>
 		{/if}
 	{/if}
+
+	<!--
+		Review sessions live UNDER the curricula and outside them. Dated, never
+		numbered — a session has no position in a sequence to number (tunatale-9p9d).
+	-->
+	<section class="review-sessions">
+		<div class="rs-head">
+			<h2>Review sessions</h2>
+			<button
+				type="button"
+				class="new-btn"
+				onclick={handleNewReviewSession}
+				disabled={creatingSession}
+			>
+				{creatingSession ? 'Working…' : '+ New review session'}
+			</button>
+		</div>
+		<p class="muted small rs-blurb">
+			Built from the words you are closest to forgetting, across everything you have learned —
+			not from any one curriculum.
+		</p>
+
+		{#if nothingDue}
+			<p class="muted rs-nothing-due">{nothingDue}</p>
+		{/if}
+		{#if sessionError}
+			<p class="error" role="alert">{sessionError}</p>
+		{/if}
+
+		{#if sessions.length === 0}
+			<p class="muted small">No review sessions yet.</p>
+		{:else}
+			<ul class="rs-list">
+				{#each sessions as s (s.id)}
+					<li class="rs-row" data-testid="review-session-row">
+						<span class="rs-date">{formatSessionDate(s.session_date)}</span>
+						<span class="rs-title">{s.title}</span>
+						{#if coverageLine(s)}
+							<span class="rs-coverage">{coverageLine(s)}</span>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</section>
 </main>
 
 <style>
+	.review-sessions {
+		margin-top: 2.5rem;
+		padding-top: 1.5rem;
+		border-top: 1px solid var(--border, #ddd);
+	}
+	.rs-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 1rem;
+		flex-wrap: wrap;
+	}
+	.rs-head h2 {
+		margin: 0;
+		font-size: 1.15rem;
+	}
+	.rs-blurb {
+		margin: 0.35rem 0 1rem;
+		max-width: 46ch;
+	}
+	.rs-nothing-due {
+		margin: 0 0 0.75rem;
+	}
+	.rs-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+	.rs-row {
+		display: flex;
+		align-items: baseline;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+		padding: 0.6rem 0.75rem;
+		border: 1px solid var(--border, #ddd);
+		border-radius: 6px;
+	}
+	.rs-date {
+		font-variant-numeric: tabular-nums;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+	.rs-title {
+		flex: 1 1 auto;
+		min-width: 0;
+	}
+	.rs-coverage {
+		font-size: 0.85rem;
+		opacity: 0.75;
+		white-space: nowrap;
+	}
+
 	main {
 		max-width: 760px;
 		margin: 1rem auto;
