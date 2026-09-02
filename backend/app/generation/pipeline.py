@@ -309,6 +309,7 @@ class LessonPipeline:
                     strategy=ContentStrategy[record["strategy"]],
                     cefr_level=curriculum.cefr_level,
                     srs_db=self._srs_dbs.get(language_code),
+                    review_pressure=curriculum.review_pressure(),
                 )
             except (StoryGenerationError, LLMError) as e:
                 # LLMError: opt-in fallback means complete() now raises a bare 429/HTTP

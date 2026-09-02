@@ -40,6 +40,7 @@ class FakeStoryGenerator:
                 "strategy": strategy,
                 "cefr_level": cefr_level,
                 "srs_db": srs_db,
+                "review_pressure": review_pressure,
             }
         )
         if self.fail_count > 0:
@@ -231,6 +232,34 @@ class TestPipelineHappyPath:
         await wait_for_job(pipeline, "no", cid, 1, "ready")
 
         assert fake_generator.calls[0]["srs_db"] is no_sentinel
+
+    async def test_generate_uses_the_curriculums_review_pressure(self, pipeline, fake_generator):
+        """bd tunatale-po5s — the auto path was locked at NATURAL with no way to
+        change it, because the pipeline read no setting at all. The dial lives on
+        `curriculum.metadata`, like `generation_mode`."""
+        from app.models.strategy import ReviewPressure
+
+        store = pipeline._content_stores["sl"]
+        cid = "cur-pressure"
+        store.save_curriculum(
+            cid,
+            Curriculum(
+                id=cid,
+                topic="test",
+                language_code="sl",
+                cefr_level="A2",
+                days=[
+                    CurriculumDay(day=1, title="Day 1", focus="hello", collocations=["hi"], learning_objective="lo"),
+                ],
+                metadata={"review_pressure": "INSISTENT"},
+            ),
+        )
+
+        pipeline.start()
+        pipeline.enqueue("sl", cid, 1, "generate")
+        await wait_for_job(pipeline, "sl", cid, 1, "ready")
+
+        assert fake_generator.calls[0]["review_pressure"] is ReviewPressure.INSISTENT
 
     async def test_render_only_job(self, pipeline, fake_renderer):
         """Render-only job for an existing lesson without audio."""

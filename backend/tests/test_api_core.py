@@ -284,7 +284,16 @@ class TestCurriculumEndpoints:
             response = await client.get("/api/curriculum/coffee-abc")
 
         data = response.json()
-        assert set(data.keys()) == {"id", "topic", "language_code", "cefr_level", "days", "proposed", "generation_mode"}
+        assert set(data.keys()) == {
+            "id",
+            "topic",
+            "language_code",
+            "cefr_level",
+            "days",
+            "proposed",
+            "generation_mode",
+            "review_pressure",
+        }
         assert set(GetCurriculumResponse.model_fields) == {
             "id",
             "topic",
@@ -293,6 +302,7 @@ class TestCurriculumEndpoints:
             "days",
             "proposed",
             "generation_mode",
+            "review_pressure",
         }
 
         day_keys = {"day", "title", "focus", "collocations", "learning_objective", "story_guidance", "position"}

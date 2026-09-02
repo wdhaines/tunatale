@@ -26,7 +26,7 @@ from app.generation.story import StoryGenerationError, build_story_prompts
 from app.llm.client import LLMError, LLMQuotaExceededError
 from app.models.language import Language
 from app.models.lesson import Lesson, SectionType
-from app.models.strategy import ContentStrategy, ReviewPressure
+from app.models.strategy import ContentStrategy
 from app.srs.database import SRSDatabase
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for
 from app.storage.lesson_io import export_lesson, import_lesson, speaker_warnings, sync_curriculum_day_title
@@ -249,7 +249,7 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
             strategy=strategy,
             cefr_level=curriculum.cefr_level,
             srs_db=request.state.srs_db,
-            review_pressure=ReviewPressure[body.review_pressure],
+            review_pressure=curriculum.review_pressure(body.review_pressure),
         )
     except StoryGenerationError as e:
         # Malformed LLM output — nothing persisted; the user retries.
@@ -377,7 +377,7 @@ async def get_story_prompt(
     curriculum_id: str,
     day: int,
     strategy: Literal["WIDER", "DEEPER"] = "WIDER",
-    review_pressure: Literal["NATURAL", "BALANCED", "INSISTENT"] = "NATURAL",
+    review_pressure: Literal["NATURAL", "BALANCED", "INSISTENT"] | None = None,
 ):
     """Export the exact prompts that the generate path would send to the LLM."""
     store = request.state.content_store
@@ -396,7 +396,7 @@ async def get_story_prompt(
         ContentStrategy[strategy],
         curriculum.cefr_level,
         srs_db=request.state.srs_db,
-        review_pressure=ReviewPressure[review_pressure],
+        review_pressure=curriculum.review_pressure(review_pressure),
     )
     return {"system_prompt": prompts.system_prompt, "user_prompt": prompts.user_prompt}
 

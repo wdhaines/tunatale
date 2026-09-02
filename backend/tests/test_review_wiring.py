@@ -201,6 +201,27 @@ class TestManualExportPath:
         assert "matters MORE than staying" in insistent.json()["user_prompt"]
 
 
+class TestThePromptEndpointInheritsTheCurriculumSetting:
+    """bd tunatale-po5s. Without this the manual export would ignore a dial the
+    user had set on the plan, which is worse than having no dial."""
+
+    async def test_no_query_param_falls_back_to_the_stored_pressure(self, seeded_db, stored_curriculum):
+        store, curriculum_id = stored_curriculum
+        curriculum = store.get_curriculum(curriculum_id)
+        curriculum.metadata["review_pressure"] = "INSISTENT"
+        store.save_curriculum(curriculum_id, curriculum)
+
+        app.state.content_store = store
+        app.state.language = get_language("sl")
+        app.state.srs_db = seeded_db
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get(f"/api/story/prompt?curriculum_id={curriculum_id}&day=1")
+
+        assert resp.status_code == 200
+        assert "matters MORE than staying" in resp.json()["user_prompt"]
+
+
 # ── M2: the trap a single-language test is blind to ────────────────────────
 
 

@@ -26,7 +26,9 @@ from app.api.models import (
     PlanTurnPromptResponse,
     PlanTurnRequest,
     PlanTurnResponse,
+    ReviewPressureRequest,
     SetGenerationModeResponse,
+    SetReviewPressureResponse,
     StartPlanRequest,
     StartPlanResponse,
 )
@@ -253,6 +255,21 @@ async def set_generation_mode(curriculum_id: str, body: GenerationModeRequest, r
     return {"mode": body.mode}
 
 
+@router.post("/{curriculum_id}/review-pressure", status_code=200, response_model=SetReviewPressureResponse)
+async def set_review_pressure(curriculum_id: str, body: ReviewPressureRequest, request: Request):
+    """Set how hard this plan's stories push to use the learner's review words.
+
+    One dial for the whole curriculum (bd tunatale-po5s). It is what the PIPELINE
+    reads, which is the path most lessons take — the two HTTP generation entry
+    points inherit it and an explicit parameter on those overrides it.
+    """
+    store = request.state.content_store
+    curriculum = _get_curriculum_or_404(store, curriculum_id)
+    curriculum.metadata["review_pressure"] = body.pressure
+    store.save_curriculum(curriculum_id, curriculum)
+    return {"pressure": body.pressure}
+
+
 @router.get("", status_code=200, response_model=list[CurriculumSummary])
 async def list_curricula(request: Request):
     store = request.state.content_store
@@ -287,6 +304,7 @@ async def get_curriculum(curriculum_id: str, request: Request):
         "days": days,
         "proposed": proposed,
         "generation_mode": curriculum.metadata.get("generation_mode", "auto"),
+        "review_pressure": curriculum.review_pressure().name,
     }
 
 

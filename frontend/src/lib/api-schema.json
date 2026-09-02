@@ -632,14 +632,20 @@
             "type": "integer"
           },
           "review_pressure": {
-            "default": "NATURAL",
-            "enum": [
-              "NATURAL",
-              "BALANCED",
-              "INSISTENT"
+            "anyOf": [
+              {
+                "enum": [
+                  "NATURAL",
+                  "BALANCED",
+                  "INSISTENT"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Review Pressure",
-            "type": "string"
+            "title": "Review Pressure"
           },
           "strategy": {
             "default": "WIDER",
@@ -743,6 +749,10 @@
               }
             ]
           },
+          "review_pressure": {
+            "title": "Review Pressure",
+            "type": "string"
+          },
           "topic": {
             "title": "Topic",
             "type": "string"
@@ -755,7 +765,8 @@
           "cefr_level",
           "days",
           "proposed",
-          "generation_mode"
+          "generation_mode",
+          "review_pressure"
         ],
         "title": "GetCurriculumResponse",
         "type": "object"
@@ -3231,6 +3242,24 @@
         "title": "RenderSectionCue",
         "type": "object"
       },
+      "ReviewPressureRequest": {
+        "properties": {
+          "pressure": {
+            "enum": [
+              "NATURAL",
+              "BALANCED",
+              "INSISTENT"
+            ],
+            "title": "Pressure",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pressure"
+        ],
+        "title": "ReviewPressureRequest",
+        "type": "object"
+      },
       "ReviewQueueResponse": {
         "description": "Response of GET /api/srs/review-queue.",
         "properties": {
@@ -3260,6 +3289,19 @@
           "mode"
         ],
         "title": "SetGenerationModeResponse",
+        "type": "object"
+      },
+      "SetReviewPressureResponse": {
+        "properties": {
+          "pressure": {
+            "title": "Pressure",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pressure"
+        ],
+        "title": "SetReviewPressureResponse",
         "type": "object"
       },
       "SetStateRequest": {
@@ -5222,6 +5264,59 @@
         ]
       }
     },
+    "/api/curriculum/{curriculum_id}/review-pressure": {
+      "post": {
+        "description": "Set how hard this plan's stories push to use the learner's review words.\n\nOne dial for the whole curriculum (bd tunatale-po5s). It is what the PIPELINE\nreads, which is the path most lessons take \u2014 the two HTTP generation entry\npoints inherit it and an explicit parameter on those overrides it.",
+        "operationId": "set_review_pressure_api_curriculum__curriculum_id__review_pressure_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewPressureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetReviewPressureResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Review Pressure",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
     "/api/curriculum/{curriculum_id}/source": {
       "get": {
         "operationId": "get_curriculum_source_api_curriculum__curriculum_id__source_get",
@@ -7152,14 +7247,20 @@
             "name": "review_pressure",
             "required": false,
             "schema": {
-              "default": "NATURAL",
-              "enum": [
-                "NATURAL",
-                "BALANCED",
-                "INSISTENT"
+              "anyOf": [
+                {
+                  "enum": [
+                    "NATURAL",
+                    "BALANCED",
+                    "INSISTENT"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
               ],
-              "title": "Review Pressure",
-              "type": "string"
+              "title": "Review Pressure"
             }
           }
         ],

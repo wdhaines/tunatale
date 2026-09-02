@@ -144,7 +144,8 @@ class GenerateStoryRequest(BaseModel):
     curriculum_id: str
     day: int = 1
     strategy: Literal["WIDER", "DEEPER"] = "WIDER"
-    review_pressure: Literal["NATURAL", "BALANCED", "INSISTENT"] = "NATURAL"
+    # None = inherit the curriculum's setting; a value overrides it.
+    review_pressure: Literal["NATURAL", "BALANCED", "INSISTENT"] | None = None
 
 
 class ImportLessonRequest(BaseModel):
@@ -211,6 +212,14 @@ class PlanFeedbackRequest(BaseModel):
 
 class GenerationModeRequest(BaseModel):
     mode: Literal["auto", "manual"]
+
+
+class ReviewPressureRequest(BaseModel):
+    pressure: Literal["NATURAL", "BALANCED", "INSISTENT"]
+
+
+class SetReviewPressureResponse(BaseModel):
+    pressure: str
 
 
 class InflectionClozeRequest(BaseModel):
@@ -922,6 +931,7 @@ class GetCurriculumResponse(BaseModel):
     days: list[CurriculumDayWithPosition]
     proposed: ProposedBatch | None
     generation_mode: str
+    review_pressure: str
 
 
 class CurriculumProgressEntry(BaseModel):

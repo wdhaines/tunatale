@@ -615,6 +615,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/curriculum/{curriculum_id}/review-pressure": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Set Review Pressure
+     * @description Set how hard this plan's stories push to use the learner's review words.
+     *
+     *     One dial for the whole curriculum (bd tunatale-po5s). It is what the PIPELINE
+     *     reads, which is the path most lessons take — the two HTTP generation entry
+     *     points inherit it and an explicit parameter on those overrides it.
+     */
+    post: operations["set_review_pressure_api_curriculum__curriculum_id__review_pressure_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/curriculum/{curriculum_id}/source": {
     parameters: {
       query?: never;
@@ -1883,12 +1907,8 @@ export interface components {
        * @default 1
        */
       day: number;
-      /**
-       * Review Pressure
-       * @default NATURAL
-       * @enum {string}
-       */
-      review_pressure: "NATURAL" | "BALANCED" | "INSISTENT";
+      /** Review Pressure */
+      review_pressure?: ("NATURAL" | "BALANCED" | "INSISTENT") | null;
       /**
        * Strategy
        * @default WIDER
@@ -1934,6 +1954,8 @@ export interface components {
       /** Language Code */
       language_code: string;
       proposed: components["schemas"]["ProposedBatch"] | null;
+      /** Review Pressure */
+      review_pressure: string;
       /** Topic */
       topic: string;
     };
@@ -2977,6 +2999,14 @@ export interface components {
       /** Text */
       text: string;
     };
+    /** ReviewPressureRequest */
+    ReviewPressureRequest: {
+      /**
+       * Pressure
+       * @enum {string}
+       */
+      pressure: "NATURAL" | "BALANCED" | "INSISTENT";
+    };
     /**
      * ReviewQueueResponse
      * @description Response of GET /api/srs/review-queue.
@@ -2992,6 +3022,11 @@ export interface components {
     SetGenerationModeResponse: {
       /** Mode */
       mode: string;
+    };
+    /** SetReviewPressureResponse */
+    SetReviewPressureResponse: {
+      /** Pressure */
+      pressure: string;
     };
     /** SetStateRequest */
     SetStateRequest: {
@@ -4167,6 +4202,41 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["CurriculumProgressEntry"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  set_review_pressure_api_curriculum__curriculum_id__review_pressure_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        curriculum_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ReviewPressureRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SetReviewPressureResponse"];
         };
       };
       /** @description Validation Error */
@@ -5557,7 +5627,7 @@ export interface operations {
         curriculum_id: string;
         day: number;
         strategy?: "WIDER" | "DEEPER";
-        review_pressure?: "NATURAL" | "BALANCED" | "INSISTENT";
+        review_pressure?: ("NATURAL" | "BALANCED" | "INSISTENT") | null;
       };
       header?: never;
       path?: never;
