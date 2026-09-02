@@ -1,22 +1,33 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api';
-	import type { LessonAudio } from '$lib/api';
+	import type { LessonAudio, TranscriptData } from '$lib/api';
 	import LessonPlayer from '$lib/components/LessonPlayer.svelte';
-	import { buildScenes } from '$lib/transcriptScenes';
+	import Transcript from '$lib/components/Transcript.svelte';
+	import TranscriptPlaceholder from '$lib/components/TranscriptPlaceholder.svelte';
+	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 
-	// The reader for a review session. It has no curriculum and no day, so there
-	// is no day navigation, no Regenerate, and no position in a sequence to show
-	// — which is most of what the lesson page's length is (bd tunatale-9p9d).
+	// The reader for a review session.
+	//
+	// ⚠️ IT RENDERS THROUGH THE SAME COMPONENTS AS A LESSON — LessonPlayer,
+	// Transcript, TranscriptPlaceholder — and that is the point. An earlier
+	// version hand-rolled its own list of dialogue lines because the transcript
+	// endpoint looked a session up in the lessons table and missed. A lookup is
+	// not a reason to fork a UI: the second one was worse immediately (it opened
+	// the scene with the narrator's "Natural Speed" section header) and would
+	// have drifted further every time either changed. The endpoint now has a
+	// session-shaped twin and this page reuses everything.
+	//
+	// What it does NOT have is the lesson page's day navigation, Regenerate or
+	// delete-day — a session has no day for those to act on.
 	let { data } = $props();
 
-	// The initial read is deliberate: `audio` is this page's own state from here
-	// on (Prepare audio replaces it), so it snapshots the loaded value rather
-	// than tracking it. untrack marks that as intended — the same pattern
-	// LessonPlayer uses for its own props.
 	let audio: LessonAudio | null = $state(untrack(() => data.audio));
+	let transcript: TranscriptData | null = $state(null);
+	let transcriptLoading = $state(true);
 	let preparing = $state(false);
 	let renderError = $state('');
+	let playbackController: PlaybackController | null = $state(null);
 
 	const MONTHS = [
 		'January',
@@ -35,9 +46,9 @@
 
 	/**
 	 * ⚠️ Formatted from the ISO parts, never through `new Date()`.
-	 * `new Date('2026-09-02')` is UTC midnight and renders as 1 September in
+	 * `new Date('2026-09-02')` is UTC midnight and renders as the previous day in
 	 * every negative-offset timezone. session_date is a calendar date, not an
-	 * instant. Same reasoning as the list on the index.
+	 * instant.
 	 */
 	function formatSessionDate(iso: string): string {
 		const [, month, day] = iso.split('-').map(Number);
@@ -52,18 +63,18 @@
 			: null
 	);
 
-	// ⚠️ buildScenes, NOT a hand-rolled filter over natural_speed.phrases.
-	// Measured against the live API: that section's first phrases are NARRATOR
-	// lines in English -- the literal string "Natural Speed", then the scene
-	// label -- so rendering the phrase list raw opens the scene with the
-	// section's own name. buildScenes already knows to drop the section title
-	// and promote the next narrator line to a heading, and it pairs each L2 line
-	// with its English translation for free.
-	//
-	// It is passed no dialogueLines: those come from the transcript endpoint,
-	// which resolves against the lessons table where a session is not. Every
-	// field this page renders comes from the session body itself.
-	const scenes = $derived(buildScenes(data.session, []));
+	onMount(async () => {
+		// Client-side, not in `load`: the transcript runs the lemmatizer and can
+		// take seconds on a cold backend. The lesson page does the same, for the
+		// same reason — the shell renders at once and the words arrive after.
+		try {
+			transcript = await api.getReviewSessionTranscript(data.session.id);
+		} catch {
+			transcript = null;
+		} finally {
+			transcriptLoading = false;
+		}
+	});
 
 	async function prepareAudio() {
 		preparing = true;
@@ -89,15 +100,19 @@
 			<p class="coverage">{coverage} words you were forgetting</p>
 		{/if}
 		<p class="muted">
-			A review session — built from what has decayed across your whole deck, with no theme and
-			no place in any curriculum.
+			A review session — built from what has decayed across your whole deck, with no theme and no
+			place in any curriculum.
 		</p>
 	</header>
 
 	{#if audio}
 		<div data-testid="session-player">
 			{#key audio.audio_id}
-				<LessonPlayer {audio} lessonTitle={data.session.title} />
+				<LessonPlayer
+					{audio}
+					lessonTitle={data.session.title}
+					bind:controller={playbackController}
+				/>
 			{/key}
 		</div>
 	{:else}
@@ -113,25 +128,13 @@
 	{/if}
 
 	<section class="transcript">
-		<h2>The scene</h2>
-		{#each scenes as scene, si (si)}
-			{#if scene.title}
-				<h3 class="scene-title">{scene.title}</h3>
-			{/if}
-			<ol>
-				{#each scene.lines as line, i (i)}
-					<li>
-						<span class="speaker">{line.role}</span>
-						<span class="text">
-							{line.naturalText}
-							{#if line.translatedText}
-								<span class="gloss">{line.translatedText}</span>
-							{/if}
-						</span>
-					</li>
-				{/each}
-			</ol>
-		{/each}
+		{#if transcript}
+			<Transcript {transcript} lesson={data.session} controller={playbackController} />
+		{:else if transcriptLoading}
+			<TranscriptPlaceholder lesson={data.session} />
+		{:else}
+			<p class="muted">No transcript available.</p>
+		{/if}
 	</section>
 </main>
 
@@ -186,45 +189,5 @@
 	}
 	.transcript {
 		margin-top: 2rem;
-	}
-	.transcript h2 {
-		font-size: 1.1rem;
-		margin: 0 0 0.75rem;
-	}
-	.scene-title {
-		font-size: 0.82rem;
-		text-transform: uppercase;
-		letter-spacing: 0.07em;
-		opacity: 0.6;
-		margin: 1.25rem 0 0.6rem;
-		font-weight: 600;
-	}
-	.gloss {
-		display: block;
-		font-size: 0.85rem;
-		opacity: 0.62;
-	}
-	.transcript ol {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-	.transcript li {
-		display: grid;
-		grid-template-columns: 6.5rem 1fr;
-		gap: 0.75rem;
-		align-items: baseline;
-	}
-	.speaker {
-		font-size: 0.78rem;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		opacity: 0.6;
-	}
-	.text {
-		min-width: 0;
 	}
 </style>

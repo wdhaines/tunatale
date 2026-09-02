@@ -161,6 +161,23 @@ describe("TunaTaleAPI", () => {
       expect(result.session_date).toBe("2026-09-02");
     });
 
+    it("getReviewSessionTranscript uses the session's own transcript path", async () => {
+      // NOT /api/srs/lesson/{id}/transcript: that one looks the id up in the
+      // lessons table and misses. This route is what lets a session render
+      // through the SAME Transcript component a lesson does.
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(mockOk({ lesson_id: "sess-1", key_phrases: [], dialogue_lines: [] })),
+      );
+
+      const result = await api.getReviewSessionTranscript("sess-1");
+
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/review-sessions/sess-1/transcript`);
+      expect(result.lesson_id).toBe("sess-1");
+    });
+
     it("renderReviewSession POSTs to the session's own render path", async () => {
       // Its own path, not /api/audio/render — that one looks the lesson up in
       // the lessons table and a session is not there. The rows it writes land

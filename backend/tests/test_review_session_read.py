@@ -204,3 +204,56 @@ class TestRendering:
 
         assert resp.status_code == 503
         assert "ffmpeg" in resp.json()["detail"]
+
+
+# ── the transcript, which is why there is one reading UI and not two ─────────
+
+
+class TestTheTranscript:
+    """GET /api/review-sessions/{id}/transcript.
+
+    ⚠️ THIS ROUTE EXISTS TO PREVENT A FORKED UI. Without it the reader had to
+    render the session body by hand, and that hand-rolled view was worse within a
+    day — it opened the scene with the narrator's "Natural Speed" section header,
+    which the real transcript builder has always known to drop. The only thing
+    standing between a session and the shared reading component was a lookup, and
+    a lookup is not a reason to fork a UI.
+    """
+
+    async def test_it_returns_a_transcript_for_a_session(self, stored):
+        from app.srs.database import SRSDatabase
+
+        stored.save_review_session("sess-1", "sl", "2026-09-02", _lesson())
+        app.state.srs_db = SRSDatabase(":memory:")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/review-sessions/sess-1/transcript")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["lesson_id"] == "sess-1"
+        assert isinstance(body["dialogue_lines"], list)
+
+    async def test_an_unknown_session_is_404(self, stored):
+        from app.srs.database import SRSDatabase
+
+        app.state.srs_db = SRSDatabase(":memory:")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/review-sessions/nope/transcript")
+
+        assert resp.status_code == 404
+        assert "Review session" in resp.json()["detail"]
+
+    async def test_a_lesson_id_is_not_a_session_id(self, stored):
+        """The two stores stay separate here too — a lesson must not be readable
+        through the session path, or the URL stops meaning anything."""
+        from app.srs.database import SRSDatabase
+
+        stored.save_lesson("lesson-1", "c1", 1, _lesson())
+        app.state.srs_db = SRSDatabase(":memory:")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/review-sessions/lesson-1/transcript")
+
+        assert resp.status_code == 404

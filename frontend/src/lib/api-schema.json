@@ -5870,6 +5870,49 @@
         ]
       }
     },
+    "/api/review-sessions/{session_id}/transcript": {
+      "get": {
+        "description": "The same transcript a lesson gets, for a session.\n\n\u26a0\ufe0f THIS EXISTS SO THERE IS ONE READING UI, NOT TWO. Without it the reader\nhad to render the session body by hand, which produced a second-class\ntranscript that drifted from the lesson page's the moment either changed \u2014\nand it did, immediately: it opened the scene with the narrator's \"Natural\nSpeed\" section header, which the real transcript builder has always known to\ndrop. Reusing the builder was always the right answer; the only thing in the\nway was a lookup, and a lookup is not a reason to fork a UI.\n\nIts own path rather than a fallback inside the lesson route, for the reason\nthe whole epic exists: a session is not a lesson, and a URL saying otherwise\nis the same mistake one layer down.",
+        "operationId": "get_review_session_transcript_api_review_sessions__session_id__transcript_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonTranscriptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Review Session Transcript",
+        "tags": [
+          "review-sessions"
+        ]
+      }
+    },
     "/api/srs/backfill-translations": {
       "post": {
         "description": "One-time repair: fill empty translations from all stored lesson glosses.",

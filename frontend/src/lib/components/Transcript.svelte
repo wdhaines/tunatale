@@ -3,7 +3,7 @@
 	import Tooltip from './Tooltip.svelte';
 	import type { TooltipActions } from './Tooltip.svelte';
 	import { api } from '$lib/api';
-	import type { LessonDetail, TranscriptData, WordToken } from '$lib/api';
+	import type { ReadableLesson, TranscriptData, WordToken } from '$lib/api';
 	import { buildScenes, fallbackScenes, cueHighlight } from '$lib/transcriptScenes';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { masteryBackgroundColor, masteryColor } from '$lib/mastery';
@@ -22,7 +22,7 @@
 
 	interface Props {
 		transcript: TranscriptData;
-		lesson?: LessonDetail;
+		lesson?: ReadableLesson;
 		onWordClick?: (word: WordToken, lineIndex: number) => void;
 		onCollocationStateChange?: (span_id: number) => void;
 		// Undo cycle for phrase grades: when undoableItemId matches a span_id the

@@ -852,6 +852,38 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/review-sessions/{session_id}/transcript": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Review Session Transcript
+     * @description The same transcript a lesson gets, for a session.
+     *
+     *     ⚠️ THIS EXISTS SO THERE IS ONE READING UI, NOT TWO. Without it the reader
+     *     had to render the session body by hand, which produced a second-class
+     *     transcript that drifted from the lesson page's the moment either changed —
+     *     and it did, immediately: it opened the scene with the narrator's "Natural
+     *     Speed" section header, which the real transcript builder has always known to
+     *     drop. Reusing the builder was always the right answer; the only thing in the
+     *     way was a lookup, and a lookup is not a reason to fork a UI.
+     *
+     *     Its own path rather than a fallback inside the lesson route, for the reason
+     *     the whole epic exists: a session is not a lesson, and a URL saying otherwise
+     *     is the same mistake one layer down.
+     */
+    get: operations["get_review_session_transcript_api_review_sessions__session_id__transcript_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/srs/backfill-translations": {
     parameters: {
       query?: never;
@@ -4701,6 +4733,37 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["RenderAudioResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_review_session_transcript_api_review_sessions__session_id__transcript_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LessonTranscriptResponse"];
         };
       };
       /** @description Validation Error */

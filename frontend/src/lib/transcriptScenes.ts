@@ -1,4 +1,4 @@
-import type { Cue, CueRef, DialogueLine, LessonDetail, WordToken } from "./api";
+import type { Cue, CueRef, DialogueLine, LessonDetail, ReadableLesson, WordToken } from "./api";
 
 interface UnifiedLine {
   role: string;
@@ -59,10 +59,7 @@ function extractTranslations(
 // can use it too: a session has no `day`, and demanding one would have forced
 // either a fake day or a second copy of this logic (bd tunatale-dswn). Every
 // LessonDetail still satisfies it.
-export function buildScenes(
-  lesson: Pick<LessonDetail, "language_code" | "sections">,
-  dialogueLines: DialogueLine[],
-): Scene[] {
+export function buildScenes(lesson: ReadableLesson, dialogueLines: DialogueLine[]): Scene[] {
   const languageCode = lesson.language_code;
   const natural = lesson.sections.find((s) => s.type === "natural_speed");
   if (!natural) return [];

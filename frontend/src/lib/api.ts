@@ -189,6 +189,17 @@ export interface LessonDetail {
   review_used?: string[];
 }
 
+/** What the reading UI actually needs off a lesson.
+ *
+ * A REVIEW SESSION satisfies this and is not a LessonDetail: it has no `day`,
+ * deliberately (bd tunatale-9p9d). Transcript, TranscriptPlaceholder and
+ * buildScenes all take this rather than the full type, so a session reads
+ * through the SAME components as a lesson instead of a second, worse copy. */
+export type ReadableLesson = Pick<
+  LessonDetail,
+  "id" | "language_code" | "sections" | "key_phrases"
+>;
+
 export interface DayProgress {
   day: number;
   /** @see DayPlan.position */
@@ -1047,6 +1058,10 @@ export class TunaTaleAPI {
     return this.request(`/api/srs/lesson/${lessonId}/commit-pending`, {
       method: "POST",
     });
+  }
+
+  async getReviewSessionTranscript(sessionId: string): Promise<TranscriptData> {
+    return this.request(`/api/review-sessions/${sessionId}/transcript`);
   }
 
   async getLessonTranscript(lessonId: string): Promise<TranscriptData> {

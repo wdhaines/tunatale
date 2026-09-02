@@ -43,10 +43,12 @@ from app.api.generation import (
 from app.api.models import (
     CreateReviewSessionRequest,
     CreateReviewSessionResponse,
+    LessonTranscriptResponse,
     ListReviewSessionsResponse,
     RenderAudioResponse,
     ReviewSessionResponse,
 )
+from app.api.srs import build_transcript_payload
 from app.audio.render_service import render_lesson_audio
 from app.generation.ids import mint_id
 from app.generation.story import NoReviewVocabularyError, StoryGenerationError
@@ -220,3 +222,25 @@ async def render_review_session(session_id: str, request: Request):
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
+
+
+@router.get("/{session_id}/transcript", status_code=200, response_model=LessonTranscriptResponse)
+async def get_review_session_transcript(session_id: str, request: Request):
+    """The same transcript a lesson gets, for a session.
+
+    ⚠️ THIS EXISTS SO THERE IS ONE READING UI, NOT TWO. Without it the reader
+    had to render the session body by hand, which produced a second-class
+    transcript that drifted from the lesson page's the moment either changed —
+    and it did, immediately: it opened the scene with the narrator's "Natural
+    Speed" section header, which the real transcript builder has always known to
+    drop. Reusing the builder was always the right answer; the only thing in the
+    way was a lookup, and a lookup is not a reason to fork a UI.
+
+    Its own path rather than a fallback inside the lesson route, for the reason
+    the whole epic exists: a session is not a lesson, and a URL saying otherwise
+    is the same mistake one layer down.
+    """
+    lesson = request.state.content_store.get_review_session(session_id)
+    if lesson is None:
+        raise HTTPException(status_code=404, detail="Review session not found")
+    return await build_transcript_payload(session_id, lesson, request)

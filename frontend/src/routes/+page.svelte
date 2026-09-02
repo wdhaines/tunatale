@@ -361,16 +361,25 @@
 		{#if sessions.length === 0}
 			<p class="muted small">No review sessions yet.</p>
 		{:else}
-			<ul class="rs-list">
+			<!--
+				The SAME card shape the curricula above use — .library / .curric-card /
+				.card-link / .topic / .meta. A session is a different KIND of thing, not
+				a different kind of list item, and giving it bespoke markup made one page
+				look like two.
+			-->
+			<ul class="library">
 				{#each sessions as s (s.id)}
+					{@const line = coverageLine(s)}
 					<li data-testid="review-session-row">
-						<a class="rs-row" href="/review-sessions/{s.id}">
-							<span class="rs-date">{formatSessionDate(s.session_date)}</span>
-							<span class="rs-title">{s.title}</span>
-							{#if coverageLine(s)}
-								<span class="rs-coverage">{coverageLine(s)}</span>
+						<div class="curric-card card">
+							<a class="card-link" href="/review-sessions/{s.id}">
+								<span class="topic">{s.title}</span>
+								<span class="meta">{formatSessionDate(s.session_date)}</span>
+							</a>
+							{#if line}
+								<p class="progress-line">{line} words you were forgetting</p>
 							{/if}
-						</a>
+						</div>
 					</li>
 				{/each}
 			</ul>
@@ -401,39 +410,6 @@
 	}
 	.rs-nothing-due {
 		margin: 0 0 0.75rem;
-	}
-	.rs-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-	.rs-row {
-		color: inherit;
-		text-decoration: none;
-		display: flex;
-		align-items: baseline;
-		gap: 0.75rem;
-		flex-wrap: wrap;
-		padding: 0.6rem 0.75rem;
-		border: 1px solid var(--border, #ddd);
-		border-radius: 6px;
-	}
-	.rs-date {
-		font-variant-numeric: tabular-nums;
-		font-weight: 600;
-		white-space: nowrap;
-	}
-	.rs-title {
-		flex: 1 1 auto;
-		min-width: 0;
-	}
-	.rs-coverage {
-		font-size: 0.85rem;
-		opacity: 0.75;
-		white-space: nowrap;
 	}
 
 	main {

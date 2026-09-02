@@ -2001,11 +2001,22 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
 
 @router.get("/lesson/{lesson_id}/transcript", status_code=200, response_model=LessonTranscriptResponse)
 async def get_lesson_transcript(lesson_id: str, request: Request):
-    store = request.state.content_store
-    lesson = store.get_lesson(lesson_id)
+    lesson = request.state.content_store.get_lesson(lesson_id)
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
+    return await build_transcript_payload(lesson_id, lesson, request)
 
+
+async def build_transcript_payload(content_id: str, lesson, request: Request) -> dict:
+    """The transcript for a stored Lesson, whoever is holding it.
+
+    ⚠️ THE ONLY LESSON-SPECIFIC THING ABOUT THE OLD HANDLER WAS ITS LOOKUP.
+    Everything below operates on a ``Lesson`` object, and a review session is
+    stored as exactly that — so it is the caller who knows which table to read,
+    and this builds the payload either way (bd tunatale-9p9d). Splitting it here
+    is what lets a session use the SAME reading UI as a lesson rather than a
+    second, worse one.
+    """
     db = request.state.srs_db
     # Anki-day rollover, not local midnight — feeds extract_transcript's is_due
     # bolding (verdict item 5): a card due "tomorrow" by real calendar date but
@@ -2019,7 +2030,7 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
     transcript = await anyio.to_thread.run_sync(extract_transcript, lesson, db, lemmatizer, today)
 
     return {
-        "lesson_id": lesson_id,
+        "lesson_id": content_id,
         "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in transcript.key_phrases],
         "dialogue_lines": [
             {

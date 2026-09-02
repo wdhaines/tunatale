@@ -1,9 +1,9 @@
 <script lang="ts">
-	import type { LessonDetail } from '$lib/api';
+	import type { ReadableLesson } from '$lib/api';
 	import { buildScenes } from '$lib/transcriptScenes';
 
 	interface Props {
-		lesson: LessonDetail;
+		lesson: ReadableLesson;
 	}
 	let { lesson }: Props = $props();
 

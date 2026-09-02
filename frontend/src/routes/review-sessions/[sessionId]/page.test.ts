@@ -27,6 +27,8 @@ vi.mock("$lib/api", () => ({
     getReviewSession: vi.fn(),
     getLessonAudio: vi.fn(),
     renderReviewSession: vi.fn(),
+    getReviewSessionTranscript: vi.fn(),
+    getLessonTranscript: vi.fn(),
     audioUrl: vi.fn((id: string) => `/audio/${id}`),
   },
 }));
@@ -38,6 +40,23 @@ import { load } from "./+page";
 const mockGetSession = vi.mocked(api.getReviewSession);
 const mockGetAudio = vi.mocked(api.getLessonAudio);
 const mockRender = vi.mocked(api.renderReviewSession);
+const mockSessionTranscript = vi.mocked(api.getReviewSessionTranscript);
+const mockLessonTranscript = vi.mocked(api.getLessonTranscript);
+
+const TRANSCRIPT = {
+  lesson_id: "sess-1",
+  key_phrases: [{ phrase: "å oppføre seg", translation: "to behave" }],
+  dialogue_lines: [
+    {
+      role: "female-1",
+      sentence: "Toget er dessverre forsinket.",
+      words: [
+        { surface: "Toget", prefix_punct: "", suffix_punct: "", lemma: "tog" },
+        { surface: "forsinket", prefix_punct: "", suffix_punct: ".", lemma: "forsinke" },
+      ],
+    },
+  ],
+} as never;
 
 type Loaded = { session: { title: string }; audio: { audio_id: string } | null };
 const loaded = (r: unknown) => r as Loaded;
@@ -104,6 +123,7 @@ function sessionBody(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockSessionTranscript.mockResolvedValue(TRANSCRIPT);
 });
 
 describe("load", () => {
@@ -153,37 +173,37 @@ describe("the reader", () => {
     expect(queryByText(/Day \d/)).toBeNull();
   });
 
-  it("reads as a scene — the dialogue is on the page", () => {
-    // Step 8 of the manual shakedown. No test can judge whether it reads WELL;
-    // this only guarantees there is something to judge.
-    const { getByText } = render(Page, { props: { data: data() } });
+  it("reads through the SAME transcript component a lesson uses", async () => {
+    // The point of this whole page. An earlier version rendered its own list of
+    // dialogue lines because the transcript endpoint missed on a session id;
+    // that fork was worse within a day. If this stops rendering Transcript, the
+    // fork is back.
+    const { findByText } = render(Page, { props: { data: data() } });
 
-    expect(getByText("Toget er dessverre forsinket.")).toBeTruthy();
-    expect(getByText("Da rekker vi ikke møtet.")).toBeTruthy();
+    expect(await findByText(/Toget/)).toBeTruthy();
   });
 
-  it("does not open the scene with the section's own name", () => {
-    // The bug this caught — found by running the real app, not by a test.
-    // natural_speed's first phrase is the narrator saying "Natural Speed"; a
-    // raw phrase list renders it as line one. buildScenes drops it.
-    const { queryByText } = render(Page, { props: { data: data() } });
+  it("asks the SESSION transcript endpoint, never the lesson one", async () => {
+    render(Page, { props: { data: data() } });
 
-    expect(queryByText("Natural Speed")).toBeNull();
+    await vi.waitFor(() => expect(mockSessionTranscript).toHaveBeenCalledWith("sess-1"));
+    expect(mockLessonTranscript).not.toHaveBeenCalled();
   });
 
-  it("shows the English under each line", () => {
-    // The gloss is what makes it readable to someone still learning — and it
-    // comes free from buildScenes, which a hand-rolled phrase filter would not
-    // have given.
-    const { getByText } = render(Page, { props: { data: data() } });
+  it("shows the shared placeholder while the words are still coming", async () => {
+    // The transcript runs the lemmatizer and is slow; the lesson page shows the
+    // same placeholder for the same reason.
+    mockSessionTranscript.mockReturnValue(new Promise(() => {}) as never);
+    const { container } = render(Page, { props: { data: data() } });
 
-    expect(getByText("The train is unfortunately delayed.")).toBeTruthy();
+    expect(container.querySelector(".transcript")?.textContent?.trim()).not.toBe("");
   });
 
-  it("promotes the scene label to a heading rather than a line", () => {
-    const { getByRole } = render(Page, { props: { data: data() } });
+  it("says so plainly when the transcript cannot be had", async () => {
+    mockSessionTranscript.mockRejectedValue(new Error("backend down"));
+    const { findByText } = render(Page, { props: { data: data() } });
 
-    expect(getByRole("heading", { name: "On the Platform" })).toBeTruthy();
+    expect(await findByText(/no transcript available/i)).toBeTruthy();
   });
 
   it("says which forgotten words it managed to use", () => {
