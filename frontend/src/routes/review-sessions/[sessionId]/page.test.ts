@@ -356,11 +356,14 @@ describe("the reader", () => {
   it("offers to prepare the audio when there is none", async () => {
     mockRender.mockResolvedValue({ audio_id: "a1", lesson_id: "sess-1", sections: [] });
     mockGetAudio.mockResolvedValue({ audio_id: "a1", lesson_id: "sess-1", sections: [] });
-    const { getByRole, findByTestId } = render(Page, { props: { data: data() } });
+    const { getByRole, container } = render(Page, { props: { data: data() } });
 
     await fireEvent.click(getByRole("button", { name: /prepare audio/i }));
 
-    expect(await findByTestId("session-player")).toBeTruthy();
+    // The shared player itself, not a wrapper this page owns — LessonReader
+    // renders it, so asserting on a local test id would have been asserting on
+    // markup that no longer exists.
+    await vi.waitFor(() => expect(container.querySelector("section.player")).toBeTruthy());
     expect(mockRender).toHaveBeenCalledWith("sess-1");
   });
 
@@ -375,9 +378,9 @@ describe("the reader", () => {
 
   it("plays straight away when the audio already exists", async () => {
     const audio = { audio_id: "a1", lesson_id: "sess-1", sections: [] };
-    const { findByTestId, queryByRole } = render(Page, { props: { data: data({ audio }) } });
+    const { container, queryByRole } = render(Page, { props: { data: data({ audio }) } });
 
-    expect(await findByTestId("session-player")).toBeTruthy();
+    expect(container.querySelector("section.player")).toBeTruthy();
     expect(queryByRole("button", { name: /prepare audio/i })).toBeNull();
   });
 

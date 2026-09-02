@@ -188,20 +188,26 @@ describe("prev/next lesson links in the player header", () => {
     expect(getByRole("button", { name: "Listen" })).toBeTruthy();
     await findByText("Day 2 →");
 
-    // Four stacked bands: curriculum link, day pager, title+toggle, stats.
-    // jsdom does no layout, so "level with the title" is expressed as "the
-    // toggle is the title area's immediate next sibling in the header grid" —
-    // the real geometry is pinned by tests/lesson-header-layout.spec.ts.
+    // Four stacked bands: curriculum link + day pager, title+toggle, stats.
+    // jsdom does no layout, so "level with the title" is expressed as sibling
+    // order in the header grid — the real geometry is pinned by
+    // tests/lesson-header-layout.spec.ts.
+    //
+    // The full-width bands are wrapped in .header-band by LessonReader. That
+    // wrapper is what lets this page span the grid WITHOUT a :global() rule
+    // reaching across the component boundary — Svelte cannot verify such a rule
+    // statically and reports it as dead CSS.
     const header = container.querySelector(".player-header")!;
     const children = Array.from(header.children);
     const idx = (sel: string) => children.findIndex((el) => el.matches(sel));
 
-    expect(idx(".breadcrumb")).toBe(0);
-    expect(idx(".lesson-nav")).toBe(1);
-    expect(idx(".player-title-area")).toBe(2);
-    expect(idx(".mode-row")).toBe(3);
-    expect(idx(".mastery-line")).toBe(4);
-    expect(children[3].querySelector(".toggle-pill")).toBeTruthy();
+    expect(idx(".header-band")).toBe(0);
+    expect(children[0].querySelector(".breadcrumb")).toBeTruthy();
+    expect(children[0].querySelector(".lesson-nav")).toBeTruthy();
+    expect(idx(".player-title-area")).toBe(1);
+    expect(idx(".mode-row")).toBe(2);
+    expect(children[2].querySelector(".toggle-pill")).toBeTruthy();
+    expect(children[3].querySelector(".mastery-line")).toBeTruthy();
     // The breadcrumb moved OUT of the title column to become its own band.
     expect(container.querySelector(".player-title-area .breadcrumb")).toBeNull();
   });

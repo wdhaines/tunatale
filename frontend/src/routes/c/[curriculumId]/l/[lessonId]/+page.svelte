@@ -11,8 +11,7 @@
 	import { syncStore } from '$lib/stores/sync.svelte';
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 	import { createReadingActions } from '$lib/reading/readingActions.svelte';
-	import { lessonModePref } from '$lib/stores/lessonModePref.svelte';
-	import ReadListenToggle from '$lib/components/ReadListenToggle.svelte';
+	import LessonReader from '$lib/components/LessonReader.svelte';
 	import { pipelineStore } from '$lib/stores/pipeline.svelte';
 	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
 	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
@@ -26,11 +25,6 @@
 
 	let { data }: { data: PageData } = $props();
 
-	// Read/Listen mode is a persisted preference that defaults by viewport (Listen
-	// on mobile, Read on desktop) rather than an unconditional 'read' that landed
-	// mobile users in the wrong mode. Seeds on mount like the theme/prefetch prefs.
-	const mode = $derived(lessonModePref.mode);
-	onMount(() => lessonModePref.init());
 
 	// untrack: intentionally snapshot load data as mutable local state
 	let audio: LessonAudio | null = $state(untrack(() => data.audio));
@@ -453,114 +447,94 @@
 <svelte:window onresize={measureNav} />
 
 <main>
-	<!-- The sticky card owns everything the user reaches for mid-lesson: the
-	     lesson title, Read/Listen toggle, and (once rendered) the player. It
-	     sticks below the global nav so nothing the user needs scrolls away. -->
-	<section class="card player-card" style="top: {navHeight}px">
-		<!-- Two-column grid, not a flex row: the title and toggle share row 1, but
-		     the stats line below spans BOTH columns. As a flex child of the title
-		     column it inherited that column's width and wrapped to two lines on a
-		     phone — and the toggle is only two lines tall, so nothing below it
-		     needs to keep clearing it. -->
-		<div class="player-header">
-			<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
-			<!-- Day pager: its own full-width band directly under the curriculum link,
-			     prev hard left and next hard right, so it reads as one axis of travel
-			     rather than two links fighting the breadcrumb for the same corner.
-			     Hidden entirely (not rendered empty) when there is no neighbour — an
-			     empty nav would still cost a grid row and its gap. -->
-			{#if prevLesson || nextLesson}
-				<nav class="lesson-nav" aria-label="Lesson navigation">
-					{#if prevLesson}
-						<a class="lesson-nav-link" href="/c/{data.curriculum.id}/l/{prevLesson.lesson_id}">← Day {prevLesson.position}</a>
-					{/if}
-					{#if nextLesson}
-						<a class="lesson-nav-link lesson-nav-next" href="/c/{data.curriculum.id}/l/{nextLesson.lesson_id}">Day {nextLesson.position} →</a>
-					{/if}
-				</nav>
-			{/if}
-			<div class="player-title-area">
-				<h1>{data.lesson.title}</h1>
-				{#if syncStatus}
-					<p class="sync-status">{syncStatus}</p>
+	<LessonReader
+		title={data.lesson.title}
+		content={data.lesson}
+		{audio}
+		{transcript}
+		{transcriptLoading}
+		{reading}
+		{navHeight}
+		bind:controller={playbackController}
+	>
+		{#snippet headerAbove()}
+				<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
+				<!-- Day pager: its own full-width band directly under the curriculum link,
+				     prev hard left and next hard right, so it reads as one axis of travel
+				     rather than two links fighting the breadcrumb for the same corner.
+				     Hidden entirely (not rendered empty) when there is no neighbour — an
+				     empty nav would still cost a grid row and its gap. -->
+				{#if prevLesson || nextLesson}
+					<nav class="lesson-nav" aria-label="Lesson navigation">
+						{#if prevLesson}
+							<a class="lesson-nav-link" href="/c/{data.curriculum.id}/l/{prevLesson.lesson_id}">← Day {prevLesson.position}</a>
+						{/if}
+						{#if nextLesson}
+							<a class="lesson-nav-link lesson-nav-next" href="/c/{data.curriculum.id}/l/{nextLesson.lesson_id}">Day {nextLesson.position} →</a>
+						{/if}
+					</nav>
 				{/if}
-				{#if error}
-					<p class="error">{error}</p>
+		{/snippet}
+		{#snippet header()}
+				<div class="player-title-area">
+					<h1>{data.lesson.title}</h1>
+					{#if syncStatus}
+						<p class="sync-status">{syncStatus}</p>
+					{/if}
+					{#if error}
+						<p class="error">{error}</p>
+					{/if}
+				</div>
+		{/snippet}
+		{#snippet headerBelow()}
+				<!-- Stats read as lesson metadata under the title rather than a third
+				     stacked line in the action row — same information, no extra row. -->
+				{#if mastery && masteryPct !== null}
+					<p class="mastery-line">
+						<span class="mastery-pct" style:color={masteryColor(masteryPct)}>{Math.round(masteryPct * 100)}%</span>
+						{#each masterySegments as seg, i (seg.key)}{#if i > 0}<span class="mastery-sep">·</span>{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}
+					</p>
 				{/if}
-			</div>
-			<ReadListenToggle />
-			<!-- Stats read as lesson metadata under the title rather than a third
-			     stacked line in the action row — same information, no extra row. -->
-			{#if mastery && masteryPct !== null}
-				<p class="mastery-line">
-					<span class="mastery-pct" style:color={masteryColor(masteryPct)}>{Math.round(masteryPct * 100)}%</span>
-					{#each masterySegments as seg, i (seg.key)}{#if i > 0}<span class="mastery-sep">·</span>{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}
-				</p>
-			{/if}
-		</div>
-		{#if audio}
-			{#key audio.audio_id}
-				<!-- ONE persistent player across modes: only the `compact` prop flips on
-				     Listen↔Read, so the controller (and playback) survives the switch. -->
-				<LessonPlayer {audio} compact={mode !== 'listen'} lessonTitle={data.lesson.title} bind:controller={playbackController} />
-			{/key}
-		{:else}
-			<div class="render-row">
-				<button onclick={handleRenderAudio} disabled={audioLoading}>
-					{audioLoading ? 'Rendering…' : 'Render Audio'}
+		{/snippet}
+		{#snippet noAudio()}
+				<div class="render-row">
+					<button onclick={handleRenderAudio} disabled={audioLoading}>
+						{audioLoading ? 'Rendering…' : 'Render Audio'}
+					</button>
+					{#if thisDayPipeline && !audioLoading}
+						<span class="pipeline-state state-{thisDayPipeline.state}">{thisDayPipeline.state}</span>
+					{/if}
+				</div>
+		{/snippet}
+		{#snippet actions()}
+			<div class="listen-actions">
+				<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened}>
+					Mark as Listened
 				</button>
-				{#if thisDayPipeline && !audioLoading}
-					<span class="pipeline-state state-{thisDayPipeline.state}">{thisDayPipeline.state}</span>
+				{#if listenResult && !error}
+					<p class="listen-confirmation">
+						{#if listenResult.created > 0}
+							{listenResult.created} new {listenResult.created === 1 ? 'word' : 'words'} added
+						{/if}
+						{#if listenResult.created > 0 && (listenResult.applied > 0 || listenResult.staged > 0)} · {/if}
+						{#if listenResult.applied > 0}
+							{listenResult.applied} graded
+						{/if}
+						{#if listenResult.applied > 0 && listenResult.staged > 0} · {/if}
+						{#if listenResult.staged > 0}
+							{listenResult.staged} ready to check
+						{/if}
+						{#if listenResult.remaining_candidates > 0}
+							 · {listenResult.remaining_candidates} remaining — listen again to add more
+						{/if}
+					</p>
+				{/if}
+				{#if showCheckWorkLink}
+					<a class="check-work-link" href="/review?lesson={data.lesson.id}&c={data.curriculum.id}">Check your work — review {queueCount} {queueCount === 1 ? 'word' : 'words'}</a>
 				{/if}
 			</div>
-		{/if}
-		<!-- One action row at the foot of the sticky card: the listen button and
-		     whatever it produced (confirmation, check-work link) sit beside it
-		     instead of stacking into three centered lines. -->
-		<div class="listen-actions">
-			<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened}>
-				Mark as Listened
-			</button>
-			{#if listenResult && !error}
-				<p class="listen-confirmation">
-					{#if listenResult.created > 0}
-						{listenResult.created} new {listenResult.created === 1 ? 'word' : 'words'} added
-					{/if}
-					{#if listenResult.created > 0 && (listenResult.applied > 0 || listenResult.staged > 0)} · {/if}
-					{#if listenResult.applied > 0}
-						{listenResult.applied} graded
-					{/if}
-					{#if listenResult.applied > 0 && listenResult.staged > 0} · {/if}
-					{#if listenResult.staged > 0}
-						{listenResult.staged} ready to check
-					{/if}
-					{#if listenResult.remaining_candidates > 0}
-						 · {listenResult.remaining_candidates} remaining — listen again to add more
-					{/if}
-				</p>
-			{/if}
-			{#if showCheckWorkLink}
-				<a class="check-work-link" href="/review?lesson={data.lesson.id}&c={data.curriculum.id}">Check your work — review {queueCount} {queueCount === 1 ? 'word' : 'words'}</a>
-			{/if}
-		</div>
-	</section>
-
-	{#if mode === 'read'}
-		<section class="card">
-			{#if transcript}
-				<Transcript
-					{transcript}
-					lesson={data.lesson}
-					controller={playbackController}
-					{...reading.transcriptProps}
-				/>
-			{:else if transcriptLoading}
-				<TranscriptPlaceholder lesson={data.lesson} />
-			{:else}
-				<p class="muted">No transcript available.</p>
-			{/if}
-		</section>
-	{/if}
+		{/snippet}
+	</LessonReader>
 
 	<!-- Rare actions live folded away: downloads for offline use, regeneration
 	     as the destructive-ish last resort. -->
@@ -649,18 +623,6 @@
 	   the two things the eye lands on), then the stats. Only that third band is
 	   two-column; the rest span the full width so the pager's arrows can sit at
 	   the card's outer edges. */
-	.player-header {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
-		align-items: start;
-		column-gap: 1rem;
-		row-gap: 0.2rem;
-	}
-	.player-header > .breadcrumb,
-	.player-header > .lesson-nav,
-	.player-header > .mastery-line {
-		grid-column: 1 / -1;
-	}
 	/* Level with the title, not the top of its column: `align-items: start` would
 	   hang the pill off the band's top edge and the h1 is the taller box. */
 	.player-title-area {
@@ -864,19 +826,6 @@
 	.state-failed {
 		background: color-mix(in srgb, var(--color-danger) 14%, transparent);
 		color: var(--color-danger);
-	}
-	.player-card {
-		position: sticky;
-		/* Above transcript content, below word tooltips (z 30) and the global nav
-		   (z 50). The tooltips used to sit UNDER this card at z 10 — deliberately,
-		   per an earlier version of this comment — and that was wrong: a popover the
-		   user long-pressed a specific word to summon is useless occluded, while this
-		   card is persistent and always reachable (F-21). */
-		z-index: 20;
-		display: flex;
-		flex-direction: column;
-		gap: 0.6rem;
-		padding: 0.9rem 1.1rem;
 	}
 	/* Single centered action row: the button keeps the card's centre line it has
 	   always had, with whatever the last listen produced beside it. Wraps on

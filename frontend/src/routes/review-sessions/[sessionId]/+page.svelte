@@ -2,13 +2,10 @@
 	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { LessonAudio, TranscriptData } from '$lib/api';
-	import LessonPlayer from '$lib/components/LessonPlayer.svelte';
-	import Transcript from '$lib/components/Transcript.svelte';
-	import TranscriptPlaceholder from '$lib/components/TranscriptPlaceholder.svelte';
+	import LessonReader from '$lib/components/LessonReader.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { createReadingActions } from '$lib/reading/readingActions.svelte';
-	import ReadListenToggle from '$lib/components/ReadListenToggle.svelte';
-	import { lessonModePref } from '$lib/stores/lessonModePref.svelte';
+
 
 	// The reader for a review session.
 	//
@@ -31,10 +28,6 @@
 	let preparing = $state(false);
 	let renderError = $state('');
 	let playbackController: PlaybackController | null = $state(null);
-
-	// The SAME persisted, viewport-defaulted preference the lesson page reads —
-	// one store, so switching to Listen here and opening a lesson keeps the mode.
-	const mode = $derived(lessonModePref.mode);
 	let error = $state('');
 
 	// ⚠️ THE SAME ACTIONS THE LESSON PAGE USES, from one implementation. Tapping
@@ -116,115 +109,101 @@
 </script>
 
 <main>
-	<a class="back" href="/">← Lessons</a>
-
-	<header>
-		<p class="date">{formatSessionDate(data.session.session_date)}</p>
-		<h1>{data.session.title}</h1>
-		{#if coverage}
-			<p class="coverage">{coverage} words you were forgetting</p>
-		{/if}
-		<ReadListenToggle />
-		<p class="muted">
-			A review session — built from what has decayed across your whole deck, with no theme and no
-			place in any curriculum.
-		</p>
-	</header>
-
-	{#if audio}
-		<div data-testid="session-player">
-			{#key audio.audio_id}
-				<LessonPlayer
-					{audio}
-					lessonTitle={data.session.title}
-					bind:controller={playbackController}
-				/>
-			{/key}
-		</div>
-	{:else}
-		<div class="prepare">
-			<p class="muted">No audio yet for this session.</p>
-			<button type="button" onclick={prepareAudio} disabled={preparing}>
-				{preparing ? 'Preparing…' : 'Prepare audio'}
-			</button>
-			{#if renderError}
-				<p class="error" role="alert">{renderError}</p>
+	<LessonReader
+		title={data.session.title}
+		content={data.session}
+		{audio}
+		{transcript}
+		{transcriptLoading}
+		{reading}
+		bind:controller={playbackController}
+	>
+		{#snippet headerAbove()}
+			<a class="back" href="/">← Lessons</a>
+		{/snippet}
+		{#snippet header()}
+			<div class="title-area">
+				<p class="date">{formatSessionDate(data.session.session_date)}</p>
+				<h1>{data.session.title}</h1>
+				{#if error}
+					<p class="error" role="alert">{error}</p>
+				{/if}
+			</div>
+		{/snippet}
+		{#snippet headerBelow()}
+			{#if coverage}
+				<p class="coverage">{coverage} words you were forgetting</p>
 			{/if}
-		</div>
-	{/if}
-
-	{#if error}
-		<p class="error" role="alert">{error}</p>
-	{/if}
-
-	{#if mode === 'read'}
-		<section class="transcript">
-			{#if transcript}
-			<Transcript
-				{transcript}
-				lesson={data.session}
-				controller={playbackController}
-					{...reading.transcriptProps}
-			/>
-			{:else if transcriptLoading}
-				<TranscriptPlaceholder lesson={data.session} />
-			{:else}
-				<p class="muted">No transcript available.</p>
-			{/if}
-		</section>
-	{/if}
+			<p class="muted">
+				A review session — built from what has decayed across your whole deck, with no theme
+				and no place in any curriculum.
+			</p>
+		{/snippet}
+		{#snippet noAudio()}
+			<div class="prepare">
+				<button type="button" onclick={prepareAudio} disabled={preparing}>
+					{preparing ? 'Preparing…' : 'Prepare audio'}
+				</button>
+				{#if renderError}
+					<p class="error" role="alert">{renderError}</p>
+				{/if}
+			</div>
+		{/snippet}
+	</LessonReader>
 </main>
 
 <style>
-	main {
-		max-width: 760px;
-		margin: 1rem auto;
-		padding: 0 1rem 4rem;
-	}
+	/* Only what THIS page's snippets need. The sticky card, the header grid, the
+	   player, the mode gate and the transcript block all live in LessonReader —
+	   shared with the lesson page so the two cannot drift again. */
 	.back {
 		display: inline-block;
-		margin-bottom: 1rem;
+		color: var(--color-muted);
 		font-size: 0.9rem;
+		font-weight: 600;
+		text-decoration: none;
 	}
-	header {
-		margin-bottom: 1.5rem;
+	.back:hover {
+		color: var(--color-primary);
+	}
+	.title-area {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+		min-width: 0;
 	}
 	.date {
 		margin: 0;
 		font-variant-numeric: tabular-nums;
 		font-weight: 600;
-		opacity: 0.7;
+		color: var(--color-muted);
+		font-size: 0.9rem;
 	}
 	h1 {
-		margin: 0.15rem 0 0.4rem;
-		font-size: 1.6rem;
+		margin: 0;
+		font-size: 1.35rem;
 		text-wrap: balance;
 	}
 	.coverage {
-		margin: 0 0 0.4rem;
-		font-size: 0.92rem;
+		margin: 0;
+		font-size: 0.9rem;
 	}
 	.muted {
-		opacity: 0.72;
-		font-size: 0.9rem;
-		margin: 0;
+		color: var(--color-muted);
+		font-size: 0.85rem;
+		margin: 0.15rem 0 0;
 		max-width: 52ch;
 	}
 	.prepare {
-		border: 1px solid var(--border, #ddd);
-		border-radius: 6px;
-		padding: 1rem;
-		margin-bottom: 1.5rem;
-	}
-	.prepare p {
-		margin: 0 0 0.6rem;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem 0.9rem;
 	}
 	.error {
-		color: #9c2f2a;
-		margin: 0.6rem 0 0;
+		color: var(--color-danger, #9c2f2a);
+		margin: 0;
 		font-size: 0.9rem;
-	}
-	.transcript {
-		margin-top: 2rem;
 	}
 </style>
