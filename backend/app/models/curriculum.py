@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 
 from app.common.titles import strip_day_prefix
@@ -67,6 +68,32 @@ class Curriculum:
             return ReviewPressure[name]
         except KeyError:
             return ReviewPressure.NATURAL
+
+    def record_review_request(self, day: int, words: Sequence[str]) -> None:
+        """Remember which review words a prompt for *day* actually asked for.
+
+        Export and import are joined only by curriculum_id + day, so without this
+        the manual path has no way to answer "did the story include what we asked
+        for?" — and recomputing at import gives a different answer precisely when
+        time has passed, which is the only case worth asking about (fgeq.1).
+
+        Last export wins: the user pastes the most recent prompt, so an older
+        request is not evidence about the story they bring back.
+        """
+        self.metadata.setdefault("review_requests", {})[str(day)] = list(words)
+
+    def review_request(self, day: int) -> tuple[str, ...]:
+        """What the last exported prompt for *day* asked for; empty if unknown.
+
+        ⚠️ The key is `str(day)`. `metadata` round-trips through JSON, where an
+        int dict key comes back as a string — keying by the int would look
+        correct and silently find nothing after exactly one reload.
+
+        Empty means UNMEASURABLE (never exported, or exported before this
+        existed), not "nothing was requested". Callers must not treat it as a
+        failed generation.
+        """
+        return tuple(self.metadata.get("review_requests", {}).get(str(day), ()))
 
     def day_positions(self) -> dict[int, int]:
         """Map each ``day`` key to its 1-based position in the ordered plan.

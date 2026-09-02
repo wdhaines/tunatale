@@ -407,6 +407,11 @@ async def get_story_prompt(
         # 409, not 422 or 502: the request is well-formed and nothing upstream
         # failed — the collection simply has nothing due to review right now.
         raise HTTPException(status_code=409, detail=str(e)) from e
+    # A write on a GET, deliberately: recording what an EXPORT handed out is
+    # part of exporting it, and this is the only moment the requested set exists
+    # on the manual path. Re-exporting simply overwrites (bd tunatale-g4c9).
+    curriculum.record_review_request(day, prompts.review_words)
+    store.save_curriculum(curriculum_id, curriculum)
     return {"system_prompt": prompts.system_prompt, "user_prompt": prompts.user_prompt}
 
 

@@ -157,7 +157,13 @@ def import_lesson(store: ContentStore, file: dict, language: Language) -> tuple[
     """
     story = file.get("story")
     validate_story(story)
-    lesson = build_lesson_from_story(story, language=language)
+    # The set the EXPORTED prompt asked for, not a fresh selection: recomputing
+    # here diverges exactly when time has passed between paste-out and paste-back,
+    # which is the case the check exists for (tunatale-fgeq.1). Absent means
+    # unmeasurable, so the meter simply reports 0 of 0.
+    curriculum = store.get_curriculum(file["curriculum_id"])
+    review_words = curriculum.review_request(file["day"]) if curriculum is not None else ()
+    lesson = build_lesson_from_story(story, language=language, review_words=review_words)
     lesson_id = mint_id(lesson.title)
     store.save_lesson(lesson_id, file["curriculum_id"], file["day"], lesson)
     sync_curriculum_day_title(store, file["curriculum_id"], file["day"], lesson.title)
