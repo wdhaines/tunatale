@@ -16,13 +16,16 @@
 
 import { build, files, version } from "$service-worker";
 import { AUDIO_CACHE, handleAudioFetch, isCacheableAudioRequest } from "$lib/sw/audio-cache";
+import { precacheAssets } from "$lib/sw/precache";
 
 // `self` in a service worker is a ServiceWorkerGlobalScope; the webworker lib
 // reference above provides the type.
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
 const APP_CACHE = `tt-app-${version}`;
-const APP_ASSETS = [...build, ...files];
+// Not a bare [...build, ...files]: debug pages under static/ are filtered out,
+// so carrying one costs users nothing. See $lib/sw/precache.
+const APP_ASSETS = precacheAssets(build, files);
 
 sw.addEventListener("install", (event) => {
   event.waitUntil(
