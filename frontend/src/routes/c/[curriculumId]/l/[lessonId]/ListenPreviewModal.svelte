@@ -978,10 +978,16 @@
 		gap: 0.25rem;
 		min-width: 0;
 	}
-	/* Revealed, the gloss borrows the Due column too — the extra ~50px is the
-	   difference between a readable gloss and a wrapped stack of fragments. */
+	/* Revealed, the gloss takes its own full-width row instead of borrowing the
+	   Due column. Borrowing it (grid-column: 1 / 3) placed the gloss in the same
+	   cell as the dueness pill, which occupies column 2 across rows 1-2 — CSS
+	   Grid stacks two items in one cell rather than reflowing, so a long gloss
+	   painted straight through the pill. A full-width row 3 gives the gloss MORE
+	   room than the ~50px it was borrowing and leaves the pill's two-row
+	   centring (rows 1-2, column 2) untouched. */
 	.sub.revealed {
-		grid-column: 1 / 3;
+		grid-column: 1 / -1;
+		grid-row: 3;
 	}
 	.gloss {
 		font-size: 0.72rem;
@@ -1264,6 +1270,14 @@
 		}
 		.candidate.tail .grade {
 			grid-row: 3;
+		}
+		/* In this arm the grade control already owns row 3, so the revealed
+		   gloss gets the next free row — same full-width shape as the
+		   three-column arm, and clear of both the pill (rows 1-2) and the grade
+		   (row 3). */
+		.sub.revealed {
+			grid-column: 1 / -1;
+			grid-row: 4;
 		}
 	}
 </style>

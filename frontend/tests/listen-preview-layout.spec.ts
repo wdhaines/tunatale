@@ -46,7 +46,16 @@ const STORY = {
 		{ word: "hvala", translation: "thanks" },
 		{ word: "nasvidenje", translation: "goodbye" },
 		{ word: "enainštirideset", translation: "forty-one" },
-		{ word: "lepa", translation: "nice, lovely" },
+		// Deliberately long, and the length is not arbitrary: the real Norwegian
+		// deck's worst case is cid 2520 'selv, sjøl' at 86 characters. A gloss must
+		// be able to reach into the Due column before the overlap this file guards
+		// can occur at all, so a SHORT fixture cannot see the bug. Kept plausible
+		// for an adjective rather than reusing the reflexive string verbatim.
+		{
+			word: "lepa",
+			translation:
+				"nice, lovely, beautiful, pleasant, fine, attractive, handsome, fair, good-looking, pretty",
+		},
 	],
 	morphology_focus: [],
 };
@@ -807,4 +816,77 @@ test("listen preview: with the countdown pref on, cancelling still shifts no gly
 		Math.abs(idle.glyphLeft - running.glyphLeft),
 		`glyph moved ${running.glyphLeft.toFixed(2)} -> ${idle.glyphLeft.toFixed(2)} on cancel`,
 	).toBeLessThanOrEqual(0.5);
+});
+
+/**
+ * A REVEALED long gloss must not paint over the Due pill (bd tunatale-8l1k).
+ *
+ * The defect is pure CSS Grid placement, and both halves were deliberate:
+ *
+ *     .day-cell     { grid-column: 2;     grid-row: 1 / 3; }   // BOTH rows
+ *     .sub.revealed { grid-column: 1 / 3; grid-row: 2;     }   // cols 1 AND 2
+ *
+ * `grid-column: 1 / 3` spans columns 1 and 2, and `.day-cell` already occupies
+ * column 2 across both rows — so row 2 / column 2 holds two items, and Grid
+ * STACKS rather than reflows. The gloss has no background, so it renders
+ * straight through the pill.
+ *
+ * Neither placement is a typo: the gloss borrows the Due column because the
+ * extra ~50px is "the difference between a readable gloss and a wrapped stack
+ * of fragments", and the pill spans both rows to floor the grade tap targets.
+ * They collide only once a gloss is long enough to reach column 2, which is why
+ * short glosses look fine and this went unseen.
+ *
+ * ⚠️ Rects, never textContent. This is a layout defect and nothing else: the
+ * DOM, the text and the computed `white-space: normal` are all already correct
+ * while the pixels overlap. jsdom reports every element at 0×0, so this cannot
+ * move to the vitest tier.
+ *
+ * ⚠️ Do NOT make this pass by truncating, ellipsising or line-clamping the
+ * gloss, nor by capping gloss length at generation. Measured 2026-09-01: every
+ * gloss over 40 chars in either deck is `source='anki'` — the user's OWN cards
+ * — and `translate.py` already prompts for "one to three words". The panel's
+ * job is to render what the user's deck contains.
+ */
+test("listen preview: a revealed long gloss does not overlap the Due pill", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "backend not running");
+	const id = await curriculumId(request);
+	await page.setViewportSize(PHONE);
+	const modal = await openPreview(page, id);
+
+	// The row carrying the long fixture gloss. Located by its word, not by
+	// index: candidate ordering is a scheduling concern this spec is not about.
+	const row = modal.locator(".candidate", { hasText: "lepa" }).first();
+	await expect(row).toBeVisible();
+
+	const gloss = row.locator(".gloss");
+	await gloss.click(); // reveal — a blurred gloss is nowrap and cannot overlap
+	await expect(gloss).not.toHaveClass(/blurred/);
+
+	const pill = row.locator(".day-cell .tag").first();
+	await expect(pill).toBeVisible();
+
+	const [g, p] = await Promise.all([gloss.boundingBox(), pill.boundingBox()]);
+	expect(g, "revealed gloss must have a box").not.toBeNull();
+	expect(p, "due pill must have a box").not.toBeNull();
+
+	const overlaps =
+		g!.x < p!.x + p!.width &&
+		p!.x < g!.x + g!.width &&
+		g!.y < p!.y + p!.height &&
+		p!.y < g!.y + g!.height;
+
+	expect(
+		overlaps,
+		`revealed gloss ${JSON.stringify(g)} overlaps due pill ${JSON.stringify(p)}`,
+	).toBe(false);
+
+	// The gloss must WRAP, not be clipped to one line — the fix must grow the
+	// row. An ellipsised single line would satisfy the overlap check above while
+	// destroying the content, so this is what forbids that shortcut.
+	const lineHeight = await gloss.evaluate((el) => parseFloat(getComputedStyle(el).lineHeight));
+	expect(g!.height).toBeGreaterThan(lineHeight * 1.5);
 });
