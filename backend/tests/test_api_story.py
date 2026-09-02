@@ -124,7 +124,16 @@ class TestStoryEndpoints:
 
         assert response.status_code == 200
         data = response.json()
-        assert set(data.keys()) == {"id", "title", "language_code", "key_phrases", "sections", "day"}
+        assert set(data.keys()) == {
+            "id",
+            "title",
+            "language_code",
+            "key_phrases",
+            "sections",
+            "review_requested",
+            "review_used",
+            "day",
+        }
         assert set(data["key_phrases"][0].keys()) == {"phrase", "translation"}
         assert set(data["sections"][0].keys()) == {"type", "phrases"}
         assert set(data["sections"][0]["phrases"][0].keys()) == {"text", "role", "language_code", "voice_id"}
@@ -134,6 +143,8 @@ class TestStoryEndpoints:
             "language_code",
             "key_phrases",
             "sections",
+            "review_requested",
+            "review_used",
             "day",
         }
 

@@ -1631,6 +1631,22 @@
             "title": "Language Code",
             "type": "string"
           },
+          "review_requested": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Review Requested",
+            "type": "array"
+          },
+          "review_used": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Review Used",
+            "type": "array"
+          },
           "sections": {
             "items": {
               "$ref": "#/components/schemas/LessonSection"

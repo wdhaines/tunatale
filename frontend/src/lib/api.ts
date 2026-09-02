@@ -109,6 +109,7 @@ export interface CurriculumSummary {
   days: DayPlan[];
   proposed: ProposedBatch | null;
   generation_mode?: "auto" | "manual";
+  review_pressure?: ReviewPressure;
 }
 
 /** POST /generate and /plan return a day COUNT, not day objects. */
@@ -149,7 +150,12 @@ export interface LessonSummary {
   sections: SectionSummary[];
 }
 
-export type ContentStrategy = "WIDER" | "DEEPER";
+/** REVIEW is themeless: the learner's decaying vocabulary IS the content. */
+export type ContentStrategy = "WIDER" | "DEEPER" | "REVIEW";
+
+/** How hard a generated lesson pushes to reuse vocabulary the learner is
+ *  forgetting, at the cost of its theme. Wire values; never shown to a user. */
+export type ReviewPressure = "NATURAL" | "BALANCED" | "INSISTENT";
 export type Direction = "recognition" | "production";
 
 interface PhraseDetail {
@@ -176,6 +182,11 @@ export interface LessonDetail {
   language_code: string;
   sections: SectionDetail[];
   key_phrases: KeyPhrase[];
+  /** What the generating prompt asked the model to reuse. Empty means
+   *  unmeasurable (authored import, or generated before the meter existed),
+   *  never "none landed". */
+  review_requested?: string[];
+  review_used?: string[];
 }
 
 export interface DayProgress {
@@ -714,6 +725,14 @@ export class TunaTaleAPI {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode }),
+    });
+  }
+
+  async setReviewPressure(id: string, pressure: ReviewPressure): Promise<{ pressure: string }> {
+    return this.request(`/api/curriculum/${id}/review-pressure`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pressure }),
     });
   }
 

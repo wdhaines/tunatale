@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-	import type { ProposedBatch } from '$lib/api';
+	import type { ProposedBatch, ReviewPressure } from '$lib/api';
 	import { onDestroy, onMount } from 'svelte';
 	import PlannerChat from '$lib/components/PlannerChat.svelte';
 	import ProposedBatchView from '$lib/components/ProposedBatch.svelte';
@@ -40,6 +40,31 @@
 	// Manual mode state
 	let generationMode: 'auto' | 'manual' = $state(initial.generation_mode ?? 'auto');
 	let modeLoading = $state(false);
+
+	// How hard generated lessons push to reuse decaying vocabulary, at the cost
+	// of the day's theme. Three values, so this is a select rather than the
+	// Auto/Manual toggle's click-to-flip — a button whose label is the NEXT state
+	// cannot express three, and there is no other on-screen consequence to read
+	// the current value off.
+	let reviewPressure: ReviewPressure = $state(initial.review_pressure ?? 'NATURAL');
+	let pressureLoading = $state(false);
+
+	// The labels say what happens to the STORY. The wire values (NATURAL /
+	// BALANCED / INSISTENT) never reach a user: the trade this setting makes —
+	// theme against review coverage — is the whole point of it, and an enum name
+	// communicates none of it.
+	const PRESSURE_LABELS: Record<ReviewPressure, string> = {
+		NATURAL: 'Theme first',
+		BALANCED: 'Balanced',
+		INSISTENT: 'Review first',
+	};
+	// Describes the SELECTED behaviour rather than the control, so the trade is
+	// legible without changing anything to find out.
+	const PRESSURE_HINTS: Record<ReviewPressure, string> = {
+		NATURAL: 'Lessons stay on their theme. Words you are forgetting appear only where they fit.',
+		BALANCED: 'Lessons look for openings to work in words you are forgetting.',
+		INSISTENT: 'Lessons bend their theme to fit in more of the words you are forgetting.',
+	};
 	let manualMessage = $state('');
 	let copiedPrompt = $state(false);
 	let pastedReply = $state('');
@@ -135,6 +160,24 @@
 		}
 	}
 
+	async function handlePressureChange(event: Event) {
+		const next = (event.currentTarget as HTMLSelectElement).value as ReviewPressure;
+		const previous = reviewPressure;
+		reviewPressure = next;
+		pressureLoading = true;
+		error = '';
+		try {
+			await api.setReviewPressure(data.curriculum.id, next);
+		} catch (e) {
+			// Put it back. A control still showing a value the server rejected is
+			// lying about the plan, and the next generation would surprise the user.
+			reviewPressure = previous;
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			pressureLoading = false;
+		}
+	}
+
 	function handleEditMessage() {
 		// Re-open the message input after a Copy so the user can revise before
 		// submitting — the input is frozen between copy and submit so the pasted
@@ -190,6 +233,18 @@
 			</p>
 			<div class="head-controls">
 				<RateLimitWidget />
+				<label class="pressure">
+					<span>Review words</span>
+					<select
+						disabled={pressureLoading}
+						value={reviewPressure}
+						onchange={handlePressureChange}
+					>
+						{#each Object.entries(PRESSURE_LABELS) as [value, label] (value)}
+							<option {value}>{label}</option>
+						{/each}
+					</select>
+				</label>
 				<button
 					class="mode-toggle"
 					disabled={modeLoading}
@@ -198,6 +253,7 @@
 					{isManual ? 'Auto' : 'Manual'}
 				</button>
 			</div>
+			<p class="pressure-hint" data-testid="pressure-hint">{PRESSURE_HINTS[reviewPressure]}</p>
 		</header>
 
 		{#if isManual}
@@ -329,6 +385,13 @@
 		align-items: center;
 		gap: 0.5rem;
 		margin-top: 0.5rem;
+		/* WRAPS. Three controls sized in `rem` (quota chip, review-words select,
+		   mode toggle) overflow a 320px viewport once an Android font-size
+		   setting scales the root — measured at 72px of horizontal page scroll at
+		   a 20px root before this line existed. Squeezing the select instead is
+		   not an option: with three values and no click-to-flip affordance, the
+		   current value has to stay readable. */
+		flex-wrap: wrap;
 	}
 	h2 {
 		margin: 0;
@@ -368,6 +431,37 @@
 	.reset.confirming {
 		border-color: var(--color-danger);
 		color: var(--color-danger);
+	}
+	.pressure {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.78rem;
+		color: var(--color-muted);
+		white-space: nowrap;
+	}
+	.pressure select {
+		font: inherit;
+		color: var(--color-text);
+		background: var(--color-surface-2);
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		padding: 0.2rem 0.35rem;
+	}
+	.pressure select:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+	/* Full width under the controls rather than beside them: it is a sentence,
+	   and squeezing it into the toolbar row would clip it on a phone. */
+	.pressure-hint {
+		margin: 0.35rem 0 0;
+		font-size: 0.76rem;
+		/* Explicit, not `normal`: the layout spec measures this against a line
+		   height to prove the sentence WRAPS rather than being clipped, and
+		   `getComputedStyle` reports `normal` as an unparseable string. */
+		line-height: 1.4;
+		color: var(--color-muted);
 	}
 	.mode-toggle {
 		padding: 0.35rem 0.8rem;

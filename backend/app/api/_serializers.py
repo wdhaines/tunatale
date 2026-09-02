@@ -20,6 +20,14 @@ def serialize_lesson(lesson_id: str, lesson: Lesson, *, day: int | None = None) 
             }
             for s in lesson.sections
         ],
+        # The review meter, and ONLY it — `generation_metadata` also carries
+        # token_glosses, verb_base_glosses, sentence_translations and the full
+        # Story-JSON source, which would bloat every lesson fetch on the reading
+        # path. Always present and always lists: empty means UNMEASURABLE (an
+        # authored import, or a lesson generated before the meter existed), which
+        # must not read as a failed generation.
+        "review_requested": list(lesson.generation_metadata.get("review_requested", [])),
+        "review_used": list(lesson.generation_metadata.get("review_used", [])),
     }
     if day is not None:
         result["day"] = day

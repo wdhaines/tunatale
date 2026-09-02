@@ -2318,6 +2318,16 @@ export interface components {
       key_phrases: components["schemas"]["LessonKeyPhrase"][];
       /** Language Code */
       language_code: string;
+      /**
+       * Review Requested
+       * @default []
+       */
+      review_requested: string[];
+      /**
+       * Review Used
+       * @default []
+       */
+      review_used: string[];
       /** Sections */
       sections: components["schemas"]["LessonSection"][];
       /** Title */

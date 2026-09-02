@@ -688,3 +688,125 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     });
   });
 });
+
+describe("review story (bd tunatale-hf55)", () => {
+  // The shared fixtures, not hand-rolled ones: the page derives lesson mastery
+  // from the transcript on mount, so a stub without `dialogue_lines` fails
+  // inside an unrelated code path and says nothing about this feature.
+  function renderPage() {
+    return render(Page, { props: { data: { curriculum, lesson, audio, transcript } } });
+  }
+
+  it("offers a review story as its own action, not a mode on Regenerate", () => {
+    // A review story is a DIFFERENT artifact — no theme, and it renames the day.
+    // Hiding that behind the same button as "make another version of this scene"
+    // would let a user get one without ever having asked for one.
+    const { getByText } = renderPage();
+    expect(getByText(/review story/i)).toBeTruthy();
+    expect(getByText("Regenerate Day 1")).toBeTruthy();
+  });
+
+  it("asks the pipeline for REVIEW, not WIDER", async () => {
+    mockRegenerateDay.mockResolvedValue({ status: "queued" });
+    const { getByText } = renderPage();
+
+    await fireEvent.click(getByText(/review story/i));
+    await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => {
+      expect(mockRegenerateDay).toHaveBeenCalledWith("cid-1", 1, "REVIEW");
+    });
+  });
+
+  it("warns that the day loses its theme before doing it", async () => {
+    // The confirm text for Regenerate describes a new version of the SAME
+    // scenario. Reusing it here would be actively misleading.
+    const { getByText, findByText } = renderPage();
+    await fireEvent.click(getByText(/review story/i));
+    expect(await findByText(/no theme|replaces the day/i)).toBeTruthy();
+    // Dismiss it. The dialog renders into document.body and outlives this
+    // component's teardown, so leaving it open makes the NEXT test's
+    // getByText(/review story/i) match two elements — the button and this
+    // dialog's prose — and fail for a reason that has nothing to do with it.
+    await fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+  });
+
+  it("passes any other failure through unchanged", async () => {
+    // The 409 rewrite must not swallow real errors. Only the "nothing is due"
+    // refusal gets reworded; a 502 or a network fault still has to say what it
+    // was, or the user is told the queue is empty when the server is down.
+    mockRegenerateDay.mockRejectedValue(new Error("Pipeline not available"));
+    const { getByText, findByText } = renderPage();
+
+    await fireEvent.click(getByText(/review story/i));
+    await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    expect(await findByText(/pipeline not available/i)).toBeTruthy();
+  });
+
+  it("reads a 409 as 'nothing is due', not as a failure", async () => {
+    // The backend refuses a review story when no vocabulary is due. That is a
+    // normal state — early in a curriculum, or right after clearing the queue —
+    // and the raw detail string would read to a user as something they broke.
+    mockRegenerateDay.mockRejectedValue(
+      new Error("REVIEW needs due review vocabulary and none is due for this language today"),
+    );
+    const { getByText, findByText } = renderPage();
+
+    await fireEvent.click(getByText(/review story/i));
+    await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    expect(await findByText(/nothing to review right now/i)).toBeTruthy();
+  });
+});
+
+describe("review coverage readout (bd tunatale-37xv)", () => {
+  function renderWith(
+    reviewFields: Partial<{ review_requested: string[]; review_used: string[] }>,
+  ) {
+    return render(Page, {
+      props: {
+        data: { curriculum, lesson: { ...lesson, ...reviewFields }, audio, transcript },
+      },
+    });
+  }
+
+  it("names the words the story reused, not just a count", () => {
+    // These are the words the learner is closest to forgetting. Seeing them
+    // named is itself a review; a bare "9 of 12" throws that away.
+    const { getByTestId } = renderWith({
+      review_requested: ["oppføre", "uansett", "derimot"],
+      review_used: ["oppføre", "derimot"],
+    });
+    const readout = getByTestId("review-coverage").textContent ?? "";
+    expect(readout).toMatch(/2 of 3/);
+    expect(readout).toContain("oppføre");
+    expect(readout).toContain("derimot");
+  });
+
+  it("says nothing at all when nothing was requested", () => {
+    // Most lessons early in a curriculum request nothing, and an imported lesson
+    // with no recorded request is UNMEASURABLE (bd tunatale-g4c9) rather than
+    // bad. Rendering "0 of 0" on those would put a permanent zero on the page.
+    const { queryByTestId } = renderWith({ review_requested: [], review_used: [] });
+    expect(queryByTestId("review-coverage")).toBeNull();
+  });
+
+  it("survives a lesson saved before the meter existed", () => {
+    const { queryByTestId } = renderWith({});
+    expect(queryByTestId("review-coverage")).toBeNull();
+  });
+
+  it("does not style a low number as a failure", async () => {
+    // At NATURAL pressure the prompt tells the model that using none of them is
+    // a correct answer — measured live, 1 of 12. Reading this as a grade would
+    // push a user toward INSISTENT for entirely the wrong reason.
+    const { getByTestId } = renderWith({
+      review_requested: ["a", "b", "c", "d"],
+      review_used: ["a"],
+    });
+    const el = getByTestId("review-coverage");
+    expect(el.className).not.toMatch(/error|warn|danger|bad/i);
+    expect(el.textContent ?? "").not.toMatch(/only|failed|missed|poor/i);
+  });
+});

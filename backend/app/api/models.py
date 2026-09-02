@@ -1055,6 +1055,10 @@ class LessonResponse(BaseModel):
     language_code: str
     key_phrases: list[LessonKeyPhrase]
     sections: list[LessonSection]
+    # What the generating prompt asked the model to reuse, and what the story
+    # actually used. Empty is "unmeasurable", not "none landed".
+    review_requested: list[str] = []
+    review_used: list[str] = []
     day: int | None = None  # omitted when unset
 
 

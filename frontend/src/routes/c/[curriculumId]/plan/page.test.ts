@@ -11,6 +11,7 @@ vi.mock("$lib/api", () => ({
     retryPipelineDay: vi.fn(),
     setGenerationMode: vi.fn(),
     getPlanTurnPrompt: vi.fn(),
+    setReviewPressure: vi.fn(),
   },
 }));
 
@@ -776,5 +777,126 @@ describe("manual mode", () => {
     // Click Revise — should focus the manual message textarea
     await fireEvent.click(getByRole("button", { name: /revise/i }));
     expect(document.activeElement).toBe(getByPlaceholderText(/message the planner/i));
+  });
+});
+
+describe("review pressure control (bd tunatale-xwqg)", () => {
+  const mockSetReviewPressure = vi.mocked(api.setReviewPressure);
+
+  function makeCurriculum(overrides: Partial<CurriculumSummary> = {}): CurriculumSummary {
+    return {
+      id: "trip-1",
+      topic: "Visiting Ljubljana",
+      language_code: "sl",
+      cefr_level: "A2",
+      days: [],
+      proposed: null,
+      generation_mode: "auto",
+      review_pressure: "NATURAL",
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("shows the stored setting without the user having to open it", () => {
+    // NOT a toggle: with three values there is no "click to flip", and unlike
+    // Auto/Manual there is no other on-screen consequence to read the current
+    // value off. It has to be visible at rest.
+    const { getByLabelText } = render(Page, {
+      props: { data: { curriculum: makeCurriculum({ review_pressure: "INSISTENT" }) } },
+    });
+    expect((getByLabelText(/review words/i) as HTMLSelectElement).value).toBe("INSISTENT");
+  });
+
+  it("falls back to NATURAL when the curriculum predates the setting", () => {
+    const curriculum = makeCurriculum();
+    delete (curriculum as Partial<CurriculumSummary>).review_pressure;
+    const { getByLabelText } = render(Page, { props: { data: { curriculum } } });
+    expect((getByLabelText(/review words/i) as HTMLSelectElement).value).toBe("NATURAL");
+  });
+
+  it("never puts the enum names in front of the user", () => {
+    // NATURAL / BALANCED / INSISTENT are wire values. The labels have to say
+    // what happens to the STORY, because the trade this setting makes — theme
+    // against review coverage — is the entire point of it.
+    const { getByLabelText } = render(Page, {
+      props: { data: { curriculum: makeCurriculum() } },
+    });
+    const labels = [...(getByLabelText(/review words/i) as HTMLSelectElement).options].map(
+      (o) => o.textContent?.trim() ?? "",
+    );
+    expect(labels).toHaveLength(3);
+    for (const label of labels) {
+      expect(label).not.toMatch(/NATURAL|BALANCED|INSISTENT/);
+    }
+  });
+
+  it("explains what the CURRENT setting does, not just what the control is", async () => {
+    // A static "this changes review pressure" line explains nothing. The hint
+    // describes the selected behaviour, so the trade is legible at rest.
+    mockSetReviewPressure.mockResolvedValue({ pressure: "INSISTENT" });
+    const { getByLabelText, getByTestId } = render(Page, {
+      props: { data: { curriculum: makeCurriculum() } },
+    });
+    expect(getByTestId("pressure-hint").textContent).toMatch(/stay on their theme/i);
+
+    await fireEvent.change(getByLabelText(/review words/i), { target: { value: "INSISTENT" } });
+    await waitFor(() => {
+      expect(getByTestId("pressure-hint").textContent).toMatch(/bend/i);
+    });
+  });
+
+  it("persists the choice", async () => {
+    mockSetReviewPressure.mockResolvedValue({ pressure: "BALANCED" });
+    const { getByLabelText } = render(Page, {
+      props: { data: { curriculum: makeCurriculum() } },
+    });
+
+    await fireEvent.change(getByLabelText(/review words/i), { target: { value: "BALANCED" } });
+
+    await waitFor(() => {
+      expect(mockSetReviewPressure).toHaveBeenCalledWith("trip-1", "BALANCED");
+    });
+  });
+
+  it("reverts and explains when the save fails", async () => {
+    // A control that keeps a value the server rejected is lying about the state
+    // of the plan, and the next generation would surprise the user.
+    mockSetReviewPressure.mockRejectedValue(new Error("Curriculum not found"));
+    const { getByLabelText, findByText } = render(Page, {
+      props: { data: { curriculum: makeCurriculum() } },
+    });
+
+    await fireEvent.change(getByLabelText(/review words/i), { target: { value: "INSISTENT" } });
+
+    expect(await findByText(/curriculum not found/i)).toBeTruthy();
+    await waitFor(() => {
+      expect((getByLabelText(/review words/i) as HTMLSelectElement).value).toBe("NATURAL");
+    });
+  });
+
+  it("cannot be changed again while a save is in flight", async () => {
+    let release: (v: { pressure: string }) => void = () => {};
+    mockSetReviewPressure.mockReturnValue(
+      new Promise((r) => {
+        release = r;
+      }),
+    );
+
+    const { getByLabelText } = render(Page, {
+      props: { data: { curriculum: makeCurriculum() } },
+    });
+    await fireEvent.change(getByLabelText(/review words/i), { target: { value: "BALANCED" } });
+
+    await waitFor(() => {
+      expect((getByLabelText(/review words/i) as HTMLSelectElement).disabled).toBe(true);
+    });
+    release({ pressure: "BALANCED" });
+    await waitFor(() => {
+      expect((getByLabelText(/review words/i) as HTMLSelectElement).disabled).toBe(false);
+    });
   });
 });

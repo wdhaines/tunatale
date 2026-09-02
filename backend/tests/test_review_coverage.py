@@ -204,3 +204,53 @@ class TestTheMeterIsWiredIn:
         assert lesson.generation_metadata["review_requested"] == []
         assert lesson.generation_metadata["review_used"] == []
         assert "Review words used" not in caplog.text
+
+
+# ── The meter reaches the lesson response (bd tunatale-37xv) ───────────────
+
+
+class TestTheLessonResponseCarriesTheMeter:
+    """`GET /api/story/{id}` returned no generation metadata at all, so the only
+    way to read the meter was the server log or a db poke — which makes the
+    feature's actual outcome invisible to the person it is for.
+
+    ⚠️ TWO COUNTS AND TWO LISTS, NOT THE WHOLE BLOB. `generation_metadata` also
+    carries token_glosses, verb_base_glosses, sentence_translations and the full
+    Story-JSON source; dumping it would bloat every lesson fetch on the reading
+    path to avoid one decision.
+    """
+
+    @pytest.fixture
+    def db(self):
+        with SRSDatabase(":memory:") as database:
+            _seed_overdue(database, PRESENT_WORD)
+            _seed_overdue(database, ABSENT_WORD)
+            yield database
+
+    async def test_the_response_reports_what_was_asked_and_what_landed(self, language, db):
+        from app.api._serializers import serialize_lesson
+
+        lesson = await _generate(language, db)
+        payload = serialize_lesson("l1", lesson)
+
+        assert set(payload["review_requested"]) == {PRESENT_WORD, ABSENT_WORD}
+        assert payload["review_used"] == [PRESENT_WORD]
+
+    def test_a_lesson_with_no_review_data_reports_empty_lists(self, language):
+        """A hand-authored import, or any lesson generated before this existed.
+        Empty means UNMEASURABLE and must not read as a failed generation — so it
+        is still present and still a list, never null and never absent."""
+        from app.api._serializers import serialize_lesson
+        from app.models.lesson import Lesson
+
+        payload = serialize_lesson("l1", Lesson(title="T", language_code="sl", sections=[]))
+        assert payload["review_requested"] == []
+        assert payload["review_used"] == []
+
+    async def test_the_heavy_metadata_stays_out_of_the_response(self, language, db):
+        from app.api._serializers import serialize_lesson
+
+        lesson = await _generate(language, db)
+        payload = serialize_lesson("l1", lesson)
+        for heavy in ("token_glosses", "sentence_translations", "story", "generation_metadata"):
+            assert heavy not in payload, f"{heavy} would bloat every lesson fetch on the reading path"

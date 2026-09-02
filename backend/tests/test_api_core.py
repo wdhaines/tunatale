@@ -405,7 +405,15 @@ class TestCurriculumEndpoints:
 
         assert response.status_code == 200
         data = response.json()
-        assert set(data.keys()) == {"id", "title", "language_code", "key_phrases", "sections"}
+        assert set(data.keys()) == {
+            "id",
+            "title",
+            "language_code",
+            "key_phrases",
+            "sections",
+            "review_requested",
+            "review_used",
+        }
         # The shared model still has `day` (get_lesson sets it); this route
         # simply doesn't emit it — the two assertions must not match.
         assert set(LessonResponse.model_fields) == {
@@ -414,6 +422,8 @@ class TestCurriculumEndpoints:
             "language_code",
             "key_phrases",
             "sections",
+            "review_requested",
+            "review_used",
             "day",
         }
 

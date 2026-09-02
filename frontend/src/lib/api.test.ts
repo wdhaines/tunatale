@@ -335,6 +335,31 @@ describe("TunaTaleAPI", () => {
       );
     });
 
+    it("setReviewPressure calls POST /api/curriculum/:id/review-pressure", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ pressure: "INSISTENT" })));
+
+      const result = await api.setReviewPressure("trip-1", "INSISTENT");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/trip-1/review-pressure`,
+        expect.objectContaining({
+          method: "POST",
+          // The WIRE value, not the label the user picked it by. The plan page
+          // shows "Review first"; the backend enum is what travels.
+          body: JSON.stringify({ pressure: "INSISTENT" }),
+        }),
+      );
+      expect(result.pressure).toBe("INSISTENT");
+    });
+
+    it("setReviewPressure throws on 404", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Not Found")));
+
+      await expect(api.setReviewPressure("missing", "NATURAL")).rejects.toThrow(
+        "POST /api/curriculum/missing/review-pressure: Not Found",
+      );
+    });
+
     it("deleteCurriculumDay calls DELETE /api/curriculum/:id/days/:day", async () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ deleted_day: 2, days: 3 })));
 
