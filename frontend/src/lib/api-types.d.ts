@@ -1545,6 +1545,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/story/review-session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Create Review Session
+     * @description Generate one review session: no curriculum, no day, no theme.
+     *
+     *     The counterpart of ``generate_story`` for content that belongs to no plan.
+     *     It takes no identifiers at all — see ``CreateReviewSessionRequest`` for why
+     *     that is enforced rather than merely undocumented.
+     */
+    post: operations["create_review_session_api_story_review_session_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/story/{lesson_id}": {
     parameters: {
       query?: never;
@@ -1715,6 +1739,36 @@ export interface components {
       translation: string;
       /** Word Count */
       word_count: number;
+    };
+    /**
+     * CreateReviewSessionRequest
+     * @description Body of POST /api/story/review-session — deliberately empty.
+     *
+     *     ⚠️ ``extra="forbid"`` is the interface carrying the decision. A review
+     *     session is drawn from the WHOLE language deck, so there is no curriculum to
+     *     name and no day to pick; silently ignoring a ``curriculum_id`` would let a
+     *     caller believe it had scoped the session to one plan. Rejecting it says so.
+     */
+    CreateReviewSessionRequest: Record<string, never>;
+    /**
+     * CreateReviewSessionResponse
+     * @description Response of POST /api/story/review-session.
+     *
+     *     Dated, not numbered — a session has no position in a sequence to report.
+     */
+    CreateReviewSessionResponse: {
+      /** Id */
+      id: string;
+      /** Review Requested */
+      review_requested: string[];
+      /** Review Used */
+      review_used: string[];
+      /** Session Date */
+      session_date: string;
+      /** Title */
+      title: string;
+      /** Warnings */
+      warnings: string[];
     };
     /**
      * CurriculumDayWithPosition
@@ -5652,6 +5706,39 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["GetStoryPromptResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  create_review_session_api_story_review_session_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateReviewSessionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CreateReviewSessionResponse"];
         };
       };
       /** @description Validation Error */

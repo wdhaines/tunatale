@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # ── SRS models ──────────────────────────────────────────────────────────────
 
@@ -424,6 +424,32 @@ class GenerateStoryResponse(BaseModel):
     id: str
     title: str
     sections: list
+    warnings: list[str]
+
+
+class CreateReviewSessionRequest(BaseModel):
+    """Body of POST /api/story/review-session — deliberately empty.
+
+    ⚠️ ``extra="forbid"`` is the interface carrying the decision. A review
+    session is drawn from the WHOLE language deck, so there is no curriculum to
+    name and no day to pick; silently ignoring a ``curriculum_id`` would let a
+    caller believe it had scoped the session to one plan. Rejecting it says so.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CreateReviewSessionResponse(BaseModel):
+    """Response of POST /api/story/review-session.
+
+    Dated, not numbered — a session has no position in a sequence to report.
+    """
+
+    id: str
+    session_date: str
+    title: str
+    review_requested: list[str]
+    review_used: list[str]
     warnings: list[str]
 
 

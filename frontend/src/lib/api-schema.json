@@ -239,6 +239,61 @@
         "title": "CreateItemRequest",
         "type": "object"
       },
+      "CreateReviewSessionRequest": {
+        "additionalProperties": false,
+        "description": "Body of POST /api/story/review-session \u2014 deliberately empty.\n\n\u26a0\ufe0f ``extra=\"forbid\"`` is the interface carrying the decision. A review\nsession is drawn from the WHOLE language deck, so there is no curriculum to\nname and no day to pick; silently ignoring a ``curriculum_id`` would let a\ncaller believe it had scoped the session to one plan. Rejecting it says so.",
+        "properties": {},
+        "title": "CreateReviewSessionRequest",
+        "type": "object"
+      },
+      "CreateReviewSessionResponse": {
+        "description": "Response of POST /api/story/review-session.\n\nDated, not numbered \u2014 a session has no position in a sequence to report.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "review_requested": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Review Requested",
+            "type": "array"
+          },
+          "review_used": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Review Used",
+            "type": "array"
+          },
+          "session_date": {
+            "title": "Session Date",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "session_date",
+          "title",
+          "review_requested",
+          "review_used",
+          "warnings"
+        ],
+        "title": "CreateReviewSessionResponse",
+        "type": "object"
+      },
       "CurriculumDayWithPosition": {
         "description": "One element of GetCurriculumResponse.days / .proposed.days.\n\nMirrors ``CurriculumDay`` (``app/models/curriculum.py``) plus ``position``,\nthe handler-computed contiguous display ordinal (``Curriculum.day_positions()``)\n\u2014 as opposed to ``day``, a stable but possibly-gappy key.",
         "properties": {
@@ -7306,6 +7361,48 @@
           }
         },
         "summary": "Get Story Prompt",
+        "tags": [
+          "generation"
+        ]
+      }
+    },
+    "/api/story/review-session": {
+      "post": {
+        "description": "Generate one review session: no curriculum, no day, no theme.\n\nThe counterpart of ``generate_story`` for content that belongs to no plan.\nIt takes no identifiers at all \u2014 see ``CreateReviewSessionRequest`` for why\nthat is enforced rather than merely undocumented.",
+        "operationId": "create_review_session_api_story_review_session_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReviewSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateReviewSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Review Session",
         "tags": [
           "generation"
         ]
