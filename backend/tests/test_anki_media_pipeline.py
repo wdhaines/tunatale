@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.cards.media.forvo import ForvoOutcome, ForvoResult
 from app.cards.media.pipeline import MediaResult, fetch_card_media
 from app.cards.media.pixabay import PixabaySearch
@@ -127,6 +129,11 @@ class TestAudioStatus:
 class TestLanguageThreading:
     """Backlog #28: language_code selects the Forvo section + TTS voice."""
 
+    # Marked individually, not at module or class scope: these two are the only
+    # tests here that reach a real ffmpeg (via the media pipeline's normalize
+    # step), and the marker costs hostile-timezone coverage for whatever it
+    # covers. See tests/conftest.py::pytest_configure.
+    @pytest.mark.ffmpeg
     async def test_resolves_tts_voice_from_language_code(self):
         captured_voice: list[str | None] = []
 
@@ -172,6 +179,11 @@ class TestLanguageThreading:
         )
         assert captured_lang == ["no"]
 
+    # Marked individually, not at module or class scope: these two are the only
+    # tests here that reach a real ffmpeg (via the media pipeline's normalize
+    # step), and the marker costs hostile-timezone coverage for whatever it
+    # covers. See tests/conftest.py::pytest_configure.
+    @pytest.mark.ffmpeg
     async def test_explicit_tts_voice_overrides_language_default(self):
         captured_voice: list[str | None] = []
 

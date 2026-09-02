@@ -813,6 +813,17 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     # ⚠️ UNLIKE THE FOUR ABOVE, this one is not an opt-in gate — there is no
     # --run-ffmpeg and these tests always run locally and in the `backend` job.
+    #
+    # ⚠️ HOW TO CHECK THE MARKER IS COMPLETE, and how NOT to. ffmpeg must be
+    # ABSENT from PATH, not present-and-failing. A shim that exists and exits 1
+    # was the first probe used here (2026-09-01) and it under-reported: a caller
+    # that catches CalledProcessError and falls back survives a failing binary
+    # but dies on a missing one with FileNotFoundError. That gap reddened main
+    # (run 33575171747) with two tests in test_anki_media_pipeline.py that the
+    # shim had passed. Build the probe by symlinking every PATH binary EXCEPT
+    # ffmpeg/ffprobe into a scratch dir and running with PATH set to just that:
+    #     TZ=UTC PATH="$CLEAN" uv run pytest -n 4 --no-cov -q -m "not ffmpeg"
+    # It must report zero failures.
     # It exists so CI's two hostile-TIMEZONE jobs can deselect them with
     # `-m "not ffmpeg"` and skip installing ffmpeg altogether (10 modules, 204
     # tests). Marking a test with it therefore REMOVES timezone coverage from it;
