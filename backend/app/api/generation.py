@@ -277,7 +277,13 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
     #
     # Cost is bounded and paid on a request that already waits on an LLM story:
     # 1.85s cold, 34ms once the sentence analyses are cached.
-    srs_db = getattr(request.app.state, "srs_db", None)
+    # request.state, NOT request.app.state (bd tunatale-pf4i). main.py:181 binds
+    # app.state.srs_db to the DEFAULT language once at startup; main.py:310 resolves
+    # request.state.srs_db per request from X-TT-Language. `store` and `language` in
+    # this same handler already read request.state — reading app.state here
+    # annotated and prewarmed the WRONG language's deck on any non-default-language
+    # request, silently, because both are text-keyed caches.
+    srs_db = getattr(request.state, "srs_db", None)
     if srs_db is not None:
         await annotate_chunk_upos_for_lesson(lesson, srs_db, **_injected_lemmatizer(request))
 
@@ -337,7 +343,13 @@ async def import_story(body: ImportLessonRequest, request: Request):
     # import_lesson already wrote the lesson, so the tags need a second write
     # rather than an earlier one. Awaited and persisted for the same reason as
     # /generate above: a detached task tags a copy that is never stored.
-    srs_db = getattr(request.app.state, "srs_db", None)
+    # request.state, NOT request.app.state (bd tunatale-pf4i). main.py:181 binds
+    # app.state.srs_db to the DEFAULT language once at startup; main.py:310 resolves
+    # request.state.srs_db per request from X-TT-Language. `store` and `language` in
+    # this same handler already read request.state — reading app.state here
+    # annotated and prewarmed the WRONG language's deck on any non-default-language
+    # request, silently, because both are text-keyed caches.
+    srs_db = getattr(request.state, "srs_db", None)
     if srs_db is not None:
         if await annotate_chunk_upos_for_lesson(lesson, srs_db, **_injected_lemmatizer(request)):
             store.update_lesson_data(lesson_id, lesson)

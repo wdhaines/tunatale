@@ -217,3 +217,184 @@ class TestLanguagesEndpointFallbacks:
         assert body["languages"] == []
         assert set(body.keys()) == {"languages", "active", "sync_available"}
         assert set(LanguagesResponse.model_fields) == {"languages", "active", "sync_available"}
+
+
+class TestGenerateStoryUsesTheRequestsDatabase:
+    """``/api/story/generate`` must annotate against the REQUEST's SRS db.
+
+    bd tunatale-pf4i. ``generate_story`` read ``request.app.state.srs_db`` —
+    the DEFAULT language's connection, set once at startup — while ``store``,
+    ``language`` and the pipeline enqueue in the SAME function all read
+    ``request.state``. Three of four resolved per-request; the fourth did not.
+    Generating a story in the non-default language therefore wrote UPOS chunk
+    annotations and prewarmed sentence analyses into the OTHER language's
+    database. Both are text-keyed caches, so nothing raised: the symptom is
+    plausible annotation drawn from, and cached into, the wrong deck.
+
+    ⚠️ THIS TEST IS ONLY MEANINGFUL WITH TWO LANGUAGES CONFIGURED. With one,
+    ``app.state.srs_db`` and ``request.state.srs_db`` are the SAME OBJECT, so
+    the bug is invisible and any single-language test passes either way. That is
+    almost certainly why it survived. Do not "simplify" this fixture to one
+    language.
+
+    The lemmatizer is injected through ``app.state.lemmatizer`` — the seam
+    ``_injected_lemmatizer`` exists for — so the sentence-analysis cache write
+    is reachable without loading Stanza and without patching into ``app.``.
+    """
+
+    SENTENCE = "kako ste"
+
+    @pytest.fixture
+    def two_language_generate_app(self):
+        from unittest.mock import AsyncMock
+
+        from app.models.curriculum import Curriculum, CurriculumDay
+        from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
+        from app.srs.lemmatizer import TokenAnalysis
+
+        db_sl = SRSDatabase(":memory:")
+        db_no = SRSDatabase(":memory:")
+        store_no = ContentStore(":memory:")
+        store_no.save_curriculum(
+            "c-no",
+            Curriculum(
+                id="c-no",
+                topic="coffee",
+                language_code="no",
+                cefr_level="A2",
+                days=[
+                    CurriculumDay(
+                        day=1,
+                        title="Day 1",
+                        focus="greetings",
+                        learning_objective="greet",
+                        story_guidance="cafe",
+                        collocations=["hei"],
+                    )
+                ],
+            ),
+        )
+
+        generator = AsyncMock()
+        generator.generate = AsyncMock(
+            return_value=Lesson(
+                title="Day 1",
+                language_code="no",
+                key_phrases=[KeyPhraseInfo(phrase=self.SENTENCE, translation="how are you")],
+                sections=[
+                    # KEY_PHRASES specifically: annotate_chunk_upos walks that
+                    # section and no other, and iterates lesson.key_phrases
+                    # against it, needing 2 + len(breakdown) phrases per key
+                    # phrase or it warns and skips. A lesson missing either half
+                    # caches nothing, and the assertion below would then pass
+                    # vacuously in BOTH directions — a clean negative, not an
+                    # oracle. Padded generously; the exact count is not the point.
+                    Section(
+                        section_type=SectionType.KEY_PHRASES,
+                        phrases=[
+                            Phrase(
+                                text=self.SENTENCE,
+                                role="male-1",
+                                voice_id="nb-NO-FinnNeural",
+                                language_code="no",
+                            )
+                            for _ in range(24)
+                        ],
+                    )
+                ],
+            )
+        )
+
+        class _Lemmatizer:
+            """Deterministic stand-in: one analysis per whitespace token."""
+
+            def analyze_sentence(self, sentence, language_code):
+                return [TokenAnalysis(surface=t, lemma=t, upos="NOUN") for t in sentence.split()]
+
+        app.state.srs_dbs = {"sl": db_sl, "no": db_no}
+        app.state.content_stores = {"sl": ContentStore(":memory:"), "no": store_no}
+        app.state.languages = {"sl": get_language("sl"), "no": get_language("no")}
+        # The singular attributes bind to the DEFAULT language (sl) — exactly
+        # the startup state that made the bug reachable.
+        app.state.srs_db = db_sl
+        app.state.content_store = app.state.content_stores["sl"]
+        app.state.language = get_language("sl")
+        app.state.story_generator = generator
+        app.state.lemmatizer = _Lemmatizer()
+        app.state.model_version = "test-v1"
+        try:
+            yield db_sl, db_no
+        finally:
+            db_sl.close()
+            db_no.close()
+            for attr in (
+                "srs_dbs",
+                "content_stores",
+                "languages",
+                "srs_db",
+                "content_store",
+                "language",
+                "story_generator",
+                "lemmatizer",
+                "model_version",
+            ):
+                if hasattr(app.state, attr):
+                    delattr(app.state, attr)
+
+    async def test_annotation_lands_in_the_requested_languages_db(self, two_language_generate_app, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "target_language", "sl")
+        db_sl, db_no = two_language_generate_app
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/story/generate",
+                json={"curriculum_id": "c-no", "day": 1, "strategy": "WIDER"},
+                headers={"X-TT-Language": "no"},
+            )
+        assert resp.status_code == 201, resp.text
+
+        # The Norwegian request must cache its analysis in the Norwegian db...
+        assert db_no.get_sentence_analysis(self.SENTENCE, "no", "test-v1") is not None
+        # ...and must not touch the default (Slovene) one. This is the assertion
+        # that fails before the fix: the annotation went to app.state.srs_db.
+        assert db_sl.get_sentence_analysis(self.SENTENCE, "no", "test-v1") is None
+
+    async def test_import_lands_in_the_requested_languages_db(self, two_language_generate_app, monkeypatch):
+        """The SAME defect existed at a SECOND call site — /import, not just
+        /generate — and both were fixed together.
+
+        ⚠️ This test exists because a guard on one path leaves the other broken
+        forever with no error. `annotate_chunk_upos_for_lesson` is called from
+        BOTH handlers; a single-path test cannot tell you the other one still
+        reads app.state. That is the same shape as tunatale-fgeq's M1 note.
+        """
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "target_language", "sl")
+        db_sl, db_no = two_language_generate_app
+
+        story = {
+            "title": "Day 1",
+            "key_phrases": [{"phrase": self.SENTENCE, "translation": "how are you"}],
+            "scenes": [
+                {
+                    "label": "Cafe",
+                    "lines": [{"speaker": "male-1", "text": self.SENTENCE, "translation": "how are you"}],
+                }
+            ],
+            "dialogue_glosses": [],
+            "morphology_focus": [],
+        }
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/story/import",
+                json={"curriculum_id": "c-no", "day": 1, "story": story},
+                headers={"X-TT-Language": "no"},
+            )
+        assert resp.status_code == 201, resp.text
+
+        assert db_no.get_sentence_analysis(self.SENTENCE, "no", "test-v1") is not None
+        assert db_sl.get_sentence_analysis(self.SENTENCE, "no", "test-v1") is None
