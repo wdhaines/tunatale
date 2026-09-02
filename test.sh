@@ -188,6 +188,18 @@ if [ "$backend_rc" -ne 0 ] || [ "$frontend_rc" -ne 0 ] || [ "$peer_sync_rc" -ne 
   rm -f "$ROOT/.git/tt-test-pass"
   echo "=== FAILED (backend=$backend_rc frontend=$frontend_rc peer_sync=$peer_sync_rc) ==="
   echo "Full log (never truncated): $full_log"
+  # Toolchain versions, because a red run is sometimes the TOOLCHAIN, not the
+  # tree (bd tunatale-1l26.3). A Node upgrade installed mid-session broke the
+  # whole vitest suite while CI stayed green on its own pinned Node, and the
+  # first plausible story — "something I did to node_modules" — was wrong. What
+  # actually identified it was an install timestamp on the node binary, which
+  # nothing in the repo pointed at. Printing the versions here costs two lines
+  # and makes the next such incident self-identifying.
+  #
+  # Deliberately NOT a pin or a version check: a warning nobody reads is worse
+  # than nothing, and pinning means the developer now has a Node install to
+  # manage. This attacks the cost that was actually paid, which was DIAGNOSIS.
+  echo "Toolchain: node $(node --version 2>/dev/null || echo '?') | bun $(bun --version 2>/dev/null || echo '?') | python $(cd "$ROOT/backend" && uv run python --version 2>/dev/null | awk '{print $2}' || echo '?')"
   exit 1
 fi
 
