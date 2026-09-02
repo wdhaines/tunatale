@@ -811,6 +811,16 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "peer_sync: requires --run-peer-sync (drives Anki sync subprocess against a self-host server).",
     )
+    # ⚠️ UNLIKE THE FOUR ABOVE, this one is not an opt-in gate — there is no
+    # --run-ffmpeg and these tests always run locally and in the `backend` job.
+    # It exists so CI's two hostile-TIMEZONE jobs can deselect them with
+    # `-m "not ffmpeg"` and skip installing ffmpeg altogether (10 modules, 204
+    # tests). Marking a test with it therefore REMOVES timezone coverage from it;
+    # mark only tests that genuinely shell out to the binary.
+    config.addinivalue_line(
+        "markers",
+        "ffmpeg: shells out to a real ffmpeg binary on PATH.",
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

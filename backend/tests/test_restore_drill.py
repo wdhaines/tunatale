@@ -41,6 +41,11 @@ from restore_drill import (  # noqa: E402
     verify_media,
 )
 
+# Shells out to a real ffmpeg binary. CI's two hostile-timezone jobs deselect
+# these with -m "not ffmpeg" so they need no ffmpeg install; see
+# pyproject.toml [tool.pytest.ini_options] markers.
+pytestmark = pytest.mark.ffmpeg
+
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 

@@ -18,7 +18,8 @@ runs:
     # FIVE job instances installed ffmpeg when this was written (backend,
     # backend-hostile-tz x2, backend-hostile-hour, e2e), moving ~470 MB per run.
     #
-    # It is THREE now, and the count is the thing to watch: the warm path makes
+    # It is ONE now (the `backend` job), and the count is the thing to watch:
+    # the warm path makes
     # zero network calls, so what is left is a 7-8s floor with a tail — measured
     # across 8 runs x 4 jobs, at least one job took >=15s in 5 of them, spiking
     # to 29s. Total CI is MAX(job), so that tail is the real cost and it
@@ -27,9 +28,13 @@ runs:
     #   - e2e dropped out entirely (2026-09-01): a broken-ffmpeg shim showed 51
     #     of 52 specs never touch it, and the one that did only built a 3s
     #     silent opus, now committed as a fixture.
-    # The remaining three all run the audio suite: 51 tests across 9 modules
-    # fail without ffmpeg (test_reassemble_lesson 21, test_audio_slicer 11,
-    # test_rename_section_titles 5, test_restore_drill 4, and six smaller).
+    #   - both hostile-timezone jobs dropped out (2026-09-01): they run
+    #     `pytest -m "not ffmpeg"`, deselecting the 10 modules that shell out to
+    #     the binary. They are --no-cov, so the 100% gate is unaffected.
+    # ONLY the `backend` job installs ffmpeg now, and it must: 51 tests across
+    # those 10 modules fail outright without it (test_reassemble_lesson 21,
+    # test_audio_slicer 11, test_rename_section_titles 5, test_restore_drill 4,
+    # and six smaller).
     #
     # The bytes are not really the problem; the MIRROR is. Anything that moves
     # them over GitHub's own network instead wins, which is what the cache does.

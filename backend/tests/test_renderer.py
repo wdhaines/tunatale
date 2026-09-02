@@ -20,6 +20,11 @@ from app.audio.renderer import LessonRenderer
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 from app.plugins.languages.sl.preprocessor import SlovenePreprocessor
 
+# Shells out to a real ffmpeg binary. CI's two hostile-timezone jobs deselect
+# these with -m "not ffmpeg" so they need no ffmpeg install; see
+# pyproject.toml [tool.pytest.ini_options] markers.
+pytestmark = pytest.mark.ffmpeg
+
 # Shared test helpers
 _PHRASE_RATE = 11025
 _PHRASE_DURATION_MS = 200

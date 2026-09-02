@@ -17,6 +17,11 @@ from app.audio.transcode import (
     encode_audio,
 )
 
+# Shells out to a real ffmpeg binary. CI's two hostile-timezone jobs deselect
+# these with -m "not ffmpeg" so they need no ffmpeg install; see
+# pyproject.toml [tool.pytest.ini_options] markers.
+pytestmark = pytest.mark.ffmpeg
+
 
 def _silence(duration_ms: int = 500, rate: int = 24000) -> tuple[np.ndarray, int]:
     frames = round(duration_ms / 1000 * rate)

@@ -32,6 +32,11 @@ from app.audio.renderer import LessonRenderer
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.plugins.languages.sl.preprocessor import SlovenePreprocessor
 
+# Shells out to a real ffmpeg binary. CI's two hostile-timezone jobs deselect
+# these with -m "not ffmpeg" so they need no ffmpeg install; see
+# pyproject.toml [tool.pytest.ini_options] markers.
+pytestmark = pytest.mark.ffmpeg
+
 SYNTH_URL = "https://eastus.tts.speech.microsoft.com/cognitiveservices/v1"
 _VOICE = "sl-SI-PetraNeural"
 

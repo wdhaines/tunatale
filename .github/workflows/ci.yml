@@ -268,21 +268,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # ffmpeg is a hard runtime dep (app/audio/transcode.py,
-      # app/cards/media/normalize.py, app/audio/alignment.py) and no test
-      # skips without it. Defined ONCE in .github/actions/setup-ffmpeg —
-      # five job instances used to each drag the same 94.1 MB dependency
-      # closure off an Ubuntu mirror (~470 MB/run) with the step duplicated
-      # verbatim in four places.
-      - name: Install ffmpeg
-        # tunatale-ouk.2: cap the step so a hung mirror cannot eat the job's
-        # full 20min and then report as a plain `fail` that reads exactly like
-        # a broken build (that misdiagnosis cost real time on 2026-08-18).
-        # 6 min, NOT the 2-3 min that issue suggested: the step measured 4m28s
-        # on e2e in run 32185315294, so a 3min cap would have reddened CI on
-        # the spot. Tighten it once the cache above is landing hits.
-        timeout-minutes: 6
-        uses: ./.github/actions/setup-ffmpeg
+      # ⚠️ NO ffmpeg STEP HERE, deliberately — do not "restore" it. This job runs
+      # `pytest -m "not ffmpeg"`, which deselects the only tests needing the
+      # binary. Running those is the `backend` job's business, and it does.
+      #
+      # Why: `Install ffmpeg` has a 7-8s floor but a long tail — across 8 runs x
+      # 4 jobs at least one instance took >=15s in 5 of them, spiking to 29s
+      # (30-46s historically). Total CI is MAX(job), so the tail is the cost and
+      # the exposure compounds with the number of jobs installing it. Four jobs
+      # installed it on 2026-09-01; one does now.
+      #
+      # ⚠️ WHAT THIS COSTS, so it reads as a decision and not an accident: this
+      # job no longer exercises those 204 audio/render tests under a hostile
+      # offset. "Audio code has no dates, so it cannot carry an offset bug" is a
+      # plausible argument, NOT a measured one. If an offset bug is ever found in
+      # audio code, this is what let it through — and the fix then is to narrow
+      # the marker, not to reinstate a 94 MB install in two more jobs.
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9/v10 alias exists)
         with:
@@ -305,7 +306,12 @@ jobs:
         run: uv run python scripts/build_nst_lexicon.py build
 
       - name: Test at ${{ matrix.tz }}
-        run: uv run pytest -n auto --no-cov
+        # `-m "not ffmpeg"` deselects the 10 audio/render modules (204 tests) that
+        # shell out to a real ffmpeg binary, which is what lets this job skip the
+        # ffmpeg install entirely — see the note where that step used to be.
+        # The `backend` job still runs them, so nothing goes unrun, and the 100%
+        # coverage gate is untouched because this job is --no-cov anyway.
+        run: uv run pytest -n auto --no-cov -m "not ffmpeg"
         env:
           TZ: ${{ matrix.tz }}
 
@@ -360,21 +366,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # ffmpeg is a hard runtime dep (app/audio/transcode.py,
-      # app/cards/media/normalize.py, app/audio/alignment.py) and no test
-      # skips without it. Defined ONCE in .github/actions/setup-ffmpeg —
-      # five job instances used to each drag the same 94.1 MB dependency
-      # closure off an Ubuntu mirror (~470 MB/run) with the step duplicated
-      # verbatim in four places.
-      - name: Install ffmpeg
-        # tunatale-ouk.2: cap the step so a hung mirror cannot eat the job's
-        # full 20min and then report as a plain `fail` that reads exactly like
-        # a broken build (that misdiagnosis cost real time on 2026-08-18).
-        # 6 min, NOT the 2-3 min that issue suggested: the step measured 4m28s
-        # on e2e in run 32185315294, so a 3min cap would have reddened CI on
-        # the spot. Tighten it once the cache above is landing hits.
-        timeout-minutes: 6
-        uses: ./.github/actions/setup-ffmpeg
+      # ⚠️ NO ffmpeg STEP HERE, deliberately — do not "restore" it. This job runs
+      # `pytest -m "not ffmpeg"`, which deselects the only tests needing the
+      # binary. Running those is the `backend` job's business, and it does.
+      #
+      # Why: `Install ffmpeg` has a 7-8s floor but a long tail — across 8 runs x
+      # 4 jobs at least one instance took >=15s in 5 of them, spiking to 29s
+      # (30-46s historically). Total CI is MAX(job), so the tail is the cost and
+      # the exposure compounds with the number of jobs installing it. Four jobs
+      # installed it on 2026-09-01; one does now.
+      #
+      # ⚠️ WHAT THIS COSTS, so it reads as a decision and not an accident: this
+      # job no longer exercises those 204 audio/render tests under a hostile
+      # offset. "Audio code has no dates, so it cannot carry an offset bug" is a
+      # plausible argument, NOT a measured one. If an offset bug is ever found in
+      # audio code, this is what let it through — and the fix then is to narrow
+      # the marker, not to reinstate a 94 MB install in two more jobs.
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9/v10 alias exists)
         with:
@@ -416,7 +423,12 @@ jobs:
         run: uv run python scripts/build_nst_lexicon.py build
 
       - name: Test at the rollover hour
-        run: TZ="$HOSTILE_TZ" uv run pytest -n auto --no-cov
+        # `-m "not ffmpeg"` deselects the 10 audio/render modules (204 tests) that
+        # shell out to a real ffmpeg binary, which is what lets this job skip the
+        # ffmpeg install entirely — see the note where that step used to be.
+        # The `backend` job still runs them, so nothing goes unrun, and the 100%
+        # coverage gate is untouched because this job is --no-cov anyway.
+        run: TZ="$HOSTILE_TZ" uv run pytest -n auto --no-cov -m "not ffmpeg"
 
   frontend:
     runs-on: ubuntu-latest

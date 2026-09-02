@@ -18,6 +18,11 @@ from app.audio.alignment import (
     trim_silence,
 )
 
+# Shells out to a real ffmpeg binary. CI's two hostile-timezone jobs deselect
+# these with -m "not ffmpeg" so they need no ffmpeg install; see
+# pyproject.toml [tool.pytest.ini_options] markers.
+pytestmark = pytest.mark.ffmpeg
+
 # Toy vocabulary for the synthetic emission matrices: 0 = blank, 1 = "a", 2 = "b".
 _BLANK, _A, _B = 0, 1, 2
 

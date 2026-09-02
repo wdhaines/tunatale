@@ -18,6 +18,11 @@ import pytest
 from app.audio.ports import TTSExhausted
 from app.audio.render_service import _with_render_retries
 
+# Shells out to a real ffmpeg binary. CI's two hostile-timezone jobs deselect
+# these with -m "not ffmpeg" so they need no ffmpeg install; see
+# pyproject.toml [tool.pytest.ini_options] markers.
+pytestmark = pytest.mark.ffmpeg
+
 
 async def _never_slept(_delay: float) -> None:  # pragma: no cover - guard, see below
     raise AssertionError("a cooldown was paid when no retry was needed")

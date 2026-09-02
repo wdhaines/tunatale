@@ -18,6 +18,11 @@ from app.audio import slicer as slicer_module
 from app.audio.slicer import PARENT_RATE, ChunkSlicer, SliceSpec, alignment_installed, build_slicers
 from app.config import Settings
 
+# Shells out to a real ffmpeg binary. CI's two hostile-timezone jobs deselect
+# these with -m "not ffmpeg" so they need no ffmpeg install; see
+# pyproject.toml [tool.pytest.ini_options] markers.
+pytestmark = pytest.mark.ffmpeg
+
 _RATE = 24_000
 _PARENT_MS = 900.0
 

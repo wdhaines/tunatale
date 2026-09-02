@@ -21,6 +21,11 @@ from app.audio.pause_calculator import NaturalPauseCalculator
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 from app.storage.store import ContentStore
 
+# Shells out to a real ffmpeg binary. CI's two hostile-timezone jobs deselect
+# these with -m "not ffmpeg" so they need no ffmpeg install; see
+# pyproject.toml [tool.pytest.ini_options] markers.
+pytestmark = pytest.mark.ffmpeg
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 

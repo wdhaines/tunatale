@@ -20,9 +20,15 @@ from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.storage.store import ContentStore
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import pytest
 import rename_section_titles as rename_mod  # noqa: E402
 
 from tests.test_reassemble_lesson import _populate_store  # noqa: E402
+
+# Shells out to a real ffmpeg binary. CI's two hostile-timezone jobs deselect
+# these with -m "not ffmpeg" so they need no ffmpeg install; see
+# pyproject.toml [tool.pytest.ini_options] markers.
+pytestmark = pytest.mark.ffmpeg
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 

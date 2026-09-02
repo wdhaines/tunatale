@@ -31,6 +31,11 @@ from app.audio.slicing import (
     time_stretch,
 )
 
+# Shells out to a real ffmpeg binary. CI's two hostile-timezone jobs deselect
+# these with -m "not ffmpeg" so they need no ffmpeg install; see
+# pyproject.toml [tool.pytest.ini_options] markers.
+pytestmark = pytest.mark.ffmpeg
+
 _RATE = 16000
 _TARGET_MS = _SLICER_TARGET_MS
 
