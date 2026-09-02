@@ -29,6 +29,10 @@ vi.mock("$lib/api", () => ({
     renderReviewSession: vi.fn(),
     getReviewSessionTranscript: vi.fn(),
     getLessonTranscript: vi.fn(),
+    submitDrill: vi.fn(),
+    undoGrade: vi.fn(),
+    createSRSItem: vi.fn(),
+    createBaseCard: vi.fn(),
     audioUrl: vi.fn((id: string) => `/audio/${id}`),
   },
 }));
@@ -121,6 +125,42 @@ function sessionBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function transcriptWithWord(overrides: Record<string, unknown> = {}) {
+  return {
+    lesson_id: "sess-1",
+    key_phrases: [],
+    dialogue_lines: [
+      {
+        role: "female-1",
+        sentence: "Toget er forsinket",
+        words: [
+          {
+            surface: "Toget",
+            lemma: "tog",
+            srs_state: "learning",
+            srs_item_id: 42,
+            translation: null,
+            collocation_span_id: null,
+            collocation_start: false,
+            collocation_srs_state: null,
+            collocation_lemma: null,
+            collocation_translation: null,
+            card_type: null,
+            active_state: "learning",
+            active_direction: "recognition",
+            is_due: true,
+            progress: null,
+            inflectable: false,
+            inflection_feature: null,
+            known_marked: false,
+            ...overrides,
+          },
+        ],
+      },
+    ],
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockSessionTranscript.mockResolvedValue(TRANSCRIPT);
@@ -181,6 +221,72 @@ describe("the reader", () => {
     const { findByText } = render(Page, { props: { data: data() } });
 
     expect(await findByText(/Toget/)).toBeTruthy();
+  });
+
+  it("grading a word goes through the same actions the lesson page uses", async () => {
+    // The user's ask: "as much like the lesson page as possible, just with a
+    // different source". The word popover's grade button is the SAME control the
+    // lesson page's own tests drive — it exists here because both pages call one
+    // createReadingActions, not because it was re-implemented.
+    //
+    // The refetch assertion is the guard against a future fork: it must re-read
+    // the SESSION transcript and never the lesson one.
+    mockSessionTranscript.mockResolvedValue(transcriptWithWord() as never);
+    vi.mocked(api.submitDrill).mockResolvedValue({} as never);
+
+    const { findByRole } = render(Page, { props: { data: data() } });
+
+    await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+
+    await vi.waitFor(() => {
+      expect(api.submitDrill).toHaveBeenCalledWith(42, "recognition", "good");
+      expect(mockSessionTranscript).toHaveBeenCalledTimes(2);
+    });
+    expect(mockLessonTranscript).not.toHaveBeenCalled();
+  });
+
+  it("introduces an unknown word against the SESSION's language", async () => {
+    // Covers the other branch of the shared actions, and pins that the language
+    // comes from the session rather than from any curriculum.
+    mockSessionTranscript.mockResolvedValue(
+      transcriptWithWord({ active_state: "unknown" }) as never,
+    );
+    vi.mocked(api.createBaseCard).mockResolvedValue({ id: 7 } as never);
+    vi.mocked(api.submitDrill).mockResolvedValue({} as never);
+
+    const { findByRole } = render(Page, { props: { data: data() } });
+    await fireEvent.click(await findByRole("button", { name: "Start learning" }));
+
+    await vi.waitFor(() =>
+      expect(api.createBaseCard).toHaveBeenCalledWith(
+        expect.objectContaining({ language_code: "no", surface: "Toget" }),
+      ),
+    );
+  });
+
+  it("surfaces a failed grade instead of swallowing it", async () => {
+    mockSessionTranscript.mockResolvedValue(transcriptWithWord() as never);
+    vi.mocked(api.submitDrill).mockRejectedValue(new Error("already synced to Anki"));
+
+    const { findByRole, findByText } = render(Page, { props: { data: data() } });
+    await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+
+    expect(await findByText(/already synced to Anki/)).toBeTruthy();
+  });
+
+  it("a graded word can be undone, exactly as on a lesson", async () => {
+    // Completes the Got it ✓ -> Undo ↩ cycle here too. The undo state lives in
+    // the shared actions, so this is the same code path the lesson page's own
+    // undo test drives — which is the point of the extraction.
+    mockSessionTranscript.mockResolvedValue(transcriptWithWord() as never);
+    vi.mocked(api.submitDrill).mockResolvedValue({} as never);
+    vi.mocked(api.undoGrade).mockResolvedValue({} as never);
+
+    const { findByRole } = render(Page, { props: { data: data() } });
+    await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+    await fireEvent.click(await findByRole("button", { name: "Undo ↩" }));
+
+    await vi.waitFor(() => expect(api.undoGrade).toHaveBeenCalledWith(42, "recognition"));
   });
 
   it("asks the SESSION transcript endpoint, never the lesson one", async () => {

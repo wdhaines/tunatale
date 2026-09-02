@@ -10,6 +10,7 @@
 	import TranscriptPlaceholder from '$lib/components/TranscriptPlaceholder.svelte';
 	import { syncStore } from '$lib/stores/sync.svelte';
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
+	import { createReadingActions } from '$lib/reading/readingActions.svelte';
 	import { lessonModePref } from '$lib/stores/lessonModePref.svelte';
 	import { pipelineStore } from '$lib/stores/pipeline.svelte';
 	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
@@ -426,211 +427,26 @@
 	// Derived booleans for template conditionals (avoid && phantom branches)
 	const showCheckWorkLink = $derived(isListened ? queueCount > 0 && hasUnreviewedListen : false);
 
-	// Single-level undo cycle: the last drill grade (word or phrase) stays
-	// reversible from its popover ("Undo ↩") until something else is graded,
-	// the page reloads, or a sync hands the review to Anki (backend 409s then).
-	let undoable = $state<{ itemId: number; direction: 'recognition' | 'production' } | null>(
-		null
-	);
+	// ⚠️ ONE IMPLEMENTATION, SHARED WITH THE REVIEW-SESSION READER. These ~200
+	// lines used to live here and were nearly copied into that page when its
+	// transcript endpoint missed on a session id. Only the SOURCE differs
+	// between the two — see $lib/reading/readingActions.svelte.ts.
+	const reading = createReadingActions({
+		// Getters, not values: read at call time so this survives SvelteKit
+		// reusing the component across a navigation, and so Svelte does not warn
+		// about capturing `data` at init.
+		get contentId() {
+			return data.lesson.id;
+		},
+		get languageCode() {
+			return data.lesson.language_code;
+		},
+		fetchTranscript: (id) => api.getLessonTranscript(id),
+		getTranscript: () => transcript,
+		setTranscript: (t) => (transcript = t),
+		setError: (m) => (error = m)
+	});
 
-	async function handleWordClick(word: import('$lib/api').WordToken, lineIndex: number) {
-		if (wordActionInFlight) return;
-		wordActionInFlight = true;
-		error = '';
-		try {
-			if (word.active_state === 'unknown') {
-				// Reading an untracked word introduces AND reviews it in one tap:
-				// create the base card, then record a first recognition review so it
-				// enters learning right away (not just parked at NEW).
-				const sentence = transcript!.dialogue_lines[lineIndex]?.sentence ?? '';
-				const created = await api.createBaseCard({
-					surface: word.surface,
-					lemma: word.lemma,
-					sentence,
-					language_code: data.lesson.language_code,
-					translation: word.translation ?? ''
-				});
-				await api.submitDrill(created.id, 'recognition', 'good');
-				undoable = { itemId: created.id, direction: 'recognition' };
-			} else if (word.is_due && word.active_direction && word.srs_item_id != null) {
-				const direction = word.active_direction as 'recognition' | 'production';
-				await api.submitDrill(word.srs_item_id, direction, 'good');
-				undoable = { itemId: word.srs_item_id, direction };
-			} else if (word.recognition_reviewable && word.srs_item_id != null) {
-				// Read-ahead: reading a not-due word is a valid RECOGNITION review.
-				// Always grade the literal recognition direction — never
-				// active_direction, which flips to production once recognition
-				// graduates (that would silently grade the wrong card).
-				await api.submitDrill(word.srs_item_id, 'recognition', 'good');
-				undoable = { itemId: word.srs_item_id, direction: 'recognition' };
-			} else {
-				return;
-			}
-			transcript = await api.getLessonTranscript(data.lesson.id);
-			// A grade changes the review counts; keep the shared nav badge truthful.
-			queueStatsStore.refresh();
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
-		} finally {
-			wordActionInFlight = false;
-		}
-	}
-
-	async function handleCollocationStateChange(span_id: number) {
-		if (wordActionInFlight) return;
-		wordActionInFlight = true;
-		error = '';
-		try {
-			await api.submitDrill(span_id, 'recognition', 'good');
-			undoable = { itemId: span_id, direction: 'recognition' };
-			transcript = await api.getLessonTranscript(data.lesson.id);
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
-		} finally {
-			wordActionInFlight = false;
-		}
-	}
-
-	async function handleUndoGrade(itemId: number, direction: 'recognition' | 'production') {
-		error = '';
-		// Either way the snapshot is spent: success restores it, failure means a
-		// newer grade or a sync invalidated it — drop the Undo button regardless.
-		undoable = null;
-		try {
-			await api.undoGrade(itemId, direction);
-			transcript = await api.getLessonTranscript(data.lesson.id);
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
-		}
-	}
-
-	const tooltipActions = {
-		onCreateInflection: async (word: import('$lib/api').WordToken, sentence: string) => {
-			error = '';
-			try {
-				await api.createInflectionCloze({
-					surface: word.surface,
-					lemma: word.lemma,
-					feature: word.inflection_feature!,
-					sentence,
-					language_code: data.lesson.language_code,
-					lesson_id: data.lesson.id,
-					translation: word.translation ?? ''
-				});
-				transcript = await api.getLessonTranscript(data.lesson.id);
-			} catch (e) {
-				error = e instanceof Error ? e.message : String(e);
-			}
-		},
-		onSetState: async (id: number, state: string) => {
-			// Reset-to-new forgets the card in Anki too (re-learn from scratch),
-			// so confirm before discarding the schedule. Other states are label-only.
-			if (
-				state === 'new' &&
-				!(await confirmDialog(
-					'Reset this word? It will be forgotten in Anki too and re-learned from scratch.',
-					{ destructive: true }
-				))
-			) {
-				return;
-			}
-			error = '';
-			try {
-				await api.setSRSItemState(id, state);
-				transcript = await api.getLessonTranscript(data.lesson.id);
-			} catch (e) {
-				error = e instanceof Error ? e.message : String(e);
-			}
-		},
-		onUntrack: async (id: number) => {
-			error = '';
-			try {
-				await api.untrackSRSItem(id);
-				transcript = await api.getLessonTranscript(data.lesson.id);
-			} catch (e) {
-				error = e instanceof Error ? e.message : String(e);
-			}
-		},
-		onUnignore: async (id: number) => {
-			error = '';
-			try {
-				await api.suspendSRSItem(id, false);
-				transcript = await api.getLessonTranscript(data.lesson.id);
-			} catch (e) {
-				error = e instanceof Error ? e.message : String(e);
-			}
-		},
-		onIgnoreLemma: async (lemma: string) => {
-			error = '';
-			try {
-				await api.ignoreLemma(lemma, data.lesson.language_code);
-				transcript = await api.getLessonTranscript(data.lesson.id);
-			} catch (e) {
-				error = e instanceof Error ? e.message : String(e);
-			}
-		},
-		onUnignoreLemma: async (lemma: string) => {
-			error = '';
-			try {
-				await api.unignoreLemma(lemma, data.lesson.language_code);
-				transcript = await api.getLessonTranscript(data.lesson.id);
-			} catch (e) {
-				error = e instanceof Error ? e.message : String(e);
-			}
-		},
-		onRestoreKnown: async (id: number) => {
-			error = '';
-			try {
-				await api.restoreKnown(id);
-				transcript = await api.getLessonTranscript(data.lesson.id);
-			} catch (e) {
-				error = e instanceof Error ? e.message : String(e);
-			}
-		},
-		// Match on item id only — grading recognition can graduate it, flipping the
-		// refetched word's active_direction to production; the undo must still hit
-		// the direction that was actually graded (stored in `undoable`).
-		isGradeUndoable: (word: import('$lib/api').WordToken) =>
-			undoable != null && word.srs_item_id === undoable.itemId,
-		onUndoGrade: async (_word: import('$lib/api').WordToken) => {
-			if (undoable != null) await handleUndoGrade(undoable.itemId, undoable.direction);
-		}
-	};
-
-	async function handleCreatePhrase({
-		text,
-		word_count,
-		translation,
-		source_sentence,
-		source_lesson_id,
-		source_line_index
-	}: {
-		text: string;
-		word_count: number;
-		translation: string;
-		lineIndex: number;
-		startIdx: number;
-		endIdx: number;
-		source_sentence?: string;
-		source_lesson_id?: string;
-		source_line_index?: number;
-	}) {
-		error = '';
-		try {
-			await api.createSRSItem({
-				text,
-				language_code: data.lesson.language_code,
-				word_count,
-				translation,
-				source_sentence,
-				source_lesson_id,
-				source_line_index
-			});
-			transcript = await api.getLessonTranscript(data.lesson.id);
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
-		}
-	}
 </script>
 
 <svelte:window onresize={measureNav} />
@@ -739,13 +555,8 @@
 				<Transcript
 					{transcript}
 					lesson={data.lesson}
-					onWordClick={handleWordClick}
-					onCollocationStateChange={handleCollocationStateChange}
-					undoableItemId={undoable?.itemId ?? null}
-					onCollocationUndo={(spanId) => handleUndoGrade(spanId, 'recognition')}
-					onCreatePhrase={handleCreatePhrase}
 					controller={playbackController}
-					tooltipActions={tooltipActions}
+					{...reading.transcriptProps}
 				/>
 			{:else if transcriptLoading}
 				<TranscriptPlaceholder lesson={data.lesson} />

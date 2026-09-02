@@ -6,6 +6,7 @@
 	import Transcript from '$lib/components/Transcript.svelte';
 	import TranscriptPlaceholder from '$lib/components/TranscriptPlaceholder.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
+	import { createReadingActions } from '$lib/reading/readingActions.svelte';
 
 	// The reader for a review session.
 	//
@@ -28,6 +29,24 @@
 	let preparing = $state(false);
 	let renderError = $state('');
 	let playbackController: PlaybackController | null = $state(null);
+	let error = $state('');
+
+	// ⚠️ THE SAME ACTIONS THE LESSON PAGE USES, from one implementation. Tapping
+	// a word grades it, the popovers create cards and cloze inflections, undo
+	// works — none of it re-implemented here. Only the SOURCE differs, which is
+	// the whole claim of this page.
+	const reading = createReadingActions({
+		get contentId() {
+			return data.session.id;
+		},
+		get languageCode() {
+			return data.session.language_code;
+		},
+		fetchTranscript: (id) => api.getReviewSessionTranscript(id),
+		getTranscript: () => transcript,
+		setTranscript: (t) => (transcript = t),
+		setError: (m) => (error = m)
+	});
 
 	const MONTHS = [
 		'January',
@@ -127,9 +146,18 @@
 		</div>
 	{/if}
 
+	{#if error}
+		<p class="error" role="alert">{error}</p>
+	{/if}
+
 	<section class="transcript">
 		{#if transcript}
-			<Transcript {transcript} lesson={data.session} controller={playbackController} />
+			<Transcript
+				{transcript}
+				lesson={data.session}
+				controller={playbackController}
+					{...reading.transcriptProps}
+			/>
 		{:else if transcriptLoading}
 			<TranscriptPlaceholder lesson={data.session} />
 		{:else}
