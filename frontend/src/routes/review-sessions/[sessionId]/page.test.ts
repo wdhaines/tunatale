@@ -38,6 +38,7 @@ vi.mock("$lib/api", () => ({
 }));
 
 import { api } from "$lib/api";
+import { lessonModePref } from "$lib/stores/lessonModePref.svelte";
 import Page from "./+page.svelte";
 import { load } from "./+page";
 
@@ -163,6 +164,19 @@ function transcriptWithWord(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // jsdom has no matchMedia, and the shared Read/Listen toggle reads it on mount
+  // to pick the viewport default. Desktop, so Read mode is the default and the
+  // transcript renders — the same stub the lesson page's tests use.
+  (window as unknown as { matchMedia: unknown }).matchMedia = vi.fn(() => ({
+    matches: false,
+    media: "(max-width: 640px)",
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
+  // lessonModePref is a module singleton shared with the lesson page, so a
+  // Listen click in one test leaks into the next. Reset it explicitly rather
+  // than depending on test order.
+  lessonModePref.set("read");
   mockSessionTranscript.mockResolvedValue(TRANSCRIPT);
 });
 
@@ -287,6 +301,20 @@ describe("the reader", () => {
     await fireEvent.click(await findByRole("button", { name: "Undo ↩" }));
 
     await vi.waitFor(() => expect(api.undoGrade).toHaveBeenCalledWith(42, "recognition"));
+  });
+
+  it("has the Read/Listen toggle, and Listen hides the transcript", async () => {
+    // Same control, same store, same behaviour as a lesson: the mode is one
+    // persisted preference, so switching here and opening a lesson keeps it.
+    mockSessionTranscript.mockResolvedValue(transcriptWithWord() as never);
+    const { findByRole, queryByText, getByRole } = render(Page, { props: { data: data() } });
+
+    expect(await findByRole("button", { name: "Read" })).toBeTruthy();
+    await findByRole("button", { name: "Got it ✓" });
+
+    await fireEvent.click(getByRole("button", { name: "Listen" }));
+
+    expect(queryByText("Toget")).toBeNull();
   });
 
   it("asks the SESSION transcript endpoint, never the lesson one", async () => {

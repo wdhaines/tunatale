@@ -7,6 +7,8 @@
 	import TranscriptPlaceholder from '$lib/components/TranscriptPlaceholder.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { createReadingActions } from '$lib/reading/readingActions.svelte';
+	import ReadListenToggle from '$lib/components/ReadListenToggle.svelte';
+	import { lessonModePref } from '$lib/stores/lessonModePref.svelte';
 
 	// The reader for a review session.
 	//
@@ -29,6 +31,10 @@
 	let preparing = $state(false);
 	let renderError = $state('');
 	let playbackController: PlaybackController | null = $state(null);
+
+	// The SAME persisted, viewport-defaulted preference the lesson page reads —
+	// one store, so switching to Listen here and opening a lesson keeps the mode.
+	const mode = $derived(lessonModePref.mode);
 	let error = $state('');
 
 	// ⚠️ THE SAME ACTIONS THE LESSON PAGE USES, from one implementation. Tapping
@@ -118,6 +124,7 @@
 		{#if coverage}
 			<p class="coverage">{coverage} words you were forgetting</p>
 		{/if}
+		<ReadListenToggle />
 		<p class="muted">
 			A review session — built from what has decayed across your whole deck, with no theme and no
 			place in any curriculum.
@@ -150,20 +157,22 @@
 		<p class="error" role="alert">{error}</p>
 	{/if}
 
-	<section class="transcript">
-		{#if transcript}
+	{#if mode === 'read'}
+		<section class="transcript">
+			{#if transcript}
 			<Transcript
 				{transcript}
 				lesson={data.session}
 				controller={playbackController}
 					{...reading.transcriptProps}
 			/>
-		{:else if transcriptLoading}
-			<TranscriptPlaceholder lesson={data.session} />
-		{:else}
-			<p class="muted">No transcript available.</p>
-		{/if}
-	</section>
+			{:else if transcriptLoading}
+				<TranscriptPlaceholder lesson={data.session} />
+			{:else}
+				<p class="muted">No transcript available.</p>
+			{/if}
+		</section>
+	{/if}
 </main>
 
 <style>

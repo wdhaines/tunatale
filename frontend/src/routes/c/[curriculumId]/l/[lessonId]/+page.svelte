@@ -12,6 +12,7 @@
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 	import { createReadingActions } from '$lib/reading/readingActions.svelte';
 	import { lessonModePref } from '$lib/stores/lessonModePref.svelte';
+	import ReadListenToggle from '$lib/components/ReadListenToggle.svelte';
 	import { pipelineStore } from '$lib/stores/pipeline.svelte';
 	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
 	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
@@ -487,12 +488,7 @@
 					<p class="error">{error}</p>
 				{/if}
 			</div>
-			<div class="mode-row">
-				<div class="toggle-pill">
-					<button class:active={mode === 'read'} onclick={() => lessonModePref.set('read')}>Read</button>
-					<button class:active={mode === 'listen'} onclick={() => lessonModePref.set('listen')}>Listen</button>
-				</div>
-			</div>
+			<ReadListenToggle />
 			<!-- Stats read as lesson metadata under the title rather than a third
 			     stacked line in the action row — same information, no extra row. -->
 			{#if mastery && masteryPct !== null}
@@ -667,9 +663,6 @@
 	}
 	/* Level with the title, not the top of its column: `align-items: start` would
 	   hang the pill off the band's top edge and the h1 is the taller box. */
-	.player-header > .mode-row {
-		align-self: center;
-	}
 	.player-title-area {
 		display: flex;
 		flex-direction: column;
@@ -836,11 +829,6 @@
 		border-color: var(--color-danger);
 		color: var(--color-danger);
 	}
-	.mode-row {
-		display: flex;
-		justify-content: flex-end;
-		flex-shrink: 0;
-	}
 	.render-row {
 		display: flex;
 		justify-content: center;
@@ -876,34 +864,6 @@
 	.state-failed {
 		background: color-mix(in srgb, var(--color-danger) 14%, transparent);
 		color: var(--color-danger);
-	}
-	.toggle-pill {
-		display: flex;
-		gap: 0;
-		background: var(--color-surface-2);
-		border-radius: var(--radius-pill);
-		padding: 2px;
-		width: fit-content;
-	}
-	.toggle-pill button {
-		margin: 0;
-		padding: 0.35rem 1rem;
-		border: none;
-		border-radius: var(--radius-pill);
-		background: transparent;
-		color: var(--color-muted);
-		font-size: 0.85rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: background 0.15s ease, color 0.15s ease;
-	}
-	.toggle-pill button.active {
-		background: var(--color-bg, #fff);
-		color: var(--color-text);
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-	}
-	.toggle-pill button:not(.active):hover {
-		color: var(--color-text);
 	}
 	.player-card {
 		position: sticky;
