@@ -978,22 +978,27 @@
 		gap: 0.25rem;
 		min-width: 0;
 	}
-	/* Revealed, the gloss takes its own full-width row instead of borrowing the
-	   Due column. Borrowing it (grid-column: 1 / 3) placed the gloss in the same
-	   cell as the dueness pill, which occupies column 2 across rows 1-2 — CSS
-	   Grid stacks two items in one cell rather than reflowing, so a long gloss
-	   painted straight through the pill.
+	/* ⚠️ THERE IS DELIBERATELY NO `.sub.revealed` PLACEMENT RULE. Revealing a
+	   gloss must not move it — it wraps in place, inside the word column.
 
-	   It takes column 1 ONLY, not the full width. Spanning every column fixed
-	   the overlap but left the text running underneath the Due track, which
-	   still reads as encroaching on it even though nothing overlaps (user,
-	   2026-09-01). Confined to the word column the gloss simply wraps, the Due
-	   track stays visually clear, and the pill keeps its two-row centring
-	   (rows 1-2, column 2) untouched. */
-	.sub.revealed {
-		grid-column: 1;
-		grid-row: 3;
-	}
+	   The history is worth a paragraph, because two of the three placements
+	   tried here were plausible and wrong. The original `grid-column: 1 / 3`
+	   borrowed the Due column for ~50px of extra width and painted a long gloss
+	   straight through the dueness pill, which occupies column 2 across rows 1-2
+	   (Grid stacks two items in one cell, it does not reflow). Moving it to a
+	   full-width row 3 fixed the overlap but left the text running under the Due
+	   track, which still reads as encroachment. Confining it to `grid-column: 1`
+	   fixed that — and, because it kept `grid-row: 3`, it also added a whole grid
+	   TRACK to every row on reveal (~16px), so the list reflowed under the
+	   reader's finger on every tap.
+
+	   Column 1 is already where `.sub` lives, so once the gloss stops borrowing
+	   column 2 there is nothing left for a separate rule to do: row 2 of column 1
+	   is clear of the pill (column 2) and of the grade control (column 3, or
+	   row 3 in the narrow arm). A long gloss still grows the row by wrapping,
+	   which is unavoidable and required — the blur is nowrap-with-ellipsis
+	   precisely so a TYPICAL gloss (median 7 chars across both real decks) is one
+	   line before and after, and the row's shape does not change at all. */
 	.gloss {
 		font-size: 0.72rem;
 		line-height: 1.25;
@@ -1276,13 +1281,10 @@
 		.candidate.tail .grade {
 			grid-row: 3;
 		}
-		/* In this arm the grade control already owns row 3, so the revealed
-		   gloss gets the next free row — same full-width shape as the
-		   three-column arm, and clear of both the pill (rows 1-2) and the grade
-		   (row 3). */
-		.sub.revealed {
-			grid-column: 1;
-			grid-row: 4;
-		}
+		/* No `.sub.revealed` rule here either, for the same reason as the
+		   three-column arm: the gloss stays in column 1 / row 2, which this arm
+		   leaves untouched (the grade moves to row 3, the pill keeps rows 1-2 of
+		   column 2). Giving it row 4 here was the narrow-arm half of the reflow
+		   regression. */
 	}
 </style>

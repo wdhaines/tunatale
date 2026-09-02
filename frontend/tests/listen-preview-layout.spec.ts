@@ -902,3 +902,39 @@ test("listen preview: a revealed long gloss does not overlap the Due pill", asyn
 		`gloss right edge ${g!.x + g!.width} must not cross into the Due column at ${c!.x}`,
 	).toBeLessThanOrEqual(c!.x);
 });
+
+test("listen preview: revealing a short gloss does not grow the row", async ({ page, request }) => {
+	test.skip(!(await backendAvailable(request)), "backend not running");
+	const id = await curriculumId(request);
+	await page.setViewportSize(PHONE);
+	const modal = await openPreview(page, id);
+
+	// A TYPICAL gloss, which is the whole point: the measured median across both
+	// real decks is 7 characters, so the overwhelmingly common reveal is a single
+	// line that was already a single line while blurred. `.gloss.blurred` is
+	// nowrap-with-ellipsis precisely so the blurred and revealed shapes match —
+	// "blur rather than omission keeps the row's shape stable" is the stated
+	// intent of the blur — and a reveal that reflows the grid breaks it for every
+	// row at once, long gloss or not.
+	const row = modal.locator(".candidate", { hasText: "kavo" }).first();
+	await expect(row).toBeVisible();
+
+	const gloss = row.locator(".gloss");
+	await expect(gloss).toHaveClass(/blurred/);
+	const before = await row.boundingBox();
+	expect(before, "row must have a box before reveal").not.toBeNull();
+
+	await gloss.click();
+	await expect(gloss).not.toHaveClass(/blurred/);
+	const after = await row.boundingBox();
+	expect(after, "row must have a box after reveal").not.toBeNull();
+
+	// Exact, not a tolerance: the regression this guards is a whole extra grid
+	// TRACK (the revealed gloss dropping to its own row), which is worth a full
+	// line-height and change. Anything smaller than that is not a thing the grid
+	// can do here, so a tolerance would only hide a real reflow.
+	expect(
+		after!.height,
+		`row grew from ${before!.height} to ${after!.height} on reveal — a short gloss occupied one line already`,
+	).toBe(before!.height);
+});
