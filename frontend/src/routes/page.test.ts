@@ -17,6 +17,8 @@ vi.mock("$lib/api", () => ({
     startPlan: vi.fn(),
     getCurriculumProgress: vi.fn(),
     deleteCurriculum: vi.fn(),
+    listReviewSessions: vi.fn(),
+    createReviewSession: vi.fn(),
   },
 }));
 
@@ -39,6 +41,7 @@ beforeEach(() => {
     { id: "x", topic: "test", created_at: "2026-01-01 00:00:00" },
   ]);
   mockGetCurriculumProgress.mockResolvedValue([]);
+  vi.mocked(api.listReviewSessions).mockResolvedValue([]);
   mockListenedHas.mockReturnValue(false);
 });
 

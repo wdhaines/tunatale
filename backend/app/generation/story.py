@@ -126,16 +126,14 @@ def build_story_prompts(
     """
     review_words = select_review_collocations(srs_db) if srs_db is not None else ()
     if strategy is ContentStrategy.REVIEW:
-        # A REVIEW story has no theme to fall back on, so an empty set is not
-        # "nothing to add" — it is a prompt with no content. This is the one
-        # place that cannot reuse the empty-set-is-byte-identical rule the other
-        # strategies hold to, because there is no prior behaviour to match.
-        if not review_words:
-            raise NoReviewVocabularyError("REVIEW needs due review vocabulary and none is due for this language today")
-        # The strategy sets BOTH axes. NATURAL's wording ("candidates, not
-        # requirements", "including none of them is a correct answer") is
-        # self-contradictory in a story whose only content is those words.
-        review_pressure = ReviewPressure.INSISTENT
+        # Delegated so there is exactly ONE REVIEW prompt builder. Safe because
+        # a REVIEW prompt provably uses nothing from *curriculum_day*: the
+        # template's format fields are only cefr_block / language_code /
+        # language_name / review_collocations, and two unrelated days render
+        # byte-identically through this function (measured on bd tunatale-9p9d).
+        # Passing the day here and ignoring it there would be the same fact
+        # written twice, and the copy nobody edits is the one that goes stale.
+        return _build_review_prompts(language, cefr_level, review_words)
 
     system_prompt = build_story_system_prompt(language)
 
@@ -153,6 +151,55 @@ def build_story_prompts(
         cefr_block=_build_cefr_block(cefr_level),
     )
     return StoryPrompts(system_prompt, user_prompt, tuple(review_words))
+
+
+def _build_review_prompts(language: Language, cefr_level: str, review_words: Sequence[str]) -> StoryPrompts:
+    """Render the themeless REVIEW prompt. The one place it is built.
+
+    ⚠️ An empty set is NOT "nothing to add" here — it is a prompt with no
+    content at all. This is the one strategy that cannot reuse the
+    empty-set-is-byte-identical rule the others hold to, because there is no
+    prior behaviour to match, so it refuses instead. The refusal happens before
+    any LLM call by construction: this runs while the prompt is still being
+    assembled.
+
+    Pressure is forced rather than passed. NATURAL's wording ("candidates, not
+    requirements", "including none of them is a correct answer") is
+    self-contradictory in a story whose only content is those words, so the
+    strategy sets both axes and a caller's dial has no say.
+    """
+    if not review_words:
+        raise NoReviewVocabularyError("REVIEW needs due review vocabulary and none is due for this language today")
+    user_prompt = get_strategy_prompt(ContentStrategy.REVIEW).format(
+        language_name=language.name,
+        language_code=language.code,
+        review_collocations=build_review_block(review_words, ReviewPressure.INSISTENT),
+        cefr_block=_build_cefr_block(cefr_level),
+    )
+    return StoryPrompts(build_story_system_prompt(language), user_prompt, tuple(review_words))
+
+
+def build_review_session_prompts(
+    language: Language,
+    cefr_level: str,
+    *,
+    srs_db: SRSDatabase | None = None,
+) -> StoryPrompts:
+    """The REVIEW prompt for a session that belongs to no curriculum.
+
+    A review session has no theme, no position in a sequence, and its content is
+    drawn from the whole language deck rather than one plan — so there is no
+    ``CurriculumDay`` to hand in, and this signature is the honest expression of
+    that (bd tunatale-9p9d). It is not a convenience wrapper: manufacturing a
+    synthetic day to satisfy the older signature would put a fake curriculum in
+    the data model to satisfy a function that then ignores it.
+
+    Selection still happens in exactly one place per path, and both paths render
+    through :func:`_build_review_prompts`, so this cannot drift from
+    ``build_story_prompts(..., ContentStrategy.REVIEW, ...)``.
+    """
+    review_words = select_review_collocations(srs_db) if srs_db is not None else ()
+    return _build_review_prompts(language, cefr_level, review_words)
 
 
 class StoryGenerator:
@@ -192,10 +239,39 @@ class StoryGenerator:
             srs_db=srs_db,
             review_pressure=review_pressure,
         )
+        return await self._complete(prompts, language, f"day {curriculum_day.day} ({strategy.value})")
+
+    async def generate_review_session(
+        self,
+        language: Language,
+        cefr_level: str = "A2",
+        *,
+        srs_db: SRSDatabase | None = None,
+    ) -> Lesson:
+        """Generate a Lesson for a review session — no curriculum, no day.
+
+        Deliberately NOT ``generate(..., strategy=REVIEW)`` with a stand-in day:
+        a review session belongs to no plan, and a signature that demanded one
+        would force a fake curriculum into the data model to satisfy a parameter
+        the REVIEW prompt then ignores (bd tunatale-9p9d).
+
+        Raises ``NoReviewVocabularyError`` — before any LLM call, while the
+        prompt is still being assembled — when nothing is due.
+        """
+        prompts = build_review_session_prompts(language, cefr_level, srs_db=srs_db)
+        return await self._complete(prompts, language, "a review session")
+
+    async def _complete(self, prompts: StoryPrompts, language: Language, label: str) -> Lesson:
+        """Call the model and parse it, with the truncation retry.
+
+        Shared by both entry points so the token budget below, and the retry
+        that re-derives it, exist exactly once. *label* is for the log line
+        only — it is the one thing the two paths genuinely differ on.
+        """
         system_prompt = prompts.system_prompt
         user_prompt = prompts.user_prompt
 
-        logger.info("Generating story for day %d (%s)", curriculum_day.day, strategy.value)
+        logger.info("Generating story for %s", label)
         # 4096, NOT 5500. gpt-oss-120b's free-tier budget is 8000 tokens/request and
         # Groq reserves prompt_tokens + max_completion_tokens against it up front, so a
         # request over 8000 is a hard 413 (not a retryable 429). The story system prompt

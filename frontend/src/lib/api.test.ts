@@ -85,6 +85,98 @@ describe("TunaTaleAPI", () => {
     vi.unstubAllGlobals();
   });
 
+  describe("review sessions", () => {
+    it("listReviewSessions unwraps the envelope to a bare list", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            sessions: [
+              {
+                id: "sess-1",
+                language_code: "no",
+                session_date: "2026-09-02",
+                title: "A Missed Train",
+                review_requested: ["oppf\u00f8re"],
+                review_used: [],
+              },
+            ],
+          }),
+        ),
+      );
+
+      const result = await api.listReviewSessions();
+
+      expect(result).toHaveLength(1);
+      expect(result[0].session_date).toBe("2026-09-02");
+    });
+
+    it("listReviewSessions preserves null as never-measured", async () => {
+      // null must survive the client. Coercing it to [] here would turn "no
+      // readout" into "reused 0 of 0" before the page ever sees it.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            sessions: [
+              {
+                id: "sess-1",
+                language_code: "no",
+                session_date: "2026-09-02",
+                title: "Old One",
+                review_requested: null,
+                review_used: null,
+              },
+            ],
+          }),
+        ),
+      );
+
+      const result = await api.listReviewSessions();
+
+      expect(result[0].review_requested).toBeNull();
+      expect(result[0].review_used).toBeNull();
+    });
+
+    it("createReviewSession POSTs an empty body and no identifiers", async () => {
+      // The empty body IS the interface: the route rejects a curriculum_id or a
+      // day with a 422, because a session belongs to no plan.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            id: "fresh",
+            session_date: "2026-09-02",
+            title: "The Late Bus",
+            review_requested: [],
+            review_used: [],
+            warnings: [],
+          }),
+        ),
+      );
+
+      const result = await api.createReviewSession();
+
+      const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(`${BASE}/api/review-sessions`);
+      expect(init.method).toBe("POST");
+      expect(init.body).toBe("{}");
+      expect(result.title).toBe("The Late Bus");
+    });
+
+    it("puts the status on the error so a refusal is not read as a failure", async () => {
+      // 409 "nothing due" is a normal Tuesday and the page renders it as a
+      // message. Without the status it could only be told apart by matching the
+      // detail text, which is written for the learner and will change.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockFailBody({ detail: "Nothing to review right now" }, 409)),
+      );
+
+      await expect(api.createReviewSession()).rejects.toMatchObject({ status: 409 });
+    });
+  });
+
   describe("curriculum", () => {
     it("listCurricula calls GET /api/curriculum", async () => {
       vi.stubGlobal(

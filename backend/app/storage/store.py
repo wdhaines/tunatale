@@ -5,7 +5,9 @@ Supports ":memory:" for in-memory test databases.
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -37,6 +39,19 @@ CREATE TABLE IF NOT EXISTS audio_files (
     file_path TEXT NOT NULL,
     section_index INTEGER,
     section_type TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+)
+"""
+
+_CREATE_REVIEW_SESSIONS = """
+CREATE TABLE IF NOT EXISTS review_sessions (
+    id TEXT PRIMARY KEY,
+    language_code TEXT NOT NULL,
+    session_date TEXT NOT NULL,
+    title TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    review_requested_json TEXT,
+    review_used_json TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 )
 """
@@ -73,7 +88,12 @@ class ContentStore:
         conn.execute(_CREATE_CURRICULA)
         conn.execute(_CREATE_LESSONS)
         conn.execute(_CREATE_AUDIO_FILES)
+        conn.execute(_CREATE_REVIEW_SESSIONS)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_lessons_curriculum_id ON lessons(curriculum_id)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_review_sessions_language"
+            " ON review_sessions(language_code, session_date DESC)"
+        )
         self._migrate_audio_files(conn)
         conn.commit()
 
@@ -373,3 +393,132 @@ class ContentStore:
             conn.execute("DELETE FROM lessons WHERE curriculum_id = ? AND day = ?", (curriculum_id, day))
             conn.commit()
         return paths
+
+    # ── review sessions ──────────────────────────────────────────────────────
+    #
+    # A review session is NOT a curriculum day, and the absence of a `day` and a
+    # `curriculum_id` column is the point rather than an oversight: it has no
+    # theme, no position in a sequence, and its content is drawn from the whole
+    # language deck rather than one plan (bd tunatale-9p9d, decided by the user
+    # from four mocked placements).
+    #
+    # It gets its own table rather than nullable columns on `lessons` because
+    # `lessons.curriculum_id` and `lessons.day` are both NOT NULL, SQLite has no
+    # DROP NOT NULL, and widening them meant a twelve-step rebuild of the table
+    # holding every real lesson. The cost accepted in exchange is this parallel
+    # read path. `audio_files` needs nothing — it joins on an id, and a session
+    # id is an id.
+
+    def save_review_session(
+        self,
+        session_id: str,
+        language_code: str,
+        session_date: str,
+        lesson: Lesson,
+        *,
+        review_requested: Sequence[str] | None = None,
+        review_used: Sequence[str] | None = None,
+    ) -> None:
+        """Store one review session, dated rather than numbered.
+
+        ⚠️ ``None`` and ``[]`` mean different things for the coverage pair and
+        must not be collapsed. ``None`` is "never measured" and renders as no
+        readout at all; ``[]`` is a measured zero. Storing the first as the
+        second would put a permanent "reused 0 of 0" on anything generated
+        before the meter existed — the same empty-versus-zero distinction the
+        lesson readout already makes.
+
+        ``title`` is denormalised out of the blob so :meth:`list_review_sessions`
+        can render a dated list without deserialising a Lesson per row.
+        """
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO review_sessions"
+                " (id, language_code, session_date, title, data_json, review_requested_json, review_used_json)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    session_id,
+                    language_code,
+                    session_date,
+                    lesson.title,
+                    lesson.to_json(),
+                    _dump_words(review_requested),
+                    _dump_words(review_used),
+                ),
+            )
+            if self._in_memory:
+                conn.commit()
+
+    def get_review_session(self, session_id: str) -> Lesson | None:
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT data_json FROM review_sessions WHERE id = ?", (session_id,)).fetchone()
+        if row is None:
+            return None
+        return Lesson.from_json(row["data_json"])
+
+    def get_review_session_row(self, session_id: str) -> dict | None:
+        """The session's metadata without its body, or ``None`` if absent."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT id, language_code, session_date, title, review_requested_json, review_used_json"
+                " FROM review_sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _session_row(row)
+
+    def list_review_sessions(self, language_code: str) -> list[dict]:
+        """Every session in one language, newest first.
+
+        Scoped by language deliberately: a Norwegian session listed under
+        Slovene has no visible symptom — it reads perfectly well and simply
+        drills the wrong deck.
+
+        ``rowid`` breaks ties so two sessions on one date come back in a stable
+        order. A date is not a key; nothing stops a learner reviewing twice.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, language_code, session_date, title, review_requested_json, review_used_json"
+                " FROM review_sessions WHERE language_code = ?"
+                " ORDER BY session_date DESC, rowid DESC",
+                (language_code,),
+            ).fetchall()
+        return [_session_row(row) for row in rows]
+
+    def delete_review_session(self, session_id: str) -> list[str]:
+        """Drop one session and its audio rows; return the orphaned paths.
+
+        Rows here, files by the caller — the same split :meth:`delete_lesson`
+        uses, and for the same reason.
+        """
+        with self._get_conn() as conn:
+            paths = [
+                row["file_path"]
+                for row in conn.execute("SELECT file_path FROM audio_files WHERE lesson_id = ?", (session_id,))
+            ]
+            conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (session_id,))
+            conn.execute("DELETE FROM review_sessions WHERE id = ?", (session_id,))
+            conn.commit()
+        return paths
+
+
+def _dump_words(words: Sequence[str] | None) -> str | None:
+    """``None`` stays NULL; a list — empty included — becomes JSON."""
+    return None if words is None else json.dumps(list(words))
+
+
+def _load_words(raw: str | None) -> list[str] | None:
+    return None if raw is None else json.loads(raw)
+
+
+def _session_row(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "language_code": row["language_code"],
+        "session_date": row["session_date"],
+        "title": row["title"],
+        "review_requested": _load_words(row["review_requested_json"]),
+        "review_used": _load_words(row["review_used_json"]),
+    }

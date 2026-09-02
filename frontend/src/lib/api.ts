@@ -643,6 +643,10 @@ export class TunaTaleAPI {
       );
       const retryAfter = res.headers.get("Retry-After");
       if (retryAfter) (err as Error & { retryAfter?: number }).retryAfter = Number(retryAfter);
+      // The status, so a caller can tell a REFUSAL from a FAILURE. Matching on
+      // the detail text instead would break the first time the wording changes,
+      // and the wording is written for the learner, not for code.
+      (err as Error & { status?: number }).status = res.status;
       throw err;
     }
     return res.json();
@@ -650,6 +654,50 @@ export class TunaTaleAPI {
 
   async listCurricula(): Promise<Array<{ id: string; topic: string; created_at: string }>> {
     return this.request("/api/curriculum");
+  }
+
+  // ── Review sessions ─────────────────────────────────────────────────
+  // Dated, not numbered, and reached by their own path: a review session
+  // belongs to no curriculum (bd tunatale-9p9d).
+
+  async listReviewSessions(): Promise<
+    Array<{
+      id: string;
+      language_code: string;
+      session_date: string;
+      title: string;
+      // null means NEVER MEASURED and renders as no readout; [] is a measured
+      // zero. Collapsing the two would put "reused 0 of 0" on older sessions.
+      review_requested: string[] | null;
+      review_used: string[] | null;
+    }>
+  > {
+    const body = await this.request<{
+      sessions: Array<{
+        id: string;
+        language_code: string;
+        session_date: string;
+        title: string;
+        review_requested: string[] | null;
+        review_used: string[] | null;
+      }>;
+    }>("/api/review-sessions");
+    return body.sessions;
+  }
+
+  async createReviewSession(): Promise<{
+    id: string;
+    session_date: string;
+    title: string;
+    review_requested: string[];
+    review_used: string[];
+    warnings: string[];
+  }> {
+    return this.request("/api/review-sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
   }
 
   async getCurriculum(id: string): Promise<CurriculumSummary> {
