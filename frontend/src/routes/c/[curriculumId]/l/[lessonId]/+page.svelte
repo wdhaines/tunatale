@@ -176,37 +176,12 @@
 		}
 	}
 
-	// A REVIEW story is a different artifact, not a mode on Regenerate: it has no
-	// theme and it renames the day. Sharing the Regenerate button would let a user
-	// end up with one without having asked for one.
 	// What the generating prompt asked this lesson to reuse, and what it actually
 	// did. Hidden entirely when nothing was requested: most early lessons request
 	// nothing, and an imported lesson with no recorded request is unmeasurable
 	// rather than bad — a permanent "0 of 0" would read as a standing failure.
 	const reviewRequested = $derived(data.lesson.review_requested ?? []);
 	const reviewUsed = $derived(data.lesson.review_used ?? []);
-
-	async function handleReviewStory() {
-		const confirmed = await confirmDialog(
-			`Build a review story for Day ${dayPosition}? It replaces the day with a scene ` +
-				`written around the words you are closest to forgetting — no theme, and the ` +
-				`day's title changes. Your existing cards are kept.`
-		);
-		if (!confirmed) return;
-		regenerating = true;
-		error = '';
-		try {
-			await api.regenerateDay(data.curriculum.id, data.lesson.day, 'REVIEW');
-		} catch (e) {
-			const raw = e instanceof Error ? e.message : String(e);
-			// The backend refuses (409) when nothing is due. That is a normal state,
-			// not something the user did wrong, and the raw detail reads as a fault.
-			error = /due review vocabulary/i.test(raw)
-				? 'Nothing to review right now — no vocabulary is due in this language today.'
-				: raw;
-			regenerating = false;
-		}
-	}
 
 	async function handleRegenerate() {
 		const confirmed = await confirmDialog(
@@ -804,9 +779,6 @@
 			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
 				{regenerating ? 'Regenerating…' : `Regenerate Day ${dayPosition}`}
 			</button>
-			<button class="regen-btn secondary" onclick={handleReviewStory} disabled={regenerating}>
-				Review story
-			</button>
 			<!-- Regeneration hits the LLM, so surface the quota chip here to track usage. -->
 			<RateLimitWidget />
 			<button type="button" class="help-toggle"
@@ -1011,11 +983,6 @@
 	}
 	.review-words {
 		color: var(--color-text);
-	}
-	.regen-btn.secondary {
-		background: var(--color-surface-2);
-		color: var(--color-text);
-		border: 1px solid var(--color-border);
 	}
 	.regen-btn {
 		background: transparent;
