@@ -685,6 +685,30 @@ export class TunaTaleAPI {
     return body.sessions;
   }
 
+  async getReviewSession(id: string): Promise<{
+    id: string;
+    session_date: string;
+    title: string;
+    language_code: string;
+    key_phrases: Array<{ phrase: string; translation: string }>;
+    sections: Array<{
+      type: string;
+      phrases: Array<{ text: string; role: string; language_code: string; voice_id: string }>;
+    }>;
+    // Arrays here, not null: this response inherits LessonResponse, where empty
+    // means UNMEASURABLE — the same convention the lesson page already reads.
+    // The LIST endpoint keeps null/[] distinct; a single read cannot, and a
+    // generated session is always measured, so nothing turns on it here.
+    review_requested: string[];
+    review_used: string[];
+  }> {
+    return this.request(`/api/review-sessions/${id}`);
+  }
+
+  async renderReviewSession(id: string): Promise<LessonAudio> {
+    return this.request(`/api/review-sessions/${id}/render`, { method: "POST" });
+  }
+
   async createReviewSession(): Promise<{
     id: string;
     session_date: string;

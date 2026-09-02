@@ -363,12 +363,14 @@
 		{:else}
 			<ul class="rs-list">
 				{#each sessions as s (s.id)}
-					<li class="rs-row" data-testid="review-session-row">
-						<span class="rs-date">{formatSessionDate(s.session_date)}</span>
-						<span class="rs-title">{s.title}</span>
-						{#if coverageLine(s)}
-							<span class="rs-coverage">{coverageLine(s)}</span>
-						{/if}
+					<li data-testid="review-session-row">
+						<a class="rs-row" href="/review-sessions/{s.id}">
+							<span class="rs-date">{formatSessionDate(s.session_date)}</span>
+							<span class="rs-title">{s.title}</span>
+							{#if coverageLine(s)}
+								<span class="rs-coverage">{coverageLine(s)}</span>
+							{/if}
+						</a>
 					</li>
 				{/each}
 			</ul>
@@ -409,6 +411,8 @@
 		gap: 0.5rem;
 	}
 	.rs-row {
+		color: inherit;
+		text-decoration: none;
 		display: flex;
 		align-items: baseline;
 		gap: 0.75rem;

@@ -134,6 +134,16 @@ describe("the review-session list", () => {
     expect(await findByText(/no review sessions yet/i)).toBeTruthy();
   });
 
+  it("each row is a link to that session", async () => {
+    // The rows exist to be opened. Until this landed they rendered and went
+    // nowhere, and manual step 8 ("read the story it wrote") had no home.
+    mockListSessions.mockResolvedValue([session()]);
+    const { findByRole } = render(Page);
+
+    const link = await findByRole("link", { name: /A Missed Train/ });
+    expect(link.getAttribute("href")).toBe("/review-sessions/sess-1");
+  });
+
   it("says nothing is there yet rather than showing an empty list", async () => {
     const { findByText } = render(Page);
 

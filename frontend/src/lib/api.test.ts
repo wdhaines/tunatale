@@ -138,6 +138,46 @@ describe("TunaTaleAPI", () => {
       expect(result[0].review_used).toBeNull();
     });
 
+    it("getReviewSession reads one by id", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            id: "sess-1",
+            session_date: "2026-09-02",
+            title: "A Missed Train",
+            language_code: "no",
+            key_phrases: [],
+            sections: [],
+            review_requested: [],
+            review_used: [],
+          }),
+        ),
+      );
+
+      const result = await api.getReviewSession("sess-1");
+
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/review-sessions/sess-1`);
+      expect(result.session_date).toBe("2026-09-02");
+    });
+
+    it("renderReviewSession POSTs to the session's own render path", async () => {
+      // Its own path, not /api/audio/render — that one looks the lesson up in
+      // the lessons table and a session is not there. The rows it writes land
+      // under the session id, so GET /api/audio/lesson/{id} then serves them.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockOk({ audio_id: "a1", lesson_id: "sess-1", sections: [] })),
+      );
+
+      const result = await api.renderReviewSession("sess-1");
+
+      const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(`${BASE}/api/review-sessions/sess-1/render`);
+      expect(init.method).toBe("POST");
+      expect(result.audio_id).toBe("a1");
+    });
+
     it("createReviewSession POSTs an empty body and no identifiers", async () => {
       // The empty body IS the interface: the route rejects a curriculum_id or a
       // day with a 422, because a session belongs to no plan.
