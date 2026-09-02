@@ -116,11 +116,19 @@ def main():
         if not stale:
             return 0
 
+        # Name a concrete id in the command ONLY when there is one candidate.
+        # With several, any pick is a guess, and guessing wrong is worse than
+        # not guessing: the FIRST real run of this hook cited both `sso8` (the
+        # bead the commit shipped) and `i69` (a bead the message merely
+        # discussed as an example), and sorted order put the wrong one in the
+        # command. A placeholder cannot mislead.
         listed = ", ".join(stale)
+        target = stale[0] if len(stale) == 1 else "<id>"
+        plural = "" if len(stale) == 1 else " one of"
         print(
-            f"{sha[:9]} cites {listed}, still open. If this commit finished the "
-            f"work, close it now — the hash it must cite exists only now:\n"
-            f"  bd close {stale[0]} --reason \"...shipped by {sha[:9]}\"\n"
+            f"{sha[:9]} cites{plural} {listed}, still open. If this commit finished "
+            f"that work, close it now — the hash it must cite exists only now:\n"
+            f"  bd close {target} --reason \"...shipped by {sha[:9]}\"\n"
             f"  ./.beads-tasks/sync.sh\n"
             f"(Advisory. A commit may legitimately cite a bead it only partly addresses.)"
         )
