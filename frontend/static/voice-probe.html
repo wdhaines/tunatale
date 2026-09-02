@@ -1,0 +1,1211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>TT voice probe</title>
+<!--
+  MEASUREMENT PROBE for tunatale-qi5.1 (answered) and tunatale-mkyb (open).
+  Not part of the app.
+
+  A static file under frontend/static/, deliberately: it is served by the dev
+  server at /voice-probe.html with no route, no Svelte component, and no import
+  from src/. It cannot regress LessonPlayer because nothing links the two.
+
+  ⚠️ IT IS NO LONGER A THROWAWAY, and it is no longer deleted at the end of a
+  spike. The qi5.1 version WAS deleted, purely because the service worker
+  precaches everything in static/ and a debug page in the app-shell cache is a
+  real cost to users — and then it had to be recovered from a commit hash to
+  build this. `$lib/sw/precache` now excludes /voice-probe.html and
+  /voice-probe/ from the precache list, so keeping it costs users nothing.
+
+  Its heavy assets (~19 MB: openWakeWord ONNX + the onnxruntime-web WASM
+  runtime) are NOT committed. Run static/voice-probe/fetch-assets.sh; the
+  preflight says so when they are missing.
+
+  Verify it after any edit, without a car:
+      cd frontend && node static/voice-probe/check-probe.mjs
+  It drives this page with a fake microphone through a positive and a negative
+  stimulus. The spotter's failure mode is silence — plausible low scores for
+  ever, nothing thrown — so "it looked fine" is not evidence.
+
+  WHAT IT MEASURES, in the bead's order:
+    1. False positives with NOBODY SPEAKING. This is the kill criterion. Every
+       result logged during a silent run is a false positive by construction, so
+       the headline counter IS the measurement.
+    2. True positives — spoken commands are marked by tapping MARK first.
+    3. Session lifecycle — Android Chrome ends recognition on silence; the
+       restart loop and its storm guard are instrumented.
+    4. Ducking — if a lesson file is loaded here, pause/volume/stall events on
+       the <audio> element are logged, so "did the mic duck the audio" has
+       evidence instead of a recollection.
+    5. Screen policy — wake lock state and visibility changes are logged.
+
+  WHAT IT MEASURES FOR mkyb — the wake-word design qi5.1 pointed at:
+    1. Does the lesson keep playing at real time while the spotter runs?
+       ARM SPOTTER with no BURST. Bar to beat: >95%. Continuous recognition
+       scored 21%.
+    2. Does one command cost exactly one pause/play pair? SIMULATE WAKE, which
+       needs no wake word and no passenger.
+    3. How often does the spotter fire on L2 lesson audio with nobody speaking?
+       ARM and drive; every wake outside a MARK window is counted as false.
+  All three are on the tiles, live, and in the DISARM summary line.
+-->
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 10px;
+    font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #111; color: #eee;
+  }
+  h1 { font-size: 15px; margin: 0 0 8px; color: #9cf; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  button {
+    font: inherit; padding: 14px 16px; min-height: 48px;
+    background: #223; color: #eee; border: 1px solid #558; border-radius: 6px;
+  }
+  button:disabled { opacity: .4; }
+  #mark { background: #143; border-color: #4a7; flex: 1; }
+  #start { background: #253; border-color: #5a5; }
+  #stop  { background: #422; border-color: #a55; }
+  /* The car readout: legible at a glance, no scrolling needed. */
+  #big { display: flex; gap: 10px; margin: 8px 0; }
+  #big div {
+    flex: 1; text-align: center; padding: 10px 4px;
+    border: 1px solid #444; border-radius: 6px; background: #1a1a1a;
+  }
+  #big b { display: block; font-size: 30px; line-height: 1.1; }
+  #big span { font-size: 11px; color: #999; }
+  #fp b { color: #f66; }
+  #pre { border: 1px solid #444; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+  #pre div { margin: 2px 0; }
+  .ok { color: #6d6; } .bad { color: #f66; } .warn { color: #fc6; }
+  #log {
+    border: 1px solid #444; border-radius: 6px; padding: 6px;
+    height: 42vh; overflow-y: auto; font-size: 12px; white-space: pre-wrap;
+    overflow-wrap: anywhere; background: #0c0c0c;
+  }
+  #log div { border-bottom: 1px solid #1e1e1e; padding: 1px 0; }
+  .final { color: #ffd479; } .interim { color: #777; }
+  .evt { color: #7bf; } .err { color: #f66; } .mark { color: #6f6; font-weight: bold; }
+  label { font-size: 12px; color: #aaa; }
+  input[type=text] { font: inherit; background: #1a1a1a; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 6px; }
+  select { font: inherit; background: #1a1a1a; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 6px; }
+
+  /* ── Wake word ─────────────────────────────────────────────────────────── */
+  #wakerow { border: 1px solid #2a4a2a; border-radius: 6px; padding: 6px; background: #0d130d; }
+  /* The live score, as a bar rather than a number: at a glance while driving,
+     "did that spike" is answerable and "0.41" is not. <i> is the score, <u> the
+     threshold line — so a near miss reads as a near miss. */
+  #wakebar {
+    position: relative; flex: 1; height: 22px; min-width: 140px;
+    background: #141414; border: 1px solid #333; border-radius: 4px; overflow: hidden;
+  }
+  #wakebar i { position: absolute; inset: 0 auto 0 0; width: 0; background: #2f6f2f; transition: width .08s linear; }
+  #wakebar.hot i { background: #6f6; }
+  #wakebar u { position: absolute; top: 0; bottom: 0; width: 2px; background: #ffd479; }
+  #big.wake b { font-size: 24px; }
+  #big.wake .bad b { color: #f66; }
+  #big.wake .good b { color: #6f6; }
+  .mono { font: 12px ui-monospace, Menlo, monospace; color: #aaa; }
+</style>
+</head>
+<body>
+
+<h1>TT voice probe — qi5.1 / mkyb</h1>
+
+<div id="pre">preflight…</div>
+
+<!--
+  ── WAKE WORD (tunatale-mkyb) ───────────────────────────────────────────────
+  The design the qi5.1 spike pointed at: a getUserMedia stream is free (it does
+  NOT request audio focus, measured 2026-09-02 15:26), so a WASM keyword spotter
+  can run on it continuously while the lesson plays, and SpeechRecognition — the
+  thing that DOES take focus — is invoked for one burst only when addressed.
+
+  ARM opens the mic and starts scoring. It never starts a recognition session on
+  its own, so ARM alone is the oracle-1 measurement (does the lesson keep playing
+  at real time while the spotter runs?). Tick BURST to add the second half.
+
+  SIMULATE WAKE fires the burst path with no spotter involved. That is
+  deliberate: oracle 2 (one pause/play pair per command) is a property of the
+  recognition session, not of the spotter, and this button measures it without
+  depending on whether the wake word is any good.
+-->
+<div class="row" id="wakerow">
+  <b style="color:#6f6">WAKE</b>
+  <label>word
+    <select id="wakeword">
+      <option value="hey_jarvis_v0.1">hey jarvis</option>
+      <option value="alexa_v0.1">alexa</option>
+      <option value="hey_mycroft_v0.1">hey mycroft</option>
+    </select>
+  </label>
+  <label>thresh <input type="text" id="wakethresh" size="4" value="0.5" /></label>
+  <label title="Android's AEC subtracts the phone's own output from the mic signal. In the car that is the lesson audio, so it should cut false wakes from L2 TTS — but it may also be a no-op over Bluetooth, where the far end is not the reference. Measure both.">
+    <input type="checkbox" id="wakeaec" checked /> AEC/NS/AGC
+  </label>
+  <label><input type="checkbox" id="wakeburst" /> BURST (recognise after a wake)</label>
+  <button id="wakearm">ARM SPOTTER</button>
+  <button id="wakesim" disabled>SIMULATE WAKE</button>
+</div>
+
+<div class="row" id="wakebarrow">
+  <div id="wakebar"><i></i><u></u></div>
+  <span id="wakenum" class="mono">—</span>
+</div>
+
+<div class="row">
+  <label>run label <input type="text" id="label" size="14" value="car-audio" /></label>
+  <label>lang <input type="text" id="lang" size="7" value="en-US" /></label>
+</div>
+
+<!--
+  The two hypotheses that could still save the epic after the 2026-09-02 run
+  showed continuous cloud recognition pauses lesson audio ~80% of the time.
+    SINGLE SHOT — one session, no restart loop. Answers whether push-to-talk
+                  survives: does it cost ONE pause instead of a rolling one?
+    LOCAL       — processLocally. Does on-device recognition take exclusive
+                  audio focus the same way the cloud path does? (tunatale-qi5.2)
+  Both are toggles, so one trip can compare all four combinations.
+-->
+<div class="row">
+  <label><input type="checkbox" id="single" /> SINGLE SHOT (one session, no restart)</label>
+  <label><input type="checkbox" id="local" /> LOCAL (processLocally) — ⚠ may crash the tab; the log records the attempt</label>
+  <button id="miconly">MIC ONLY (getUserMedia, no recognizer)</button>
+  <button id="checklocal">CHECK LOCAL (may crash — not while driving)</button>
+  <button id="install" hidden>INSTALL LOCAL MODEL</button>
+</div>
+
+<div class="row">
+  <button id="start">START</button>
+  <button id="stop" disabled>STOP</button>
+  <button id="mark" disabled>MARK — I am about to speak</button>
+</div>
+
+<div id="big">
+  <div id="fp"><b>0</b><span>RESULTS WHILE SILENT</span></div>
+  <div><b id="c-final">0</b><span>finals</span></div>
+  <div><b id="c-restart">0</b><span>restarts</span></div>
+  <div><b id="c-elapsed">0:00</b><span>elapsed</span></div>
+</div>
+
+<!--
+  The three oracles from tunatale-mkyb, each rendered as the number it IS rather
+  than as inputs a reader has to combine. PLAYED is the headline: >95% is the
+  bar, 21% was continuous recognition's score.
+-->
+<div id="big" class="wake">
+  <div id="w-played"><b>—</b><span>% REAL TIME PLAYED</span></div>
+  <div id="w-false"><b>0</b><span>false wakes /min</span></div>
+  <div><b id="w-pairs">—</b><span>pause pairs / wake</span></div>
+  <div><b id="w-cpu">—</b><span>% spotter CPU</span></div>
+</div>
+
+<!--
+  Two ways in for measurement 4's audio. The URL is the good one: /api is proxied
+  to the backend by Vite, so this is SAME-ORIGIN and needs no download, no file
+  picker, and no MIME guessing by the phone's content provider.
+-->
+<div class="row">
+  <label style="flex:1">lesson audio by URL (same-origin via the /api proxy)
+    <input type="text" id="audiourl" style="width:100%"
+           value="/api/audio/f9324313-c5c7-499e-b5c8-2fa9b3ce2ba3" />
+  </label>
+  <button id="loadurl">LOAD URL</button>
+</div>
+<div class="row">
+  <label>…or a file already on the phone
+    <input type="file" id="audiofile" />
+  </label>
+</div>
+<audio id="audio" controls loop style="width:100%; margin-bottom:8px;"></audio>
+
+<div class="row">
+  <button id="copy">COPY LOG</button>
+  <button id="clear">CLEAR</button>
+  <button id="recheck">RE-CHECK</button>
+</div>
+
+<div id="log"></div>
+
+<script>
+"use strict";
+
+// ── Durable sink ────────────────────────────────────────────────────────────
+// Same contract as src/lib/clientLog.ts, reimplemented rather than imported:
+// this page is static and never goes through the Svelte build. The server caps
+// a batch at 50 lines of 300 chars, so those bounds are mirrored here — a batch
+// that oversends is truncated server-side, silently, and the dropped lines are
+// exactly the ones you wanted.
+//
+// Relative URL on purpose: Vite proxies /api to the backend, so this works from
+// the phone over Tailscale without knowing the backend's host or port.
+// Bump on EVERY edit. A stale tab on the phone is invisible otherwise: on
+// 2026-09-02 an AIMP focus test was run against a page version that predated the
+// toggles, and the only tell was a missing field in one log line. The version is
+// announced in the preflight AND written to disk at load, so "which build was
+// that run?" is never a reconstruction again.
+const PROBE_VERSION = "2026-09-02.9-mkyb";
+const MAX_BATCH = 50, MAX_CHARS = 300;
+let sink = [], sinkTimer = null, sinkState = "unknown";
+
+async function flush() {
+  if (sinkTimer) { clearTimeout(sinkTimer); sinkTimer = null; }
+  if (!sink.length) return;
+  const lines = sink.splice(0, MAX_BATCH).map((l) => l.slice(0, MAX_CHARS));
+  try {
+    const r = await fetch("/api/client-log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lines }),
+      keepalive: true,
+    });
+    // 404 is the documented "switched off" answer, not an error to chase.
+    const next = r.ok ? "on" : (r.status === 404 ? "off" : "err" + r.status);
+    if (next !== sinkState) { sinkState = next; preflight(); }
+  } catch {
+    if (sinkState !== "unreachable") { sinkState = "unreachable"; preflight(); }
+  }
+}
+function sinkPush(line) {
+  sink.push("VOICEPROBE " + line);
+  if (sink.length >= MAX_BATCH) flush();
+  else if (!sinkTimer) sinkTimer = setTimeout(flush, 1000);
+}
+
+// ── On-screen log ───────────────────────────────────────────────────────────
+const logEl = document.getElementById("log");
+const all = [];
+let t0 = 0;
+
+function stamp() {
+  if (!t0) return "0.0";
+  return ((Date.now() - t0) / 1000).toFixed(1);
+}
+function log(cls, text) {
+  const line = `[${stamp()}s] ${text}`;
+  all.push(line);
+  const d = document.createElement("div");
+  d.className = cls;
+  d.textContent = line;
+  logEl.appendChild(d);
+  // Only autoscroll when already near the bottom, so reading history at a red
+  // light does not fight the incoming stream.
+  if (logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 80) {
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  sinkPush(`${label()} ${line}`);
+  while (logEl.childElementCount > 400) logEl.removeChild(logEl.firstChild);
+}
+const label = () => document.getElementById("label").value.trim() || "unlabelled";
+
+// ── Counters ────────────────────────────────────────────────────────────────
+// `silent` is the kill criterion: results that arrived while the operator had
+// NOT pressed MARK. MARK opens a 10s window in which results are attributed to
+// a deliberate utterance instead.
+let nFinal = 0, nRestart = 0, nSilent = 0, markUntil = 0;
+// Counters run for the life of the TAB (CLEAR resets them), but a STOP line that
+// reports lifetime totals reads as this run's result and is silently wrong —
+// aimp-comply-foreground logged "finals=4 restarts=24" for a single 3s session
+// (2026-09-02). Snapshot at START so STOP can report BOTH.
+let runBase = { f: 0, r: 0, s: 0 };
+const $ = (id) => document.getElementById(id);
+function paint() {
+  $("fp").firstElementChild.textContent = nSilent;
+  $("c-final").textContent = nFinal;
+  $("c-restart").textContent = nRestart;
+  const s = t0 ? Math.floor((Date.now() - t0) / 1000) : 0;
+  $("c-elapsed").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+setInterval(paint, 1000);
+
+// ── Preflight ───────────────────────────────────────────────────────────────
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+// ── On-device recognition (tunatale-qi5.2) ──────────────────────────────────
+// Chrome exposes processLocally on the instance plus static available()/install().
+// All three are feature-detected: assigning processLocally on a browser that
+// lacks it is a SILENT no-op, which would label a cloud run "LOCAL" and produce
+// a confidently wrong finding.
+const LOCAL_SUPPORTED = !!(SR && "processLocally" in SR.prototype);
+let localState = LOCAL_SUPPORTED ? "probing" : "unsupported";
+
+// ⚠️ SR.available() IS NOT CALLED ON LOAD, and that is deliberate.
+//
+// Measured 2026-09-02 in headless Chromium 152: every feature detection passes
+// ("processLocally" in prototype, typeof available === "function"), and then
+// calling SR.available({langs, processLocally}) CRASHES THE RENDERER. A crash is
+// not catchable — no try/catch, no error event, the page is simply gone. On load
+// that would have killed the probe before it could be used; mid-run it would
+// destroy an in-progress measurement at speed.
+//
+// Whether real Chrome on Android crashes the same way is UNKNOWN and untested.
+// The cheap, safe assumption is that it might, so the call is behind an explicit
+// button that is never pressed by accident and never while driving.
+function probeLocal() {
+  if (!LOCAL_SUPPORTED) localState = "unsupported";
+  else if (localState === "probing") localState = "present, not yet checked";
+  preflight();
+}
+
+// The deliberate, opt-in version of the same question.
+async function checkLocalAvailability() {
+  if (!LOCAL_SUPPORTED || typeof SR.available !== "function") {
+    localState = "unsupported"; preflight(); return;
+  }
+  log("evt", "CHECK LOCAL: calling SR.available() — if the page dies here, that IS the finding");
+  await flush();   // get that line to disk FIRST; a crash takes the tab with it
+  try {
+    localState = await SR.available({ langs: [$("lang").value.trim() || "en-US"], processLocally: true });
+    log("evt", `SR.available() returned "${localState}" — survived, no crash`);
+  } catch (e) {
+    localState = `available() threw: ${e && e.name ? e.name : e}`;
+    log("err", `SR.available() threw: ${e}`);
+  }
+  // The model download is explicit and user-initiated, never implicit in the car.
+  $("install").hidden = !(localState === "downloadable" || localState === "downloading");
+  preflight();
+}
+
+// Real reachability of the Google edge, from THIS phone on THIS network.
+// no-cors gives an opaque response we cannot read — but resolve-vs-reject is the
+// whole signal: resolved means the request reached the network, rejected means it
+// did not. generate_204 on purpose: it is the same endpoint family Android uses
+// to validate a network, and it returns an empty body.
+let netState = "probing";
+async function probeNet() {
+  const was = netState;
+  netState = "probing";
+  if (was !== "probing") preflight();
+  try {
+    await fetch("https://www.gstatic.com/generate_204", { mode: "no-cors", cache: "no-store" });
+    netState = "reachable";
+  } catch {
+    netState = "unreachable";
+  }
+  log_safe(`net probe: ${netState}`);
+  preflight();
+}
+// log() is defined above but t0/logEl must exist; this runs after both.
+function log_safe(msg) { try { log("evt", msg); } catch { /* pre-DOM, ignore */ } }
+
+// Re-probe when the picture could have changed: the browser's own events, and
+// coming back to the tab after a trip to Wi-Fi settings — which is exactly the
+// driveway fix-it loop.
+addEventListener("online", probeNet);
+addEventListener("offline", probeNet);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") probeNet();
+});
+
+function preflight() {
+  const rows = [];
+  const add = (ok, text) => rows.push(`<div class="${ok}">${text}</div>`);
+  add("ok", `display-mode: ${matchMedia("(display-mode: standalone)").matches ? "STANDALONE (installed PWA)" : "browser tab"}`);
+  add("ok", `probe version: ${PROBE_VERSION} — if this is not the version you expect, HARD RELOAD`);
+  add(window.isSecureContext ? "ok" : "bad",
+      `secure context: ${window.isSecureContext}` +
+      (window.isSecureContext ? "" : " — SpeechRecognition WILL refuse"));
+  add(SR ? "ok" : "bad",
+      `SpeechRecognition: ${SR ? "available" : "MISSING — this browser cannot run the probe"}`);
+  // navigator.onLine is a BELIEF, and a weak one: its `true` means little, while
+  // on Android its `false` mirrors NET_CAPABILITY_VALIDATED — Android's own
+  // generate_204 probe having failed. Tailscale reaching the Mac says nothing
+  // about it, which is why "the page loaded, so we are online" is wrong here.
+  // The false-with-Google-reachable case is the COMMON one here and is benign:
+  // with a VPN up (Tailscale), Android marks the transport unvalidated while
+  // traffic routes fine, and Chrome mirrors that. Say so, or it reads as a
+  // blocker every time. Observed on the real phone 2026-09-02.
+  add(navigator.onLine ? "ok" : "warn",
+      `navigator.onLine: ${navigator.onLine}` +
+      (navigator.onLine ? ""
+        : netState === "reachable"
+          ? " — but Google IS reachable below, so this is NOT a blocker. Normal signature of an active VPN: Android marks the transport unvalidated while traffic routes fine. Ignore this row."
+          : " — Android's own internet check failed (a tailnet-only route looks like this)"));
+  // …so measure it. Recognition needs Google reachable, not the tailnet.
+  const netMsg = {
+    reachable:   ["ok",   "google reachable: YES — recognition has the endpoint it needs"],
+    unreachable: ["bad",  "google reachable: NO — Android streams audio to Google; you will get ZERO results. Fix connectivity before driving."],
+    probing:     ["warn", "google reachable: probing…"],
+  }[netState] || ["warn", `google reachable: ${netState}`];
+  add(netMsg[0], netMsg[1]);
+  const localMsg = {
+    available:    ["ok",   "on-device (processLocally): READY — tick LOCAL to use it"],
+    downloadable: ["warn", "on-device: model NOT installed — tap INSTALL LOCAL MODEL (do it on wifi, not in the car)"],
+    downloading:  ["warn", "on-device: model downloading… re-check in a minute"],
+    unavailable:  ["warn", "on-device: unavailable for this language — LOCAL runs will fall back to CLOUD"],
+    unsupported:  ["warn", "on-device: this browser has no processLocally — CLOUD only"],
+    "present, not yet checked": ["warn", "on-device: processLocally EXISTS. Ticking LOCAL will use it; the errors row will say if it fell back. Press CHECK LOCAL (parked) to ask outright."],
+    probing:      ["warn", "on-device: probing…"],
+  }[localState] || ["warn", `on-device: ${localState}`];
+  add(localMsg[0], localMsg[1]);
+  const sinkMsg = { on: ["ok", "durable log: ON — lines land in ~/.tunatale/logs/client.log"],
+                    off: ["warn", "durable log: OFF (404) — set client_log_enabled=true in backend/.env AND restart the server; on-screen only until then"],
+                    unreachable: ["warn", "durable log: backend unreachable — on-screen only"],
+                    unknown: ["warn", "durable log: not yet probed"] }[sinkState]
+                 || ["bad", `durable log: ${sinkState}`];
+  add(sinkMsg[0], sinkMsg[1]);
+  // The wake assets are deliberately NOT committed (~19 MB), so "missing" is a
+  // normal state on a fresh clone and must read as an instruction, not a fault.
+  const wakeMsg = {
+    ready:   ["ok",   "wake assets: present — ARM SPOTTER is live"],
+    missing: ["warn", "wake assets: MISSING — run <code>frontend/static/voice-probe/fetch-assets.sh</code> (~19 MB, once), then reload"],
+    probing: ["warn", "wake assets: probing…"],
+  }[wakeAssetState] || ["bad", `wake assets: ${wakeAssetState}`];
+  add(wakeMsg[0], wakeMsg[1]);
+  $("pre").innerHTML = rows.join("");
+}
+
+// HEAD, not GET: the answer is 14 MB and the question is one bit. Checks the
+// wasm rather than a model file because it is the download most likely to have
+// been interrupted, and `-o file.part` + rename in fetch-assets.sh means a
+// half-download never presents as a complete one.
+let wakeAssetState = "probing";
+async function probeWakeAssets() {
+  try {
+    const r = await fetch("/voice-probe/ort/ort-wasm-simd-threaded.wasm", { method: "HEAD" });
+    wakeAssetState = r.ok ? "ready" : "missing";
+  } catch { wakeAssetState = "missing"; }
+  preflight();
+}
+preflight();
+
+// Probe the sink on load, so the banner is truthful before you drive off.
+//
+// This MUST push a line first. A bare flush() — which is what this was — returns
+// early on an empty sink and issues no request at all, so sinkState stayed
+// "unknown" and the row read "durable log: not yet probed" until the first START.
+// That is precisely backwards: the row exists to be answered BEFORE the run.
+//
+// A line rather than an empty batch, because the endpoint accepts `lines: []`
+// with a 200 and writes nothing — that would prove the route answers while
+// leaving the append path (settings.client_log, mkdir, open-for-write) untested.
+// It also timestamps the page load, which dates every run that follows it.
+sinkPush(`${label()} page loaded v=${PROBE_VERSION} display=${matchMedia("(display-mode: standalone)").matches ? "standalone" : "tab"} — preflight probe ua=${navigator.userAgent.slice(0, 80)}`);
+flush();
+probeNet();
+probeLocal();
+probeWakeAssets();
+
+// ── Recognition ─────────────────────────────────────────────────────────────
+let rec = null, running = false, restartAt = 0, backoff = 250;
+// Latched at START. The toggles used to be read live by spin() and again by
+// stop(), so ticking LOCAL mid-run silently changed behaviour AND produced a run
+// whose START said CLOUD and whose STOP said LOCAL (observed 2026-09-02 15:34).
+// A run's configuration must be one thing for its whole life.
+let runMode = { single: false, local: false };
+
+async function start() {
+  if (!SR) { log("err", "ABORT no SpeechRecognition in this browser"); return; }
+  running = true; backoff = 250;
+  runMode = { single: $("single").checked, local: $("local").checked && LOCAL_SUPPORTED };
+  runBase = { f: nFinal, r: nRestart, s: nSilent };
+  if (!t0) t0 = Date.now();
+  $("start").disabled = true; $("stop").disabled = false; $("mark").disabled = false;
+  log("evt", `START v=${PROBE_VERSION} label=${label()} lang=${$("lang").value} mode=${runMode.single ? "SINGLE" : "CONTINUOUS"}/${runMode.local ? "LOCAL" : "CLOUD"} ua=${navigator.userAgent.slice(0, 120)}`);
+  // A LOCAL session can take the whole tab with it — setting processLocally
+  // crashed the renderer in headless Chromium 151 (2026-09-02), uncatchably.
+  // Get the intent to DISK before trying, so a crash is a dated line in
+  // client.log saying exactly what was attempted, rather than a vanished tab
+  // and a guess. If the next line in the log is a page load, it crashed here.
+  if (runMode.local) {
+    log("evt", "ABOUT TO START A LOCAL SESSION — if the log ends here, processLocally crashed the tab");
+    await flush();
+  }
+  spin();
+  wakeLock();
+}
+
+function spin() {
+  if (!running) return;
+  const single = runMode.single;
+  rec = new SR();
+  rec.lang = $("lang").value.trim() || "en-US";
+  // continuous:false for the single-shot pass — the session should end on its
+  // own after one utterance rather than being held open.
+  rec.continuous = !single;
+  rec.interimResults = true;
+  rec.maxAlternatives = 1;
+
+  // Feature-detected, never assumed: on a browser without it, assigning the
+  // property is silently a no-op and the run would be mislabelled as LOCAL
+  // while quietly using the cloud. Report what was actually set.
+  if (runMode.local) {
+    if (LOCAL_SUPPORTED) {
+      rec.processLocally = true;
+      log("evt", "processLocally=true requested for this session");
+    } else {
+      log("err", "LOCAL checked but processLocally is UNSUPPORTED here — this session is CLOUD. Untick it so the run is not mislabelled.");
+    }
+  }
+
+  rec.onstart = () => log("evt", "recognition.onstart");
+  rec.onaudiostart = () => log("evt", "audiostart");
+  rec.onspeechstart = () => log("evt", "speechstart (recognizer thinks speech began)");
+  rec.onspeechend = () => log("evt", "speechend");
+  rec.onaudioend = () => log("evt", "audioend");
+  rec.onnomatch = () => log("evt", "nomatch");
+
+  rec.onerror = (e) => {
+    log("err", `error=${e.error} ${e.message || ""}`);
+    // These are terminal: retrying just storms.
+    if (e.error === "language-not-supported") {
+      log("err", "language-not-supported — on-device model missing for this lang; this run was NOT local.");
+    }
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+      log("err", "PERMISSION/SERVICE DENIED — stopping. On Android this is also what a browser with the Google speech endpoint removed looks like.");
+      stop();
+    }
+  };
+
+  rec.onresult = (e) => {
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      const alt = r[0];
+      const marked = Date.now() < markUntil;
+      const conf = typeof alt.confidence === "number" ? alt.confidence.toFixed(3) : "n/a";
+      if (r.isFinal) {
+        nFinal++;
+        if (!marked) nSilent++;
+        log("final", `FINAL${marked ? " [MARKED]" : ""} conf=${conf} "${alt.transcript.trim()}"`);
+      } else {
+        if (!marked) nSilent++;
+        log("interim", `interim${marked ? " [MARKED]" : ""} conf=${conf} "${alt.transcript.trim()}"`);
+      }
+    }
+    paint();
+  };
+
+  rec.onend = () => {
+    log("evt", "recognition.onend");
+    if (!running) return;
+    // SINGLE SHOT: stop here. The whole point is to count how many pauses ONE
+    // session costs, so restarting would destroy the measurement.
+    if (single) {
+      log("evt", "SINGLE SHOT — session over, not restarting");
+      stop();
+      return;
+    }
+    // Storm guard. Android ends the session on silence, so a naive
+    // onend->start() loop is correct behaviour AND a busy-loop risk; the
+    // backoff makes a storm visible in the restart counter instead of
+    // invisible in CPU.
+    const now = Date.now();
+    backoff = now - restartAt < 1000 ? Math.min(backoff * 2, 8000) : 250;
+    restartAt = now;
+    nRestart++;
+    paint();
+    setTimeout(() => { if (running) spin(); }, backoff);
+  };
+
+  try { rec.start(); }
+  catch (err) { log("err", `start() threw: ${err}`); }
+}
+
+function stop() {
+  running = false;
+  $("start").disabled = false; $("stop").disabled = true; $("mark").disabled = true;
+  try { rec && rec.stop(); } catch { /* already dead */ }
+  log("evt", `STOP thisRun finals=${nFinal - runBase.f} silentResults=${nSilent - runBase.s} restarts=${nRestart - runBase.r} (tabTotals ${nFinal}/${nSilent}/${nRestart}) mode=${runMode.single ? "SINGLE" : "CONTINUOUS"}/${runMode.local ? "LOCAL" : "CLOUD"}`);
+  flush();
+}
+
+// ── Wake lock + visibility (measurement 5) ──────────────────────────────────
+let lock = null;
+async function wakeLock() {
+  if (!("wakeLock" in navigator)) { log("evt", "wakeLock: unsupported"); return; }
+  try {
+    lock = await navigator.wakeLock.request("screen");
+    log("evt", "wakeLock: acquired");
+    lock.addEventListener("release", () => log("evt", "wakeLock: released"));
+  } catch (e) { log("err", `wakeLock failed: ${e}`); }
+}
+document.addEventListener("visibilitychange", () => {
+  log("evt", `visibility=${document.visibilityState}`);
+  if (document.visibilityState === "visible" && running && !lock) wakeLock();
+});
+
+// ── Audio ducking (measurement 4) ───────────────────────────────────────────
+// Evidence, not recollection: if the platform ducks or pauses the element when
+// the mic opens, it shows up here as a pause/volumechange/stalled event, or as
+// currentTime failing to advance while not paused.
+const audio = $("audio");
+
+// Same-origin load through the Vite /api proxy. Preferred over the picker: the
+// server sends a correct Content-Type, so nothing depends on what the phone's
+// content provider thinks a .opus file is.
+$("loadurl").onclick = () => {
+  const u = $("audiourl").value.trim();
+  if (!u) return;
+  audio.src = u;
+  audio.load();
+  registerMediaSession();
+  log("evt", `audio src set from URL: ${u}`);
+};
+
+// The phone's MIME type for a downloaded file comes from the content provider,
+// NOT the extension, and Android routinely reports "" or
+// application/octet-stream for .opus. createObjectURL(file) inherits that type
+// verbatim, and <audio> then refuses to decode — which presents as a silent
+// 0:00 / 0:00 with no error anywhere. Re-wrap with the type the extension
+// implies (Blob.slice takes a contentType and copies no data).
+const EXT_MIME = { opus: "audio/ogg", ogg: "audio/ogg", m4a: "audio/mp4", mp3: "audio/mpeg", wav: "audio/wav" };
+$("audiofile").addEventListener("change", (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  const ext = (f.name.split(".").pop() || "").toLowerCase();
+  const want = EXT_MIME[ext];
+  const blob = want && f.type !== want ? f.slice(0, f.size, want) : f;
+  log("evt", `audio file: ${f.name} bytes=${f.size} reportedType="${f.type}" -> using "${blob.type}"`);
+  audio.src = URL.createObjectURL(blob);
+  audio.load();
+  registerMediaSession();
+});
+
+// ── MediaSession, mirroring the real player ─────────────────────────────────
+// The probe used a bare <audio>; playbackController.svelte.ts registers metadata,
+// playbackState and action handlers. An app that declares itself a media session
+// may be treated differently by Android's focus policy, so without this the probe
+// is not a faithful stand-in for LessonPlayer. Same handler set as the real one.
+function registerMediaSession() {
+  const ms = navigator.mediaSession;
+  if (!ms) { log("evt", "mediaSession: unsupported"); return; }
+  try {
+    ms.metadata = new MediaMetadata({ title: "TT voice probe", artist: "TunaTale", album: "qi5.1" });
+  } catch { /* MediaMetadata missing in some browsers */ }
+  ms.setActionHandler("play", () => { audio.play(); });
+  ms.setActionHandler("pause", () => { audio.pause(); });
+  ms.setActionHandler("seekbackward", () => { audio.currentTime = Math.max(0, audio.currentTime - 10); });
+  ms.setActionHandler("seekforward", () => { audio.currentTime += 10; });
+  ms.setActionHandler("previoustrack", () => { audio.currentTime = 0; });
+  log("evt", "mediaSession: registered (metadata + 5 handlers), as LessonPlayer does");
+}
+audio.addEventListener("play",  () => { if (navigator.mediaSession) navigator.mediaSession.playbackState = "playing"; });
+audio.addEventListener("pause", () => { if (navigator.mediaSession) navigator.mediaSession.playbackState = "paused"; });
+
+for (const ev of ["play", "pause", "stalled", "waiting", "volumechange", "ratechange", "ended"]) {
+  audio.addEventListener(ev, () => log("evt", `audio.${ev} paused=${audio.paused} vol=${audio.volume.toFixed(2)} t=${audio.currentTime.toFixed(1)}`));
+}
+
+// Load-path instrumentation. Without these a file that never decodes logs
+// NOTHING and simply reads 0:00 / 0:00 — the failure this page most needs to
+// explain was the one it could not see.
+audio.addEventListener("loadedmetadata", () =>
+  log("evt", `audio.loadedmetadata duration=${audio.duration.toFixed(1)}s`));
+audio.addEventListener("canplay", () => log("evt", "audio.canplay"));
+audio.addEventListener("error", () => {
+  const e = audio.error;
+  const NAMES = { 1: "ABORTED", 2: "NETWORK", 3: "DECODE", 4: "SRC_NOT_SUPPORTED" };
+  log("err", `audio.error code=${e ? e.code : "?"} ${e ? NAMES[e.code] || "" : ""} ${e && e.message ? e.message : ""}`);
+  if (e && e.code === 4) {
+    log("err", "SRC_NOT_SUPPORTED — the browser rejected the container/codec or the MIME type. Try the URL loader instead of the file picker.");
+  }
+});
+let lastT = -1;
+setInterval(() => {
+  if (!audio.src || audio.paused) { lastT = -1; return; }
+  const t = audio.currentTime;
+  if (lastT >= 0 && Math.abs(t - lastT) < 0.15) {
+    log("err", `audio STALLED WHILE PLAYING t=${t.toFixed(1)} (progress < 0.15s over 2s)`);
+  }
+  lastT = t;
+}, 2000);
+
+// ── Wiring ──────────────────────────────────────────────────────────────────
+$("start").onclick = start;
+$("stop").onclick = stop;
+$("mark").onclick = () => {
+  markUntil = Date.now() + 10000;
+  log("mark", "MARK — next 10s of results attributed to a deliberate utterance");
+};
+$("copy").onclick = async () => {
+  try { await navigator.clipboard.writeText(all.join("\n")); log("evt", "log copied"); }
+  catch (e) { log("err", `clipboard failed: ${e}`); }
+};
+// Deliberately does NOT call SR.available() — RE-CHECK must stay safe to press.
+$("recheck").onclick = () => { probeNet(); flush(); };
+// ── MIC ONLY (the "Hey Google" question) ────────────────────────────────────
+// Opens a raw capture stream and NOTHING else — no SpeechRecognition, so no
+// recognition session and (hypothesis) no audio-focus request. Every run so far
+// showed audio.pause landing at recognition.onstart with audiostart trailing
+// ~100ms later, which says the focus request belongs to the SESSION, not to the
+// microphone. If that is right, this button opens the mic and the lesson keeps
+// playing — and a WASM keyword spotter on this stream is a wake word inside the
+// PWA, with SpeechRecognition invoked (and its one pause paid) only afterwards.
+// If the audio pauses here too, the mic itself is the trigger and the web path
+// is finished.
+let micStream = null;
+$("miconly").onclick = async () => {
+  if (micStream) {
+    micStream.getTracks().forEach((t) => t.stop());
+    micStream = null;
+    $("miconly").textContent = "MIC ONLY (getUserMedia, no recognizer)";
+    log("evt", "MIC ONLY: stream stopped");
+    return;
+  }
+  log("evt", `MIC ONLY: requesting getUserMedia — audio is ${audio.paused ? "PAUSED" : "PLAYING"} t=${audio.currentTime.toFixed(1)}`);
+  await flush();
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const tr = micStream.getAudioTracks()[0];
+    $("miconly").textContent = "STOP MIC";
+    log("evt", `MIC ONLY: stream OPEN label="${tr && tr.label}" — watch for an audio.pause in the next second`);
+    setTimeout(() => log("evt", `MIC ONLY: +1s audio is ${audio.paused ? "PAUSED — the MIC is the trigger" : "STILL PLAYING — the mic is NOT the trigger; it is the recognition session"} t=${audio.currentTime.toFixed(1)}`), 1000);
+    setTimeout(() => log("evt", `MIC ONLY: +5s audio is ${audio.paused ? "PAUSED" : "STILL PLAYING"} t=${audio.currentTime.toFixed(1)}`), 5000);
+  } catch (e) {
+    log("err", `MIC ONLY: getUserMedia failed: ${e && e.name ? e.name : e}`);
+  }
+};
+// ── WAKE WORD (tunatale-mkyb) ───────────────────────────────────────────────
+//
+// openWakeWord v0.5.1 via onnxruntime-web, three models in series per 80 ms:
+//
+//   raw 16 kHz f32 ──melspectrogram──▶ 8 mel frames of 32 bins
+//   mel/10 + 2                          (normalisation baked into head training)
+//   last 76 mel frames ──embedding──▶  one 96-d vector
+//   last 16 embeddings ──head──▶       score in [0,1]
+//
+// Receptive field: 76 + 15*8 = 196 mel frames = 1.96 s.
+//
+// ⚠️ THE ONE THING THAT IS NOT VISIBLE IN THE SHAPES. The melspectrogram model
+// returns `samples/160 - 3` frames, not `samples/160` — measured 2026-09-02:
+// 1280 samples → 5 frames, 1600 → 7, 2560 → 13. Feed it bare 1280-sample chunks
+// and the mel stream runs at 5/8 speed for ever; every window then spans 1.6 s
+// of audio where the head was trained on 1.0 s, and the wake word simply never
+// scores. Nothing throws. openWakeWord compensates by feeding the last
+// `n + 160*3` samples each time, so the 3 dropped frames are ones already
+// emitted — hence MEL_LOOKBACK below, and the assertion that guards it.
+//
+// This arithmetic was verified against a Python reference before it was written
+// here: TTS speaking each wake word peaks at 0.997–1.000 across three voices.
+const OWW = {
+  CHUNK: 1280,        // samples @16k = 80 ms
+  MEL_PER_CHUNK: 8,   // hop 160
+  MEL_LOOKBACK: 480,  // 160*3 — replaces the frames the model drops at the edge
+  EMB_MEL_FRAMES: 76, // embedding model's input window
+  EMB_WINDOW: 16,     // head's input window, in embeddings
+  MEL_SILENCE: -8,    // mel(digital silence) = -100, normalised to -8. NOT 0:
+                      // zero is a value no audio produces, so a 0-filled ring
+                      // makes warm-up scores meaningless rather than merely low.
+  SR: 16000,
+  COOLDOWN_MS: 2000,  // one utterance is ~24 chunks over threshold; without a
+                      // latch each would count as its own false wake.
+};
+
+let ortRT = null, oww = null, wakeArmed = false, wakeCtx = null, wakeStream = null, wakeNode = null;
+let wakeRunMode = null;   // latched at ARM, same discipline as runMode
+let wakeStats = null;
+
+// The bar is repainted every chunk; the DOM lookups are hoisted so a 12.5 Hz
+// repaint does not do 3 getElementById calls a frame on a phone.
+const bar = () => $("wakebar");
+
+function paintWake(score) {
+  const el = bar(), thr = wakeRunMode ? wakeRunMode.thresh : 0.5;
+  el.firstElementChild.style.width = `${Math.min(1, Math.max(0, score)) * 100}%`;
+  el.lastElementChild.style.left = `${thr * 100}%`;
+  el.classList.toggle("hot", score >= thr);
+  $("wakenum").textContent = score.toFixed(3);
+}
+
+async function loadOww(wake) {
+  if (!ortRT) {
+    // The wasm-only build: this runs three tiny models on a phone CPU and will
+    // never dispatch to the GPU, so the default bundle's jsep wasm would be
+    // 14 MB of download buying nothing.
+    await new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "/voice-probe/ort/ort.wasm.min.js";
+      s.onload = res; s.onerror = () => rej(new Error("ort.wasm.min.js failed to load"));
+      document.head.appendChild(s);
+    });
+    ortRT = window.ort;
+    ortRT.env.wasm.wasmPaths = "/voice-probe/ort/";
+    // Single-threaded on purpose. Threads need SharedArrayBuffer, which needs
+    // COOP/COEP headers the dev server does not send — so the multi-threaded
+    // path would silently fall back anyway, and a fallback that happens under
+    // measurement is a number you cannot attribute.
+    ortRT.env.wasm.numThreads = 1;
+    ortRT.env.logLevel = "error";
+    log("evt", `ort ${ortRT.env.versions ? ortRT.env.versions.web : "?"} loaded, numThreads=1, simd=${ortRT.env.wasm.simd !== false}`);
+  }
+  const t = performance.now();
+  const opt = { executionProviders: ["wasm"], graphOptimizationLevel: "all" };
+  const [mel, emb, head] = await Promise.all([
+    ortRT.InferenceSession.create("/voice-probe/models/melspectrogram.onnx", opt),
+    ortRT.InferenceSession.create("/voice-probe/models/embedding_model.onnx", opt),
+    ortRT.InferenceSession.create(`/voice-probe/models/${wake}.onnx`, opt),
+  ]);
+  log("evt", `oww models loaded (${wake}) in ${(performance.now() - t).toFixed(0)}ms`);
+  return {
+    mel, emb, head,
+    melIn: mel.inputNames[0], embIn: emb.inputNames[0], headIn: head.inputNames[0],
+    raw: new Float32Array(OWW.CHUNK + OWW.MEL_LOOKBACK),
+    mels: new Float32Array((OWW.EMB_MEL_FRAMES + OWW.MEL_PER_CHUNK * 4) * 32).fill(OWW.MEL_SILENCE),
+    embs: new Float32Array(OWW.EMB_WINDOW * 96),
+    warm: 0,
+  };
+}
+
+// Shift a ring buffer left by `n` and write `src` into the tail.
+function ringPush(buf, src, n) {
+  buf.copyWithin(0, n);
+  buf.set(src, buf.length - n);
+}
+
+async function owwPush(chunk) {
+  ringPush(oww.raw, chunk, OWW.CHUNK);
+
+  const melOut = await oww.mel.run({
+    [oww.melIn]: new ortRT.Tensor("float32", oww.raw, [1, oww.raw.length]),
+  });
+  const melData = melOut[oww.mel.outputNames[0]].data;
+  const frames = melData.length / 32;
+  if (frames !== OWW.MEL_PER_CHUNK) {
+    // The failure this whole comment block exists for. Loud, once, and fatal to
+    // the run — a spotter fed a 5/8-speed mel stream produces plausible-looking
+    // low scores for ever, which is the worst possible outcome for a measurement.
+    throw new Error(`melspectrogram returned ${frames} frames, expected ${OWW.MEL_PER_CHUNK} — the lookback is wrong`);
+  }
+  const norm = new Float32Array(melData.length);
+  for (let i = 0; i < melData.length; i++) norm[i] = melData[i] / 10 + 2;
+  ringPush(oww.mels, norm, norm.length);
+
+  // NOT named `window`: shadowing the global inside this function works and is
+  // a trap for the next edit that reaches for window.performance here.
+  const melWindow = oww.mels.slice(oww.mels.length - OWW.EMB_MEL_FRAMES * 32);
+  const embOut = await oww.emb.run({
+    [oww.embIn]: new ortRT.Tensor("float32", melWindow, [1, OWW.EMB_MEL_FRAMES, 32, 1]),
+  });
+  ringPush(oww.embs, embOut[oww.emb.outputNames[0]].data, 96);
+  oww.warm++;
+
+  const headOut = await oww.head.run({
+    [oww.headIn]: new ortRT.Tensor("float32", oww.embs, [1, OWW.EMB_WINDOW, 96]),
+  });
+  return headOut[oww.head.outputNames[0]].data[0];
+}
+
+// The worklet's only job is reframing: 128-sample render quanta in, 1280-sample
+// (80 ms) chunks out. Inference stays on the main thread — ORT's wasm build is
+// loaded there, and moving it into the worklet thread would risk glitching the
+// capture graph itself, which is the one thing that must not distort.
+// Inline as a Blob so the probe stays self-contained: one more file under
+// static/ is one more thing to forget to exclude from the precache.
+const WORKLET_SRC = `
+class Reframer extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Float32Array(${OWW.CHUNK}); this.n = 0; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (!ch) return true;
+    for (let i = 0; i < ch.length; i++) {
+      this.buf[this.n++] = ch[i];
+      if (this.n === ${OWW.CHUNK}) {
+        this.port.postMessage(this.buf.slice());
+        this.n = 0;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("reframer", Reframer);
+`;
+
+// ── Oracle bookkeeping ──────────────────────────────────────────────────────
+// Each of mkyb's three oracles is accumulated as the quantity it is, not
+// reconstructed from the log afterwards. A run that ends in a dead battery
+// still has its numbers on screen and in client.log.
+function newWakeStats() {
+  return {
+    t0: performance.now(),
+    // Oracle 1 — playback duty. Sampled, because there is no event for "time
+    // advanced": `loop` is on, so currentTime wraps and a raw end-minus-start
+    // would read a 3-minute run as 40 seconds.
+    playedSec: 0, lastT: -1,
+    // Oracle 2 — pause/play pairs, counted only inside a burst window so an
+    // operator tapping the transport control does not pollute it.
+    pausesInBurst: 0, playsInBurst: 0, burstOpen: false,
+    // Oracle 3 — wakes with no MARK.
+    wakes: 0, falseWakes: 0, lastWakeAt: 0, peakSilent: 0,
+    // Cost. `drops` is the honest signal: a phone that cannot keep up sheds
+    // chunks, and a silent shed would look exactly like a quiet spotter.
+    inferMs: 0, chunks: 0, drops: 0, maxInferMs: 0,
+  };
+}
+
+function paintWakeStats() {
+  const w = wakeStats;
+  if (!w) return;
+  const wall = (performance.now() - w.t0) / 1000;
+  const set = (id, txt, cls) => {
+    const el = $(id); el.firstElementChild.textContent = txt;
+    el.className = cls || "";
+  };
+  if (wall > 2 && audio.src) {
+    const pct = (w.playedSec / wall) * 100;
+    set("w-played", `${pct.toFixed(0)}%`, pct >= 95 ? "good" : "bad");
+  }
+  const mins = wall / 60;
+  const rate = mins > 0 ? w.falseWakes / mins : 0;
+  set("w-false", mins < 0.5 ? `${w.falseWakes}` : rate.toFixed(2), w.falseWakes ? "bad" : "good");
+  $("w-pairs").textContent = w.wakes ? (w.pausesInBurst / w.wakes).toFixed(2) : "—";
+  $("w-cpu").textContent = w.chunks ? `${((w.inferMs / (wall * 1000)) * 100).toFixed(0)}%` : "—";
+}
+
+// Playback-duty sampler. Runs whether or not the spotter is armed, so an
+// unarmed baseline can be taken on the same page in the same minute.
+setInterval(() => {
+  const w = wakeStats;
+  if (!w) return;
+  const t = audio.currentTime;
+  if (!audio.paused && w.lastT >= 0) {
+    const d = t - w.lastT;
+    // A negative delta is the loop wrapping, not time going backwards; a huge
+    // positive one is a seek. Both are credited as one tick of real playback
+    // rather than as their arithmetic value.
+    w.playedSec += d >= 0 && d < 1.5 ? d : 0.5;
+  }
+  w.lastT = audio.paused ? -1 : t;
+  paintWakeStats();
+}, 500);
+
+for (const ev of ["pause", "play"]) {
+  audio.addEventListener(ev, () => {
+    if (wakeStats && wakeStats.burstOpen) wakeStats[ev === "pause" ? "pausesInBurst" : "playsInBurst"]++;
+  });
+}
+
+// ── The burst: one recognition session, one pause, then resume ──────────────
+let burstRec = null;
+function burst(why) {
+  if (burstRec) { log("err", `burst: already open, ignoring ${why}`); return; }
+  const wasPlaying = !audio.paused;
+  wakeStats.burstOpen = true;   // pause/play events are counted by the listeners above
+  const t = performance.now();
+  log("mark", `WAKE (${why}) — opening ONE recognition burst; audio ${wasPlaying ? "playing" : "paused"} t=${audio.currentTime.toFixed(1)}`);
+  // NOT awaited, unlike the processLocally path in start(). There the flush buys
+  // crash forensics for an uncatchable renderer crash; here it would insert a
+  // network round trip between the wake word and the recognizer opening, which
+  // clips the front of the command and biases the very latency being measured.
+  flush();
+
+  const r = new SR();
+  r.lang = $("lang").value.trim() || "en-US";
+  r.continuous = false;   // the whole point: one utterance, one focus request
+  r.interimResults = true;
+  r.maxAlternatives = 1;
+  burstRec = r;
+
+  const done = (how) => {
+    if (burstRec !== r) return;
+    burstRec = null;
+    const dt = performance.now() - t;
+    log("evt", `burst end (${how}) after ${(dt / 1000).toFixed(1)}s — pausePairs thisWake=${wakeStats.pausesInBurst}/${wakeStats.playsInBurst}`);
+    // Android sometimes restores focus and sometimes does not (measured
+    // 2026-09-02: AIMP resumed only when configured to). Resume explicitly and
+    // SAY so, rather than letting "the audio came back" mean two different things.
+    if (wasPlaying && audio.paused) {
+      log("evt", "burst: audio did NOT auto-resume — resuming explicitly");
+      audio.play().catch((e) => log("err", `resume failed: ${e}`));
+    } else if (wasPlaying) {
+      log("evt", "burst: audio auto-resumed (no explicit play needed)");
+    }
+    // Held open briefly so a late pause/play still lands in this wake's count.
+    setTimeout(() => { if (wakeStats) wakeStats.burstOpen = false; }, 1500);
+    flush();
+  };
+
+  r.onstart = () => log("evt", "burst recognition.onstart");
+  r.onresult = (e) => {
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const a = e.results[i][0];
+      const conf = typeof a.confidence === "number" ? a.confidence.toFixed(3) : "n/a";
+      log(e.results[i].isFinal ? "final" : "interim",
+        `burst ${e.results[i].isFinal ? "FINAL" : "interim"} conf=${conf} "${a.transcript.trim()}"`);
+    }
+  };
+  r.onerror = (ev) => { log("err", `burst error=${ev.error}`); done(`error ${ev.error}`); };
+  r.onend = () => done("onend");
+  try { r.start(); } catch (e) { log("err", `burst start() threw: ${e}`); done("threw"); }
+}
+
+// ── ARM / DISARM ────────────────────────────────────────────────────────────
+async function armWake() {
+  const wake = $("wakeword").value;
+  const thresh = parseFloat($("wakethresh").value) || 0.5;
+  const aec = $("wakeaec").checked;
+  // Latched, for the same reason runMode is: a configuration that changes
+  // mid-run produces one log with two contradictory labels (observed 15:34).
+  wakeRunMode = { wake, thresh, aec, burst: $("wakeburst").checked };
+  wakeStats = newWakeStats();
+
+  $("wakearm").disabled = true;
+  $("wakearm").textContent = "loading…";
+  try {
+    oww = await loadOww(wake);
+  } catch (e) {
+    log("err", `WAKE: model load failed: ${e}. Run frontend/static/voice-probe/fetch-assets.sh`);
+    $("wakearm").disabled = false; $("wakearm").textContent = "ARM SPOTTER";
+    return;
+  }
+
+  log("evt", `WAKE ARM v=${PROBE_VERSION} word=${wake} thresh=${thresh} aec=${aec} burst=${wakeRunMode.burst} — audio is ${audio.paused ? "PAUSED" : "PLAYING"} t=${audio.currentTime.toFixed(1)}`);
+  await flush();
+
+  try {
+    // echoCancellation is the lever most likely to decide oracle 3: it
+    // subtracts the phone's own output from the mic signal, and the phone's own
+    // output is the L2 lesson audio that the recognizer hallucinated English
+    // from. Whether it engages over Bluetooth (where the speaker is not the
+    // reference) is exactly what a car run has to answer.
+    wakeStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: aec, noiseSuppression: aec, autoGainControl: aec },
+    });
+  } catch (e) {
+    log("err", `WAKE: getUserMedia failed: ${e && e.name ? e.name : e}`);
+    $("wakearm").disabled = false; $("wakearm").textContent = "ARM SPOTTER";
+    return;
+  }
+  const tr = wakeStream.getAudioTracks()[0];
+  const st = tr.getSettings ? tr.getSettings() : {};
+  // Report what was GRANTED, not what was asked for. Constraints are advisory —
+  // a phone that ignores echoCancellation would otherwise produce a run
+  // labelled "AEC on" whose audio never went through an AEC.
+  log("evt", `WAKE: stream OPEN label="${tr.label}" granted aec=${st.echoCancellation} ns=${st.noiseSuppression} agc=${st.autoGainControl} rate=${st.sampleRate || "?"}`);
+  setTimeout(() => log("evt", `WAKE: +2s audio is ${audio.paused ? "PAUSED — the spotter is NOT free" : "STILL PLAYING"} t=${audio.currentTime.toFixed(1)}`), 2000);
+
+  wakeCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: OWW.SR });
+  if (wakeCtx.sampleRate !== OWW.SR) {
+    // Every model here is 16 kHz. A context that silently opened at 48 kHz
+    // would make each chunk 26 ms of audio and nothing would ever fire.
+    log("err", `WAKE: AudioContext is ${wakeCtx.sampleRate} Hz, not ${OWW.SR} — scores are meaningless. DISARM.`);
+  }
+  await wakeCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET_SRC], { type: "text/javascript" })));
+  wakeNode = new AudioWorkletNode(wakeCtx, "reframer");
+  wakeCtx.createMediaStreamSource(wakeStream).connect(wakeNode);
+  // Not connected to the destination: the mic must never reach the speakers.
+
+  let busy = false;
+  wakeNode.port.onmessage = async (ev) => {
+    if (!wakeArmed) return;
+    if (busy) {
+      // Dropping keeps latency bounded, but it tears the mel stream's
+      // continuity — so it is an error, not a debug line. A phone that drops
+      // steadily has failed oracle 1 regardless of what the playback % says.
+      wakeStats.drops++;
+      if (wakeStats.drops % 12 === 1) log("err", `WAKE: dropped chunk (${wakeStats.drops} total) — inference is slower than real time`);
+      return;
+    }
+    busy = true;
+    const t = performance.now();
+    let score;
+    try {
+      score = await owwPush(ev.data);
+    } catch (e) {
+      log("err", `WAKE: inference failed: ${e && e.message ? e.message : e} — DISARMING`);
+      disarmWake();
+      return;
+    } finally { busy = false; }
+
+    const dt = performance.now() - t;
+    wakeStats.inferMs += dt; wakeStats.chunks++;
+    if (dt > wakeStats.maxInferMs) wakeStats.maxInferMs = dt;
+    paintWake(score);
+
+    if (oww.warm < OWW.EMB_WINDOW) return;  // receptive field still zero-filled
+    const marked = Date.now() < markUntil;
+    if (!marked && score > wakeStats.peakSilent) wakeStats.peakSilent = score;
+    if (score < wakeRunMode.thresh) return;
+    if (performance.now() - wakeStats.lastWakeAt < OWW.COOLDOWN_MS) return;
+    wakeStats.lastWakeAt = performance.now();
+    wakeStats.wakes++;
+    if (!marked) {
+      wakeStats.falseWakes++;
+      log("err", `WAKE while SILENT score=${score.toFixed(3)} — false positive #${wakeStats.falseWakes}`);
+    } else {
+      log("mark", `WAKE [MARKED] score=${score.toFixed(3)}`);
+    }
+    paintWakeStats();
+    if (wakeRunMode.burst) {
+      if (!SR) log("err", "BURST requested but this browser has no SpeechRecognition");
+      else burst(marked ? "spoken" : "false positive");
+    }
+  };
+
+  // The clock starts HERE, not at newWakeStats(). Loading three ONNX models
+  // takes ~1 s on a Mac and longer on a phone, and every percentage in the
+  // summary divides by this wall time — so counting the load would report a
+  // spotter that is idle during it as cheaper than it is, and would make a
+  // 30 s run's playback figure wrong by several points.
+  wakeStats.t0 = performance.now();
+  wakeArmed = true;
+  $("wakearm").disabled = false;
+  $("wakearm").textContent = "DISARM SPOTTER";
+  $("wakesim").disabled = false;
+  wakeLock();
+}
+
+function disarmWake() {
+  wakeArmed = false;
+  const w = wakeStats;
+  if (w) {
+    const wall = (performance.now() - w.t0) / 1000;
+    log("evt", `WAKE DISARM word=${wakeRunMode.wake} aec=${wakeRunMode.aec} burst=${wakeRunMode.burst} thresh=${wakeRunMode.thresh} — ` +
+      `played=${((w.playedSec / wall) * 100).toFixed(1)}% of ${wall.toFixed(0)}s | ` +
+      `wakes=${w.wakes} false=${w.falseWakes} (${(w.falseWakes / (wall / 60)).toFixed(2)}/min) peakSilent=${w.peakSilent.toFixed(3)} | ` +
+      `pausePairs=${w.pausesInBurst}/${w.playsInBurst} over ${w.wakes} wakes | ` +
+      `cpu=${((w.inferMs / (wall * 1000)) * 100).toFixed(1)}% mean=${(w.inferMs / Math.max(1, w.chunks)).toFixed(1)}ms max=${w.maxInferMs.toFixed(0)}ms chunks=${w.chunks} drops=${w.drops}`);
+  }
+  try { wakeNode && (wakeNode.port.onmessage = null); } catch { /* gone */ }
+  try { wakeStream && wakeStream.getTracks().forEach((t) => t.stop()); } catch { /* gone */ }
+  try { wakeCtx && wakeCtx.close(); } catch { /* gone */ }
+  wakeNode = wakeStream = wakeCtx = null;
+  $("wakearm").textContent = "ARM SPOTTER";
+  $("wakearm").disabled = false;
+  $("wakesim").disabled = true;
+  flush();
+}
+
+$("wakearm").onclick = () => (wakeArmed ? disarmWake() : armWake());
+// Oracle 2 without the spotter in the way. The pause/play cost of a burst is a
+// property of the recognition session; measuring it should not wait on a wake
+// word being good, or on a passenger being available to say one.
+$("wakesim").onclick = () => {
+  if (!wakeStats) wakeStats = newWakeStats();
+  markUntil = Date.now() + 10000;
+  wakeStats.wakes++;
+  if (!SR) { log("err", "SIMULATE WAKE: no SpeechRecognition in this browser"); return; }
+  burst("simulated");
+};
+for (const id of ["wakeword", "wakethresh", "wakeaec", "wakeburst"]) {
+  $(id).addEventListener("change", () => {
+    if (wakeArmed) log("err", "WAKE TOGGLE CHANGED MID-RUN — ignored for this run; DISARM and ARM again to apply it");
+  });
+}
+
+$("single").addEventListener("change", () => { if (running) log("err", "TOGGLE CHANGED MID-RUN — ignored for this run; STOP and START again to apply it"); });
+$("local").addEventListener("change", () => { if (running) log("err", "TOGGLE CHANGED MID-RUN — ignored for this run; STOP and START again to apply it"); });
+$("checklocal").onclick = checkLocalAvailability;
+$("install").onclick = async () => {
+  const lang = $("lang").value.trim() || "en-US";
+  log("evt", `install: requesting on-device model for ${lang}…`);
+  $("install").disabled = true;
+  try {
+    const ok = await SR.install({ langs: [lang], processLocally: true });
+    log("evt", `install: returned ${ok}`);
+  } catch (e) {
+    log("err", `install failed: ${e}`);
+  }
+  $("install").disabled = false;
+  probeLocal();
+};
+$("clear").onclick = () => {
+  all.length = 0; logEl.innerHTML = "";
+  nFinal = nRestart = nSilent = 0; t0 = 0; paint();
+  log("evt", "cleared");
+};
+window.addEventListener("pagehide", flush);
+</script>
+</body>
+</html>
