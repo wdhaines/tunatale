@@ -51,10 +51,17 @@ function sessionBody(overrides: Record<string, unknown> = {}) {
     key_phrases: [{ phrase: "å oppføre seg", translation: "to behave" }],
     review_requested: ["oppføre", "dessuten"],
     review_used: ["oppføre"],
+    // ⚠️ SHAPED FROM THE LIVE API, not invented. natural_speed really does open
+    // with two NARRATOR lines in English — the section's own name, then the
+    // scene label — before any dialogue. The earlier fixture here omitted them,
+    // which made a naive `phrases` filter look correct while it would have
+    // rendered "Natural Speed" as the first line of the scene.
     sections: [
       {
         type: "natural_speed",
         phrases: [
+          { text: "Natural Speed", role: "narrator", language_code: "en", voice_id: "v" },
+          { text: "On the Platform", role: "narrator", language_code: "en", voice_id: "v" },
           {
             text: "Toget er dessverre forsinket.",
             role: "female-1",
@@ -62,6 +69,32 @@ function sessionBody(overrides: Record<string, unknown> = {}) {
             voice_id: "v",
           },
           { text: "Da rekker vi ikke møtet.", role: "male-1", language_code: "no", voice_id: "v" },
+        ],
+      },
+      {
+        // The bilingual section buildScenes pulls each line's gloss from: an L2
+        // line, then its narrator translation, in that order.
+        type: "translated",
+        phrases: [
+          {
+            text: "Toget er dessverre forsinket.",
+            role: "female-1",
+            language_code: "no",
+            voice_id: "v",
+          },
+          {
+            text: "The train is unfortunately delayed.",
+            role: "narrator",
+            language_code: "en",
+            voice_id: "v",
+          },
+          { text: "Da rekker vi ikke møtet.", role: "male-1", language_code: "no", voice_id: "v" },
+          {
+            text: "Then we will not make the meeting.",
+            role: "narrator",
+            language_code: "en",
+            voice_id: "v",
+          },
         ],
       },
     ],
@@ -127,6 +160,30 @@ describe("the reader", () => {
 
     expect(getByText("Toget er dessverre forsinket.")).toBeTruthy();
     expect(getByText("Da rekker vi ikke møtet.")).toBeTruthy();
+  });
+
+  it("does not open the scene with the section's own name", () => {
+    // The bug this caught — found by running the real app, not by a test.
+    // natural_speed's first phrase is the narrator saying "Natural Speed"; a
+    // raw phrase list renders it as line one. buildScenes drops it.
+    const { queryByText } = render(Page, { props: { data: data() } });
+
+    expect(queryByText("Natural Speed")).toBeNull();
+  });
+
+  it("shows the English under each line", () => {
+    // The gloss is what makes it readable to someone still learning — and it
+    // comes free from buildScenes, which a hand-rolled phrase filter would not
+    // have given.
+    const { getByText } = render(Page, { props: { data: data() } });
+
+    expect(getByText("The train is unfortunately delayed.")).toBeTruthy();
+  });
+
+  it("promotes the scene label to a heading rather than a line", () => {
+    const { getByRole } = render(Page, { props: { data: data() } });
+
+    expect(getByRole("heading", { name: "On the Platform" })).toBeTruthy();
   });
 
   it("says which forgotten words it managed to use", () => {

@@ -690,11 +690,10 @@ export class TunaTaleAPI {
     session_date: string;
     title: string;
     language_code: string;
-    key_phrases: Array<{ phrase: string; translation: string }>;
-    sections: Array<{
-      type: string;
-      phrases: Array<{ text: string; role: string; language_code: string; voice_id: string }>;
-    }>;
+    key_phrases: KeyPhrase[];
+    // Same shape as a lesson's, so buildScenes works on it unchanged — the
+    // response is a lesson read minus `day`.
+    sections: SectionDetail[];
     // Arrays here, not null: this response inherits LessonResponse, where empty
     // means UNMEASURABLE — the same convention the lesson page already reads.
     // The LIST endpoint keeps null/[] distinct; a single read cannot, and a

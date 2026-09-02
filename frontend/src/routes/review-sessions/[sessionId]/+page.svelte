@@ -3,6 +3,7 @@
 	import { api } from '$lib/api';
 	import type { LessonAudio } from '$lib/api';
 	import LessonPlayer from '$lib/components/LessonPlayer.svelte';
+	import { buildScenes } from '$lib/transcriptScenes';
 
 	// The reader for a review session. It has no curriculum and no day, so there
 	// is no day navigation, no Regenerate, and no position in a sequence to show
@@ -51,13 +52,18 @@
 			: null
 	);
 
-	// The dialogue, which is the whole point of reading one: with no theme, the
-	// only thing left to judge is whether it is a scene real people could have.
-	const dialogue = $derived(
-		data.session.sections.find(
-			(s: { type: string }) => s.type === 'natural_speed'
-		)?.phrases ?? []
-	);
+	// ⚠️ buildScenes, NOT a hand-rolled filter over natural_speed.phrases.
+	// Measured against the live API: that section's first phrases are NARRATOR
+	// lines in English -- the literal string "Natural Speed", then the scene
+	// label -- so rendering the phrase list raw opens the scene with the
+	// section's own name. buildScenes already knows to drop the section title
+	// and promote the next narrator line to a heading, and it pairs each L2 line
+	// with its English translation for free.
+	//
+	// It is passed no dialogueLines: those come from the transcript endpoint,
+	// which resolves against the lessons table where a session is not. Every
+	// field this page renders comes from the session body itself.
+	const scenes = $derived(buildScenes(data.session, []));
 
 	async function prepareAudio() {
 		preparing = true;
@@ -108,11 +114,24 @@
 
 	<section class="transcript">
 		<h2>The scene</h2>
-		<ol>
-			{#each dialogue as line, i (i)}
-				<li><span class="speaker">{line.role}</span><span class="text">{line.text}</span></li>
-			{/each}
-		</ol>
+		{#each scenes as scene, si (si)}
+			{#if scene.title}
+				<h3 class="scene-title">{scene.title}</h3>
+			{/if}
+			<ol>
+				{#each scene.lines as line, i (i)}
+					<li>
+						<span class="speaker">{line.role}</span>
+						<span class="text">
+							{line.naturalText}
+							{#if line.translatedText}
+								<span class="gloss">{line.translatedText}</span>
+							{/if}
+						</span>
+					</li>
+				{/each}
+			</ol>
+		{/each}
 	</section>
 </main>
 
@@ -171,6 +190,19 @@
 	.transcript h2 {
 		font-size: 1.1rem;
 		margin: 0 0 0.75rem;
+	}
+	.scene-title {
+		font-size: 0.82rem;
+		text-transform: uppercase;
+		letter-spacing: 0.07em;
+		opacity: 0.6;
+		margin: 1.25rem 0 0.6rem;
+		font-weight: 600;
+	}
+	.gloss {
+		display: block;
+		font-size: 0.85rem;
+		opacity: 0.62;
 	}
 	.transcript ol {
 		list-style: none;
