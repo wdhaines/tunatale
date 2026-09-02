@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import logging
-from collections.abc import Sequence
 
 from app.generation.json_parsing import parse_json_object
 from app.generation.prompts import (
@@ -26,7 +25,9 @@ from app.models.curriculum import CurriculumDay
 from app.models.language import NARRATOR_VOICE, Language
 from app.models.lesson import KeyPhraseInfo, Lesson
 from app.models.strategy import ContentStrategy, ReviewPressure
+from app.srs.database import SRSDatabase
 from app.srs.lemmatizer import get_lemmatizer, lemmatize_surfaces_in_context
+from app.srs.review_selector import select_review_collocations
 from app.srs.tokenizer import tokenize
 
 logger = logging.getLogger(__name__)
@@ -60,7 +61,7 @@ def build_story_prompts(
     strategy: ContentStrategy,
     cefr_level: str,
     *,
-    review_words: Sequence[str] = (),
+    srs_db: SRSDatabase | None = None,
     review_pressure: ReviewPressure = ReviewPressure.NATURAL,
 ) -> tuple[str, str]:
     """Build the (system_prompt, user_prompt) pair for story generation.
@@ -68,12 +69,19 @@ def build_story_prompts(
     Shared by ``StoryGenerator.generate`` and the ``GET /api/story/prompt``
     export endpoint so the manual-paste path can never drift from the Groq path.
 
-    *review_words* is the learner's decaying vocabulary, most urgent first (see
-    ``srs.review_selector``); *review_pressure* is how hard the prompt should
-    push to use it. Both default to the pre-feature behaviour — with no words,
-    the rendered prompt is byte-identical to what every story cassette was
-    recorded against, at every pressure setting.
+    SELECTION HAPPENS HERE, NOT AT THE CALL SITES. Both modes funnel through
+    this one function — that is what its first paragraph is promising — so
+    ``srs_db`` goes in and words come out in a single place. If each caller
+    selected its own words, the caller that forgot would send "(none yet)"
+    forever with no error: a worse lesson and no way to notice.
+
+    ``srs_db=None`` renders the prompt EXACTLY as it was before this feature
+    existed, at every pressure setting. Every story cassette was recorded that
+    way and the cassette key is sha256(system + user), so this is not a courtesy
+    default — it is what keeps the recorded corpus valid.
     """
+    review_words = select_review_collocations(srs_db) if srs_db is not None else ()
+
     system_prompt = build_story_system_prompt(language)
 
     new_collocations = "\n".join(f"- {c}" for c in curriculum_day.collocations)
@@ -104,6 +112,9 @@ class StoryGenerator:
         language: Language,
         strategy: ContentStrategy,
         cefr_level: str = "A2",
+        *,
+        srs_db: SRSDatabase | None = None,
+        review_pressure: ReviewPressure = ReviewPressure.NATURAL,
     ) -> Lesson:
         """Generate a Lesson for the given curriculum day.
 
@@ -112,11 +123,20 @@ class StoryGenerator:
             language: Target language configuration.
             strategy: WIDER or DEEPER content strategy.
             cefr_level: CEFR level string (e.g. "A2") to calibrate dialogue complexity.
+            srs_db: Per-language SRS database for review collocation selection.
+            review_pressure: How hard the prompt should push to use review words.
 
         Returns:
             Parsed Lesson with 4 Pimsleur sections built mechanically from LLM JSON.
         """
-        system_prompt, user_prompt = build_story_prompts(curriculum_day, language, strategy, cefr_level)
+        system_prompt, user_prompt = build_story_prompts(
+            curriculum_day,
+            language,
+            strategy,
+            cefr_level,
+            srs_db=srs_db,
+            review_pressure=review_pressure,
+        )
 
         logger.info("Generating story for day %d (%s)", curriculum_day.day, strategy.value)
         # 4096, NOT 5500. gpt-oss-120b's free-tier budget is 8000 tokens/request and

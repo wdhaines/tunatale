@@ -29,13 +29,17 @@ class FakeStoryGenerator:
         self.fail_count: int = 0
         self.raise_error: Exception = StoryGenerationError("mock error")
 
-    async def generate(self, curriculum_day, language, strategy, cefr_level="A2"):
+    async def generate(self, curriculum_day, language, strategy, cefr_level="A2", *, srs_db=None, review_pressure=None):
+        # `srs_db` is RECORDED, not ignored: the pipeline is the third call site
+        # of build_story_prompts and the one no HTTP test drives, so this double
+        # is the only place its per-language db argument can be observed.
         self.calls.append(
             {
                 "curriculum_day": curriculum_day,
                 "language": language,
                 "strategy": strategy,
                 "cefr_level": cefr_level,
+                "srs_db": srs_db,
             }
         )
         if self.fail_count > 0:
@@ -192,6 +196,41 @@ class TestPipelineHappyPath:
         events, _ = activity_log.events_since(0)
         states = [e["state"] for e in events if e["kind"] == "pipeline"]
         assert states == ["queued", "generating", "rendering", "ready"]
+
+    async def test_generate_hands_the_per_language_srs_db_to_the_generator(self, pipeline, fake_generator):
+        """bd tunatale-fgeq.2 / M1 — the pipeline is the THIRD call site of
+        build_story_prompts and the only one no HTTP test drives.
+
+        Two defects are covered, and the second is why the job is enqueued for
+        Norwegian rather than Slovene: passing nothing at all (the auto path
+        silently reverts to "(none yet)"), and passing the DEFAULT language's db
+        (review words drawn from the wrong deck — plausible output, no error).
+        A same-language assertion would pass under the second.
+        """
+        sl_sentinel, no_sentinel = object(), object()
+        pipeline._srs_dbs["sl"] = sl_sentinel
+        pipeline._srs_dbs["no"] = no_sentinel
+
+        store = pipeline._content_stores["no"]
+        cid = "cur-review-db"
+        store.save_curriculum(
+            cid,
+            Curriculum(
+                id=cid,
+                topic="test",
+                language_code="no",
+                cefr_level="A2",
+                days=[
+                    CurriculumDay(day=1, title="Day 1", focus="hello", collocations=["hei"], learning_objective="lo"),
+                ],
+            ),
+        )
+
+        pipeline.start()
+        pipeline.enqueue("no", cid, 1, "generate")
+        await wait_for_job(pipeline, "no", cid, 1, "ready")
+
+        assert fake_generator.calls[0]["srs_db"] is no_sentinel
 
     async def test_render_only_job(self, pipeline, fake_renderer):
         """Render-only job for an existing lesson without audio."""

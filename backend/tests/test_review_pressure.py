@@ -51,14 +51,20 @@ class TestEmptySetIsUnchanged:
 
 
 class TestTheBlockCarriesTheWords:
-    def test_words_appear_in_the_order_given(self, language, strategy):
-        _, user = build_story_prompts(_make_curriculum_day(), language, strategy, "A2", review_words=WORDS)
-        positions = [user.index(w) for w in WORDS]
-        assert positions == sorted(positions), "the selector's urgency order must survive into the prompt"
+    """Renderer-level only. That the words reach the prompt from the DB, at both
+    call sites and in the right language, is `test_review_wiring.py`'s job — this
+    class stays pure so a DB or routing failure cannot masquerade as a wording
+    failure here."""
 
-    def test_the_old_placeholder_is_gone_once_there_are_words(self, language, strategy):
-        _, user = build_story_prompts(_make_curriculum_day(), language, strategy, "A2", review_words=WORDS)
-        assert "(none yet)" not in user
+    def test_words_appear_in_the_order_given(self):
+        block = build_review_block(WORDS)
+        positions = [block.index(w) for w in WORDS]
+        assert positions == sorted(positions), "the selector's urgency order must survive rendering"
+
+    def test_each_word_is_its_own_bullet(self):
+        block = build_review_block(WORDS)
+        for word in WORDS:
+            assert f"- {word}" in block
 
 
 class TestTheDial:

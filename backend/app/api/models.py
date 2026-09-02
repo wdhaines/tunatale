@@ -144,6 +144,7 @@ class GenerateStoryRequest(BaseModel):
     curriculum_id: str
     day: int = 1
     strategy: Literal["WIDER", "DEEPER"] = "WIDER"
+    review_pressure: Literal["NATURAL", "BALANCED", "INSISTENT"] = "NATURAL"
 
 
 class ImportLessonRequest(BaseModel):

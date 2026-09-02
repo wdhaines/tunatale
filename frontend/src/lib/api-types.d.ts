@@ -1884,6 +1884,12 @@ export interface components {
        */
       day: number;
       /**
+       * Review Pressure
+       * @default NATURAL
+       * @enum {string}
+       */
+      review_pressure: "NATURAL" | "BALANCED" | "INSISTENT";
+      /**
        * Strategy
        * @default WIDER
        * @enum {string}
@@ -5551,6 +5557,7 @@ export interface operations {
         curriculum_id: string;
         day: number;
         strategy?: "WIDER" | "DEEPER";
+        review_pressure?: "NATURAL" | "BALANCED" | "INSISTENT";
       };
       header?: never;
       path?: never;

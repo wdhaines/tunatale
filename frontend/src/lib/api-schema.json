@@ -631,6 +631,16 @@
             "title": "Day",
             "type": "integer"
           },
+          "review_pressure": {
+            "default": "NATURAL",
+            "enum": [
+              "NATURAL",
+              "BALANCED",
+              "INSISTENT"
+            ],
+            "title": "Review Pressure",
+            "type": "string"
+          },
           "strategy": {
             "default": "WIDER",
             "enum": [
@@ -7134,6 +7144,21 @@
                 "DEEPER"
               ],
               "title": "Strategy",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "review_pressure",
+            "required": false,
+            "schema": {
+              "default": "NATURAL",
+              "enum": [
+                "NATURAL",
+                "BALANCED",
+                "INSISTENT"
+              ],
+              "title": "Review Pressure",
               "type": "string"
             }
           }
