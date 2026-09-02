@@ -773,6 +773,85 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/review-sessions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Review Sessions
+     * @description Every review session in this language, newest first.
+     *
+     *     Dated, not numbered. The store returns the coverage pair without touching a
+     *     lesson body, so this stays one query however long the list grows.
+     */
+    get: operations["list_review_sessions_api_review_sessions_get"];
+    put?: never;
+    /**
+     * Create Review Session
+     * @description Generate one review session: no curriculum, no day, no theme.
+     *
+     *     Takes no identifiers at all — see ``CreateReviewSessionRequest`` for why that
+     *     is enforced rather than merely documented.
+     */
+    post: operations["create_review_session_api_review_sessions_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/review-sessions/{session_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Review Session
+     * @description One session's body, shaped like a lesson minus the field it has no right to.
+     *
+     *     ``serialize_lesson`` omits ``day`` when it is not passed, so the reading
+     *     frontend reuses its lesson renderer unchanged and a session still cannot
+     *     claim a position in a sequence it is not part of.
+     */
+    get: operations["get_review_session_api_review_sessions__session_id__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/review-sessions/{session_id}/render": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Render Review Session
+     * @description Render a session's audio through the ordinary audio pipeline.
+     *
+     *     ``render_lesson_audio`` takes no curriculum and no day and keys on the id
+     *     alone, so this reuses it verbatim; ``audio_files`` rows land under the
+     *     session id and ``GET /api/audio/lesson/{id}`` then serves them with no
+     *     change at all.
+     */
+    post: operations["render_review_session_api_review_sessions__session_id__render_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/srs/backfill-translations": {
     parameters: {
       query?: never;
@@ -1539,30 +1618,6 @@ export interface paths {
     get: operations["get_story_prompt_api_story_prompt_get"];
     put?: never;
     post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/story/review-session": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Create Review Session
-     * @description Generate one review session: no curriculum, no day, no theme.
-     *
-     *     The counterpart of ``generate_story`` for content that belongs to no plan.
-     *     It takes no identifiers at all — see ``CreateReviewSessionRequest`` for why
-     *     that is enforced rather than merely undocumented.
-     */
-    post: operations["create_review_session_api_story_review_session_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2449,6 +2504,14 @@ export interface components {
       total: number;
     };
     /**
+     * ListReviewSessionsResponse
+     * @description Response of GET /api/review-sessions.
+     */
+    ListReviewSessionsResponse: {
+      /** Sessions */
+      sessions: components["schemas"]["ReviewSessionSummary"][];
+    };
+    /**
      * ListenPreviewCandidate
      * @description One row of GET /lesson/{id}/listen-preview's response.
      */
@@ -3078,6 +3141,66 @@ export interface components {
     ReviewQueueResponse: {
       /** Queue */
       queue: components["schemas"]["QueueItemResponse"][];
+    };
+    /**
+     * ReviewSessionResponse
+     * @description Response of GET /api/review-sessions/{session_id}.
+     *
+     *     A lesson read plus a date, MINUS the ``day`` it has no right to.
+     *     ``serialize_lesson`` leaves that key out for a session, but the inherited
+     *     ``day: int | None = None`` would still serialize as ``null`` — so the ROUTE
+     *     must set ``response_model_exclude_unset=True``. That is a route setting, not
+     *     something this model can enforce, which is why the route carries the warning.
+     */
+    ReviewSessionResponse: {
+      /** Day */
+      day?: number | null;
+      /** Id */
+      id: string;
+      /** Key Phrases */
+      key_phrases: components["schemas"]["LessonKeyPhrase"][];
+      /** Language Code */
+      language_code: string;
+      /**
+       * Review Requested
+       * @default []
+       */
+      review_requested: string[];
+      /**
+       * Review Used
+       * @default []
+       */
+      review_used: string[];
+      /** Sections */
+      sections: components["schemas"]["LessonSection"][];
+      /** Session Date */
+      session_date: string;
+      /** Title */
+      title: string;
+    };
+    /**
+     * ReviewSessionSummary
+     * @description One row of the dated list on the Lessons index.
+     *
+     *     ⚠️ ``review_requested``/``review_used`` are OPTIONAL, and the ``None`` is
+     *     load-bearing: it means "never measured" and renders as no readout at all,
+     *     while ``[]`` is a measured zero. Defaulting them to ``[]`` here would put a
+     *     permanent "reused 0 of 0" on any row that predates the meter — a grade where
+     *     an observation belongs.
+     */
+    ReviewSessionSummary: {
+      /** Id */
+      id: string;
+      /** Language Code */
+      language_code: string;
+      /** Review Requested */
+      review_requested?: string[] | null;
+      /** Review Used */
+      review_used?: string[] | null;
+      /** Session Date */
+      session_date: string;
+      /** Title */
+      title: string;
     };
     /**
      * SetGenerationModeResponse
@@ -4476,6 +4599,121 @@ export interface operations {
       };
     };
   };
+  list_review_sessions_api_review_sessions_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ListReviewSessionsResponse"];
+        };
+      };
+    };
+  };
+  create_review_session_api_review_sessions_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateReviewSessionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CreateReviewSessionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_review_session_api_review_sessions__session_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReviewSessionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  render_review_session_api_review_sessions__session_id__render_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RenderAudioResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   backfill_translations_api_srs_backfill_translations_post: {
     parameters: {
       query?: never;
@@ -5706,39 +5944,6 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["GetStoryPromptResponse"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  create_review_session_api_story_review_session_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["CreateReviewSessionRequest"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["CreateReviewSessionResponse"];
         };
       };
       /** @description Validation Error */

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date
 from functools import partial
 from typing import Literal
 
@@ -13,8 +12,6 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.api._serializers import serialize_lesson
 from app.api.models import (
-    CreateReviewSessionRequest,
-    CreateReviewSessionResponse,
     GenerateStoryRequest,
     GenerateStoryResponse,
     GetStoryPromptResponse,
@@ -317,100 +314,6 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
         "title": lesson.title,
         "sections": sections,
         "warnings": _logged_speaker_warnings(lesson.generation_metadata.get("story"), language),
-    }
-
-
-_FALLBACK_CEFR_LEVEL = "A2"
-
-# The refusal the learner reads when nothing is due. Lifted verbatim from the
-# deleted lesson-page handler (bd tunatale-q2np) rather than rewritten: "no
-# vocabulary is due" is the part that tells them this is a normal Tuesday and
-# not a broken button.
-_NOTHING_DUE = "Nothing to review right now — no vocabulary is due in this language today"
-
-
-def _latest_cefr_level(store) -> str:
-    """The level a new review session should be pitched at.
-
-    A session belongs to no curriculum, so it has no level of its own. Taking it
-    from the learner's most recent plan in this language is the answer the user
-    chose over a per-language setting and over a picker on the button, with the
-    downside stated: a session inherits a level from a plan it has nothing to do
-    with.
-
-    ⚠️ THE FALLBACK IS NOT AN EDGE CASE. A learner with no curricula at all must
-    still be able to make a review session — that is the whole point of the
-    surface being independent — so "no plans yet" resolves to the same default
-    ``GenerateStoryRequest`` has always used, not to an error.
-
-    ``list_curricula`` is newest-first, and the store is already scoped to the
-    request's language.
-    """
-    rows = store.list_curricula()
-    if not rows:
-        return _FALLBACK_CEFR_LEVEL
-    return store.get_curriculum(rows[0]["id"]).cefr_level
-
-
-@router.post("/review-session", status_code=201, response_model=CreateReviewSessionResponse)
-async def create_review_session(body: CreateReviewSessionRequest, request: Request):
-    """Generate one review session: no curriculum, no day, no theme.
-
-    The counterpart of ``generate_story`` for content that belongs to no plan.
-    It takes no identifiers at all — see ``CreateReviewSessionRequest`` for why
-    that is enforced rather than merely undocumented.
-    """
-    store = request.state.content_store
-    language = request.state.language
-    generator = request.app.state.story_generator
-    srs_db = getattr(request.state, "srs_db", None)
-
-    try:
-        lesson = await generator.generate_review_session(language, _latest_cefr_level(store), srs_db=srs_db)
-    except NoReviewVocabularyError as e:
-        # 409, and with the learner's wording rather than the exception's: this
-        # is the ONLY refusal that gets reworded, so the neighbouring 502 still
-        # reads as an upstream failure.
-        raise HTTPException(status_code=409, detail=_NOTHING_DUE) from e
-    except StoryGenerationError as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
-    except LLMQuotaExceededError as e:
-        raise HTTPException(status_code=429, detail=str(e)) from e
-    except LLMError as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
-
-    # No `if srs_db is not None` guard, and that is not an oversight: reaching
-    # this line proves it is not None. A review session with no SRS database
-    # selects no words, and no words raises NoReviewVocabularyError above,
-    # before any LLM call. Guarding here would add a branch nothing can execute.
-    await annotate_chunk_upos_for_lesson(lesson, srs_db, **_injected_lemmatizer(request))
-
-    session_id = mint_id(lesson.title)
-    metadata = lesson.generation_metadata
-    # Read the clock ONCE. Called twice, this would store one date and report
-    # another across a midnight boundary — rare, silent, and impossible to
-    # reproduce afterwards.
-    session_date = date.today().isoformat()
-    store.save_review_session(
-        session_id,
-        request.state.language_code,
-        session_date,
-        lesson,
-        review_requested=metadata.get("review_requested"),
-        review_used=metadata.get("review_used"),
-    )
-
-    task = asyncio.create_task(_prewarm_lesson(lesson, srs_db))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-
-    return {
-        "id": session_id,
-        "session_date": session_date,
-        "title": lesson.title,
-        "review_requested": metadata.get("review_requested", []),
-        "review_used": metadata.get("review_used", []),
-        "warnings": _logged_speaker_warnings(metadata.get("story"), language),
     }
 
 

@@ -453,6 +453,30 @@ class CreateReviewSessionResponse(BaseModel):
     warnings: list[str]
 
 
+class ReviewSessionSummary(BaseModel):
+    """One row of the dated list on the Lessons index.
+
+    ⚠️ ``review_requested``/``review_used`` are OPTIONAL, and the ``None`` is
+    load-bearing: it means "never measured" and renders as no readout at all,
+    while ``[]`` is a measured zero. Defaulting them to ``[]`` here would put a
+    permanent "reused 0 of 0" on any row that predates the meter — a grade where
+    an observation belongs.
+    """
+
+    id: str
+    language_code: str
+    session_date: str
+    title: str
+    review_requested: list[str] | None = None
+    review_used: list[str] | None = None
+
+
+class ListReviewSessionsResponse(BaseModel):
+    """Response of GET /api/review-sessions."""
+
+    sessions: list[ReviewSessionSummary]
+
+
 class GetStoryPromptResponse(BaseModel):
     """Response of GET /api/story/prompt."""
 
@@ -1086,6 +1110,19 @@ class LessonResponse(BaseModel):
     review_requested: list[str] = []
     review_used: list[str] = []
     day: int | None = None  # omitted when unset
+
+
+class ReviewSessionResponse(LessonResponse):
+    """Response of GET /api/review-sessions/{session_id}.
+
+    A lesson read plus a date, MINUS the ``day`` it has no right to.
+    ``serialize_lesson`` leaves that key out for a session, but the inherited
+    ``day: int | None = None`` would still serialize as ``null`` — so the ROUTE
+    must set ``response_model_exclude_unset=True``. That is a route setting, not
+    something this model can enforce, which is why the route carries the warning.
+    """
+
+    session_date: str
 
 
 class LessonSourceResponse(BaseModel):

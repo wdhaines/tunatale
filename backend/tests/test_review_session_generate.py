@@ -193,7 +193,7 @@ class TestTheRoute:
 
     async def _post(self, body=None):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            return await client.post("/api/story/review-session", json={} if body is None else body)
+            return await client.post("/api/review-sessions", json={} if body is None else body)
 
     async def test_it_creates_a_session_and_stores_it(self, stored, seeded_db):
         self._with_curriculum(stored)
@@ -276,7 +276,7 @@ class TestTheLevel:
 
     async def _post(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            return await client.post("/api/story/review-session", json={})
+            return await client.post("/api/review-sessions", json={})
 
     async def test_it_comes_from_the_most_recent_curriculum(self, stored, seeded_db):
         """Asserted on the prompt the model actually receives, not on a call
@@ -326,7 +326,7 @@ class TestRefusals:
 
     async def _post(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            return await client.post("/api/story/review-session", json={})
+            return await client.post("/api/review-sessions", json={})
 
     async def test_nothing_due_is_409_before_any_llm_call(self, stored):
         """Spending a Groq request to produce a contentless story is the thing

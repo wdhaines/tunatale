@@ -1845,6 +1845,23 @@
         "title": "ListItemsResponse",
         "type": "object"
       },
+      "ListReviewSessionsResponse": {
+        "description": "Response of GET /api/review-sessions.",
+        "properties": {
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewSessionSummary"
+            },
+            "title": "Sessions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessions"
+        ],
+        "title": "ListReviewSessionsResponse",
+        "type": "object"
+      },
       "ListenPreviewCandidate": {
         "description": "One row of GET /lesson/{id}/listen-preview's response.",
         "properties": {
@@ -3348,6 +3365,135 @@
           "queue"
         ],
         "title": "ReviewQueueResponse",
+        "type": "object"
+      },
+      "ReviewSessionResponse": {
+        "description": "Response of GET /api/review-sessions/{session_id}.\n\nA lesson read plus a date, MINUS the ``day`` it has no right to.\n``serialize_lesson`` leaves that key out for a session, but the inherited\n``day: int | None = None`` would still serialize as ``null`` \u2014 so the ROUTE\nmust set ``response_model_exclude_unset=True``. That is a route setting, not\nsomething this model can enforce, which is why the route carries the warning.",
+        "properties": {
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "key_phrases": {
+            "items": {
+              "$ref": "#/components/schemas/LessonKeyPhrase"
+            },
+            "title": "Key Phrases",
+            "type": "array"
+          },
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "review_requested": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Review Requested",
+            "type": "array"
+          },
+          "review_used": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Review Used",
+            "type": "array"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/LessonSection"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "session_date": {
+            "title": "Session Date",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "language_code",
+          "key_phrases",
+          "sections",
+          "session_date"
+        ],
+        "title": "ReviewSessionResponse",
+        "type": "object"
+      },
+      "ReviewSessionSummary": {
+        "description": "One row of the dated list on the Lessons index.\n\n\u26a0\ufe0f ``review_requested``/``review_used`` are OPTIONAL, and the ``None`` is\nload-bearing: it means \"never measured\" and renders as no readout at all,\nwhile ``[]`` is a measured zero. Defaulting them to ``[]`` here would put a\npermanent \"reused 0 of 0\" on any row that predates the meter \u2014 a grade where\nan observation belongs.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "review_requested": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Requested"
+          },
+          "review_used": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Used"
+          },
+          "session_date": {
+            "title": "Session Date",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "language_code",
+          "session_date",
+          "title"
+        ],
+        "title": "ReviewSessionSummary",
         "type": "object"
       },
       "SetGenerationModeResponse": {
@@ -5576,6 +5722,154 @@
         ]
       }
     },
+    "/api/review-sessions": {
+      "get": {
+        "description": "Every review session in this language, newest first.\n\nDated, not numbered. The store returns the coverage pair without touching a\nlesson body, so this stays one query however long the list grows.",
+        "operationId": "list_review_sessions_api_review_sessions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListReviewSessionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Review Sessions",
+        "tags": [
+          "review-sessions"
+        ]
+      },
+      "post": {
+        "description": "Generate one review session: no curriculum, no day, no theme.\n\nTakes no identifiers at all \u2014 see ``CreateReviewSessionRequest`` for why that\nis enforced rather than merely documented.",
+        "operationId": "create_review_session_api_review_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReviewSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateReviewSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Review Session",
+        "tags": [
+          "review-sessions"
+        ]
+      }
+    },
+    "/api/review-sessions/{session_id}": {
+      "get": {
+        "description": "One session's body, shaped like a lesson minus the field it has no right to.\n\n``serialize_lesson`` omits ``day`` when it is not passed, so the reading\nfrontend reuses its lesson renderer unchanged and a session still cannot\nclaim a position in a sequence it is not part of.",
+        "operationId": "get_review_session_api_review_sessions__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Review Session",
+        "tags": [
+          "review-sessions"
+        ]
+      }
+    },
+    "/api/review-sessions/{session_id}/render": {
+      "post": {
+        "description": "Render a session's audio through the ordinary audio pipeline.\n\n``render_lesson_audio`` takes no curriculum and no day and keys on the id\nalone, so this reuses it verbatim; ``audio_files`` rows land under the\nsession id and ``GET /api/audio/lesson/{id}`` then serves them with no\nchange at all.",
+        "operationId": "render_review_session_api_review_sessions__session_id__render_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenderAudioResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Render Review Session",
+        "tags": [
+          "review-sessions"
+        ]
+      }
+    },
     "/api/srs/backfill-translations": {
       "post": {
         "description": "One-time repair: fill empty translations from all stored lesson glosses.",
@@ -7361,48 +7655,6 @@
           }
         },
         "summary": "Get Story Prompt",
-        "tags": [
-          "generation"
-        ]
-      }
-    },
-    "/api/story/review-session": {
-      "post": {
-        "description": "Generate one review session: no curriculum, no day, no theme.\n\nThe counterpart of ``generate_story`` for content that belongs to no plan.\nIt takes no identifiers at all \u2014 see ``CreateReviewSessionRequest`` for why\nthat is enforced rather than merely undocumented.",
-        "operationId": "create_review_session_api_story_review_session_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateReviewSessionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CreateReviewSessionResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Create Review Session",
         "tags": [
           "generation"
         ]
