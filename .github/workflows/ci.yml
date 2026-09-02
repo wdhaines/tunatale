@@ -494,21 +494,26 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # ffmpeg is a hard runtime dep (app/audio/transcode.py,
-      # app/cards/media/normalize.py, app/audio/alignment.py) and no test
-      # skips without it. Defined ONCE in .github/actions/setup-ffmpeg —
-      # five job instances used to each drag the same 94.1 MB dependency
-      # closure off an Ubuntu mirror (~470 MB/run) with the step duplicated
-      # verbatim in four places.
-      - name: Install ffmpeg
-        # tunatale-ouk.2: cap the step so a hung mirror cannot eat the job's
-        # full 20min and then report as a plain `fail` that reads exactly like
-        # a broken build (that misdiagnosis cost real time on 2026-08-18).
-        # 6 min, NOT the 2-3 min that issue suggested: the step measured 4m28s
-        # on e2e in run 32185315294, so a 3min cap would have reddened CI on
-        # the spot. Tighten it once the cache above is landing hits.
-        timeout-minutes: 6
-        uses: ./.github/actions/setup-ffmpeg
+      # ⚠️ NO ffmpeg STEP HERE, deliberately — do not "restore" it.
+      #
+      # The three backend-shaped jobs need ffmpeg; this one does not, and that is
+      # measured rather than assumed (2026-09-01): with a shim on PATH making
+      # `ffmpeg`/`ffprobe` exit 1, 51 of 52 specs passed. The single failure was
+      # offline-audio.spec.ts's `beforeAll`, which synthesised a 3s silent opus —
+      # a 94 MB dependency closure installed to produce 847 bytes. That file is
+      # now committed (frontend/tests/fixtures/silence-3s.opus, 7594f6d) and the
+      # same probe passes 52 of 52.
+      #
+      # Why it was worth removing rather than leaving as an 8s step: `Install
+      # ffmpeg` measured across 8 runs x 4 jobs has a 7-8s FLOOR but took >=15s
+      # in at least one job in 5 of those 8 runs, spiking to 29s (30-46s
+      # historically). Total CI is MAX(job), so the tail is the cost and the
+      # exposure compounds with the number of jobs that install it. This is one
+      # of four removed.
+      #
+      # If a spec ever needs real transcoding, add the step back rather than
+      # reaching for ffmpeg some other way — and re-run the shim probe, which is
+      # what makes this comment falsifiable.
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1  # exact: astral-sh stopped publishing floating major tags after v7 (no v8/v9/v10 alias exists)
         with:
