@@ -151,7 +151,7 @@
 // toggles, and the only tell was a missing field in one log line. The version is
 // announced in the preflight AND written to disk at load, so "which build was
 // that run?" is never a reconstruction again.
-const PROBE_VERSION = "2026-09-02.7";
+const PROBE_VERSION = "2026-09-02.8";
 const MAX_BATCH = 50, MAX_CHARS = 300;
 let sink = [], sinkTimer = null, sinkState = "unknown";
 
@@ -373,20 +373,26 @@ probeLocal();
 
 // ── Recognition ─────────────────────────────────────────────────────────────
 let rec = null, running = false, restartAt = 0, backoff = 250;
+// Latched at START. The toggles used to be read live by spin() and again by
+// stop(), so ticking LOCAL mid-run silently changed behaviour AND produced a run
+// whose START said CLOUD and whose STOP said LOCAL (observed 2026-09-02 15:34).
+// A run's configuration must be one thing for its whole life.
+let runMode = { single: false, local: false };
 
 async function start() {
   if (!SR) { log("err", "ABORT no SpeechRecognition in this browser"); return; }
   running = true; backoff = 250;
+  runMode = { single: $("single").checked, local: $("local").checked && LOCAL_SUPPORTED };
   runBase = { f: nFinal, r: nRestart, s: nSilent };
   if (!t0) t0 = Date.now();
   $("start").disabled = true; $("stop").disabled = false; $("mark").disabled = false;
-  log("evt", `START v=${PROBE_VERSION} label=${label()} lang=${$("lang").value} mode=${$("single").checked ? "SINGLE" : "CONTINUOUS"}/${$("local").checked && LOCAL_SUPPORTED ? "LOCAL" : "CLOUD"} ua=${navigator.userAgent.slice(0, 120)}`);
+  log("evt", `START v=${PROBE_VERSION} label=${label()} lang=${$("lang").value} mode=${runMode.single ? "SINGLE" : "CONTINUOUS"}/${runMode.local ? "LOCAL" : "CLOUD"} ua=${navigator.userAgent.slice(0, 120)}`);
   // A LOCAL session can take the whole tab with it — setting processLocally
   // crashed the renderer in headless Chromium 151 (2026-09-02), uncatchably.
   // Get the intent to DISK before trying, so a crash is a dated line in
   // client.log saying exactly what was attempted, rather than a vanished tab
   // and a guess. If the next line in the log is a page load, it crashed here.
-  if ($("local").checked && LOCAL_SUPPORTED) {
+  if (runMode.local) {
     log("evt", "ABOUT TO START A LOCAL SESSION — if the log ends here, processLocally crashed the tab");
     await flush();
   }
@@ -396,7 +402,7 @@ async function start() {
 
 function spin() {
   if (!running) return;
-  const single = $("single").checked;
+  const single = runMode.single;
   rec = new SR();
   rec.lang = $("lang").value.trim() || "en-US";
   // continuous:false for the single-shot pass — the session should end on its
@@ -408,7 +414,7 @@ function spin() {
   // Feature-detected, never assumed: on a browser without it, assigning the
   // property is silently a no-op and the run would be mislabelled as LOCAL
   // while quietly using the cloud. Report what was actually set.
-  if ($("local").checked) {
+  if (runMode.local) {
     if (LOCAL_SUPPORTED) {
       rec.processLocally = true;
       log("evt", "processLocally=true requested for this session");
@@ -484,7 +490,7 @@ function stop() {
   running = false;
   $("start").disabled = false; $("stop").disabled = true; $("mark").disabled = true;
   try { rec && rec.stop(); } catch { /* already dead */ }
-  log("evt", `STOP thisRun finals=${nFinal - runBase.f} silentResults=${nSilent - runBase.s} restarts=${nRestart - runBase.r} (tabTotals ${nFinal}/${nSilent}/${nRestart}) mode=${$("single").checked ? "SINGLE" : "CONTINUOUS"}/${$("local").checked && LOCAL_SUPPORTED ? "LOCAL" : "CLOUD"}`);
+  log("evt", `STOP thisRun finals=${nFinal - runBase.f} silentResults=${nSilent - runBase.s} restarts=${nRestart - runBase.r} (tabTotals ${nFinal}/${nSilent}/${nRestart}) mode=${runMode.single ? "SINGLE" : "CONTINUOUS"}/${runMode.local ? "LOCAL" : "CLOUD"}`);
   flush();
 }
 
@@ -634,6 +640,8 @@ $("miconly").onclick = async () => {
     log("err", `MIC ONLY: getUserMedia failed: ${e && e.name ? e.name : e}`);
   }
 };
+$("single").addEventListener("change", () => { if (running) log("err", "TOGGLE CHANGED MID-RUN — ignored for this run; STOP and START again to apply it"); });
+$("local").addEventListener("change", () => { if (running) log("err", "TOGGLE CHANGED MID-RUN — ignored for this run; STOP and START again to apply it"); });
 $("checklocal").onclick = checkLocalAvailability;
 $("install").onclick = async () => {
   const lang = $("lang").value.trim() || "en-US";
