@@ -13,10 +13,28 @@ import { defineConfig, devices } from '@playwright/test';
 // comment). tests/helpers.ts::BACKEND duplicates the backend half of the
 // formula for the same reason and must also stay in lockstep.
 //
-// Default stays 2: that is the only value ever measured for CPU contention
-// against the rest of ./test.sh's concurrent groups. Override locally with
-// `E2E_WORKERS=4 bun run test:e2e`; CI does not set this, so its behavior is
-// unchanged.
+// Default stays 2. Measured standalone 2026-09-03 on a 10-core (8P+2E) box,
+// colima stopped, one run each — NOT more is better:
+//
+//   E2E_WORKERS   wall   test-reported   1-min load at start
+//   2             41s    37.5s           1.82
+//   4             38s    35.3s           4.84
+//   6             46s    42.7s           10.14
+//   8             46s    43.7s           54.24
+//   10            53s    49.7s           47.68
+//
+// 4 is the fastest measured here, 2 close behind; 6/8/10 all get SLOWER as
+// the load-average column shows why — each worker is its own uvicorn + vite
+// preview + browser context, so past 4 this box is oversubscribed and
+// thrashing outweighs the added parallelism. This did not also measure
+// contention against ./test.sh's other concurrent groups (backend pytest,
+// frontend vitest, peer-sync) the way the backend `-n` sweet spot in test.sh
+// was — that is a different, unmeasured question, which is why the DEFAULT
+// stays 2 rather than moving to the standalone-fastest 4. Re-measure with the
+// same method (frontend/, `for n in …; do E2E_WORKERS=$n bun run test:e2e;
+// done`) if the suite's shape or this machine changes; a 10-core answer is not
+// a universal one. Override locally with `E2E_WORKERS=4 bun run test:e2e`;
+// CI does not set this, so its behavior is unchanged.
 // Exported so tests/global-setup.ts can guard against `--workers=N` (a CLI
 // flag, which overrides this file's `workers:` below) exceeding how many
 // server pairs actually got started — see its own comment for what that
