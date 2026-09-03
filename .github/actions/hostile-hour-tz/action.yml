@@ -1,0 +1,49 @@
+name: Resolve a hostile rollover-hour timezone
+description: >
+  Export HOSTILE_TZ — a zone whose LOCAL time is inside [04:00, 05:00) right
+  now — so a job can run deterministically at Anki's study-day rollover instead
+  of waiting for the wall clock to wander into it.
+
+runs:
+  using: composite
+  steps:
+    # ── Why this action exists ──────────────────────────────────────────────
+    # Anki's study day turns over at 04:00 LOCAL, so every day-index bug in this
+    # repo lives in a band one hour wide (wider when col.crt's offset disagrees
+    # with the reader's). A job pinned to TZ=UTC only samples that band when the
+    # wall clock happens to be in it — 1 run in 24.
+    #
+    # ⚠️ MEASURED, and the number is the whole argument: across the 598 CI runs
+    # between the oracle gate landing (2026-06-10) and 2026-09-03, EXACTLY ONE
+    # started in [04:00, 05:00) UTC — and that one is the run that caught
+    # `compute_anki_day_index` computing a day index Anki does not agree with
+    # (anki-gates, Anki=127 vs TT=126). The band is 00:00-01:00 in the author's
+    # zone, i.e. just past the end of a working evening; hours 05:00-10:00 UTC
+    # have never had a single run. So the exposure was not "rare", it was
+    # effectively zero, and the one sample that ever landed found a real bug on
+    # its first try.
+    #
+    # Duplicating the resolution inline in two jobs is what this replaces. The
+    # self-check below is the reason it must not drift: a job whose probe
+    # silently stops landing on hour 4 goes on reporting green while testing
+    # nothing, which is the failure mode the band was supposed to close.
+    - name: Resolve a timezone whose local time is inside [04:00, 05:00)
+      shell: bash
+      run: |
+        set -euo pipefail
+        utc_hour=$(date -u +%-H)
+        offset=$(( (4 - utc_hour + 24) % 24 ))
+        # Etc/GMT zones only reach +14/-12; fold the far side of the dial into a
+        # negative offset so every UTC hour resolves to a real zone.
+        [ "$offset" -gt 14 ] && offset=$(( offset - 24 ))
+        # ⚠️ Etc/GMT signs are INVERTED versus the offset they name: Etc/GMT-3 is
+        # UTC+3. This is POSIX, not a typo, and the check below is what proves it
+        # was applied the right way round.
+        if [ "$offset" -ge 0 ]; then tz="Etc/GMT-$offset"; else tz="Etc/GMT+$(( -offset ))"; fi
+        local_hour=$(TZ="$tz" date +%-H)
+        echo "UTC hour $utc_hour -> offset $offset -> $tz -> local hour $local_hour"
+        if [ "$local_hour" -ne 4 ]; then
+          echo "::error::Resolved $tz gives local hour $local_hour, expected 4 — the probe is broken, not the suite."
+          exit 1
+        fi
+        echo "HOSTILE_TZ=$tz" >> "$GITHUB_ENV"

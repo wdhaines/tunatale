@@ -19,11 +19,22 @@ on:
   pull_request:
 
 # Pinned workflow-wide, to the SAME value test.sh pins, so a future job cannot
-# silently reintroduce the divergence by forgetting it. See test.sh for why.
-# Exactly TWO jobs deliberately override it, and they are the only ones that
-# should: `backend-hostile-tz` (varies the OFFSET) and `backend-hostile-hour`
-# (varies the local CLOCK). Reproducibility comes from the pin, tolerance from
-# those two — and they are orthogonal, so neither substitutes for the other.
+# silently reintroduce the divergence by forgetting it. Exactly THREE jobs
+# deliberately override it, and they are the only ones that should:
+# `backend-hostile-tz` (varies the OFFSET), `backend-hostile-hour` (varies the
+# local CLOCK), and `anki-gates` (the Anki parity gates, also at the clock — see
+# below). Reproducibility comes from the pin, tolerance from those — and offset
+# and clock are orthogonal, so neither substitutes for the other.
+#
+# ⚠️ `anki-gates` joined that list on 2026-09-03, and the reason is worth
+# keeping: the two defences were orthogonal in the WRONG direction. The job that
+# sat in the rollover band on every run (`backend-hostile-hour`) does not pass
+# `--run-oracle`, so it never ran a single Anki parity test; the job that runs
+# them all (`anki-gates`) sat at TZ=UTC and therefore reached the band only when
+# the wall clock wandered into it. Measured: 1 run in 598. Neither job was
+# misconfigured on its own — the hole was at the intersection, and it stayed
+# invisible because the exposed job sampled the bad hour once in three months
+# and found a real bug the first time it did.
 env:
   TZ: UTC
 
@@ -400,24 +411,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --no-default-groups --group dev
 
-      # Etc/GMT signs are INVERTED (Etc/GMT-9 is UTC+9), hence the negation.
-      # The local-hour assertion is not ceremony: without it a bad offset would
-      # silently run the suite at an ordinary hour and report a meaningless
-      # green, which is worse than no job at all.
-      - name: Resolve a timezone whose local time is inside [04:00, 05:00)
-        run: |
-          set -euo pipefail
-          utc_hour=$(date -u +%-H)
-          offset=$(( (4 - utc_hour + 24) % 24 ))
-          [ "$offset" -gt 14 ] && offset=$(( offset - 24 ))
-          if [ "$offset" -ge 0 ]; then tz="Etc/GMT-$offset"; else tz="Etc/GMT+$(( -offset ))"; fi
-          local_hour=$(TZ="$tz" date +%-H)
-          echo "UTC hour $utc_hour -> offset $offset -> $tz -> local hour $local_hour"
-          if [ "$local_hour" -ne 4 ]; then
-            echo "::error::Resolved $tz gives local hour $local_hour, expected 4 — the probe is broken, not the suite."
-            exit 1
-          fi
-          echo "HOSTILE_TZ=$tz" >> "$GITHUB_ENV"
+      # Resolution, the Etc/GMT sign inversion, and the local-hour assertion all
+      # live in the action now. Shared with `anki-gates`, which runs the Anki parity gates in the same
+      # band. Extracted 2026-09-03 rather than copied: two inline copies of the
+      # probe can drift, and a drifted probe reports green while testing the
+      # wrong hour.
+      - uses: ./.github/actions/hostile-hour-tz
 
       - name: Build NST lexicon
         run: uv run python scripts/build_nst_lexicon.py build
@@ -908,8 +907,25 @@ jobs:
         id: warm
         run: uv run --isolated --no-project --python 3.14 --with anki==26.8.1 python -c "import anki"
 
+      # ⚠️ Both gates below run at Anki's 04:00 rollover, NOT at the workflow's
+      # TZ=UTC. This is the point of the job, not a detail: parity with Anki is
+      # a LOCAL wall-clock property, and the boundary is where it breaks.
+      #
+      # Both must carry `TZ="$HOSTILE_TZ"` explicitly. A job-level `env:` cannot
+      # do it — job env is evaluated before any step runs, so it cannot see a
+      # value a step wrote to $GITHUB_ENV.
+      - uses: ./.github/actions/hostile-hour-tz
+
+      # ⚠️ IF THIS GOES RED WHILE `backend` IS GREEN, suspect PRODUCT code
+      # first. That is the opposite of the guidance on `backend-hostile-tz`, and
+      # deliberately so: these tests compare TT against the real Anki backend, so
+      # a boundary-only failure here is TT and Anki genuinely disagreeing about
+      # what day it is, which is a user-visible scheduling bug. On the hostile-tz
+      # job the same shape is far more often a fixture doing date arithmetic
+      # across ANKI_ROLLOVER_HOUR. Both readings exist; the oracle is what tells
+      # them apart, and only this job has one.
       - name: Oracle parity gate
-        run: uv run pytest -m oracle --run-oracle -n auto --no-cov
+        run: TZ="$HOSTILE_TZ" uv run pytest -m oracle --run-oracle -n auto --no-cov
 
       # ⚠️ Runs even when the oracle gate above FAILED. Without this the merge
       # would quietly cost a diagnostic: two jobs always reported on both
@@ -917,4 +933,4 @@ jobs:
       # the warm step so a setup failure still short-circuits both gates.
       - name: Peer-sync gate
         if: always() && steps.warm.outcome == 'success'
-        run: uv run pytest tests/test_anki_peer_sync_selfhost.py --run-peer-sync --no-cov -v
+        run: TZ="$HOSTILE_TZ" uv run pytest tests/test_anki_peer_sync_selfhost.py --run-peer-sync --no-cov -v

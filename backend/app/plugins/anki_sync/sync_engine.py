@@ -1130,6 +1130,12 @@ class AnkiSync:
         if not all(hasattr(self._writer, m) for m in required):
             return
         today_4am_ms = int(_local_today_4am().timestamp() * 1000)
+        # ⚠️ KNOWN WRONG inside `[local midnight, 04:00)`, left as-is on purpose.
+        # Anki compares this against its own `col.sched.today` to decide whether
+        # a deck's studied-today counters are current, so it wants
+        # `anki_today_col_day`. Swapping it is a WRITE to the user's collection
+        # and belongs behind its own oracle test asserting Anki reads the
+        # counters back — not a drive-by on a read-path fix.
         day_index = compute_anki_day_index(self._anki_col_crt)
         for deck_id in self._writer.list_decks_with_revlog_today(today_4am_ms):
             new_count = self._writer.count_first_grades_today_for_deck(deck_id, today_4am_ms)

@@ -1073,6 +1073,12 @@ def build_live_load_balancer(
 
     from app.srs.anki_mirror.load_balancer import LOAD_BALANCE_DAYS, LoadBalancer
 
+    # NOT `anki_today_col_day`: `next_day_at` below is derived from `today` by
+    # plain arithmetic on col_crt, so the two must stay in the same domain.
+    # Moving `today` alone would put the load balancer's "next rollover" a day
+    # off. Fixing both belongs with the due_at-domain change (see
+    # `_review_due_at_from_interval`), and only shifts which day a card lands on
+    # inside the same `[local midnight, 04:00)` window.
     today = compute_anki_day_index(col_crt, 4, now)
     next_day_at = col_crt + (today + 1) * 86400
     bury_reviews, _ = resolve_bury_review(db)

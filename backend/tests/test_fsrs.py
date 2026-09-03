@@ -420,50 +420,62 @@ class TestElapsedDaysForFsrs:
         assert _elapsed_days_for_fsrs(last2, now2) == 7.625
 
     def test_midnight_datetime_col_day_rollover_crossing(self):
-        """Day-level branch with col_crt crosses a 4am-local rollover boundary.
+        """Day-level branch with col_crt crosses the 4am-*local* rollover boundary.
 
-        When col_crt=-572400, the Anki col-day boundary is at 05:00 UTC.
-        A midnight-UTC last_review falls before the day's boundary.
-        Between May 20 01:00 UTC (before boundary) and May 20 09:00 UTC
-        (after boundary), the col day advances by 1 even though the UTC
-        calendar date stays the same. The col-day-aware computation must
-        reflect this extra day; the old UTC-date code cannot.
+        TZ is pinned because the boundary this test is about is a local one.
+        Anki's study day turns over at 04:00 local, so under ``TZ=UTC`` the
+        interesting instants are either side of 04:00 UTC on May 20: the col day
+        advances by 1 even though the UTC calendar date does not. The day-level
+        branch must reflect that; the plain UTC-date subtraction (no col_crt)
+        cannot, which is the divergence the col_crt argument exists for.
+
+        Pre-2026-09-03 this docstring said the boundary was 05:00 UTC. That was
+        the artifact of ``compute_anki_day_index`` anchoring on ``col_crt``'s
+        time-of-day (here 09:00 UTC, i.e. 4 AM at UTC-5) rather than on the local
+        calendar — the bug that broke ``anki-gates``. The assertions below are
+        unchanged: both instants moved to the same side of the corrected
+        boundary that they were on for the old one.
         """
         from datetime import datetime as _dt
 
         from app.srs.fsrs import _elapsed_days_for_fsrs
+        from tests._helpers.localtz import local_timezone
 
         last = _dt(2026, 4, 11, 0, 0, 0, tzinfo=UTC)
         col_crt = -572400
         rollover = 4
 
-        # Before 05:00 UTC boundary — col day 20599 (same as May 19's col day)
-        now_before = _dt(2026, 5, 20, 1, 0, 0, tzinfo=UTC)
-        assert _elapsed_days_for_fsrs(last, now_before, col_crt=col_crt, rollover_hour=rollover) == 39
-        # Old code (no col_crt) also gives 39
-        assert _elapsed_days_for_fsrs(last, now_before) == 39
+        with local_timezone("UTC"):
+            # Before the 04:00 local boundary — still May 19's col day.
+            now_before = _dt(2026, 5, 20, 1, 0, 0, tzinfo=UTC)
+            assert _elapsed_days_for_fsrs(last, now_before, col_crt=col_crt, rollover_hour=rollover) == 39
+            # Old code (no col_crt) also gives 39
+            assert _elapsed_days_for_fsrs(last, now_before) == 39
 
-        # After 05:00 UTC boundary — col day 20600 (May 20's col day)
-        now_after = _dt(2026, 5, 20, 9, 0, 0, tzinfo=UTC)
-        assert _elapsed_days_for_fsrs(last, now_after, col_crt=col_crt, rollover_hour=rollover) == 40
-        # Old code (no col_crt) still gives 39 — the divergence this fix addresses
-        assert _elapsed_days_for_fsrs(last, now_after) == 39
+            # After the 04:00 local boundary — May 20's col day.
+            now_after = _dt(2026, 5, 20, 9, 0, 0, tzinfo=UTC)
+            assert _elapsed_days_for_fsrs(last, now_after, col_crt=col_crt, rollover_hour=rollover) == 40
+            # Old code (no col_crt) still gives 39 — the divergence this fix addresses
+            assert _elapsed_days_for_fsrs(last, now_after) == 39
 
     def test_midnight_datetime_col_day_same_as_utc_when_boundary_not_crossed(self):
         """When both timestamps are before or after the col-day boundary,
         the col-day elapsed matches the UTC-date elapsed.
 
-        With boundary at 05:00 UTC: midnight belongs to the previous col day,
-        and any time before 05:00 UTC shares that same col day.
+        With the boundary at 04:00 local (``TZ=UTC`` here, so 04:00 UTC):
+        midnight belongs to the previous col day, and any time before 04:00
+        shares that same col day.
         """
         from datetime import datetime as _dt
 
         from app.srs.fsrs import _elapsed_days_for_fsrs
+        from tests._helpers.localtz import local_timezone
 
-        # last at midnight, now at 01:00 on same day → both before 05:00 boundary
+        # last at midnight, now at 01:00 on same day → both before the boundary
         last = _dt(2026, 4, 11, 0, 0, 0, tzinfo=UTC)
         now = _dt(2026, 4, 11, 1, 0, 0, tzinfo=UTC)
-        assert _elapsed_days_for_fsrs(last, now, col_crt=-572400, rollover_hour=4) == 0
+        with local_timezone("UTC"):
+            assert _elapsed_days_for_fsrs(last, now, col_crt=-572400, rollover_hour=4) == 0
         assert _elapsed_days_for_fsrs(last, now) == 0
 
     def test_midnight_datetime_col_day_fallback_to_utc_when_col_crt_none(self):

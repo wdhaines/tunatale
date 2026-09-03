@@ -656,7 +656,7 @@ class TestFsrsMemoryStatePresent:
         producing midnight in the *previous* col_day.  This test pins the full
         pipeline so the off-by-one cannot return.
         """
-        from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index
+        from app.srs.anki_mirror.protobuf_wire import anki_today_col_day, compute_anki_day_index
         from app.srs.fsrs import _elapsed_days_for_fsrs
 
         col_crt = 1388836800  # user's real col_crt
@@ -687,7 +687,12 @@ class TestFsrsMemoryStatePresent:
         ref_now = datetime.now(tz=UTC)
         tt_elapsed = _elapsed_days_for_fsrs(state.last_review, ref_now, col_crt=col_crt)
 
-        today_col_day = compute_anki_day_index(col_crt, 4, ref_now)
+        # `today` is Anki's study-day index (local calendar rule); `review_col_day`
+        # is the stored integer Anki itself recorded. Using `compute_anki_day_index`
+        # for the `today` term here made this assertion restate the implementation
+        # instead of Anki's rule, and it agreed with Anki only outside the daily
+        # `[local midnight, 04:00)` window.
+        today_col_day = anki_today_col_day(col_crt, ref_now)
         expected_elapsed = today_col_day - review_col_day
 
         assert tt_elapsed == expected_elapsed, (
