@@ -365,14 +365,31 @@ def _grade_elapsed_days(
         if col_crt is not None:
             if is_day_level_last_review(last_review):
                 # No `lrt` in cards.data — `last_review` is the synthetic marker
-                # `_compute_last_review` writes, not a real review time. LEFT
-                # UNCHANGED, and not because it is right: measured 2026-09-03,
-                # Anki's answering path for a card with no lrt does not do col-day
-                # arithmetic at all, it routes through `stability_short_term`
-                # (elapsed=0) — reproduced to six significant figures. That is a
-                # separate and much larger divergence than the one below, with its
-                # own bead; folding it in here would change grade outcomes for
-                # every pre-FSRS imported card on the strength of one probe.
+                # `_compute_last_review` writes from `due - ivl`, not a real
+                # review time.
+                #
+                # Measured against real Anki (4 stabilities x 4 ratings, twice):
+                # with no lrt Anki takes elapsed from the card's LAST REVLOG
+                # ENTRY, and falls back to `stability_short_term` (elapsed=0)
+                # only when the card has no revlog at all. Both matched to six
+                # significant figures. So TT's `due - ivl` agrees with Anki
+                # exactly while the card is untouched — the interval IS the gap
+                # since the last review — and disagrees after anything that moves
+                # `due` without a review: set_due_date, a manual reschedule, an
+                # interval edit.
+                #
+                # ⚠️ An earlier probe concluded Anki always uses short_term here.
+                # That was an artifact of a fixture card with NO revlog, which
+                # cannot occur in a real collection: a review card has review
+                # history by definition. The widened measurement is in
+                # tests/test_parity_no_lrt_elapsed.py, which pins both branches.
+                #
+                # Left as `due - ivl` deliberately. Following the revlog would
+                # mean a per-card revlog query on the sync read path and would
+                # rewrite `last_review` for every such card, which
+                # `_direction_differs` turns into a push. Measured against the
+                # real databases: 2 of 3030 review rows are in this branch at
+                # all (tunatale-r5d1.4).
                 today_col_day = compute_anki_day_index(col_crt, rollover_hour, ref_now)
                 review_col_day = compute_anki_day_index(col_crt, rollover_hour, last_review)
                 return max(0, today_col_day - review_col_day)
