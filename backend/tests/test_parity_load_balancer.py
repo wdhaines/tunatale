@@ -19,12 +19,14 @@ in the non-oracle `test_load_balancer.py`.
 from __future__ import annotations
 
 import time
-from datetime import UTC, datetime
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
 from app.models.srs_item import Rating
+from app.srs.anki_mirror.protobuf_wire import anki_today_col_day
+from app.srs.anki_mirror.rollover import local_today_rollover
 from app.srs.database import SRSDatabase
 from app.srs.fsrs import (
     DEFAULT_FSRS5_PARAMS,
@@ -235,10 +237,21 @@ def test_live_builder_matches_anki(synthetic_collection: SyntheticCollection, tm
     anki_today = anki_on["today"]
 
     db = _mirror_histogram_into_tt(placement_today)
-    # Pick a `now` mid-way through Anki's `today` so build_live_load_balancer's
-    # computed day index == anki_today, aligning TT's histogram frame to Anki's
-    # (mirrors _make_balancer's placement_today→anki_today shift without rounding).
-    now = datetime.fromtimestamp(COL_CRT + anki_today * 86400 + 8 * 3600, tz=UTC)
+    # A `now` mid-way through Anki's CURRENT study day, so TT's histogram frame
+    # lines up with Anki's.
+    #
+    # This used to be `COL_CRT + anki_today * 86400 + 8h`, which lands mid-day
+    # only if col.crt's time-of-day is the rollover hour in the ambient zone —
+    # the same assumption `compute_anki_day_index` made, and it put the frame a
+    # day out in America/New_York once the production code stopped making it.
+    # Anchoring on the real rollover is zone-general rather than merely
+    # zone-blind.
+    now = local_today_rollover() + timedelta(hours=8)
+    tt_frame = anki_today_col_day(COL_CRT, now)
+    assert tt_frame == anki_today, (
+        f"histogram frame misaligned: TT day {tt_frame} vs Anki {anki_today}. "
+        "The interval assertions below would fail confusingly; fix the frame, not them."
+    )
     balancer = build_live_load_balancer(db, now=now, col_crt=COL_CRT)
     assert balancer is not None
 

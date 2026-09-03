@@ -19,7 +19,7 @@ from app.srs.anki_mirror.protobuf_wire import (
     compute_anki_day_index,
     review_due_at_for_col_day,
 )
-from app.srs.anki_mirror.rollover import anki_today
+from app.srs.anki_mirror.rollover import anki_today, local_next_rollover
 
 # fsrs-rs (rslib/.../fsrs/model.rs) computes stability + difficulty in f32 end-to-end
 # via Burn tensors. TT mirrors that precision by casting all arithmetic operands and
@@ -94,15 +94,17 @@ def _review_due_at_from_interval(
     """
     if col_crt is None:
         return datetime.combine(review_date + timedelta(days=interval), time(0, 0), tzinfo=UTC)
-    # NOT `anki_today_col_day`, deliberately. This `today` feeds
-    # `review_due_at_for_col_day`, i.e. it is an input to a STORED `due_at`, and
-    # it must stay byte-identical to what sync writeback (`compute_due_at`)
-    # produces or `_direction_differs` sees a spurious diff on every card (rule
-    # 6 / Layer 49 — `tests/test_colday_helper_consistency.py` pins the pairing).
-    # Correcting it is right but is a separate change: it shifts stored due_at
-    # by a day for grades landing in `[local midnight, 04:00)` and needs a
-    # migration story, not a drive-by.
-    today_col_day = compute_anki_day_index(col_crt, rollover_hour, now)
+    # The col_day a TT-native grade schedules from. It must be the day ANKI is
+    # on: `sync_push` turns the resulting `due_at` into a set-due-date delta
+    # against `anki_today()`, so a `today` from the index domain lands the card a
+    # day late in BOTH apps for any grade in `[local midnight, 04:00)`.
+    #
+    # This does not desync from sync writeback: `compute_due_at` never computes a
+    # "today" of its own — it converts Anki's own `due_raw`. What the two must
+    # share is `review_due_at_for_col_day`, and they still do, so a given col_day
+    # still maps to a byte-identical `due_at` (rule 6 / Layer 49,
+    # `tests/test_colday_helper_consistency.py`).
+    today_col_day = anki_today_col_day(col_crt, now)
     return review_due_at_for_col_day(col_crt, today_col_day + interval, rollover_hour)
 
 
@@ -361,18 +363,49 @@ def _grade_elapsed_days(
         return 0
     if isinstance(last_review, datetime):
         if col_crt is not None:
-            # NOT `anki_today_col_day` here, unlike `_elapsed_days_for_fsrs`. On
-            # the grade path `last_review` may carry sub-day precision (a real
-            # lrt), so it is NOT the col_day-derived marker whose decoding is
-            # exact — and the asymmetric pairing that makes the other site
-            # correct would be unsound. Both terms sharing the index domain means
-            # the crt-offset skew cancels except when exactly one endpoint sits
-            # in the `[local midnight, 04:00)` window. Layer 50 measured this
-            # path bit-exact across 65 real grades; re-anchoring it needs the
-            # same measurement, not an analogy to the day-level branch.
-            today_col_day = compute_anki_day_index(col_crt, rollover_hour, ref_now)
-            review_col_day = compute_anki_day_index(col_crt, rollover_hour, last_review)
-            return max(0, today_col_day - review_col_day)
+            if is_day_level_last_review(last_review):
+                # No `lrt` in cards.data — `last_review` is the synthetic marker
+                # `_compute_last_review` writes from `due - ivl`, not a real
+                # review time.
+                #
+                # Measured against real Anki (4 stabilities x 4 ratings, twice):
+                # with no lrt Anki takes elapsed from the card's LAST REVLOG
+                # ENTRY, and falls back to `stability_short_term` (elapsed=0)
+                # only when the card has no revlog at all. Both matched to six
+                # significant figures. So TT's `due - ivl` agrees with Anki
+                # exactly while the card is untouched — the interval IS the gap
+                # since the last review — and disagrees after anything that moves
+                # `due` without a review: set_due_date, a manual reschedule, an
+                # interval edit.
+                #
+                # ⚠️ An earlier probe concluded Anki always uses short_term here.
+                # That was an artifact of a fixture card with NO revlog, which
+                # cannot occur in a real collection: a review card has review
+                # history by definition. The widened measurement is in
+                # tests/test_parity_no_lrt_elapsed.py, which pins both branches.
+                #
+                # Left as `due - ivl` deliberately. Following the revlog would
+                # mean a per-card revlog query on the sync read path and would
+                # rewrite `last_review` for every such card, which
+                # `_direction_differs` turns into a push. Measured against the
+                # real databases: 2 of 3030 review rows are in this branch at
+                # all (tunatale-r5d1.4).
+                today_col_day = compute_anki_day_index(col_crt, rollover_hour, ref_now)
+                review_col_day = compute_anki_day_index(col_crt, rollover_hour, last_review)
+                return max(0, today_col_day - review_col_day)
+            # Real sub-day `lrt`. Anki measures from the NEXT rollover, as a
+            # DURATION — `next_day_at.elapsed_days_since(lrt)` — which is neither
+            # of TT's day-index domains. Using the index domain on both endpoints
+            # (pre-fix) cancels the crt-offset skew only while both sit on the
+            # same side of `[local midnight, 04:00)`; when exactly one is inside,
+            # it is off by a full day and the resulting stability by 8-9%.
+            #
+            # Layer 50 was not wrong to call this path bit-exact — its 65 grades
+            # simply never had an endpoint in the band. Same shape as the CI
+            # measurement that started all this: a sample that misses a one-hour
+            # window looks like proof the window does not exist.
+            next_day_at = local_next_rollover(ref_now)
+            return max(0, int((next_day_at - last_review).total_seconds()) // 86400)
         return max(0, (ref_now.date() - last_review.date()).days)
     return max(0, (ref_now.date() - last_review).days)
 

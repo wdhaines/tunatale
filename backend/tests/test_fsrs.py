@@ -292,13 +292,13 @@ class TestReviewScheduling:
         from dataclasses import replace
         from datetime import datetime as _dt
 
-        from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index
-        from app.srs.anki_mirror.rollover import anki_today
+        from app.srs.anki_mirror.rollover import anki_today, local_next_rollover
         from app.srs.fsrs import (
             _forgetting_curve,
             _next_stability_recall,
             _quantize_stability,
         )
+        from tests._helpers.localtz import local_timezone
 
         col_crt = 1388836800
         grade_dt = _dt(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
@@ -324,22 +324,28 @@ class TestReviewScheduling:
             ref_now_for_elapsed = grade_dt
         else:
             ref_now_for_elapsed = datetime.combine(grade_dt.date(), time(0, 0), tzinfo=UTC)
-        today_idx = compute_anki_day_index(col_crt, 4, ref_now_for_elapsed)
-        review_idx = compute_anki_day_index(col_crt, 4, last_review_dt)
-        expected_elapsed = max(0, today_idx - review_idx)
+        # Anki's grade-path rule is a DURATION back from the next rollover, not a
+        # difference of day indices. Mirroring `compute_anki_day_index` here (as
+        # this did until 2026-09-03) restated the implementation rather than
+        # Anki's rule, so it could not fail on the day the implementation was
+        # wrong. TZ is pinned because the rollover is local.
+        with local_timezone("UTC"):
+            next_day_at = local_next_rollover(ref_now_for_elapsed)
+            expected_elapsed = max(0, int((next_day_at - last_review_dt).total_seconds()) // 86400)
 
         params = DEFAULT_FSRS5_PARAMS
         w = params.weights
         expected_r = _forgetting_curve(expected_elapsed, s_pre, decay=-params.decay)
         expected_s = _quantize_stability(max(0.001, _next_stability_recall(d_pre, s_pre, expected_r, Rating.GOOD, w)))
 
-        result = schedule(
-            item,
-            Rating.GOOD,
-            review_date=grade_dt.date(),
-            now=grade_dt,
-            col_crt=col_crt,
-        )
+        with local_timezone("UTC"):
+            result = schedule(
+                item,
+                Rating.GOOD,
+                review_date=grade_dt.date(),
+                now=grade_dt,
+                col_crt=col_crt,
+            )
         actual_s = result.directions[Direction.RECOGNITION].stability
 
         # Bit-exact within rounding tolerance (4dp quantization).
@@ -525,6 +531,7 @@ class TestGradeElapsedDaysLAYER_50:
         from datetime import datetime as _dt
 
         from app.srs.fsrs import _elapsed_days_for_fsrs, _grade_elapsed_days
+        from tests._helpers.localtz import local_timezone
 
         col_crt = 1388836800
         last = _dt(2026, 5, 11, 17, 0, 0, tzinfo=UTC)
@@ -532,10 +539,17 @@ class TestGradeElapsedDaysLAYER_50:
         # _elapsed_days_for_fsrs returns fractional ~6.79 (queue-sort branch
         # uses raw seconds-diff / 86400 when last_review has sub-day precision)
         assert _elapsed_days_for_fsrs(last, now, col_crt=col_crt) == pytest.approx(6.79, abs=0.01)
-        # _grade_elapsed_days returns integer col-day diff (7), regardless of
-        # lrt sub-day precision. Anki's `next_day_at.elapsed_days_since(lrt)`
-        # has the same behavior.
-        assert _grade_elapsed_days(last, now, col_crt=col_crt) == 7
+        # _grade_elapsed_days returns a whole number of days regardless of lrt's
+        # sub-day precision — the contrast this test is about.
+        #
+        # TZ is pinned because the VALUE is local: Anki measures back from the
+        # next 04:00-local rollover, so 7 is right under UTC and 6 under a zone
+        # already past midnight but not yet 04:00. This held in every zone only
+        # because the implementation was a TZ-blind difference of day indices —
+        # the bug fixed 2026-09-03. Absolute correctness against real Anki is
+        # pinned in tests/test_parity_grade_elapsed.py.
+        with local_timezone("UTC"):
+            assert _grade_elapsed_days(last, now, col_crt=col_crt) == 7
 
     def test_datetime_without_col_crt_uses_utc_date_diff(self):
         from datetime import datetime as _dt

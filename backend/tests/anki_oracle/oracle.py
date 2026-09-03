@@ -16,6 +16,7 @@ Operations
 ``{"op": "set_config", "key": "fsrs", "value": true}``
     Calls ``col.set_config(key, value)`` for setup.
 ``{"op": "get_today"}``
+``{"op": "deck_today", "deck_id": 1}``
     Returns ``{"today": col.sched.today}`` — Anki's day index for today.
 ``{"op": "note_ords"}``
     Returns ``{"ords": {sfld: [ord…]}, "card_ids": {sfld: {ord: card_id}}}`` —
@@ -244,8 +245,41 @@ def _op_scheduling_states(col: Any, op: dict) -> dict:
 
 
 def _op_get_today(col: Any, op: dict) -> dict:
-    """Return Anki's day index for today (col.sched.today)."""
-    return {"today": col.sched.today}
+    """Return Anki's day index for today, and the instant the day turns over.
+
+    ``day_cutoff`` is Anki's ``next_day_at`` (epoch seconds) — the value the
+    ANSWERING path measures elapsed time against
+    (``next_day_at.elapsed_days_since(lrt)``, rslib
+    ``scheduler/answering/mod.rs``). Exposing it lets a parity test compute
+    Anki's grade-path ``days_elapsed`` from Anki's own scheduler state rather
+    than from a reimplementation of its rollover arithmetic.
+    """
+    return {"today": col.sched.today, "day_cutoff": col.sched.day_cutoff}
+
+
+def _op_deck_today(col: Any, op: dict) -> dict:
+    """Return Anki's view of a deck's studied-today counters.
+
+    ``newToday`` / ``revToday`` come back as ``[last_day_studied, count]``.
+    Anki treats the count as belonging to *today* only when that first element
+    equals ``col.sched.today``; otherwise it is a stale stamp from another study
+    day and the daily limit is not charged for it. So the pair, read alongside
+    ``today``, says both what TT wrote and whether Anki accepts it — which is
+    the whole question for the studied-today marker.
+
+    ``new_count`` is the same question asked behaviourally: the new cards Anki
+    will actually serve after charging the deck limit.
+    """
+    deck_id = op.get("deck_id", 1)
+    deck = col.decks.get(deck_id)
+    col.decks.select(deck_id)
+    new_count, _, _ = col.sched.counts()
+    return {
+        "today": col.sched.today,
+        "new_today": deck.get("newToday"),
+        "rev_today": deck.get("revToday"),
+        "new_count": new_count,
+    }
 
 
 def _op_get_card(col: Any, op: dict) -> dict:
@@ -380,6 +414,7 @@ _OPERATIONS: dict[str, Any] = {
     "get_card": _op_get_card,
     "get_revlog": _op_get_revlog,
     "get_today": _op_get_today,
+    "deck_today": _op_deck_today,
     "scheduling_states": _op_scheduling_states,
 }
 
