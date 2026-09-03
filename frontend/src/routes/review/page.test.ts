@@ -770,7 +770,7 @@ describe("review/+page.svelte", () => {
 
     it("lesson mode links its title back to the lesson page", async () => {
       mockGetLesson.mockResolvedValue(lessonDetail("Day 4: Interview with a Neighbor"));
-      urlParams.set("c", "curriculum-xyz");
+      urlParams.set("back", "/c/curriculum-xyz/l/lesson-abc");
       const item = makeReviewQueueItem({ id: 1, text: "okno", direction: "recognition" });
       mockFetchLessonReviewQueue.mockResolvedValue({ queue: [item], has_unreviewed_listen: true });
 
@@ -884,17 +884,17 @@ describe("review/+page.svelte", () => {
       expect(mockFetchLessonReviewQueue.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
 
-    it("done state shows '← Back to lesson' link when ?c= param is present", async () => {
+    it("done state shows '← Back to lesson' link when ?back= is present", async () => {
       urlParams.set("lesson", "lesson-abc");
-      urlParams.set("c", "curriculum-xyz");
+      urlParams.set("back", "/c/curriculum-xyz/l/lesson-abc");
       const { findByText } = render(ReviewPage);
 
       const link = await findByText("← Back to lesson");
       expect(link.getAttribute("href")).toBe("/c/curriculum-xyz/l/lesson-abc");
     });
 
-    it("done state shows '← Home' when no ?c= param", async () => {
-      // ?lesson is set but no ?c=
+    it("done state shows '← Home' when no ?back= param", async () => {
+      // ?lesson is set but no ?back=
       const { findByText } = render(ReviewPage);
 
       const link = await findByText("← Home");

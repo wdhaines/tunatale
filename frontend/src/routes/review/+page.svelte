@@ -14,7 +14,11 @@
 
 	// C1: lesson mode — read from URL search params.
 	let lessonId = $derived($page.url.searchParams.get('lesson'));
-	let curriculumId = $derived($page.url.searchParams.get('c'));
+	// A RETURN PATH, not a curriculum id. `c` only ever existed to rebuild the
+	// "back to lesson" url, which assumed the content lived under a curriculum.
+	// A review session does not, so the caller now says where to go back to
+	// (bd tunatale-9p9d).
+	let backHref = $derived($page.url.searchParams.get('back'));
 	let lessonMode = $derived(lessonId !== null);
 
 	let queue: QueueItem[] = $state([]);
@@ -172,7 +176,7 @@
 		<section class="card lesson-head">
 			<div class="lesson-title-area">
 				{#if lessonTitle}
-					<a class="breadcrumb" href="/c/{curriculumId}/l/{lessonId}">← {lessonTitle}</a>
+					<a class="breadcrumb" href={backHref}>← {lessonTitle}</a>
 				{/if}
 				<h1>Check your work</h1>
 			</div>
@@ -202,8 +206,8 @@
 		<section class="done">
 			<h2>Done for today</h2>
 			<p>Reviewed: {reviewed}</p>
-			{#if lessonMode && curriculumId}
-				<a href="/c/{curriculumId}/l/{lessonId}">← Back to lesson</a>
+			{#if lessonMode && backHref}
+				<a href={backHref}>← Back to lesson</a>
 			{:else}
 				<a href="/">← Home</a>
 			{/if}

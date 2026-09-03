@@ -19,7 +19,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
-import ListenPreviewModal from "./ListenPreviewModal.svelte";
+import ListenPreviewModal from "$lib/components/ListenPreviewModal.svelte";
 import { api } from "$lib/api";
 import { listenCountdownPref } from "$lib/stores/listenCountdownPref.svelte";
 import { masteryBackgroundColor, masteryColor } from "$lib/mastery";

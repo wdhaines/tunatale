@@ -22,6 +22,10 @@ import { render, fireEvent } from "@testing-library/svelte";
 const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
+vi.mock("$lib/stores/listened.svelte", () => ({
+  listenedStore: { has: vi.fn().mockReturnValue(false), refresh: vi.fn() },
+}));
+
 vi.mock("$lib/api", () => ({
   api: {
     getReviewSession: vi.fn(),
@@ -29,6 +33,8 @@ vi.mock("$lib/api", () => ({
     renderReviewSession: vi.fn(),
     getTranscript: vi.fn(),
     submitDrill: vi.fn(),
+    fetchLessonReviewQueue: vi.fn(),
+    getListenPreview: vi.fn(),
     undoGrade: vi.fn(),
     createSRSItem: vi.fn(),
     createBaseCard: vi.fn(),
@@ -38,6 +44,7 @@ vi.mock("$lib/api", () => ({
 
 import { api } from "$lib/api";
 import { lessonModePref } from "$lib/stores/lessonModePref.svelte";
+import { listenedStore } from "$lib/stores/listened.svelte";
 import Page from "./+page.svelte";
 import { load } from "./+page";
 
@@ -175,6 +182,7 @@ beforeEach(() => {
   // Listen click in one test leaks into the next. Reset it explicitly rather
   // than depending on test order.
   lessonModePref.set("read");
+  vi.mocked(listenedStore.has).mockReturnValue(false);
   mockSessionTranscript.mockResolvedValue(TRANSCRIPT);
 });
 
@@ -298,6 +306,59 @@ describe("the reader", () => {
     await fireEvent.click(await findByRole("button", { name: "Undo ↩" }));
 
     await vi.waitFor(() => expect(api.undoGrade).toHaveBeenCalledWith(42, "recognition"));
+  });
+
+  it("offers the same listen flow a lesson does", async () => {
+    // Nothing about listening was ever day-scoped; the only thing that had made
+    // it look lesson-only was store.get_lesson(id) in five handlers.
+    mockSessionTranscript.mockResolvedValue(transcriptWithWord() as never);
+    const { findByRole } = render(Page, { props: { data: data() } });
+
+    expect(await findByRole("button", { name: "Mark as Listened" })).toBeTruthy();
+  });
+
+  it("shows how much of the session is known", async () => {
+    // MasteryLine is pure arithmetic over the transcript — no curriculum, no
+    // day, no API call. It works here for exactly that reason.
+    mockSessionTranscript.mockResolvedValue(transcriptWithWord() as never);
+    const { findByText } = render(Page, { props: { data: data() } });
+
+    expect(await findByText(/\d+%/)).toBeTruthy();
+  });
+
+  it("sends Check your work back to the SESSION, not to a curriculum", async () => {
+    // /review used to take ?c= purely to rebuild a "back to lesson" url, which
+    // assumed the content lived under a curriculum. It takes a return PATH now.
+    mockSessionTranscript.mockResolvedValue(transcriptWithWord() as never);
+    vi.mocked(listenedStore.has).mockReturnValue(true);
+    vi.mocked(api.fetchLessonReviewQueue).mockResolvedValue({
+      queue: [{ id: 1 }],
+      has_unreviewed_listen: true,
+    } as never);
+
+    const { findByRole } = render(Page, { props: { data: data() } });
+
+    const link = await findByRole("link", { name: /Check your work/ });
+    expect(link.getAttribute("href")).toBe("/review?lesson=sess-1&back=/review-sessions/sess-1");
+  });
+
+  it("opens the same listen preview a lesson does, and commits back into it", async () => {
+    // Exercises the whole listen path on a session: the modal opens against the
+    // SESSION id, and finishing it re-reads the transcript through the shared
+    // content route. Both were lesson-only until get_readable_content landed.
+    mockSessionTranscript.mockResolvedValue(transcriptWithWord() as never);
+    vi.mocked(api.getListenPreview).mockResolvedValue({
+      candidates: [],
+      key_phrases: [],
+      daily_new_cap: 20,
+      introduced_today: 0,
+    } as never);
+
+    const { findByRole } = render(Page, { props: { data: data() } });
+    await fireEvent.click(await findByRole("button", { name: "Mark as Listened" }));
+
+    expect(await findByRole("dialog", { name: "Listen preview" })).toBeTruthy();
+    await vi.waitFor(() => expect(api.getListenPreview).toHaveBeenCalledWith("sess-1"));
   });
 
   it("has the Read/Listen toggle, and Listen hides the transcript", async () => {

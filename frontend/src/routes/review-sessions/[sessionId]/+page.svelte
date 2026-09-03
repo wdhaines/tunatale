@@ -3,6 +3,11 @@
 	import { api } from '$lib/api';
 	import type { LessonAudio, TranscriptData } from '$lib/api';
 	import LessonReader from '$lib/components/LessonReader.svelte';
+	import MasteryLine from '$lib/components/MasteryLine.svelte';
+	import ListenActions from '$lib/components/ListenActions.svelte';
+	import ListenPreviewModal from '$lib/components/ListenPreviewModal.svelte';
+	import { createListenActions } from '$lib/reading/listenActions.svelte';
+	import { listenedStore } from '$lib/stores/listened.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { createReadingActions } from '$lib/reading/readingActions.svelte';
 
@@ -34,7 +39,10 @@
 	// a word grades it, the popovers create cards and cloze inflections, undo
 	// works — none of it re-implemented here. Only the SOURCE differs, which is
 	// the whole claim of this page.
-	const reading = createReadingActions({
+	// ONE binding, both factories. The accessors are created once — which also
+	// means the reading tests exercise the very same closures the listen path
+	// uses, rather than each page carrying two identical copies.
+	const contentBinding = {
 		get contentId() {
 			return data.session.id;
 		},
@@ -42,9 +50,15 @@
 			return data.session.language_code;
 		},
 		getTranscript: () => transcript,
-		setTranscript: (t) => (transcript = t),
-		setError: (m) => (error = m)
-	});
+		setTranscript: (t: TranscriptData) => {
+			transcript = t;
+		},
+		setError: (m: string) => {
+			error = m;
+		}
+	};
+
+	const reading = createReadingActions(contentBinding);
 
 	const MONTHS = [
 		'January',
@@ -79,6 +93,14 @@
 			? `reused ${data.session.review_used.length} of ${data.session.review_requested.length}`
 			: null
 	);
+
+	// The same listen flow a lesson has: nothing about it was ever day-scoped,
+	// and /api/srs/content/{id}/… now resolves a session too.
+	const listen = createListenActions(contentBinding);
+
+	$effect(() => {
+		if (listenedStore.has(data.session.id)) listen.fetchQueue();
+	});
 
 	onMount(async () => {
 		// Client-side, not in `load`: the transcript runs the lemmatizer and can
@@ -133,10 +155,18 @@
 			{#if coverage}
 				<p class="coverage">{coverage} words you were forgetting</p>
 			{/if}
+			<MasteryLine {transcript} />
 			<p class="muted">
 				A review session — built from what has decayed across your whole deck, with no theme
 				and no place in any curriculum.
 			</p>
+		{/snippet}
+		{#snippet actions()}
+			<ListenActions
+				{listen}
+				reviewHref="/review?lesson={data.session.id}&back=/review-sessions/{data.session.id}"
+				hasError={error !== ''}
+			/>
 		{/snippet}
 		{#snippet noAudio()}
 			<div class="prepare">
@@ -150,6 +180,10 @@
 		{/snippet}
 	</LessonReader>
 </main>
+
+{#if listen.showPreview}
+	<ListenPreviewModal {...listen.previewProps} />
+{/if}
 
 <style>
 	/* Only what THIS page's snippets need. The sticky card, the header grid, the

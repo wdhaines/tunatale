@@ -12,11 +12,14 @@
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 	import { createReadingActions } from '$lib/reading/readingActions.svelte';
 	import LessonReader from '$lib/components/LessonReader.svelte';
+	import MasteryLine from '$lib/components/MasteryLine.svelte';
+	import ListenActions from '$lib/components/ListenActions.svelte';
+	import { createListenActions } from '$lib/reading/listenActions.svelte';
 	import { pipelineStore } from '$lib/stores/pipeline.svelte';
 	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
 	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
 	import LessonSourcePanel from '$lib/components/LessonSourcePanel.svelte';
-	import ListenPreviewModal from './ListenPreviewModal.svelte';
+	import ListenPreviewModal from '$lib/components/ListenPreviewModal.svelte';
 	import { lessonMastery, masteryColor } from '$lib/mastery';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
@@ -32,9 +35,28 @@
 	// Starts true when load didn't supply a transcript (production: we fetch it
 	// client-side below) so the section shows the spinner from first paint.
 	let transcriptLoading = $state(untrack(() => data.transcript === null));
-	let listenResult = $state<ListenResponse | null>(null);
-	let queueCount = $state(0);
-	let hasUnreviewedListen = $state(false);
+
+	// ONE binding, both factories. The accessors are created once — which also
+	// means the reading tests exercise the very same closures the listen path
+	// uses, rather than each page carrying two identical copies.
+	const contentBinding = {
+		get contentId() {
+			return data.lesson.id;
+		},
+		get languageCode() {
+			return data.lesson.language_code;
+		},
+		getTranscript: () => transcript,
+		setTranscript: (t: TranscriptData) => {
+			transcript = t;
+		},
+		setError: (m: string) => {
+			error = m;
+		}
+	};
+
+	const reading = createReadingActions(contentBinding);
+	const listen = createListenActions(contentBinding);
 	// Which lesson the three above describe. Plain `let`, not $state: it is the
 	// follow-`data` effect's own bookkeeping and must not be a dependency of it.
 	let resultsLessonId: string | null = untrack(() => data.lesson.id);
@@ -49,7 +71,6 @@
 	let deletingDay = $state(false);
 	let wordActionInFlight = $state(false);
 	let showRegenHelp = $state(false);
-	let showPreview = $state(false);
 
 	let playbackController = $state<PlaybackController | null>(null);
 
@@ -67,7 +88,6 @@
 		void rateLimitStore.ensureFresh();
 	});
 
-	let isListened = $derived(listenedStore.has(data.lesson.id));
 
 	// `lesson.day` is the stable key and goes gappy as days are deleted; the plan's
 	// position is what the day picker shows, so label with that. Falls back to the
@@ -120,9 +140,7 @@
 		// a queue count that the fetch effect below has no reason to re-fetch.
 		if (data.lesson.id !== resultsLessonId) {
 			resultsLessonId = data.lesson.id;
-			listenResult = null;
-			queueCount = 0;
-			hasUnreviewedListen = false;
+			listen.reset();
 		}
 		const provided = data.transcript;
 		if (provided !== null) {
@@ -341,73 +359,15 @@
 		}
 	});
 
-	async function fetchQueue() {
-		const lessonId = data.lesson.id;
-		try {
-			const { queue, has_unreviewed_listen } = await api.fetchLessonReviewQueue(lessonId);
-			if (data.lesson.id === lessonId) {
-				queueCount = queue.length;
-				hasUnreviewedListen = has_unreviewed_listen;
-			}
-		} catch {
-			// 404 or network error — leave queueCount at its last value.
-		}
-	}
 
-	// Fetch the review queue when the page loads with an already-listened lesson
-	// (so the "Check your work" link shows the right count from first paint).
-	// Depends on the lesson id, not just `isListened`: navigating between two
-	// already-listened lessons leaves that boolean at true, so a `$derived`
-	// equality check swallows the change and the queue is never re-fetched —
-	// the link then keeps the previous lesson's count.
+	// Fetch the review queue when the page loads with already-listened content
+	// (so "Check your work" shows the right count from first paint). Depends on
+	// the ID, not just `isListened`: navigating between two already-listened
+	// lessons leaves that boolean true, so a $derived equality check swallows the
+	// change and the link keeps the previous lesson's count.
 	$effect(() => {
-		if (listenedStore.has(data.lesson.id)) fetchQueue();
+		if (listenedStore.has(data.lesson.id)) listen.fetchQueue();
 	});
-
-	async function handleMarkListened() {
-		showPreview = true;
-	}
-
-	async function handlePreviewDone(result: ListenResponse | { status: 'cancelled' }) {
-		const lessonId = data.lesson.id;
-		showPreview = false;
-		// `in` narrows the union properly; a plain `result.status === 'cancelled'`
-		// check does not, because ListenResponse.status is `string` (not a
-		// literal), so TS can't exclude that arm from the negative branch.
-		if (!('created' in result)) return;
-		listenResult = result;
-		try {
-			await listenedStore.refresh();
-			const t = await api.getTranscript(lessonId);
-			if (data.lesson.id === lessonId) transcript = t;
-			await fetchQueue();
-			queueStatsStore.refresh();
-		} catch (e) {
-			if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
-		}
-	}
-
-	// Mastery computed from the current transcript state
-	const mastery = $derived(transcript ? lessonMastery(transcript) : null);
-	const masteryPct = $derived(mastery?.pct ?? null);
-	const masteryCounts = $derived(mastery?.counts ?? null);
-
-	const masterySegments = $derived(
-		!masteryCounts ? [] :
-		[
-			{ key: 'new', count: masteryCounts.new, label: 'new', lemmas: mastery?.lemmas?.new ?? [] },
-			{ key: 'learning', count: masteryCounts.learning, label: 'learning', lemmas: mastery?.lemmas?.learning ?? [] },
-			{ key: 'due', count: masteryCounts.due, label: 'due', lemmas: mastery?.lemmas?.due ?? [] },
-			{ key: 'review', count: masteryCounts.review, label: 'review', lemmas: mastery?.lemmas?.review ?? [] },
-			{ key: 'known', count: masteryCounts.known, label: 'known', lemmas: mastery?.lemmas?.known ?? [] },
-		].filter(s => s.count > 0 || s.key === 'known')
-	);
-
-	const LEMMA_TOOLTIP_MAX = 15;
-	function formatLemmaTooltip(lemmas: string[]): string {
-		if (lemmas.length <= LEMMA_TOOLTIP_MAX) return lemmas.join(', ');
-		return lemmas.slice(0, LEMMA_TOOLTIP_MAX).join(', ') + ` … +${lemmas.length - LEMMA_TOOLTIP_MAX} more`;
-	}
 
 	// Fully acquired: no remaining candidates AND no words in the review queue
 	// No "fully acquired" terminal state any more (dropped 2026-07-27). It was
@@ -419,27 +379,11 @@
 	// needs. The mastery line below already reports how well the lesson is
 	// known; that is the honest signal, and the button stays a button.
 
-	// Derived booleans for template conditionals (avoid && phantom branches)
-	const showCheckWorkLink = $derived(isListened ? queueCount > 0 && hasUnreviewedListen : false);
 
 	// ⚠️ ONE IMPLEMENTATION, SHARED WITH THE REVIEW-SESSION READER. These ~200
 	// lines used to live here and were nearly copied into that page when its
 	// transcript endpoint missed on a session id. Only the SOURCE differs
 	// between the two — see $lib/reading/readingActions.svelte.ts.
-	const reading = createReadingActions({
-		// Getters, not values: read at call time so this survives SvelteKit
-		// reusing the component across a navigation, and so Svelte does not warn
-		// about capturing `data` at init.
-		get contentId() {
-			return data.lesson.id;
-		},
-		get languageCode() {
-			return data.lesson.language_code;
-		},
-		getTranscript: () => transcript,
-		setTranscript: (t) => (transcript = t),
-		setError: (m) => (error = m)
-	});
 
 </script>
 
@@ -488,12 +432,7 @@
 		{#snippet headerBelow()}
 				<!-- Stats read as lesson metadata under the title rather than a third
 				     stacked line in the action row — same information, no extra row. -->
-				{#if mastery && masteryPct !== null}
-					<p class="mastery-line">
-						<span class="mastery-pct" style:color={masteryColor(masteryPct)}>{Math.round(masteryPct * 100)}%</span>
-						{#each masterySegments as seg, i (seg.key)}{#if i > 0}<span class="mastery-sep">·</span>{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}
-					</p>
-				{/if}
+				<MasteryLine {transcript} />
 		{/snippet}
 		{#snippet noAudio()}
 				<div class="render-row">
@@ -506,32 +445,11 @@
 				</div>
 		{/snippet}
 		{#snippet actions()}
-			<div class="listen-actions">
-				<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened}>
-					Mark as Listened
-				</button>
-				{#if listenResult && !error}
-					<p class="listen-confirmation">
-						{#if listenResult.created > 0}
-							{listenResult.created} new {listenResult.created === 1 ? 'word' : 'words'} added
-						{/if}
-						{#if listenResult.created > 0 && (listenResult.applied > 0 || listenResult.staged > 0)} · {/if}
-						{#if listenResult.applied > 0}
-							{listenResult.applied} graded
-						{/if}
-						{#if listenResult.applied > 0 && listenResult.staged > 0} · {/if}
-						{#if listenResult.staged > 0}
-							{listenResult.staged} ready to check
-						{/if}
-						{#if listenResult.remaining_candidates > 0}
-							 · {listenResult.remaining_candidates} remaining — listen again to add more
-						{/if}
-					</p>
-				{/if}
-				{#if showCheckWorkLink}
-					<a class="check-work-link" href="/review?lesson={data.lesson.id}&c={data.curriculum.id}">Check your work — review {queueCount} {queueCount === 1 ? 'word' : 'words'}</a>
-				{/if}
-			</div>
+			<ListenActions
+				{listen}
+				reviewHref="/review?lesson={data.lesson.id}&back=/c/{data.curriculum.id}/l/{data.lesson.id}"
+				hasError={error !== ''}
+			/>
 		{/snippet}
 	</LessonReader>
 
@@ -600,12 +518,8 @@
 	</details>
 </main>
 
-{#if showPreview}
-	<ListenPreviewModal
-		lessonId={data.lesson.id}
-		languageCode={data.lesson.language_code}
-		onDone={handlePreviewDone}
-	/>
+{#if listen.showPreview}
+	<ListenPreviewModal {...listen.previewProps} />
 {/if}
 
 <style>
