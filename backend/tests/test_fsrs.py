@@ -197,6 +197,8 @@ class TestReviewScheduling:
         from dataclasses import replace
         from datetime import datetime as _dt
 
+        from tests._helpers.localtz import local_timezone
+
         col_crt = 1388836800  # user's real col_crt; doesn't change result
         grade_dt = _dt(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
 
@@ -215,15 +217,26 @@ class TestReviewScheduling:
             )
 
         # Two cards graded at the same moment, with last_review at different
-        # sub-day times WITHIN THE SAME col-day window. col_crt=1388836800
-        # (12:00 UTC) puts col-day boundaries at 16:00 UTC. Both times below
-        # fall in the [16:00 UTC 5/11, 16:00 UTC 5/12) col-day window, so
-        # Anki's integer col-day diff is identical → identical new_s.
-        early = _dt(2026, 5, 11, 17, 0, 1, tzinfo=UTC)  # just past col-day boundary
+        # sub-day times WITHIN THE SAME col-day window, so Anki's integer
+        # col-day diff is identical → identical new_s.
+        #
+        # ⚠️ THE ZONE IS PART OF THE FIXTURE AND MUST BE DECLARED. The col-day
+        # boundary is 04:00 LOCAL (anki_today_col_day is independent of crt's
+        # time-of-day — see anki-queue-parity.md principle 6 rule 1), so which
+        # times share a col-day depends entirely on the reader's zone. Pinned to
+        # UTC the window is [04:00 5/11, 04:00 5/12) and both times fall inside
+        # it. Unpinned, this test asserted a UTC+12 reader: it passed at
+        # Etc/GMT-12 and failed at Etc/GMT-10, where the boundary moves to 18:00
+        # UTC and 17:00:01 lands in the PREVIOUS col-day (measured: col_day 4510
+        # vs 4511). An earlier comment here blamed crt's 12:00 UTC time-of-day
+        # for a "16:00 UTC boundary" — that number was right only for UTC+12 and
+        # the reason was wrong.
+        early = _dt(2026, 5, 11, 17, 0, 1, tzinfo=UTC)
         late = _dt(2026, 5, 11, 22, 0, 0, tzinfo=UTC)  # later same col-day
 
-        r_early = _grade_again_with_last_review_at(early)
-        r_late = _grade_again_with_last_review_at(late)
+        with local_timezone("UTC"):
+            r_early = _grade_again_with_last_review_at(early)
+            r_late = _grade_again_with_last_review_at(late)
 
         s_early = r_early.directions[Direction.RECOGNITION].stability
         s_late = r_late.directions[Direction.RECOGNITION].stability
@@ -246,6 +259,8 @@ class TestReviewScheduling:
         from dataclasses import replace
         from datetime import datetime as _dt
 
+        from tests._helpers.localtz import local_timezone
+
         col_crt = 1388836800
         grade_dt = _dt(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
 
@@ -263,12 +278,14 @@ class TestReviewScheduling:
                 col_crt=col_crt,
             )
 
-        # Same col-day-window times as the AGAIN test above.
+        # Same col-day-window times as the AGAIN test above, and pinned to UTC
+        # for the same reason — see that test for why the zone is load-bearing.
         early = _dt(2026, 5, 11, 17, 0, 1, tzinfo=UTC)
         late = _dt(2026, 5, 11, 22, 0, 0, tzinfo=UTC)
 
-        r_early = _grade_good_with_last_review_at(early)
-        r_late = _grade_good_with_last_review_at(late)
+        with local_timezone("UTC"):
+            r_early = _grade_good_with_last_review_at(early)
+            r_late = _grade_good_with_last_review_at(late)
 
         s_early = r_early.directions[Direction.RECOGNITION].stability
         s_late = r_late.directions[Direction.RECOGNITION].stability
