@@ -42,6 +42,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from app.cards.number_image import number_value, render_count_svg
 from app.srs.function_words import is_function_word
 
 from .vocab_media import safe_stem, store_tt_media
@@ -109,6 +110,12 @@ class PreStageReport(NamedTuple):
     already_had_image: int = 0
     skipped_function_word: int = 0
     no_image: int = 0
+    #: Number words DRAWN rather than searched for (tunatale-elrj). Counted apart
+    #: from ``fetched`` because that name means "a live network chain was spent",
+    #: and this costs none — no LLM call, no Pixabay search, no download. A pass
+    #: that draws 30 pictures and fetches 0 has done no network work at all, and
+    #: folding the two together would hide that from the only line anyone reads.
+    rendered_number: int = 0
     #: Fetches that RAISED. Counted apart from ``no_image`` on purpose: that one
     #: means "searched, nothing picturable" and drives ``mark_image_unavailable``,
     #: which routes the word to a permanent cloze. A 429 or a timeout is not
@@ -145,7 +152,8 @@ def _log_prestage_summary(report: PreStageReport) -> None:
     pre-stage pass, so every error here is swallowed deliberately.
     """
     line = (
-        f"PRESTAGE_IMAGES fetched={report.fetched} already={report.already_had_image} "
+        f"PRESTAGE_IMAGES fetched={report.fetched} drawn={report.rendered_number} "
+        f"already={report.already_had_image} "
         f"function_word={report.skipped_function_word} no_image={report.no_image} "
         f"failed={report.failed}"
     )
@@ -192,6 +200,7 @@ async def prestage_production_images(
     # front means the fetch batch is exactly the words that need a live call.
     failed = 0
     failure_reasons: list[str] = []
+    drawn = 0
     wanted = []
     for cand in db.list_words_awaiting_production(limit=SCAN_LIMIT):
         if len(wanted) >= limit:
@@ -201,6 +210,31 @@ async def prestage_production_images(
 
         if db.get_image_filename(cand.collocation_id) is not None:
             already += 1
+            continue
+
+        # A number word is DRAWN, not searched for (tunatale-elrj). Checked before
+        # every other filter below, and deliberately so in two directions:
+        #
+        # - before the unpicturable marker, because that marker records a verdict
+        #   about a *photo search* ("Pixabay had nothing for 'five'"), and every
+        #   number word in the real deck predates this feature. Letting a stale
+        #   photo verdict veto a render would permanently mis-shape exactly the
+        #   words this change exists to fix.
+        # - before the closed-class test, which is what sends numbers to a cloze
+        #   in the first place: the Norwegian deck labels them `determinative`,
+        #   which is a truthful DET. The word IS closed-class; it just happens to
+        #   be the one closed class with a perfect picture.
+        #
+        # It costs nothing against `limit`, which bounds live network chains and
+        # this is not one. `number_value` returns None for anything it will not
+        # draw — not a number, excluded, zero, or too large — so those words fall
+        # through to exactly the routing they had before.
+        value = number_value(unit.text, language_code)
+        if value is not None:
+            image = render_count_svg(value)
+            digest = hashlib.sha256(image).hexdigest()[:8]
+            store_tt_media(db, cand.collocation_id, "image", f"count_{value:03d}_{digest}.svg", image)
+            drawn += 1
             continue
 
         if db.is_image_unavailable(cand.collocation_id):
@@ -304,6 +338,7 @@ async def prestage_production_images(
         already_had_image=already,
         skipped_function_word=skipped,
         no_image=missing,
+        rendered_number=drawn,
         failed=failed,
         failures=tuple(failure_reasons[:MAX_FAILURE_REASONS]),
     )
