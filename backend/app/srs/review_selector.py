@@ -70,8 +70,20 @@ def select_review_collocations(
     point; the sample is not a second opinion about what is due.
 
     *horizon_days* widens that bound into the future. It defaults to 0, today's
-    behaviour, and exists for tunatale-6r44: a learner who hears a story a week
-    after generating it wants the words that come due across that week.
+    behaviour, and was added for tunatale-6r44.
+
+    ⚠️ IT IS A NO-OP UNLESS THE DUE POOL IS SMALLER THAN *limit*, and the
+    rationale this docstring used to give ("a learner who hears a story a week
+    after generating it") did not survive measurement. The ranking above is
+    R-ASCENDING and truncated at *limit*; FSRS holds not-yet-due cards ABOVE
+    ``desired_retention`` and overdue ones below, so widening ``as_of`` only
+    appends cards that sort LAST. They reach the sample only when fewer than
+    *limit* are already due. Measured 2026-09-03 on the real NO deck: 78 due
+    against a limit of 12, so every horizon from 0 to +29 returned the same
+    twelve words. Note this makes a large overdue backlog — the case tunatale-6r44
+    was filed for — precisely the case where the parameter can do nothing, since a
+    backlog is what guarantees the pool exceeds the limit. Do not wire a cadence
+    into this expecting an effect without re-measuring that ratio first.
 
     NO TOPICAL FILTER, DELIBERATELY (user, 2026-09-02): "adding diversity
     through the additional vocab and letting the LLM use its best judgement for
