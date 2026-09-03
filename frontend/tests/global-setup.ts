@@ -14,8 +14,11 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { request } from '@playwright/test';
 import type { FullConfig } from '@playwright/test';
 
-/** Backend/frontend server pairs `playwright.config.ts` actually starts. */
-const CONFIGURED_WORKERS = 2;
+// Backend/frontend server pairs `playwright.config.ts` actually starts —
+// imported, not re-derived, so this guard can never drift from the count that
+// generated `webServer` (it did once, as a hardcoded `2`, which is exactly
+// the kind of divergence this check exists to catch).
+import { WORKER_COUNT as CONFIGURED_WORKERS } from '../playwright.config';
 
 const EMAIL = 'e2e@example.com';
 export const STORAGE_STATE = 'tests/.auth/state.json';
@@ -26,11 +29,11 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
 	// ⚠️ The worker count is capped by CONSTRUCTION, not by CPU, and exceeding it
 	// fails in a way that reads like a SPEED-UP. `tests/fixtures.ts::PORTS` gives
 	// worker N backend `8001 + 2N` and frontend `5174 + N`, and playwright.config
-	// starts exactly two of each (:8001/:8003, :5174/:5175). At `--workers=4`,
-	// workers 2 and 3 therefore address :8005/:8007 and :5176/:5177, which nothing
-	// is listening on — measured 2026-09-03: 34 x ECONNREFUSED, 15-30 specs failed,
-	// and the run finished in 24s against a healthy 38s BECAUSE the failures are
-	// instant.
+	// starts exactly `CONFIGURED_WORKERS` of each. At `--workers` above that, the
+	// excess workers address ports nothing is listening on — measured 2026-09-03
+	// at a then-hardcoded cap of 2: `--workers=4` produced 34 x ECONNREFUSED,
+	// 15-30 specs failed, and the run finished in 24s against a healthy 38s
+	// BECAUSE the failures are instant.
 	//
 	// That is how this bit before. tunatale-1l26 recorded "More Playwright workers,
 	// locally too: 2/4/6 = 42/41/47s" as evidence that raising workers is flat. The
@@ -39,8 +42,10 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
 	// Checking the exit code would have caught it; a loud failure here means nobody
 	// has to remember to.
 	//
-	// Raising the cap is a real change: add webServer entries AND keep PORTS in
-	// lockstep. `workers: 2` in playwright.config.ts has its own note on why 2.
+	// CONFIGURED_WORKERS now tracks playwright.config.ts's WORKER_COUNT directly
+	// (2026-09-03: `E2E_WORKERS=N bun run test:e2e` scales both, in lockstep, by
+	// construction), so this guard is now only reachable via a CLI `--workers`
+	// override that exceeds however many pairs THAT run actually started.
 	if (config.workers > CONFIGURED_WORKERS) {
 		throw new Error(
 			`--workers=${config.workers} but only ${CONFIGURED_WORKERS} backend/frontend ` +

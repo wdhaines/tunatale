@@ -3,12 +3,32 @@ import { rmSync } from 'node:fs';
 
 import { defineConfig, devices } from '@playwright/test';
 
+// Worker count, overridable so a spare-core machine isn't stuck at the
+// measured-safe default. `workers: 2` used to be a literal below with the
+// comment "measure at 2 before building for N" — this IS building for N.
+// Every backend/frontend pair below is generated from this count, and
+// tests/fixtures.ts::PORTS derives the SAME ports from Playwright's own
+// TEST_PARALLEL_INDEX — change the formula in one place without the other and
+// a worker silently talks to a backend that was never started (see PORTS'
+// comment). tests/helpers.ts::BACKEND duplicates the backend half of the
+// formula for the same reason and must also stay in lockstep.
+//
+// Default stays 2: that is the only value ever measured for CPU contention
+// against the rest of ./test.sh's concurrent groups. Override locally with
+// `E2E_WORKERS=4 bun run test:e2e`; CI does not set this, so its behavior is
+// unchanged.
+// Exported so tests/global-setup.ts can guard against `--workers=N` (a CLI
+// flag, which overrides this file's `workers:` below) exceeding how many
+// server pairs actually got started — see its own comment for what that
+// guard catches and why it is worth keeping even though this file now scales.
+export const WORKER_COUNT = Number(process.env.E2E_WORKERS ?? 2);
+
 // DB cleanup happens HERE, at module scope, before any server spawns — NOT in
-// the webServer commands. Both backends share the auth store
-// (tunatale-test-auth.db), so an `rm -f` inside either command is a boot race:
-// if worker 1's backend opens the auth DB before worker 0's rm runs, it holds
-// a deleted inode, the storageState cookie stops validating on that worker,
-// and every spec there redirects to /login.
+// the webServer commands. All backends share the auth store
+// (tunatale-test-auth.db), so an `rm -f` inside any command is a boot race:
+// if one worker's backend opens the auth DB before another's rm runs, it
+// holds a deleted inode, the storageState cookie stops validating on that
+// worker, and every spec there redirects to /login.
 //
 // ⚠️ This file is evaluated by MORE than the main process — each worker loads
 // it too — so the loop below MUST be guarded: unguarded, a worker's copy fires
@@ -18,22 +38,20 @@ import { defineConfig, devices } from '@playwright/test';
 // our own env marks the run clean; every child process inherits it and skips.
 if (!process.env.TT_E2E_DBS_CLEANED) {
 	process.env.TT_E2E_DBS_CLEANED = '1';
-	for (const f of [
-		'../backend/tunatale-test-auth.db',
-		'../backend/tunatale-test-0.db',
-		'../backend/tunatale-test-1.db',
-		'../backend/tunatale-test-no-0.db',
-		'../backend/tunatale-test-no-1.db'
-	]) rmSync(f, { force: true });
+	const dbFiles = ['../backend/tunatale-test-auth.db'];
+	for (let i = 0; i < WORKER_COUNT; i++) {
+		dbFiles.push(`../backend/tunatale-test-${i}.db`, `../backend/tunatale-test-no-${i}.db`);
+	}
+	for (const f of dbFiles) rmSync(f, { force: true });
 
-	// Build ONCE, here, for both worker frontends to serve (see their webServer
+	// Build ONCE, here, for every worker frontend to serve (see the webServer
 	// entries below for why they are `vite preview` and not `vite dev`). This sits
 	// inside the same guard as the rm above: the config is evaluated by every
 	// worker too, and an unguarded build would have each worker rebuild into the
 	// directory the running preview servers are serving.
 	//
 	// 2s for a 1.4 MB static SPA (adapter-static, SPA fallback), against the ~8s
-	// the two dev servers cost the suite. `bun install` runs before Playwright
+	// two dev servers would cost the suite. `bun install` runs before Playwright
 	// both locally and in CI's e2e job, so `bun run build` is available in both.
 	execSync('bun run build', {
 		stdio: 'inherit',
@@ -41,179 +59,157 @@ if (!process.env.TT_E2E_DBS_CLEANED) {
 	});
 }
 
+// One backend + frontend pair per worker index, so WORKER_COUNT can be any N
+// without hand-adding entries. Formulas MUST match PORTS in tests/fixtures.ts
+// and BACKEND in tests/helpers.ts:
+//   backend port  = 8001 + 2*i
+//   frontend port = 5174 + i
+// The backend stride of 2 (not 1) is a leftover, kept for exactly this reason
+// — a second per-worker backend at 8002+2*i (TARGET_LANGUAGE=no) used to live
+// here and was deleted 2026-08-15 (tunatale-vnf.10) along with its only
+// consumer, generate-norwegian.spec.ts. Renumbering to a stride of 1 would
+// save nothing (ports are free either way) and would just be gratuitous
+// formula churn across three files for zero benefit.
+function backendServer(i: number) {
+	const port = 8001 + 2 * i;
+	const frontendPort = 5174 + i;
+	return {
+		// Isolated DBs, dedicated port — never reuses the dev server. DB cleanup
+		// lives at module scope above (see the boot-race note).
+		//
+		// BOTH language DBs are removed every run, and that is load-bearing: this
+		// one backend serves both (see DATABASE_URLS below), so
+		// language-switch.spec.ts reaches the Norwegian DB with a header.
+		// tunatale-test-no.db used to be cleaned by a SECOND uvicorn on :8002,
+		// deleted 2026-08-15 with the spec that was its only consumer
+		// (tunatale-vnf.10) — leaving the rm behind would have made the Norwegian
+		// seed accumulate one row per run, and the spec's strict text locator go
+		// non-idempotent on the second one.
+		command: `cd ../backend && uv run uvicorn app.main:app --host 0.0.0.0 --port ${port} --log-level error`,
+		port,
+		reuseExistingServer: false,
+		timeout: 30000,
+		env: {
+			LLM_MODE: 'mock',
+			PIPELINE_AUTOSTART: 'false',
+			DATABASE_URL: `sqlite:///./tunatale-test-${i}.db`,
+			// Redirect the Phase-5 multi-language map at test DBs. _language_db_map()
+			// returns settings.database_urls verbatim when non-empty and IGNORES
+			// database_url — so a developer whose .env sets DATABASE_URLS (real
+			// per-language DBs) would make this "isolated" backend open the REAL
+			// tunatale_sl.db/_no.db, and e2e specs (topic "ordering coffee") would
+			// pollute live data. The KEY MUST BE UPPERCASE to match .env's
+			// DATABASE_URLS: on case-sensitive Unix a lowercase `database_urls` is a
+			// DIFFERENT os.environ key, so load_dotenv(override=False) still injects
+			// the .env value and pydantic's case-insensitive read resolves to the
+			// real DBs (this silently wiped tunatale_sl.db twice — 2026-06-30,
+			// 2026-07-13). Every language key must be listed here to fully isolate.
+			DATABASE_URLS: `{"sl":"sqlite:///./tunatale-test-${i}.db","no":"sqlite:///./tunatale-test-no-${i}.db"}`,
+			// Startup DB-backup rotation would otherwise snapshot the throwaway
+			// test DB into the real ~/.tunatale/db-backups. 0 disables it for E2E.
+			DB_BACKUP_KEEP_DAYS: '0',
+			// Add-time vocab media (POST /items, /listen) fetches image+audio when
+			// a Pixabay key is set. E2E seeds cards via those endpoints, so a real
+			// key in .env makes the suite hit Pixabay/Forvo live (slow, flaky).
+			// Empty it so seeding stays offline. load_dotenv(override=False) keeps
+			// this preset value; key is uppercase to match the .env's PIXABAY_API_KEY.
+			PIXABAY_API_KEY: '',
+			// E2E doesn't test lemmatization; force the fast lowercase lemmatizer
+			// so a local `lemmatizer_type=classla` in .env doesn't make the
+			// backend pay classla's ~26s model load and blow the webServer timeout.
+			// Key MUST be lowercase to match the .env key: main.py's load_dotenv()
+			// loads the lowercase `lemmatizer_type` from .env, and on case-sensitive
+			// Unix an uppercase `LEMMATIZER_TYPE` is a *different* key that .env wins over.
+			lemmatizer_type: 'lowercase',
+			// This backend's own frontend is on a port outside the default
+			// allowlist (:5173), so cors-lockdown.spec.ts has no ALLOWED case to
+			// pair its refusal against — and a lone refusal proves nothing (a dead
+			// port refuses too). Listing exactly one origin also makes the spec's
+			// control real: 127.0.0.1 on the same port is the same server under a
+			// spelling this list does not cover.
+			CORS_ORIGINS: `["http://localhost:${frontendPort}"]`,
+			// Pin the target language to Slovene: the e2e curriculum/story flows are
+			// backed by Slovene LLM cassettes. A developer's .env with TARGET_LANGUAGE=no
+			// (running TT as Norwegian) would otherwise generate a Norwegian prompt with
+			// no cassette → 500. Uppercase matches the .env key so load_dotenv keeps it.
+			TARGET_LANGUAGE: 'sl',
+			// ⚠️ AUTH ON, deliberately — this suite runs the deployed shape.
+			//
+			// With the gate off, every spec here would prove the app works in a
+			// configuration production never uses, and the login journey would have
+			// no real stack to walk. So the backend requires a session, globalSetup
+			// creates the account and signs in once, and `use.storageState` below
+			// hands that cookie to every spec. Only auth-login.spec.ts opts out.
+			//
+			// The session cookie is `Secure` and this suite is plain http. That
+			// works because browsers treat `localhost` as a trustworthy origin —
+			// measured 2026-08-18 in the pinned chromium: cookie set over
+			// http://localhost and returned on the next request, `me` → 200. Do
+			// NOT generalise that to a deployment: over http on any other host the
+			// cookie is stored and never sent back, and it reads exactly like a
+			// broken server (see docs/deployment.md § Signing in).
+			AUTH_ENABLED: 'true',
+			// Shared across every worker (see the boot-race comment above): each
+			// worker's own DB pair holds no accounts, only this one does. Never
+			// the real ./auth.db.
+			AUTH_DATABASE_URL: 'sqlite:///./tunatale-test-auth.db'
+		}
+	};
+}
+
+function frontendServer(i: number) {
+	const port = 5174 + i;
+	const backendPort = 8001 + 2 * i;
+	return {
+		// Serves the PRODUCTION BUILD (see the shared `bun run build` above),
+		// proxying /api to this worker's own backend.
+		//
+		// This was `npm run dev` until 2026-09-01. Vite dev servers transform the
+		// whole app on demand, once each, and that work landed on an already-
+		// saturated box: the gate is CPU-throughput-bound, not schedule-bound
+		// (measured — backend pytest 32s alone / 56s in-gate, vitest 16s / 34s,
+		// peer-sync 18s / 39s). Swapping both for `vite preview` over one shared
+		// build took e2e 50s -> 42s and the whole gate 93s -> 86s, with all 52
+		// specs passing unchanged.
+		//
+		// ⚠️ WHAT THIS TRADES AWAY, stated rather than hidden: the gate no
+		// longer exercises `vite dev`. A dev-server-only regression — Vite
+		// pre-bundling deps at boot is the known class — is now invisible to
+		// it. Accepted because the deployed shape is what this suite is FOR:
+		// AUTH_ENABLED is on for the same reason, and the service-worker spec
+		// now runs against a build where service workers actually activate
+		// (vite.config.ts notes HMR and SWs conflict), which is where it
+		// belongs.
+		//
+		// `--strictPort` so a port already in use FAILS instead of silently
+		// serving a different worker's app to this one.
+		command: `SVELTEKIT_OUT_DIR=.svelte-kit-e2e bun run preview -- --port ${port} --strictPort`,
+		url: `http://localhost:${port}`,
+		reuseExistingServer: false,
+		timeout: 30000,
+		env: { API_PORT: String(backendPort) }
+	};
+}
+
 export default defineConfig({
 	globalSetup: './tests/global-setup.ts',
 	webServer: [
-		{
-			// Worker-0 test backend: isolated DBs, dedicated port — never reuses dev
-			// server. DB cleanup lives at module scope above (see the boot-race note).
-			//
-			// BOTH language DBs are removed every run, and that is load-bearing: this one
-			// backend serves both (see DATABASE_URLS below), so language-switch.spec.ts
-			// reaches the Norwegian DB with a header. tunatale-test-no.db used to be
-			// cleaned by a SECOND uvicorn on :8002, deleted 2026-08-15 with the spec
-			// that was its only consumer (tunatale-vnf.10) — leaving the rm behind
-			// would have made the Norwegian seed accumulate one row per run, and the
-			// spec's strict text locator go non-idempotent on the second one.
-			command: 'cd ../backend && uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --log-level error',
-			port: 8001,
-			reuseExistingServer: false,
-			timeout: 30000,
-			env: {
-				LLM_MODE: 'mock',
-				PIPELINE_AUTOSTART: 'false',
-				DATABASE_URL: 'sqlite:///./tunatale-test-0.db',
-				// Redirect the Phase-5 multi-language map at test DBs. _language_db_map()
-				// returns settings.database_urls verbatim when non-empty and IGNORES
-				// database_url — so a developer whose .env sets DATABASE_URLS (real
-				// per-language DBs) would make this "isolated" backend open the REAL
-				// tunatale_sl.db/_no.db, and e2e specs (topic "ordering coffee") would
-				// pollute live data. The KEY MUST BE UPPERCASE to match .env's
-				// DATABASE_URLS: on case-sensitive Unix a lowercase `database_urls` is a
-				// DIFFERENT os.environ key, so load_dotenv(override=False) still injects
-				// the .env value and pydantic's case-insensitive read resolves to the real
-				// DBs (this silently wiped tunatale_sl.db twice — 2026-06-30, 2026-07-13).
-				// Every language key must be listed here to fully isolate.
-				DATABASE_URLS: '{"sl":"sqlite:///./tunatale-test-0.db","no":"sqlite:///./tunatale-test-no-0.db"}',
-				// Startup DB-backup rotation would otherwise snapshot the throwaway
-				// test DB into the real ~/.tunatale/db-backups. 0 disables it for E2E.
-				DB_BACKUP_KEEP_DAYS: '0',
-				// Add-time vocab media (POST /items, /listen) fetches image+audio when
-				// a Pixabay key is set. E2E seeds cards via those endpoints, so a real
-				// key in .env makes the suite hit Pixabay/Forvo live (slow, flaky).
-				// Empty it so seeding stays offline. load_dotenv(override=False) keeps
-				// this preset value; key is uppercase to match the .env's PIXABAY_API_KEY.
-				PIXABAY_API_KEY: '',
-				// E2E doesn't test lemmatization; force the fast lowercase lemmatizer
-				// so a local `lemmatizer_type=classla` in .env doesn't make the
-				// backend pay classla's ~26s model load and blow the webServer timeout.
-				// Key MUST be lowercase to match the .env key: main.py's load_dotenv()
-				// loads the lowercase `lemmatizer_type` from .env, and on case-sensitive
-				// Unix an uppercase `LEMMATIZER_TYPE` is a *different* key that .env wins over.
-				lemmatizer_type: 'lowercase',
-				// The e2e frontend is on :5174, not the :5173 the default allowlist
-				// names, so cors-lockdown.spec.ts would otherwise have no ALLOWED
-				// case to pair its refusal against — and a lone refusal proves
-				// nothing (a dead port refuses too). Listing exactly one origin also
-				// makes the spec's control real: 127.0.0.1:5174 is the same server
-				// under a spelling this list does not cover.
-				CORS_ORIGINS: '["http://localhost:5174"]',
-				// Pin the target language to Slovene: the e2e curriculum/story flows are
-				// backed by Slovene LLM cassettes. A developer's .env with TARGET_LANGUAGE=no
-				// (running TT as Norwegian) would otherwise generate a Norwegian prompt with
-				// no cassette → 500. Uppercase matches the .env key so load_dotenv keeps it.
-				TARGET_LANGUAGE: 'sl',
-				// ⚠️ AUTH ON, deliberately — this suite runs the deployed shape.
-				//
-				// With the gate off, every spec here would prove the app works in a
-				// configuration production never uses, and the login journey would have
-				// no real stack to walk. So the backend requires a session, globalSetup
-				// creates the account and signs in once, and `use.storageState` below
-				// hands that cookie to every spec. Only auth-login.spec.ts opts out.
-				//
-				// The session cookie is `Secure` and this suite is plain http. That
-				// works because browsers treat `localhost` as a trustworthy origin —
-				// measured 2026-08-18 in the pinned chromium: cookie set over
-				// http://localhost and returned on the next request, `me` → 200. Do
-				// NOT generalise that to a deployment: over http on any other host the
-				// cookie is stored and never sent back, and it reads exactly like a
-				// broken server (see docs/deployment.md § Signing in).
-				AUTH_ENABLED: 'true',
-				// Its own store, removed by the rm above so each run starts with no
-				// accounts. Never the real ./auth.db.
-				AUTH_DATABASE_URL: 'sqlite:///./tunatale-test-auth.db'
-			}
-		},
-		// A SECOND BACKEND ON :8002 (TARGET_LANGUAGE=no) USED TO LIVE HERE. It was
-		// deleted 2026-08-15 (tunatale-vnf.10) along with generate-norwegian.spec.ts,
-		// its only consumer — a spec that never opened a browser and whose
-		// assertions were all backend claims, now made in pytest.
-		//
-		// ⚠️ ONE CLAIM WENT UNOWNED WITH IT, stated rather than hidden: Playwright
-		// waits for a webServer's port to listen, so booting that process was an
-		// implicit assertion that a uvicorn with TARGET_LANGUAGE=no starts at all.
-		// Nothing asserts that now — pytest's ASGITransport builds the app in-process
-		// and cannot make a claim about a configured OS process. It is a deployment
-		// topology claim and belongs with the deploy work (tunatale-kbb), not here.
-		// language-switch.spec.ts does NOT recover it: the frontend proxies /api to
-		// :8001 only, so that journey reaches the Norwegian DB through :8001's
-		// per-language connection map, never through a Norwegian-configured process.
-		{
-			// Worker-1 test backend: same shape as worker-0's, own app DB pair and
-			// CORS origin. Differences from worker 0 are ONLY: port, DATABASE_URL,
-			// DATABASE_URLS, CORS_ORIGINS — every env var below must stay in
-			// lockstep with worker 0's, comments included. AUTH_DATABASE_URL is
-			// deliberately SHARED (see its comment in worker 0's env).
-			command: 'cd ../backend && uv run uvicorn app.main:app --host 0.0.0.0 --port 8003 --log-level error',
-			port: 8003,
-			reuseExistingServer: false,
-			timeout: 30000,
-			env: {
-				LLM_MODE: 'mock',
-				PIPELINE_AUTOSTART: 'false',
-				DATABASE_URL: 'sqlite:///./tunatale-test-1.db',
-				DATABASE_URLS: '{"sl":"sqlite:///./tunatale-test-1.db","no":"sqlite:///./tunatale-test-no-1.db"}',
-				DB_BACKUP_KEEP_DAYS: '0',
-				PIXABAY_API_KEY: '',
-				lemmatizer_type: 'lowercase',
-				CORS_ORIGINS: '["http://localhost:5175"]',
-				TARGET_LANGUAGE: 'sl',
-				AUTH_ENABLED: 'true',
-				AUTH_DATABASE_URL: 'sqlite:///./tunatale-test-auth.db'
-			}
-		},
-		{
-			// Test frontend: serves the PRODUCTION BUILD, proxies /api to :8001.
-			//
-			// This was `npm run dev` until 2026-09-01. Two Vite dev servers
-			// transform the whole app on demand, once each, and that work landed on
-			// an already-saturated box: the gate is CPU-throughput-bound, not
-			// schedule-bound (measured — backend pytest 32s alone / 56s in-gate,
-			// vitest 16s / 34s, peer-sync 18s / 39s). Swapping both for `vite
-			// preview` over one shared build took e2e 50s -> 42s and the whole
-			// gate 93s -> 86s, with all 52 specs passing unchanged.
-			//
-			// ⚠️ WHAT THIS TRADES AWAY, stated rather than hidden: the gate no
-			// longer exercises `vite dev`. A dev-server-only regression — Vite
-			// pre-bundling deps at boot is the known class — is now invisible to
-			// it. Accepted because the deployed shape is what this suite is FOR:
-			// AUTH_ENABLED is on for the same reason, and the service-worker spec
-			// now runs against a build where service workers actually activate
-			// (vite.config.ts notes HMR and SWs conflict), which is where it
-			// belongs.
-			//
-			// `--strictPort` so a port already in use FAILS instead of silently
-			// serving worker 1's app to worker 0.
-			command: 'SVELTEKIT_OUT_DIR=.svelte-kit-e2e bun run preview -- --port 5174 --strictPort',
-			url: 'http://localhost:5174',
-			reuseExistingServer: false,
-			timeout: 30000,
-			env: { API_PORT: '8001' }
-		},
-		{
-			// Worker-1 test frontend: same build, proxies /api to :8003. The two
-			// used to need distinct SVELTEKIT_OUT_DIRs because two dev servers
-			// clobber each other's output; two preview servers only READ the build
-			// directory, so they share one.
-			command: 'SVELTEKIT_OUT_DIR=.svelte-kit-e2e bun run preview -- --port 5175 --strictPort',
-			url: 'http://localhost:5175',
-			reuseExistingServer: false,
-			timeout: 30000,
-			env: { API_PORT: '8003' }
-		}
+		...Array.from({ length: WORKER_COUNT }, (_, i) => backendServer(i)),
+		...Array.from({ length: WORKER_COUNT }, (_, i) => frontendServer(i))
 	],
 	testDir: 'tests',
 	// E2E specs use `.spec.ts`. Vitest unit tests under `tests/` (e.g.,
 	// `coverage-gate.test.ts`) use `.test.ts` and must NOT be collected here.
 	testMatch: /\.spec\.[jt]s/,
 	timeout: 30000,
-	// workers: 2 — each worker owns a backend (:8001 / :8003) with its own app
-	// DB pair (tunatale-test-{0,1}.db, tunatale-test-no-{0,1}.db) and its own
-	// frontend port (:5174 / :5175); tests/fixtures.ts::PORTS must stay in
-	// lockstep. The auth DB is SHARED (AUTH_DATABASE_URL below): sessions are
+	// Each worker owns a backend (backendServer above) with its own app DB pair
+	// (tunatale-test-{i}.db, tunatale-test-no-{i}.db) and its own frontend port
+	// — tests/fixtures.ts::PORTS and tests/helpers.ts::BACKEND must stay in
+	// lockstep, per the WORKER_COUNT comment at the top of this file. The auth
+	// DB is SHARED (AUTH_DATABASE_URL in backendServer): sessions are
 	// token_hash → user_id rows, so one storageState cookie validates against
-	// either backend. Two is deliberate — measure at 2 before building for N.
-	workers: 2,
+	// any worker's backend.
+	workers: WORKER_COUNT,
 	// retries: 0 EVERYWHERE, deliberately. This was `process.env.CI ? 2 : 0`,
 	// which had never once executed its CI branch — Playwright did not run in CI
 	// at all until the `e2e` job was added (tunatale-as5), so the retry policy was
