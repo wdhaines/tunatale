@@ -196,12 +196,68 @@ def pb_remove_field(blob: bytes, field_number: int) -> bytes:
 
 
 def compute_anki_day_index(col_crt: int, rollover_hour: int = ANKI_ROLLOVER_HOUR, now: datetime | None = None) -> int:
-    """Return the Anki day index for *now*, matching what Anki writes to ``decks.common`` field 3.
+    """Return the col-day *index-domain* encoding of the instant *now*.
 
-    Anki's day index increments at *rollover_hour* (default 4 AM) each day.
+    ⚠️ **This is NOT Anki's ``col.sched.today``** — for "which study day is it
+    right now?" use :func:`anki_today_col_day`. The two differ, and the
+    difference is not a rounding detail: this function's day boundary sits at
+    the UTC instant ``col_crt - rollover_hour`` hours, i.e. it silently assumes
+    ``col.crt``'s time-of-day *is* the rollover hour in the reader's current
+    zone. Anki instead counts **local calendar dates** and subtracts one until
+    today's local rollover has passed, so its boundary is ``rollover_hour``
+    local regardless of what time-of-day ``col.crt`` carries.
+
+    For a real collection (``col.crt`` = 4 AM local on creation day) read back
+    in the same zone the two agree only outside ``[local midnight, local
+    rollover)``: this function rolls over at local midnight, Anki at 4 AM. That
+    four-hour daily window is where every "off by one day" symptom in this
+    codebase has come from. It widens further whenever ``col.crt``'s offset and
+    the reader's current offset disagree — a DST change, a move, or CI running
+    ``TZ=UTC`` against a collection created at UTC-5, which is the 04:00–05:00
+    UTC band that broke ``anki-gates`` on 2026-09-03.
+
+    What this function *is* good for, and why it survives: it is the exact
+    inverse of the day-level ``last_review`` marker that
+    ``_compute_last_review`` writes (Layer 45), so
+    ``compute_anki_day_index(col_crt, h, _compute_last_review(...)) ==
+    due_raw - ivl`` holds by construction. Decoding a stored marker back to the
+    col-day Anki recorded is the index domain's job and stays here. Re-anchoring
+    it on local dates would shift every stored ``last_review`` by a day and
+    trigger a mass sync write-back for zero gain — the same trade
+    ``tests/test_colday_helper_consistency.py`` refuses for
+    ``review_due_at_for_col_day``.
     """
     now_ts = int(now.timestamp()) if now else int(_time.time())
     return (now_ts - col_crt + rollover_hour * 3600) // 86400
+
+
+def anki_today_col_day(col_crt: int, now: datetime | None = None) -> int:
+    """Return Anki's ``col.sched.today`` — the study-day index of *now*.
+
+    Mirrors ``rslib``'s ``sched_timing_today`` / ``days_elapsed``: count whole
+    **local calendar days** from ``col.crt``'s local date to the current Anki
+    day, where the current Anki day is still *yesterday's* date until the local
+    rollover has passed (that shift is what :func:`~app.srs.anki_mirror.rollover.anki_today`
+    already encodes, so it is single-sourced there rather than re-derived).
+
+    Crucially the result does **not** depend on ``col.crt``'s time-of-day — only
+    on its local calendar date. That is the property
+    :func:`compute_anki_day_index` lacks, and the reason this function exists.
+
+    Measured against the real Anki backend (``col.sched.today`` via the oracle
+    harness) at 20 combinations of four zones × five ``col.crt`` times-of-day,
+    including a zone sitting before its rollover: this rule matched 20/20 while
+    the index-domain arithmetic matched 13/20. See
+    ``tests/test_parity_anki_today.py``.
+
+    ``rollover_hour`` is not a parameter: the local-day domain single-sources it
+    from ``app.config.ANKI_ROLLOVER_HOUR`` (Anki stores it per-collection; if it
+    ever becomes configurable it moves there, once, for both domains).
+    """
+    from app.srs.anki_mirror.rollover import anki_today
+
+    crt_local_date = datetime.fromtimestamp(col_crt, tz=UTC).astimezone().date()
+    return (anki_today(now) - crt_local_date).days
 
 
 def review_due_at_for_col_day(col_crt: int, col_day: int, rollover_hour: int = ANKI_ROLLOVER_HOUR) -> datetime:

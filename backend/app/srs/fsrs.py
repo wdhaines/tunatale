@@ -14,7 +14,11 @@ import numpy as np
 from app.config import ANKI_ROLLOVER_HOUR
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSItem, SRSState
 from app.srs._anki_rng import ChaCha12Rng, random_range_f32, random_range_u32
-from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index, review_due_at_for_col_day
+from app.srs.anki_mirror.protobuf_wire import (
+    anki_today_col_day,
+    compute_anki_day_index,
+    review_due_at_for_col_day,
+)
 from app.srs.anki_mirror.rollover import anki_today
 
 # fsrs-rs (rslib/.../fsrs/model.rs) computes stability + difficulty in f32 end-to-end
@@ -90,6 +94,14 @@ def _review_due_at_from_interval(
     """
     if col_crt is None:
         return datetime.combine(review_date + timedelta(days=interval), time(0, 0), tzinfo=UTC)
+    # NOT `anki_today_col_day`, deliberately. This `today` feeds
+    # `review_due_at_for_col_day`, i.e. it is an input to a STORED `due_at`, and
+    # it must stay byte-identical to what sync writeback (`compute_due_at`)
+    # produces or `_direction_differs` sees a spurious diff on every card (rule
+    # 6 / Layer 49 — `tests/test_colday_helper_consistency.py` pins the pairing).
+    # Correcting it is right but is a separate change: it shifts stored due_at
+    # by a day for grades landing in `[local midnight, 04:00)` and needs a
+    # migration story, not a drive-by.
     today_col_day = compute_anki_day_index(col_crt, rollover_hour, now)
     return review_due_at_for_col_day(col_crt, today_col_day + interval, rollover_hour)
 
@@ -294,7 +306,21 @@ def _elapsed_days_for_fsrs(
     if isinstance(last_review, datetime):
         is_day_level = is_day_level_last_review(last_review)
         if is_day_level and col_crt is not None:
-            today_col_day = compute_anki_day_index(col_crt, rollover_hour, ref_now)
+            # Asymmetric ON PURPOSE — the two terms answer different questions.
+            # `today` is "which study day is it now?", which is Anki's local
+            # calendar-date rule (`anki_today_col_day`). `review` is "decode the
+            # day-level marker `_compute_last_review` wrote", and that marker is
+            # constructed to invert `compute_anki_day_index` exactly, yielding
+            # `due_raw - ivl` — the very col-day Anki recorded. So the difference
+            # is Anki's `elapsed_days` bit-exact.
+            #
+            # Using `compute_anki_day_index` for the `today` term (pre-fix) made
+            # this wrong whenever col.crt's time-of-day was not the rollover hour
+            # in the reader's zone: a real 4 AM-local crt put the skew at
+            # `[local midnight, 04:00)` daily, and CI's TZ=UTC read of a UTC-5
+            # collection put it at `[04:00, 05:00)` UTC — where anki-gates went
+            # red on 2026-09-03 with Anki=127 vs TT=126.
+            today_col_day = anki_today_col_day(col_crt, ref_now)
             review_col_day = compute_anki_day_index(col_crt, rollover_hour, last_review)
             return max(0, today_col_day - review_col_day)
         if is_day_level:
@@ -335,6 +361,15 @@ def _grade_elapsed_days(
         return 0
     if isinstance(last_review, datetime):
         if col_crt is not None:
+            # NOT `anki_today_col_day` here, unlike `_elapsed_days_for_fsrs`. On
+            # the grade path `last_review` may carry sub-day precision (a real
+            # lrt), so it is NOT the col_day-derived marker whose decoding is
+            # exact — and the asymmetric pairing that makes the other site
+            # correct would be unsound. Both terms sharing the index domain means
+            # the crt-offset skew cancels except when exactly one endpoint sits
+            # in the `[local midnight, 04:00)` window. Layer 50 measured this
+            # path bit-exact across 65 real grades; re-anchoring it needs the
+            # same measurement, not an analogy to the day-level branch.
             today_col_day = compute_anki_day_index(col_crt, rollover_hour, ref_now)
             review_col_day = compute_anki_day_index(col_crt, rollover_hour, last_review)
             return max(0, today_col_day - review_col_day)
