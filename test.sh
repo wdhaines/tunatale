@@ -122,9 +122,34 @@ full_log="$ROOT/.git/tt-test-last.log"
   uv run python scripts/check_prod_env.py
 
   echo "=== Tests ==="
-  # -n auto parallelizes across CPU cores; pytest-cov combines per-worker
-  # coverage so the 100% gate still applies to the full run.
-  uv run pytest --run-oracle -n auto
+  # pytest-cov combines per-worker coverage, so the 100% gate still applies to
+  # the full run at any -n.
+  #
+  # -n 6, NOT `auto`, and this is LOCAL-ONLY: every CI pytest invocation lives in
+  # ci.yml (lines 176/314/431/912) and keeps `-n auto`, which resolves to 4 on
+  # GitHub's 4-core runner. Nothing here reaches CI.
+  #
+  # `auto` picks 10 on this box and that is faster STANDALONE — the whole point
+  # is that standalone is the wrong measurement. Measured 2026-09-03, three
+  # interleaved reps each, colima stopped:
+  #
+  #   backend suite alone      -n 4 39.5   -n 6 32.8   -n 8 32.4   -n 10 29.5   -n 12 32.3
+  #   FULL ./test.sh           -n auto(10) 78.7/78.1/78.3     -n 6 70.5/70.7/69.7
+  #
+  # So -n 6 loses 3s of its own and buys 8s of gate, because the four cores it
+  # stops holding go to the frontend group it runs beside. Ranges do not overlap.
+  #
+  # ⚠️ This was banked and REJECTED once (tunatale-1l26.1): in the 2026-09-01
+  # shape the composite measured 89s against an 86s baseline, because the tail
+  # was e2e running alone and nothing was waiting for the freed cores. Two things
+  # changed it — the e2e preview-server build shipped, and a colima guest that
+  # had been eating a full core for 16 days was stopped. The `-n 6` datapoint is
+  # its own control: it reads 32.8s now against 33s then, unchanged, while -n 10
+  # went 35s -> 29.5s. The core came back and it went to the high worker counts.
+  #
+  # Re-measure with the loop in tunatale-1l26.1 if the suite shape changes; the
+  # flat 6..12 region is a property of this suite's size, not a constant.
+  uv run pytest --run-oracle -n 6
 
   # Clean up coverage data file left by pytest --cov
   uv run coverage erase
