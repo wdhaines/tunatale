@@ -51,6 +51,8 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
+import pytest
+
 from app.plugins.anki_sync.sqlite_reader import compute_due_at
 from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index, review_due_at_for_col_day
 from app.srs.fsrs import _review_due_at_from_interval
@@ -93,7 +95,27 @@ class TestReviewDueAtDateCorrectness:
 
 
 class TestNativeGradeMatchesSyncWriteback:
-    """The two due_at writers must agree — this is what prevents sync churn."""
+    """The two due_at writers must agree — this is what prevents sync churn.
+
+    ⚠️ ZONE-PINNED, and it has to be. Every fixture in this module was captured
+    on an EDT machine (see the module docstring: ``next_day_at == 2026-05-25
+    08:00 UTC``, i.e. 4am at UTC-4), but only this class routes through the
+    NATIVE GRADE path, which reads the local 04:00 rollover — the other classes
+    call ``compute_anki_day_index`` with an explicit ``rollover_hour`` and are
+    zone-blind by construction. So only these two tests inherited the module's
+    undeclared wall-clock assumption, and only they reddened at other offsets.
+
+    ``Etc/GMT+4`` is UTC-4 (POSIX inverts the sign) and is a FIXED offset, so it
+    pins the captured zone without importing a DST transition into a fixture set
+    that has none.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _pin_captured_zone(self):
+        from tests._helpers.localtz import local_timezone
+
+        with local_timezone("Etc/GMT+4"):
+            yield
 
     def test_native_equals_sync_for_each_interval(self):
         today = compute_anki_day_index(_COL_CRT, 4, _NOW)
