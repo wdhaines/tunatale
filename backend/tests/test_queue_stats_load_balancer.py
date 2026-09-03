@@ -14,7 +14,9 @@ import sqlite3
 import struct
 from datetime import UTC, datetime
 
-from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index
+import pytest
+
+from app.srs.anki_mirror.protobuf_wire import anki_today_col_day
 from app.srs.database import SRSDatabase
 from app.srs.load_balancer import LOAD_BALANCE_DAYS
 from app.srs.queue_stats import (
@@ -28,12 +30,31 @@ from app.srs.queue_stats import (
     resolve_load_balancer_enabled,
     warn_if_multi_deck_preset,
 )
+from tests._helpers.localtz import local_timezone
 from tests._helpers.protobuf import encode_varint, pb_len_field, pb_varint_field
 
-# A fixed crt + now so compute_anki_day_index is deterministic across the test run.
+# A fixed crt + now, and a pinned zone, so "today" is deterministic across the
+# run. The zone is not decoration: Anki's study day is a LOCAL calendar day, so
+# `anki_today_col_day` — which is what `build_live_load_balancer` calls — gives
+# different answers in different zones for the same instant. The autouse fixture
+# below puts the code under test in the same zone this constant was computed in;
+# without it the histogram offsets below are off by one wherever the two
+# disagree.
+#
+# `_TODAY` used to be `compute_anki_day_index(...)`, i.e. the implementation
+# restated. It agreed with production only while production shared that bug.
 _COL_CRT = 1_700_000_000
 _NOW = datetime(2026, 5, 24, 18, 0, tzinfo=UTC)
-_TODAY = compute_anki_day_index(_COL_CRT, 4, _NOW)
+_ZONE = "UTC"
+with local_timezone(_ZONE):
+    _TODAY = anki_today_col_day(_COL_CRT, _NOW)
+
+
+@pytest.fixture(autouse=True)
+def _pinned_zone():
+    """Run every test in this module in the zone `_TODAY` was computed for."""
+    with local_timezone(_ZONE):
+        yield
 
 
 def _insert_direction(

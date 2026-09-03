@@ -94,15 +94,17 @@ def _review_due_at_from_interval(
     """
     if col_crt is None:
         return datetime.combine(review_date + timedelta(days=interval), time(0, 0), tzinfo=UTC)
-    # NOT `anki_today_col_day`, deliberately. This `today` feeds
-    # `review_due_at_for_col_day`, i.e. it is an input to a STORED `due_at`, and
-    # it must stay byte-identical to what sync writeback (`compute_due_at`)
-    # produces or `_direction_differs` sees a spurious diff on every card (rule
-    # 6 / Layer 49 — `tests/test_colday_helper_consistency.py` pins the pairing).
-    # Correcting it is right but is a separate change: it shifts stored due_at
-    # by a day for grades landing in `[local midnight, 04:00)` and needs a
-    # migration story, not a drive-by.
-    today_col_day = compute_anki_day_index(col_crt, rollover_hour, now)
+    # The col_day a TT-native grade schedules from. It must be the day ANKI is
+    # on: `sync_push` turns the resulting `due_at` into a set-due-date delta
+    # against `anki_today()`, so a `today` from the index domain lands the card a
+    # day late in BOTH apps for any grade in `[local midnight, 04:00)`.
+    #
+    # This does not desync from sync writeback: `compute_due_at` never computes a
+    # "today" of its own — it converts Anki's own `due_raw`. What the two must
+    # share is `review_due_at_for_col_day`, and they still do, so a given col_day
+    # still maps to a byte-identical `due_at` (rule 6 / Layer 49,
+    # `tests/test_colday_helper_consistency.py`).
+    today_col_day = anki_today_col_day(col_crt, now)
     return review_due_at_for_col_day(col_crt, today_col_day + interval, rollover_hour)
 
 

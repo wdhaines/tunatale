@@ -11,13 +11,14 @@ from typing import TYPE_CHECKING
 
 from app.config import settings
 from app.srs.anki_mirror.protobuf_wire import (
-    compute_anki_day_index,
+    anki_today_col_day,
     decode_varint,
     find_fixed32_field,
     find_len_field,
     find_varint_field,
     skip_field,
 )
+from app.srs.anki_mirror.rollover import local_next_rollover
 from app.srs.fsrs import DEFAULT_FSRS5_PARAMS, FSRSParams
 
 _log = logging.getLogger(__name__)
@@ -1073,14 +1074,19 @@ def build_live_load_balancer(
 
     from app.srs.anki_mirror.load_balancer import LOAD_BALANCE_DAYS, LoadBalancer
 
-    # NOT `anki_today_col_day`: `next_day_at` below is derived from `today` by
-    # plain arithmetic on col_crt, so the two must stay in the same domain.
-    # Moving `today` alone would put the load balancer's "next rollover" a day
-    # off. Fixing both belongs with the due_at-domain change (see
-    # `_review_due_at_from_interval`), and only shifts which day a card lands on
-    # inside the same `[local midnight, 04:00)` window.
-    today = compute_anki_day_index(col_crt, 4, now)
-    next_day_at = col_crt + (today + 1) * 86400
+    # `today` is compared against `anki_due`, which holds Anki's own col-day
+    # numbers, so it has to be the day Anki is on.
+    #
+    # `next_day_at` is Anki's real next rollover instant rather than
+    # `col_crt + (today + 1) * 86400`. That arithmetic was only ever right
+    # because a real `col.crt` sits at 4 AM local, so whole days from it land
+    # back on 4 AM local — it silently encodes the same assumption
+    # `compute_anki_day_index` did, and drifts an hour across a DST change.
+    # `local_next_rollover` is verified equal to Anki's `col.sched.day_cutoff`
+    # in tests/test_parity_grade_elapsed.py. It matters here because the
+    # easy-days map turns this instant into WEEKDAYS.
+    today = anki_today_col_day(col_crt, now)
+    next_day_at = int(local_next_rollover(now).timestamp())
     bury_reviews, _ = resolve_bury_review(db)
     easy_days = resolve_easy_days(db)
 
