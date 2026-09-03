@@ -219,6 +219,13 @@ class LanguageConfig:
     # Path to the per-language function-word JSON config, or ``None`` when the
     # language has no curated function-word policy.
     function_words_path: Path | None = None
+    # Path to the per-language cardinal-number JSON vocabulary, or ``None`` when
+    # the language registers none (which simply means it has no number words —
+    # capability-driven, exactly like ``function_words_path``). Numbers are the
+    # one word class with a perfect picture, so they bypass the closed-class
+    # cloze route their UPOS would otherwise send them down. See
+    # ``app.cards.number_image``.
+    numbers_path: Path | None = None
     # Breakdown variant that also reports which syllables of which word each
     # chunk is, so the renderer can cut it out of one whole-word render instead
     # of synthesizing the fragment alone. ``None`` (every language but Norwegian)
@@ -594,6 +601,18 @@ def get_function_words_path(code: str) -> Path | None:
     discover()
     config = _CONFIGS.get(code)
     return config.function_words_path if config else None
+
+
+def get_numbers_path(code: str) -> Path | None:
+    """Return the path to the per-language cardinal-number JSON vocabulary.
+
+    ``None`` when the language registers none — which means the language has no
+    number words as far as TT is concerned, and every one of its words keeps the
+    routing it has today. Capability-driven, like ``get_function_words_path``.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    return config.numbers_path if config else None
 
 
 def get_wordfreq_lang(code: str) -> str | None:

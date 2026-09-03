@@ -114,6 +114,23 @@ def _staged_image(word: str, english: str) -> tuple[str, bytes]:
     return f"{safe_stem(english, 'img')}_{sha256(data).hexdigest()[:8]}.jpg", data
 
 
+def _stage_count_picture(db: SRSDatabase, coll_id: int, value: int) -> str:
+    """Stage the counting picture exactly as `prestage_production_images` does.
+
+    The mint never draws — it reads what the pre-stage left — so a test about the
+    mint has to put the picture there the same way, filename convention included.
+    """
+    import hashlib
+
+    from app.cards.media.vocab_media import store_tt_media
+    from app.cards.number_image import render_count_svg
+
+    image = render_count_svg(value)
+    filename = f"count_{value:03d}_{hashlib.sha256(image).hexdigest()[:8]}.svg"
+    store_tt_media(db, coll_id, "image", filename, image)
+    return filename
+
+
 IMG_FILENAME, IMG_BYTES = _staged_image("hus", "house")
 
 
@@ -390,6 +407,188 @@ class TestPromoteProductionCards:
         assert (report.clozed, report.minted) == (1, 0)
         assert _prod_cards(conn, 1000) == []
         assert _cloze_unit(db, "foran").source_sentence == "Bilen står {{c1::foran}} huset"
+
+    async def test_a_number_word_is_pictured_rather_than_clozed(self, tmp_path, monkeypatch) -> None:
+        """The complaint this whole change answers (tunatale-elrj, 2026-09-03).
+
+        `fem` reaches the closed-class fork honestly: the deck labels every
+        numeral `determinative`, `field_map` maps that to DET, and DET is in the
+        Norwegian closed-class set. The word really is closed-class. It is also
+        the one closed class with a perfect picture, so it must overtake that
+        fork rather than loosen it — every other determinative (`denne`, `hver`,
+        `min`) still clozes, which the next test holds.
+        """
+        # conftest pins target_language to "sl"; every word here is Norwegian and
+        # the number vocabulary is per-language, so without this the lookup misses
+        # and the assertion passes or fails for the wrong reason. The closed-class
+        # tests above get away with not doing this only because the sl and no UPOS
+        # sets overlap on DET/ADP — which is luck, not coverage.
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        card_id = _add_note(
+            conn,
+            1000,
+            "fem",
+            "five",
+            word_class="determinative",
+            examples="Jeg har fem barn (<i>I have five children</i>)",
+        )
+        db = SRSDatabase(":memory:")
+        coll_id = _add_word(db, "fem", "five", note_id=1000, card_id=card_id, disambig="determinative", image=False)
+        _stage_count_picture(db, coll_id, 5)
+        anki_media = tmp_path / "collection.media"
+        anki_media.mkdir()
+
+        report = await _make_sync(conn, db, anki_media).promote_production_cards()
+
+        assert (report.minted, report.clozed, report.unservable) == (1, 0, 0)
+        assert db.count_collocations() == 1, "a cloze would have added a second collocation"
+
+        # The card is fronted by a picture of exactly five things — the oracle a
+        # fetched photo could not have satisfied.
+        filename = db.get_image_filename(coll_id)
+        assert _image_field(conn, 1000) == f'<img src="{filename}">'
+        assert (anki_media / filename).read_bytes().count(b"<circle") == 5
+
+    async def test_a_determinative_that_is_not_a_number_still_clozes(self, monkeypatch) -> None:
+        """The control. Without it, "numbers are pictured" is indistinguishable
+        from "the closed-class fork stopped working for DET"."""
+        # conftest pins target_language to "sl"; every word here is Norwegian and
+        # the number vocabulary is per-language, so without this the lookup misses
+        # and the assertion passes or fails for the wrong reason. The closed-class
+        # tests above get away with not doing this only because the sl and no UPOS
+        # sets overlap on DET/ADP — which is luck, not coverage.
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        card_id = _add_note(
+            conn,
+            1000,
+            "hver",
+            "each, every",
+            word_class="determinative",
+            examples="Hun kommer hver dag (<i>She comes every day</i>)",
+        )
+        db = SRSDatabase(":memory:")
+        _add_word(db, "hver", "each, every", note_id=1000, card_id=card_id, disambig="determinative")
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.clozed, report.minted) == (1, 0)
+        assert _prod_cards(conn, 1000) == []
+
+    async def test_an_excluded_number_still_clozes(self, monkeypatch) -> None:
+        """`en` is 'one' AND the indefinite article; a picture cannot separate them.
+
+        Settled with the user 2026-09-03: it keeps the cloze it has. The exclusion
+        lives in the language's own numbers.json, so this is one curated list
+        disagreeing with another, not a special case in the router.
+        """
+        # conftest pins target_language to "sl"; every word here is Norwegian and
+        # the number vocabulary is per-language, so without this the lookup misses
+        # and the assertion passes or fails for the wrong reason. The closed-class
+        # tests above get away with not doing this only because the sl and no UPOS
+        # sets overlap on DET/ADP — which is luck, not coverage.
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        card_id = _add_note(
+            conn,
+            1000,
+            "en",
+            "a, an, one",
+            word_class="determinative",
+            examples="Jeg ser en mann (<i>I see a man</i>)",
+        )
+        db = SRSDatabase(":memory:")
+        _add_word(db, "en", "a, an, one", note_id=1000, card_id=card_id, disambig="determinative")
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.clozed, report.minted) == (1, 0)
+
+    async def test_a_number_too_large_to_draw_still_clozes(self, monkeypatch) -> None:
+        """A thousand dots is a texture. The cut-off has to fall back cleanly."""
+        # conftest pins target_language to "sl"; every word here is Norwegian and
+        # the number vocabulary is per-language, so without this the lookup misses
+        # and the assertion passes or fails for the wrong reason. The closed-class
+        # tests above get away with not doing this only because the sl and no UPOS
+        # sets overlap on DET/ADP — which is luck, not coverage.
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        card_id = _add_note(
+            conn,
+            1000,
+            "tusen",
+            "thousand",
+            word_class="determinative",
+            examples="Det koster tusen kroner (<i>It costs a thousand kroner</i>)",
+        )
+        db = SRSDatabase(":memory:")
+        _add_word(db, "tusen", "thousand", note_id=1000, card_id=card_id, disambig="determinative", unpicturable=True)
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.clozed, report.minted) == (1, 0)
+
+    async def test_a_number_with_no_picture_yet_waits_rather_than_clozing(self, monkeypatch) -> None:
+        """ "Not drawn yet" and "cannot be pictured" are different claims.
+
+        The pre-stage draws; the mint only reads. A number that the pre-stage has
+        not reached must stay at the head of the queue — clozing it here would
+        permanently mis-shape a word that was merely early, which is the same
+        trap the photo path documents one branch down.
+        """
+        # conftest pins target_language to "sl"; every word here is Norwegian and
+        # the number vocabulary is per-language, so without this the lookup misses
+        # and the assertion passes or fails for the wrong reason. The closed-class
+        # tests above get away with not doing this only because the sl and no UPOS
+        # sets overlap on DET/ADP — which is luck, not coverage.
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        card_id = _add_note(
+            conn,
+            1000,
+            "fem",
+            "five",
+            word_class="determinative",
+            examples="Jeg har fem barn (<i>I have five children</i>)",
+        )
+        db = SRSDatabase(":memory:")
+        _add_word(db, "fem", "five", note_id=1000, card_id=card_id, disambig="determinative", image=False)
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.awaiting_image, report.clozed, report.minted) == (1, 0, 0)
+        assert db.count_collocations() == 1
+
+    async def test_a_stale_unpicturable_marker_does_not_cloze_a_number(self, tmp_path, monkeypatch) -> None:
+        """The marker records a verdict about a PHOTO search, reached before this
+        feature existed. It must not veto a drawing."""
+        # conftest pins target_language to "sl"; every word here is Norwegian and
+        # the number vocabulary is per-language, so without this the lookup misses
+        # and the assertion passes or fails for the wrong reason. The closed-class
+        # tests above get away with not doing this only because the sl and no UPOS
+        # sets overlap on DET/ADP — which is luck, not coverage.
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        card_id = _add_note(
+            conn,
+            1000,
+            "tre",
+            "three",
+            word_class="determinative",
+            examples="Det er tre epler (<i>There are three apples</i>)",
+        )
+        db = SRSDatabase(":memory:")
+        coll_id = _add_word(
+            db, "tre", "three", note_id=1000, card_id=card_id, disambig="determinative", unpicturable=True
+        )
+        _stage_count_picture(db, coll_id, 3)
+        anki_media = tmp_path / "collection.media"
+        anki_media.mkdir()
+
+        report = await _make_sync(conn, db, anki_media).promote_production_cards()
+
+        assert (report.minted, report.clozed) == (1, 0)
 
     async def test_declines_when_no_example_sentence_can_carry_a_cloze(self) -> None:
         """Neither shape is available: counted, not guessed at."""

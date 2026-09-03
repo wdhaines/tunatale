@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from app.cards.cloze_source import choose_cloze_sentence
 from app.cards.media.vocab_media import safe_stem as _safe_stem
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media
+from app.cards.number_image import number_value
 from app.common.guid import compute_guid
 from app.config import settings
 from app.languages import card_surface_variants
@@ -1808,18 +1809,39 @@ class AnkiSync:
             unit = cand.item.syntactic_unit
             material = self._reader.get_cloze_material(cand.anki_note_id)
 
-            # Closed-class words route to a cloze without spending a fetch: a
-            # picture of "foran" is noise, and minting a card with a meaningless
-            # image is the failure mode this whole router exists to avoid. The
-            # test goes through the language registry — the deck's own POS label
-            # is mapped to a UPOS tag by its notetype profile — so this is the
-            # same closed-class decision `/listen` makes, not a parallel one.
-            if is_function_word(unit.text, settings.target_language, upos=material.upos):
+            # A number word overtakes the closed-class fork below (tunatale-elrj).
+            # It does NOT loosen it: `fem` really is closed-class — the deck says
+            # `determinative`, the profile maps that to DET, and DET is in the
+            # language's closed-class set — but it is the one closed class with a
+            # perfect, unambiguous picture, the quantity itself. A cloze is the
+            # wrong shape for it in a way a preposition's is not: "jeg har ___
+            # barn" admits every number, so the card constrains nothing and marks
+            # a right answer wrong. Every other determinative (`denne`, `hver`,
+            # `min`) still clozes, and a test holds that.
+            #
+            # The picture is DRAWN by `prestage_production_images`, never here —
+            # this phase makes no network call and now makes no drawing either,
+            # so its contract is unchanged: it mints from what is already staged.
+            is_number = number_value(unit.text, settings.target_language) is not None
+            if not is_number and is_function_word(unit.text, settings.target_language, upos=material.upos):
+                # Closed-class words route to a cloze without spending a fetch: a
+                # picture of "foran" is noise, and minting a card with a meaningless
+                # image is the failure mode this whole router exists to avoid. The
+                # test goes through the language registry — the deck's own POS label
+                # is mapped to a UPOS tag by its notetype profile — so this is the
+                # same closed-class decision `/listen` makes, not a parallel one.
                 self._fallback_to_cloze(cand, material, report)
                 continue
 
             filename = self._db.get_image_filename(cand.collocation_id)
-            if filename is None and self._db.is_image_unavailable(cand.collocation_id):
+            # `is_number` vetoes the marker as well. It records a verdict about a
+            # PHOTO search — "Pixabay had nothing for 'five'" — and every number
+            # word in the real deck predates the drawing, so letting that stale
+            # verdict stand would permanently mis-shape exactly the words this
+            # change exists to fix. A number with no picture yet falls through to
+            # `awaiting_image` below and waits for the pre-stage, which is the
+            # correct reading of "not drawn yet".
+            if not is_number and filename is None and self._db.is_image_unavailable(cand.collocation_id):
                 # The pre-stage already looked and found nothing picturable, so
                 # this is the settled "cannot be pictured" case, not an early one.
                 # Same destination as before the fetch moved off the sync: a card

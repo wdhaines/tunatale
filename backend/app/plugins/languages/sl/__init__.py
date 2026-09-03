@@ -46,6 +46,7 @@ register(
         ),
         style_notes=_style_notes,
         function_words_path=Path(__file__).parent / "data" / "function_words.json",
+        numbers_path=Path(__file__).parent / "data" / "numbers.json",
         wordfreq_lang="sl",
         a1_morphology=SLOVENE_A1_MORPHOLOGY,
     ),

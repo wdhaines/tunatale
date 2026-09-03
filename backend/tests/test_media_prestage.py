@@ -357,6 +357,100 @@ class TestUnpicturableWords:
         assert report.fetched == 0
 
 
+class TestNumberWords:
+    """A number word is drawn, never searched for (tunatale-elrj).
+
+    The picture of a quantity is exact by construction, so it costs no fetch, no
+    API key and no network — and unlike a photo, its count is assertable. These
+    tests are the reason the render was chosen over an image search: for a
+    fetched photo there is no oracle for "this shows exactly five things" at all.
+    """
+
+    async def test_draws_the_quantity_instead_of_fetching_a_photo(self, db) -> None:
+        media_fn = _MediaFn()
+        coll_id = _add_word(db, "fem", "five", note_id=1000, card_id=10000)
+
+        report = await prestage_production_images(db, media_fn, language_code=LANG, limit=10)
+
+        assert media_fn.calls == [], "a number word must never reach the image search"
+        assert (report.rendered_number, report.fetched) == (1, 0)
+        assert db.get_image_filename(coll_id) is not None
+
+    async def test_the_stored_picture_shows_exactly_that_many_objects(self, db, tmp_path) -> None:
+        """The oracle a fetched photo could never satisfy."""
+        coll_id = _add_word(db, "syv", "seven", note_id=1000, card_id=10000)
+
+        await prestage_production_images(db, _MediaFn(), language_code=LANG, limit=10)
+
+        stored = (tmp_path / "media" / db.get_image_filename(coll_id)).read_bytes()
+        assert stored.count(b"<circle") == 7
+
+    async def test_an_excluded_number_still_takes_the_ordinary_route(self, db) -> None:
+        """Norwegian `en` is 'one' AND 'a/an'; it is curated as a function word."""
+        media_fn = _MediaFn()
+        _add_word(db, "en", "a, an, one", note_id=1000, card_id=10000)
+
+        report = await prestage_production_images(db, media_fn, language_code=LANG, limit=10)
+
+        assert media_fn.calls == []
+        assert (report.rendered_number, report.skipped_function_word) == (0, 1)
+
+    async def test_a_number_too_large_to_draw_takes_the_ordinary_route(self, db) -> None:
+        """`tusen` is a hundred rods — a texture, not a countable set."""
+        media_fn = _MediaFn()
+        _add_word(db, "tusen", "thousand", note_id=1000, card_id=10000)
+
+        report = await prestage_production_images(db, media_fn, language_code=LANG, limit=10)
+
+        assert report.rendered_number == 0
+        assert media_fn.calls == [("tusen", "thousand")], "it is not closed-class, so it is a normal candidate"
+
+    async def test_a_number_already_drawn_is_not_drawn_again(self, db) -> None:
+        _add_word(db, "fem", "five", note_id=1000, card_id=10000)
+        await prestage_production_images(db, _MediaFn(), language_code=LANG, limit=10)
+
+        report = await prestage_production_images(db, _MediaFn(), language_code=LANG, limit=10)
+
+        assert (report.rendered_number, report.already_had_image) == (0, 1)
+
+    async def test_a_stale_unpicturable_marker_does_not_block_the_render(self, db) -> None:
+        """The marker means "the photo search found nothing", which is now moot.
+
+        Every number word in the real deck predates this feature, and one that
+        was searched for and came back empty carries the marker that routes a
+        word permanently to a cloze. Drawing is checked first so that verdict —
+        reached about a photo — cannot outlive the reason for it.
+        """
+        coll_id = _add_word(db, "fem", "five", note_id=1000, card_id=10000)
+        db.mark_image_unavailable(coll_id)
+
+        report = await prestage_production_images(db, _MediaFn(), language_code=LANG, limit=10)
+
+        assert report.rendered_number == 1
+        assert db.get_image_filename(coll_id) is not None
+
+    async def test_renders_do_not_consume_the_fetch_budget(self, db) -> None:
+        """The budget exists to bound live network calls; a render is neither."""
+        for i, word in enumerate(("to", "tre", "fire", "fem")):
+            _add_word(db, word, f"n{i}", note_id=1000 + i, card_id=10000 + i)
+        _add_word(db, "beslutning", "decision", note_id=1100, card_id=11000)
+
+        media_fn = _MediaFn()
+        report = await prestage_production_images(db, media_fn, language_code=LANG, limit=1)
+
+        assert report.rendered_number == 4
+        assert media_fn.calls == [("beslutning", "decision")]
+
+    async def test_the_summary_line_names_the_renders(self, db, caplog) -> None:
+        """A counter absent from the durable line is a counter nobody can read."""
+        _add_word(db, "fem", "five", note_id=1000, card_id=10000)
+
+        with caplog.at_level("WARNING"):
+            await prestage_production_images(db, _MediaFn(), language_code=LANG, limit=10)
+
+        assert "drawn=1" in caplog.text
+
+
 class _RaisingMediaFn:
     """Fetches that raise for named words, and succeed for the rest.
 

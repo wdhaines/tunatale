@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from app.languages import get_function_words_path, get_language, get_style_notes
+from app.languages import get_function_words_path, get_language, get_numbers_path, get_style_notes
 
 
 def test_sl_style_notes_non_empty() -> None:
@@ -61,3 +61,35 @@ def test_sl_function_words_file_lives_in_plugin_dir() -> None:
     assert path is not None
     assert path.parent.name == "data"
     assert path.parent.parent.name == "sl"
+
+
+# ── Cardinal-number vocabulary ───────────────────────────────────────────
+
+
+def test_every_language_with_function_words_also_ships_numbers() -> None:
+    """The two files are a pair.
+
+    A language that curates a closed-class policy has, by that act, put its
+    numerals on the cloze route (numerals are DET/NUM in every deck that labels
+    them). Shipping the closed-class file without the number file is therefore
+    the exact configuration that produced tunatale-elrj, and it would be silent.
+    """
+    for code in ("sl", "no"):
+        assert get_function_words_path(code) is not None, code
+        assert get_numbers_path(code) is not None, code
+
+
+def test_number_vocabulary_lives_in_the_plugin_dir() -> None:
+    for code in ("sl", "no"):
+        path = get_numbers_path(code)
+        assert path is not None and path.exists(), code
+        assert path.parent.name == "data"
+        assert path.parent.parent.name == code
+
+
+def test_en_numbers_path_none() -> None:
+    assert get_numbers_path("en") is None
+
+
+def test_unknown_numbers_path_none() -> None:
+    assert get_numbers_path("xx") is None
