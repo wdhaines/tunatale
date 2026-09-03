@@ -35,7 +35,7 @@ from app.plugins.anki_sync.sync_common import (
     _local_today_4am,
     build_cloze_back_extra,
 )
-from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index
+from app.srs.anki_mirror.protobuf_wire import anki_today_col_day
 from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
 from app.srs.database import SRSDatabase
 from app.srs.direction_fields import SYNC_COMPARABLE_MODEL_FIELDS
@@ -1129,14 +1129,19 @@ class AnkiSync:
         )
         if not all(hasattr(self._writer, m) for m in required):
             return
+        # ⚠️ THESE TWO LINES MUST STAY IN THE SAME DAY DOMAIN. They are the
+        # window the counts are gathered over and the stamp those counts are
+        # filed under; Anki accepts the counts only when the stamp equals its own
+        # `col.sched.today`. Until 2026-09-03 they disagreed — the window was
+        # local-day (correct) and the stamp was `compute_anki_day_index`, which
+        # turns over at local midnight for a real 4 AM-local col.crt. Inside
+        # `[local midnight, 04:00)` that filed yesterday's counts under
+        # tomorrow's stamp, Anki discarded them, and the deck's daily limits went
+        # uncharged for work already done — so it served new cards over the cap
+        # until its own next grade rewrote the field.
+        # Pinned by tests/test_parity_studied_today_marker.py against real Anki.
         today_4am_ms = int(_local_today_4am().timestamp() * 1000)
-        # ⚠️ KNOWN WRONG inside `[local midnight, 04:00)`, left as-is on purpose.
-        # Anki compares this against its own `col.sched.today` to decide whether
-        # a deck's studied-today counters are current, so it wants
-        # `anki_today_col_day`. Swapping it is a WRITE to the user's collection
-        # and belongs behind its own oracle test asserting Anki reads the
-        # counters back — not a drive-by on a read-path fix.
-        day_index = compute_anki_day_index(self._anki_col_crt)
+        day_index = anki_today_col_day(self._anki_col_crt)
         for deck_id in self._writer.list_decks_with_revlog_today(today_4am_ms):
             new_count = self._writer.count_first_grades_today_for_deck(deck_id, today_4am_ms)
             review_count = self._writer.count_reviews_today_for_deck(deck_id, today_4am_ms)

@@ -418,7 +418,15 @@ class SyntheticCollection:
         last_ivl: int,
         time: int,
         type: int = 0,
+        factor: int = 0,
     ) -> None:
+        """Append a revlog row. *id* is the grade's epoch-millisecond timestamp.
+
+        ``factor`` was missing until 2026-09-03, so ``_write_revlogs`` bound 8
+        values into a 9-column table and every call raised ProgrammingError.
+        This builder had no caller until then, which is the only reason a
+        fixture that could not write a single row sat here green.
+        """
         self.revlogs.append(
             {
                 "id": id,
@@ -427,6 +435,7 @@ class SyntheticCollection:
                 "ease": ease,
                 "ivl": ivl,
                 "lastIvl": last_ivl,
+                "factor": factor,
                 "time": time,
                 "type": type,
             }
@@ -593,6 +602,7 @@ class SyntheticCollection:
                     revlog["ease"],
                     revlog["ivl"],
                     revlog["lastIvl"],
+                    revlog["factor"],
                     revlog["time"],
                     revlog["type"],
                 ),

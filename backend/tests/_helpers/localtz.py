@@ -20,6 +20,32 @@ import os
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
+
+
+def timezone_with_local_hour(hour: int, now: datetime | None = None) -> str:
+    """Name an ``Etc/GMT`` zone whose LOCAL clock is inside *hour* right now.
+
+    Lets a test sit in a wall-clock band deterministically instead of waiting for
+    the machine's clock to wander into it — the same trick CI's
+    ``.github/actions/hostile-hour-tz`` uses for the 04:00 rollover, which
+    existed for a year as the only defence and was never pointed at the Anki
+    parity suite (see that action for the 1-run-in-598 measurement).
+
+    ⚠️ ``Etc/GMT`` signs are INVERTED versus the offset they name: ``Etc/GMT-3``
+    is UTC+3. The assertion below is what proves the sign was applied the right
+    way round rather than producing a plausible zone in the wrong direction.
+    """
+    utc_hour = (now or datetime.now(UTC)).hour
+    offset = (hour - utc_hour) % 24
+    if offset > 14:  # Etc/GMT tops out at +14/-12; fold to the negative side
+        offset -= 24
+    name = f"Etc/GMT-{offset}" if offset >= 0 else f"Etc/GMT+{-offset}"
+    with local_timezone(name):
+        resolved = datetime.now().hour
+    if resolved != hour:  # pragma: no cover - guards a sign error, not a branch
+        raise AssertionError(f"{name} gives local hour {resolved}, wanted {hour} — the probe is broken, not the suite")
+    return name
 
 
 @contextmanager

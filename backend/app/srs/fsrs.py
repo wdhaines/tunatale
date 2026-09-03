@@ -19,7 +19,7 @@ from app.srs.anki_mirror.protobuf_wire import (
     compute_anki_day_index,
     review_due_at_for_col_day,
 )
-from app.srs.anki_mirror.rollover import anki_today
+from app.srs.anki_mirror.rollover import anki_today, local_next_rollover
 
 # fsrs-rs (rslib/.../fsrs/model.rs) computes stability + difficulty in f32 end-to-end
 # via Burn tensors. TT mirrors that precision by casting all arithmetic operands and
@@ -361,18 +361,32 @@ def _grade_elapsed_days(
         return 0
     if isinstance(last_review, datetime):
         if col_crt is not None:
-            # NOT `anki_today_col_day` here, unlike `_elapsed_days_for_fsrs`. On
-            # the grade path `last_review` may carry sub-day precision (a real
-            # lrt), so it is NOT the col_day-derived marker whose decoding is
-            # exact — and the asymmetric pairing that makes the other site
-            # correct would be unsound. Both terms sharing the index domain means
-            # the crt-offset skew cancels except when exactly one endpoint sits
-            # in the `[local midnight, 04:00)` window. Layer 50 measured this
-            # path bit-exact across 65 real grades; re-anchoring it needs the
-            # same measurement, not an analogy to the day-level branch.
-            today_col_day = compute_anki_day_index(col_crt, rollover_hour, ref_now)
-            review_col_day = compute_anki_day_index(col_crt, rollover_hour, last_review)
-            return max(0, today_col_day - review_col_day)
+            if is_day_level_last_review(last_review):
+                # No `lrt` in cards.data — `last_review` is the synthetic marker
+                # `_compute_last_review` writes, not a real review time. LEFT
+                # UNCHANGED, and not because it is right: measured 2026-09-03,
+                # Anki's answering path for a card with no lrt does not do col-day
+                # arithmetic at all, it routes through `stability_short_term`
+                # (elapsed=0) — reproduced to six significant figures. That is a
+                # separate and much larger divergence than the one below, with its
+                # own bead; folding it in here would change grade outcomes for
+                # every pre-FSRS imported card on the strength of one probe.
+                today_col_day = compute_anki_day_index(col_crt, rollover_hour, ref_now)
+                review_col_day = compute_anki_day_index(col_crt, rollover_hour, last_review)
+                return max(0, today_col_day - review_col_day)
+            # Real sub-day `lrt`. Anki measures from the NEXT rollover, as a
+            # DURATION — `next_day_at.elapsed_days_since(lrt)` — which is neither
+            # of TT's day-index domains. Using the index domain on both endpoints
+            # (pre-fix) cancels the crt-offset skew only while both sit on the
+            # same side of `[local midnight, 04:00)`; when exactly one is inside,
+            # it is off by a full day and the resulting stability by 8-9%.
+            #
+            # Layer 50 was not wrong to call this path bit-exact — its 65 grades
+            # simply never had an endpoint in the band. Same shape as the CI
+            # measurement that started all this: a sample that misses a one-hour
+            # window looks like proof the window does not exist.
+            next_day_at = local_next_rollover(ref_now)
+            return max(0, int((next_day_at - last_review).total_seconds()) // 86400)
         return max(0, (ref_now.date() - last_review.date()).days)
     return max(0, (ref_now.date() - last_review).days)
 

@@ -78,6 +78,24 @@ def local_today_rollover(now: datetime | None = None) -> datetime:
     return _most_recent_rollover(now.date(), now, now.tzinfo)
 
 
+def local_next_rollover(now: datetime | None = None) -> datetime:
+    """The datetime of the NEXT rollover — Anki's ``next_day_at`` / ``col.sched.day_cutoff``.
+
+    Anki's ANSWERING path measures elapsed time against this instant, not against
+    ``now``: ``days_elapsed = next_day_at.elapsed_days_since(lrt)``, an integer
+    division of the duration by 86400 (rslib ``scheduler/answering/mod.rs``,
+    ``timestamp.rs``). That is a third formulation, distinct from both TT day
+    domains — it is a duration, not a difference of day indices — which is why
+    ``_grade_elapsed_days`` cannot be expressed with either of them.
+
+    Verified against the real backend: for a card with sub-day ``lrt``, the
+    post-grade stability Anki produces matches the recall formula fed with
+    ``(day_cutoff - lrt) // 86400`` to six significant figures, in and out of the
+    rollover band. See ``tests/test_parity_grade_elapsed.py``.
+    """
+    return local_today_rollover(now) + timedelta(days=1)
+
+
 def anki_day_bounds_utc_dt(today: date, now: datetime | None = None) -> tuple[datetime, datetime]:
     """Return the UTC-aware [start, end) `datetime` bounds of the Anki day
     anchored on `today` — the same arithmetic as `anki_day_bounds_utc`, but as
