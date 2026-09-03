@@ -90,6 +90,16 @@ Both apps freeze the main review queue and never re-sort mid-session (Anki `Card
 
 5. **Two-branch R formula.** `extract_fsrs_retrievability` has lrt branch (sub-day fractional elapsed) and day-level fallback (integer-day elapsed). TT mirrors both in `compute_retrievability`.
 
+6. **THREE day rules, and picking the wrong one is silent** (2026-09-03). Anki does not have "a day number" — it has three answers to three different questions, and they coincide most of the day, which is why mixing them survives:
+
+   - **"What study day is it?"** → `anki_today_col_day(col_crt, now)`. Local calendar dates from crt's local date, minus one until today's local rollover has passed. Independent of crt's time-of-day. Use this for anything meaning *today*: FSRS elapsed, the deck studied-today stamp, the load-balancer frame, the col_day a native grade schedules from.
+   - **"What col_day does this stored day-level marker decode to?"** → `compute_anki_day_index`. It is NOT Anki's `today` despite once claiming to be; it is the exact inverse of the marker `_compute_last_review` writes, and re-anchoring it would shift every stored `last_review`.
+   - **"How long since the last review, at grade time?"** → a DURATION back from `local_next_rollover()`, integer-divided by 86400. Neither of the above; Anki's answering path measures from `next_day_at`, not from `now`.
+
+   **Why this hid for months:** for a real `col.crt` (4 AM local) read in its own zone, rules 1 and 2 agree except inside `[local midnight, 04:00)`, and rule 3 agrees with 1−2 unless exactly one endpoint is in that window. Every symptom is a one-day slip that self-heals, so nothing announces itself — the failures found were an FSRS elapsed off by one, a daily cap silently uncharged, ~8–9% stability drift on grades near the boundary, and review cards scheduled a day late in BOTH apps.
+
+   **If you are chasing a one-day discrepancy, check which of the three a call site is using before anything else.** `anki-gates` now runs at the rollover on every CI run precisely so this class fails loudly; see `.claude/rules/anki-oracle-harness.md`.
+
 6. **Sync must merge both directions.** `sync_push` defers to Anki when Anki is ahead (graduated or smaller `total_remaining`). `sync_pull` defers to Anki when Anki is ahead. `_direction_differs` must compare `left`, `due_at`, `prior_state`, `bury_kind`, `anki_card_mod` so self-heal writes actually fire — since 2026-07-05 it (and `_DIR_COLUMNS`) derives from the field registry `app/srs/direction_fields.py`; register new columns there with an explicit `sync_comparable` decision, never hand-edit either list (`tests/test_direction_fields.py` pins registry ↔ schema ↔ model ↔ diff).
 
 7. **`prior_state='new'` is sticky.** Set on intro by `_resolve_prior_state` (sync) or `_grade_prior_state` (TT). Persists across same-state-class grades and LEARNING→REVIEW graduation. Released only on REVIEW→RELEARNING (lapse) for revlog `type=1` correctness. **Do not** overwrite `prior_state='new'` without checking new state. *Now declared as `WritePolicy.STICKY_NEW` in `app/srs/direction_fields.py`, pinned to `_grade_prior_state` by `tests/test_direction_invariants.py`; `prior_state`'s value domain is a v35 SQL CHECK.*

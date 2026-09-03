@@ -21,7 +21,20 @@ backend/tests/anki_oracle/
 └── harness_fixtures.py       # pytest fixtures + run_oracle() helper
 ```
 
-Tests live alongside other tests as `backend/tests/test_parity_*.py`. They're opt-in via `--run-oracle`: `./test.sh` passes the flag so local pre-commit runs the harness, and CI runs them in a dedicated **oracle-parity job** (`.github/workflows/ci.yml`: warm the isolated anki env, then `pytest -m oracle --run-oracle -n auto --no-cov`) so an oracle failure is never conflated with a unit failure. Every oracle-gated test must carry `@pytest.mark.oracle` or the CI job won't select it. If you need to skip the harness locally for speed, run `cd backend && uv run pytest` directly. CI runs on Linux/UTC while dev is macOS/EDT — timezone-sensitive day arithmetic WILL diverge there (see gotcha #10).
+Tests live alongside other tests as `backend/tests/test_parity_*.py`. They're opt-in via `--run-oracle`: `./test.sh` passes the flag so local pre-commit runs the harness, and CI runs them in the **`anki-gates` job** (`.github/workflows/ci.yml`: warm the isolated anki env, then `pytest -m oracle --run-oracle -n auto --no-cov`) so an oracle failure is never conflated with a unit failure. Every oracle-gated test must carry `@pytest.mark.oracle` or the CI job won't select it. If you need to skip the harness locally for speed, run `cd backend && uv run pytest` directly.
+
+⚠️ **`anki-gates` runs at Anki's 04:00 rollover, not at the workflow's `TZ: UTC`** (2026-09-03). It resolves a zone whose LOCAL clock is inside `[04:00, 05:00)` via `.github/actions/hostile-hour-tz`, so every run exercises the day boundary instead of reaching it by luck. Why: between the oracle gate landing in CI (2026-06-10) and 2026-09-03, exactly **1 of 598 runs** ever started in that hour, and it went red the first time it did. `backend-hostile-hour` had sat in the band on every run for months but does not pass `--run-oracle`, so it had never run a single parity test — the hole was at the intersection of two correctly-configured jobs.
+
+**Consequence for triage, and it is the opposite of `backend-hostile-tz`:** a boundary-only failure there is usually a fixture encoding a wall-clock assumption. Here, suspect PRODUCT code first — these tests compare against the real backend, so a failure at the boundary is TT and Anki genuinely disagreeing about what day it is. Only this job has an oracle to tell the two readings apart.
+
+**A test asserting an absolute day index must pin its zone** (`tests/_helpers/localtz.py`: `local_timezone`, `timezone_with_local_hour`). The quantity is a local calendar day, so it is genuinely zone-dependent; declaring the zone is the opposite of assuming one. `local_timezone` sets `TZ` in the environment, which the oracle subprocess inherits — both sides must agree about what day it is.
+
+### Ops the driver understands
+
+`get_queue` (cards + post-limit `counts` + per-rating `states`), `scheduling_states` (intervals only), `answer_card` (grades for real, returns post-grade `stability`/`difficulty`), `get_card`, `get_revlog`, `note_ords`, `set_config`, `add_review_cards`, `check_database`, plus:
+
+- `get_today` — `col.sched.today` **and** `day_cutoff`, Anki's `next_day_at`. The answering path measures elapsed as a duration back from `day_cutoff`, so it is what a grade-elapsed question must be checked against.
+- `deck_today` — a deck's `newToday` / `revToday` as `[last_day_studied, count]`, alongside `today` and the post-limit `new_count`. Anki charges the daily limit only when the stamp equals its own `today`, so the pair says both what TT wrote and whether Anki accepted it.
 
 ## Subprocess boundary — never violate
 
@@ -84,7 +97,19 @@ These are documented in the test docstrings too, but listed here for fast recall
 
 10. **Never compute Anki's `today` Python-side.** Naive UTC day division (`(now - col.crt) // 86400`) ignores the local-TZ 4AM rollover. Between local midnight and 4AM, the naive UTC day has advanced but Anki's `today` has NOT — so `due=naive_today` lands one day in Anki's **future**, the card isn't due yet, and it's absent from the queue entirely (a past-due card would still be gathered). Passes in EDT afternoons, fails in UTC CI (and on any machine in the midnight–4AM window). Use the `get_today` oracle op (`col.sched.today`) — Anki's authoritative day index. Found on the first Linux/UTC CI run (2026-06-10), LAYER_38.
 
+    ⚠️ **This rule was right and was scoped to the wrong half of the codebase for three months.** It said "in tests"; the identical arithmetic was sitting in PRODUCTION as `compute_anki_day_index`, and on 2026-09-03 it broke `anki-gates` from there (Anki=127 vs TT=126). In production the answer is `anki_today_col_day`, not `compute_anki_day_index` — see that function's docstring for the two-domain split, and never introduce a third. When a harness gotcha describes a *formula* rather than a fixture, ask whether the shipped code has the same one before filing it under "testing".
+
+    Seeding a `due` from `anki_today_col_day` (rather than a prior `get_today` call) is now the cheaper move for a card that must be due today, because it needs no extra oracle round-trip — but see gotcha 13 for the ordering constraint that makes the two-call form fail silently.
+
 11. **`col.fix_integrity()` (Check Database) reports failure by RETURN VALUE, not by raising** — and an aborted check generates no cards, which is indistinguishable from Anki *deciding* not to generate. The synthetic collection's schema is minimal, so a whole-collection operation walks into tables the scheduler tests never touch: dbcheck opens with `select tag from tags where collapsed = false`, the fixture's `tags` table was missing `collapsed`, and dbcheck returned `(DbError{…no such column…}, False)` with the notes loop never running. The `check_database` op returns `ok` separately for exactly this reason — **assert on it**. If you extend the fixture for another whole-collection operation, expect the same class of gap, and take the DDL from the real collection (`SELECT sql FROM sqlite_master WHERE name='…'`) rather than from what looks plausible. This is `.claude/rules/tdd.md`'s clean-negative trap in its harness costume: the probe disagreed with a measurement against a real anki-built collection, and the *probe* was wrong.
+
+12. **Seed the collection BEFORE the first `run_oracle` call.** Opening the file with Anki rewrites it; a `SyntheticCollection.save()` afterwards writes the builder's rows into a file Anki has already restructured, and they do not take. The symptom is not an error — `get_queue` returns `counts: {new: 0, learning: 0, review: 0}` and an empty card list, which reads exactly like "the scheduler declined to gather them". If you need Anki's `today` in order to compute a `due`, use `anki_today_col_day(col_crt, now)` rather than a first `get_today` round-trip, and assert it equals the `today` the same run reports.
+
+13. **`answer_card` fails with `not at top of queue` if a `get_queue` op ran before it in the same batch.** The earlier op builds and caches the queue; the grade then targets a card that is no longer the head. Put `answer_card` first, or in its own `run_oracle` call. Nothing about the message points at op ordering.
+
+14. **`states.current.elapsed_days` is the RETRIEVABILITY path's number, not the answering path's.** For a card with no `lrt` they disagree: `current.elapsed_days` reports the day-level fallback (`today - (due - ivl)`) while the grade Anki actually applies uses the revlog (or `stability_short_term` when there is no revlog at all). Judge an elapsed question by the post-grade **stability**, never by the reported `elapsed_days` — that field agreeing with your expectation is not evidence the grade will. Measured 2026-09-03; both branches pinned in `test_parity_no_lrt_elapsed.py`.
+
+15. **A fixture builder with no caller is not a working builder.** `add_revlog` bound 8 values into the 9-column `revlog` table (`factor` missing) and raised on every call from the day it was written until it got its first caller (2026-09-03). Coverage does not catch this: the function was never executed. Before relying on an unused fixture helper, call it once and look.
 
 ## Both gates per commit
 
