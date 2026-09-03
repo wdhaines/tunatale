@@ -504,6 +504,27 @@ class ContentStore:
             ).fetchall()
         return [_session_row(row) for row in rows]
 
+    def delete_review_session_audio(self, session_id: str) -> list[str]:
+        """Drop one session's audio rows, KEEPING the session; return the paths.
+
+        Regeneration rewrites a session in place, so the renders of the previous
+        dialogue have to go while the id and date — the two things regeneration
+        preserves, and what the session's URL and dated list are keyed on —
+        stay. :meth:`delete_review_session` cannot serve that: it takes the row
+        with it.
+
+        Rows here, files by the caller, the same split :meth:`delete_lesson`
+        uses.
+        """
+        with self._get_conn() as conn:
+            paths = [
+                row["file_path"]
+                for row in conn.execute("SELECT file_path FROM audio_files WHERE lesson_id = ?", (session_id,))
+            ]
+            conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (session_id,))
+            conn.commit()
+        return paths
+
     def delete_review_session(self, session_id: str) -> list[str]:
         """Drop one session and its audio rows; return the orphaned paths.
 

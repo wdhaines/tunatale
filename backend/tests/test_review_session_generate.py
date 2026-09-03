@@ -38,6 +38,7 @@ from app.generation.story import (
 from app.languages import get_language
 from app.main import app
 from app.models.curriculum import Curriculum, CurriculumDay
+from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.strategy import ContentStrategy
 from app.models.syntactic_unit import SyntacticUnit
@@ -401,3 +402,124 @@ class TestRefusals:
         resp = await self._post()
 
         assert resp.status_code == 502
+
+
+# ── regenerating one in place ────────────────────────────────────────────────
+
+
+class TestRegenerating:
+    """Rewrite a session's dialogue without it becoming a different session.
+
+    The lesson page has had "Regenerate Day N" since long before sessions
+    existed, and a session had no equivalent — so a dialogue the user wanted
+    improved could only be replaced by generating a WHOLE NEW session, under a
+    new id, at a new URL, with a different word set. That is not the same act.
+
+    ⚠️ The id and the session_date are what must survive: the URL is keyed on the
+    id and the dated list is keyed on the date, so a regenerate that minted
+    either afresh would leave the old row behind and read as a duplicate.
+
+    ⚠️ The words are NOT pinned, deliberately. ``build_review_session_prompts``
+    selects from what has decayed AT CALL TIME, and a review session's whole
+    claim is that it is about what you are forgetting now. Pinning the previous
+    selection would make a regenerated session assert a staleness it no longer
+    measures. The coverage pair is rewritten with the new selection for the same
+    reason.
+    """
+
+    @pytest.fixture
+    def stored(self):
+        store = ContentStore(":memory:")
+        app.state.content_store = store
+        app.state.language = get_language("sl")
+        return store
+
+    def _stored_session(self, store, session_id="sess-1", session_date="2026-09-02"):
+        store.save_review_session(
+            session_id,
+            "sl",
+            session_date,
+            Lesson(
+                title="The Old Dialogue",
+                language_code="sl",
+                sections=[
+                    Section(
+                        section_type=SectionType.NATURAL_SPEED,
+                        phrases=[Phrase(text="Stara vrstica.", voice_id="v", language_code="sl")],
+                    )
+                ],
+            ),
+            review_requested=["kavo"],
+            review_used=[],
+        )
+
+    async def _post(self, session_id: str):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            return await client.post(f"/api/review-sessions/{session_id}/regenerate")
+
+    async def test_an_unknown_session_is_404(self, stored, seeded_db):
+        app.state.srs_db = seeded_db
+        app.state.story_generator = _generator_returning_a_story()[0]
+
+        assert (await self._post("nope")).status_code == 404
+
+    async def test_it_keeps_the_id_and_the_date(self, stored, seeded_db):
+        self._stored_session(stored)
+        app.state.srs_db = seeded_db
+        app.state.story_generator = _generator_returning_a_story()[0]
+
+        resp = await self._post("sess-1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["id"] == "sess-1"
+        assert body["session_date"] == "2026-09-02"
+        assert stored.get_review_session_row("sess-1")["session_date"] == "2026-09-02"
+
+    async def test_it_replaces_the_stored_dialogue(self, stored, seeded_db):
+        self._stored_session(stored)
+        app.state.srs_db = seeded_db
+        app.state.story_generator = _generator_returning_a_story()[0]
+
+        resp = await self._post("sess-1")
+
+        assert resp.json()["title"] == "A Missed Train"
+        assert stored.get_review_session("sess-1").title == "A Missed Train"
+
+    async def test_it_does_not_mint_a_second_session(self, stored, seeded_db):
+        """The failure this guards is the one a naive implementation ships: call
+        the create path, get a new id, and leave the old row in the dated list."""
+        self._stored_session(stored)
+        app.state.srs_db = seeded_db
+        app.state.story_generator = _generator_returning_a_story()[0]
+
+        await self._post("sess-1")
+
+        assert [row["id"] for row in stored.list_review_sessions("sl")] == ["sess-1"]
+
+    async def test_it_drops_the_audio_of_the_dialogue_it_replaced(self, stored, seeded_db, tmp_path):
+        """Audio rows key on the session id, so a render of the OLD dialogue
+        would otherwise still be served for the new one — the page would read a
+        script that is no longer on screen."""
+        self._stored_session(stored)
+        stale = tmp_path / "0.mp3"
+        stale.write_bytes(b"old")
+        stored.save_audio_file("audio-1", "sess-1", str(stale), section_index=0, section_type="natural_speed")
+        app.state.srs_db = seeded_db
+        app.state.story_generator = _generator_returning_a_story()[0]
+
+        await self._post("sess-1")
+
+        assert stored.list_audio_files_for_lesson("sess-1") == []
+        assert not stale.exists()
+
+    async def test_nothing_due_is_409_and_the_session_survives(self, stored):
+        """A refusal must not destroy the dialogue the user already had."""
+        app.state.srs_db = None
+        app.state.story_generator = _generator_returning_a_story()[0]
+        self._stored_session(stored)
+
+        resp = await self._post("sess-1")
+
+        assert resp.status_code == 409
+        assert stored.get_review_session("sess-1").title == "The Old Dialogue"

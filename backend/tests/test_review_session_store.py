@@ -229,6 +229,44 @@ class TestDeletion:
     def test_deleting_an_unknown_session_is_not_an_error(self):
         assert _store().delete_review_session("nope") == []
 
+
+class TestDroppingOnlyTheAudio:
+    """Regeneration rewrites a session in place, so its audio must go and the
+    session must NOT. ``delete_review_session`` cannot serve that — it takes the
+    row with it, and the session's id and date are exactly what regeneration
+    preserves."""
+
+    def test_it_orphans_the_audio_and_keeps_the_session(self):
+        store = _store()
+        store.save_review_session("sess-1", "no", "2026-09-02", _lesson())
+        store.save_audio_file(
+            "audio-1", "sess-1", "/media/no/sess-1/0.mp3", section_index=0, section_type="natural_speed"
+        )
+
+        paths = store.delete_review_session_audio("sess-1")
+
+        assert paths == ["/media/no/sess-1/0.mp3"]
+        assert store.list_audio_files_for_lesson("sess-1") == []
+        assert store.get_review_session("sess-1") is not None
+
+    def test_a_session_with_no_audio_is_not_an_error(self):
+        store = _store()
+        store.save_review_session("sess-1", "no", "2026-09-02", _lesson())
+
+        assert store.delete_review_session_audio("sess-1") == []
+
+    def test_it_leaves_another_session_audio_alone(self):
+        store = _store()
+        for sid in ("sess-1", "sess-2"):
+            store.save_review_session(sid, "no", "2026-09-02", _lesson())
+            store.save_audio_file(
+                f"audio-{sid}", sid, f"/media/no/{sid}/0.mp3", section_index=0, section_type="natural_speed"
+            )
+
+        store.delete_review_session_audio("sess-1")
+
+        assert [r["id"] for r in store.list_audio_files_for_lesson("sess-2")] == ["audio-sess-2"]
+
     def test_it_leaves_the_other_sessions_alone(self):
         store = _store()
         store.save_review_session("sess-1", "no", "2026-09-02", _lesson())

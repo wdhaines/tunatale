@@ -827,6 +827,45 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/review-sessions/{session_id}/regenerate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Regenerate Review Session
+     * @description Rewrite one session's dialogue without it becoming a different session.
+     *
+     *     The lesson page has had "Regenerate Day N" since long before sessions
+     *     existed. A session had no equivalent, so a dialogue the user wanted improved
+     *     could only be replaced by generating a WHOLE NEW one — new id, new URL, new
+     *     row in the dated list, different words. That is a different act, and the
+     *     absence of this route was reported as "the lesson tools are missing".
+     *
+     *     ⚠️ Not routed through ``LessonPipeline`` the way the lesson page's Regenerate
+     *     is. That pipeline is keyed (language_code, curriculum_id, day) throughout, so
+     *     a session has nothing to key on — the same reason rendering calls
+     *     ``render_lesson_audio`` directly. The cost, stated rather than hidden: no
+     *     429 wait-and-retry and no sticky-failed + Retry, so a quota refusal surfaces
+     *     to the user as a 429 they must act on themselves.
+     *
+     *     ⚠️ The word selection is NOT pinned to the previous run. A review session's
+     *     whole claim is that it is about what has decayed NOW, and
+     *     ``build_review_session_prompts`` re-selects at call time; pinning the old
+     *     list would make a regenerated session assert a staleness it no longer
+     *     measures. The coverage pair is rewritten to match, for the same reason.
+     */
+    post: operations["regenerate_review_session_api_review_sessions__session_id__regenerate_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/review-sessions/{session_id}/render": {
     parameters: {
       query?: never;
@@ -4670,6 +4709,37 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ReviewSessionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  regenerate_review_session_api_review_sessions__session_id__regenerate_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CreateReviewSessionResponse"];
         };
       };
       /** @description Validation Error */

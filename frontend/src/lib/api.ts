@@ -11,6 +11,7 @@ import type { components } from "./api-types";
 export type ListenPreviewCandidate = components["schemas"]["ListenPreviewCandidate"];
 export type ListenPreview = components["schemas"]["ListenPreviewResponse"];
 export type CommitPendingResponse = components["schemas"]["CommitPendingResponse"];
+export type CreateReviewSessionResponse = components["schemas"]["CreateReviewSessionResponse"];
 
 // SSR fetches go straight to the backend (the browser uses the Vite proxy via
 // relative URLs). Protocol and port must mirror the proxy target in
@@ -719,19 +720,22 @@ export class TunaTaleAPI {
     return this.request(`/api/review-sessions/${id}/render`, { method: "POST" });
   }
 
-  async createReviewSession(): Promise<{
-    id: string;
-    session_date: string;
-    title: string;
-    review_requested: string[];
-    review_used: string[];
-    warnings: string[];
-  }> {
+  async createReviewSession(): Promise<CreateReviewSessionResponse> {
     return this.request("/api/review-sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
     });
+  }
+
+  /**
+   * Rewrite ONE session's dialogue in place — same id, same date, same URL.
+   *
+   * Not `createReviewSession()`: that mints a new id and leaves the old session
+   * in the dated list, which is a different act from improving this one.
+   */
+  async regenerateReviewSession(sessionId: string): Promise<CreateReviewSessionResponse> {
+    return this.request(`/api/review-sessions/${sessionId}/regenerate`, { method: "POST" });
   }
 
   async getCurriculum(id: string): Promise<CurriculumSummary> {
@@ -991,7 +995,9 @@ export class TunaTaleAPI {
   }
 
   async markAsListened(
-    lessonId: string,
+    // `contentId`, not `lessonId`: /api/srs/listen resolves a lesson OR a review
+    // session through ContentStore.get_readable_content.
+    contentId: string,
     wordRatings: Record<string, WordRating> = {},
     kpRatings: Record<string, WordRating> = {},
     // Items the user graded by hand in the preview. These are applied
@@ -1007,8 +1013,23 @@ export class TunaTaleAPI {
     overCapWords: string[] = [],
     overCapKps: string[] = [],
   ): Promise<ListenResponse> {
-    const body: Record<string, unknown> = {
-      lesson_id: lessonId,
+    // ⚠️ TYPED against the generated schema, not `Record<string, unknown>`.
+    // This shipped posting `lesson_id` after the backend renamed the field to
+    // `content_id`, so every Listen apply 422'd — on lessons as well as review
+    // sessions — and nothing caught it: an untyped body is invisible to
+    // svelte-check, and api.test.ts pinned the OLD field name, so the suite
+    // agreed with the bug. `check:api` only proves api-types.d.ts is in step
+    // with api-schema.json; it says nothing about whether a call site uses it.
+    // With the alias below, a stale request field is a compile error.
+    // `Partial<…> &` the one genuinely required field: openapi-typescript emits
+    // every DEFAULTED property as required (it generates one type for both
+    // directions, and a response always carries them), but this is a REQUEST —
+    // the backend defaults them, and over_cap_* are deliberately omitted below.
+    // Excess-property checking on the literal is what does the real work here,
+    // so a stale or misspelled field name is still a compile error.
+    const body: Partial<components["schemas"]["ListenRequest"]> &
+      Pick<components["schemas"]["ListenRequest"], "content_id"> = {
+      content_id: contentId,
       word_ratings: wordRatings,
       kp_ratings: kpRatings,
       confirmed_words: confirmedWords,

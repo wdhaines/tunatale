@@ -18,6 +18,7 @@
 	import { pipelineStore } from '$lib/stores/pipeline.svelte';
 	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
 	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
+	import AudioDownloads from '$lib/components/AudioDownloads.svelte';
 	import LessonSourcePanel from '$lib/components/LessonSourcePanel.svelte';
 	import ListenPreviewModal from '$lib/components/ListenPreviewModal.svelte';
 	import { lessonMastery, masteryColor } from '$lib/mastery';
@@ -457,14 +458,7 @@
 	     as the destructive-ish last resort. -->
 	<details class="card tools-card">
 		<summary>Lesson tools</summary>
-		{#if audio}
-			<div class="download-links">
-				<a class="download-all-btn" href={api.audioZipUrl(audio.lesson_id)} download>Download All Sections</a>
-				{#each audio.sections as sec (sec.audio_id)}
-					<a class="section-dl-btn" href={api.audioUrl(sec.audio_id)} download>{sec.title}</a>
-				{/each}
-			</div>
-		{/if}
+		<AudioDownloads {audio} />
 		{#if reviewRequested.length > 0}
 			<!-- Deliberately neutral: at the default pressure the prompt tells the
 			     model that using none of these is a correct answer, so a low number
@@ -823,34 +817,5 @@
 		border-top: 1px solid var(--color-border);
 		margin: 1rem 0;
 		opacity: 0.5;
-	}
-	.download-links {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-	}
-	.download-all-btn {
-		display: inline-block;
-		padding: 0.5rem 1.25rem;
-		background: var(--color-primary);
-		color: var(--color-on-primary);
-		border-radius: 4px;
-		text-decoration: none;
-		font-size: 0.9rem;
-		font-weight: 600;
-	}
-	.download-all-btn:hover {
-		filter: brightness(0.9);
-	}
-	.section-dl-btn {
-		padding: 0.4rem 0.9rem;
-		background: var(--color-secondary);
-		color: var(--color-on-primary);
-		border-radius: 4px;
-		text-decoration: none;
-		font-size: 0.85rem;
-	}
-	.section-dl-btn:hover {
-		filter: brightness(0.85);
 	}
 </style>

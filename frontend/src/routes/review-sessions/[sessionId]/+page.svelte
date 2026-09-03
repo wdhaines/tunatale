@@ -10,6 +10,10 @@
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { createReadingActions } from '$lib/reading/readingActions.svelte';
+	import AudioDownloads from '$lib/components/AudioDownloads.svelte';
+	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
+	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
+	import { invalidateAll } from '$app/navigation';
 
 
 	// The reader for a review session.
@@ -34,6 +38,8 @@
 	let renderError = $state('');
 	let playbackController: PlaybackController | null = $state(null);
 	let error = $state('');
+	let regenerating = $state(false);
+	let showRegenHelp = $state(false);
 
 	// ⚠️ THE SAME ACTIONS THE LESSON PAGE USES, from one implementation. Tapping
 	// a word grades it, the popovers create cards and cloze inflections, undo
@@ -115,6 +121,44 @@
 		}
 	});
 
+	/**
+	 * Rewrite this session's dialogue, keeping the session.
+	 *
+	 * ⚠️ NOT `createReviewSession()`. That mints a new id at a new URL and leaves
+	 * this one in the dated list — a second session, not a better one. The route
+	 * this calls preserves the id and the date.
+	 *
+	 * ⚠️ Unlike the lesson page's Regenerate, this does NOT go through the greedy
+	 * pipeline: `LessonPipeline` is keyed (language_code, curriculum_id, day) and
+	 * a session has none of those. The visible cost is that a 429 arrives here as
+	 * an error the user has to act on, rather than a wait-and-retry.
+	 */
+	async function handleRegenerate() {
+		const confirmed = await confirmDialog(
+			'Rewrite this session\u2019s dialogue? It keeps its date and its place in the list, ' +
+				'and is rebuilt from what has decayed NOW \u2014 so the words it drills may differ ' +
+				'from the ones it used before. Existing cards are kept. Any audio already ' +
+				'rendered for it is discarded.'
+		);
+		if (!confirmed) return;
+		regenerating = true;
+		error = '';
+		try {
+			await api.regenerateReviewSession(data.session.id);
+			// The server dropped the renders of the dialogue we just replaced, so
+			// the player must not keep offering them.
+			audio = null;
+			transcriptLoading = true;
+			await invalidateAll();
+			transcript = await api.getTranscript(data.session.id).catch(() => null);
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			regenerating = false;
+			transcriptLoading = false;
+		}
+	}
+
 	async function prepareAudio() {
 		preparing = true;
 		renderError = '';
@@ -179,6 +223,39 @@
 			</div>
 		{/snippet}
 	</LessonReader>
+	<!-- Same fold-away as the lesson reader's, with only the tools a session can
+	     actually have. No day pager, no curriculum breadcrumb, no delete-day and
+	     no source panel: every one of those acts on a POSITION IN A CURRICULUM,
+	     which a session does not have. The source panel is the near miss —
+	     `/api/story/{id}/source` reads the lessons table, and its importer needs a
+	     curriculumId and a day to write back to. -->
+	<details class="card tools-card">
+		<summary>Session tools</summary>
+		<AudioDownloads {audio} />
+		<div class="regen-row">
+			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
+				{regenerating ? 'Rewriting…' : 'Rewrite dialogue'}
+			</button>
+			<!-- Rewriting hits the LLM, so the quota chip belongs beside the button
+			     that spends it — the same placement the lesson reader uses. -->
+			<RateLimitWidget />
+			<button
+				type="button"
+				class="help-toggle"
+				aria-label="What does rewriting do?"
+				aria-expanded={showRegenHelp}
+				onclick={() => (showRegenHelp = !showRegenHelp)}>?</button
+			>
+		</div>
+		{#if showRegenHelp}
+			<p class="help-panel">
+				Rewrites this session&rsquo;s dialogue with the current prompt, keeping its date and
+				its place in the list. It is rebuilt from what has decayed <em>now</em>, so the words
+				it drills may differ from last time. Existing cards stay; any audio already rendered
+				is discarded and can be prepared again.
+			</p>
+		{/if}
+	</details>
 </main>
 
 {#if listen.showPreview}
@@ -238,5 +315,71 @@
 		color: var(--color-danger, #9c2f2a);
 		margin: 0;
 		font-size: 0.9rem;
+	}
+	/* The `<details>` chrome is duplicated from the lesson reader rather than
+	   shared, deliberately: a shared shell would have to style content each page
+	   passes IN, and Svelte scopes a slot's styles to the parent — so it could
+	   only work through `:global()` rules the compiler cannot verify. What is
+	   genuinely identical and leaf-like (the download row) IS shared, as
+	   AudioDownloads. See its header for the full reasoning. */
+	.tools-card summary {
+		cursor: pointer;
+		font-size: 0.9rem;
+		font-weight: 600;
+		color: var(--color-muted);
+		padding: 0.25rem 0;
+		border-radius: 4px;
+		user-select: none;
+	}
+	.tools-card summary:hover {
+		color: var(--color-text);
+	}
+	.tools-card[open] summary {
+		margin-bottom: 0.75rem;
+	}
+	.regen-row {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		flex-wrap: wrap;
+		margin-top: 0.75rem;
+	}
+	.regen-btn {
+		background: transparent;
+		color: var(--color-danger);
+		border: 1px solid var(--color-danger);
+		border-radius: 4px;
+		padding: 0.4rem 0.9rem;
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.regen-btn:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+	.help-toggle {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.4rem;
+		height: 1.4rem;
+		padding: 0;
+		margin: 0;
+		border: 1px solid var(--color-border);
+		border-radius: 50%;
+		background: transparent;
+		color: var(--color-muted);
+		font-size: 0.8rem;
+		cursor: pointer;
+	}
+	.help-toggle:hover {
+		color: var(--color-text);
+		border-color: var(--color-text);
+	}
+	.help-panel {
+		margin: 0.5rem 0 0;
+		font-size: 0.85rem;
+		color: var(--color-muted);
 	}
 </style>

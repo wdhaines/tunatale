@@ -221,6 +221,32 @@ describe("TunaTaleAPI", () => {
       expect(result.title).toBe("The Late Bus");
     });
 
+    it("regenerateReviewSession POSTs to THAT session's own path", async () => {
+      // The whole point of the route: the id in the URL is what keeps the
+      // session — a create would mint a new one and leave this one behind.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            id: "sess-1",
+            session_date: "2026-09-02",
+            title: "A Better Dialogue",
+            review_requested: ["kavo"],
+            review_used: ["kavo"],
+            warnings: [],
+          }),
+        ),
+      );
+
+      const result = await api.regenerateReviewSession("sess-1");
+
+      const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(`${BASE}/api/review-sessions/sess-1/regenerate`);
+      expect(init.method).toBe("POST");
+      expect(result.id).toBe("sess-1");
+      expect(result.session_date).toBe("2026-09-02");
+    });
+
     it("puts the status on the error so a refusal is not read as a failure", async () => {
       // 409 "nothing due" is a normal Tuesday and the page renders it as a
       // message. Without the status it could only be told apart by matching the
@@ -850,7 +876,7 @@ describe("TunaTaleAPI", () => {
       expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/new?direction=production&limit=5`);
     });
 
-    it("markAsListened calls POST /api/srs/listen with lesson_id and empty ratings by default", async () => {
+    it("markAsListened calls POST /api/srs/listen with content_id and empty ratings by default", async () => {
       vi.stubGlobal(
         "fetch",
         vi.fn().mockResolvedValue(
@@ -872,7 +898,7 @@ describe("TunaTaleAPI", () => {
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
-            lesson_id: "lesson-1",
+            content_id: "lesson-1",
             word_ratings: {},
             kp_ratings: {},
             confirmed_words: [],
@@ -914,7 +940,7 @@ describe("TunaTaleAPI", () => {
         `${BASE}/api/srs/listen`,
         expect.objectContaining({
           body: JSON.stringify({
-            lesson_id: "lesson-1",
+            content_id: "lesson-1",
             word_ratings: { banka: "hard", zdravo: "easy" },
             kp_ratings: { "na zdravje": "skip" },
             // The grades the user picked by hand: applied on commit rather
@@ -962,7 +988,7 @@ describe("TunaTaleAPI", () => {
         `${BASE}/api/srs/listen`,
         expect.objectContaining({
           body: JSON.stringify({
-            lesson_id: "lesson-1",
+            content_id: "lesson-1",
             word_ratings: { hotel: "good" },
             kp_ratings: { "dober dan": "hard" },
             confirmed_words: [],

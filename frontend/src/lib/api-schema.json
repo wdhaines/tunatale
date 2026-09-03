@@ -5827,6 +5827,49 @@
         ]
       }
     },
+    "/api/review-sessions/{session_id}/regenerate": {
+      "post": {
+        "description": "Rewrite one session's dialogue without it becoming a different session.\n\nThe lesson page has had \"Regenerate Day N\" since long before sessions\nexisted. A session had no equivalent, so a dialogue the user wanted improved\ncould only be replaced by generating a WHOLE NEW one \u2014 new id, new URL, new\nrow in the dated list, different words. That is a different act, and the\nabsence of this route was reported as \"the lesson tools are missing\".\n\n\u26a0\ufe0f Not routed through ``LessonPipeline`` the way the lesson page's Regenerate\nis. That pipeline is keyed (language_code, curriculum_id, day) throughout, so\na session has nothing to key on \u2014 the same reason rendering calls\n``render_lesson_audio`` directly. The cost, stated rather than hidden: no\n429 wait-and-retry and no sticky-failed + Retry, so a quota refusal surfaces\nto the user as a 429 they must act on themselves.\n\n\u26a0\ufe0f The word selection is NOT pinned to the previous run. A review session's\nwhole claim is that it is about what has decayed NOW, and\n``build_review_session_prompts`` re-selects at call time; pinning the old\nlist would make a regenerated session assert a staleness it no longer\nmeasures. The coverage pair is rewritten to match, for the same reason.",
+        "operationId": "regenerate_review_session_api_review_sessions__session_id__regenerate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateReviewSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Regenerate Review Session",
+        "tags": [
+          "review-sessions"
+        ]
+      }
+    },
     "/api/review-sessions/{session_id}/render": {
       "post": {
         "description": "Render a session's audio through the ordinary audio pipeline.\n\n``render_lesson_audio`` takes no curriculum and no day and keys on the id\nalone, so this reuses it verbatim; ``audio_files`` rows land under the\nsession id and ``GET /api/audio/lesson/{id}`` then serves them with no\nchange at all.",

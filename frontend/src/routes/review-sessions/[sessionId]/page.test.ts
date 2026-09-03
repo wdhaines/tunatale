@@ -20,7 +20,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 
 const mockGoto = vi.fn();
-vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
+const mockInvalidateAll = vi.fn();
+vi.mock("$app/navigation", () => ({
+  goto: (...args: unknown[]) => mockGoto(...args),
+  invalidateAll: () => mockInvalidateAll(),
+}));
+
+// The confirm is a real dialog component elsewhere; here it is the boundary, so
+// stub it to "yes" and let the tests assert what the click DOES.
+const mockConfirm = vi.fn().mockResolvedValue(true);
+vi.mock("$lib/components/ConfirmDialog.svelte", () => ({
+  default: () => null,
+  confirmDialog: (...args: unknown[]) => mockConfirm(...args),
+}));
 
 vi.mock("$lib/stores/listened.svelte", () => ({
   listenedStore: { has: vi.fn().mockReturnValue(false), refresh: vi.fn() },
@@ -39,6 +51,9 @@ vi.mock("$lib/api", () => ({
     createSRSItem: vi.fn(),
     createBaseCard: vi.fn(),
     audioUrl: vi.fn((id: string) => `/audio/${id}`),
+    audioZipUrl: vi.fn((id: string) => `/audio/lesson/${id}/zip`),
+    regenerateReviewSession: vi.fn(),
+    createReviewSession: vi.fn(),
   },
 }));
 
@@ -449,5 +464,127 @@ describe("the reader", () => {
 
     const back = getByRole("link", { name: /lessons|back/i });
     expect(back.getAttribute("href")).toBe("/");
+  });
+
+  /**
+   * Session tools. Reported by the user as "the lesson tools are also missing —
+   * I'd love to have Opus improve the dialog, but I can't": the page rendered
+   * the dialogue with no way to download it and no way to ask for a better one.
+   */
+  describe("session tools", () => {
+    const withAudio = () => ({
+      audio_id: "a1",
+      lesson_id: "sess-1",
+      sections: [{ audio_id: "s1", title: "Natural Speed" }],
+    });
+
+    it("offers the downloads once audio exists", () => {
+      const { getByRole } = render(Page, { props: { data: data({ audio: withAudio() }) } });
+
+      expect(getByRole("link", { name: /download all sections/i }).getAttribute("href")).toBe(
+        "/audio/lesson/sess-1/zip",
+      );
+      expect(getByRole("link", { name: "Natural Speed" }).getAttribute("href")).toBe("/audio/s1");
+    });
+
+    it("rewrites THIS session rather than minting a new one", async () => {
+      vi.mocked(api.regenerateReviewSession).mockResolvedValue({
+        id: "sess-1",
+        session_date: "2026-09-02",
+        title: "A Better Dialogue",
+        review_requested: [],
+        review_used: [],
+        warnings: [],
+      });
+      const { getByRole } = render(Page, { props: { data: data() } });
+
+      await fireEvent.click(getByRole("button", { name: /rewrite dialogue/i }));
+
+      expect(api.regenerateReviewSession).toHaveBeenCalledWith("sess-1");
+      // The distinction the whole route exists for: creating one would leave
+      // this session behind under a new id at a new URL.
+      expect(api.createReviewSession).not.toHaveBeenCalled();
+    });
+
+    it("stops offering audio that belongs to the dialogue it replaced", async () => {
+      vi.mocked(api.regenerateReviewSession).mockResolvedValue({
+        id: "sess-1",
+        session_date: "2026-09-02",
+        title: "A Better Dialogue",
+        review_requested: [],
+        review_used: [],
+        warnings: [],
+      });
+      const { getByRole, findByRole } = render(Page, {
+        props: { data: data({ audio: withAudio() }) },
+      });
+
+      await fireEvent.click(getByRole("button", { name: /rewrite dialogue/i }));
+
+      // The server dropped those rows; a page still linking them would serve a
+      // recording of a script that is no longer on screen.
+      expect(await findByRole("button", { name: /prepare audio/i })).toBeTruthy();
+    });
+
+    it("asks first, and does nothing when the answer is no", async () => {
+      mockConfirm.mockResolvedValueOnce(false);
+      const { getByRole } = render(Page, { props: { data: data() } });
+
+      await fireEvent.click(getByRole("button", { name: /rewrite dialogue/i }));
+
+      expect(mockConfirm).toHaveBeenCalled();
+      expect(api.regenerateReviewSession).not.toHaveBeenCalled();
+    });
+
+    it("shows the failure instead of leaving the button spinning", async () => {
+      vi.mocked(api.regenerateReviewSession).mockRejectedValue(
+        new Error("daily token budget exhausted"),
+      );
+      const { getByRole, findByText } = render(Page, { props: { data: data() } });
+
+      await fireEvent.click(getByRole("button", { name: /rewrite dialogue/i }));
+
+      expect(await findByText(/daily token budget exhausted/i)).toBeTruthy();
+      expect(getByRole("button", { name: /rewrite dialogue/i })).not.toHaveProperty(
+        "disabled",
+        true,
+      );
+    });
+
+    it("survives a transcript that fails to come back after the rewrite", async () => {
+      // The rewrite already succeeded server-side at this point, so a failed
+      // re-fetch must not surface as a failed rewrite — the new dialogue IS
+      // stored, and telling the user otherwise would invite a second LLM call.
+      vi.mocked(api.regenerateReviewSession).mockResolvedValue({
+        id: "sess-1",
+        session_date: "2026-09-02",
+        title: "A Better Dialogue",
+        review_requested: [],
+        review_used: [],
+        warnings: [],
+      });
+      // Every call, not `…Once`: onMount fetches the transcript too, so a single
+      // one-shot rejection is consumed by the mount and never reaches the path
+      // under test — which is why this first read as "the button vanished".
+      mockSessionTranscript.mockRejectedValue(new Error("lemmatizer cold"));
+      const { getByRole, findByRole, queryByText } = render(Page, { props: { data: data() } });
+
+      await fireEvent.click(getByRole("button", { name: /rewrite dialogue/i }));
+
+      // findBy, not getBy: the label is "Rewriting…" until the promise chain
+      // settles, so a synchronous read here is a race with its own success case.
+      expect(await findByRole("button", { name: /rewrite dialogue/i })).toBeTruthy();
+      expect(queryByText(/lemmatizer cold/i)).toBeNull();
+    });
+
+    it("explains what rewriting trades, on demand", async () => {
+      const { getByRole, findByText } = render(Page, { props: { data: data() } });
+
+      await fireEvent.click(getByRole("button", { name: /what does rewriting do/i }));
+
+      // Not /decayed/ — the page's own standing blurb already says that, and the
+      // assertion matched it in both panels. Pick a phrase only the help has.
+      expect(await findByText(/keeping its date/i)).toBeTruthy();
+    });
   });
 });
