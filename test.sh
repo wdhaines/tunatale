@@ -77,6 +77,40 @@ trap 'rm -f "$backend_log" "$frontend_log" "$peer_sync_log"
 # commit gate's tree fingerprint.
 full_log="$ROOT/.git/tt-test-last.log"
 
+# Per-step pass/fail history, appended across EVERY local run (unlike
+# tt-test-last.log above, which is overwritten each time). CI's flake rate is
+# cheap to measure after the fact because GitHub keeps a queryable run archive;
+# nothing local does that, so a step could be quietly flaking for weeks and the
+# only evidence would be one-off manual sweeps (tunatale-xw6s). This gives every
+# step — not just e2e — the same kind of history CI gets for free, so if one
+# starts flaking the data is already there instead of needing another campaign.
+tt_test_history="$ROOT/.git/tt-test-history.log"
+
+# Wraps one check with a banner (replacing the old bare `echo "=== X ==="`) plus
+# a history line: timestamp, group, step name, exit code, elapsed seconds, and
+# 1-min load average. `"$@" && rc=0 || rc=$?` is the standard way to capture a
+# failing command's status under `set -e` without tripping errexit on the spot
+# — a bare `"$@"; rc=$?` would abort at the failing command before the second
+# line ever ran. `return "$rc"` then re-raises it, so a failed step still aborts
+# the rest of this group exactly as before.
+#
+# EPOCHREALTIME (bash 5+, confirmed on this box) avoids a `date` subprocess per
+# step; macOS's BSD date has no %N, so `date +%s.%N` would silently print the
+# literal string "%N" here instead of failing loudly.
+log_step() {
+  local group="$1" name="$2"
+  shift 2
+  echo "=== $name ==="
+  local t0="$EPOCHREALTIME" rc elapsed load
+  "$@" && rc=0 || rc=$?
+  elapsed=$(awk -v a="$t0" -v b="$EPOCHREALTIME" 'BEGIN { printf "%.1f", b - a }')
+  load=$(uptime | sed -E 's/.*load averages?: *//' | awk '{print $1}' | tr -d ',')
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$group" "$name" "$rc" "$elapsed" "${load:-?}" \
+    >>"$tt_test_history"
+  return "$rc"
+}
+
 (
   set -e
   cd "$ROOT/backend"
@@ -91,37 +125,26 @@ full_log="$ROOT/.git/tt-test-last.log"
   # on a fresh clone and in CI, every lookup degrades to None, and the boundary
   # tests would pass here (where the file happens to exist) while proving nothing
   # there. Build takes ~1s from the committed extract, so it is always built.
-  echo "=== Build NST lexicon ==="
-  uv run python scripts/build_nst_lexicon.py build
+  log_step backend "Build NST lexicon" uv run python scripts/build_nst_lexicon.py build
 
-  echo "=== Ruff lint ==="
-  uv run ruff check --no-cache app tests scripts
+  log_step backend "Ruff lint" uv run ruff check --no-cache app tests scripts
 
-  echo "=== Ruff format check ==="
-  uv run ruff format --check --no-cache app tests scripts
+  log_step backend "Ruff format check" uv run ruff format --check --no-cache app tests scripts
 
-  echo "=== Mock boundary check ==="
-  uv run python scripts/check_mock_boundaries.py
+  log_step backend "Mock boundary check" uv run python scripts/check_mock_boundaries.py
 
-  echo "=== Language literal check ==="
-  uv run python scripts/check_language_literals.py
+  log_step backend "Language literal check" uv run python scripts/check_language_literals.py
 
-  echo "=== Date today check ==="
-  uv run python scripts/check_date_today.py
+  log_step backend "Date today check" uv run python scripts/check_date_today.py
 
-  echo "=== Singular database_url check ==="
-  uv run python scripts/check_singular_database_url.py
+  log_step backend "Singular database_url check" uv run python scripts/check_singular_database_url.py
 
-  echo "=== Plugin import check ==="
-  uv run python scripts/check_plugin_imports.py
+  log_step backend "Plugin import check" uv run python scripts/check_plugin_imports.py
 
-  echo "=== OpenAPI snapshot check ==="
-  uv run python scripts/check_openapi_snapshot.py
+  log_step backend "OpenAPI snapshot check" uv run python scripts/check_openapi_snapshot.py
 
-  echo "=== Prod env profile check ==="
-  uv run python scripts/check_prod_env.py
+  log_step backend "Prod env profile check" uv run python scripts/check_prod_env.py
 
-  echo "=== Tests ==="
   # pytest-cov combines per-worker coverage, so the 100% gate still applies to
   # the full run at any -n.
   #
@@ -149,7 +172,7 @@ full_log="$ROOT/.git/tt-test-last.log"
   #
   # Re-measure with the loop in tunatale-1l26.1 if the suite shape changes; the
   # flat 6..12 region is a property of this suite's size, not a constant.
-  uv run pytest --run-oracle -n 6
+  log_step backend "Tests" uv run pytest --run-oracle -n 6
 
   # Clean up coverage data file left by pytest --cov
   uv run coverage erase
@@ -160,23 +183,17 @@ backend_pid=$!
   set -e
   cd "$ROOT/frontend"
 
-  echo "=== Frontend format check ==="
-  bun run fmt:check
+  log_step frontend "Frontend format check" bun run fmt:check
 
-  echo "=== Frontend lint ==="
-  bun run lint
+  log_step frontend "Frontend lint" bun run lint
 
-  echo "=== OpenAPI type check ==="
-  bun run check:api
+  log_step frontend "OpenAPI type check" bun run check:api
 
-  echo "=== Svelte type check ==="
-  bun run check
+  log_step frontend "Svelte type check" bun run check
 
-  echo "=== Frontend tests (with coverage) ==="
-  bun run test:coverage
+  log_step frontend "Frontend tests (with coverage)" bun run test:coverage
 
-  echo "=== E2E smoke tests ==="
-  bun run test:e2e
+  log_step frontend "E2E smoke tests" bun run test:e2e
 ) >"$frontend_log" 2>&1 &
 frontend_pid=$!
 
@@ -196,8 +213,7 @@ frontend_pid=$!
   set -e
   cd "$ROOT/backend"
 
-  echo "=== Peer-sync round-trip ==="
-  uv run pytest tests/test_anki_peer_sync_selfhost.py --run-peer-sync --no-cov
+  log_step peer_sync "Peer-sync round-trip" uv run pytest tests/test_anki_peer_sync_selfhost.py --run-peer-sync --no-cov
 ) >"$peer_sync_log" 2>&1 &
 peer_sync_pid=$!
 
