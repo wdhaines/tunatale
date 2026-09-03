@@ -18,7 +18,7 @@ from app.models.srs_item import Direction, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 
-PREVIEW_URL = "/api/srs/lesson/lesson-1/listen-preview"
+PREVIEW_URL = "/api/srs/content/lesson-1/listen-preview"
 LISTEN_URL = "/api/srs/listen"
 
 
@@ -76,7 +76,7 @@ class TestIgnoredLemmaPreviewAndCommit:
         assert "anna" not in preview_texts
         assert "boris" in preview_texts
 
-        listen = await _post_listen({"lesson_id": "lesson-1"})
+        listen = await _post_listen({"content_id": "lesson-1"})
         assert listen["created"] == 1
         assert db.get_collocation_by_lemma("boris") is not None
         assert db.get_collocation_by_lemma("anna") is None
@@ -141,7 +141,7 @@ class TestCardedIgnoredLemmaPreviewCommitParity:
         assert by_text["anna"]["grade_class"] == "due"
         assert by_text["anna"]["kind"] == "word"
 
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
         # ...and the commit stages exactly the row the preview offered.
         assert db.get_pending_grade(anna_id, Direction.RECOGNITION.value) is not None
         # Control: the non-ignored card-less sibling still gets created.
@@ -205,6 +205,6 @@ class TestNorwegianProperNounIgnore:
         assert "lund" not in preview_texts, f"ignored lemma offered for creation: {preview_texts}"
         assert "alibi" not in preview_texts, f"ignored lemma offered for creation: {preview_texts}"
 
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
         for lem in ("hansen", "lund", "alibi"):
             assert db.get_collocation_by_lemma(lem) is None, f"card created for ignored lemma {lem!r}"

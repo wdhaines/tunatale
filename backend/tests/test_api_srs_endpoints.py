@@ -128,7 +128,7 @@ class TestSRSEndpoints:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-foreign"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-foreign"})
 
         assert response.status_code == 200
         # The English phrase should contribute 0 lemmas (registered = 0 lemmas + 0 key phrases)
@@ -162,7 +162,7 @@ class TestSRSEndpoints:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         assert response.status_code == 200
         # kje and je appear in both phrases, but only first sentence stored
@@ -196,7 +196,7 @@ class TestSRSEndpoints:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         assert response.status_code == 200
         data = response.json()
@@ -230,7 +230,7 @@ class TestSRSEndpoints:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         # Key phrases no longer create collocations
@@ -272,8 +272,8 @@ class TestSRSEndpoints:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         assert response.status_code == 200
         assert db.count_collocations() == 0
@@ -286,7 +286,7 @@ class TestSRSEndpoints:
         app.state.content_store = ContentStore(":memory:")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "nonexistent"})
+            response = await client.post("/api/srs/listen", json={"content_id": "nonexistent"})
 
         assert response.status_code == 404
 
@@ -315,7 +315,7 @@ class TestSRSEndpoints:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         assert response.status_code == 200
         data = response.json()
@@ -374,7 +374,7 @@ class TestSRSEndpoints:
         monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         assert response.status_code == 200
         assert db.get_collocation_by_lemma("dobrodošel") is None
@@ -398,7 +398,7 @@ class TestSRSEndpoints:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         item = db.get_collocation("dober dan")
         assert item is None
@@ -431,7 +431,7 @@ class TestSRSEndpoints:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         assert response.status_code == 200
         assert db.count_collocations() == 1
@@ -466,7 +466,7 @@ class TestSRSEndpoints:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         assert response.status_code == 200
         items_without_anki = db.list_items_without_anki_note()
@@ -493,7 +493,7 @@ class TestSRSEndpoints:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         item = db.get_collocation("dober dan")
         assert item is None
@@ -520,8 +520,8 @@ class TestSRSEndpoints:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            first = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
-            second = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            first = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
+            second = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         assert first.status_code == 200
         assert second.status_code == 200
@@ -548,7 +548,7 @@ class TestSRSEndpoints:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/srs/listen",
-                json={"lesson_id": "lesson-1", "word_ratings": {}},
+                json={"content_id": "lesson-1", "word_ratings": {}},
             )
 
         assert response.status_code == 200

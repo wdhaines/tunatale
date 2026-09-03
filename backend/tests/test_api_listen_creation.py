@@ -80,7 +80,7 @@ class TestListenStagedCreation:
         # known and learning rows are deferred unless explicitly rated, so a
         # test whose subject happens to be a learning card must opt it in.
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1", **ratings})
+            resp = await client.post("/api/srs/listen", json={"content_id": "lesson-1", **ratings})
         assert resp.status_code == 200
         return resp.json()
 
@@ -270,7 +270,7 @@ class TestListenStagedCreation:
         db = self._setup(self._lesson(["banka"]))
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/listen", json={"lesson_id": "no-such-lesson"})
+            resp = await client.post("/api/srs/listen", json={"content_id": "no-such-lesson"})
 
         assert resp.status_code == 404
         assert db.count_listens("no-such-lesson") == 0
@@ -429,7 +429,7 @@ class TestListenReviewCap:
         # known and learning rows are deferred unless explicitly rated, so a
         # test whose subject happens to be a learning card must opt it in.
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1", **ratings})
+            resp = await client.post("/api/srs/listen", json={"content_id": "lesson-1", **ratings})
         assert resp.status_code == 200
         return resp.json()
 
@@ -689,7 +689,7 @@ class TestListenReviewCap:
         assert data["staged"] == 3
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/lesson/lesson-1/review-queue")
+            resp = await client.get("/api/srs/content/lesson-1/review-queue")
         assert resp.status_code == 200
         texts = {q["text"] for q in resp.json()["queue"]}
         assert {"banka", "center", "hotel"} <= texts
@@ -732,7 +732,7 @@ class TestLemmaPlausibilityBulkPath:
 
     async def _listen(self):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            resp = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert resp.status_code == 200
         return resp.json()
 

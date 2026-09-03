@@ -18,7 +18,7 @@ from app.models.syntactic_unit import SyntacticUnit
 from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 
-PREVIEW_URL = "/api/srs/lesson/lesson-1/listen-preview"
+PREVIEW_URL = "/api/srs/content/lesson-1/listen-preview"
 LISTEN_URL = "/api/srs/listen"
 
 
@@ -151,7 +151,7 @@ class TestWellKnownCommitParity:
         _seed_review(db, "anna", days_until_due=400)
         _seed_review(db, "boris", days_until_due=1)
 
-        result = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {}})
+        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {}})
         # boris is "ahead" (due tomorrow) but inside the horizon → staged;
         # anna is "ahead" beyond the horizon → well-known → not staged.
         assert result["staged"] == 1
@@ -163,7 +163,7 @@ class TestWellKnownCommitParity:
 
         result = await _post_listen(
             {
-                "lesson_id": "lesson-1",
+                "content_id": "lesson-1",
                 "word_ratings": {"anna": "good"},
             }
         )
@@ -210,7 +210,7 @@ class TestKPIgnoredInPreviewAndCommit:
         db = app.state.srs_db
         db.add_ignored_lemma("sl", "dober dan")
 
-        result = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {}})
+        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {}})
         assert result["created"] == 1
 
     async def test_well_known_kp_skipped_in_commit(self):
@@ -227,7 +227,7 @@ class TestKPIgnoredInPreviewAndCommit:
         rec.reps = 5
         db.update_collocation(item)
 
-        result = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {}})
+        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {}})
         # zdravo is well-known and not in word_ratings → skipped
         # Only anna is created
         assert result["created"] == 1

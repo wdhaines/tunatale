@@ -57,7 +57,7 @@ async function seedListened(lessonId: string, count: number) {
 }
 
 const mockRenderAudio = vi.mocked(api.renderAudio);
-const mockGetTranscript = vi.mocked(api.getLessonTranscript);
+const mockGetTranscript = vi.mocked(api.getTranscript);
 const mockSetSRSItemState = vi.mocked(api.setSRSItemState);
 const mockSuspendSRSItem = vi.mocked(api.suspendSRSItem);
 const mockUntrackSRSItem = vi.mocked(api.untrackSRSItem);
@@ -286,7 +286,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(await findByText("a coffee please")).toBeTruthy();
   });
 
-  it("still shows LessonPlayer if getLessonTranscript fails after render", async () => {
+  it("still shows LessonPlayer if getTranscript fails after render", async () => {
     mockRenderAudio.mockResolvedValue(audio);
     mockGetTranscript.mockRejectedValue(new Error("transcript unavailable"));
 
@@ -510,7 +510,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
   });
 
   it("drops the post-render transcript when navigation happens between the two fetches", async () => {
-    // handleRenderAudio awaits renderAudio, then getLessonTranscript. Navigating
+    // handleRenderAudio awaits renderAudio, then getTranscript. Navigating
     // in that window must not let lesson A's transcript land on lesson B.
     mockRenderAudio.mockResolvedValueOnce(audio);
     let resolveTranscript!: (t: TranscriptData) => void;

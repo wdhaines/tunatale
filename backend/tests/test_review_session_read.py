@@ -206,54 +206,50 @@ class TestRendering:
         assert "ffmpeg" in resp.json()["detail"]
 
 
-# ── the transcript, which is why there is one reading UI and not two ─────────
+# ── the transcript comes from the SHARED content route ───────────────────────
 
 
 class TestTheTranscript:
-    """GET /api/review-sessions/{id}/transcript.
+    """A session's transcript is served by GET /api/srs/content/{id}/transcript.
 
-    ⚠️ THIS ROUTE EXISTS TO PREVENT A FORKED UI. Without it the reader had to
-    render the session body by hand, and that hand-rolled view was worse within a
-    day — it opened the scene with the narrator's "Natural Speed" section header,
-    which the real transcript builder has always known to drop. The only thing
-    standing between a session and the shared reading component was a lookup, and
-    a lookup is not a reason to fork a UI.
+    ⚠️ THERE IS NO SESSION-SPECIFIC TRANSCRIPT ROUTE, and there was briefly. The
+    same obstacle — a handler whose only lesson-specific line was
+    ``store.get_lesson(id)`` — appeared five times in this epic: render,
+    transcript, listen, review-queue, listen-preview. Adding a twin per endpoint
+    was the wrong shape; ``ContentStore.get_readable_content`` resolves either,
+    and the route family was renamed to say so.
     """
 
-    async def test_it_returns_a_transcript_for_a_session(self, stored):
+    async def test_a_session_resolves_through_the_content_route(self, stored):
         from app.srs.database import SRSDatabase
 
         stored.save_review_session("sess-1", "sl", "2026-09-02", _lesson())
         app.state.srs_db = SRSDatabase(":memory:")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/review-sessions/sess-1/transcript")
+            resp = await client.get("/api/srs/content/sess-1/transcript")
 
         assert resp.status_code == 200
-        body = resp.json()
-        assert body["lesson_id"] == "sess-1"
-        assert isinstance(body["dialogue_lines"], list)
+        assert resp.json()["lesson_id"] == "sess-1"
 
-    async def test_an_unknown_session_is_404(self, stored):
-        from app.srs.database import SRSDatabase
-
-        app.state.srs_db = SRSDatabase(":memory:")
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/review-sessions/nope/transcript")
-
-        assert resp.status_code == 404
-        assert "Review session" in resp.json()["detail"]
-
-    async def test_a_lesson_id_is_not_a_session_id(self, stored):
-        """The two stores stay separate here too — a lesson must not be readable
-        through the session path, or the URL stops meaning anything."""
+    async def test_a_lesson_still_resolves_through_the_same_route(self, stored):
+        """The regression control: widening the lookup must not cost the lesson."""
         from app.srs.database import SRSDatabase
 
         stored.save_lesson("lesson-1", "c1", 1, _lesson())
         app.state.srs_db = SRSDatabase(":memory:")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/review-sessions/lesson-1/transcript")
+            resp = await client.get("/api/srs/content/lesson-1/transcript")
+
+        assert resp.status_code == 200
+
+    async def test_an_unknown_id_is_404(self, stored):
+        from app.srs.database import SRSDatabase
+
+        app.state.srs_db = SRSDatabase(":memory:")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/content/nope/transcript")
 
         assert resp.status_code == 404

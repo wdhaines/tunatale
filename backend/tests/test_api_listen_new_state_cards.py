@@ -24,9 +24,9 @@ from app.models.srs_item import Direction, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 
-PREVIEW_URL = "/api/srs/lesson/lesson-1/listen-preview"
+PREVIEW_URL = "/api/srs/content/lesson-1/listen-preview"
 LISTEN_URL = "/api/srs/listen"
-COMMIT_URL = "/api/srs/lesson/lesson-1/commit-pending"
+COMMIT_URL = "/api/srs/content/lesson-1/commit-pending"
 
 
 def _setup_lesson(phrase_text: str, key_phrases=None):
@@ -246,7 +246,7 @@ class TestPreviewCommitParity:
         offered = {c["text"] for c in (await _preview())["candidates"] if c["grade_class"] == "new"}
         assert offered == {"banka"}
 
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
         assert _pending_texts(db) == {"banka"}
 
     async def test_over_budget_new_state_row_is_not_staged(self):
@@ -262,7 +262,7 @@ class TestPreviewCommitParity:
         assert len(live) == 1
         assert len(tail) == 1
 
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
         assert _pending_texts(db) == live
 
 
@@ -278,7 +278,7 @@ class TestSharedIntroductionBudget:
         assert sum(1 for c in cands if c["will_create"] is True) == 2
         assert sum(1 for c in cands if c["will_create"] is False) == 2
 
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
         assert _pending_texts(db) == {c["text"] for c in cands if c["will_create"] is True}
 
     async def test_cards_created_today_are_free(self):
@@ -292,7 +292,7 @@ class TestSharedIntroductionBudget:
         assert row["grade_class"] == "new"
         assert row["will_create"] is True
 
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
         assert _pending_texts(db) == {"banka"}
 
     async def test_a_commoner_creation_candidate_now_outranks_a_new_state_row(self):
@@ -328,7 +328,7 @@ class TestSharedIntroductionBudget:
         assert delo["will_create"] is True
 
         before = {r[0] for r in _all_texts(db)}
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
         assert {r[0] for r in _all_texts(db)} - before == {"delo"}, "the create landed, and only it"
         assert _pending_texts(db) == set(), "the NEW-state row was in the tail, so nothing was staged"
 
@@ -349,7 +349,7 @@ class TestReleaseIntroduces:
         today = anki_today()
         assert db.count_new_introduced_today(today) == 0
 
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
         assert _pending_texts(db) == {"banka"}
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -407,7 +407,7 @@ class TestNewStateRatingPaths:
         _set_new_cap(db, 5)
         _seed_new_state(db, "banka", created_days_ago=3)
 
-        data = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"banka": "skip"}})
+        data = await _post_listen({"content_id": "lesson-1", "word_ratings": {"banka": "skip"}})
 
         assert _pending_texts(db) == set()
         assert data["staged"] == 0
@@ -419,7 +419,7 @@ class TestNewStateRatingPaths:
         _seed_new_state(db, "banka", created_days_ago=3)
 
         data = await _post_listen(
-            {"lesson_id": "lesson-1", "word_ratings": {"banka": "good"}, "confirmed_words": ["banka"]}
+            {"content_id": "lesson-1", "word_ratings": {"banka": "good"}, "confirmed_words": ["banka"]}
         )
 
         assert _pending_texts(db) == set(), "a confirmed grade is applied, never staged"
@@ -447,7 +447,7 @@ class TestNewStateKeyPhrase:
         assert row["will_create"] is True
         assert row["due_at"] is None
 
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
         assert "dober dan" in _pending_texts(db)
 
     async def test_over_budget_new_state_key_phrase_is_not_staged(self):
@@ -470,7 +470,7 @@ class TestNewStateKeyPhrase:
         assert len(live) == 1
         assert len([c for c in cands if c["will_create"] is False]) == 1
 
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
         assert _pending_texts(db) == live
 
 

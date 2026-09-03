@@ -456,6 +456,23 @@ class ContentStore:
             return None
         return Lesson.from_json(row["data_json"])
 
+    def get_readable_content(self, content_id: str) -> Lesson | None:
+        """A lesson OR a review session, whichever holds this id.
+
+        ⚠️ THE SAME OBSTACLE APPEARED FIVE TIMES BEFORE THIS EXISTED. Rendering,
+        the transcript, listen, the review queue and the listen preview each did
+        exactly one lesson-specific thing — ``get_lesson(id)`` — and everything
+        after it operated on a ``Lesson``, which is precisely how a review
+        session is stored. Four of those were worked around one at a time; this
+        is the general fix, and the reason the ``/api/srs/content/{id}/...``
+        routes can serve both.
+
+        Lessons are checked first, so a lesson wins an id collision. Ids are
+        minted from titles and a clash is possible in principle; the order is a
+        decision, not an accident.
+        """
+        return self.get_lesson(content_id) or self.get_review_session(content_id)
+
     def get_review_session_row(self, session_id: str) -> dict | None:
         """The session's metadata without its body, or ``None`` if absent."""
         with self._get_conn() as conn:

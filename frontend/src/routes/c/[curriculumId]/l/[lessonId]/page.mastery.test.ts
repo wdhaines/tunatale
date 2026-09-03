@@ -44,7 +44,7 @@ async function seedListened(lessonId: string, count: number) {
   await listenedStore.hydrate();
 }
 
-const mockGetTranscript = vi.mocked(api.getLessonTranscript);
+const mockGetTranscript = vi.mocked(api.getTranscript);
 const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
 
 beforeEach(() => {

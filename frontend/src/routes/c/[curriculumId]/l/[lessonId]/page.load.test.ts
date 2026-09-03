@@ -32,7 +32,7 @@ import Page from "./+page.svelte";
 import { curriculum, lesson, audio, stubViewport } from "./page-test-helpers";
 
 const mockMarkAsListened = vi.mocked(api.markAsListened);
-const mockGetTranscript = vi.mocked(api.getLessonTranscript);
+const mockGetTranscript = vi.mocked(api.getTranscript);
 const mockSubmitDrill = vi.mocked(api.submitDrill);
 const mockUndoGrade = vi.mocked(api.undoGrade);
 const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
@@ -70,7 +70,7 @@ describe("load function for /c/[curriculumId]/l/[lessonId]", () => {
         getCurriculum: vi.fn().mockResolvedValue(curriculum),
         getLesson: vi.fn().mockResolvedValue(lesson),
         getLessonAudio: vi.fn().mockRejectedValue(new Error("Not Found")),
-        getLessonTranscript: vi.fn().mockRejectedValue(new Error("Not Found")),
+        getTranscript: vi.fn().mockRejectedValue(new Error("Not Found")),
       },
     }));
 

@@ -9,10 +9,12 @@
  * just with a different source" — so the SOURCE is the only parameter, and the
  * behaviour has exactly one implementation.
  *
- * Only three things vary between the two callers:
- *   contentId       — a lesson id or a session id; both are just ids
- *   languageCode    — the content's language
- *   fetchTranscript — which endpoint to re-read after a mutation
+ * Only two things vary between the two callers:
+ *   contentId    — a lesson id or a session id; both are just ids
+ *   languageCode — the content's language
+ *
+ * There is no transcript-fetcher parameter: /api/srs/content/{id}/transcript
+ * resolves either, so even the SOURCE is now shared.
  *
  * Everything else (createBaseCard, submitDrill, undoGrade, the tooltip actions)
  * is content-agnostic and always was.
@@ -30,7 +32,6 @@ import { queueStatsStore } from "$lib/stores/queueStats.svelte";
 export interface ReadingActionsOptions {
   contentId: string;
   languageCode: string;
-  fetchTranscript: (id: string) => Promise<TranscriptData>;
   getTranscript: () => TranscriptData | null;
   setTranscript: (t: TranscriptData) => void;
   setError: (message: string) => void;
@@ -55,7 +56,9 @@ export function createReadingActions(opts: ReadingActionsOptions) {
   let undoable = $state<{ itemId: number; direction: "recognition" | "production" } | null>(null);
   let wordActionInFlight = false;
 
-  const refetch = async () => opts.setTranscript(await opts.fetchTranscript(opts.contentId));
+  // No fetcher parameter any more: /api/srs/content/{id}/transcript resolves a
+  // lesson OR a review session, so both callers re-read through the same route.
+  const refetch = async () => opts.setTranscript(await api.getTranscript(opts.contentId));
 
   const guarded = async (fn: () => Promise<void>) => {
     opts.setError("");

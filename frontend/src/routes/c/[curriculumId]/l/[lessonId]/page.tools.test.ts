@@ -33,7 +33,7 @@ import { curriculum, lesson, audio, transcript, stubViewport } from "./page-test
 
 const mockMarkAsListened = vi.mocked(api.markAsListened);
 const mockGetLessonAudio = vi.mocked(api.getLessonAudio);
-const mockGetTranscript = vi.mocked(api.getLessonTranscript);
+const mockGetTranscript = vi.mocked(api.getTranscript);
 const mockRegenerateDay = vi.mocked(api.regenerateDay);
 const mockGetStorySource = vi.mocked(api.getStorySource);
 const mockImportStory = vi.mocked(api.importStory);

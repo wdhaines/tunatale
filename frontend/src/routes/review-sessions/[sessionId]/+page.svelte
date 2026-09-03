@@ -41,7 +41,6 @@
 		get languageCode() {
 			return data.session.language_code;
 		},
-		fetchTranscript: (id) => api.getReviewSessionTranscript(id),
 		getTranscript: () => transcript,
 		setTranscript: (t) => (transcript = t),
 		setError: (m) => (error = m)
@@ -86,7 +85,7 @@
 		// take seconds on a cold backend. The lesson page does the same, for the
 		// same reason — the shell renders at once and the words arrive after.
 		try {
-			transcript = await api.getReviewSessionTranscript(data.session.id);
+			transcript = await api.getTranscript(data.session.id);
 		} catch {
 			transcript = null;
 		} finally {

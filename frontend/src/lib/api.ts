@@ -859,7 +859,7 @@ export class TunaTaleAPI {
     return this.request("/api/audio/render", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lesson_id: lessonId }),
+      body: JSON.stringify({ content_id: lessonId }),
     });
   }
 
@@ -1043,29 +1043,27 @@ export class TunaTaleAPI {
   async fetchLessonReviewQueue(
     lessonId: string,
   ): Promise<{ queue: ReviewQueueItem[]; has_unreviewed_listen: boolean }> {
-    return this.request(`/api/srs/lesson/${lessonId}/review-queue`);
+    return this.request(`/api/srs/content/${lessonId}/review-queue`);
   }
 
   async markLessonReviewed(lessonId: string): Promise<{ ok: boolean }> {
-    return this.request(`/api/srs/lesson/${lessonId}/reviewed`, { method: "POST" });
+    return this.request(`/api/srs/content/${lessonId}/reviewed`, { method: "POST" });
   }
 
   async getListenPreview(lessonId: string): Promise<ListenPreview> {
-    return this.request(`/api/srs/lesson/${lessonId}/listen-preview`);
+    return this.request(`/api/srs/content/${lessonId}/listen-preview`);
   }
 
   async commitPending(lessonId: string): Promise<CommitPendingResponse> {
-    return this.request(`/api/srs/lesson/${lessonId}/commit-pending`, {
+    return this.request(`/api/srs/content/${lessonId}/commit-pending`, {
       method: "POST",
     });
   }
 
-  async getReviewSessionTranscript(sessionId: string): Promise<TranscriptData> {
-    return this.request(`/api/review-sessions/${sessionId}/transcript`);
-  }
-
-  async getLessonTranscript(lessonId: string): Promise<TranscriptData> {
-    return this.request(`/api/srs/lesson/${lessonId}/transcript`);
+  /** The transcript for a lesson OR a review session — one route resolves both
+   *  (ContentStore.get_readable_content). */
+  async getTranscript(contentId: string): Promise<TranscriptData> {
+    return this.request(`/api/srs/content/${contentId}/transcript`);
   }
 
   async createSRSItem(payload: CreateSRSItemRequest): Promise<SRSItemDetail> {

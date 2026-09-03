@@ -139,7 +139,7 @@
 		transcript = null;
 		transcriptLoading = true;
 		error = '';
-		api.getLessonTranscript(lessonId)
+		api.getTranscript(lessonId)
 			.then((t) => {
 				if (data.lesson.id === lessonId) transcript = t;
 			})
@@ -162,7 +162,7 @@
 			const rendered = await api.renderAudio(lessonId);
 			if (data.lesson.id !== lessonId) return;
 			audio = rendered;
-			const t = await api.getLessonTranscript(lessonId);
+			const t = await api.getTranscript(lessonId);
 			if (data.lesson.id !== lessonId) return;
 			transcript = t;
 		} catch (e) {
@@ -237,7 +237,7 @@
 		error = '';
 		const lessonId = data.lesson.id;
 		try {
-			const t = await api.getLessonTranscript(lessonId);
+			const t = await api.getTranscript(lessonId);
 			if (data.lesson.id === lessonId) transcript = t;
 		} catch (e) {
 			if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
@@ -378,7 +378,7 @@
 		listenResult = result;
 		try {
 			await listenedStore.refresh();
-			const t = await api.getLessonTranscript(lessonId);
+			const t = await api.getTranscript(lessonId);
 			if (data.lesson.id === lessonId) transcript = t;
 			await fetchQueue();
 			queueStatsStore.refresh();
@@ -436,7 +436,6 @@
 		get languageCode() {
 			return data.lesson.language_code;
 		},
-		fetchTranscript: (id) => api.getLessonTranscript(id),
 		getTranscript: () => transcript,
 		setTranscript: (t) => (transcript = t),
 		setError: (m) => (error = m)

@@ -53,7 +53,7 @@ from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.models.syntactic_unit import SyntacticUnit
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 
-PREVIEW_URL = "/api/srs/lesson/lesson-1/listen-preview"
+PREVIEW_URL = "/api/srs/content/lesson-1/listen-preview"
 LISTEN_URL = "/api/srs/listen"
 
 # ── The interleaving fixture ─────────────────────────────────────────────
@@ -341,7 +341,7 @@ class TestOnePoolAtTheApi:
         preview = await _preview()
 
         assert _live_texts(preview) == {"delo"}
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
         assert _created(db, _CREATES) == {"delo"}
         assert _pending_texts(db) == set(), "no NEW-state row was live, so none was staged"
 
@@ -361,7 +361,7 @@ class TestOnePoolAtTheApi:
         assert live & set(_CREATES), "creates starved"
         assert live & set(_NEW_STATE), "NEW-state rows starved"
 
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
         assert _created(db, _CREATES) == {"delo"}
         assert _pending_texts(db) == {"voda"}
 
@@ -378,7 +378,7 @@ class TestOnePoolAtTheApi:
         promised = _live_texts(preview)
         assert promised == {"delo", "voda", "okno"}
 
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
 
         landed = _created(db, _CREATES) | _pending_texts(db)
         assert landed == promised
@@ -408,7 +408,7 @@ class TestOnePoolAtTheApi:
         assert "riba" in _live_texts(preview)
         assert _live_texts(preview) == {"riba"}, "nothing else may be live at zero budget"
 
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
         assert _pending_texts(db) == {"riba"}
         assert _created(db, _CREATES) == set(), "zero budget creates nothing"
 
@@ -424,7 +424,7 @@ class TestOnePoolAtTheApi:
         preview = await _preview()
 
         assert _live_texts(preview) == {"dober dan"}
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
         assert _pending_texts(db) == {"dober dan"}
         assert _created(db, _CREATES) == set()
 
@@ -436,7 +436,7 @@ class TestSkipAndOptInSurviveTheOnePool:
         (`25f2cab`) — a `break` here would also stop the opt-in test below."""
         db = _new_state_fixture(cap=1)
 
-        await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"delo": "skip"}})
+        await _post_listen({"content_id": "lesson-1", "word_ratings": {"delo": "skip"}})
 
         assert _created(db, _CREATES) == set(), "the slot was consumed, not promoted"
         assert _pending_texts(db) == set(), "and nothing was promoted into it"
@@ -447,6 +447,6 @@ class TestSkipAndOptInSurviveTheOnePool:
         the over-budget rows instead of breaking out at the first one."""
         db = _new_state_fixture(cap=1)
 
-        await _post_listen({"lesson_id": "lesson-1", "over_cap_words": ["okno"]})
+        await _post_listen({"content_id": "lesson-1", "over_cap_words": ["okno"]})
 
         assert "okno" in _created(db, _CREATES)

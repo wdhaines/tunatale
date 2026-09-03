@@ -28,7 +28,7 @@ import Page from "./+page.svelte";
 import { curriculum, lesson, audio, transcript, stubViewport } from "./page-test-helpers";
 
 const mockGetListens = vi.mocked(api.getListens);
-const mockGetTranscript = vi.mocked(api.getLessonTranscript);
+const mockGetTranscript = vi.mocked(api.getTranscript);
 const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
 
 async function seedListened(lessonId: string, count: number) {

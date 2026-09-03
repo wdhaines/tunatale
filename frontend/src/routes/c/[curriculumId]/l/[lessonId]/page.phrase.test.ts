@@ -31,7 +31,7 @@ import Page from "./+page.svelte";
 import { curriculum, lesson, audio, stubViewport } from "./page-test-helpers";
 
 const mockMarkAsListened = vi.mocked(api.markAsListened);
-const mockGetTranscript = vi.mocked(api.getLessonTranscript);
+const mockGetTranscript = vi.mocked(api.getTranscript);
 const mockCreateSRSItem = vi.mocked(api.createSRSItem);
 const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
 
@@ -111,7 +111,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       ],
     };
 
-    it("calls createSRSItem and then getLessonTranscript on success", async () => {
+    it("calls createSRSItem and then getTranscript on success", async () => {
       const createdItem = {
         id: 55,
         text: "centru mesta",

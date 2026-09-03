@@ -100,7 +100,7 @@ class TestExplicitGradesApplyImmediately:
 
         result = await _listen(
             {
-                "lesson_id": "lesson-1",
+                "content_id": "lesson-1",
                 "word_ratings": {"banka": "hard"},
                 "confirmed_words": ["banka"],
             }
@@ -121,7 +121,7 @@ class TestExplicitGradesApplyImmediately:
         db = _setup_lesson("Banka riba")
         _seed_review_due(db, "banka")
 
-        result = await _listen({"lesson_id": "lesson-1", "confirmed_words": ["banka"]})
+        result = await _listen({"content_id": "lesson-1", "confirmed_words": ["banka"]})
 
         assert _pending(db, "banka") is None
         assert _reps(db, "banka") == 6
@@ -132,7 +132,7 @@ class TestExplicitGradesApplyImmediately:
         db = _setup_lesson("Banka riba")
         _seed_review_due(db, "banka")
 
-        result = await _listen({"lesson_id": "lesson-1"})
+        result = await _listen({"content_id": "lesson-1"})
 
         row = _pending(db, "banka")
         assert row is not None, "an unreviewed auto-grade must still be staged"
@@ -147,7 +147,7 @@ class TestExplicitGradesApplyImmediately:
 
         result = await _listen(
             {
-                "lesson_id": "lesson-1",
+                "content_id": "lesson-1",
                 "word_ratings": {"banka": "skip"},
                 "confirmed_words": ["banka"],
             }
@@ -164,7 +164,7 @@ class TestExplicitGradesApplyImmediately:
 
         result = await _listen(
             {
-                "lesson_id": "lesson-1",
+                "content_id": "lesson-1",
                 "word_ratings": {"banka": "easy", "riba": "skip"},
                 "confirmed_words": ["banka", "riba"],
             }
@@ -181,7 +181,7 @@ class TestExplicitGradesApplyImmediately:
 
         result = await _listen(
             {
-                "lesson_id": "lesson-1",
+                "content_id": "lesson-1",
                 "kp_ratings": {"dober dan": "hard"},
                 "confirmed_kps": ["dober dan"],
             }
@@ -203,7 +203,7 @@ class TestExplicitGradesApplyImmediately:
 
         await _listen(
             {
-                "lesson_id": "lesson-1",
+                "content_id": "lesson-1",
                 "word_ratings": {"banka": "hard"},
                 "confirmed_words": ["banka"],
             }
@@ -223,7 +223,7 @@ class TestExplicitGradesApplyImmediately:
 
         await _listen(
             {
-                "lesson_id": "lesson-1",
+                "content_id": "lesson-1",
                 "word_ratings": {"banka": "hard", "riba": "good", "mesto": "easy"},
                 "confirmed_words": ["banka", "riba", "mesto"],
             }
@@ -260,7 +260,7 @@ class TestConfirmationIsNotInferredFromPresence:
         rec.due_at = due_at_rollover_utc(anki_today() + timedelta(days=400))
         db.update_collocation(item)
 
-        result = await _listen({"lesson_id": "lesson-1", "word_ratings": {"banka": "good"}})
+        result = await _listen({"content_id": "lesson-1", "word_ratings": {"banka": "good"}})
 
         assert _pending(db, "banka") is not None, "unconfirmed must stage, whatever the rating map says"
         assert _reps(db, "banka") == 5
@@ -295,7 +295,7 @@ class TestConfirmedGradesClearAnyPendingRow:
         _seed_review_due(db, "banka")
         self._stage(db, "banka", lesson_id="lesson-2")
 
-        await _listen({"lesson_id": "lesson-1", "word_ratings": {"banka": "easy"}, "confirmed_words": ["banka"]})
+        await _listen({"content_id": "lesson-1", "word_ratings": {"banka": "easy"}, "confirmed_words": ["banka"]})
 
         assert _pending(db, "banka") is None, "a just-graded card must not keep a pending row"
 
@@ -309,11 +309,11 @@ class TestConfirmedGradesClearAnyPendingRow:
         _seed_review_due(db, "banka")
         self._stage(db, "banka")
 
-        await _listen({"lesson_id": "lesson-1", "word_ratings": {"banka": "easy"}, "confirmed_words": ["banka"]})
+        await _listen({"content_id": "lesson-1", "word_ratings": {"banka": "easy"}, "confirmed_words": ["banka"]})
         reps_after_confirm = _reps(db, "banka")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            commit = await client.post("/api/srs/lesson/lesson-1/commit-pending")
+            commit = await client.post("/api/srs/content/lesson-1/commit-pending")
         assert commit.status_code == 200, commit.text
         assert commit.json()["applied"] == 0, "nothing left to release"
 

@@ -135,7 +135,7 @@ class TestInflectedFormResolvesToTheCardThatTeachesIt:
         db.set_anki_state_cache("daily_review_cap", "10")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            resp = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert resp.status_code == 200
 
         assert _count_rows(db, "ferskt") == 0, "listen minted a duplicate of a word the deck already inflects"
@@ -148,7 +148,7 @@ class TestInflectedFormResolvesToTheCardThatTeachesIt:
         db.set_anki_state_cache("daily_review_cap", "10")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            resp = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert resp.status_code == 200
         assert resp.json()["staged"] == 1, "the inflected surface did not stage its base card"
 
@@ -158,7 +158,7 @@ class TestInflectedFormResolvesToTheCardThatTeachesIt:
         _seed_card(db, "fersk", "fresh", FERSK_INFLECTIONS, review_due=True)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/lesson/lesson-1/transcript")
+            resp = await client.get("/api/srs/content/lesson-1/transcript")
         assert resp.status_code == 200
         words = [w for line in resp.json()["dialogue_lines"] for w in line["words"]]
         ferskt = next(w for w in words if w["surface"].lower() == "ferskt")
@@ -180,7 +180,7 @@ class TestResolutionRefusesWhenTheEvidenceIsAmbiguous:
         db.set_anki_state_cache("daily_review_cap", "10")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            resp = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert resp.status_code == 200
         assert _count_rows(db, "lofte") == 1, "an ambiguous inflected form must not resolve to one of its claimants"
 
@@ -196,7 +196,7 @@ class TestResolutionRefusesWhenTheEvidenceIsAmbiguous:
         db.set_anki_state_cache("daily_review_cap", "10")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            resp = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert resp.status_code == 200
 
         graded_ids = {row["collocation_id"] for row in db.get_pending_grades("lesson-1")}

@@ -161,10 +161,10 @@ describe("TunaTaleAPI", () => {
       expect(result.session_date).toBe("2026-09-02");
     });
 
-    it("getReviewSessionTranscript uses the session's own transcript path", async () => {
-      // NOT /api/srs/lesson/{id}/transcript: that one looks the id up in the
-      // lessons table and misses. This route is what lets a session render
-      // through the SAME Transcript component a lesson does.
+    it("getTranscript resolves a session through the shared content route", async () => {
+      // One route for both surfaces: the backend's get_readable_content tries
+      // lessons then review sessions, so there is no session-specific
+      // transcript endpoint to call — and no branch here to get wrong.
       vi.stubGlobal(
         "fetch",
         vi
@@ -172,9 +172,9 @@ describe("TunaTaleAPI", () => {
           .mockResolvedValue(mockOk({ lesson_id: "sess-1", key_phrases: [], dialogue_lines: [] })),
       );
 
-      const result = await api.getReviewSessionTranscript("sess-1");
+      const result = await api.getTranscript("sess-1");
 
-      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/review-sessions/sess-1/transcript`);
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/content/sess-1/transcript`);
       expect(result.lesson_id).toBe("sess-1");
     });
 
@@ -982,7 +982,7 @@ describe("TunaTaleAPI", () => {
       );
     });
 
-    it("getLessonTranscript calls GET /api/srs/lesson/{id}/transcript", async () => {
+    it("getTranscript calls GET /api/srs/content/{id}/transcript", async () => {
       const mockTranscript = {
         lesson_id: "lesson-1",
         key_phrases: [{ phrase: "Zdravo", translation: "Hello" }],
@@ -1008,18 +1008,18 @@ describe("TunaTaleAPI", () => {
       };
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(mockTranscript)));
 
-      const result = await api.getLessonTranscript("lesson-1");
+      const result = await api.getTranscript("lesson-1");
 
-      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/lesson/lesson-1/transcript`);
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/content/lesson-1/transcript`);
       expect(result.lesson_id).toBe("lesson-1");
       expect(result.dialogue_lines).toHaveLength(1);
     });
 
-    it("getLessonTranscript throws on non-ok response", async () => {
+    it("getTranscript throws on non-ok response", async () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail()));
 
-      await expect(api.getLessonTranscript("lesson-1")).rejects.toThrow(
-        "GET /api/srs/lesson/lesson-1/transcript: Internal Server Error",
+      await expect(api.getTranscript("lesson-1")).rejects.toThrow(
+        "GET /api/srs/content/lesson-1/transcript: Internal Server Error",
       );
     });
 
@@ -1978,31 +1978,31 @@ describe("TunaTaleAPI", () => {
   });
 
   describe("fetchLessonReviewQueue", () => {
-    it("GETs /api/srs/lesson/{id}/review-queue and returns queue", async () => {
+    it("GETs /api/srs/content/{id}/review-queue and returns queue", async () => {
       const queue = [{ id: 1, text: "foo", direction: "recognition" }];
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ queue })));
 
       const result = await api.fetchLessonReviewQueue("lesson-1");
 
-      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/lesson/lesson-1/review-queue`);
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/content/lesson-1/review-queue`);
       expect(result).toEqual({ queue });
     });
 
     it("throws on non-ok response", async () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Not Found")));
       await expect(api.fetchLessonReviewQueue("missing")).rejects.toThrow(
-        "GET /api/srs/lesson/missing/review-queue: Not Found",
+        "GET /api/srs/content/missing/review-queue: Not Found",
       );
     });
   });
 
   describe("markLessonReviewed", () => {
-    it("POSTs /api/srs/lesson/{id}/reviewed and returns ok", async () => {
+    it("POSTs /api/srs/content/{id}/reviewed and returns ok", async () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ ok: true })));
 
       const result = await api.markLessonReviewed("lesson-1");
 
-      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/lesson/lesson-1/reviewed`, {
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/content/lesson-1/reviewed`, {
         method: "POST",
       });
       expect(result).toEqual({ ok: true });
@@ -2011,7 +2011,7 @@ describe("TunaTaleAPI", () => {
     it("throws on non-ok response", async () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail("Not Found")));
       await expect(api.markLessonReviewed("missing")).rejects.toThrow(
-        "POST /api/srs/lesson/missing/reviewed: Not Found",
+        "POST /api/srs/content/missing/reviewed: Not Found",
       );
     });
   });
@@ -2316,7 +2316,7 @@ describe("image methods", () => {
     expect(result.image_url).toBeNull();
   });
 
-  it("getListenPreview calls GET /api/srs/lesson/:id/listen-preview", async () => {
+  it("getListenPreview calls GET /api/srs/content/:id/listen-preview", async () => {
     const preview = {
       candidates: [
         {
@@ -2343,20 +2343,20 @@ describe("image methods", () => {
 
     const result = await api.getListenPreview("l1");
 
-    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/lesson/l1/listen-preview`);
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/content/l1/listen-preview`);
     expect(result.candidates).toHaveLength(2);
     expect(result.candidates[0].kind).toBe("create");
     expect(result.candidates[1].item_id).toBe(5);
   });
 
-  it("commitPending calls POST /api/srs/lesson/:id/commit-pending with no body", async () => {
+  it("commitPending calls POST /api/srs/content/:id/commit-pending with no body", async () => {
     const resp = { status: "ok", applied: 3 };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(resp)));
 
     const result = await api.commitPending("l1");
 
     expect(fetch).toHaveBeenCalledWith(
-      `${BASE}/api/srs/lesson/l1/commit-pending`,
+      `${BASE}/api/srs/content/l1/commit-pending`,
       expect.objectContaining({
         method: "POST",
       }),

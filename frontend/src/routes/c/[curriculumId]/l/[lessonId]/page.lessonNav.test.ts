@@ -30,7 +30,7 @@ import Page from "./+page.svelte";
 import { curriculum, lesson, audio, stubViewport } from "./page-test-helpers";
 
 const mockGetProgress = vi.mocked(api.getCurriculumProgress);
-const mockGetTranscript = vi.mocked(api.getLessonTranscript);
+const mockGetTranscript = vi.mocked(api.getTranscript);
 
 beforeEach(() => {
   vi.clearAllMocks();

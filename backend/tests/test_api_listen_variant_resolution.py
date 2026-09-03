@@ -76,7 +76,7 @@ async def _transcript_resolves_mot(client) -> None:
 
     If THIS assertion fails the seed shape is wrong — fix the test setup,
     not the invariant."""
-    resp = await client.get("/api/srs/lesson/lesson-1/transcript")
+    resp = await client.get("/api/srs/content/lesson-1/transcript")
     assert resp.status_code == 200
     words = [w for line in resp.json()["dialogue_lines"] for w in line["words"]]
     mot = next(w for w in words if w["surface"].lower() == "mot")
@@ -96,7 +96,7 @@ class TestVariantCardResolutionConservation:
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await _transcript_resolves_mot(client)
-            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            resp = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert resp.status_code == 200
         data = resp.json()
 
@@ -120,9 +120,9 @@ class TestVariantCardResolutionConservation:
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await _transcript_resolves_mot(client)
-            listen = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            listen = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
             assert listen.json()["staged"] == 1, "listen missed the variant card (resolution drift)"
-            resp = await client.get("/api/srs/lesson/lesson-1/review-queue")
+            resp = await client.get("/api/srs/content/lesson-1/review-queue")
         assert resp.status_code == 200
         texts = [i["text"] for i in resp.json().get("queue", [])]
         assert "mot, imot" in texts, "scoped queue missed the variant card (resolution drift)"
@@ -136,7 +136,7 @@ class TestVariantCardResolutionConservation:
         db.set_anki_state_cache("daily_review_cap", "10")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         with db._get_conn() as conn:
             n = conn.execute("SELECT COUNT(*) FROM collocations WHERE text = 'mot' OR lemma = 'mot'").fetchone()[0]

@@ -2010,6 +2010,10 @@
             "title": "Confirmed Words",
             "type": "array"
           },
+          "content_id": {
+            "title": "Content Id",
+            "type": "string"
+          },
           "kp_ratings": {
             "additionalProperties": {
               "enum": [
@@ -2024,10 +2028,6 @@
             "default": {},
             "title": "Kp Ratings",
             "type": "object"
-          },
-          "lesson_id": {
-            "title": "Lesson Id",
-            "type": "string"
           },
           "over_cap_kps": {
             "default": [],
@@ -2062,7 +2062,7 @@
           }
         },
         "required": [
-          "lesson_id"
+          "content_id"
         ],
         "title": "ListenRequest",
         "type": "object"
@@ -5870,17 +5870,210 @@
         ]
       }
     },
-    "/api/review-sessions/{session_id}/transcript": {
-      "get": {
-        "description": "The same transcript a lesson gets, for a session.\n\n\u26a0\ufe0f THIS EXISTS SO THERE IS ONE READING UI, NOT TWO. Without it the reader\nhad to render the session body by hand, which produced a second-class\ntranscript that drifted from the lesson page's the moment either changed \u2014\nand it did, immediately: it opened the scene with the narrator's \"Natural\nSpeed\" section header, which the real transcript builder has always known to\ndrop. Reusing the builder was always the right answer; the only thing in the\nway was a lookup, and a lookup is not a reason to fork a UI.\n\nIts own path rather than a fallback inside the lesson route, for the reason\nthe whole epic exists: a session is not a lesson, and a URL saying otherwise\nis the same mistake one layer down.",
-        "operationId": "get_review_session_transcript_api_review_sessions__session_id__transcript_get",
+    "/api/srs/backfill-translations": {
+      "post": {
+        "description": "One-time repair: fill empty translations from all stored lesson glosses.",
+        "operationId": "backfill_translations_api_srs_backfill_translations_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackfillTranslationsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Backfill Translations",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/content/{content_id}/commit-pending": {
+      "post": {
+        "description": "Bulk \"Sync it\": release every staged grade for a lesson without reviewing it.\n\nApplies each pending row at its provisional rating through the SAME path a\nper-card release takes (``schedule`` \u2192 revlog \u2192 ``dirty_fsrs``), then clears\nit. Afterwards these are ordinary dirty grades and the next normal \"Sync to\nAnkiWeb\" pushes them \u2014 this endpoint deliberately does NOT sync by itself.\n\nOne shared balancer and a monotonic grade clock across the batch, exactly as\nthe pre-staging /listen grade loop had: ``tt_revlog.id`` is a millisecond PK\nand ``append_revlog`` is INSERT OR IGNORE, so two grades in the same\nmillisecond would silently drop one.",
+        "operationId": "commit_pending_grades_api_srs_content__content_id__commit_pending_post",
         "parameters": [
           {
             "in": "path",
-            "name": "session_id",
+            "name": "content_id",
             "required": true,
             "schema": {
-              "title": "Session Id",
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommitPendingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Commit Pending Grades",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/content/{content_id}/listen-preview": {
+      "get": {
+        "description": "Read-only classification of what a listen would stage for a lesson.\n\nThe ``create`` rows are every untracked lemma, flagged with ``will_create``\nagainst the same per-listen introduction budget ``mark_lesson_listened``\nuses (``resolve_daily_new_cap`` minus today's introductions and still-NEW\nsame-day creations): rows within budget are True (live), the over-budget\ntail is False. Without the flag the preview and the commit disagree \u2014 a\nsame-day re-listen has ~0 budget left and would create nothing even though\nthe preview showed every untracked lemma as checked.\n\nCreations do **not** get their own budget. ``_allocate_intro_pool`` ranks\nthem in ONE pool with the NEW-state rows, by corpus frequency across both\nkinds (F-2), so a common untracked lemma can outrank a rarer card that is\nalready in the deck. Cards created earlier today are free and always live;\nNEW-state key phrases lead the charged order and are never\nfrequency-ranked (a phrase is OOV, so ranking it would sink every key\nphrase below every word).\n\nTracked word/kp candidates follow the creations, grouped (new \u2192 learning \u2192\ndue \u2192 ahead) and then ordered by ``_tracked_sort_key``: ripening time for\nthe learning group, due DAY then mastery ascending (least-known first) for\nthe two review groups. Strictly read-only \u2014 no pending\nwrites, no card creation, no side effects beyond the\n``_analyze_lesson_words`` lemma-cache warm-up. The response informs the\nfrontend preview modal without committing anything.\n\nArray order (frontend contract): create rows come first, in rank order,\nlive rows (``will_create`` True) before tail rows (``will_create`` False);\nthen the tracked rows sorted as today. Do not reorder or interleave. Live\ncreates stay a prefix of the create list even though the pool interleaves\nthe two kinds, because the live cut is a prefix of the ranked pool and the\ncreates keep their relative order inside it. The preview and commit agree\nbecause both make the SAME ``_allocate_intro_pool`` call with the same\n``zipf`` callable (resolved once per request via ``_zipf_for``), so the\nfirst N live create rows are exactly what ``mark_lesson_listened`` will\ncreate. Un-checking one does NOT promote the next-ranked tail row: a skip\nconsumes its slot server-side (``1535071``), which is why ``will_create``\nis a static flag on the response rather than something the frontend\nre-derives from the current ratings.",
+        "operationId": "get_listen_preview_api_srs_content__content_id__listen_preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListenPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Listen Preview",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/content/{content_id}/review-queue": {
+      "get": {
+        "description": "Lesson-scoped \"Check your work\" queue: exactly the listen's autograded cards.\n\nItems share ``_queue_item_to_dict``'s shape with /review-queue; grading a\nserved item goes through the normal per-item feedback endpoint (an Again\non an auto-Good'ed card is an ordinary same-day lapse). Strictly\nread-only w.r.t. parity state: no learning-cutoff advance, no\nsession_main_queue write, no unbury sweep, no queue-engine involvement \u2014\nthe frozen main-queue order must survive this endpoint unchanged (pinned\nby the parity-guard test).\n\nInclusion is now exactly this lesson's ``pending_listen_grades`` rows, so\nthe served queue and what \"Sync it\" (``commit-pending``) would release are\nthe same set by construction \u2014 they are read from the same query. Scoping\nnarrowed here 2026-07-27; the endpoint used to be a lesson-scoped *study*\nqueue (D6 buckets: learning, tracked NEW in D2 rank order, REVIEW\ntouched-today or due). After the confirmed/staged split that produced two\nvisible wrongs: cards the user had just confirmed in the preview came back\n(applied immediately, so no pending row, but re-admitted by \"touched\ntoday\" \u2014 the double-question the split existed to remove), and due *cloze*\ncards appeared that a listen can never autograde, since staging is\nRECOGNITION-only and cloze is production-only. Everything dropped stays\nreachable from the main queue: with no pending row, the Layer 81 exclusion\ndoes not hold it back.\n\nConsequences worth knowing: a NEW card CAN appear here (since 2026-08\n``_listen_grade_class`` returns ``\"new\"`` for a NEW-state direction, so a\nlisten stages carded-but-never-introduced words), but only up to the shared\nintroduction budget \u2014 releasing such a row *introduces* the card, spending\nAnki's daily new-card allowance, so ``_allocate_intro_pool`` caps how\nmany a single listen can arm. A cloze still can never appear: staging is\nRECOGNITION-only and cloze is production-only. Release by any path \u2014\nper-card grade, ``commit-pending``, or an Anki-side grade arriving via\n``sync_pull`` \u2014 clears the row, which is what drops the card from this\nqueue; no separate \"graded since the arming listen\" filter is needed.",
+        "operationId": "get_lesson_review_queue_api_srs_content__content_id__review_queue_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonReviewQueueResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Lesson Review Queue",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/content/{content_id}/reviewed": {
+      "post": {
+        "description": "Record completion of a lesson-scoped 'Check your work' review.\n\nGates the lesson page's \"Check your work\" link to one-shot-per-listen:\na completed review clears the link until the next listen re-arms it\n(has_unreviewed_listen on the review-queue response). TT-only; touches\nno parity/FSRS state.",
+        "operationId": "mark_lesson_reviewed_api_srs_content__content_id__reviewed_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarkLessonReviewedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark Lesson Reviewed",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/content/{content_id}/transcript": {
+      "get": {
+        "operationId": "get_lesson_transcript_api_srs_content__content_id__transcript_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
               "type": "string"
             }
           }
@@ -5907,29 +6100,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Get Review Session Transcript",
-        "tags": [
-          "review-sessions"
-        ]
-      }
-    },
-    "/api/srs/backfill-translations": {
-      "post": {
-        "description": "One-time repair: fill empty translations from all stored lesson glosses.",
-        "operationId": "backfill_translations_api_srs_backfill_translations_post",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BackfillTranslationsResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Backfill Translations",
+        "summary": "Get Lesson Transcript",
         "tags": [
           "srs"
         ]
@@ -6970,220 +7141,6 @@
           }
         },
         "summary": "Untrack Item",
-        "tags": [
-          "srs"
-        ]
-      }
-    },
-    "/api/srs/lesson/{lesson_id}/commit-pending": {
-      "post": {
-        "description": "Bulk \"Sync it\": release every staged grade for a lesson without reviewing it.\n\nApplies each pending row at its provisional rating through the SAME path a\nper-card release takes (``schedule`` \u2192 revlog \u2192 ``dirty_fsrs``), then clears\nit. Afterwards these are ordinary dirty grades and the next normal \"Sync to\nAnkiWeb\" pushes them \u2014 this endpoint deliberately does NOT sync by itself.\n\nOne shared balancer and a monotonic grade clock across the batch, exactly as\nthe pre-staging /listen grade loop had: ``tt_revlog.id`` is a millisecond PK\nand ``append_revlog`` is INSERT OR IGNORE, so two grades in the same\nmillisecond would silently drop one.",
-        "operationId": "commit_pending_grades_api_srs_lesson__lesson_id__commit_pending_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "lesson_id",
-            "required": true,
-            "schema": {
-              "title": "Lesson Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommitPendingResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Commit Pending Grades",
-        "tags": [
-          "srs"
-        ]
-      }
-    },
-    "/api/srs/lesson/{lesson_id}/listen-preview": {
-      "get": {
-        "description": "Read-only classification of what a listen would stage for a lesson.\n\nThe ``create`` rows are every untracked lemma, flagged with ``will_create``\nagainst the same per-listen introduction budget ``mark_lesson_listened``\nuses (``resolve_daily_new_cap`` minus today's introductions and still-NEW\nsame-day creations): rows within budget are True (live), the over-budget\ntail is False. Without the flag the preview and the commit disagree \u2014 a\nsame-day re-listen has ~0 budget left and would create nothing even though\nthe preview showed every untracked lemma as checked.\n\nCreations do **not** get their own budget. ``_allocate_intro_pool`` ranks\nthem in ONE pool with the NEW-state rows, by corpus frequency across both\nkinds (F-2), so a common untracked lemma can outrank a rarer card that is\nalready in the deck. Cards created earlier today are free and always live;\nNEW-state key phrases lead the charged order and are never\nfrequency-ranked (a phrase is OOV, so ranking it would sink every key\nphrase below every word).\n\nTracked word/kp candidates follow the creations, grouped (new \u2192 learning \u2192\ndue \u2192 ahead) and then ordered by ``_tracked_sort_key``: ripening time for\nthe learning group, due DAY then mastery ascending (least-known first) for\nthe two review groups. Strictly read-only \u2014 no pending\nwrites, no card creation, no side effects beyond the\n``_analyze_lesson_words`` lemma-cache warm-up. The response informs the\nfrontend preview modal without committing anything.\n\nArray order (frontend contract): create rows come first, in rank order,\nlive rows (``will_create`` True) before tail rows (``will_create`` False);\nthen the tracked rows sorted as today. Do not reorder or interleave. Live\ncreates stay a prefix of the create list even though the pool interleaves\nthe two kinds, because the live cut is a prefix of the ranked pool and the\ncreates keep their relative order inside it. The preview and commit agree\nbecause both make the SAME ``_allocate_intro_pool`` call with the same\n``zipf`` callable (resolved once per request via ``_zipf_for``), so the\nfirst N live create rows are exactly what ``mark_lesson_listened`` will\ncreate. Un-checking one does NOT promote the next-ranked tail row: a skip\nconsumes its slot server-side (``1535071``), which is why ``will_create``\nis a static flag on the response rather than something the frontend\nre-derives from the current ratings.",
-        "operationId": "get_listen_preview_api_srs_lesson__lesson_id__listen_preview_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "lesson_id",
-            "required": true,
-            "schema": {
-              "title": "Lesson Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListenPreviewResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Listen Preview",
-        "tags": [
-          "srs"
-        ]
-      }
-    },
-    "/api/srs/lesson/{lesson_id}/review-queue": {
-      "get": {
-        "description": "Lesson-scoped \"Check your work\" queue: exactly the listen's autograded cards.\n\nItems share ``_queue_item_to_dict``'s shape with /review-queue; grading a\nserved item goes through the normal per-item feedback endpoint (an Again\non an auto-Good'ed card is an ordinary same-day lapse). Strictly\nread-only w.r.t. parity state: no learning-cutoff advance, no\nsession_main_queue write, no unbury sweep, no queue-engine involvement \u2014\nthe frozen main-queue order must survive this endpoint unchanged (pinned\nby the parity-guard test).\n\nInclusion is now exactly this lesson's ``pending_listen_grades`` rows, so\nthe served queue and what \"Sync it\" (``commit-pending``) would release are\nthe same set by construction \u2014 they are read from the same query. Scoping\nnarrowed here 2026-07-27; the endpoint used to be a lesson-scoped *study*\nqueue (D6 buckets: learning, tracked NEW in D2 rank order, REVIEW\ntouched-today or due). After the confirmed/staged split that produced two\nvisible wrongs: cards the user had just confirmed in the preview came back\n(applied immediately, so no pending row, but re-admitted by \"touched\ntoday\" \u2014 the double-question the split existed to remove), and due *cloze*\ncards appeared that a listen can never autograde, since staging is\nRECOGNITION-only and cloze is production-only. Everything dropped stays\nreachable from the main queue: with no pending row, the Layer 81 exclusion\ndoes not hold it back.\n\nConsequences worth knowing: a NEW card CAN appear here (since 2026-08\n``_listen_grade_class`` returns ``\"new\"`` for a NEW-state direction, so a\nlisten stages carded-but-never-introduced words), but only up to the shared\nintroduction budget \u2014 releasing such a row *introduces* the card, spending\nAnki's daily new-card allowance, so ``_allocate_intro_pool`` caps how\nmany a single listen can arm. A cloze still can never appear: staging is\nRECOGNITION-only and cloze is production-only. Release by any path \u2014\nper-card grade, ``commit-pending``, or an Anki-side grade arriving via\n``sync_pull`` \u2014 clears the row, which is what drops the card from this\nqueue; no separate \"graded since the arming listen\" filter is needed.",
-        "operationId": "get_lesson_review_queue_api_srs_lesson__lesson_id__review_queue_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "lesson_id",
-            "required": true,
-            "schema": {
-              "title": "Lesson Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LessonReviewQueueResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Lesson Review Queue",
-        "tags": [
-          "srs"
-        ]
-      }
-    },
-    "/api/srs/lesson/{lesson_id}/reviewed": {
-      "post": {
-        "description": "Record completion of a lesson-scoped 'Check your work' review.\n\nGates the lesson page's \"Check your work\" link to one-shot-per-listen:\na completed review clears the link until the next listen re-arms it\n(has_unreviewed_listen on the review-queue response). TT-only; touches\nno parity/FSRS state.",
-        "operationId": "mark_lesson_reviewed_api_srs_lesson__lesson_id__reviewed_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "lesson_id",
-            "required": true,
-            "schema": {
-              "title": "Lesson Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MarkLessonReviewedResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Mark Lesson Reviewed",
-        "tags": [
-          "srs"
-        ]
-      }
-    },
-    "/api/srs/lesson/{lesson_id}/transcript": {
-      "get": {
-        "operationId": "get_lesson_transcript_api_srs_lesson__lesson_id__transcript_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "lesson_id",
-            "required": true,
-            "schema": {
-              "title": "Lesson Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LessonTranscriptResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Lesson Transcript",
         "tags": [
           "srs"
         ]

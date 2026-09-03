@@ -27,8 +27,7 @@ vi.mock("$lib/api", () => ({
     getReviewSession: vi.fn(),
     getLessonAudio: vi.fn(),
     renderReviewSession: vi.fn(),
-    getReviewSessionTranscript: vi.fn(),
-    getLessonTranscript: vi.fn(),
+    getTranscript: vi.fn(),
     submitDrill: vi.fn(),
     undoGrade: vi.fn(),
     createSRSItem: vi.fn(),
@@ -45,8 +44,7 @@ import { load } from "./+page";
 const mockGetSession = vi.mocked(api.getReviewSession);
 const mockGetAudio = vi.mocked(api.getLessonAudio);
 const mockRender = vi.mocked(api.renderReviewSession);
-const mockSessionTranscript = vi.mocked(api.getReviewSessionTranscript);
-const mockLessonTranscript = vi.mocked(api.getLessonTranscript);
+const mockSessionTranscript = vi.mocked(api.getTranscript);
 
 const TRANSCRIPT = {
   lesson_id: "sess-1",
@@ -256,7 +254,6 @@ describe("the reader", () => {
       expect(api.submitDrill).toHaveBeenCalledWith(42, "recognition", "good");
       expect(mockSessionTranscript).toHaveBeenCalledTimes(2);
     });
-    expect(mockLessonTranscript).not.toHaveBeenCalled();
   });
 
   it("introduces an unknown word against the SESSION's language", async () => {
@@ -317,11 +314,13 @@ describe("the reader", () => {
     expect(queryByText("Toget")).toBeNull();
   });
 
-  it("asks the SESSION transcript endpoint, never the lesson one", async () => {
+  it("reads its transcript through the shared content route", async () => {
+    // There is no session-specific transcript endpoint any more, and no lesson
+    // one either: /api/srs/content/{id}/transcript resolves both. What is worth
+    // pinning is that this page passes its OWN id to it.
     render(Page, { props: { data: data() } });
 
     await vi.waitFor(() => expect(mockSessionTranscript).toHaveBeenCalledWith("sess-1"));
-    expect(mockLessonTranscript).not.toHaveBeenCalled();
   });
 
   it("shows the shared placeholder while the words are still coming", async () => {

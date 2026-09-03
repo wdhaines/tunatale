@@ -93,10 +93,10 @@ class TestARelistenSupersedesThePreviousBucket:
         _seed_review_due(db, "banka")
         _seed_review_due(db, "riba")
 
-        first = await _listen({"lesson_id": LESSON_ID})
+        first = await _listen({"content_id": LESSON_ID})
         assert first["staged"] == 2
 
-        await _listen({"lesson_id": LESSON_ID, "word_ratings": {"banka": "skip", "riba": "skip"}})
+        await _listen({"content_id": LESSON_ID, "word_ratings": {"banka": "skip", "riba": "skip"}})
 
         assert db.get_pending_grades(LESSON_ID) == []
 
@@ -104,9 +104,9 @@ class TestARelistenSupersedesThePreviousBucket:
         db = _setup("Banka riba")
         _seed_review_due(db, "banka")
         _seed_review_due(db, "riba")
-        await _listen({"lesson_id": LESSON_ID})
+        await _listen({"content_id": LESSON_ID})
 
-        await _listen({"lesson_id": LESSON_ID, "word_ratings": {"banka": "skip"}})
+        await _listen({"content_id": LESSON_ID, "word_ratings": {"banka": "skip"}})
 
         pending = db.get_pending_grades(LESSON_ID)
         assert [p["collocation_id"] for p in pending] == [
@@ -118,11 +118,11 @@ class TestARelistenSupersedesThePreviousBucket:
         db = _setup("Banka riba")
         _seed_review_due(db, "banka")
         _seed_review_due(db, "riba")
-        await _listen({"lesson_id": LESSON_ID})
+        await _listen({"content_id": LESSON_ID})
 
         result = await _listen(
             {
-                "lesson_id": LESSON_ID,
+                "content_id": LESSON_ID,
                 "word_ratings": {"banka": "easy", "riba": "skip"},
                 "confirmed_words": ["banka"],
             }
@@ -137,7 +137,7 @@ class TestARelistenSupersedesThePreviousBucket:
         cid = _seed_review_due(db, "banka")
         db.stage_pending_grade("lesson-2", cid, Direction.RECOGNITION.value, "hard", "due")
 
-        await _listen({"lesson_id": LESSON_ID, "word_ratings": {"banka": "skip", "riba": "skip"}})
+        await _listen({"content_id": LESSON_ID, "word_ratings": {"banka": "skip", "riba": "skip"}})
 
         surviving = db.get_pending_grade(cid, Direction.RECOGNITION.value)
         assert surviving is not None
@@ -150,8 +150,8 @@ class TestARelistenSupersedesThePreviousBucket:
         _seed_review_due(db, "banka")
         _seed_review_due(db, "riba")
 
-        await _listen({"lesson_id": LESSON_ID})
-        second = await _listen({"lesson_id": LESSON_ID})
+        await _listen({"content_id": LESSON_ID})
+        second = await _listen({"content_id": LESSON_ID})
 
         assert second["staged"] == 2
         assert len(db.get_pending_grades(LESSON_ID)) == 2

@@ -59,7 +59,7 @@ class TestRatingValidation:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 LISTEN_URL,
-                json={"lesson_id": "lesson-1", "word_ratings": {"banka": "bogus"}},
+                json={"content_id": "lesson-1", "word_ratings": {"banka": "bogus"}},
             )
         assert resp.status_code == 422
 
@@ -73,7 +73,7 @@ class TestRatingValidation:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 LISTEN_URL,
-                json={"lesson_id": "lesson-1", "kp_ratings": {"dober dan": "bogus"}},
+                json={"content_id": "lesson-1", "kp_ratings": {"dober dan": "bogus"}},
             )
         assert resp.status_code == 422
 
@@ -88,7 +88,7 @@ class TestRatingValidation:
             resp = await client.post(
                 LISTEN_URL,
                 json={
-                    "lesson_id": "lesson-1",
+                    "content_id": "lesson-1",
                     "word_ratings": {
                         "banka": "again",
                         "riba": "hard",

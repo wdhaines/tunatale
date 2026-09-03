@@ -84,7 +84,7 @@ class TestListenMediaIsOffTheCriticalPath:
         monkeypatch.setattr(vocab_media_mod, "generate_vocab_media", _fake_vocab_media)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/listen", json={"lesson_id": lesson_id})
+            resp = await client.post("/api/srs/listen", json={"content_id": lesson_id})
         assert resp.status_code == 200
         return seen
 
@@ -165,7 +165,7 @@ class TestListenMediaIsOffTheCriticalPath:
         monkeypatch.setattr(vocab_media_mod, "generate_vocab_media", _boom)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-async-3"})
+            resp = await client.post("/api/srs/listen", json={"content_id": "lesson-async-3"})
 
         # The request itself is unaffected — the failure happens after the response.
         assert resp.status_code == 200

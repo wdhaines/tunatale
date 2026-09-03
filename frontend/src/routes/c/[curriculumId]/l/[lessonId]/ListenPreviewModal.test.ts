@@ -2,7 +2,7 @@
  * Tests for ListenPreviewModal — preview of word candidates before listen commit.
  *
  * Uses real backend shapes:
- *   GET /api/srs/lesson/{id}/listen-preview → { candidates: [...] }
+ *   GET /api/srs/content/{id}/listen-preview → { candidates: [...] }
  *   Each candidate: { kind, text, item_id, grade_class, rating, translation, progress }
  *
  * The modal calls listenedStore.markListened(lessonId, wordRatings, kpRatings)

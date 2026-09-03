@@ -991,7 +991,7 @@ class TestCreatePhraseIntegration:
             assert create_resp.status_code == 201
 
             # Fetch transcript — match_spans should pick up the new collocation
-            transcript_resp = await client.get("/api/srs/lesson/lesson-phrase/transcript")
+            transcript_resp = await client.get("/api/srs/content/lesson-phrase/transcript")
             assert transcript_resp.status_code == 200
 
         data = transcript_resp.json()
@@ -1046,7 +1046,7 @@ class TestClozeTTSIntegration:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-ct"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-ct"})
         assert response.status_code == 200
 
         for lemma in ("kje", "je"):
@@ -1178,7 +1178,7 @@ class TestClozeTTSIntegration:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-ct2"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-ct2"})
         assert response.status_code == 200
 
         # Function-word cloze card should still exist
@@ -1219,7 +1219,7 @@ class TestClozeTTSIntegration:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-ctv"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-ctv"})
         assert response.status_code == 200
         # Every synth call for a Slovene lesson uses the Slovene voice.
         assert captured and all(v == "sl-SI-PetraNeural" for v in captured)
@@ -1264,13 +1264,13 @@ class TestClozeTTSIntegration:
 
         # First listen creates cloze cards and succeeds at TTS
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-ct3"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-ct3"})
         assert response.status_code == 200
         assert calls[0] >= 1  # at least one TTS call succeeded
 
         # Second listen should hit the existing cloze backfill path with failure
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-ct3"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-ct3"})
         assert response.status_code == 200
 
         # Cloze card should still exist

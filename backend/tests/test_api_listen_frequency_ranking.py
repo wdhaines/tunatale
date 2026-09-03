@@ -36,7 +36,7 @@ from app.main import app
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 
-PREVIEW_URL = "/api/srs/lesson/lesson-1/listen-preview"
+PREVIEW_URL = "/api/srs/content/lesson-1/listen-preview"
 LISTEN_URL = "/api/srs/listen"
 
 # ── The inversion fixture ────────────────────────────────────────────────
@@ -251,7 +251,7 @@ class TestListenCreationRanksByFrequency:
         db = _setup()
         db.set_anki_state_cache("daily_new_cap", "1")
 
-        listen = await _post_listen({"lesson_id": "lesson-1"})
+        listen = await _post_listen({"content_id": "lesson-1"})
 
         assert listen["created"] == 1
         assert _created(db, _ALL) == {"mesto"}
@@ -261,7 +261,7 @@ class TestListenCreationRanksByFrequency:
         db = _setup()
         db.set_anki_state_cache("daily_new_cap", "3")
 
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
 
         assert _created(db, _ALL) == {"mesto", "miza", "pingvin"}
 
@@ -280,7 +280,7 @@ class TestListenCreationRanksByFrequency:
         preview = await _get_preview()
         promised = {c["text"] for c in preview["candidates"] if c["kind"] == "create" and c["will_create"]}
 
-        await _post_listen({"lesson_id": "lesson-1"})
+        await _post_listen({"content_id": "lesson-1"})
 
         assert promised == _created(db, _ALL)
         assert promised == {"mesto", "miza"}

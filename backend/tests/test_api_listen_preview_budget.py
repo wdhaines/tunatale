@@ -28,7 +28,7 @@ from app.models.srs_item import Direction, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 
-PREVIEW_URL = "/api/srs/lesson/lesson-1/listen-preview"
+PREVIEW_URL = "/api/srs/content/lesson-1/listen-preview"
 LISTEN_URL = "/api/srs/listen"
 
 
@@ -113,7 +113,7 @@ class TestPreviewMatchesListenCreation:
         preview = await _get_preview()
         preview_live = set(_live(preview))
 
-        listen = await _post_listen({"lesson_id": "lesson-1"})
+        listen = await _post_listen({"content_id": "lesson-1"})
         assert listen["created"] == 2
 
         created_texts = {lemma for lemma in lemmas if db.get_collocation_by_lemma(lemma) is not None}
@@ -172,7 +172,7 @@ class TestPreviewBudgetExhausted:
         db = _setup([" ".join(lemmas)])
         db.set_anki_state_cache("daily_new_cap", "1")
 
-        first = await _post_listen({"lesson_id": "lesson-1"})
+        first = await _post_listen({"content_id": "lesson-1"})
         assert first["created"] == 1
 
         preview = await _get_preview()

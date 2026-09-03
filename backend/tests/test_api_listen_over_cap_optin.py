@@ -41,9 +41,9 @@ from app.models.srs_item import Direction, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 
-PREVIEW_URL = "/api/srs/lesson/lesson-1/listen-preview"
+PREVIEW_URL = "/api/srs/content/lesson-1/listen-preview"
 LISTEN_URL = "/api/srs/listen"
-COMMIT_URL = "/api/srs/lesson/lesson-1/commit-pending"
+COMMIT_URL = "/api/srs/content/lesson-1/commit-pending"
 
 # Same fixture as test_api_listen_creation_skip_consumes_slot.py, and for the
 # same reason — the ranking is corpus frequency (wordfreq zipf, commonest
@@ -112,7 +112,7 @@ async def _get_preview() -> dict:
 
 
 async def _post_listen(payload: dict) -> dict:
-    payload = {"lesson_id": "lesson-1", **payload}
+    payload = {"content_id": "lesson-1", **payload}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(LISTEN_URL, json=payload)
     assert resp.status_code == 200, resp.text

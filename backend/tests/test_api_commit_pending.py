@@ -68,7 +68,7 @@ def _seed(db: SRSDatabase, text: str, *, ahead: bool = False) -> int:
 
 async def _commit(lesson_id: str = LESSON_ID) -> tuple[int, dict]:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post(f"/api/srs/lesson/{lesson_id}/commit-pending")
+        resp = await client.post(f"/api/srs/content/{lesson_id}/commit-pending")
     return resp.status_code, (resp.json() if resp.content else {})
 
 

@@ -83,7 +83,7 @@ def _track_ahead(db, text: str) -> int:
 
 async def _queue() -> dict:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(f"/api/srs/lesson/{LESSON_ID}/review-queue")
+        resp = await client.get(f"/api/srs/content/{LESSON_ID}/review-queue")
     assert resp.status_code == 200, resp.text
     return resp.json()
 
@@ -192,7 +192,7 @@ class TestPendingRowsAreLessonScoped:
 
         served = (await _queue())["queue"]
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post(f"/api/srs/lesson/{LESSON_ID}/commit-pending")
+            resp = await client.post(f"/api/srs/content/{LESSON_ID}/commit-pending")
         assert resp.status_code == 200, resp.text
 
         assert resp.json()["applied"] == 0

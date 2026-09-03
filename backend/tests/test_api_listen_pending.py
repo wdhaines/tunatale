@@ -142,7 +142,7 @@ def _revlog_count(db) -> int:
 
 async def _listen(**body) -> dict:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/api/srs/listen", json={"lesson_id": LESSON_ID, **body})
+        resp = await client.post("/api/srs/listen", json={"content_id": LESSON_ID, **body})
     assert resp.status_code == 200, resp.text
     return resp.json()
 
