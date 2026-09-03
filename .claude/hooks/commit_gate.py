@@ -8,7 +8,8 @@ tree fingerprint matches the current tree — i.e. ./test.sh passed on exactly
 this state.
 
 Modes:
-  --record    Write the current tree fingerprint to .git/tt-test-pass.
+  --record    Write the current tree fingerprint to <git-dir>/tt-test-pass
+              (per-worktree; see sentinel_path).
               Called by test.sh after the full suite passes.
   (default)   PreToolUse hook: reads the tool-call JSON on stdin, prints an
               "ask" decision when the fingerprint is missing or stale, exits
@@ -66,7 +67,7 @@ import subprocess
 import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SENTINEL = os.path.join(REPO_ROOT, ".git", "tt-test-pass")
+
 # Match `commit` only as git's subcommand — immediately after `git` bar global
 # options (`-C <path>`, `-c k=v`, `--no-pager`, …) — NOT as any later word.
 # Regression (2026-07-16): `git log … .pre-commit-config.yaml` triggered the
@@ -127,6 +128,34 @@ def _git(args, cwd):
     return subprocess.run(["git", *args], capture_output=True, cwd=cwd, timeout=60)
 
 
+def sentinel_path(root):
+    """Where the tree fingerprint for *root* lives.
+
+    NOT ``<root>/.git/tt-test-pass``. In a linked worktree ``.git`` is a FILE
+    (a gitdir pointer), so that path is impossible — and because ``test.sh``
+    wraps its ``--record`` in ``|| true``, a green gate silently recorded
+    NOTHING and this hook then prompted on a tree that had genuinely passed.
+    It failed annoying rather than open, which is worse than it sounds: a gate
+    that asks on work it has already cleared trains the reader to click through
+    it, the exact failure the gate exists to prevent. (tunatale-5znu, fixed
+    2026-09-02; it bit every commit of the wake-word spike.)
+
+    ``--absolute-git-dir`` resolves to ``<main>/.git`` in an ordinary checkout
+    and ``<main>/.git/worktrees/<name>`` inside a worktree. That per-worktree
+    location is the CORRECT semantics, not an accident of the implementation:
+    each worktree has its own working tree, so a fingerprint recorded in one
+    must never satisfy a commit in another. ``--git-common-dir`` would share a
+    single sentinel across all of them and is the wrong call here.
+    """
+    probe = _git(["rev-parse", "--absolute-git-dir"], root)
+    git_dir = probe.stdout.decode("utf-8", "replace").strip()
+    if probe.returncode != 0 or not git_dir:
+        # Not a repo, or git is unavailable. Fall back rather than raise — this
+        # hook must always exit 0, and a missing sentinel keeps the gate ON.
+        git_dir = os.path.join(root, ".git")
+    return os.path.join(git_dir, "tt-test-pass")
+
+
 def _unquote(token):
     if len(token) >= 2 and token[0] == token[-1] and token[0] in "'\"":
         return token[1:-1]
@@ -180,7 +209,7 @@ def tree_fingerprint(root):
 
 def main():
     if "--record" in sys.argv:
-        with open(SENTINEL, "w") as fh:
+        with open(sentinel_path(REPO_ROOT), "w") as fh:
             fh.write(tree_fingerprint(REPO_ROOT) + "\n")
         return 0
 
@@ -200,7 +229,7 @@ def main():
         return 0  # commit targets a different repo — not ours to gate
 
     try:
-        with open(SENTINEL) as fh:
+        with open(sentinel_path(REPO_ROOT)) as fh:
             recorded = fh.read().strip()
     except OSError:
         recorded = ""

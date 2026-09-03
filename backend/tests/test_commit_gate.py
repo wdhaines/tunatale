@@ -205,3 +205,72 @@ class TestQuoteStrippingDoesNotOpenAHole:
         assert hook.find_commit('bash -c "git commit -m x"') is not None
         assert hook.find_commit("sh -c 'git commit -m x'") is not None
         assert hook.find_commit('zsh -lc "git commit -m x"') is not None
+
+
+@pytest.fixture
+def repo_with_worktree(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A real repo, plus two linked worktrees of it.
+
+    Two, not one: the interesting property is not merely that a worktree works,
+    but that each worktree gets its OWN fingerprint. One shared sentinel would
+    let a green ``./test.sh`` in one worktree silently authorize a commit of a
+    completely different tree in another.
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    def run(*args: str) -> None:
+        subprocess.run(args, cwd=root, check=True, timeout=60, capture_output=True)
+
+    run("git", "init", "-q", "-b", "main")
+    run("git", "config", "user.email", "t@example.com")
+    run("git", "config", "user.name", "t")
+    (root / "seed.txt").write_text("seed\n")
+    run("git", "add", "seed.txt")
+    run("git", "commit", "-q", "-m", "seed")
+    wt_a, wt_b = tmp_path / "wt-a", tmp_path / "wt-b"
+    run("git", "worktree", "add", "-q", "-b", "a", str(wt_a))
+    run("git", "worktree", "add", "-q", "-b", "b", str(wt_b))
+    return root, wt_a, wt_b
+
+
+class TestSentinelSurvivesAWorktree:
+    """tunatale-5znu: in a worktree ``.git`` is a FILE, not a directory.
+
+    ``<root>/.git/tt-test-pass`` is therefore an impossible path there, and
+    ``test.sh`` wraps its ``--record`` in ``|| true`` — so a green gate recorded
+    NOTHING and the hook then prompted on a tree that had genuinely passed.
+    It failed annoying rather than open, which is the direction that trains a
+    reader to click through the prompt.
+    """
+
+    def test_a_normal_checkout_keeps_the_sentinel_in_dot_git(self, repo_with_worktree: tuple[Path, Path, Path]) -> None:
+        root, _, _ = repo_with_worktree
+        hook = _load_hook()
+        assert Path(hook.sentinel_path(str(root))) == root / ".git" / "tt-test-pass"
+
+    def test_a_worktree_sentinel_is_in_a_directory_that_exists(
+        self, repo_with_worktree: tuple[Path, Path, Path]
+    ) -> None:
+        """The regression itself: the path must be writable, not merely different."""
+        _, wt_a, _ = repo_with_worktree
+        hook = _load_hook()
+        p = Path(hook.sentinel_path(str(wt_a)))
+        assert p.parent.is_dir(), f"{p.parent} must exist for --record to work"
+        p.write_text("fingerprint\n")  # would raise NotADirectoryError before the fix
+        assert p.read_text() == "fingerprint\n"
+
+    def test_each_worktree_gets_its_own_sentinel(self, repo_with_worktree: tuple[Path, Path, Path]) -> None:
+        """A green tree in one worktree must not authorize a commit in another."""
+        root, wt_a, wt_b = repo_with_worktree
+        hook = _load_hook()
+        a, b = hook.sentinel_path(str(wt_a)), hook.sentinel_path(str(wt_b))
+        assert a != b
+        assert a != hook.sentinel_path(str(root))
+
+    def test_a_non_repo_falls_back_rather_than_crashing(self, tmp_path: Path) -> None:
+        """The hook must always exit 0; an unresolvable root cannot raise."""
+        hook = _load_hook()
+        plain = tmp_path / "not-a-repo"
+        plain.mkdir()
+        assert Path(hook.sentinel_path(str(plain))) == plain / ".git" / "tt-test-pass"

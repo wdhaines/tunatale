@@ -19,6 +19,14 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Where the commit gate's pass fingerprint lives. NOT "$ROOT/.git": inside a
+# linked worktree .git is a FILE (a gitdir pointer), so that path is impossible
+# and the `rm -f` below silently no-opped while `--record` (wrapped in
+# `|| true`) recorded nothing — every worktree commit then prompted on a tree
+# that had genuinely passed. Must stay in lockstep with sentinel_path() in
+# .claude/hooks/commit_gate.py; if these two disagree the gate prompts for ever.
+# (tunatale-5znu, 2026-09-02.)
+TT_SENTINEL="$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null || echo "$ROOT/.git")/tt-test-pass"
 
 # Each group's stdout is a capture file, so the tools would normally strip
 # color (no TTY). Force color from every toolchain (FORCE_COLOR for ruff/bun/
@@ -185,7 +193,7 @@ if [ "$backend_rc" -ne 0 ] || [ "$frontend_rc" -ne 0 ] || [ "$peer_sync_rc" -ne 
   # A stale pass sentinel must never outlive a failing run: the commit gate
   # compares fingerprints, and a flaky green followed by a red on the SAME tree
   # would otherwise still let a commit through unchallenged.
-  rm -f "$ROOT/.git/tt-test-pass"
+  rm -f "$TT_SENTINEL"
   echo "=== FAILED (backend=$backend_rc frontend=$frontend_rc peer_sync=$peer_sync_rc) ==="
   echo "Full log (never truncated): $full_log"
   # Toolchain versions, because a red run is sometimes the TOOLCHAIN, not the

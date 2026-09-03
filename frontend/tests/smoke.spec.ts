@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { resetSRSItems } from './helpers';
 
 test('backend health check', async ({ request, backendURL }) => {
 	const res = await request.get(`${backendURL}/api/health`);
@@ -45,13 +46,35 @@ test('start curriculum plan flow', async ({ page, request, backendURL }) => {
 	await expect(page.getByRole('button', { name: /Plan the next \d+ days/ })).toBeVisible();
 });
 
-test('review page loads', async ({ page }) => {
+test('review page loads', async ({ page, request }) => {
+	// ⚠️ The subject of this test is the EMPTY-QUEUE done state, and until
+	// 2026-09-03 nothing established that precondition — whichever specs happened
+	// to precede it on this worker decided whether cards were due. The one that
+	// bit is review-pressure's `zapadlica`: promoted to LEARNING with today's
+	// due_at, two directions, so the nav reads exactly the `0 + 2 + 0` recorded on
+	// tunatale-g9kr. At workers: 2 that spec lands on this worker or the other
+	// depending on how Playwright distributes files, which is the whole of the
+	// "only reproduces at 2 workers" mystery. Wiping this worker's own SRS rows
+	// (never the other's — see resetSRSItems) makes the assertion below a claim
+	// about the page rather than about the run order.
+	await resetSRSItems(request);
+
 	await page.goto('/review');
 	await expect(page.getByRole('link', { name: /TunaTale/ })).toBeVisible();
-	// Either shows loading → done state when no cards
-	await expect(
-		page.getByText(/Done for today|Loading/)
-	).toBeVisible({ timeout: 5000 });
+	// `Done for today` ALONE. This read /Done for today|Loading/, which made the
+	// assertion vacuous: `Loading…` is the pre-fetch state of EVERY render of this
+	// page, including one about to show a due card. Passing therefore meant only
+	// that Playwright's first poll beat the queue fetch — measured 2026-09-03 with
+	// a card seeded, the page reads `Loading…` immediately after goto and
+	// `0 + 2 + 0 … zapadlica … Show` three seconds later, and BOTH satisfied the
+	// old regex. That coin flip is why CI went ~5% red and then ~33% once `vite
+	// preview` (2026-09-01) made the app boot fast enough to close the window.
+	//
+	// 10s matches the sibling test below because this now waits for the fetch to
+	// SETTLE instead of catching a transient. It is not the "raise the timeout"
+	// fix g9kr forbids: the failing page renders a card and never reaches this
+	// text at any timeout.
+	await expect(page.getByText('Done for today')).toBeVisible({ timeout: 10000 });
 });
 
 test('review page loads (with backend)', async ({ page, request, backendURL }) => {
