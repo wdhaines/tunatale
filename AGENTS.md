@@ -198,6 +198,17 @@ history.
   by the rule above. Latitude to route was granted explicitly; latitude to skip
   the gate was not.
 
+⚠️ **Do not STACK a PR on another open PR's branch** (2026-09-03). "Stop at the
+open PR" makes this tempting: work continues, so the next branch is cut from the
+one still waiting for approval and its PR is based there. Merging the parent
+then deletes that base branch, and **GitHub auto-closes the child PR and will
+not let it be reopened** — the branch and commits survive, but the PR, its
+description and its review history do not. Recovering it means opening a NEW PR
+from the same branch retargeted to `main` and waiting out a fresh CI run
+(#103 → #104 died this way → recreated as #105). Base the second PR on `main`
+and say in its body that it should merge after the first, or simply keep going
+on the same branch when the work is one story.
+
 **Why the checkpoint is the merge and not the commit:** a local commit is cheap
 and revertible, and gating it bought a round-trip per change without buying
 safety — the same reasoning `f884e52` applied to beads sync. A merge into `main`
