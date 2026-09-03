@@ -19,7 +19,7 @@ from app.models.srs_item import Direction, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 
-PREVIEW_URL = "/api/srs/lesson/lesson-1/listen-preview"
+PREVIEW_URL = "/api/srs/content/lesson-1/listen-preview"
 
 
 def _setup(phrases: list[str], language_code: str = "sl"):

@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from app.main import app
 
-PREVIEW_PATH = "/api/srs/lesson/{lesson_id}/listen-preview"
-COMMIT_PATH = "/api/srs/lesson/{lesson_id}/commit-pending"
+PREVIEW_PATH = "/api/srs/content/{content_id}/listen-preview"
+COMMIT_PATH = "/api/srs/content/{content_id}/commit-pending"
 
 
 def _resolve_schema(schema: dict, components: dict) -> dict:

@@ -140,7 +140,7 @@ async def _review_badge() -> int:
 
 async def _lesson_queue_texts() -> list[str]:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get(f"/api/srs/lesson/{LESSON_ID}/review-queue")
+        resp = await client.get(f"/api/srs/content/{LESSON_ID}/review-queue")
     assert resp.status_code == 200, resp.text
     return [i["text"] for i in resp.json()["queue"]]
 

@@ -2,7 +2,7 @@
  * Tests for ListenPreviewModal — preview of word candidates before listen commit.
  *
  * Uses real backend shapes:
- *   GET /api/srs/lesson/{id}/listen-preview → { candidates: [...] }
+ *   GET /api/srs/content/{id}/listen-preview → { candidates: [...] }
  *   Each candidate: { kind, text, item_id, grade_class, rating, translation, progress }
  *
  * The modal calls listenedStore.markListened(lessonId, wordRatings, kpRatings)
@@ -19,7 +19,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
-import ListenPreviewModal from "./ListenPreviewModal.svelte";
+import ListenPreviewModal from "$lib/components/ListenPreviewModal.svelte";
 import { api } from "$lib/api";
 import { listenCountdownPref } from "$lib/stores/listenCountdownPref.svelte";
 import { masteryBackgroundColor, masteryColor } from "$lib/mastery";

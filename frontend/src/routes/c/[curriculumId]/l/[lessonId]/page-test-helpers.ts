@@ -21,7 +21,7 @@ export function createApiMock() {
   return {
     getLessonAudio: vi.fn(),
     renderAudio: vi.fn(),
-    getLessonTranscript: vi.fn(),
+    getTranscript: vi.fn(),
     createSRSItem: vi.fn(),
     setSRSItemState: vi.fn(),
     restoreKnown: vi.fn(),

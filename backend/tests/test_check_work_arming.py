@@ -13,7 +13,7 @@ implementation must satisfy them WITHOUT modifying them. Two anchors:
      computes `has_unreviewed_listen` by calling it with
      `db.latest_listen_at(lesson_id)` / `db.latest_review_at(lesson_id)`.
   2. The review-queue response carries `has_unreviewed_listen: bool`, and
-     `POST /api/srs/lesson/{id}/reviewed` records a review row.
+     `POST /api/srs/content/{id}/reviewed` records a review row.
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ class TestCheckWorkArmingEndToEnd:
         return db
 
     async def _get_flag(self, client):
-        resp = await client.get("/api/srs/lesson/lesson-1/review-queue")
+        resp = await client.get("/api/srs/content/lesson-1/review-queue")
         assert resp.status_code == 200
         return resp.json()["has_unreviewed_listen"]
 
@@ -96,7 +96,7 @@ class TestCheckWorkArmingEndToEnd:
             assert await self._get_flag(client) is True
 
             # completing the review disarms it
-            r = await client.post("/api/srs/lesson/lesson-1/reviewed")
+            r = await client.post("/api/srs/content/lesson-1/reviewed")
             assert r.status_code == 200
             assert await self._get_flag(client) is False
 
@@ -107,5 +107,5 @@ class TestCheckWorkArmingEndToEnd:
     async def test_reviewed_endpoint_404_unknown_lesson(self):
         self._setup()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            r = await client.post("/api/srs/lesson/no-such-lesson/reviewed")
+            r = await client.post("/api/srs/content/no-such-lesson/reviewed")
             assert r.status_code == 404

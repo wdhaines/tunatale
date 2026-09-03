@@ -10,12 +10,17 @@
 	import TranscriptPlaceholder from '$lib/components/TranscriptPlaceholder.svelte';
 	import { syncStore } from '$lib/stores/sync.svelte';
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
-	import { lessonModePref } from '$lib/stores/lessonModePref.svelte';
+	import { createReadingActions } from '$lib/reading/readingActions.svelte';
+	import LessonReader from '$lib/components/LessonReader.svelte';
+	import MasteryLine from '$lib/components/MasteryLine.svelte';
+	import ListenActions from '$lib/components/ListenActions.svelte';
+	import { createListenActions } from '$lib/reading/listenActions.svelte';
 	import { pipelineStore } from '$lib/stores/pipeline.svelte';
 	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
 	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
+	import AudioDownloads from '$lib/components/AudioDownloads.svelte';
 	import LessonSourcePanel from '$lib/components/LessonSourcePanel.svelte';
-	import ListenPreviewModal from './ListenPreviewModal.svelte';
+	import ListenPreviewModal from '$lib/components/ListenPreviewModal.svelte';
 	import { lessonMastery, masteryColor } from '$lib/mastery';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
@@ -24,11 +29,6 @@
 
 	let { data }: { data: PageData } = $props();
 
-	// Read/Listen mode is a persisted preference that defaults by viewport (Listen
-	// on mobile, Read on desktop) rather than an unconditional 'read' that landed
-	// mobile users in the wrong mode. Seeds on mount like the theme/prefetch prefs.
-	const mode = $derived(lessonModePref.mode);
-	onMount(() => lessonModePref.init());
 
 	// untrack: intentionally snapshot load data as mutable local state
 	let audio: LessonAudio | null = $state(untrack(() => data.audio));
@@ -36,9 +36,28 @@
 	// Starts true when load didn't supply a transcript (production: we fetch it
 	// client-side below) so the section shows the spinner from first paint.
 	let transcriptLoading = $state(untrack(() => data.transcript === null));
-	let listenResult = $state<ListenResponse | null>(null);
-	let queueCount = $state(0);
-	let hasUnreviewedListen = $state(false);
+
+	// ONE binding, both factories. The accessors are created once — which also
+	// means the reading tests exercise the very same closures the listen path
+	// uses, rather than each page carrying two identical copies.
+	const contentBinding = {
+		get contentId() {
+			return data.lesson.id;
+		},
+		get languageCode() {
+			return data.lesson.language_code;
+		},
+		getTranscript: () => transcript,
+		setTranscript: (t: TranscriptData) => {
+			transcript = t;
+		},
+		setError: (m: string) => {
+			error = m;
+		}
+	};
+
+	const reading = createReadingActions(contentBinding);
+	const listen = createListenActions(contentBinding);
 	// Which lesson the three above describe. Plain `let`, not $state: it is the
 	// follow-`data` effect's own bookkeeping and must not be a dependency of it.
 	let resultsLessonId: string | null = untrack(() => data.lesson.id);
@@ -53,7 +72,6 @@
 	let deletingDay = $state(false);
 	let wordActionInFlight = $state(false);
 	let showRegenHelp = $state(false);
-	let showPreview = $state(false);
 
 	let playbackController = $state<PlaybackController | null>(null);
 
@@ -71,7 +89,6 @@
 		void rateLimitStore.ensureFresh();
 	});
 
-	let isListened = $derived(listenedStore.has(data.lesson.id));
 
 	// `lesson.day` is the stable key and goes gappy as days are deleted; the plan's
 	// position is what the day picker shows, so label with that. Falls back to the
@@ -124,9 +141,7 @@
 		// a queue count that the fetch effect below has no reason to re-fetch.
 		if (data.lesson.id !== resultsLessonId) {
 			resultsLessonId = data.lesson.id;
-			listenResult = null;
-			queueCount = 0;
-			hasUnreviewedListen = false;
+			listen.reset();
 		}
 		const provided = data.transcript;
 		if (provided !== null) {
@@ -143,7 +158,7 @@
 		transcript = null;
 		transcriptLoading = true;
 		error = '';
-		api.getLessonTranscript(lessonId)
+		api.getTranscript(lessonId)
 			.then((t) => {
 				if (data.lesson.id === lessonId) transcript = t;
 			})
@@ -166,7 +181,7 @@
 			const rendered = await api.renderAudio(lessonId);
 			if (data.lesson.id !== lessonId) return;
 			audio = rendered;
-			const t = await api.getLessonTranscript(lessonId);
+			const t = await api.getTranscript(lessonId);
 			if (data.lesson.id !== lessonId) return;
 			transcript = t;
 		} catch (e) {
@@ -241,7 +256,7 @@
 		error = '';
 		const lessonId = data.lesson.id;
 		try {
-			const t = await api.getLessonTranscript(lessonId);
+			const t = await api.getTranscript(lessonId);
 			if (data.lesson.id === lessonId) transcript = t;
 		} catch (e) {
 			if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
@@ -345,73 +360,15 @@
 		}
 	});
 
-	async function fetchQueue() {
-		const lessonId = data.lesson.id;
-		try {
-			const { queue, has_unreviewed_listen } = await api.fetchLessonReviewQueue(lessonId);
-			if (data.lesson.id === lessonId) {
-				queueCount = queue.length;
-				hasUnreviewedListen = has_unreviewed_listen;
-			}
-		} catch {
-			// 404 or network error — leave queueCount at its last value.
-		}
-	}
 
-	// Fetch the review queue when the page loads with an already-listened lesson
-	// (so the "Check your work" link shows the right count from first paint).
-	// Depends on the lesson id, not just `isListened`: navigating between two
-	// already-listened lessons leaves that boolean at true, so a `$derived`
-	// equality check swallows the change and the queue is never re-fetched —
-	// the link then keeps the previous lesson's count.
+	// Fetch the review queue when the page loads with already-listened content
+	// (so "Check your work" shows the right count from first paint). Depends on
+	// the ID, not just `isListened`: navigating between two already-listened
+	// lessons leaves that boolean true, so a $derived equality check swallows the
+	// change and the link keeps the previous lesson's count.
 	$effect(() => {
-		if (listenedStore.has(data.lesson.id)) fetchQueue();
+		if (listenedStore.has(data.lesson.id)) listen.fetchQueue();
 	});
-
-	async function handleMarkListened() {
-		showPreview = true;
-	}
-
-	async function handlePreviewDone(result: ListenResponse | { status: 'cancelled' }) {
-		const lessonId = data.lesson.id;
-		showPreview = false;
-		// `in` narrows the union properly; a plain `result.status === 'cancelled'`
-		// check does not, because ListenResponse.status is `string` (not a
-		// literal), so TS can't exclude that arm from the negative branch.
-		if (!('created' in result)) return;
-		listenResult = result;
-		try {
-			await listenedStore.refresh();
-			const t = await api.getLessonTranscript(lessonId);
-			if (data.lesson.id === lessonId) transcript = t;
-			await fetchQueue();
-			queueStatsStore.refresh();
-		} catch (e) {
-			if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
-		}
-	}
-
-	// Mastery computed from the current transcript state
-	const mastery = $derived(transcript ? lessonMastery(transcript) : null);
-	const masteryPct = $derived(mastery?.pct ?? null);
-	const masteryCounts = $derived(mastery?.counts ?? null);
-
-	const masterySegments = $derived(
-		!masteryCounts ? [] :
-		[
-			{ key: 'new', count: masteryCounts.new, label: 'new', lemmas: mastery?.lemmas?.new ?? [] },
-			{ key: 'learning', count: masteryCounts.learning, label: 'learning', lemmas: mastery?.lemmas?.learning ?? [] },
-			{ key: 'due', count: masteryCounts.due, label: 'due', lemmas: mastery?.lemmas?.due ?? [] },
-			{ key: 'review', count: masteryCounts.review, label: 'review', lemmas: mastery?.lemmas?.review ?? [] },
-			{ key: 'known', count: masteryCounts.known, label: 'known', lemmas: mastery?.lemmas?.known ?? [] },
-		].filter(s => s.count > 0 || s.key === 'known')
-	);
-
-	const LEMMA_TOOLTIP_MAX = 15;
-	function formatLemmaTooltip(lemmas: string[]): string {
-		if (lemmas.length <= LEMMA_TOOLTIP_MAX) return lemmas.join(', ');
-		return lemmas.slice(0, LEMMA_TOOLTIP_MAX).join(', ') + ` … +${lemmas.length - LEMMA_TOOLTIP_MAX} more`;
-	}
 
 	// Fully acquired: no remaining candidates AND no words in the review queue
 	// No "fully acquired" terminal state any more (dropped 2026-07-27). It was
@@ -423,350 +380,85 @@
 	// needs. The mastery line below already reports how well the lesson is
 	// known; that is the honest signal, and the button stays a button.
 
-	// Derived booleans for template conditionals (avoid && phantom branches)
-	const showCheckWorkLink = $derived(isListened ? queueCount > 0 && hasUnreviewedListen : false);
 
-	// Single-level undo cycle: the last drill grade (word or phrase) stays
-	// reversible from its popover ("Undo ↩") until something else is graded,
-	// the page reloads, or a sync hands the review to Anki (backend 409s then).
-	let undoable = $state<{ itemId: number; direction: 'recognition' | 'production' } | null>(
-		null
-	);
+	// ⚠️ ONE IMPLEMENTATION, SHARED WITH THE REVIEW-SESSION READER. These ~200
+	// lines used to live here and were nearly copied into that page when its
+	// transcript endpoint missed on a session id. Only the SOURCE differs
+	// between the two — see $lib/reading/readingActions.svelte.ts.
 
-	async function handleWordClick(word: import('$lib/api').WordToken, lineIndex: number) {
-		if (wordActionInFlight) return;
-		wordActionInFlight = true;
-		error = '';
-		try {
-			if (word.active_state === 'unknown') {
-				// Reading an untracked word introduces AND reviews it in one tap:
-				// create the base card, then record a first recognition review so it
-				// enters learning right away (not just parked at NEW).
-				const sentence = transcript!.dialogue_lines[lineIndex]?.sentence ?? '';
-				const created = await api.createBaseCard({
-					surface: word.surface,
-					lemma: word.lemma,
-					sentence,
-					language_code: data.lesson.language_code,
-					translation: word.translation ?? ''
-				});
-				await api.submitDrill(created.id, 'recognition', 'good');
-				undoable = { itemId: created.id, direction: 'recognition' };
-			} else if (word.is_due && word.active_direction && word.srs_item_id != null) {
-				const direction = word.active_direction as 'recognition' | 'production';
-				await api.submitDrill(word.srs_item_id, direction, 'good');
-				undoable = { itemId: word.srs_item_id, direction };
-			} else if (word.recognition_reviewable && word.srs_item_id != null) {
-				// Read-ahead: reading a not-due word is a valid RECOGNITION review.
-				// Always grade the literal recognition direction — never
-				// active_direction, which flips to production once recognition
-				// graduates (that would silently grade the wrong card).
-				await api.submitDrill(word.srs_item_id, 'recognition', 'good');
-				undoable = { itemId: word.srs_item_id, direction: 'recognition' };
-			} else {
-				return;
-			}
-			transcript = await api.getLessonTranscript(data.lesson.id);
-			// A grade changes the review counts; keep the shared nav badge truthful.
-			queueStatsStore.refresh();
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
-		} finally {
-			wordActionInFlight = false;
-		}
-	}
-
-	async function handleCollocationStateChange(span_id: number) {
-		if (wordActionInFlight) return;
-		wordActionInFlight = true;
-		error = '';
-		try {
-			await api.submitDrill(span_id, 'recognition', 'good');
-			undoable = { itemId: span_id, direction: 'recognition' };
-			transcript = await api.getLessonTranscript(data.lesson.id);
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
-		} finally {
-			wordActionInFlight = false;
-		}
-	}
-
-	async function handleUndoGrade(itemId: number, direction: 'recognition' | 'production') {
-		error = '';
-		// Either way the snapshot is spent: success restores it, failure means a
-		// newer grade or a sync invalidated it — drop the Undo button regardless.
-		undoable = null;
-		try {
-			await api.undoGrade(itemId, direction);
-			transcript = await api.getLessonTranscript(data.lesson.id);
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
-		}
-	}
-
-	const tooltipActions = {
-		onCreateInflection: async (word: import('$lib/api').WordToken, sentence: string) => {
-			error = '';
-			try {
-				await api.createInflectionCloze({
-					surface: word.surface,
-					lemma: word.lemma,
-					feature: word.inflection_feature!,
-					sentence,
-					language_code: data.lesson.language_code,
-					lesson_id: data.lesson.id,
-					translation: word.translation ?? ''
-				});
-				transcript = await api.getLessonTranscript(data.lesson.id);
-			} catch (e) {
-				error = e instanceof Error ? e.message : String(e);
-			}
-		},
-		onSetState: async (id: number, state: string) => {
-			// Reset-to-new forgets the card in Anki too (re-learn from scratch),
-			// so confirm before discarding the schedule. Other states are label-only.
-			if (
-				state === 'new' &&
-				!(await confirmDialog(
-					'Reset this word? It will be forgotten in Anki too and re-learned from scratch.',
-					{ destructive: true }
-				))
-			) {
-				return;
-			}
-			error = '';
-			try {
-				await api.setSRSItemState(id, state);
-				transcript = await api.getLessonTranscript(data.lesson.id);
-			} catch (e) {
-				error = e instanceof Error ? e.message : String(e);
-			}
-		},
-		onUntrack: async (id: number) => {
-			error = '';
-			try {
-				await api.untrackSRSItem(id);
-				transcript = await api.getLessonTranscript(data.lesson.id);
-			} catch (e) {
-				error = e instanceof Error ? e.message : String(e);
-			}
-		},
-		onUnignore: async (id: number) => {
-			error = '';
-			try {
-				await api.suspendSRSItem(id, false);
-				transcript = await api.getLessonTranscript(data.lesson.id);
-			} catch (e) {
-				error = e instanceof Error ? e.message : String(e);
-			}
-		},
-		onIgnoreLemma: async (lemma: string) => {
-			error = '';
-			try {
-				await api.ignoreLemma(lemma, data.lesson.language_code);
-				transcript = await api.getLessonTranscript(data.lesson.id);
-			} catch (e) {
-				error = e instanceof Error ? e.message : String(e);
-			}
-		},
-		onUnignoreLemma: async (lemma: string) => {
-			error = '';
-			try {
-				await api.unignoreLemma(lemma, data.lesson.language_code);
-				transcript = await api.getLessonTranscript(data.lesson.id);
-			} catch (e) {
-				error = e instanceof Error ? e.message : String(e);
-			}
-		},
-		onRestoreKnown: async (id: number) => {
-			error = '';
-			try {
-				await api.restoreKnown(id);
-				transcript = await api.getLessonTranscript(data.lesson.id);
-			} catch (e) {
-				error = e instanceof Error ? e.message : String(e);
-			}
-		},
-		// Match on item id only — grading recognition can graduate it, flipping the
-		// refetched word's active_direction to production; the undo must still hit
-		// the direction that was actually graded (stored in `undoable`).
-		isGradeUndoable: (word: import('$lib/api').WordToken) =>
-			undoable != null && word.srs_item_id === undoable.itemId,
-		onUndoGrade: async (_word: import('$lib/api').WordToken) => {
-			if (undoable != null) await handleUndoGrade(undoable.itemId, undoable.direction);
-		}
-	};
-
-	async function handleCreatePhrase({
-		text,
-		word_count,
-		translation,
-		source_sentence,
-		source_lesson_id,
-		source_line_index
-	}: {
-		text: string;
-		word_count: number;
-		translation: string;
-		lineIndex: number;
-		startIdx: number;
-		endIdx: number;
-		source_sentence?: string;
-		source_lesson_id?: string;
-		source_line_index?: number;
-	}) {
-		error = '';
-		try {
-			await api.createSRSItem({
-				text,
-				language_code: data.lesson.language_code,
-				word_count,
-				translation,
-				source_sentence,
-				source_lesson_id,
-				source_line_index
-			});
-			transcript = await api.getLessonTranscript(data.lesson.id);
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
-		}
-	}
 </script>
 
 <svelte:window onresize={measureNav} />
 
 <main>
-	<!-- The sticky card owns everything the user reaches for mid-lesson: the
-	     lesson title, Read/Listen toggle, and (once rendered) the player. It
-	     sticks below the global nav so nothing the user needs scrolls away. -->
-	<section class="card player-card" style="top: {navHeight}px">
-		<!-- Two-column grid, not a flex row: the title and toggle share row 1, but
-		     the stats line below spans BOTH columns. As a flex child of the title
-		     column it inherited that column's width and wrapped to two lines on a
-		     phone — and the toggle is only two lines tall, so nothing below it
-		     needs to keep clearing it. -->
-		<div class="player-header">
-			<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
-			<!-- Day pager: its own full-width band directly under the curriculum link,
-			     prev hard left and next hard right, so it reads as one axis of travel
-			     rather than two links fighting the breadcrumb for the same corner.
-			     Hidden entirely (not rendered empty) when there is no neighbour — an
-			     empty nav would still cost a grid row and its gap. -->
-			{#if prevLesson || nextLesson}
-				<nav class="lesson-nav" aria-label="Lesson navigation">
-					{#if prevLesson}
-						<a class="lesson-nav-link" href="/c/{data.curriculum.id}/l/{prevLesson.lesson_id}">← Day {prevLesson.position}</a>
-					{/if}
-					{#if nextLesson}
-						<a class="lesson-nav-link lesson-nav-next" href="/c/{data.curriculum.id}/l/{nextLesson.lesson_id}">Day {nextLesson.position} →</a>
-					{/if}
-				</nav>
-			{/if}
-			<div class="player-title-area">
-				<h1>{data.lesson.title}</h1>
-				{#if syncStatus}
-					<p class="sync-status">{syncStatus}</p>
+	<LessonReader
+		title={data.lesson.title}
+		content={data.lesson}
+		{audio}
+		{transcript}
+		{transcriptLoading}
+		{reading}
+		{navHeight}
+		bind:controller={playbackController}
+	>
+		{#snippet headerAbove()}
+				<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
+				<!-- Day pager: its own full-width band directly under the curriculum link,
+				     prev hard left and next hard right, so it reads as one axis of travel
+				     rather than two links fighting the breadcrumb for the same corner.
+				     Hidden entirely (not rendered empty) when there is no neighbour — an
+				     empty nav would still cost a grid row and its gap. -->
+				{#if prevLesson || nextLesson}
+					<nav class="lesson-nav" aria-label="Lesson navigation">
+						{#if prevLesson}
+							<a class="lesson-nav-link" href="/c/{data.curriculum.id}/l/{prevLesson.lesson_id}">← Day {prevLesson.position}</a>
+						{/if}
+						{#if nextLesson}
+							<a class="lesson-nav-link lesson-nav-next" href="/c/{data.curriculum.id}/l/{nextLesson.lesson_id}">Day {nextLesson.position} →</a>
+						{/if}
+					</nav>
 				{/if}
-				{#if error}
-					<p class="error">{error}</p>
-				{/if}
-			</div>
-			<div class="mode-row">
-				<div class="toggle-pill">
-					<button class:active={mode === 'read'} onclick={() => lessonModePref.set('read')}>Read</button>
-					<button class:active={mode === 'listen'} onclick={() => lessonModePref.set('listen')}>Listen</button>
+		{/snippet}
+		{#snippet header()}
+				<div class="player-title-area">
+					<h1>{data.lesson.title}</h1>
+					{#if syncStatus}
+						<p class="sync-status">{syncStatus}</p>
+					{/if}
+					{#if error}
+						<p class="error">{error}</p>
+					{/if}
 				</div>
-			</div>
-			<!-- Stats read as lesson metadata under the title rather than a third
-			     stacked line in the action row — same information, no extra row. -->
-			{#if mastery && masteryPct !== null}
-				<p class="mastery-line">
-					<span class="mastery-pct" style:color={masteryColor(masteryPct)}>{Math.round(masteryPct * 100)}%</span>
-					{#each masterySegments as seg, i (seg.key)}{#if i > 0}<span class="mastery-sep">·</span>{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}
-				</p>
-			{/if}
-		</div>
-		{#if audio}
-			{#key audio.audio_id}
-				<!-- ONE persistent player across modes: only the `compact` prop flips on
-				     Listen↔Read, so the controller (and playback) survives the switch. -->
-				<LessonPlayer {audio} compact={mode !== 'listen'} lessonTitle={data.lesson.title} bind:controller={playbackController} />
-			{/key}
-		{:else}
-			<div class="render-row">
-				<button onclick={handleRenderAudio} disabled={audioLoading}>
-					{audioLoading ? 'Rendering…' : 'Render Audio'}
-				</button>
-				{#if thisDayPipeline && !audioLoading}
-					<span class="pipeline-state state-{thisDayPipeline.state}">{thisDayPipeline.state}</span>
-				{/if}
-			</div>
-		{/if}
-		<!-- One action row at the foot of the sticky card: the listen button and
-		     whatever it produced (confirmation, check-work link) sit beside it
-		     instead of stacking into three centered lines. -->
-		<div class="listen-actions">
-			<button class="listen-btn" class:listened={isListened} onclick={handleMarkListened}>
-				Mark as Listened
-			</button>
-			{#if listenResult && !error}
-				<p class="listen-confirmation">
-					{#if listenResult.created > 0}
-						{listenResult.created} new {listenResult.created === 1 ? 'word' : 'words'} added
+		{/snippet}
+		{#snippet headerBelow()}
+				<!-- Stats read as lesson metadata under the title rather than a third
+				     stacked line in the action row — same information, no extra row. -->
+				<MasteryLine {transcript} />
+		{/snippet}
+		{#snippet noAudio()}
+				<div class="render-row">
+					<button onclick={handleRenderAudio} disabled={audioLoading}>
+						{audioLoading ? 'Rendering…' : 'Render Audio'}
+					</button>
+					{#if thisDayPipeline && !audioLoading}
+						<span class="pipeline-state state-{thisDayPipeline.state}">{thisDayPipeline.state}</span>
 					{/if}
-					{#if listenResult.created > 0 && (listenResult.applied > 0 || listenResult.staged > 0)} · {/if}
-					{#if listenResult.applied > 0}
-						{listenResult.applied} graded
-					{/if}
-					{#if listenResult.applied > 0 && listenResult.staged > 0} · {/if}
-					{#if listenResult.staged > 0}
-						{listenResult.staged} ready to check
-					{/if}
-					{#if listenResult.remaining_candidates > 0}
-						 · {listenResult.remaining_candidates} remaining — listen again to add more
-					{/if}
-				</p>
-			{/if}
-			{#if showCheckWorkLink}
-				<a class="check-work-link" href="/review?lesson={data.lesson.id}&c={data.curriculum.id}">Check your work — review {queueCount} {queueCount === 1 ? 'word' : 'words'}</a>
-			{/if}
-		</div>
-	</section>
-
-	{#if mode === 'read'}
-		<section class="card">
-			{#if transcript}
-				<Transcript
-					{transcript}
-					lesson={data.lesson}
-					onWordClick={handleWordClick}
-					onCollocationStateChange={handleCollocationStateChange}
-					undoableItemId={undoable?.itemId ?? null}
-					onCollocationUndo={(spanId) => handleUndoGrade(spanId, 'recognition')}
-					onCreatePhrase={handleCreatePhrase}
-					controller={playbackController}
-					tooltipActions={tooltipActions}
-				/>
-			{:else if transcriptLoading}
-				<TranscriptPlaceholder lesson={data.lesson} />
-			{:else}
-				<p class="muted">No transcript available.</p>
-			{/if}
-		</section>
-	{/if}
+				</div>
+		{/snippet}
+		{#snippet actions()}
+			<ListenActions
+				{listen}
+				reviewHref="/review?lesson={data.lesson.id}&back=/c/{data.curriculum.id}/l/{data.lesson.id}"
+				hasError={error !== ''}
+			/>
+		{/snippet}
+	</LessonReader>
 
 	<!-- Rare actions live folded away: downloads for offline use, regeneration
 	     as the destructive-ish last resort. -->
 	<details class="card tools-card">
 		<summary>Lesson tools</summary>
-		{#if audio}
-			<div class="download-links">
-				<a class="download-all-btn" href={api.audioZipUrl(audio.lesson_id)} download>Download All Sections</a>
-				{#each audio.sections as sec (sec.audio_id)}
-					<a class="section-dl-btn" href={api.audioUrl(sec.audio_id)} download>{sec.title}</a>
-				{/each}
-			</div>
-		{/if}
+		<AudioDownloads {audio} />
 		{#if reviewRequested.length > 0}
 			<!-- Deliberately neutral: at the default pressure the prompt tells the
 			     model that using none of these is a correct answer, so a low number
@@ -820,12 +512,8 @@
 	</details>
 </main>
 
-{#if showPreview}
-	<ListenPreviewModal
-		lessonId={data.lesson.id}
-		languageCode={data.lesson.language_code}
-		onDone={handlePreviewDone}
-	/>
+{#if listen.showPreview}
+	<ListenPreviewModal {...listen.previewProps} />
 {/if}
 
 <style>
@@ -842,23 +530,8 @@
 	   the two things the eye lands on), then the stats. Only that third band is
 	   two-column; the rest span the full width so the pager's arrows can sit at
 	   the card's outer edges. */
-	.player-header {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
-		align-items: start;
-		column-gap: 1rem;
-		row-gap: 0.2rem;
-	}
-	.player-header > .breadcrumb,
-	.player-header > .lesson-nav,
-	.player-header > .mastery-line {
-		grid-column: 1 / -1;
-	}
 	/* Level with the title, not the top of its column: `align-items: start` would
 	   hang the pill off the band's top edge and the h1 is the taller box. */
-	.player-header > .mode-row {
-		align-self: center;
-	}
 	.player-title-area {
 		display: flex;
 		flex-direction: column;
@@ -1025,11 +698,6 @@
 		border-color: var(--color-danger);
 		color: var(--color-danger);
 	}
-	.mode-row {
-		display: flex;
-		justify-content: flex-end;
-		flex-shrink: 0;
-	}
 	.render-row {
 		display: flex;
 		justify-content: center;
@@ -1065,47 +733,6 @@
 	.state-failed {
 		background: color-mix(in srgb, var(--color-danger) 14%, transparent);
 		color: var(--color-danger);
-	}
-	.toggle-pill {
-		display: flex;
-		gap: 0;
-		background: var(--color-surface-2);
-		border-radius: var(--radius-pill);
-		padding: 2px;
-		width: fit-content;
-	}
-	.toggle-pill button {
-		margin: 0;
-		padding: 0.35rem 1rem;
-		border: none;
-		border-radius: var(--radius-pill);
-		background: transparent;
-		color: var(--color-muted);
-		font-size: 0.85rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: background 0.15s ease, color 0.15s ease;
-	}
-	.toggle-pill button.active {
-		background: var(--color-bg, #fff);
-		color: var(--color-text);
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-	}
-	.toggle-pill button:not(.active):hover {
-		color: var(--color-text);
-	}
-	.player-card {
-		position: sticky;
-		/* Above transcript content, below word tooltips (z 30) and the global nav
-		   (z 50). The tooltips used to sit UNDER this card at z 10 — deliberately,
-		   per an earlier version of this comment — and that was wrong: a popover the
-		   user long-pressed a specific word to summon is useless occluded, while this
-		   card is persistent and always reachable (F-21). */
-		z-index: 20;
-		display: flex;
-		flex-direction: column;
-		gap: 0.6rem;
-		padding: 0.9rem 1.1rem;
 	}
 	/* Single centered action row: the button keeps the card's centre line it has
 	   always had, with whatever the last listen produced beside it. Wraps on
@@ -1190,34 +817,5 @@
 		border-top: 1px solid var(--color-border);
 		margin: 1rem 0;
 		opacity: 0.5;
-	}
-	.download-links {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-	}
-	.download-all-btn {
-		display: inline-block;
-		padding: 0.5rem 1.25rem;
-		background: var(--color-primary);
-		color: var(--color-on-primary);
-		border-radius: 4px;
-		text-decoration: none;
-		font-size: 0.9rem;
-		font-weight: 600;
-	}
-	.download-all-btn:hover {
-		filter: brightness(0.9);
-	}
-	.section-dl-btn {
-		padding: 0.4rem 0.9rem;
-		background: var(--color-secondary);
-		color: var(--color-on-primary);
-		border-radius: 4px;
-		text-decoration: none;
-		font-size: 0.85rem;
-	}
-	.section-dl-btn:hover {
-		filter: brightness(0.85);
 	}
 </style>

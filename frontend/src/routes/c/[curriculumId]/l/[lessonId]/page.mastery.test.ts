@@ -44,7 +44,7 @@ async function seedListened(lessonId: string, count: number) {
   await listenedStore.hydrate();
 }
 
-const mockGetTranscript = vi.mocked(api.getLessonTranscript);
+const mockGetTranscript = vi.mocked(api.getTranscript);
 const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
 
 beforeEach(() => {
@@ -87,7 +87,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await waitFor(() => {
         const link = getByText(/Check your work/);
         expect(link.textContent).toContain("2 words");
-        expect(link.getAttribute("href")).toBe("/review?lesson=l1&c=cid-1");
+        expect(link.getAttribute("href")).toBe("/review?lesson=l1&back=/c/cid-1/l/l1");
       });
     });
 

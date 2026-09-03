@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import date
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -92,12 +93,19 @@ def _latest_cefr_level(store) -> str:
     return store.get_curriculum(rows[0]["id"]).cefr_level
 
 
-@router.post("", status_code=201, response_model=CreateReviewSessionResponse)
-async def create_review_session(body: CreateReviewSessionRequest, request: Request):
-    """Generate one review session: no curriculum, no day, no theme.
+async def _generate_and_store(request: Request, *, session_id: str | None, session_date: str | None) -> dict:
+    """Generate one session and write it, minting id and date only when asked.
 
-    Takes no identifiers at all — see ``CreateReviewSessionRequest`` for why that
-    is enforced rather than merely documented.
+    Shared by create and regenerate, which differ in EXACTLY two things: whether
+    the id and date are minted or supplied, and the status code. Everything else
+    — the four-way error mapping, the UPOS pass before the write, the gloss
+    pre-warm after it — has to be identical, and a second copy would drift
+    precisely where the two must agree.
+
+    ⚠️ The generation happens BEFORE anything is written, and that ordering is
+    load-bearing for regenerate: a refusal (nothing due, a 429, an upstream
+    failure) must leave the dialogue the user already had intact rather than
+    replacing it with nothing.
     """
     store = request.state.content_store
     language = request.state.language
@@ -126,11 +134,11 @@ async def create_review_session(body: CreateReviewSessionRequest, request: Reque
     # Guarding here would add a branch nothing can execute.
     await annotate_chunk_upos_for_lesson(lesson, srs_db, **_injected_lemmatizer(request))
 
-    session_id = mint_id(lesson.title)
+    session_id = session_id or mint_id(lesson.title)
     metadata = lesson.generation_metadata
     # Read the clock ONCE. Called twice, this would store one date and report
     # another across a midnight boundary — rare, silent, and unreproducible.
-    session_date = date.today().isoformat()
+    session_date = session_date or date.today().isoformat()
     store.save_review_session(
         session_id,
         request.state.language_code,
@@ -152,6 +160,57 @@ async def create_review_session(body: CreateReviewSessionRequest, request: Reque
         "review_used": metadata.get("review_used", []),
         "warnings": _logged_speaker_warnings(metadata.get("story"), language),
     }
+
+
+@router.post("", status_code=201, response_model=CreateReviewSessionResponse)
+async def create_review_session(body: CreateReviewSessionRequest, request: Request):
+    """Generate one review session: no curriculum, no day, no theme.
+
+    Takes no identifiers at all — see ``CreateReviewSessionRequest`` for why that
+    is enforced rather than merely documented.
+    """
+    return await _generate_and_store(request, session_id=None, session_date=None)
+
+
+@router.post("/{session_id}/regenerate", status_code=200, response_model=CreateReviewSessionResponse)
+async def regenerate_review_session(session_id: str, request: Request):
+    """Rewrite one session's dialogue without it becoming a different session.
+
+    The lesson page has had "Regenerate Day N" since long before sessions
+    existed. A session had no equivalent, so a dialogue the user wanted improved
+    could only be replaced by generating a WHOLE NEW one — new id, new URL, new
+    row in the dated list, different words. That is a different act, and the
+    absence of this route was reported as "the lesson tools are missing".
+
+    ⚠️ Not routed through ``LessonPipeline`` the way the lesson page's Regenerate
+    is. That pipeline is keyed (language_code, curriculum_id, day) throughout, so
+    a session has nothing to key on — the same reason rendering calls
+    ``render_lesson_audio`` directly. The cost, stated rather than hidden: no
+    429 wait-and-retry and no sticky-failed + Retry, so a quota refusal surfaces
+    to the user as a 429 they must act on themselves.
+
+    ⚠️ The word selection is NOT pinned to the previous run. A review session's
+    whole claim is that it is about what has decayed NOW, and
+    ``build_review_session_prompts`` re-selects at call time; pinning the old
+    list would make a regenerated session assert a staleness it no longer
+    measures. The coverage pair is rewritten to match, for the same reason.
+    """
+    store = request.state.content_store
+    row = store.get_review_session_row(session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Review session not found")
+
+    result = await _generate_and_store(request, session_id=session_id, session_date=row["session_date"])
+
+    # AFTER the write, and only on success. Audio rows key on the session id, so
+    # renders of the dialogue we just replaced would otherwise still be served
+    # for the new one — the player would read a script no longer on screen.
+    # Unlink as well as delete the rows, missing_ok for the same reason the
+    # day-delete path gives: a file already gone is the outcome we want.
+    for file_path in store.delete_review_session_audio(session_id):
+        Path(file_path).unlink(missing_ok=True)
+
+    return result
 
 
 @router.get("", status_code=200, response_model=ListReviewSessionsResponse)

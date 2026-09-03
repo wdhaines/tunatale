@@ -3,7 +3,7 @@
 	import Tooltip from './Tooltip.svelte';
 	import type { TooltipActions } from './Tooltip.svelte';
 	import { api } from '$lib/api';
-	import type { LessonDetail, TranscriptData, WordToken } from '$lib/api';
+	import type { ReadableLesson, TranscriptData, WordToken } from '$lib/api';
 	import { buildScenes, fallbackScenes, cueHighlight } from '$lib/transcriptScenes';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { masteryBackgroundColor, masteryColor } from '$lib/mastery';
@@ -22,7 +22,7 @@
 
 	interface Props {
 		transcript: TranscriptData;
-		lesson?: LessonDetail;
+		lesson?: ReadableLesson;
 		onWordClick?: (word: WordToken, lineIndex: number) => void;
 		onCollocationStateChange?: (span_id: number) => void;
 		// Undo cycle for phrase grades: when undoableItemId matches a span_id the
@@ -1108,7 +1108,12 @@
 			gap: 0.75rem;
 		}
 		.dialogue-role {
-			min-width: 6rem;
+			/* NO min-width. It was 6rem, sized for the raw voice id this column used
+			   to show ("female-1", "male-1") — see 0999a35. The speaker CHIP replaced
+			   that text in 3bc1250 and the column was never revisited, so a 1.4rem
+			   chip sat in a 6rem slot and every line began ~5rem from its speaker.
+			   Alignment does not need the min-width: every chip is exactly 1.4rem, so
+			   the column is uniform on its own. */
 			font-weight: 400;
 		}
 		.key-phrases-list li {

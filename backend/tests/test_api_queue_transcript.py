@@ -124,7 +124,7 @@ class TestQueueStatsEndpoint:
 
 
 class TestTranscriptEndpoint:
-    """Tests for GET /api/srs/lesson/{lesson_id}/transcript."""
+    """Tests for GET /api/srs/content/{lesson_id}/transcript."""
 
     async def test_returns_200_with_correct_shape(self):
         from app.srs.database import SRSDatabase
@@ -149,7 +149,7 @@ class TestTranscriptEndpoint:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/srs/lesson/lesson-1/transcript")
+            response = await client.get("/api/srs/content/lesson-1/transcript")
 
         assert response.status_code == 200
         data = response.json()
@@ -193,7 +193,7 @@ class TestTranscriptEndpoint:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/srs/lesson/lesson-1/transcript")
+            response = await client.get("/api/srs/content/lesson-1/transcript")
 
         data = response.json()
         assert set(data.keys()) == {"lesson_id", "key_phrases", "dialogue_lines"}
@@ -243,7 +243,7 @@ class TestTranscriptEndpoint:
         app.state.content_store = ContentStore(":memory:")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/srs/lesson/nonexistent/transcript")
+            response = await client.get("/api/srs/content/nonexistent/transcript")
 
         assert response.status_code == 404
 
@@ -284,7 +284,7 @@ class TestTranscriptEndpoint:
         monkeypatch.setattr(srs_mod, "get_lemmatizer", _spy)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/srs/lesson/lesson-no/transcript")
+            response = await client.get("/api/srs/content/lesson-no/transcript")
 
         assert response.status_code == 200
         assert captured == ["no"], f"expected the lemmatizer resolved for 'no', got {captured}"
@@ -315,7 +315,7 @@ class TestTranscriptEndpoint:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/srs/lesson/lesson-1/transcript")
+            response = await client.get("/api/srs/content/lesson-1/transcript")
 
         data = response.json()
         assert len(data["dialogue_lines"]) == 1
@@ -347,7 +347,7 @@ class TestTranscriptEndpoint:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/srs/lesson/lesson-1/transcript")
+            response = await client.get("/api/srs/content/lesson-1/transcript")
 
         data = response.json()
         word = data["dialogue_lines"][0]["words"][0]
@@ -394,7 +394,7 @@ class TestTranscriptEndpoint:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/srs/lesson/lesson-1/transcript")
+            response = await client.get("/api/srs/content/lesson-1/transcript")
 
         data = response.json()
         word = data["dialogue_lines"][0]["words"][0]
@@ -442,7 +442,7 @@ class TestTranscriptEndpoint:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/srs/lesson/lesson-1/transcript")
+            response = await client.get("/api/srs/content/lesson-1/transcript")
 
         data = response.json()
         word = data["dialogue_lines"][0]["words"][0]
@@ -472,7 +472,7 @@ class TestTranscriptEndpoint:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/srs/lesson/lesson-1/transcript")
+            response = await client.get("/api/srs/content/lesson-1/transcript")
 
         data = response.json()
         word = data["dialogue_lines"][0]["words"][0]

@@ -105,7 +105,7 @@ async function seed(request: import("@playwright/test").APIRequestContext) {
 	const lesson = await impRes.json();
 
 	const listenRes = await request.post(`${BACKEND}/api/srs/listen`, {
-		data: { lesson_id: lesson.id ?? lesson.lesson_id, word_ratings: {}, kp_ratings: {} },
+		data: { content_id: lesson.id ?? lesson.lesson_id, word_ratings: {}, kp_ratings: {} },
 	});
 	if (!listenRes.ok())
 		throw new Error(`listen failed: ${listenRes.status()} ${await listenRes.text()}`);

@@ -427,7 +427,7 @@ class TestCreateItem:
 
 
 class TestTranscriptEnrichment:
-    """Tests that GET /api/srs/lesson/{id}/transcript returns enriched WordToken fields."""
+    """Tests that GET /api/srs/content/{id}/transcript returns enriched WordToken fields."""
 
     async def test_transcript_includes_srs_item_id_for_known_word(self):
         db = _db()
@@ -451,7 +451,7 @@ class TestTranscriptEnrichment:
         store.save_lesson("test-lesson", "curr-1", 1, lesson)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/srs/lesson/test-lesson/transcript")
+            response = await client.get("/api/srs/content/test-lesson/transcript")
 
         assert response.status_code == 200
         word = response.json()["dialogue_lines"][0]["words"][0]
@@ -477,7 +477,7 @@ class TestTranscriptEnrichment:
         store.save_lesson("test-lesson2", "curr-1", 1, lesson)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/srs/lesson/test-lesson2/transcript")
+            response = await client.get("/api/srs/content/test-lesson2/transcript")
 
         assert response.status_code == 200
         word = response.json()["dialogue_lines"][0]["words"][0]
@@ -497,7 +497,7 @@ class TestTranscriptEnrichment:
         store.save_lesson("test-lesson3", "curr-1", 1, lesson)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/srs/lesson/test-lesson3/transcript")
+            response = await client.get("/api/srs/content/test-lesson3/transcript")
 
         assert response.status_code == 200
         word = response.json()["dialogue_lines"][0]["words"][0]

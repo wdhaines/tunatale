@@ -24,7 +24,7 @@ from app.main import app
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 
-PREVIEW_URL = "/api/srs/lesson/lesson-1/listen-preview"
+PREVIEW_URL = "/api/srs/content/lesson-1/listen-preview"
 LISTEN_URL = "/api/srs/listen"
 
 
@@ -107,7 +107,7 @@ class TestCreateRowGloss:
         previewed = _creates(await _preview())
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post(LISTEN_URL, json={"lesson_id": "lesson-1"})
+            resp = await client.post(LISTEN_URL, json={"content_id": "lesson-1"})
         assert resp.status_code == 200
 
         for lemma, shown in previewed.items():
@@ -140,7 +140,7 @@ class TestGlossWarningBelongsToCreation:
 
         with caplog.at_level(logging.WARNING, logger="app.api.srs"):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                resp = await client.post(LISTEN_URL, json={"lesson_id": "lesson-1"})
+                resp = await client.post(LISTEN_URL, json={"content_id": "lesson-1"})
             assert resp.status_code == 200
 
         warned = {r.args[0] for r in caplog.records if "empty translation" in r.message}

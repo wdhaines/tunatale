@@ -142,7 +142,7 @@ class TestListenToSyncRoundTrip:
 
         # ── 1. Listen ─────────────────────────────────────────────────────
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         assert response.status_code == 200
         assert db.count_collocations() == 3  # 2 cloze + 1 vocab
@@ -237,7 +237,7 @@ class TestListenToSyncRoundTrip:
 
         # ── 1. Capped listen ──────────────────────────────────────────────
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         assert response.status_code == 200
         data = response.json()
@@ -338,7 +338,7 @@ class TestListenToSyncRoundTrip:
         db.set_anki_state_cache("daily_review_cap", "10")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
         data = response.json()
         assert data["staged"] == 2

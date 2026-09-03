@@ -105,7 +105,7 @@ def _setup(phrase_text: str, llm) -> object:
 
 async def _listen(db) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+        resp = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
     assert resp.status_code == 200
 
 

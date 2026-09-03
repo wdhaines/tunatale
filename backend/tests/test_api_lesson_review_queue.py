@@ -14,7 +14,7 @@ from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 
 
 class TestLessonReviewQueue:
-    """GET /api/srs/lesson/{lesson_id}/review-queue — lesson-scoped "Check your
+    """GET /api/srs/content/{lesson_id}/review-queue — lesson-scoped "Check your
     work" queue.
 
     Scope narrowed 2026-07-27 to **exactly this lesson's pending_listen_grades
@@ -106,7 +106,7 @@ class TestLessonReviewQueue:
 
     async def _get_queue(self, lesson_id="lesson-1"):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            return await client.get(f"/api/srs/lesson/{lesson_id}/review-queue")
+            return await client.get(f"/api/srs/content/{lesson_id}/review-queue")
 
     async def test_404_unknown_lesson(self):
         self._setup(self._lesson(["banka"]))
@@ -356,7 +356,7 @@ class TestLessonReviewQueue:
         )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            listen = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            listen = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert listen.json()["staged"] == 1
 
         resp = await self._get_queue()
@@ -395,7 +395,7 @@ class TestLessonReviewQueue:
         )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            listen = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            listen = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert listen.json()["staged"] == 1
 
         resp = await self._get_queue()
@@ -433,7 +433,7 @@ class TestLessonReviewQueue:
 
 
 class TestMarkLessonReviewed:
-    """POST /api/srs/lesson/{lesson_id}/reviewed — records a review row for
+    """POST /api/srs/content/{lesson_id}/reviewed — records a review row for
     the one-shot-per-listen gate."""
 
     def _lesson(self):
@@ -463,13 +463,13 @@ class TestMarkLessonReviewed:
     async def test_404_unknown_lesson(self):
         self._setup()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/lesson/no-such-lesson/reviewed")
+            resp = await client.post("/api/srs/content/no-such-lesson/reviewed")
             assert resp.status_code == 404
 
     async def test_200_and_row_recorded(self):
         db = self._setup()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/lesson/lesson-1/reviewed")
+            resp = await client.post("/api/srs/content/lesson-1/reviewed")
             assert resp.status_code == 200
             assert resp.json() == {"ok": True}
         assert db.latest_review_at("lesson-1") is not None
@@ -478,6 +478,6 @@ class TestMarkLessonReviewed:
         """Oracle for the response_model flip (bp-ledger-burndown stage 3)."""
         self._setup()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/lesson/lesson-1/reviewed")
+            resp = await client.post("/api/srs/content/lesson-1/reviewed")
         assert set(resp.json().keys()) == {"ok"}
         assert set(MarkLessonReviewedResponse.model_fields) == {"ok"}

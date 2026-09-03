@@ -10,7 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ListenRequest(BaseModel):
-    lesson_id: str
+    # `content_id`, not `lesson_id`: a review session is listened to exactly like
+    # a lesson and resolves through ContentStore.get_readable_content.
+    content_id: str
     word_ratings: dict[str, Literal["again", "hard", "good", "easy", "skip"]] = {}  # lemma → rating
     kp_ratings: dict[str, Literal["again", "hard", "good", "easy", "skip"]] = {}  # key-phrase text → same domain
     # Items the user actually graded in the preview, as opposed to ones the

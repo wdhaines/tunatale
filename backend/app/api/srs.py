@@ -1006,7 +1006,7 @@ def _resolve_card_for_lemma(
 @router.post("/listen", status_code=200, response_model=ListenResponse)
 async def mark_lesson_listened(body: ListenRequest, request: Request, background_tasks: BackgroundTasks):
     store = request.state.content_store
-    lesson = store.get_lesson(body.lesson_id)
+    lesson = store.get_readable_content(body.content_id)
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
 
@@ -1067,7 +1067,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     # so re-listening and skipping everything still offered the old rows in
     # "Check your work". Lesson-scoped — another lesson's rows are not this
     # listen's to discard.
-    db.clear_pending_grades_for_lesson(body.lesson_id)
+    db.clear_pending_grades_for_lesson(body.content_id)
 
     created_count = 0
     staged_count = 0
@@ -1254,7 +1254,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
                 _apply_confirmed(listen_coll_id, rating_str)
             else:
                 db.stage_pending_grade(
-                    body.lesson_id,
+                    body.content_id,
                     listen_coll_id,
                     Direction.RECOGNITION.value,
                     rating_str,
@@ -1305,7 +1305,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
             _apply_confirmed(kp_coll_id, rating_str)
         else:
             db.stage_pending_grade(
-                body.lesson_id,
+                body.content_id,
                 kp_coll_id,
                 Direction.RECOGNITION.value,
                 rating_str,
@@ -1337,7 +1337,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
         if _confirmed:
             _apply_confirmed(_coll_id, _rating)
         else:
-            db.stage_pending_grade(body.lesson_id, _coll_id, Direction.RECOGNITION.value, _rating, "new")
+            db.stage_pending_grade(body.content_id, _coll_id, Direction.RECOGNITION.value, _rating, "new")
             staged_count += 1
 
     live_create_set = set(live_creates)
@@ -1418,7 +1418,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     remaining_candidates = len(ranked) - created_count
 
     # Server-side listened state (TT-only, never syncs): one row per listen.
-    db.record_listen(body.lesson_id)
+    db.record_listen(body.content_id)
 
     # Anki parity: grading advances the learning cutoff. A batch of confirmed
     # grades is still one grade event, so advance once at the end.
@@ -1443,7 +1443,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
         "applied": grade_ctx["applied"],
         "created": created_count,
         "remaining_candidates": remaining_candidates,
-        "listen_count": db.count_listens(body.lesson_id),
+        "listen_count": db.count_listens(body.content_id),
     }
 
 
@@ -1465,7 +1465,7 @@ async def import_listens(body: ImportListensRequest, request: Request):
         if lesson_id in seen:
             continue
         seen.add(lesson_id)
-        if store.get_lesson(lesson_id) is None:
+        if store.get_readable_content(lesson_id) is None:
             unknown.append(lesson_id)
         elif db.has_listen(lesson_id):
             already_present.append(lesson_id)
@@ -1485,7 +1485,7 @@ def _has_unreviewed_listen(latest_listen: str | None, latest_review: str | None)
 
 
 @router.get(
-    "/lesson/{lesson_id}/review-queue",
+    "/content/{content_id}/review-queue",
     status_code=200,
     response_model=LessonReviewQueueResponse,
     # The nested DirectionStateResponse omits `left` when None
@@ -1493,7 +1493,7 @@ def _has_unreviewed_listen(latest_listen: str | None, latest_review: str | None)
     # "left": null back into every NEW/REVIEW direction.
     response_model_exclude_unset=True,
 )
-async def get_lesson_review_queue(lesson_id: str, request: Request, response: Response) -> dict:
+async def get_lesson_review_queue(content_id: str, request: Request, response: Response) -> dict:
     """Lesson-scoped "Check your work" queue: exactly the listen's autograded cards.
 
     Items share ``_queue_item_to_dict``'s shape with /review-queue; grading a
@@ -1531,7 +1531,7 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     """
     response.headers["Cache-Control"] = "no-store"
     store = request.state.content_store
-    lesson = store.get_lesson(lesson_id)
+    lesson = store.get_readable_content(content_id)
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
     db = request.state.srs_db
@@ -1540,7 +1540,7 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     # bucket order (the NEW bucket is unreachable now, see the docstring).
     learning: list[tuple[datetime.datetime, int, SRSItem, Direction, str]] = []
     review: list[tuple[datetime.datetime, int, SRSItem, Direction, str]] = []
-    for pending in db.get_pending_grades(lesson_id):
+    for pending in db.get_pending_grades(content_id):
         rid = pending["collocation_id"]
         got = db.get_collocation_by_id(rid)
         if got is None:
@@ -1561,7 +1561,7 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     review.sort(key=lambda t: (t[0], t[1]))
 
     ambiguous = db.get_ambiguous_surfaces(lesson.language_code)
-    has_unreviewed_listen = _has_unreviewed_listen(db.latest_listen_at(lesson_id), db.latest_review_at(lesson_id))
+    has_unreviewed_listen = _has_unreviewed_listen(db.latest_listen_at(content_id), db.latest_review_at(content_id))
     queue = []
     for _, rid, item, d, rating in learning + review:
         entry = _queue_item_to_dict(rid, item, lesson.language_code, d, db, ambiguous)
@@ -1571,8 +1571,8 @@ async def get_lesson_review_queue(lesson_id: str, request: Request, response: Re
     return {"queue": queue, "has_unreviewed_listen": has_unreviewed_listen}
 
 
-@router.post("/lesson/{lesson_id}/reviewed", status_code=200, response_model=MarkLessonReviewedResponse)
-async def mark_lesson_reviewed(lesson_id: str, request: Request) -> dict:
+@router.post("/content/{content_id}/reviewed", status_code=200, response_model=MarkLessonReviewedResponse)
+async def mark_lesson_reviewed(content_id: str, request: Request) -> dict:
     """Record completion of a lesson-scoped 'Check your work' review.
 
     Gates the lesson page's "Check your work" link to one-shot-per-listen:
@@ -1581,10 +1581,10 @@ async def mark_lesson_reviewed(lesson_id: str, request: Request) -> dict:
     no parity/FSRS state.
     """
     store = request.state.content_store
-    if store.get_lesson(lesson_id) is None:
+    if store.get_readable_content(content_id) is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
     db = request.state.srs_db
-    db.record_review(lesson_id)
+    db.record_review(content_id)
     return {"ok": True}
 
 
@@ -1645,8 +1645,8 @@ def _apply_grade_now(
     return now, last_grade_ms
 
 
-@router.post("/lesson/{lesson_id}/commit-pending", status_code=200)
-async def commit_pending_grades(lesson_id: str, request: Request) -> CommitPendingResponse:
+@router.post("/content/{content_id}/commit-pending", status_code=200)
+async def commit_pending_grades(content_id: str, request: Request) -> CommitPendingResponse:
     """Bulk "Sync it": release every staged grade for a lesson without reviewing it.
 
     Applies each pending row at its provisional rating through the SAME path a
@@ -1660,7 +1660,7 @@ async def commit_pending_grades(lesson_id: str, request: Request) -> CommitPendi
     millisecond would silently drop one.
     """
     store = request.state.content_store
-    if store.get_lesson(lesson_id) is None:
+    if store.get_readable_content(content_id) is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
     db = request.state.srs_db
 
@@ -1673,7 +1673,7 @@ async def commit_pending_grades(lesson_id: str, request: Request) -> CommitPendi
     last_grade_ms = 0
     applied = 0
 
-    for pending in db.get_pending_grades(lesson_id):
+    for pending in db.get_pending_grades(content_id):
         collocation_id = pending["collocation_id"]
         dir_enum = Direction(pending["direction"])
         if db.get_collocation_by_id(collocation_id) is None:
@@ -1735,8 +1735,8 @@ def _tracked_sort_key(c: dict) -> tuple[int, str, float]:
     return (rank, due[:10], progress if progress is not None else 0.0)
 
 
-@router.get("/lesson/{lesson_id}/listen-preview", status_code=200)
-async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewResponse:
+@router.get("/content/{content_id}/listen-preview", status_code=200)
+async def get_listen_preview(content_id: str, request: Request) -> ListenPreviewResponse:
     """Read-only classification of what a listen would stage for a lesson.
 
     The ``create`` rows are every untracked lemma, flagged with ``will_create``
@@ -1778,7 +1778,7 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
     re-derives from the current ratings.
     """
     store = request.state.content_store
-    lesson = store.get_lesson(lesson_id)
+    lesson = store.get_readable_content(content_id)
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
     db = request.state.srs_db
@@ -1999,13 +1999,24 @@ async def get_listen_preview(lesson_id: str, request: Request) -> ListenPreviewR
     return {"candidates": creates + tracked}
 
 
-@router.get("/lesson/{lesson_id}/transcript", status_code=200, response_model=LessonTranscriptResponse)
-async def get_lesson_transcript(lesson_id: str, request: Request):
-    store = request.state.content_store
-    lesson = store.get_lesson(lesson_id)
+@router.get("/content/{content_id}/transcript", status_code=200, response_model=LessonTranscriptResponse)
+async def get_lesson_transcript(content_id: str, request: Request):
+    lesson = request.state.content_store.get_readable_content(content_id)
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
+    return await build_transcript_payload(content_id, lesson, request)
 
+
+async def build_transcript_payload(content_id: str, lesson, request: Request) -> dict:
+    """The transcript for a stored Lesson, whoever is holding it.
+
+    ⚠️ THE ONLY LESSON-SPECIFIC THING ABOUT THE OLD HANDLER WAS ITS LOOKUP.
+    Everything below operates on a ``Lesson`` object, and a review session is
+    stored as exactly that — so it is the caller who knows which table to read,
+    and this builds the payload either way (bd tunatale-9p9d). Splitting it here
+    is what lets a session use the SAME reading UI as a lesson rather than a
+    second, worse one.
+    """
     db = request.state.srs_db
     # Anki-day rollover, not local midnight — feeds extract_transcript's is_due
     # bolding (verdict item 5): a card due "tomorrow" by real calendar date but
@@ -2019,7 +2030,7 @@ async def get_lesson_transcript(lesson_id: str, request: Request):
     transcript = await anyio.to_thread.run_sync(extract_transcript, lesson, db, lemmatizer, today)
 
     return {
-        "lesson_id": lesson_id,
+        "lesson_id": content_id,
         "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in transcript.key_phrases],
         "dialogue_lines": [
             {
@@ -2711,7 +2722,7 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
     if body.lesson_id:
         from app.models.lesson import extract_sentence_translations_from_translated
 
-        lesson = request.state.content_store.get_lesson(body.lesson_id)
+        lesson = request.state.content_store.get_readable_content(body.lesson_id)
         if lesson is not None:
             token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
             sentence_translations: dict[str, str] = dict(lesson.generation_metadata.get("sentence_translations", {}))

@@ -15,7 +15,7 @@ type TranscriptWord = {
 };
 
 async function getTranscript(request: APIRequestContext, lessonId: string, backendURL: string) {
-	const res = await request.get(`${backendURL}/api/srs/lesson/${lessonId}/transcript`);
+	const res = await request.get(`${backendURL}/api/srs/content/${lessonId}/transcript`);
 	expect(res.ok()).toBe(true);
 	const data = await res.json();
 	return (data.dialogue_lines ?? []).flatMap(

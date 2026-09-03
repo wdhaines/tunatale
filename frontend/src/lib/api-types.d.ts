@@ -827,6 +827,45 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/review-sessions/{session_id}/regenerate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Regenerate Review Session
+     * @description Rewrite one session's dialogue without it becoming a different session.
+     *
+     *     The lesson page has had "Regenerate Day N" since long before sessions
+     *     existed. A session had no equivalent, so a dialogue the user wanted improved
+     *     could only be replaced by generating a WHOLE NEW one — new id, new URL, new
+     *     row in the dated list, different words. That is a different act, and the
+     *     absence of this route was reported as "the lesson tools are missing".
+     *
+     *     ⚠️ Not routed through ``LessonPipeline`` the way the lesson page's Regenerate
+     *     is. That pipeline is keyed (language_code, curriculum_id, day) throughout, so
+     *     a session has nothing to key on — the same reason rendering calls
+     *     ``render_lesson_audio`` directly. The cost, stated rather than hidden: no
+     *     429 wait-and-retry and no sticky-failed + Retry, so a quota refusal surfaces
+     *     to the user as a 429 they must act on themselves.
+     *
+     *     ⚠️ The word selection is NOT pinned to the previous run. A review session's
+     *     whole claim is that it is about what has decayed NOW, and
+     *     ``build_review_session_prompts`` re-selects at call time; pinning the old
+     *     list would make a regenerated session assert a staleness it no longer
+     *     measures. The coverage pair is rewritten to match, for the same reason.
+     */
+    post: operations["regenerate_review_session_api_review_sessions__session_id__regenerate_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/review-sessions/{session_id}/render": {
     parameters: {
       query?: never;
@@ -866,6 +905,189 @@ export interface paths {
      * @description One-time repair: fill empty translations from all stored lesson glosses.
      */
     post: operations["backfill_translations_api_srs_backfill_translations_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/srs/content/{content_id}/commit-pending": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Commit Pending Grades
+     * @description Bulk "Sync it": release every staged grade for a lesson without reviewing it.
+     *
+     *     Applies each pending row at its provisional rating through the SAME path a
+     *     per-card release takes (``schedule`` → revlog → ``dirty_fsrs``), then clears
+     *     it. Afterwards these are ordinary dirty grades and the next normal "Sync to
+     *     AnkiWeb" pushes them — this endpoint deliberately does NOT sync by itself.
+     *
+     *     One shared balancer and a monotonic grade clock across the batch, exactly as
+     *     the pre-staging /listen grade loop had: ``tt_revlog.id`` is a millisecond PK
+     *     and ``append_revlog`` is INSERT OR IGNORE, so two grades in the same
+     *     millisecond would silently drop one.
+     */
+    post: operations["commit_pending_grades_api_srs_content__content_id__commit_pending_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/srs/content/{content_id}/listen-preview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Listen Preview
+     * @description Read-only classification of what a listen would stage for a lesson.
+     *
+     *     The ``create`` rows are every untracked lemma, flagged with ``will_create``
+     *     against the same per-listen introduction budget ``mark_lesson_listened``
+     *     uses (``resolve_daily_new_cap`` minus today's introductions and still-NEW
+     *     same-day creations): rows within budget are True (live), the over-budget
+     *     tail is False. Without the flag the preview and the commit disagree — a
+     *     same-day re-listen has ~0 budget left and would create nothing even though
+     *     the preview showed every untracked lemma as checked.
+     *
+     *     Creations do **not** get their own budget. ``_allocate_intro_pool`` ranks
+     *     them in ONE pool with the NEW-state rows, by corpus frequency across both
+     *     kinds (F-2), so a common untracked lemma can outrank a rarer card that is
+     *     already in the deck. Cards created earlier today are free and always live;
+     *     NEW-state key phrases lead the charged order and are never
+     *     frequency-ranked (a phrase is OOV, so ranking it would sink every key
+     *     phrase below every word).
+     *
+     *     Tracked word/kp candidates follow the creations, grouped (new → learning →
+     *     due → ahead) and then ordered by ``_tracked_sort_key``: ripening time for
+     *     the learning group, due DAY then mastery ascending (least-known first) for
+     *     the two review groups. Strictly read-only — no pending
+     *     writes, no card creation, no side effects beyond the
+     *     ``_analyze_lesson_words`` lemma-cache warm-up. The response informs the
+     *     frontend preview modal without committing anything.
+     *
+     *     Array order (frontend contract): create rows come first, in rank order,
+     *     live rows (``will_create`` True) before tail rows (``will_create`` False);
+     *     then the tracked rows sorted as today. Do not reorder or interleave. Live
+     *     creates stay a prefix of the create list even though the pool interleaves
+     *     the two kinds, because the live cut is a prefix of the ranked pool and the
+     *     creates keep their relative order inside it. The preview and commit agree
+     *     because both make the SAME ``_allocate_intro_pool`` call with the same
+     *     ``zipf`` callable (resolved once per request via ``_zipf_for``), so the
+     *     first N live create rows are exactly what ``mark_lesson_listened`` will
+     *     create. Un-checking one does NOT promote the next-ranked tail row: a skip
+     *     consumes its slot server-side (``1535071``), which is why ``will_create``
+     *     is a static flag on the response rather than something the frontend
+     *     re-derives from the current ratings.
+     */
+    get: operations["get_listen_preview_api_srs_content__content_id__listen_preview_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/srs/content/{content_id}/review-queue": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Lesson Review Queue
+     * @description Lesson-scoped "Check your work" queue: exactly the listen's autograded cards.
+     *
+     *     Items share ``_queue_item_to_dict``'s shape with /review-queue; grading a
+     *     served item goes through the normal per-item feedback endpoint (an Again
+     *     on an auto-Good'ed card is an ordinary same-day lapse). Strictly
+     *     read-only w.r.t. parity state: no learning-cutoff advance, no
+     *     session_main_queue write, no unbury sweep, no queue-engine involvement —
+     *     the frozen main-queue order must survive this endpoint unchanged (pinned
+     *     by the parity-guard test).
+     *
+     *     Inclusion is now exactly this lesson's ``pending_listen_grades`` rows, so
+     *     the served queue and what "Sync it" (``commit-pending``) would release are
+     *     the same set by construction — they are read from the same query. Scoping
+     *     narrowed here 2026-07-27; the endpoint used to be a lesson-scoped *study*
+     *     queue (D6 buckets: learning, tracked NEW in D2 rank order, REVIEW
+     *     touched-today or due). After the confirmed/staged split that produced two
+     *     visible wrongs: cards the user had just confirmed in the preview came back
+     *     (applied immediately, so no pending row, but re-admitted by "touched
+     *     today" — the double-question the split existed to remove), and due *cloze*
+     *     cards appeared that a listen can never autograde, since staging is
+     *     RECOGNITION-only and cloze is production-only. Everything dropped stays
+     *     reachable from the main queue: with no pending row, the Layer 81 exclusion
+     *     does not hold it back.
+     *
+     *     Consequences worth knowing: a NEW card CAN appear here (since 2026-08
+     *     ``_listen_grade_class`` returns ``"new"`` for a NEW-state direction, so a
+     *     listen stages carded-but-never-introduced words), but only up to the shared
+     *     introduction budget — releasing such a row *introduces* the card, spending
+     *     Anki's daily new-card allowance, so ``_allocate_intro_pool`` caps how
+     *     many a single listen can arm. A cloze still can never appear: staging is
+     *     RECOGNITION-only and cloze is production-only. Release by any path —
+     *     per-card grade, ``commit-pending``, or an Anki-side grade arriving via
+     *     ``sync_pull`` — clears the row, which is what drops the card from this
+     *     queue; no separate "graded since the arming listen" filter is needed.
+     */
+    get: operations["get_lesson_review_queue_api_srs_content__content_id__review_queue_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/srs/content/{content_id}/reviewed": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Mark Lesson Reviewed
+     * @description Record completion of a lesson-scoped 'Check your work' review.
+     *
+     *     Gates the lesson page's "Check your work" link to one-shot-per-listen:
+     *     a completed review clears the link until the next listen re-arms it
+     *     (has_unreviewed_listen on the review-queue response). TT-only; touches
+     *     no parity/FSRS state.
+     */
+    post: operations["mark_lesson_reviewed_api_srs_content__content_id__reviewed_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/srs/content/{content_id}/transcript": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get Lesson Transcript */
+    get: operations["get_lesson_transcript_api_srs_content__content_id__transcript_get"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -1189,189 +1411,6 @@ export interface paths {
     put?: never;
     /** Untrack Item */
     post: operations["untrack_item_api_srs_items__item_id__untrack_post"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/srs/lesson/{lesson_id}/commit-pending": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Commit Pending Grades
-     * @description Bulk "Sync it": release every staged grade for a lesson without reviewing it.
-     *
-     *     Applies each pending row at its provisional rating through the SAME path a
-     *     per-card release takes (``schedule`` → revlog → ``dirty_fsrs``), then clears
-     *     it. Afterwards these are ordinary dirty grades and the next normal "Sync to
-     *     AnkiWeb" pushes them — this endpoint deliberately does NOT sync by itself.
-     *
-     *     One shared balancer and a monotonic grade clock across the batch, exactly as
-     *     the pre-staging /listen grade loop had: ``tt_revlog.id`` is a millisecond PK
-     *     and ``append_revlog`` is INSERT OR IGNORE, so two grades in the same
-     *     millisecond would silently drop one.
-     */
-    post: operations["commit_pending_grades_api_srs_lesson__lesson_id__commit_pending_post"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/srs/lesson/{lesson_id}/listen-preview": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Get Listen Preview
-     * @description Read-only classification of what a listen would stage for a lesson.
-     *
-     *     The ``create`` rows are every untracked lemma, flagged with ``will_create``
-     *     against the same per-listen introduction budget ``mark_lesson_listened``
-     *     uses (``resolve_daily_new_cap`` minus today's introductions and still-NEW
-     *     same-day creations): rows within budget are True (live), the over-budget
-     *     tail is False. Without the flag the preview and the commit disagree — a
-     *     same-day re-listen has ~0 budget left and would create nothing even though
-     *     the preview showed every untracked lemma as checked.
-     *
-     *     Creations do **not** get their own budget. ``_allocate_intro_pool`` ranks
-     *     them in ONE pool with the NEW-state rows, by corpus frequency across both
-     *     kinds (F-2), so a common untracked lemma can outrank a rarer card that is
-     *     already in the deck. Cards created earlier today are free and always live;
-     *     NEW-state key phrases lead the charged order and are never
-     *     frequency-ranked (a phrase is OOV, so ranking it would sink every key
-     *     phrase below every word).
-     *
-     *     Tracked word/kp candidates follow the creations, grouped (new → learning →
-     *     due → ahead) and then ordered by ``_tracked_sort_key``: ripening time for
-     *     the learning group, due DAY then mastery ascending (least-known first) for
-     *     the two review groups. Strictly read-only — no pending
-     *     writes, no card creation, no side effects beyond the
-     *     ``_analyze_lesson_words`` lemma-cache warm-up. The response informs the
-     *     frontend preview modal without committing anything.
-     *
-     *     Array order (frontend contract): create rows come first, in rank order,
-     *     live rows (``will_create`` True) before tail rows (``will_create`` False);
-     *     then the tracked rows sorted as today. Do not reorder or interleave. Live
-     *     creates stay a prefix of the create list even though the pool interleaves
-     *     the two kinds, because the live cut is a prefix of the ranked pool and the
-     *     creates keep their relative order inside it. The preview and commit agree
-     *     because both make the SAME ``_allocate_intro_pool`` call with the same
-     *     ``zipf`` callable (resolved once per request via ``_zipf_for``), so the
-     *     first N live create rows are exactly what ``mark_lesson_listened`` will
-     *     create. Un-checking one does NOT promote the next-ranked tail row: a skip
-     *     consumes its slot server-side (``1535071``), which is why ``will_create``
-     *     is a static flag on the response rather than something the frontend
-     *     re-derives from the current ratings.
-     */
-    get: operations["get_listen_preview_api_srs_lesson__lesson_id__listen_preview_get"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/srs/lesson/{lesson_id}/review-queue": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Get Lesson Review Queue
-     * @description Lesson-scoped "Check your work" queue: exactly the listen's autograded cards.
-     *
-     *     Items share ``_queue_item_to_dict``'s shape with /review-queue; grading a
-     *     served item goes through the normal per-item feedback endpoint (an Again
-     *     on an auto-Good'ed card is an ordinary same-day lapse). Strictly
-     *     read-only w.r.t. parity state: no learning-cutoff advance, no
-     *     session_main_queue write, no unbury sweep, no queue-engine involvement —
-     *     the frozen main-queue order must survive this endpoint unchanged (pinned
-     *     by the parity-guard test).
-     *
-     *     Inclusion is now exactly this lesson's ``pending_listen_grades`` rows, so
-     *     the served queue and what "Sync it" (``commit-pending``) would release are
-     *     the same set by construction — they are read from the same query. Scoping
-     *     narrowed here 2026-07-27; the endpoint used to be a lesson-scoped *study*
-     *     queue (D6 buckets: learning, tracked NEW in D2 rank order, REVIEW
-     *     touched-today or due). After the confirmed/staged split that produced two
-     *     visible wrongs: cards the user had just confirmed in the preview came back
-     *     (applied immediately, so no pending row, but re-admitted by "touched
-     *     today" — the double-question the split existed to remove), and due *cloze*
-     *     cards appeared that a listen can never autograde, since staging is
-     *     RECOGNITION-only and cloze is production-only. Everything dropped stays
-     *     reachable from the main queue: with no pending row, the Layer 81 exclusion
-     *     does not hold it back.
-     *
-     *     Consequences worth knowing: a NEW card CAN appear here (since 2026-08
-     *     ``_listen_grade_class`` returns ``"new"`` for a NEW-state direction, so a
-     *     listen stages carded-but-never-introduced words), but only up to the shared
-     *     introduction budget — releasing such a row *introduces* the card, spending
-     *     Anki's daily new-card allowance, so ``_allocate_intro_pool`` caps how
-     *     many a single listen can arm. A cloze still can never appear: staging is
-     *     RECOGNITION-only and cloze is production-only. Release by any path —
-     *     per-card grade, ``commit-pending``, or an Anki-side grade arriving via
-     *     ``sync_pull`` — clears the row, which is what drops the card from this
-     *     queue; no separate "graded since the arming listen" filter is needed.
-     */
-    get: operations["get_lesson_review_queue_api_srs_lesson__lesson_id__review_queue_get"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/srs/lesson/{lesson_id}/reviewed": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Mark Lesson Reviewed
-     * @description Record completion of a lesson-scoped 'Check your work' review.
-     *
-     *     Gates the lesson page's "Check your work" link to one-shot-per-listen:
-     *     a completed review clears the link until the next listen re-arms it
-     *     (has_unreviewed_listen on the review-queue response). TT-only; touches
-     *     no parity/FSRS state.
-     */
-    post: operations["mark_lesson_reviewed_api_srs_lesson__lesson_id__reviewed_post"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/srs/lesson/{lesson_id}/transcript": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get Lesson Transcript */
-    get: operations["get_lesson_transcript_api_srs_lesson__lesson_id__transcript_get"];
-    put?: never;
-    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -2574,6 +2613,8 @@ export interface components {
        * @default []
        */
       confirmed_words: string[];
+      /** Content Id */
+      content_id: string;
       /**
        * Kp Ratings
        * @default {}
@@ -2581,8 +2622,6 @@ export interface components {
       kp_ratings: {
         [key: string]: "again" | "hard" | "good" | "easy" | "skip";
       };
-      /** Lesson Id */
-      lesson_id: string;
       /**
        * Over Cap Kps
        * @default []
@@ -4683,6 +4722,37 @@ export interface operations {
       };
     };
   };
+  regenerate_review_session_api_review_sessions__session_id__regenerate_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CreateReviewSessionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   render_review_session_api_review_sessions__session_id__render_post: {
     parameters: {
       query?: never;
@@ -4730,6 +4800,161 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["BackfillTranslationsResponse"];
+        };
+      };
+    };
+  };
+  commit_pending_grades_api_srs_content__content_id__commit_pending_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        content_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CommitPendingResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_listen_preview_api_srs_content__content_id__listen_preview_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        content_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ListenPreviewResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_lesson_review_queue_api_srs_content__content_id__review_queue_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        content_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LessonReviewQueueResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  mark_lesson_reviewed_api_srs_content__content_id__reviewed_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        content_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MarkLessonReviewedResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_lesson_transcript_api_srs_content__content_id__transcript_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        content_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LessonTranscriptResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };
@@ -5416,161 +5641,6 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["UntrackItemResponse"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  commit_pending_grades_api_srs_lesson__lesson_id__commit_pending_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        lesson_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["CommitPendingResponse"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  get_listen_preview_api_srs_lesson__lesson_id__listen_preview_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        lesson_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ListenPreviewResponse"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  get_lesson_review_queue_api_srs_lesson__lesson_id__review_queue_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        lesson_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["LessonReviewQueueResponse"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  mark_lesson_reviewed_api_srs_lesson__lesson_id__reviewed_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        lesson_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["MarkLessonReviewedResponse"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  get_lesson_transcript_api_srs_lesson__lesson_id__transcript_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        lesson_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["LessonTranscriptResponse"];
         };
       };
       /** @description Validation Error */

@@ -61,7 +61,7 @@ class TestListenClozeIntegration:
 
         await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
         expected = {"status", "staged", "applied", "created", "remaining_candidates", "listen_count"}
         assert set(response.json().keys()) == expected
@@ -72,7 +72,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         item_kje = db.get_collocation_by_lemma("kje")
@@ -101,7 +101,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson(phrase_text="Sem doma.")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         # No base cloze should be created for biti
@@ -129,7 +129,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson(phrase_text="Zdravo kje ste")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         # No base cloze for biti
@@ -158,7 +158,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson(phrase_text="Sem doma, kje ste")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         # biti should have NO base cloze (card_type='cloze', lemma='biti', empty disambig)
@@ -187,7 +187,7 @@ class TestListenClozeIntegration:
 
         await self._setup_lesson(phrase_text="Kje je banka?")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            resp = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert resp.status_code == 200
 
         # Cloze for kje — audio uses the surface that appears in the sentence
@@ -226,7 +226,7 @@ class TestListenClozeIntegration:
         assert pre_id is not None
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         # No new card was created for the dictionary lemma (surface-keyed one was reused)
@@ -242,7 +242,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         item = db.get_collocation_by_lemma("banka")
@@ -264,7 +264,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         # Force banka's recognition to LEARNING
         banka = db.get_collocation_by_lemma("banka")
@@ -279,7 +279,7 @@ class TestListenClozeIntegration:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/srs/listen",
-                json={"lesson_id": "lesson-1", "word_ratings": {"banka": "good"}},
+                json={"content_id": "lesson-1", "word_ratings": {"banka": "good"}},
             )
         assert response.status_code == 200
         data = response.json()
@@ -299,7 +299,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
 
@@ -316,7 +316,7 @@ class TestListenClozeIntegration:
         db.update_collocation(banka)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
         data = response.json()
 
@@ -329,7 +329,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         banka = db.get_collocation_by_lemma("banka")
         assert banka is not None
@@ -340,7 +340,7 @@ class TestListenClozeIntegration:
         db.update_collocation(banka)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         banka = db.get_collocation_by_lemma("banka")
@@ -385,7 +385,7 @@ class TestListenClozeIntegration:
         app.state.content_store = store
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "phase-4b-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "phase-4b-1"})
         assert response.status_code == 200
 
         with db._get_conn() as conn:
@@ -399,7 +399,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         banka = db.get_collocation_by_lemma("banka")
         assert banka is not None
@@ -413,7 +413,7 @@ class TestListenClozeIntegration:
             db.update_direction(banka.guid, Direction.PRODUCTION, prod)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         banka = db.get_collocation_by_lemma("banka")
@@ -427,7 +427,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         kje = db.get_collocation_by_lemma("kje")
         assert kje is not None
@@ -438,7 +438,7 @@ class TestListenClozeIntegration:
         db.update_direction(kje.guid, Direction.PRODUCTION, prod)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         kje = db.get_collocation_by_lemma("kje")
@@ -451,7 +451,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         banka = db.get_collocation_by_lemma("banka")
         assert banka is not None
@@ -459,7 +459,7 @@ class TestListenClozeIntegration:
         rec_reps_before = banka.directions[Direction.RECOGNITION].reps
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         banka = db.get_collocation_by_lemma("banka")
@@ -473,7 +473,7 @@ class TestListenClozeIntegration:
             language_code="en",
         )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         # English words are all "content" (no function-word list for en) → created as vocab
@@ -491,7 +491,7 @@ class TestListenClozeIntegration:
         """Cloze items expose card_type and source_sentence via the items API."""
         await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
             response = await client.get("/api/srs/items", params={"limit": 50})
         assert response.status_code == 200
@@ -511,7 +511,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
             item = db.get_collocation_by_lemma("kje")
             assert item is not None
@@ -541,7 +541,7 @@ class TestListenClozeIntegration:
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         assert db.get_collocation("dober dan") is None
@@ -582,7 +582,7 @@ class TestListenClozeIntegration:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/srs/listen",
-                json={"lesson_id": "lesson-1", "kp_ratings": {"dober dan": "good"}},
+                json={"content_id": "lesson-1", "kp_ratings": {"dober dan": "good"}},
             )
         assert response.status_code == 200
         data = response.json()
@@ -625,7 +625,7 @@ class TestListenClozeIntegration:
         db.update_collocation(item)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
         data = response.json()
 
@@ -656,7 +656,7 @@ class TestListenClozeIntegration:
         db.update_collocation(item)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         item = db.get_collocation("dober dan")
@@ -680,7 +680,7 @@ class TestListenClozeIntegration:
         rec_reps_before = item.directions[Direction.RECOGNITION].reps
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         item = db.get_collocation("dober dan")
@@ -707,7 +707,7 @@ class TestListenClozeIntegration:
         db.update_collocation(item)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         item = db.get_collocation("dober dan")
@@ -724,7 +724,7 @@ class TestListenClozeIntegration:
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         item_kje = db.get_collocation_by_lemma("kje")
         assert item_kje is not None
@@ -751,7 +751,7 @@ class TestListenClozeIntegration:
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         item_kje = db.get_collocation_by_lemma("kje")
         assert item_kje is not None
@@ -763,7 +763,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         item_kje = db.get_collocation_by_lemma("kje")
         assert item_kje is not None
@@ -781,7 +781,7 @@ class TestListenClozeIntegration:
         store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         item_kje = db.get_collocation_by_lemma("kje")
@@ -809,7 +809,7 @@ class TestListenClozeIntegration:
             conn.commit()
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         item = db.get_collocation("dober dan")
@@ -836,14 +836,14 @@ class TestListenClozeIntegration:
             conn.commit()
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
     async def test_listen_skips_existing_cloze_with_populated_sentence_translation(self):
         """Existing cloze already has sentence_translation → no re-backfill, dirty_fields unchanged."""
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         # Manually set sentence_translation to simulate already-backfilled state
         with db._get_conn() as conn:
@@ -854,7 +854,7 @@ class TestListenClozeIntegration:
         db.set_dirty_fields(item.guid, "")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         item = db.get_collocation_by_lemma("kje")
@@ -869,7 +869,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         banka = db.get_collocation_by_lemma("banka")
         assert banka is not None
@@ -879,7 +879,7 @@ class TestListenClozeIntegration:
         db.update_collocation(banka)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         banka = db.get_collocation_by_lemma("banka")
@@ -890,7 +890,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         banka = db.get_collocation_by_lemma("banka")
         assert banka is not None
@@ -901,7 +901,7 @@ class TestListenClozeIntegration:
         db.update_collocation(banka)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
         data = response.json()
 
@@ -914,7 +914,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         banka = db.get_collocation_by_lemma("banka")
         assert banka is not None
@@ -924,7 +924,7 @@ class TestListenClozeIntegration:
         db.update_collocation(banka)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
         banka = db.get_collocation_by_lemma("banka")
@@ -935,7 +935,7 @@ class TestListenClozeIntegration:
 
         db = await self._setup_lesson(phrase_text="testword")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
 
         with db._get_conn() as conn:
             conn.execute(
@@ -944,7 +944,7 @@ class TestListenClozeIntegration:
             conn.commit()
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert response.status_code == 200
 
     async def test_listen_existing_cloze_audio_uses_raw_sentence(self, monkeypatch):
@@ -1004,7 +1004,7 @@ class TestListenClozeIntegration:
         store.save_lesson("lesson-a", "curriculum-1", 1, lesson)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/srs/listen", json={"lesson_id": "lesson-a"})
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-a"})
         assert response.status_code == 200
 
         assert len(audio_mock.await_args_list) > 0
@@ -1072,7 +1072,7 @@ class TestListenClozeIntegration:
         db.set_anki_state_cache("daily_review_cap", "1")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post("/api/srs/listen", json={"lesson_id": "lesson-1"})
+            resp = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
         assert resp.status_code == 200
 
         # kp card was NOT graded — reps and due_at unchanged
@@ -1083,7 +1083,7 @@ class TestListenClozeIntegration:
 
         # kp card still appears in the lesson review-queue due bucket
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            queue_resp = await client.get("/api/srs/lesson/lesson-1/review-queue")
+            queue_resp = await client.get("/api/srs/content/lesson-1/review-queue")
         assert queue_resp.status_code == 200
         queue_data = queue_resp.json()
         due_texts = [item["text"] for item in queue_data.get("queue", [])]

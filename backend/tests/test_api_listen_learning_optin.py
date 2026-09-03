@@ -37,7 +37,7 @@ from app.models.syntactic_unit import SyntacticUnit
 from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 
-PREVIEW_URL = "/api/srs/lesson/lesson-1/listen-preview"
+PREVIEW_URL = "/api/srs/content/lesson-1/listen-preview"
 LISTEN_URL = "/api/srs/listen"
 
 
@@ -185,7 +185,7 @@ class TestLearningCommitParity:
         _seed_learning(db, "alpha")
         _seed_due(db, "beta")
 
-        result = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {}})
+        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {}})
         # beta (ordinary due) stages; alpha (learning) does not.
         assert result["staged"] == 1
 
@@ -194,7 +194,7 @@ class TestLearningCommitParity:
         _seed_learning(db, "alpha")
         _seed_due(db, "beta")
 
-        result = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"alpha": "good"}})
+        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {"alpha": "good"}})
         assert result["staged"] == 2
 
     async def test_an_explicit_skip_is_still_a_skip(self):
@@ -204,7 +204,7 @@ class TestLearningCommitParity:
         _seed_learning(db, "alpha")
         _seed_due(db, "beta")
 
-        result = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"alpha": "skip"}})
+        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {"alpha": "skip"}})
         assert result["staged"] == 1
 
 
@@ -216,7 +216,7 @@ class TestLearningKeyPhraseCommitParity:
         _seed_due(db, "alpha")
         _seed_learning(db, "zdravo")
 
-        result = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {}, "kp_ratings": {}})
+        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {}, "kp_ratings": {}})
         # Only alpha stages. A learning key phrase is deferred exactly like a
         # learning word — if this reads 2, the guard went into the word loop
         # only, which is the divergence the preview cannot see.
@@ -227,7 +227,7 @@ class TestLearningKeyPhraseCommitParity:
         _seed_due(db, "alpha")
         _seed_learning(db, "zdravo")
 
-        result = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {}, "kp_ratings": {"zdravo": "good"}})
+        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {}, "kp_ratings": {"zdravo": "good"}})
         assert result["staged"] == 2
 
 
@@ -240,7 +240,7 @@ class TestWellKnownBehaviourIsUnchanged:
         _seed_well_known(db, "alpha")
         _seed_due(db, "beta")
 
-        result = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {}})
+        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {}})
         assert result["staged"] == 1
 
     async def test_well_known_still_staged_with_an_explicit_rating(self):
@@ -248,5 +248,5 @@ class TestWellKnownBehaviourIsUnchanged:
         _seed_well_known(db, "alpha")
         _seed_due(db, "beta")
 
-        result = await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"alpha": "good"}})
+        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {"alpha": "good"}})
         assert result["staged"] == 2

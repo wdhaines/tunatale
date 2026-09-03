@@ -204,3 +204,52 @@ class TestRendering:
 
         assert resp.status_code == 503
         assert "ffmpeg" in resp.json()["detail"]
+
+
+# ── the transcript comes from the SHARED content route ───────────────────────
+
+
+class TestTheTranscript:
+    """A session's transcript is served by GET /api/srs/content/{id}/transcript.
+
+    ⚠️ THERE IS NO SESSION-SPECIFIC TRANSCRIPT ROUTE, and there was briefly. The
+    same obstacle — a handler whose only lesson-specific line was
+    ``store.get_lesson(id)`` — appeared five times in this epic: render,
+    transcript, listen, review-queue, listen-preview. Adding a twin per endpoint
+    was the wrong shape; ``ContentStore.get_readable_content`` resolves either,
+    and the route family was renamed to say so.
+    """
+
+    async def test_a_session_resolves_through_the_content_route(self, stored):
+        from app.srs.database import SRSDatabase
+
+        stored.save_review_session("sess-1", "sl", "2026-09-02", _lesson())
+        app.state.srs_db = SRSDatabase(":memory:")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/content/sess-1/transcript")
+
+        assert resp.status_code == 200
+        assert resp.json()["lesson_id"] == "sess-1"
+
+    async def test_a_lesson_still_resolves_through_the_same_route(self, stored):
+        """The regression control: widening the lookup must not cost the lesson."""
+        from app.srs.database import SRSDatabase
+
+        stored.save_lesson("lesson-1", "c1", 1, _lesson())
+        app.state.srs_db = SRSDatabase(":memory:")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/content/lesson-1/transcript")
+
+        assert resp.status_code == 200
+
+    async def test_an_unknown_id_is_404(self, stored):
+        from app.srs.database import SRSDatabase
+
+        app.state.srs_db = SRSDatabase(":memory:")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/content/nope/transcript")
+
+        assert resp.status_code == 404

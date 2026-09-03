@@ -1,6 +1,6 @@
 """Guard tests for the listen-preview endpoint (Stage 4, pending-bucket model).
 
-Contract: `GET /api/srs/lesson/{lesson_id}/listen-preview` returns a read-only
+Contract: `GET /api/srs/content/{lesson_id}/listen-preview` returns a read-only
 classification of what a listen would stage, ordered creations-first then
 tracked by mastery ascending. No side effects (the lemma-cache write is
 exempt). No budget concept — staging is budget-free.
@@ -22,7 +22,7 @@ from app.models.srs_item import Direction, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 
-PREVIEW_URL = "/api/srs/lesson/lesson-1/listen-preview"
+PREVIEW_URL = "/api/srs/content/lesson-1/listen-preview"
 LISTEN_URL = "/api/srs/listen"
 
 
@@ -98,7 +98,7 @@ class TestSkipRating:
         _seed_review_due(db, "banka")
         due_before = db.get_collocation("banka").directions[Direction.RECOGNITION].due_at
 
-        await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"banka": "skip"}})
+        await _post_listen({"content_id": "lesson-1", "word_ratings": {"banka": "skip"}})
 
         item = db.get_collocation("banka")
         rec = item.directions[Direction.RECOGNITION]
@@ -113,7 +113,7 @@ class TestSkipRating:
         without suppressing creation of the lesson's other new words."""
         db = _setup_lesson("Banka riba")
 
-        await _post_listen({"lesson_id": "lesson-1", "word_ratings": {"banka": "skip"}})
+        await _post_listen({"content_id": "lesson-1", "word_ratings": {"banka": "skip"}})
 
         assert db.get_collocation_by_lemma("banka") is None, "skip must suppress creation"
         assert db.get_collocation_by_lemma("riba") is not None, "skip must not leak to other words"
@@ -128,7 +128,7 @@ class TestKpRatings:
         db = _setup_lesson("Banka riba", key_phrases=[KeyPhraseInfo(phrase="dober dan", translation="good day")])
         _seed_review_due(db, "dober dan")
 
-        await _post_listen({"lesson_id": "lesson-1", "kp_ratings": {"dober dan": "hard"}})
+        await _post_listen({"content_id": "lesson-1", "kp_ratings": {"dober dan": "hard"}})
 
         item = db.get_collocation("dober dan")
         rec = item.directions[Direction.RECOGNITION]
@@ -145,7 +145,7 @@ class TestKpRatings:
         db = _setup_lesson("Banka riba", key_phrases=[KeyPhraseInfo(phrase="dober dan", translation="good day")])
         _seed_review_due(db, "dober dan")
 
-        await _post_listen({"lesson_id": "lesson-1", "kp_ratings": {"dober dan": "skip"}})
+        await _post_listen({"content_id": "lesson-1", "kp_ratings": {"dober dan": "skip"}})
 
         assert _rec_reps(db, "dober dan") == 5, "kp skip must not grade"
         item = db.get_collocation("dober dan")
@@ -310,7 +310,7 @@ class TestListenPreview:
         """Preview of a nonexistent lesson returns 404."""
         _setup_lesson("Banka riba")  # sets up content_store with "lesson-1"
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/api/srs/lesson/nonexistent/listen-preview")
+            resp = await client.get("/api/srs/content/nonexistent/listen-preview")
         assert resp.status_code == 404
 
     async def test_preview_includes_key_phrases(self):

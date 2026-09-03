@@ -35,7 +35,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, waitFor } from "@testing-library/svelte";
-import ListenPreviewModal from "./ListenPreviewModal.svelte";
+import ListenPreviewModal from "$lib/components/ListenPreviewModal.svelte";
 import { api, type ListenPreviewCandidate } from "$lib/api";
 import { listenCountdownPref } from "$lib/stores/listenCountdownPref.svelte";
 
