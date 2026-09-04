@@ -1234,7 +1234,9 @@ class AnkiSync:
         push_desired_retention = resolve_fsrs_params(self._db)[0].desired_retention
 
         for guid, anki_note_id, dirty_fields_str, item, coll_id in self._db.list_dirty_field_edits():
+            report.rows_considered += 1
             if anki_note_id is None:
+                report.no_anki_id += 1
                 continue
             dirty_set = {f for f in dirty_fields_str.split(",") if f}
             fields: dict[str, str] = {}
@@ -1283,6 +1285,8 @@ class AnkiSync:
                 stray = dirty_set & {"image", "text"}
                 if stray and not dry_run:
                     self._db.set_dirty_fields(guid, ",".join(sorted(dirty_set - stray)))
+                    report.stray_dropped += 1
+                report.no_fields += 1
                 continue
             if not dry_run:
                 if not self._writer.update_note_fields(anki_note_id, fields):
@@ -1290,6 +1294,7 @@ class AnkiSync:
                     # peer-sync that is tt_collection, not the user's. Nothing
                     # reached Anki, so KEEP the flag for a later sync and do not
                     # count a push. Clearing here destroyed the edit silently.
+                    report.write_noop += 1
                     continue
                 self._db.set_dirty_fields(guid, "")
             report.notes_pushed += 1

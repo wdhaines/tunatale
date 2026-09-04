@@ -4039,3 +4039,36 @@ class TestMissingNoteDoesNotConsumeTheEdit(TestSyncPushImage):
 
         assert db.get_dirty_fields(guid) == ""
         assert report.notes_pushed == 1
+
+
+class TestPushBranchCounters(TestSyncPushImage):
+    """tunatale-7rx7. `notes_pushed` alone cannot tell "nothing to do" from
+    "tried and nothing landed"; these counters can, and they are what reaches
+    the persisted PUSH_FIELDS line."""
+
+    def test_counters_split_the_branches(self):
+        db = _make_tt_db()
+        guid = self._add_cloze(db)
+        db.set_dirty_fields(guid, "image")  # stray on a cloze: no field, flag dropped
+
+        report = AnkiSync(db=db, _reader=FakeReader(), _writer=FakeWriter()).sync_push()
+
+        assert report.rows_considered == 1
+        assert report.no_fields == 1
+        assert report.stray_dropped == 1
+        assert report.notes_pushed == 0
+        assert report.write_noop == 0
+
+    def test_write_noop_is_counted_separately_from_a_real_push(self):
+        db = _make_tt_db()
+        guid = self._add_cloze(db)
+        db.set_dirty_fields(guid, "translation")
+
+        writer = FakeWriter()
+        writer.note_exists = False
+        report = AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert report.rows_considered == 1
+        assert report.write_noop == 1
+        assert report.notes_pushed == 0
+        assert report.no_fields == 0, "a field WAS built; the write is what did nothing"

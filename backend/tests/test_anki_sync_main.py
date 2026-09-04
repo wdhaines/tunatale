@@ -851,6 +851,34 @@ class TestSyncSoakLog:
         assert "RECOMPUTE_DIVERGENCE cid=785 dir=production" in text
         assert "replay_s=11.9706 anki_s=2.5138 replay_d=7.3830 anki_d=7.3830" in text
 
+    def test_write_sync_soak_log_emits_push_fields(self, tmp_path):
+        """Every sync persists a PUSH_FIELDS line. The push was the only mutating
+        phase with no durable trace, which is why tunatale-w7sd could not be
+        settled from the log while tunatale-i0x6 died to it in one query
+        (tunatale-7rx7)."""
+        log_path = tmp_path / "sync.log"
+        push = PushReport(
+            notes_pushed=4,
+            directions_pushed=0,
+            rows_considered=9,
+            no_anki_id=1,
+            no_fields=3,
+            stray_dropped=2,
+            write_noop=1,
+        )
+
+        _write_sync_soak_log(log_path, pull=PullReport(), push=push)
+
+        text = log_path.read_text()
+        assert "PUSH_FIELDS considered=9 written=4 no_anki_id=1 no_fields=3 stray_dropped=2 write_noop=1" in text
+
+    def test_push_fields_line_is_emitted_even_when_nothing_was_dirty(self, tmp_path):
+        """A quiet push still says so. 'No line' and 'nothing to do' must not look
+        identical — that ambiguity is the whole defect this line fixes."""
+        log_path = tmp_path / "sync.log"
+        _write_sync_soak_log(log_path, pull=PullReport(), push=PushReport())
+        assert "PUSH_FIELDS considered=0 written=0" in log_path.read_text()
+
     def test_write_sync_soak_log_appends(self, tmp_path):
         """Two syncs append two heartbeats (the soak is a growing timeline)."""
         log_path = tmp_path / "sync.log"
