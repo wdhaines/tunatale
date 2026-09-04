@@ -120,6 +120,18 @@ class PullReport:
 class PushReport:
     notes_pushed: int = 0
     directions_pushed: int = 0
+    #: Field-push branch counters. `notes_pushed` alone cannot distinguish "the
+    #: push did nothing because there was nothing to do" from "the push tried and
+    #: nothing landed" — the ambiguity that let tunatale-w7sd be mis-diagnosed as
+    #: a P1 (tunatale-7rx7).
+    rows_considered: int = 0
+    no_anki_id: int = 0
+    no_fields: int = 0
+    stray_dropped: int = 0
+    #: Writes attempted that changed nothing: the note is absent from the
+    #: collection being written (tt_collection during peer-sync). Only expressible
+    #: since update_note_fields reports whether it wrote (tunatale-7p4f).
+    write_noop: int = 0
 
 
 @dataclass

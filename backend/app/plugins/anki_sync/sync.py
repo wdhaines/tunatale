@@ -210,6 +210,25 @@ def _write_sync_soak_log(
     diagnoses of the same promote wall time, and telling them apart after the
     fact is the whole point (tunatale-byw, 2026-08-19).
 
+    Also emits one ``PUSH_FIELDS`` line every sync. The field push was the ONLY
+    mutating phase with no voice — ``sync_engine.sync_push`` contains zero
+    logger calls — so the only durable trace was ``push_notes=N`` above, which
+    counts rows processed and cannot tell "nothing to do" from "tried and
+    nothing landed". That ambiguity is why tunatale-w7sd survived as a P1: it
+    could not be settled from the log at all and needed a hand-written
+    two-collection probe, while tunatale-i0x6 died in one query the same day
+    because the mint and pre-stage DID persist counters (tunatale-7rx7).
+
+    ``write_noop`` is the counter that phase exists for: a write attempted
+    against a note absent from the collection being written. It is only
+    expressible because ``update_note_fields`` reports whether it wrote
+    (tunatale-7p4f).
+
+    ⚠️ **PUSH_FIELDS is deliberately a SINGLE copy — do not add a ``_log``
+    twin.** The drift documented immediately below happened because one field
+    list was maintained in two places. The push has no logging copy to drift
+    against, and it should stay that way.
+
     ⚠️ **This line and the ``_log.warning`` in ``sync_engine.promote_production_cards``
     are two hand-maintained copies of one field list, and they drifted.** The
     logging copy carried ``awaiting_image``; this one stopped at ``no_template``
@@ -233,6 +252,11 @@ def _write_sync_soak_log(
         f"recompute_divergences={len(pull.recompute_divergences)} "
         f"push_notes={push.notes_pushed} push_dirs={push.directions_pushed}"
     ]
+    lines.append(
+        f"{ts} PUSH_FIELDS considered={push.rows_considered} written={push.notes_pushed} "
+        f"no_anki_id={push.no_anki_id} no_fields={push.no_fields} "
+        f"stray_dropped={push.stray_dropped} write_noop={push.write_noop}"
+    )
     if promotion is not None:
         lines.append(
             f"{ts} PRODUCTION_MINT awaiting={promotion.awaiting} minted={promotion.minted} "
