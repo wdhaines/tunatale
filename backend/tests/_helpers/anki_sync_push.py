@@ -21,8 +21,13 @@ class FakeWriter:
         # for an absent key tells push "no current state; proceed normally."
         self.current_states: dict[int, dict] = {}
 
-    def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
+    #: Mirrors OfflineWriter: a write to a note absent from the collection
+    #: being written reports that it wrote nothing. Set False to simulate that.
+    note_exists: bool = True
+
+    def update_note_fields(self, note_id: int, fields: dict[str, str]) -> bool:
         self.calls.append(("update_note_fields", note_id, fields))
+        return self.note_exists
 
     def get_l2_field_for_note(self, note_id: int) -> str:
         self.calls.append(("get_l2_field_for_note", note_id))

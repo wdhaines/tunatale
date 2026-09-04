@@ -1285,7 +1285,12 @@ class AnkiSync:
                     self._db.set_dirty_fields(guid, ",".join(sorted(dirty_set - stray)))
                 continue
             if not dry_run:
-                self._writer.update_note_fields(anki_note_id, fields)
+                if not self._writer.update_note_fields(anki_note_id, fields):
+                    # The note is not in the collection being written — during
+                    # peer-sync that is tt_collection, not the user's. Nothing
+                    # reached Anki, so KEEP the flag for a later sync and do not
+                    # count a push. Clearing here destroyed the edit silently.
+                    continue
                 self._db.set_dirty_fields(guid, "")
             report.notes_pushed += 1
 

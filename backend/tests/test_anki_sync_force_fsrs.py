@@ -78,8 +78,9 @@ class FakeWriter:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
 
-    def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
+    def update_note_fields(self, note_id: int, fields: dict[str, str]) -> bool:
         self.calls.append(("update_note_fields", note_id, fields))
+        return True
 
     def suspend(self, card_ids: list[int]) -> None:
         self.calls.append(("suspend", list(card_ids)))

@@ -182,10 +182,21 @@ class OfflineWriter:
             raise ValueError(f"Note {note_id} not found")
         return self._field_names_for_mid(row["mid"])[0]
 
-    def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
+    def update_note_fields(self, note_id: int, fields: dict[str, str]) -> bool:
+        """Write *fields* into *note_id*. Returns whether anything was written.
+
+        A note absent from THIS collection returns ``False`` rather than raising:
+        peer-sync writes ``tt_collection``, and a note the user deleted there is
+        a recoverable state, not an error. But the caller must be able to TELL —
+        returning ``None`` either way let ``sync_push`` clear ``dirty_fields``
+        and count a push for a write that never happened (tunatale-7p4f).
+
+        Contrast ``get_l2_field_for_note``, which raises for the same condition
+        because it has no useful answer to give.
+        """
         row = self._conn.execute("SELECT flds, mid FROM notes WHERE id = ?", (note_id,)).fetchone()
         if row is None:
-            return
+            return False
         field_names = self._field_names_for_mid(row["mid"])
         parts = row["flds"].split("\x1f")
         name_to_idx = {name: i for i, name in enumerate(field_names)}
@@ -202,6 +213,7 @@ class OfflineWriter:
         )
         self._bump_col(ts)
         self._conn.commit()
+        return True
 
     def suspend(self, card_ids: list[int]) -> None:
         ts = int(_time.time())
