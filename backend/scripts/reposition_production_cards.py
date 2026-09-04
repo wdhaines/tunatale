@@ -10,6 +10,23 @@ check) and verifies every changed row against the backup afterwards via
 ``ctx.audit_changes``, so a write outside the plan fails the run rather than shipping
 silently.
 
+⚠️ **This is a one-shot repair and it REFUSES to run twice** (tunatale-qf6.15). If no
+minted production card sits outside the reserved band, the repair is already done: the
+run declines to renumber, repairs only the TunaTale mirror, and exits 0.
+
+    uv run python scripts/reposition_production_cards.py --language no --apply --renumber
+
+``--renumber`` forces the full renumber anyway. **Stop the dev server first.** The
+migration and the mint both read-the-max-then-write, and they interleave: a mint that
+read a position before this run writes will land on a slot this run has since handed to
+another card, and the two share a ``due``. That is cosmetic — Anki breaks the tie
+arbitrarily, nothing corrupts — but it drifts the TT mirror, and it happened three
+times on 2026-08-22, every one of them a re-run rather than normal operation.
+
+Renumbering is never routine. The full renumber is what put the population into note-id
+(deck/frequency) order and that has been done once; one new card at the head shifts
+every index by one, so a routine renumber rewrites and re-pushes everything for nothing.
+
 All of the logic — and all of the tests — live in
 ``app.plugins.anki_sync.reposition_production_cards``. This file is the wiring.
 
@@ -25,8 +42,10 @@ from app.config import settings
 from app.languages import resolve_language_context
 from app.plugins.anki_sync.reposition_production_cards import (
     apply_repositioning,
+    cards_outside_band,
     mirror_positions_to_tt,
     plan_repositioning,
+    read_band_positions,
 )
 from app.plugins.anki_sync.safety import safe_open
 from app.plugins.anki_sync.sqlite_reader import find_deck_id
@@ -38,6 +57,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--language", default=None, help="language code, e.g. the configured target language")
     parser.add_argument("--apply", action="store_true", help="perform the write (default: dry run)")
+    parser.add_argument(
+        "--renumber",
+        action="store_true",
+        help="force a full renumber even when nothing is stranded. Dev server STOPPED — see the module docstring.",
+    )
     args = parser.parse_args(argv)
 
     context = resolve_language_context(args.language, settings)
@@ -62,8 +86,10 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
         plan = plan_repositioning(ctx.conn, deck_id)
+        stranded = cards_outside_band(ctx.conn, deck_id)
         print(f"deck            {context.deck_name}")
         print(f"minted cards    {plan.total}")
+        print(f"outside band    {len(stranded)}")
         print(f"already placed  {plan.already_placed}")
         print(f"to move         {len(plan.moves)}")
         if plan.moves:
@@ -71,28 +97,51 @@ def main(argv: list[str] | None = None) -> int:
             print(f"first move      card {first[0]} -> position {first[1]}")
             print(f"last move       card {last[0]} -> position {last[1]}")
 
-        if not args.apply:
-            print("\nDRY RUN — nothing written. Re-run with --apply.")
-            return 0
-
-        if plan.moves:
-            apply_repositioning(ctx.conn, plan)
-            ctx.conn.commit()
-            # cards.due is an INTEGER column, so the planned values must be ints.
-            # Passing str() here reported all 158 planned writes as "missing" on a run
-            # whose writes had in fact all landed (2026-08-22) — the audit compares
-            # against the raw source value, and -1000000 != '-1000000'.
-            ctx.audit_changes("cards", "id", "due", dict(plan.moves))
+        # THE RE-RUN GUARD (tunatale-qf6.15). `stranded`, never `plan.moves`: a sync
+        # that minted since the band was laid out leaves `moves` at ~the whole
+        # population while the collection is in fact correct, so a guard keyed on
+        # `moves` would never fire on the runs it exists to stop. All three observed
+        # incidents (2026-08-22) were re-runs of an already-repaired collection.
+        if not stranded and not args.renumber:
+            print("\nAlready repaired — every minted production card sits inside the band.")
+            print("REFUSING to renumber. A renumber here rewrites and re-pushes the whole")
+            print("population for nothing, and races any concurrent mint: both read the max")
+            print("then write, so a mint that read before this run writes lands on a slot")
+            print("this run has since handed to another card. Pass --renumber to force it,")
+            print("with the dev server STOPPED.")
+            if not args.apply:
+                print("\nDRY RUN — nothing written.")
+                return 0
+            # The mirror is the half that can be stale on its own, so it is still
+            # repaired — from what the collection ACTUALLY holds, never from `plan`,
+            # whose assignments are a renumber we just declined to perform.
+            positions = read_band_positions(ctx.conn, deck_id)
+            repositioned = 0
         else:
-            print("\nCollection already placed; nothing to write there.")
+            if not args.apply:
+                print("\nDRY RUN — nothing written. Re-run with --apply.")
+                return 0
+
+            if plan.moves:
+                apply_repositioning(ctx.conn, plan)
+                ctx.conn.commit()
+                # cards.due is an INTEGER column, so the planned values must be ints.
+                # Passing str() here reported all 158 planned writes as "missing" on a run
+                # whose writes had in fact all landed (2026-08-22) — the audit compares
+                # against the raw source value, and -1000000 != '-1000000'.
+                ctx.audit_changes("cards", "id", "due", dict(plan.moves))
+            else:
+                print("\nCollection already placed; nothing to write there.")
+            positions = plan.assignments
+            repositioned = len(plan.moves)
 
     # Always run, even when the collection needed no writes: the mirror is the half
     # that can be stale on its own, and a run with empty `moves` is exactly the case
     # that repairs it.
     with db._get_conn() as tt_conn:
-        mirrored = mirror_positions_to_tt(tt_conn, plan)
+        mirrored = mirror_positions_to_tt(tt_conn, positions)
         tt_conn.commit()
-    print(f"\nDone. {len(plan.moves)} cards repositioned, {mirrored} TunaTale mirror rows updated.")
+    print(f"\nDone. {repositioned} cards repositioned, {mirrored} TunaTale mirror rows updated.")
     print("Backup + audit passed. Sync from TunaTale when convenient; nothing forces a full sync.")
     return 0
 

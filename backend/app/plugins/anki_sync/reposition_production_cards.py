@@ -6,9 +6,16 @@ is where the queue arrives LAST, so all 290 of them sat behind 1400+ imported wo
 and none had ever been introduced (Layer 83, ``tunatale-uze6``).
 
 ``OfflineWriter`` allocates into the reserved band now, so cards minted from here on
-land ahead of the deck. This module moves the ones that already exist. It is
-idempotent: a card already sitting in its assigned slot is left alone, so a second
-run reports zero moves.
+land ahead of the deck. This module moves the ones that already exist.
+
+⚠️ **It is idempotent only against a collection that has not been minted into since**,
+and that qualifier is the whole of tunatale-qf6.15. A card already sitting in its
+assigned slot is left alone — but "its assigned slot" is recomputed from note-id order
+on every run, so ONE card minted at the head shifts every later index by one and a
+second run reports ~the whole population as moves. ``plan.moves`` is therefore NOT the
+question "has this already run?"; ``cards_outside_band`` is. Callers must consult it
+before repositioning, because a gratuitous renumber races any concurrent mint (both
+read-the-max-then-write) and lands two cards on one ``due``.
 
 **Order is the point, not just the range.** Cards are assigned band slots by
 ``notes.id`` ascending, which for the imported deck is deck (frequency) order —
@@ -111,6 +118,44 @@ def plan_repositioning(
     return RepositionPlan(assignments=assignments, moves=moves)
 
 
+def cards_outside_band(
+    conn: sqlite3.Connection,
+    deck_id: int,
+    *,
+    band_floor: int = _PRODUCTION_BAND_FLOOR,
+    band_ceiling: int = _PRODUCTION_BAND_CEILING,
+) -> list[int]:
+    """Minted production cards sitting OUTSIDE the reserved band — the repair still owed.
+
+    This, not ``plan.moves``, is the question "has the one-shot migration already
+    run?". The two come apart the moment a sync mints anything: a new production
+    card gets ``MAX(due in band) + 1`` from ``OfflineWriter._next_production_position``
+    so it lands INSIDE the band and is fine, while a fresh ``plan_repositioning``
+    renumbers by note id — and one new card at the head shifts every later index by
+    one, making ``moves`` almost the whole population. A guard keyed on ``moves``
+    would therefore never fire on precisely the runs it exists to stop
+    (tunatale-qf6.15; the observed re-run reported "already placed 1, to move 309").
+
+    Empty means the collection half is done. It does NOT mean the TT mirror is —
+    see ``read_band_positions``.
+    """
+    rows = conn.execute(_SELECT_MINTED_PRODUCTION, (deck_id,)).fetchall()
+    return [row["card_id"] for row in rows if not band_floor <= row["due"] < band_ceiling]
+
+
+def read_band_positions(conn: sqlite3.Connection, deck_id: int) -> list[tuple[int, int]]:
+    """Every minted production card paired with the position the collection ACTUALLY holds.
+
+    The mirror source for a run that is NOT repositioning. ``plan.assignments`` is
+    only truthful when it is about to be written; on the refusal path it is a
+    hypothetical the collection does not hold, so mirroring it would MANUFACTURE
+    the divergence the mirror exists to prevent — writing an ``anki_due`` no Anki
+    card has.
+    """
+    rows = conn.execute(_SELECT_MINTED_PRODUCTION, (deck_id,)).fetchall()
+    return [(row["card_id"], row["due"]) for row in rows]
+
+
 def apply_repositioning(conn: sqlite3.Connection, plan: RepositionPlan) -> None:
     """Write the planned positions. Caller owns the transaction boundary.
 
@@ -128,20 +173,26 @@ def apply_repositioning(conn: sqlite3.Connection, plan: RepositionPlan) -> None:
     conn.execute("UPDATE col SET mod = ?", (ts,))
 
 
-def mirror_positions_to_tt(tt_conn: sqlite3.Connection, plan: RepositionPlan) -> int:
-    """Point TunaTale's ``anki_due`` mirror at the band positions. Returns rows updated.
+def mirror_positions_to_tt(tt_conn: sqlite3.Connection, positions: list[tuple[int, int]]) -> int:
+    """Point TunaTale's ``anki_due`` mirror at ``positions``. Returns rows updated.
 
     Without this the two sides disagree until the next ``sync_pull`` recomputes the
     mirror, and TunaTale keeps serving the old order in the meantime — which on a
     change whose whole purpose is queue position would read as "the fix did nothing".
-    The values written are the ones written to Anki, so no divergence is created.
 
-    Driven by ``assignments``, not ``moves``: see the RepositionPlan docstring. A run
-    whose collection half already landed still has a mirror to repair, and that is
-    precisely the run whose ``moves`` is empty.
+    ⚠️ **Pass positions Anki holds or is about to hold, never a hypothetical.** Two
+    callers, and choosing wrongly between them creates the exact divergence this
+    repairs:
+
+    - repositioning: ``plan.assignments`` — the values ``apply_repositioning`` just
+      wrote. NOT ``plan.moves``; a run whose collection half already landed still
+      has a mirror to repair, and that is precisely the run whose ``moves`` is empty
+      (the regression that cost a real repair on 2026-08-22).
+    - refusing to reposition: ``read_band_positions(conn, deck_id)`` — what the
+      collection actually holds. A fresh plan's assignments are wrong here.
     """
     updated = 0
-    for card_id, new_due in plan.assignments:
+    for card_id, new_due in positions:
         cur = tt_conn.execute(
             "UPDATE collocation_directions SET anki_due = ? WHERE anki_card_id = ?",
             (new_due, card_id),
