@@ -8,6 +8,7 @@ import PillSyncHarness from "../../test/PillSyncHarness.svelte";
 import { tick } from "svelte";
 import { maybePrefetchLesson } from "$lib/sw/prefetch";
 import { captionBlurPref } from "$lib/stores/captionBlurPref.svelte";
+import { voicePref } from "$lib/stores/voicePref.svelte";
 import type { Cue, LessonAudio } from "$lib/api";
 import type { PlaybackController } from "$lib/playback/playbackController.svelte";
 
@@ -42,6 +43,8 @@ beforeEach(() => {
   localStorage.clear();
   vi.mocked(maybePrefetchLesson).mockClear();
   captionBlurPref.set(true);
+  voicePref.set(false);
+  localStorage.clear();
 });
 
 vi.mock("$lib/api", () => ({
@@ -1131,6 +1134,48 @@ describe("LessonPlayer", () => {
         props: { audio: audioWithAllSections, compact: true },
       });
       expect(container.querySelector(".caption-blur-btn")).toBeFalsy();
+    });
+  });
+
+  describe("voice chip", () => {
+    it("renders disabled by default: aria-pressed false, value Off, not active", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
+      const chip = container.querySelector(".voice-btn");
+      expect(chip).toBeTruthy();
+      expect(chip!.getAttribute("aria-pressed")).toBe("false");
+      expect(chip!.classList.contains("active")).toBe(false);
+      expect(chip!.querySelector(".chip-label")!.textContent).toBe("Mic");
+      expect(chip!.querySelector(".chip-value")!.textContent).toBe("Off");
+    });
+
+    it("clicking toggles the preference on, persists 'on', and marks the chip active", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
+      const chip = container.querySelector(".voice-btn")!;
+      fireEvent.click(chip);
+      expect(voicePref.enabled).toBe(true);
+      expect(localStorage.getItem("voice")).toBe("on");
+      expect(chip.getAttribute("aria-pressed")).toBe("true");
+      expect(chip.classList.contains("active")).toBe(true);
+      expect(chip.querySelector(".chip-value")!.textContent).toBe("On");
+    });
+
+    it("clicking again toggles back off and persists 'off'", () => {
+      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
+      const chip = container.querySelector(".voice-btn")!;
+      fireEvent.click(chip);
+      fireEvent.click(chip);
+      expect(voicePref.enabled).toBe(false);
+      expect(localStorage.getItem("voice")).toBe("off");
+      expect(chip.getAttribute("aria-pressed")).toBe("false");
+      expect(chip.classList.contains("active")).toBe(false);
+      expect(chip.querySelector(".chip-value")!.textContent).toBe("Off");
+    });
+
+    it("does not render in compact (Read) mode", () => {
+      const { container } = render(LessonPlayer, {
+        props: { audio: audioWithAllSections, compact: true },
+      });
+      expect(container.querySelector(".voice-btn")).toBeFalsy();
     });
   });
 

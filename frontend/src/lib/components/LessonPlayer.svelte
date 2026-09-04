@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { LessonAudio } from '$lib/api';
 	import { maybePrefetchLesson } from '$lib/sw/prefetch';
@@ -11,7 +11,9 @@
 	import { createPlaybackController } from '$lib/playback/playbackController.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { captionBlurPref } from '$lib/stores/captionBlurPref.svelte';
+	import { voicePref } from '$lib/stores/voicePref.svelte';
 	import { splitCaption, activeChunkIndex } from '$lib/captionChunks';
+	import { createWakeLock } from '$lib/voice/wakeLock';
 
 	interface Props {
 		audio: LessonAudio;
@@ -112,6 +114,20 @@
 	// listen-first attempt per line instead of the caption snapping back on
 	// every ~2s chunk boundary.
 	let revealedCueIndex: number | null = $state(null);
+
+	// --- Wake lock for self-paced voice capture ---
+	// Self-timed mic capture needs the screen not to sleep mid-phrase. The
+	// helper feature-detects navigator.wakeLock, so browsers (and jsdom)
+	// without it no-op silently, and a rejected request (document not visible)
+	// is swallowed rather than breaking playback. onDestroy releases whatever
+	// a disable/re-enable race left behind.
+	const wakeLock = createWakeLock();
+	$effect(() => {
+		void wakeLock.sync(voicePref.enabled);
+	});
+	onDestroy(() => {
+		wakeLock.release();
+	});
 
 	// --- Chunked caption state ---
 	const captionChunks = $derived(ctrl.currentCue ? splitCaption(ctrl.currentCue.text) : []);
@@ -252,6 +268,7 @@
 
 	onMount(() => {
 		captionBlurPref.init();
+		voicePref.init();
 
 		// Seed the persisted phase/enunciation/English selection and make it
 		// effective. Gated on trackMode: without per-section cues the phase
@@ -408,6 +425,15 @@
 				>
 					<span class="chip-label">Captions</span>
 					<span class="chip-value">{captionBlurPref.enabled ? 'Blurred' : 'Visible'}</span>
+				</button>
+				<button
+					class="setting-chip voice-btn"
+					class:active={voicePref.enabled}
+					aria-pressed={voicePref.enabled}
+					onclick={() => voicePref.set(!voicePref.enabled)}
+				>
+					<span class="chip-label">Mic</span>
+					<span class="chip-value">{voicePref.enabled ? 'On' : 'Off'}</span>
 				</button>
 				<!-- Governs what the physical ⏮⏭ (headphone / car) keys skip — a
 				     different axis from the on-screen transport pills, hence the
