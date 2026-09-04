@@ -172,6 +172,10 @@ class LanguageConfig:
     preprocessor_factory: type[TextPreprocessor] | None = None
     deck_name: str | None = None
     vocab_notetype: VocabNotetype | None = None
+    #: Scores how strongly a text looks like THIS language rather than English,
+    #: for picking the L2 field out of an Anki note that carries no markup.
+    #: Built with ``app.cards.l2_scoring.make_l2_scorer``. See get_l2_scorer.
+    l2_scorer: Callable[[str], float] | None = None
     lemmatizer_type: str = "lowercase"
     # Onset-maximization syllabifier function for this language.
     # ``None`` for languages with no syllabifier wiring (``en``); callers
@@ -461,6 +465,24 @@ def get_l2_css_class(code: str) -> str:
     """
     notetype = get_vocab_notetype(code)
     return notetype.l2_css_class if notetype is not None else ""
+
+
+def get_l2_scorer(code: str) -> Callable[[str], float] | None:
+    """Return *code*'s L2-field scorer, or ``None`` if the language has none.
+
+    Used when an Anki note carries no L2 markup class and the reader must pick
+    the target-language field by inspection. The scorer is language-specific
+    because the evidence is: the letters that mark Slovene are not the letters
+    that mark Norwegian.
+
+    ``None`` is a LOUD condition at the call site, not a silent fallback —
+    ``sqlite_reader.extract_l2_from_fields`` raises rather than guess. Guessing
+    with the wrong language's scorer is what wrote an entire example sentence
+    into Anki as a headword (tunatale-yaan): with no Norwegian scorer, ``snøm``
+    scored 0.0 and the sentence won on one ``æ`` in ``være``.
+    """
+    config = _CONFIGS.get(code)
+    return config.l2_scorer if config is not None else None
 
 
 def get_breakdown_spans(code: str) -> Callable[[str], list[BreakdownChunk]] | None:

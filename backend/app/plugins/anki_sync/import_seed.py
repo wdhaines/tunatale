@@ -17,7 +17,7 @@ from typing import Any
 
 from app.common.guid import compute_guid
 from app.config import settings
-from app.languages import card_surface_variants, get_deck_name, get_l2_css_class, resolve_db_path
+from app.languages import card_surface_variants, get_deck_name, get_l2_css_class, get_l2_scorer, resolve_db_path
 from app.media.importer import compute_sha256, copy_media_file
 from app.models.srs_item import Direction, DirectionState
 from app.models.syntactic_unit import BackField, SyntacticUnit
@@ -300,7 +300,7 @@ def import_seed(
             if profile_result is not None:
                 l2_text, translation, disambig, article, extras = profile_result
             else:
-                l2_text = extract_l2_from_fields(note.fields, l2_css_class)
+                l2_text = extract_l2_from_fields(note.fields, l2_css_class, get_l2_scorer(language_code))
                 disambig = extract_disambig_from_fields(note.fields)
                 # Layer 31: if a field uses the `<b>L2</b><br><i>EN</i>` pattern
                 # (Pronunciation/Basic notetype), the English gloss lives inside
