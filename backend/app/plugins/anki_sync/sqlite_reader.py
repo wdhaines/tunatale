@@ -7,6 +7,7 @@ import binascii
 import json
 import re
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -529,7 +530,11 @@ _QA_INTERROGATIVES = frozenset(
 )
 
 
-def extract_l2_from_fields(fields: list[str], l2_css_class: str) -> str:
+def extract_l2_from_fields(
+    fields: list[str],
+    l2_css_class: str,
+    l2_scorer: Callable[[str], float] | None = None,
+) -> str:
     """Return the L2 text from fields, preferring the L2 markup class.
 
     ``l2_css_class`` is the active language's ``VocabNotetype.l2_css_class``,
@@ -572,51 +577,32 @@ def extract_l2_from_fields(fields: list[str], l2_css_class: str) -> str:
             if first_word in _QA_INTERROGATIVES:
                 return first
 
-    # Second pass: no field carries the L2 markup class.
-    # Score each field: prefer fields with Slovene-specific or IPA phonetic characters
-    # (since phonics cards have answers with IPA like [ɛ], [bɛˈseːda], etc.)
-    # Slovene-specific characters (not in English) plus dictionary stress diacritics
-    # used in pronunciation hints (besêda, oblákov).
-    _SLOVENE_CHARS = set("čšžđćČŠŽĐĆáàâäéèêëíìîïóòôöúùûüŕÁÀÂÄÉÈÊËÍÌÎÏÓÒÔÖÚÙÛÜŔ")
-    _IPA_CHARS = set("ɛəɔɪʊæθðŋɲʃʒɕʑɯɰʔˈˌːˈ́")
-    _ENGLISH_STOPWORDS = {
-        "what",
-        "where",
-        "when",
-        "how",
-        "why",
-        "is",
-        "are",
-        "does",
-        "do",
-        "did",
-        "was",
-        "were",
-        "the",
-        "a",
-        "an",
-        "per",
-        "after",
-        "before",
-        "of",
-        "in",
-        "on",
-        "to",
-        "with",
-        "for",
-    }
+    # Second pass: no field carries the L2 markup class, so the target-language
+    # field must be identified by inspection.
+    #
+    # ⚠️ The scorer is LANGUAGE-SPECIFIC and comes from the language's own plugin
+    # (`app.languages.get_l2_scorer`). It used to be a Slovene character set
+    # inlined here, applied to every language — so a Norwegian note scored
+    # `snøm` at 0.0 (ø in no set) and an example sentence at 0.5 (the æ in være,
+    # counted only as IPA). The sentence won by half a point and was written to
+    # Anki as a headword (tunatale-yaan).
 
-    def _l2_score(clean: str) -> float:
-        score = 0.0
-        for ch in clean:
-            if ch in _SLOVENE_CHARS:
-                score += 1
-            elif ch in _IPA_CHARS:
-                score += 0.5
-        for w in clean.lower().split():
-            if w.strip("?,.!:;") in _ENGLISH_STOPWORDS:
-                score -= 2
-        return score
+    scorable = [c for c in (re.sub(r"<[^>]+>", "", f).strip() for f in fields) if c]
+    if not scorable:
+        # Nothing to choose between; no scorer needed, and demanding one here
+        # would turn "this note is empty" into a crash.
+        return ""
+    if l2_scorer is None:
+        msg = (
+            "No L2 scorer for this language: cannot identify the target-language "
+            "field in a note that carries no L2 markup class. Register `l2_scorer` "
+            "in the language's plugin (app.cards.l2_scoring.make_l2_scorer). "
+            "Refusing rather than guessing with another language's letters — "
+            "guessing is what wrote an example sentence into Anki as a headword "
+            "(tunatale-yaan)."
+        )
+        raise ValueError(msg)
+    _l2_score = l2_scorer
 
     best_field = ""
     best_score = float("-inf")

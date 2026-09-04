@@ -712,6 +712,25 @@ class TestMainCreateNew:
 
         md._CACHE_PATH.write_text("Slovene Vocabulary\n")
 
+        # "zz" has no vocab notetype (that is what makes discovery fire) but the
+        # reader still has to identify an L2 field, and since tunatale-yaan a
+        # language with no scorer is REFUSED rather than scored with another
+        # language's letters. Register a neutral scorer — empty charset, so every
+        # field ties at 0.0 and the forward-layout default (first field) wins.
+        from app.cards.l2_scoring import make_l2_scorer
+        from app.languages import _CONFIGS as _configs
+        from app.languages import LanguageConfig
+        from app.models.language import Language as _Language
+
+        monkeypatch.setitem(
+            _configs,
+            "zz",
+            LanguageConfig(
+                language=_Language(code="zz", name="Test", native_name="Test", script="latin"),
+                l2_scorer=make_l2_scorer(frozenset()),
+            ),
+        )
+
         anki_conn = _make_dual_collection_conn()
         tt_db = SRSDatabase(":memory:")
         tt_db.add_collocation(

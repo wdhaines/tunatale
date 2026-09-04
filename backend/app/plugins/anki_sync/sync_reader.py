@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 
 from app.cards.field_map import get_profile
-from app.languages import get_l2_css_class
+from app.languages import get_l2_css_class, get_l2_scorer
 from app.models.syntactic_unit import BackField
 from app.plugins.anki_sync.sqlite_reader import (
     extract_disambig_from_fields,
@@ -41,6 +41,9 @@ class OfflineReader:
         # per note) and never a literal — a Slovene class read against a Norwegian
         # deck silently returns the English gloss as the L2. See get_l2_css_class.
         self._l2_css_class = get_l2_css_class(language_code)
+        # Language-specific: see get_l2_scorer. None makes the reader RAISE
+        # rather than score a note with another language's letters.
+        self._l2_scorer = get_l2_scorer(language_code)
 
     def get_revlog_for_card(self, card_id: int, after_ms: int = 0) -> list[sqlite3.Row]:
         """Return revlog rows for *card_id* with id > *after_ms*.
@@ -153,7 +156,7 @@ class OfflineReader:
                 translation = extract_cloze_translation(back_extra)
                 sentence_translation = extract_cloze_sentence_translation(back_extra)
                 note_text = extract_cloze_note(back_extra)
-                l2_text = extract_l2_from_fields(note.fields, self._l2_css_class)
+                l2_text = extract_l2_from_fields(note.fields, self._l2_css_class, self._l2_scorer)
                 disambig_key = ""
                 article = None
                 extras: tuple[BackField, ...] | None = None
@@ -162,7 +165,7 @@ class OfflineReader:
                 if profile_result is not None:
                     l2_text, translation, disambig_key, article, extras = profile_result
                 else:
-                    l2_text = extract_l2_from_fields(note.fields, self._l2_css_class)
+                    l2_text = extract_l2_from_fields(note.fields, self._l2_css_class, self._l2_scorer)
                     translation = extract_translation(note.fields[1]) if len(note.fields) > 1 else ""
                     disambig_key = extract_disambig_from_fields(note.fields)
                     article = None

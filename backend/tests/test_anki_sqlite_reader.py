@@ -18,6 +18,11 @@ from app.plugins.anki_sync.sqlite_reader import (
     list_media_refs,
     parse_fsrs_data,
 )
+
+#: The scorer is language-specific and must be passed explicitly — a note
+#: scored with another language's letters is tunatale-yaan.
+from app.plugins.languages.no.l2_scoring import score_norwegian_l2 as _NO_SCORER  # noqa: E402
+from app.plugins.languages.sl.l2_scoring import score_slovene_l2 as _SL_SCORER  # noqa: E402
 from app.srs.anki_mirror.rollover import anki_today
 
 
@@ -738,7 +743,7 @@ class TestL2MarkupIsPerLanguage:
         skips the markup pass and the scorer hands back the English field."""
         from app.cards.vocab_notetype import SLOVENE_VOCAB
 
-        assert extract_l2_from_fields(self._NO_INVERSE, SLOVENE_VOCAB.l2_css_class) == "bank"
+        assert extract_l2_from_fields(self._NO_INVERSE, SLOVENE_VOCAB.l2_css_class, _SL_SCORER) == "bank"
 
     def test_extract_l2_honours_the_norwegian_class(self):
         from app.cards.vocab_notetype import NORWEGIAN_VOCAB
@@ -764,15 +769,15 @@ class TestL2MarkupIsPerLanguage:
 
 class TestExtractL2FromFields:
     def test_returns_first_field_when_it_has_l2(self):
-        assert extract_l2_from_fields(['<span class="slovene">hiša</span>', "house"], "slovene") == "hiša"
+        assert extract_l2_from_fields(['<span class="slovene">hiša</span>', "house"], "slovene", _SL_SCORER) == "hiša"
 
     def test_falls_back_to_second_field_when_first_is_image_only(self):
         fields = ['<div class="img"><img src="dog.jpg"></div>', '<div class="slovene">pes</div>']
-        assert extract_l2_from_fields(fields, "slovene") == "pes"
+        assert extract_l2_from_fields(fields, "slovene", _SL_SCORER) == "pes"
 
     def test_falls_back_to_second_field_plain_text_when_first_empty(self):
         fields = ["<div></div>", "<b>banka</b>"]
-        assert extract_l2_from_fields(fields, "slovene") == "banka"
+        assert extract_l2_from_fields(fields, "slovene", _SL_SCORER) == "banka"
 
     def test_returns_empty_when_no_field_yields_text(self):
         assert extract_l2_from_fields(["<div></div>", "  "], "slovene") == ""
@@ -793,14 +798,14 @@ class TestExtractL2FromFields:
             "[sound:sl_vrata.mp3][w] — voiced bilabial, like English <i>w</i>"
             "<br><br><i>vrata</i> → [ˈwɾaːta] — door<br><i>vlak</i> → [wlak] — train",
         ]
-        assert extract_l2_from_fields(fields, "slovene").startswith("What sound is")
+        assert extract_l2_from_fields(fields, "slovene", _SL_SCORER).startswith("What sound is")
 
     def test_qa_how_question_with_diacritic_back_still_returns_question(self):
         fields = [
             "How is syllabic <b>r</b> pronounced in <i>trg</i> (town square)?",
             "[sound:sl_trg.mp3][tərg] — r acts as the syllable nucleus with a schwa-like quality",
         ]
-        assert extract_l2_from_fields(fields, "slovene").startswith("How is")
+        assert extract_l2_from_fields(fields, "slovene", _SL_SCORER).startswith("How is")
 
     def test_field0_ending_with_question_but_no_interrogative_falls_through_to_scoring(self):
         """A non-question first field that happens to end with '?' (no interrogative
@@ -808,7 +813,7 @@ class TestExtractL2FromFields:
         fields = ["banka?", "<div>bank</div>"]
         # No interrogative, falls through. Both clean strip to short text;
         # neither has Slovene chars, so the earlier field wins by tie-break.
-        assert extract_l2_from_fields(fields, "slovene") == "banka?"
+        assert extract_l2_from_fields(fields, "slovene", _SL_SCORER) == "banka?"
 
     def test_phonics_qa_prompt_returns_question_not_answer(self):
         """Phonics Q&A notes use Field 0 for an English question and Field 1 for the
@@ -823,7 +828,7 @@ class TestExtractL2FromFields:
             "What phoneme does unstressed <b>e before</b> the stressed syllable represent?",
             "[sound:sl_beseda.mp3]/ɛ/ = [ɛ] — open-mid front<br><br><i>besêda</i> [bɛˈseːda]",
         ]
-        result = extract_l2_from_fields(fields, "slovene")
+        result = extract_l2_from_fields(fields, "slovene", _SL_SCORER)
         assert result.startswith("What phoneme"), f"Q&A front should win on the new heuristic; got: {result!r}"
 
     def test_ipa_chars_boost_score_when_no_qa_pattern(self):
@@ -833,7 +838,7 @@ class TestExtractL2FromFields:
             "Practice the phoneme with the audio",  # no '?', no interrogative
             "[ɛ] besêda [bɛˈseːda]",  # several IPA chars
         ]
-        result = extract_l2_from_fields(fields, "slovene")
+        result = extract_l2_from_fields(fields, "slovene", _SL_SCORER)
         assert "besêda" in result
 
     def test_dictionary_stress_diacritic_counts_as_slovene(self):
@@ -841,7 +846,7 @@ class TestExtractL2FromFields:
         # that aren't in the basic čšž set. They should still score positively
         # so the L2 field wins over an English gloss.
         fields = ["before the stressed syllable", "besêda"]
-        assert extract_l2_from_fields(fields, "slovene") == "besêda"
+        assert extract_l2_from_fields(fields, "slovene", _SL_SCORER) == "besêda"
 
     def test_b_then_i_pattern_returns_b_content(self):
         """Pronunciation/Basic notetype Front field: `<b>SLOVENE</b><br><i>ENGLISH</i>`.
@@ -849,12 +854,12 @@ class TestExtractL2FromFields:
         the new behavior that extracts the `<b>...</b>` group as L2.
         """
         fields = ["<b>nič</b><br><i>nothing</i>", "[sound:sl_nic.mp3][nətʃ]"]
-        assert extract_l2_from_fields(fields, "slovene") == "nič"
+        assert extract_l2_from_fields(fields, "slovene", _SL_SCORER) == "nič"
 
     def test_b_then_i_pattern_with_whitespace(self):
         """Tolerate whitespace and minor variation between the <b> and <i> tags."""
         fields = ["<b>ulica</b><br/>  <i>street</i>", "[sound:sl_ulica.mp3]"]
-        assert extract_l2_from_fields(fields, "slovene") == "ulica"
+        assert extract_l2_from_fields(fields, "slovene", _SL_SCORER) == "ulica"
 
 
 class TestExtractGlossFromFields:
@@ -1353,3 +1358,50 @@ class TestExtractBackFields:
         l2, translation, disambig, article, extras = extract_via_profile(note, "slovene")
         assert (l2, translation, disambig, article) == ("være", "to be", "verb", "")
         assert [(e.label, e.html) for e in extras] == [("IPA", "/ˈʋæːɾə/")]
+
+
+class TestL2ScorerIsPerLanguage:
+    """tunatale-yaan. The scorer lives in each language's plugin, and a language
+    without one gets a loud refusal rather than another language's letters.
+
+    The incident: TT row 3131 ('snøm') lost its link, the reverse-import scored
+    its note with the only scorer that existed — Slovene — and wrote the example
+    sentence into Anki as the headword. The user hit it as their top review.
+    """
+
+    #: The incident's exact note fields (ord 5 is the example sentence).
+    _SNOM = [
+        "snøm",
+        "snowmen",
+        "[sound:tts_snøm.mp3]",
+        '<img src="img_snowmen.jpg">',
+        "",
+        "Det kan være tilfeldig. Folk lager snømenn om vinteren.",
+        "",
+    ]
+
+    def test_norwegian_scorer_picks_the_headword_not_the_sentence(self):
+        assert extract_l2_from_fields(self._SNOM, "norwegian", _NO_SCORER) == "snøm"
+
+    def test_a_missing_scorer_refuses_loudly(self):
+        """No scorer is a REFUSAL, never a fallback. A guessed headword is worse
+        than a skipped note: the skip is visible, the guess is not."""
+        with pytest.raises(ValueError, match="No L2 scorer"):
+            extract_l2_from_fields(self._SNOM, "norwegian", None)
+
+    def test_no_scorer_needed_when_there_is_nothing_to_score(self):
+        """An empty note is not a missing-language problem — demanding a scorer
+        here would turn 'this note is empty' into a crash."""
+        assert extract_l2_from_fields(["", "  ", "<div></div>"], "norwegian", None) == ""
+
+    def test_score_is_density_not_a_raw_count(self):
+        """The deeper defect: a raw count is length-biased, so a sentence always
+        beats a headword by simply containing more letters. With counting, the
+        Norwegian scorer STILL picked the sentence (2 special chars vs 1)."""
+        assert _NO_SCORER("snøm") > _NO_SCORER("Det kan være tilfeldig. Folk lager snømenn om vinteren.")
+
+    def test_each_language_scores_its_own_letters(self):
+        """Slovene letters do not mark Norwegian text and vice versa — which is
+        the whole reason the scorer cannot be shared."""
+        assert _NO_SCORER("bløt") > _SL_SCORER("bløt")
+        assert _SL_SCORER("hiša") > _NO_SCORER("hiša")

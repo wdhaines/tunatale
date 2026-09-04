@@ -6,6 +6,7 @@ from app.cards.vocab_notetype import SLOVENE_VOCAB
 from app.languages import LanguageConfig, PlannerExample, register
 from app.models.language import NARRATOR_VOICE, Language
 from app.plugins.languages.sl.a1_morphology import SLOVENE_A1_MORPHOLOGY
+from app.plugins.languages.sl.l2_scoring import score_slovene_l2
 from app.plugins.languages.sl.preprocessor import SlovenePreprocessor
 from app.plugins.languages.sl.syllabify import syllabify_slovene_word
 
@@ -32,6 +33,7 @@ register(
         preprocessor_factory=SlovenePreprocessor,
         deck_name="1. Slovene",
         vocab_notetype=SLOVENE_VOCAB,
+        l2_scorer=score_slovene_l2,
         lemmatizer_type="classla",
         morphology_profile="slavic",
         syllabifier_fn=syllabify_slovene_word,
