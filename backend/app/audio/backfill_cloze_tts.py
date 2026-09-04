@@ -10,6 +10,7 @@ from app.audio.cloze_tts import synthesize_cloze_audios
 from app.config import settings
 from app.languages import get_tts_voice, resolve_db_path
 from app.srs.database import SRSDatabase
+from app.srs.function_words import uncloze_text
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ def backfill_cloze_tts(
 
     for i, row in enumerate(rows, 1):
         collocation_id = row["id"]
-        sentence = row["source_sentence"]
+        sentence = uncloze_text(row["source_sentence"])
         lemma = row["lemma"]
 
         if not sentence or not lemma:

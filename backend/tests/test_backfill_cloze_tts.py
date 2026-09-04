@@ -256,3 +256,100 @@ def test_backfill_handles_synthesis_failure(monkeypatch, db_path):
     assert result["synthesized"] == 0, f"expected no synthesized, got {result}"
     assert result["skipped"] == 1, f"expected 1 skipped, got {result}"
     assert result["total"] == 1, f"expected total 1, got {result}"
+
+
+def test_backfill_unclozes_source_sentence_before_tts(monkeypatch, db_path):
+    """B1: cloze markup in source_sentence must be stripped before TTS synthesis."""
+    import app.audio.cloze_tts as cloze_tts_mod
+
+    captured_texts: list[str] = []
+
+    async def _fake_tts(text, voice="nb-NO-PernilleNeural"):
+        captured_texts.append(text)
+        return b"fake-mp3"
+
+    monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", _fake_tts)
+
+    from app.models.syntactic_unit import SyntacticUnit
+    from app.srs.database import SRSDatabase
+
+    db = SRSDatabase(db_path)
+    unit = SyntacticUnit(
+        text="sånn",
+        translation="that kind",
+        word_count=1,
+        difficulty=1,
+        source="llm",
+        lemma="sånn",
+        card_type="cloze",
+        source_sentence="Jeg vil ha en {{c1::sånn}} bil",
+    )
+    db.add_collocation(unit, language_code="no")
+
+    result = backfill_cloze_tts(db_path=db_path, dry_run=False)
+
+    assert result["synthesized"] == 1
+    assert not any("{{c1::" in t for t in captured_texts), captured_texts
+    assert not any("}}" in t for t in captured_texts), captured_texts
+    assert "Jeg vil ha en sånn bil" in captured_texts
+
+    db2 = SRSDatabase(db_path)
+    coll_id = db2.get_collocation_by_lemma_with_id("sånn")[0]
+    assert db2.get_sentence_audio_filename(coll_id) == "tts_sentence_0b1066c0e69b24e9.mp3"
+
+
+def test_backfill_unclozes_hint_payload_before_tts(monkeypatch, db_path):
+    """B2: a cloze carrying a hint payload keeps the answer and drops the hint."""
+    import app.audio.cloze_tts as cloze_tts_mod
+
+    async def _fake_tts(text, voice="nb-NO-PernilleNeural"):
+        return b"fake-mp3"
+
+    monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", _fake_tts)
+
+    from app.models.syntactic_unit import SyntacticUnit
+    from app.srs.database import SRSDatabase
+
+    db = SRSDatabase(db_path)
+    unit = SyntacticUnit(
+        text="tenker",
+        translation="think",
+        word_count=1,
+        difficulty=1,
+        source="llm",
+        lemma="tenke",
+        card_type="cloze",
+        source_sentence="Jeg {{c1::tenker::tenke, pres}} på deg",
+    )
+    db.add_collocation(unit, language_code="no")
+
+    result = backfill_cloze_tts(db_path=db_path, dry_run=False)
+
+    assert result["synthesized"] == 1
+
+    db2 = SRSDatabase(db_path)
+    coll_id = db2.get_collocation_by_lemma_with_id("tenke")[0]
+    assert db2.get_sentence_audio_filename(coll_id) == "tts_sentence_87afd8f533341d9c.mp3"
+
+
+def test_backfill_clean_text_untouched(monkeypatch, db_path):
+    """B3: clean text without cloze markup passes through unchanged."""
+    import app.audio.cloze_tts as cloze_tts_mod
+
+    async def _fake_tts(text, voice="sl-SI-PetraNeural"):
+        return b"fake-mp3"
+
+    monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", _fake_tts)
+
+    from app.srs.database import SRSDatabase
+
+    db = SRSDatabase(db_path)
+    _seed_cloze_row(db, "vsak", "Odprto je vsak dan")
+
+    result = backfill_cloze_tts(db_path=db_path, dry_run=False)
+
+    assert result["synthesized"] == 1
+
+    db2 = SRSDatabase(db_path)
+    coll_id = db2.get_collocation_by_lemma_with_id("vsak")[0]
+    assert db2.get_sentence_audio_filename(coll_id) == "tts_sentence_3fedfee1f3457d84.mp3"
