@@ -154,6 +154,21 @@ you could state.
 oracle, doc sweeps, ledger burn-downs, renames/refactors with a mechanical rule
 — anything whose hard part is typing rather than deciding.
 
+**Also NEW ARTIFACTS, not just edits to existing ones** (widened 2026-09-04,
+`tunatale-7330`), when BOTH hold: the artifact has **≥2 in-repo siblings** to
+pattern-match, and the oracle is a **measured literal table** you produced
+yourself. A new `scripts/check_*.py` plus its test plus its `test.sh` and
+`ci.yml` wiring is the reference shape — nine siblings existed, and the 9-row
+route table was measured before the brief was written. BP scored 6/6 on the
+pre-registered failure modes, including the two that most invited improvisation:
+adding a CI *job* instead of a step, and allowlisting the one route that looked
+like a violation and was not.
+
+⚠️ **Widening the WORK does not widen the AUDIT — it tightens it.** All three
+defects that survived that delivery sat in the space *between* the cases the
+brief enumerated. See the detector rule in the bp-delegate skill's audit
+protocol.
+
 **Do NOT delegate, regardless of cost:**
 - Anything touching Anki / SRS / sync semantics (`.claude/rules/anki-safety-core.md`).
 - Oracle **design** — deciding what would falsify a claim. Executing a supplied
