@@ -266,6 +266,26 @@
 	/* Only what THIS page's snippets need. The sticky card, the header grid, the
 	   player, the mode gate and the transcript block all live in LessonReader —
 	   shared with the lesson page so the two cannot drift again. */
+
+	/* ⚠️ …except the page wrapper, which LessonReader does NOT own, because it
+	   sits OUTSIDE it. Scoping this block to "the remainder after LessonReader"
+	   is what left <main> unstyled: Svelte styles are component-scoped, so the
+	   lesson page's identical rule never applied here and the session rendered
+	   full-viewport-width — a phone layout on a desktop. Found by looking at the
+	   screen (2026-09-03), which is how all four of this page's drifts were
+	   found. Every other route that renders <main> styles it; this was the only
+	   one that did not. Keep this identical to the lesson page's rule: both are
+	   the reading surface, and 700px is the reading measure. The other widths in
+	   the app differ on purpose (760 index, 1100 cards). */
+	main {
+		max-width: 700px;
+		margin: 1.5rem auto;
+		padding: 0 1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 1.25rem;
+	}
+
 	.back {
 		display: inline-block;
 		color: var(--color-muted);
