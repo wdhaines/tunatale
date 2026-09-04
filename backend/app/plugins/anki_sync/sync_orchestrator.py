@@ -20,6 +20,7 @@ import os
 import select
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -27,6 +28,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app.config import settings
+from app.plugins.anki_sync.secrets import SecretRequest, build_secret_sources, resolve_secret
 
 # The driver imports `anki` (+ protobuf), which does NOT import on Python 3.14.
 # It is also self-contained (stdlib + anki only, no `app.*` imports), so we run it
@@ -364,21 +366,44 @@ def _keychain_password(service: str, account: str) -> str | None:
     return proc.stdout.strip() or None
 
 
-def _resolve_sync_password() -> str:
-    """The AnkiWeb password: prefer ``settings.sync_password`` (env/.env override), else
-    the macOS Keychain (service=``sync_keychain_service``, account=``sync_username``).
-    Keeps the secret out of plaintext .env for recurring use."""
-    if settings.sync_password:
-        return settings.sync_password
-    pw = _keychain_password(settings.sync_keychain_service, settings.sync_username)
-    if not pw:
+def _resolve_sync_password(platform: str = sys.platform) -> str:
+    """The AnkiWeb password, from the first source on this machine that has it.
+
+    The chain lives in ``app.plugins.anki_sync.secrets``: the ``sync_password``
+    setting, then ``sync_password_file``, then — on macOS only — the Keychain.
+
+    ⚠️ **macOS behaviour is unchanged, deliberately** (tunatale-pkk). Same
+    lookup, same order, and the same error text pointing at
+    ``security add-generic-password``: that message is what the user's own setup
+    instructions rest on. Only the non-darwin branch is new, where ``security``
+    does not exist and advising it was the bug.
+
+    ``platform`` is a parameter so the Linux chain is reachable from a test
+    without patching a module global.
+    """
+    request = SecretRequest(service=settings.sync_keychain_service, account=settings.sync_username)
+    sources = build_secret_sources(
+        static_value=settings.sync_password,
+        file_path=Path(settings.sync_password_file).expanduser() if settings.sync_password_file else None,
+        platform=platform,
+    )
+    pw = resolve_secret(request, sources)
+    if pw:
+        return pw
+    if platform == "darwin":
         raise PeerSyncError(
             "No AnkiWeb password found. Store it in the macOS Keychain:\n"
             f"  security add-generic-password -s {settings.sync_keychain_service} "
             f"-a {settings.sync_username or '<your-ankiweb-username>'} -w\n"
             "(or set sync_password in backend/.env as a less-secure fallback)."
         )
-    return pw
+    raise PeerSyncError(
+        "No AnkiWeb password found. The macOS Keychain is not available on this "
+        f"platform ({platform}), so set one of:\n"
+        "  sync_password_file — a file whose contents are the password\n"
+        "  sync_password      — the password itself (plaintext; prefer the file)\n"
+        "Both are read from the environment or backend/.env."
+    )
 
 
 def _read_real_curdeck(real_collection_path: Path) -> bytes | None:

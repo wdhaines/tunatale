@@ -113,6 +113,11 @@ class Settings(BaseSettings):
     # (account = sync_username). Store it with:
     #   security add-generic-password -s tunatale-ankiweb -a <username> -w
     sync_keychain_service: str = "tunatale-ankiweb"
+    # A file whose entire contents are the AnkiWeb password. The portable source:
+    # the macOS `security` binary does not exist on Linux, so a deployed box needs
+    # somewhere else to read the secret from (tunatale-pkk). Empty → not configured.
+    # Prefer this over `sync_password`, which puts the secret in the environment.
+    sync_password_file: str = ""
     # Pin for the anki subprocess (`uv run --with anki==X`). Empty → latest anki.
     # Pinned to match the user's desktop Anki (26.08.1 → PyPI `anki==26.8.1`): the sync
     # subprocess must speak the same sync-protocol and mirror the same scheduler the
