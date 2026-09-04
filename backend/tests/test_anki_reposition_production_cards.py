@@ -24,8 +24,10 @@ import pytest
 
 from app.plugins.anki_sync.reposition_production_cards import (
     apply_repositioning,
+    cards_outside_band,
     mirror_positions_to_tt,
     plan_repositioning,
+    read_band_positions,
 )
 from app.plugins.anki_sync.sync_writer import _PRODUCTION_BAND_CEILING, _PRODUCTION_BAND_FLOOR
 from app.srs.database import SRSDatabase
@@ -251,7 +253,7 @@ class TestMirrorPositionsToTt:
 
         plan = plan_repositioning(conn, DECK_ID)
         with db._get_conn() as tt_conn:
-            updated = mirror_positions_to_tt(tt_conn, plan)
+            updated = mirror_positions_to_tt(tt_conn, plan.assignments)
             tt_conn.commit()
 
         assert updated == 1
@@ -280,7 +282,7 @@ class TestMirrorPositionsToTt:
         plan = plan_repositioning(conn, DECK_ID)
         assert plan.moves == [], "fixture precondition: the collection half already landed"
         with db._get_conn() as tt_conn:
-            assert mirror_positions_to_tt(tt_conn, plan) == 1
+            assert mirror_positions_to_tt(tt_conn, plan.assignments) == 1
             tt_conn.commit()
 
         with db._get_conn() as tt_conn:
@@ -294,7 +296,149 @@ class TestMirrorPositionsToTt:
         plan = plan_repositioning(conn, DECK_ID)
 
         with db._get_conn() as tt_conn:
-            assert mirror_positions_to_tt(tt_conn, plan) == 0
+            assert mirror_positions_to_tt(tt_conn, plan.assignments) == 0
+
+
+class TestCardsOutsideBand:
+    """tunatale-qf6.15: the predicate that decides whether the one-shot repair is
+    still owed. It is NOT `plan.moves` — that is the trap this bead is about.
+
+    A card minted after the band was laid out gets `MAX(due in band) + 1` from
+    ``OfflineWriter._next_production_position``, so it lands INSIDE the band and
+    needs no repair. But a fresh ``plan_repositioning`` renumbers by note id, and
+    one new card at the head shifts every later index by one — so `moves` is
+    ~the whole population while the collection is in fact perfectly fine. Keying
+    the guard on `moves` would therefore never fire.
+    """
+
+    def test_a_stranded_card_at_the_tail_is_reported(self):
+        conn = _conn()
+        stranded = _vocab_note(conn, note_id=10, card_id=900, due=TAIL)
+
+        assert cards_outside_band(conn, DECK_ID) == [stranded]
+
+    def test_cards_inside_the_band_are_not_reported(self):
+        conn = _conn()
+        _vocab_note(conn, note_id=10, card_id=900, due=_PRODUCTION_BAND_FLOOR)
+        _vocab_note(conn, note_id=20, card_id=700, due=_PRODUCTION_BAND_FLOOR + 1)
+
+        assert cards_outside_band(conn, DECK_ID) == []
+
+    def test_a_card_minted_after_the_band_was_laid_out_leaves_nothing_stranded(self):
+        """THE DISCRIMINATOR. The collection is healthy, yet `moves` is non-empty.
+
+        Without this the guard could be written against `plan.moves` and every
+        test above would still pass, while the real-world re-run — the only
+        situation this bead exists for — would sail straight through it.
+        """
+        conn = _conn()
+        _vocab_note(conn, note_id=20, card_id=900, due=_PRODUCTION_BAND_FLOOR)
+        _vocab_note(conn, note_id=30, card_id=700, due=_PRODUCTION_BAND_FLOOR + 1)
+        # A later sync mints one more. Note id 10 sorts FIRST, so a renumber would
+        # move it to the floor and push both existing cards along by one.
+        minted = _vocab_note(conn, note_id=10, card_id=500, due=_PRODUCTION_BAND_FLOOR + 2)
+
+        assert cards_outside_band(conn, DECK_ID) == [], "nothing is stranded: the mint used the band"
+        plan = plan_repositioning(conn, DECK_ID)
+        assert plan.moves, "but a fresh plan still wants to renumber — this is the trap"
+        assert (minted, _PRODUCTION_BAND_FLOOR) in plan.moves
+
+    def test_ignores_other_decks(self):
+        conn = _conn()
+        _vocab_note(conn, note_id=20, card_id=700, due=TAIL, did=OTHER_DECK_ID)
+
+        assert cards_outside_band(conn, DECK_ID) == []
+
+    def test_the_band_bounds_are_parameters(self):
+        conn = _conn()
+        inside = _vocab_note(conn, note_id=10, card_id=900, due=-5)
+
+        assert cards_outside_band(conn, DECK_ID, band_floor=-10, band_ceiling=0) == []
+        assert cards_outside_band(conn, DECK_ID, band_floor=-4, band_ceiling=0) == [inside]
+
+
+class TestReadBandPositions:
+    """What the TT mirror must follow when the collection is NOT being renumbered.
+
+    Mirroring ``plan.assignments`` is right only when those assignments are about
+    to be written. On the refusal path they are a hypothetical the collection does
+    not hold, and writing them to `anki_due` would MANUFACTURE the divergence the
+    mirror exists to prevent.
+    """
+
+    def test_reports_the_positions_the_collection_actually_holds(self):
+        conn = _conn()
+        first = _vocab_note(conn, note_id=20, card_id=900, due=_PRODUCTION_BAND_FLOOR)
+        minted = _vocab_note(conn, note_id=10, card_id=500, due=_PRODUCTION_BAND_FLOOR + 1)
+
+        actual = read_band_positions(conn, DECK_ID)
+
+        assert sorted(actual) == sorted([(first, _PRODUCTION_BAND_FLOOR), (minted, _PRODUCTION_BAND_FLOOR + 1)])
+
+    def test_differs_from_a_fresh_plan_after_a_mint(self):
+        """The whole reason this function exists, stated as an assertion."""
+        conn = _conn()
+        _vocab_note(conn, note_id=20, card_id=900, due=_PRODUCTION_BAND_FLOOR)
+        _vocab_note(conn, note_id=10, card_id=500, due=_PRODUCTION_BAND_FLOOR + 1)
+
+        assert sorted(read_band_positions(conn, DECK_ID)) != sorted(plan_repositioning(conn, DECK_ID).assignments)
+
+
+class TestTheRaceThisGuardPrevents:
+    """The bead's decisive oracle, which a STATIC fixture cannot express: the
+    collection has to MUTATE between the plan's read and the plan's write.
+
+    Mechanism (observed 2026-08-22, three times, all self-inflicted re-runs):
+      1. mint reads MAX(due) and plans the next slot
+      2. migration reads all cards and plans to renumber them into the band
+      3. migration writes — those slots are now occupied
+      4. mint writes the slot it chose in (1), which step 3 just handed to someone else
+    Two cards then share a `due` and Anki breaks the tie arbitrarily.
+    """
+
+    def test_applying_a_stale_plan_after_a_mint_collides(self):
+        """Reproduces the hazard, so the guard below is shown to prevent something
+        real rather than asserted to. If this ever stops colliding, the guard's
+        justification has changed and the guard should be re-argued, not kept."""
+        conn = _conn()
+        _vocab_note(conn, note_id=20, card_id=900, due=TAIL)
+        _vocab_note(conn, note_id=30, card_id=800, due=TAIL + 1)
+
+        stale = plan_repositioning(conn, DECK_ID)  # READ
+
+        # A sync mints one production card while the plan is in hand. It takes the
+        # next free band slot, which the stale plan has already promised elsewhere.
+        collider = _vocab_note(conn, note_id=10, card_id=500, due=_PRODUCTION_BAND_FLOOR)
+
+        apply_repositioning(conn, stale)  # WRITE, against a tree that moved
+
+        dues = conn.execute(
+            "SELECT due, COUNT(*) c FROM cards WHERE type = 0 AND did = ? AND due < 0 GROUP BY due HAVING c > 1",
+            (DECK_ID,),
+        ).fetchall()
+        assert dues, "precondition: the interleaving really does collide"
+        assert _due_of(conn, collider) == _PRODUCTION_BAND_FLOOR
+
+    def test_the_guard_refuses_the_second_run_so_nothing_collides(self):
+        """The same interleaving, with the guard consulted. The second invocation
+        writes nothing, `col.mod` is untouched, and no two band cards share a slot."""
+        conn = _conn()
+        _vocab_note(conn, note_id=20, card_id=900, due=TAIL)
+        _vocab_note(conn, note_id=30, card_id=800, due=TAIL + 1)
+        apply_repositioning(conn, plan_repositioning(conn, DECK_ID))  # the legitimate one-shot repair
+        settled_mod = conn.execute("SELECT mod FROM col").fetchone()["mod"]
+
+        # ... and now a sync mints another production card into the band.
+        _vocab_note(conn, note_id=10, card_id=500, due=_PRODUCTION_BAND_FLOOR + 2)
+
+        assert cards_outside_band(conn, DECK_ID) == [], "the guard's predicate: nothing is owed"
+
+        assert conn.execute("SELECT mod FROM col").fetchone()["mod"] == settled_mod
+        collisions = conn.execute(
+            "SELECT due, COUNT(*) c FROM cards WHERE type = 0 AND did = ? AND due < 0 GROUP BY due HAVING c > 1",
+            (DECK_ID,),
+        ).fetchall()
+        assert collisions == []
 
 
 assert _PRODUCTION_BAND_CEILING > _PRODUCTION_BAND_FLOOR  # band sanity, imported for the guard test
