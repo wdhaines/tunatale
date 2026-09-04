@@ -538,7 +538,7 @@ class TestAmbiguousSurfaces:
 class TestDueQueries:
     """Tests for due/new collocation queries."""
 
-    def test_get_due_collocations_includes_overdue(self, srs_db):
+    def test_get_due_items_includes_overdue(self, srs_db):
         unit = _unit()
         srs_db.add_collocation(unit, language_code="sl")
         item = srs_db.get_collocation("dober dan")
@@ -546,10 +546,10 @@ class TestDueQueries:
         item.state = SRSState.REVIEW
         srs_db.update_collocation(item)
 
-        due = srs_db.get_due_collocations(date.today())
-        assert any(i.syntactic_unit.text == "dober dan" for i in due)
+        due = srs_db.get_due_items(date.today())
+        assert any(item.syntactic_unit.text == "dober dan" for _cid, item, _lang in due)
 
-    def test_get_due_collocations_excludes_future(self, srs_db):
+    def test_get_due_items_excludes_future(self, srs_db):
         unit = _unit()
         srs_db.add_collocation(unit, language_code="sl")
         item = srs_db.get_collocation("dober dan")
@@ -557,14 +557,14 @@ class TestDueQueries:
         item.state = SRSState.REVIEW
         srs_db.update_collocation(item)
 
-        due = srs_db.get_due_collocations(date.today())
-        assert not any(i.syntactic_unit.text == "dober dan" for i in due)
+        due = srs_db.get_due_items(date.today())
+        assert not any(item.syntactic_unit.text == "dober dan" for _cid, item, _lang in due)
 
-    def test_get_new_collocations(self, srs_db):
+    def test_get_new_items_counts_every_new_direction(self, srs_db):
         srs_db.add_collocation(_unit("dober dan"), language_code="sl")
         srs_db.add_collocation(_unit("hvala lepa", "thank you"), language_code="sl")
 
-        new = srs_db.get_new_collocations(limit=10)
+        new = srs_db.get_new_items(limit=10)
         assert len(new) == 2
 
     def test_get_new_items_returns_stable_order(self, srs_db):
@@ -2485,8 +2485,8 @@ class TestSuspended:
         item.state = SRSState.SUSPENDED
         srs_db.update_collocation(item)
 
-        due = srs_db.get_due_collocations(date.today())
-        assert not any(i.syntactic_unit.text == "hvala" for i in due)
+        due = srs_db.get_due_items(date.today())
+        assert not any(item.syntactic_unit.text == "hvala" for _cid, item, _lang in due)
         assert srs_db.count_due_collocations(date.today()) == 0
 
     def test_suspended_state_roundtrip(self, srs_db):

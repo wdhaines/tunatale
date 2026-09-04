@@ -78,4 +78,11 @@ def test_public_method_count_pinned() -> None:
     # +mark_image_unavailable, is_image_unavailable (the pre-stage's verdict that
     #  a word cannot be pictured; the mint no longer fetches, so it cannot reach
     #  that verdict itself — tunatale-byw)
-    assert count == 133
+    # -get_due_collocations, -get_new_collocations (tunatale-1l26.5: superseded by
+    #  get_due_items / get_new_items, which db_queue's own docstring already named
+    #  as the richer form — "Like get_due_collocations but returns (id, SRSItem,
+    #  language_code) tuples". No app code called either, and both were SHADOWED
+    #  BY NAME by live route handlers in api/srs.py, so a grep for "is this used?"
+    #  answered yes about a different symbol. Their three behaviour tests were
+    #  consolidated onto get_due_items/get_new_items, not deleted.)
+    assert count == 131

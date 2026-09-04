@@ -20,46 +20,6 @@ from app.srs.db_base import (
 class DbQueueMixin:
     """Queue gather + unbury sweep. Mixed into SRSDatabase; relies on SRSDatabaseBase infra."""
 
-    def get_due_collocations(
-        self,
-        as_of: date,
-        direction: Direction = Direction.RECOGNITION,
-    ) -> list[SRSItem]:
-        """Return all collocations whose `direction` is due on or before `as_of`."""
-        placeholders = ",".join("?" * len(_NON_REVIEWABLE_STATES))
-        end_of_day = datetime.combine(as_of, time.max).isoformat()
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT c.* FROM collocations c
-                JOIN collocation_directions d ON d.collocation_id = c.id
-                WHERE d.direction = ?
-                  AND d.due_at <= ?
-                  AND d.state NOT IN ({placeholders})
-                ORDER BY d.due_at ASC, d.stability ASC NULLS LAST, d.anki_card_id ASC NULLS LAST, c.id ASC
-                """,
-                (direction.value, end_of_day, *_NON_REVIEWABLE_STATES),
-            ).fetchall()
-            return [self._row_to_item(conn, r) for r in rows]
-
-    def get_new_collocations(
-        self,
-        limit: int = 10,
-        direction: Direction = Direction.RECOGNITION,
-    ) -> list[SRSItem]:
-        """Return collocations whose `direction` state is NEW."""
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                """
-                SELECT c.* FROM collocations c
-                JOIN collocation_directions d ON d.collocation_id = c.id
-                WHERE d.direction = ? AND d.state = 'new'
-                LIMIT ?
-                """,
-                (direction.value, limit),
-            ).fetchall()
-            return [self._row_to_item(conn, r) for r in rows]
-
     def get_due_items(
         self,
         as_of: date,
