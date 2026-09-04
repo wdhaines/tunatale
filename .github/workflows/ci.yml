@@ -183,6 +183,9 @@ jobs:
       - name: Prod env profile check
         run: uv run python scripts/check_prod_env.py
 
+      - name: Main styling check
+        run: uv run python scripts/check_main_styling.py
+
       - name: Test
         run: uv run pytest -n auto
 

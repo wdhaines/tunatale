@@ -145,6 +145,8 @@ log_step() {
 
   log_step backend "Prod env profile check" uv run python scripts/check_prod_env.py
 
+  log_step backend "Main styling check" uv run python scripts/check_main_styling.py
+
   # pytest-cov combines per-worker coverage, so the 100% gate still applies to
   # the full run at any -n.
   #
