@@ -184,6 +184,7 @@ def build_review_session_prompts(
     cefr_level: str,
     *,
     srs_db: SRSDatabase | None = None,
+    review_words: Sequence[str] | None = None,
 ) -> StoryPrompts:
     """The REVIEW prompt for a session that belongs to no curriculum.
 
@@ -197,8 +198,18 @@ def build_review_session_prompts(
     Selection still happens in exactly one place per path, and both paths render
     through :func:`_build_review_prompts`, so this cannot drift from
     ``build_story_prompts(..., ContentStrategy.REVIEW, ...)``.
+
+    *review_words* PINS the set instead of selecting one, for the manual-paste
+    route (tunatale-w1i3). The learner exports this prompt, writes a dialogue
+    elsewhere, and pastes it back; coverage is then measured against the session's
+    ORIGINAL request, so the prompt has to ask for that same set or the meter
+    reads low for a reason nothing on screen explains. Same rule ``import_lesson``
+    already follows (tunatale-fgeq.1) — import paths pin, generation paths select.
+    ``None`` means "select"; an explicit empty sequence still refuses below, which
+    is why this is not defaulted to ``()``.
     """
-    review_words = select_review_collocations(srs_db) if srs_db is not None else ()
+    if review_words is None:
+        review_words = select_review_collocations(srs_db) if srs_db is not None else ()
     return _build_review_prompts(language, cefr_level, review_words)
 
 

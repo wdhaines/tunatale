@@ -616,7 +616,10 @@ export class TunaTaleAPI {
     if (Object.keys(langHeader).length > 0) {
       res = await fetch(`${this.baseUrl}${path}`, {
         ...init,
-        headers: { ...langHeader, ...(init?.headers as Record<string, string> | undefined) },
+        headers: {
+          ...langHeader,
+          ...(init?.headers as Record<string, string> | undefined),
+        },
       });
     } else {
       res = init
@@ -717,7 +720,9 @@ export class TunaTaleAPI {
   }
 
   async renderReviewSession(id: string): Promise<LessonAudio> {
-    return this.request(`/api/review-sessions/${id}/render`, { method: "POST" });
+    return this.request(`/api/review-sessions/${id}/render`, {
+      method: "POST",
+    });
   }
 
   async createReviewSession(): Promise<CreateReviewSessionResponse> {
@@ -735,7 +740,21 @@ export class TunaTaleAPI {
    * in the dated list, which is a different act from improving this one.
    */
   async regenerateReviewSession(sessionId: string): Promise<CreateReviewSessionResponse> {
-    return this.request(`/api/review-sessions/${sessionId}/regenerate`, { method: "POST" });
+    return this.request(`/api/review-sessions/${sessionId}/regenerate`, {
+      method: "POST",
+    });
+  }
+
+  async getReviewSessionPrompt(sessionId: string): Promise<PromptExport> {
+    return this.request(`/api/review-sessions/${sessionId}/prompt`);
+  }
+
+  async importReviewSession(sessionId: string, raw: string): Promise<CreateReviewSessionResponse> {
+    return this.request(`/api/review-sessions/${sessionId}/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ raw }),
+    });
   }
 
   async getCurriculum(id: string): Promise<CurriculumSummary> {
@@ -803,7 +822,9 @@ export class TunaTaleAPI {
     id: string,
     day: number,
   ): Promise<{ deleted_day: number; days: number }> {
-    return this.request(`/api/curriculum/${id}/days/${day}`, { method: "DELETE" });
+    return this.request(`/api/curriculum/${id}/days/${day}`, {
+      method: "DELETE",
+    });
   }
 
   async setGenerationMode(id: string, mode: "auto" | "manual"): Promise<{ mode: string }> {
@@ -911,14 +932,22 @@ export class TunaTaleAPI {
     return this.request(`/api/srs/items/${itemId}/direction/${direction}/feedback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rating, time_ms: timeMs, lesson_review: lessonReview }),
+      body: JSON.stringify({
+        rating,
+        time_ms: timeMs,
+        lesson_review: lessonReview,
+      }),
     });
   }
 
   async undoGrade(
     itemId: number,
     direction: "recognition" | "production",
-  ): Promise<{ status: string; restored_state: string; restored_due_at: string }> {
+  ): Promise<{
+    status: string;
+    restored_state: string;
+    restored_due_at: string;
+  }> {
     return this.request(`/api/srs/items/${itemId}/direction/${direction}/undo`, {
       method: "POST",
     });
@@ -1068,7 +1097,9 @@ export class TunaTaleAPI {
   }
 
   async markLessonReviewed(lessonId: string): Promise<{ ok: boolean }> {
-    return this.request(`/api/srs/content/${lessonId}/reviewed`, { method: "POST" });
+    return this.request(`/api/srs/content/${lessonId}/reviewed`, {
+      method: "POST",
+    });
   }
 
   async getListenPreview(lessonId: string): Promise<ListenPreview> {
@@ -1144,7 +1175,9 @@ export class TunaTaleAPI {
   }
 
   async restoreKnown(id: number): Promise<SRSItemDetail> {
-    return this.request(`/api/srs/items/${id}/restore-known`, { method: "POST" });
+    return this.request(`/api/srs/items/${id}/restore-known`, {
+      method: "POST",
+    });
   }
 
   async setSRSItemState(id: number, state: string): Promise<SRSItemDetail> {
@@ -1215,7 +1248,9 @@ export class TunaTaleAPI {
   }
 
   async peerSync(dryRun = false): Promise<PeerSyncResult> {
-    return this.request(`/api/anki/peer-sync?dry_run=${dryRun}`, { method: "POST" });
+    return this.request(`/api/anki/peer-sync?dry_run=${dryRun}`, {
+      method: "POST",
+    });
   }
 
   async getLanguages(): Promise<LanguagesResponse> {

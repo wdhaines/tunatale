@@ -7,46 +7,26 @@ const mockClipboard = {
 };
 Object.assign(navigator, { clipboard: mockClipboard });
 
-vi.mock("$lib/api", () => ({
-  api: {
-    getStoryPrompt: vi.fn(),
-    importStory: vi.fn(),
-    deleteCurriculumDay: vi.fn(),
-  },
-}));
+const PROMPT_TEXT = "You are a helpful story writer.\n\nWrite a story about coffee in Slovene.";
 
-import { api } from "$lib/api";
-
-const mockGetStoryPrompt = vi.mocked(api.getStoryPrompt);
-const mockImportStory = vi.mocked(api.importStory);
-const mockDeleteCurriculumDay = vi.mocked(api.deleteCurriculumDay);
-
-const PROMPT_EXPORT = {
-  system_prompt: "You are a helpful story writer.",
-  user_prompt: "Write a story about coffee in Slovene.",
-};
-
-const IMPORT_RESULT = {
+const copyPrompt = vi.fn().mockResolvedValue(PROMPT_TEXT);
+const importRaw = vi.fn().mockResolvedValue({
   id: "new-lesson-42",
-  title: "Coffee Day 5",
-  sections: [{ type: "key_phrases", phrase_count: 2 }],
-  warnings: ["speaker 'unknown' is not in the sl voice map"],
-};
-
+  warnings: [],
+});
 const onImported = vi.fn();
-const onDeleted = vi.fn();
+const onDelete = vi.fn();
+
 const PROPS = {
-  curriculumId: "cid-1",
-  day: 5,
+  copyPrompt,
+  importRaw,
   onImported,
-  onDeleted,
+  onDelete,
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockClipboard.writeText.mockResolvedValue(undefined);
-  mockGetStoryPrompt.mockResolvedValue(PROMPT_EXPORT);
-  mockImportStory.mockResolvedValue(IMPORT_RESULT);
 });
 
 describe("ManualStoryPanel", () => {
@@ -56,22 +36,22 @@ describe("ManualStoryPanel", () => {
     await fireEvent.click(btn);
 
     await waitFor(() => {
-      expect(mockGetStoryPrompt).toHaveBeenCalledWith("cid-1", 5);
+      expect(copyPrompt).toHaveBeenCalledOnce();
     });
-    expect(mockClipboard.writeText).toHaveBeenCalledWith(
-      "You are a helpful story writer.\n\nWrite a story about coffee in Slovene.",
-    );
+    expect(mockClipboard.writeText).toHaveBeenCalledWith(PROMPT_TEXT);
   });
 
   it("shows Copied label after successful copy", async () => {
-    const { getByText, findByText } = render(ManualStoryPanel, { props: PROPS });
+    const { getByText, findByText } = render(ManualStoryPanel, {
+      props: PROPS,
+    });
     const btn = getByText("Copy story prompt");
     await fireEvent.click(btn);
 
     expect(await findByText("Copied ✓")).toBeTruthy();
   });
 
-  it("import sends raw text without client-side JSON.parse", async () => {
+  it("import sends raw text via importRaw prop", async () => {
     const { container } = render(ManualStoryPanel, { props: PROPS });
     const textarea = container.querySelector("textarea")!;
     const rawText = '{"title":"Test"}';
@@ -81,20 +61,12 @@ describe("ManualStoryPanel", () => {
     await fireEvent.click(importBtn);
 
     await waitFor(() => {
-      expect(mockImportStory).toHaveBeenCalledWith({
-        curriculum_id: "cid-1",
-        day: 5,
-        raw: rawText,
-      });
+      expect(importRaw).toHaveBeenCalledWith(rawText);
     });
-    // Verify the mock was NOT called with a `story` key
-    const call = mockImportStory.mock.calls[0][0];
-    expect(call).not.toHaveProperty("story");
-    expect(call).toHaveProperty("raw", rawText);
   });
 
   it("calls onImported immediately when import succeeds without warnings", async () => {
-    mockImportStory.mockResolvedValue({ ...IMPORT_RESULT, warnings: [] });
+    importRaw.mockResolvedValue({ id: "new-lesson-42", warnings: [] });
 
     const { container } = render(ManualStoryPanel, { props: PROPS });
     const textarea = container.querySelector("textarea")!;
@@ -109,6 +81,11 @@ describe("ManualStoryPanel", () => {
   });
 
   it("import with warnings defers navigation until Continue clicked", async () => {
+    importRaw.mockResolvedValue({
+      id: "new-lesson-42",
+      warnings: ["speaker 'unknown' is not in the sl voice map"],
+    });
+
     const { container } = render(ManualStoryPanel, { props: PROPS });
     const textarea = container.querySelector("textarea")!;
     await fireEvent.input(textarea, { target: { value: '{"title":"Test"}' } });
@@ -127,8 +104,8 @@ describe("ManualStoryPanel", () => {
     expect(onImported).toHaveBeenCalledWith("new-lesson-42");
   });
 
-  it("import error (422) shows error message and does not call onImported", async () => {
-    mockImportStory.mockRejectedValue(new Error("POST /api/story/import: Unparseable JSON"));
+  it("import error shows error message and does not call onImported", async () => {
+    importRaw.mockRejectedValue(new Error("POST /api/story/import: Unparseable JSON"));
 
     const { container } = render(ManualStoryPanel, { props: PROPS });
     const textarea = container.querySelector("textarea")!;
@@ -144,7 +121,7 @@ describe("ManualStoryPanel", () => {
   });
 
   it("copy failure surfaces error message", async () => {
-    mockGetStoryPrompt.mockRejectedValue(new Error("Network error"));
+    copyPrompt.mockRejectedValue(new Error("Network error"));
 
     const { getByText } = render(ManualStoryPanel, { props: PROPS });
     const btn = getByText("Copy story prompt");
@@ -156,7 +133,7 @@ describe("ManualStoryPanel", () => {
   });
 
   it("import failure surfaces error message", async () => {
-    mockImportStory.mockRejectedValue(new Error("POST /api/story/import: 422"));
+    importRaw.mockRejectedValue(new Error("POST /api/story/import: 422"));
 
     const { container } = render(ManualStoryPanel, { props: PROPS });
     const textarea = container.querySelector("textarea")!;
@@ -171,7 +148,7 @@ describe("ManualStoryPanel", () => {
   });
 
   it("disables import button while import is loading", async () => {
-    mockImportStory.mockReturnValue(new Promise(() => {}));
+    importRaw.mockReturnValue(new Promise(() => {}));
 
     const { container } = render(ManualStoryPanel, { props: PROPS });
     const textarea = container.querySelector("textarea")!;
@@ -188,7 +165,7 @@ describe("ManualStoryPanel", () => {
   });
 
   it("shows Importing… while loading", async () => {
-    mockImportStory.mockReturnValue(new Promise(() => {}));
+    importRaw.mockReturnValue(new Promise(() => {}));
 
     const { container } = render(ManualStoryPanel, { props: PROPS });
     const textarea = container.querySelector("textarea")!;
@@ -205,27 +182,32 @@ describe("ManualStoryPanel", () => {
   });
 
   describe("delete this day", () => {
-    it("renders a Delete this day button", () => {
+    it("renders a Delete this day button when onDelete is provided", () => {
       const { getByText } = render(ManualStoryPanel, { props: PROPS });
       expect(getByText("Delete this day")).toBeTruthy();
+    });
+
+    it("does not render delete button when onDelete is omitted", () => {
+      const { queryByText } = render(ManualStoryPanel, {
+        props: { copyPrompt, importRaw, onImported },
+      });
+      expect(queryByText("Delete this day")).toBeNull();
     });
 
     it("requires a second click to confirm before deleting", async () => {
       const { getByText } = render(ManualStoryPanel, { props: PROPS });
       await fireEvent.click(getByText("Delete this day"));
       expect(getByText("Confirm delete")).toBeTruthy();
-      expect(mockDeleteCurriculumDay).not.toHaveBeenCalled();
+      expect(onDelete).not.toHaveBeenCalled();
     });
 
-    it("deletes the day and calls onDeleted on the second click", async () => {
-      mockDeleteCurriculumDay.mockResolvedValue({ deleted_day: 5, days: 0 });
+    it("calls onDelete on the second click", async () => {
       const { getByText } = render(ManualStoryPanel, { props: PROPS });
       await fireEvent.click(getByText("Delete this day"));
       await fireEvent.click(getByText("Confirm delete"));
 
       await waitFor(() => {
-        expect(mockDeleteCurriculumDay).toHaveBeenCalledWith("cid-1", 5);
-        expect(onDeleted).toHaveBeenCalled();
+        expect(onDelete).toHaveBeenCalledOnce();
       });
     });
 
@@ -236,17 +218,18 @@ describe("ManualStoryPanel", () => {
 
       await fireEvent.blur(getByText("Confirm delete"));
       expect(getByText("Delete this day")).toBeTruthy();
-      expect(mockDeleteCurriculumDay).not.toHaveBeenCalled();
+      expect(onDelete).not.toHaveBeenCalled();
     });
 
-    it("shows an error and does not call onDeleted when deletion fails", async () => {
-      mockDeleteCurriculumDay.mockRejectedValue(new Error("delete failed"));
-      const { getByText, findByText } = render(ManualStoryPanel, { props: PROPS });
+    it("shows an error when deletion fails", async () => {
+      onDelete.mockRejectedValue(new Error("delete failed"));
+      const { getByText, findByText } = render(ManualStoryPanel, {
+        props: PROPS,
+      });
       await fireEvent.click(getByText("Delete this day"));
       await fireEvent.click(getByText("Confirm delete"));
 
       expect(await findByText("delete failed")).toBeTruthy();
-      expect(onDeleted).not.toHaveBeenCalled();
     });
   });
 });

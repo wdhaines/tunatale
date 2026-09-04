@@ -13,6 +13,7 @@
 	import AudioDownloads from '$lib/components/AudioDownloads.svelte';
 	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
 	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
+	import ManualStoryPanel from '$lib/components/ManualStoryPanel.svelte';
 	import { invalidateAll } from '$app/navigation';
 
 
@@ -159,6 +160,19 @@
 		}
 	}
 
+	async function handlePasteImported() {
+		// Re-read the session so the page shows the new text and the new coverage
+		// line. NOT goto() — the id and URL are unchanged by design.
+		await invalidateAll();
+		transcriptLoading = true;
+		try {
+			transcript = await api.getTranscript(data.session.id);
+		} catch {
+			transcript = null;
+		}
+		transcriptLoading = false;
+	}
+
 	async function prepareAudio() {
 		preparing = true;
 		renderError = '';
@@ -255,6 +269,14 @@
 				is discarded and can be prepared again.
 			</p>
 		{/if}
+		<ManualStoryPanel
+			copyPrompt={async () => {
+				const r = await api.getReviewSessionPrompt(data.session.id);
+				return r.system_prompt + '\n\n' + r.user_prompt;
+			}}
+			importRaw={async (raw) => api.importReviewSession(data.session.id, raw)}
+			onImported={handlePasteImported}
+		/>
 	</details>
 </main>
 

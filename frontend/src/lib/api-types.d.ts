@@ -827,6 +827,77 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/review-sessions/{session_id}/import": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Import Review Session
+     * @description Replace one session's dialogue with a hand-authored one, IN PLACE.
+     *
+     *     The manual escape hatch the lesson page has always had. It reaches a session
+     *     only because the addressing changed: ``ManualStoryPanel`` was keyed
+     *     ``{curriculum_id, day}``, and a session has neither (bd tunatale-w1i3).
+     *
+     *     ⚠️ THE ID, THE DATE AND THE REQUEST ALL SURVIVE. Keeping ``review_requested``
+     *     is what makes "reused 11 of 12" comparable across a re-run; a re-selected
+     *     denominator would make the two numbers describe different questions.
+     *     ``review_used``, by contrast, is RECOMPUTED — ``build_lesson_from_story``
+     *     measures it against the pasted dialogue. Carrying it forward would report the
+     *     old model's score for the new text, which is the silently-plausible wrong
+     *     number this epic keeps producing.
+     *
+     *     ⚠️ Nothing is written until the rebuild succeeds, mirroring
+     *     ``_generate_and_store``: a refusal must leave the dialogue the learner
+     *     already had intact rather than replacing it with nothing.
+     *
+     *     No SRS write happens here, by decision — replacing a session's text must not
+     *     touch scheduling state.
+     */
+    post: operations["import_review_session_api_review_sessions__session_id__import_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/review-sessions/{session_id}/prompt": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Review Session Prompt
+     * @description Export the prompt for rewriting THIS session by hand.
+     *
+     *     ⚠️ PINNED TO THE SESSION'S OWN REQUEST, never a fresh selection. The learner
+     *     takes this to a chat, writes a better dialogue, and pastes it back at
+     *     ``/import``, where coverage is measured against the stored
+     *     ``review_requested``. A freshly-selected prompt would ask for one set while
+     *     the meter scored another, and the readout would drop for a reason nothing on
+     *     screen could explain.
+     *
+     *     That is the same rule ``import_lesson`` follows (tunatale-fgeq.1): import
+     *     paths pin, generation paths select. ``regenerate`` re-selecting is not an
+     *     inconsistency with this — it generates new content, so "what has decayed NOW"
+     *     is the right question there and the wrong one here.
+     */
+    get: operations["get_review_session_prompt_api_review_sessions__session_id__prompt_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/review-sessions/{session_id}/regenerate": {
     parameters: {
       query?: never;
@@ -2275,6 +2346,25 @@ export interface components {
       language_code: string;
       /** Topic */
       topic: string;
+    };
+    /**
+     * ImportReviewSessionRequest
+     * @description A dialogue written elsewhere, pasted back onto an existing session.
+     *
+     *     Deliberately carries NO identifiers: the session id is in the path, and the
+     *     date and the review request come from the stored row. A body field for any
+     *     of them would be a way to make a paste silently become a different session,
+     *     which is the thing this route exists to avoid — see ``ImportLessonRequest``,
+     *     whose ``curriculum_id``/``day`` exist because a lesson genuinely is addressed
+     *     that way.
+     */
+    ImportReviewSessionRequest: {
+      /** Raw */
+      raw?: string | null;
+      /** Story */
+      story?: {
+        [key: string]: unknown;
+      } | null;
     };
     /**
      * ImportStoryResponse
@@ -4709,6 +4799,72 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ReviewSessionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  import_review_session_api_review_sessions__session_id__import_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ImportReviewSessionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CreateReviewSessionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_review_session_prompt_api_review_sessions__session_id__prompt_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GetStoryPromptResponse"];
         };
       };
       /** @description Validation Error */

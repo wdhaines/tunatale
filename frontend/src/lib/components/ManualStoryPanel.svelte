@@ -1,14 +1,12 @@
 <script lang="ts">
-	import { api } from '$lib/api';
-
 	interface Props {
-		curriculumId: string;
-		day: number;
-		onImported: (lessonId: string) => void;
-		onDeleted: () => void;
+		copyPrompt: () => Promise<string>;
+		importRaw: (raw: string) => Promise<{ id: string; warnings: string[] }>;
+		onImported: (id: string) => void;
+		onDelete?: () => Promise<void>;
 	}
 
-	let { curriculumId, day, onImported, onDeleted }: Props = $props();
+	let { copyPrompt, importRaw, onImported, onDelete }: Props = $props();
 
 	let copyError = $state('');
 	let copyLabel = $state('');
@@ -24,8 +22,8 @@
 	async function handleCopy() {
 		copyError = '';
 		try {
-			const result = await api.getStoryPrompt(curriculumId, day);
-			await navigator.clipboard.writeText(result.system_prompt + '\n\n' + result.user_prompt);
+			const result = await copyPrompt();
+			await navigator.clipboard.writeText(result);
 			copyLabel = 'Copied ✓';
 		} catch (e) {
 			copyError = e instanceof Error ? e.message : String(e);
@@ -47,11 +45,7 @@
 
 		importLoading = true;
 		try {
-			const result = await api.importStory({
-				curriculum_id: curriculumId,
-				day,
-				raw: pasteText,
-			});
+			const result = await importRaw(pasteText);
 			if (result.warnings.length > 0) {
 				importWarnings = result.warnings;
 				importedLessonId = result.id;
@@ -65,17 +59,12 @@
 		}
 	}
 
-	// Two-click confirm (same pattern as the plan page's Reset chat button):
-	// deletes this lesson-less day's lessons/audio server-side (there may be
-	// none yet) so a wrongly planned day can be removed; existing SRS/Anki
-	// cards are untouched, no renumbering.
 	async function handleDelete() {
 		confirmingDelete = false;
 		deleting = true;
 		deleteError = '';
 		try {
-			await api.deleteCurriculumDay(curriculumId, day);
-			onDeleted();
+			await onDelete!();
 		} catch (e) {
 			deleteError = e instanceof Error ? e.message : String(e);
 			deleting = false;
@@ -147,18 +136,20 @@
 	{#if deleteError}
 		<p class="error">{deleteError}</p>
 	{/if}
-	<div class="delete-day-row">
-		<button
-			type="button"
-			class="delete-day-btn"
-			class:confirming={confirmingDelete}
-			onclick={handleDeleteClick}
-			onblur={handleDeleteBlur}
-			disabled={deleting}
-		>
-			{confirmingDelete ? 'Confirm delete' : 'Delete this day'}
-		</button>
-	</div>
+	{#if onDelete}
+		<div class="delete-day-row">
+			<button
+				type="button"
+				class="delete-day-btn"
+				class:confirming={confirmingDelete}
+				onclick={handleDeleteClick}
+				onblur={handleDeleteBlur}
+				disabled={deleting}
+			>
+				{confirmingDelete ? 'Confirm delete' : 'Delete this day'}
+			</button>
+		</div>
+	{/if}
 </div>
 
 <style>

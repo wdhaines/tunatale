@@ -54,6 +54,8 @@ vi.mock("$lib/api", () => ({
     audioZipUrl: vi.fn((id: string) => `/audio/lesson/${id}/zip`),
     regenerateReviewSession: vi.fn(),
     createReviewSession: vi.fn(),
+    getReviewSessionPrompt: vi.fn(),
+    importReviewSession: vi.fn(),
   },
 }));
 
@@ -77,13 +79,21 @@ const TRANSCRIPT = {
       sentence: "Toget er dessverre forsinket.",
       words: [
         { surface: "Toget", prefix_punct: "", suffix_punct: "", lemma: "tog" },
-        { surface: "forsinket", prefix_punct: "", suffix_punct: ".", lemma: "forsinke" },
+        {
+          surface: "forsinket",
+          prefix_punct: "",
+          suffix_punct: ".",
+          lemma: "forsinke",
+        },
       ],
     },
   ],
 } as never;
 
-type Loaded = { session: { title: string }; audio: { audio_id: string } | null };
+type Loaded = {
+  session: { title: string };
+  audio: { audio_id: string } | null;
+};
 const loaded = (r: unknown) => r as Loaded;
 
 function sessionBody(overrides: Record<string, unknown> = {}) {
@@ -104,15 +114,30 @@ function sessionBody(overrides: Record<string, unknown> = {}) {
       {
         type: "natural_speed",
         phrases: [
-          { text: "Natural Speed", role: "narrator", language_code: "en", voice_id: "v" },
-          { text: "On the Platform", role: "narrator", language_code: "en", voice_id: "v" },
+          {
+            text: "Natural Speed",
+            role: "narrator",
+            language_code: "en",
+            voice_id: "v",
+          },
+          {
+            text: "On the Platform",
+            role: "narrator",
+            language_code: "en",
+            voice_id: "v",
+          },
           {
             text: "Toget er dessverre forsinket.",
             role: "female-1",
             language_code: "no",
             voice_id: "v",
           },
-          { text: "Da rekker vi ikke møtet.", role: "male-1", language_code: "no", voice_id: "v" },
+          {
+            text: "Da rekker vi ikke møtet.",
+            role: "male-1",
+            language_code: "no",
+            voice_id: "v",
+          },
         ],
       },
       {
@@ -132,7 +157,12 @@ function sessionBody(overrides: Record<string, unknown> = {}) {
             language_code: "en",
             voice_id: "v",
           },
-          { text: "Da rekker vi ikke møtet.", role: "male-1", language_code: "no", voice_id: "v" },
+          {
+            text: "Da rekker vi ikke møtet.",
+            role: "male-1",
+            language_code: "no",
+            voice_id: "v",
+          },
           {
             text: "Then we will not make the meeting.",
             role: "narrator",
@@ -204,7 +234,11 @@ beforeEach(() => {
 describe("load", () => {
   it("returns the session and its audio", async () => {
     mockGetSession.mockResolvedValue(sessionBody());
-    mockGetAudio.mockResolvedValue({ audio_id: "a1", lesson_id: "sess-1", sections: [] });
+    mockGetAudio.mockResolvedValue({
+      audio_id: "a1",
+      lesson_id: "sess-1",
+      sections: [],
+    });
 
     const data = loaded(await load({ params: { sessionId: "sess-1" } } as never));
 
@@ -241,7 +275,9 @@ describe("the reader", () => {
   });
 
   it("names the session by date, never by a day", () => {
-    const { getByText, queryByText } = render(Page, { props: { data: data() } });
+    const { getByText, queryByText } = render(Page, {
+      props: { data: data() },
+    });
 
     expect(getByText("A Missed Train")).toBeTruthy();
     expect(getByText(/2 September/)).toBeTruthy();
@@ -302,7 +338,9 @@ describe("the reader", () => {
     mockSessionTranscript.mockResolvedValue(transcriptWithWord() as never);
     vi.mocked(api.submitDrill).mockRejectedValue(new Error("already synced to Anki"));
 
-    const { findByRole, findByText } = render(Page, { props: { data: data() } });
+    const { findByRole, findByText } = render(Page, {
+      props: { data: data() },
+    });
     await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
 
     expect(await findByText(/already synced to Anki/)).toBeTruthy();
@@ -380,7 +418,9 @@ describe("the reader", () => {
     // Same control, same store, same behaviour as a lesson: the mode is one
     // persisted preference, so switching here and opening a lesson keeps it.
     mockSessionTranscript.mockResolvedValue(transcriptWithWord() as never);
-    const { findByRole, queryByText, getByRole } = render(Page, { props: { data: data() } });
+    const { findByRole, queryByText, getByRole } = render(Page, {
+      props: { data: data() },
+    });
 
     expect(await findByRole("button", { name: "Read" })).toBeTruthy();
     await findByRole("button", { name: "Got it ✓" });
@@ -423,14 +463,24 @@ describe("the reader", () => {
 
   it("shows no readout when the session was never measured", () => {
     const session = sessionBody({ review_requested: [], review_used: [] });
-    const { queryByText } = render(Page, { props: { data: data({ session }) } });
+    const { queryByText } = render(Page, {
+      props: { data: data({ session }) },
+    });
 
     expect(queryByText(/reused/i)).toBeNull();
   });
 
   it("offers to prepare the audio when there is none", async () => {
-    mockRender.mockResolvedValue({ audio_id: "a1", lesson_id: "sess-1", sections: [] });
-    mockGetAudio.mockResolvedValue({ audio_id: "a1", lesson_id: "sess-1", sections: [] });
+    mockRender.mockResolvedValue({
+      audio_id: "a1",
+      lesson_id: "sess-1",
+      sections: [],
+    });
+    mockGetAudio.mockResolvedValue({
+      audio_id: "a1",
+      lesson_id: "sess-1",
+      sections: [],
+    });
     const { getByRole, container } = render(Page, { props: { data: data() } });
 
     await fireEvent.click(getByRole("button", { name: /prepare audio/i }));
@@ -453,7 +503,9 @@ describe("the reader", () => {
 
   it("plays straight away when the audio already exists", async () => {
     const audio = { audio_id: "a1", lesson_id: "sess-1", sections: [] };
-    const { container, queryByRole } = render(Page, { props: { data: data({ audio }) } });
+    const { container, queryByRole } = render(Page, {
+      props: { data: data({ audio }) },
+    });
 
     expect(container.querySelector("section.player")).toBeTruthy();
     expect(queryByRole("button", { name: /prepare audio/i })).toBeNull();
@@ -479,7 +531,9 @@ describe("the reader", () => {
     });
 
     it("offers the downloads once audio exists", () => {
-      const { getByRole } = render(Page, { props: { data: data({ audio: withAudio() }) } });
+      const { getByRole } = render(Page, {
+        props: { data: data({ audio: withAudio() }) },
+      });
 
       expect(getByRole("link", { name: /download all sections/i }).getAttribute("href")).toBe(
         "/audio/lesson/sess-1/zip",
@@ -540,7 +594,9 @@ describe("the reader", () => {
       vi.mocked(api.regenerateReviewSession).mockRejectedValue(
         new Error("daily token budget exhausted"),
       );
-      const { getByRole, findByText } = render(Page, { props: { data: data() } });
+      const { getByRole, findByText } = render(Page, {
+        props: { data: data() },
+      });
 
       await fireEvent.click(getByRole("button", { name: /rewrite dialogue/i }));
 
@@ -567,7 +623,9 @@ describe("the reader", () => {
       // one-shot rejection is consumed by the mount and never reaches the path
       // under test — which is why this first read as "the button vanished".
       mockSessionTranscript.mockRejectedValue(new Error("lemmatizer cold"));
-      const { getByRole, findByRole, queryByText } = render(Page, { props: { data: data() } });
+      const { getByRole, findByRole, queryByText } = render(Page, {
+        props: { data: data() },
+      });
 
       await fireEvent.click(getByRole("button", { name: /rewrite dialogue/i }));
 
@@ -578,13 +636,114 @@ describe("the reader", () => {
     });
 
     it("explains what rewriting trades, on demand", async () => {
-      const { getByRole, findByText } = render(Page, { props: { data: data() } });
+      const { getByRole, findByText } = render(Page, {
+        props: { data: data() },
+      });
 
       await fireEvent.click(getByRole("button", { name: /what does rewriting do/i }));
 
       // Not /decayed/ — the page's own standing blurb already says that, and the
       // assertion matched it in both panels. Pick a phrase only the help has.
       expect(await findByText(/keeping its date/i)).toBeTruthy();
+    });
+
+    describe("manual story paste", () => {
+      it("renders a ManualStoryPanel with copy and import", () => {
+        vi.mocked(api.getReviewSessionPrompt).mockResolvedValue({
+          system_prompt: "You are a story writer.",
+          user_prompt: "Write a story about trains.",
+        });
+        vi.mocked(api.importReviewSession).mockResolvedValue({
+          id: "sess-1",
+          session_date: "2026-09-02",
+          title: "A Train Story",
+          review_requested: [],
+          review_used: [],
+          warnings: [],
+        });
+
+        const { getByText } = render(Page, { props: { data: data() } });
+
+        expect(getByText("Copy story prompt")).toBeTruthy();
+        expect(getByText("Import")).toBeTruthy();
+      });
+
+      it("does not render a delete button on the session page", () => {
+        const { queryByText } = render(Page, { props: { data: data() } });
+
+        expect(queryByText("Delete this day")).toBeNull();
+      });
+
+      it("copy calls getReviewSessionPrompt, not getStoryPrompt", async () => {
+        vi.mocked(api.getReviewSessionPrompt).mockResolvedValue({
+          system_prompt: "sys",
+          user_prompt: "usr",
+        });
+
+        const { getByText } = render(Page, { props: { data: data() } });
+        await fireEvent.click(getByText("Copy story prompt"));
+
+        await vi.waitFor(() => {
+          expect(api.getReviewSessionPrompt).toHaveBeenCalledWith("sess-1");
+        });
+        expect(api.getReviewSessionPrompt).toHaveBeenCalledOnce();
+      });
+
+      it("import calls importReviewSession and re-reads the session", async () => {
+        vi.mocked(api.importReviewSession).mockResolvedValue({
+          id: "sess-1",
+          session_date: "2026-09-02",
+          title: "A Better Dialogue",
+          review_requested: [],
+          review_used: [],
+          warnings: [],
+        });
+
+        const { container } = render(Page, { props: { data: data() } });
+        // onMount calls getTranscript once
+        await vi.waitFor(() => expect(mockSessionTranscript).toHaveBeenCalledOnce());
+
+        const textarea = container.querySelector("textarea")!;
+        await fireEvent.input(textarea, {
+          target: { value: '{"title":"Test"}' },
+        });
+        await fireEvent.click(container.querySelector('[data-testid="import-btn"]')!);
+
+        // handlePasteImported calls invalidateAll + getTranscript a second time
+        await vi.waitFor(() => {
+          expect(api.importReviewSession).toHaveBeenCalledWith("sess-1", '{"title":"Test"}');
+          expect(mockInvalidateAll).toHaveBeenCalled();
+          expect(mockSessionTranscript).toHaveBeenCalledTimes(2);
+        });
+      });
+
+      it("import survives a transcript fetch failure on re-read", async () => {
+        vi.mocked(api.importReviewSession).mockResolvedValue({
+          id: "sess-1",
+          session_date: "2026-09-02",
+          title: "A Better Dialogue",
+          review_requested: [],
+          review_used: [],
+          warnings: [],
+        });
+
+        const { container } = render(Page, { props: { data: data() } });
+        await vi.waitFor(() => expect(mockSessionTranscript).toHaveBeenCalledOnce());
+
+        // Make the next call (from handlePasteImported) fail
+        mockSessionTranscript.mockRejectedValueOnce(new Error("lemmatizer cold"));
+
+        const textarea = container.querySelector("textarea")!;
+        await fireEvent.input(textarea, {
+          target: { value: '{"title":"Test"}' },
+        });
+        await fireEvent.click(container.querySelector('[data-testid="import-btn"]')!);
+
+        await vi.waitFor(() => {
+          expect(api.importReviewSession).toHaveBeenCalledWith("sess-1", '{"title":"Test"}');
+          expect(mockSessionTranscript).toHaveBeenCalledTimes(2);
+        });
+      });
     });
   });
 });

@@ -12,7 +12,11 @@ function mockOk(json: unknown): Response {
 }
 
 function mockFail(statusText = "Internal Server Error"): Response {
-  return { ok: false, statusText, headers: new Headers() } as unknown as Response;
+  return {
+    ok: false,
+    statusText,
+    headers: new Headers(),
+  } as unknown as Response;
 }
 
 function mockFailBody(body: unknown, status = 500, statusText = ""): Response {
@@ -167,9 +171,13 @@ describe("TunaTaleAPI", () => {
       // transcript endpoint to call — and no branch here to get wrong.
       vi.stubGlobal(
         "fetch",
-        vi
-          .fn()
-          .mockResolvedValue(mockOk({ lesson_id: "sess-1", key_phrases: [], dialogue_lines: [] })),
+        vi.fn().mockResolvedValue(
+          mockOk({
+            lesson_id: "sess-1",
+            key_phrases: [],
+            dialogue_lines: [],
+          }),
+        ),
       );
 
       const result = await api.getTranscript("sess-1");
@@ -247,6 +255,50 @@ describe("TunaTaleAPI", () => {
       expect(result.session_date).toBe("2026-09-02");
     });
 
+    it("getReviewSessionPrompt GETs the prompt for manual paste", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            system_prompt: "You are a story writer.",
+            user_prompt: "Write a story about trains.",
+          }),
+        ),
+      );
+
+      const result = await api.getReviewSessionPrompt("sess-1");
+
+      const [url] = vi.mocked(fetch).mock.calls[0] as [string];
+      expect(url).toBe(`${BASE}/api/review-sessions/sess-1/prompt`);
+      expect(result.system_prompt).toBe("You are a story writer.");
+    });
+
+    it("importReviewSession POSTs the raw text to the import route", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            id: "sess-1",
+            session_date: "2026-09-02",
+            title: "A Better Dialogue",
+            review_requested: [],
+            review_used: [],
+            warnings: [],
+          }),
+        ),
+      );
+
+      const result = await api.importReviewSession("sess-1", '{"title":"Test"}');
+
+      const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(`${BASE}/api/review-sessions/sess-1/import`);
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body as string)).toEqual({
+        raw: '{"title":"Test"}',
+      });
+      expect(result.id).toBe("sess-1");
+    });
+
     it("puts the status on the error so a refusal is not read as a failure", async () => {
       // 409 "nothing due" is a normal Tuesday and the page renders it as a
       // message. Without the status it could only be told apart by matching the
@@ -256,7 +308,9 @@ describe("TunaTaleAPI", () => {
         vi.fn().mockResolvedValue(mockFailBody({ detail: "Nothing to review right now" }, 409)),
       );
 
-      await expect(api.createReviewSession()).rejects.toMatchObject({ status: 409 });
+      await expect(api.createReviewSession()).rejects.toMatchObject({
+        status: 409,
+      });
     });
   });
 
@@ -281,9 +335,14 @@ describe("TunaTaleAPI", () => {
     it("getCurriculum calls GET /api/curriculum/:id", async () => {
       vi.stubGlobal(
         "fetch",
-        vi
-          .fn()
-          .mockResolvedValue(mockOk({ id: "abc", topic: "coffee", language_code: "sl", days: 3 })),
+        vi.fn().mockResolvedValue(
+          mockOk({
+            id: "abc",
+            topic: "coffee",
+            language_code: "sl",
+            days: 3,
+          }),
+        ),
       );
 
       const result = await api.getCurriculum("abc");
@@ -303,11 +362,15 @@ describe("TunaTaleAPI", () => {
     it("startPlan calls POST /api/curriculum/plan", async () => {
       vi.stubGlobal(
         "fetch",
-        vi
-          .fn()
-          .mockResolvedValue(
-            mockOk({ id: "trip-1", topic: "trip", language_code: "sl", cefr_level: "B1", days: 0 }),
-          ),
+        vi.fn().mockResolvedValue(
+          mockOk({
+            id: "trip-1",
+            topic: "trip",
+            language_code: "sl",
+            cefr_level: "B1",
+            days: 0,
+          }),
+        ),
       );
 
       const result = await api.startPlan("trip", "B1");
@@ -326,18 +389,24 @@ describe("TunaTaleAPI", () => {
     it("startPlan defaults cefr_level to A2", async () => {
       vi.stubGlobal(
         "fetch",
-        vi
-          .fn()
-          .mockResolvedValue(
-            mockOk({ id: "t-1", topic: "t", language_code: "sl", cefr_level: "A2", days: 0 }),
-          ),
+        vi.fn().mockResolvedValue(
+          mockOk({
+            id: "t-1",
+            topic: "t",
+            language_code: "sl",
+            cefr_level: "A2",
+            days: 0,
+          }),
+        ),
       );
 
       await api.startPlan("t");
 
       expect(fetch).toHaveBeenCalledWith(
         `${BASE}/api/curriculum/plan`,
-        expect.objectContaining({ body: JSON.stringify({ topic: "t", cefr_level: "A2" }) }),
+        expect.objectContaining({
+          body: JSON.stringify({ topic: "t", cefr_level: "A2" }),
+        }),
       );
     });
 
@@ -371,7 +440,9 @@ describe("TunaTaleAPI", () => {
       );
       expect(fetch).toHaveBeenCalledWith(
         `${BASE}/api/curriculum/trip-1/plan/turn`,
-        expect.objectContaining({ body: JSON.stringify({ message: "plan", batch_size: 5 }) }),
+        expect.objectContaining({
+          body: JSON.stringify({ message: "plan", batch_size: 5 }),
+        }),
       );
     });
 
@@ -446,12 +517,22 @@ describe("TunaTaleAPI", () => {
     });
 
     it("importPlan calls POST /api/curriculum/import", async () => {
-      const file = { topic: "trip", language_code: "sl", cefr_level: "A2", days: [] };
+      const file = {
+        topic: "trip",
+        language_code: "sl",
+        cefr_level: "A2",
+        days: [],
+      };
       vi.stubGlobal(
         "fetch",
-        vi
-          .fn()
-          .mockResolvedValue(mockOk({ id: "trip-9", topic: "trip", language_code: "sl", days: 0 })),
+        vi.fn().mockResolvedValue(
+          mockOk({
+            id: "trip-9",
+            topic: "trip",
+            language_code: "sl",
+            days: 0,
+          }),
+        ),
       );
 
       const result = await api.importPlan(file);
@@ -679,11 +760,13 @@ describe("TunaTaleAPI", () => {
     it("getStorySource calls GET /api/story/:id/source", async () => {
       vi.stubGlobal(
         "fetch",
-        vi
-          .fn()
-          .mockResolvedValue(
-            mockOk({ curriculum_id: "cid-1", day: 1, story: { title: "Kavarna" } }),
-          ),
+        vi.fn().mockResolvedValue(
+          mockOk({
+            curriculum_id: "cid-1",
+            day: 1,
+            story: { title: "Kavarna" },
+          }),
+        ),
       );
 
       const result = await api.getStorySource("l1");
@@ -722,7 +805,11 @@ describe("TunaTaleAPI", () => {
         `${BASE}/api/story/import`,
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ curriculum_id: "cid-1", day: 1, story: { title: "Kavarna v2" } }),
+          body: JSON.stringify({
+            curriculum_id: "cid-1",
+            day: 1,
+            story: { title: "Kavarna v2" },
+          }),
         }),
       );
       expect(result.id).toBe("new-l1");
@@ -740,9 +827,14 @@ describe("TunaTaleAPI", () => {
     it("importStory passes raw when provided", async () => {
       vi.stubGlobal(
         "fetch",
-        vi
-          .fn()
-          .mockResolvedValue(mockOk({ id: "new-l1", title: "Day 1", sections: [], warnings: [] })),
+        vi.fn().mockResolvedValue(
+          mockOk({
+            id: "new-l1",
+            title: "Day 1",
+            sections: [],
+            warnings: [],
+          }),
+        ),
       );
 
       const rawText = "Here is the story\n```json\n{...}\n```";
@@ -752,7 +844,11 @@ describe("TunaTaleAPI", () => {
         `${BASE}/api/story/import`,
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ curriculum_id: "cid-1", day: 1, raw: rawText }),
+          body: JSON.stringify({
+            curriculum_id: "cid-1",
+            day: 1,
+            raw: rawText,
+          }),
         }),
       );
     });
@@ -843,7 +939,9 @@ describe("TunaTaleAPI", () => {
     });
 
     it("getSRSNew calls GET /api/srs/new", async () => {
-      const mockResponse = { new: [{ text: "dober dan", translation: "good day" }] };
+      const mockResponse = {
+        new: [{ text: "dober dan", translation: "good day" }],
+      };
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(mockResponse)));
 
       const result = await api.getSRSNew();
@@ -1146,7 +1244,11 @@ describe("TunaTaleAPI", () => {
         `${BASE}/api/srs/items/9/direction/recognition/feedback`,
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ rating: "again", time_ms: 1200, lesson_review: true }),
+          body: JSON.stringify({
+            rating: "again",
+            time_ms: 1200,
+            lesson_review: true,
+          }),
         }),
       );
     });
@@ -1452,7 +1554,10 @@ describe("TunaTaleAPI", () => {
       };
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(item)));
 
-      const result = await api.updateSRSItem(1, { text: "dober", translation: "good" });
+      const result = await api.updateSRSItem(1, {
+        text: "dober",
+        translation: "good",
+      });
 
       expect(fetch).toHaveBeenCalledWith(
         `${BASE}/api/srs/items/1`,
@@ -1768,7 +1873,13 @@ describe("TunaTaleAPI", () => {
 
   describe("fetchQueueStats", () => {
     it("calls GET /api/srs/queue-stats and returns parsed shape", async () => {
-      const payload = { new: 5, learning: 3, review: 9, daily_new_cap: 30, cap_source: "cache" };
+      const payload = {
+        new: 5,
+        learning: 3,
+        review: 9,
+        daily_new_cap: 30,
+        cap_source: "cache",
+      };
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(payload)));
 
       const result = await api.fetchQueueStats();
@@ -1910,8 +2021,16 @@ describe("TunaTaleAPI", () => {
   describe("getListens", () => {
     it("GETs /api/srs/listens and returns the lessons payload", async () => {
       const lessons = [
-        { lesson_id: "l1", listen_count: 3, last_listened_at: "2026-01-01T00:00:00Z" },
-        { lesson_id: "l2", listen_count: 1, last_listened_at: "2026-01-02T00:00:00Z" },
+        {
+          lesson_id: "l1",
+          listen_count: 3,
+          last_listened_at: "2026-01-01T00:00:00Z",
+        },
+        {
+          lesson_id: "l2",
+          listen_count: 1,
+          last_listened_at: "2026-01-02T00:00:00Z",
+        },
       ];
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ lessons })));
 
@@ -1937,7 +2056,11 @@ describe("TunaTaleAPI", () => {
 
   describe("importListens", () => {
     it("POSTs to /api/srs/listens/import with lesson_ids", async () => {
-      const response = { imported: ["l1", "l2"], already_present: [], unknown: [] };
+      const response = {
+        imported: ["l1", "l2"],
+        already_present: [],
+        unknown: [],
+      };
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(response)));
 
       const result = await api.importListens(["l1", "l2"]);
@@ -1953,7 +2076,11 @@ describe("TunaTaleAPI", () => {
     });
 
     it("returns already_present and unknown arrays from server", async () => {
-      const response = { imported: [], already_present: ["l1"], unknown: ["l3"] };
+      const response = {
+        imported: [],
+        already_present: ["l1"],
+        unknown: ["l3"],
+      };
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(response)));
 
       const result = await api.importListens(["l1", "l3"]);
@@ -2063,7 +2190,9 @@ describe("TunaTaleAPI language header", () => {
     await api.listSRSItems();
     expect(fetch).toHaveBeenCalledWith(
       `${BASE}/api/srs/items`,
-      expect.objectContaining({ headers: expect.objectContaining({ "X-TT-Language": "no" }) }),
+      expect.objectContaining({
+        headers: expect.objectContaining({ "X-TT-Language": "no" }),
+      }),
     );
   });
 
@@ -2154,7 +2283,10 @@ describe("pipeline API", () => {
     const result = await api.retryPipelineDay("cid-1", 2);
     expect(fetch).toHaveBeenCalledWith(
       `${BASE}/api/curriculum/cid-1/pipeline/retry`,
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ day: 2 }) }),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ day: 2 }),
+      }),
     );
     expect(result.status).toBe("queued");
   });
@@ -2183,7 +2315,9 @@ describe("pipeline API", () => {
     await api.regenerateDay("cid-1", 1, "WIDER");
     expect(fetch).toHaveBeenCalledWith(
       `${BASE}/api/curriculum/cid-1/pipeline/regenerate`,
-      expect.objectContaining({ body: JSON.stringify({ day: 1, strategy: "WIDER" }) }),
+      expect.objectContaining({
+        body: JSON.stringify({ day: 1, strategy: "WIDER" }),
+      }),
     );
   });
 
@@ -2317,7 +2451,10 @@ describe("image methods", () => {
   });
 
   it("uploadItemImage sends FormData without Content-Type header", async () => {
-    const updated = makeSRSItemDetail({ id: 1, image_url: "http://x/uploaded.jpg" });
+    const updated = makeSRSItemDetail({
+      id: 1,
+      image_url: "http://x/uploaded.jpg",
+    });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(updated)));
 
     const file = new File(["dummy"], "photo.jpg", { type: "image/jpeg" });
@@ -2432,7 +2569,9 @@ describe("auth endpoints", () => {
 
     await api.logout();
 
-    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/auth/logout`, { method: "POST" });
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/auth/logout`, {
+      method: "POST",
+    });
   });
 
   it("getMe calls GET /api/auth/me", async () => {
