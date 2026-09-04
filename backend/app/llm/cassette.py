@@ -108,17 +108,39 @@ class CassetteLLMClient:
             self.save()
         return response
 
+    def _prompt_dump(self, prompt: str, system_prompt: str | None) -> str:
+        """Both halves of the hashed payload, in full, plus what IS on the cassette.
+
+        ⚠️ In FULL, not previewed, and including the SYSTEM prompt — both parts
+        are the point (tunatale-hvbv). A cassette miss reached CI twice with the
+        same hash on different commits and different UTC dates, and could not be
+        diagnosed from the log: all four recorded e2e prompts share their first
+        80 characters, so an 80-char preview discriminated nothing, and the
+        message omitted the system prompt entirely even though ``_hash_prompt``
+        hashes it. A miss is always a real failure, so verbosity costs nothing
+        here and the alternative is a second CI run that says as little.
+        """
+        known = "\n".join(f"    {h}  {e[0].get('prompt_preview', '')!r}" for h, e in self._playback_by_hash.items())
+        return (
+            f"\n--- system prompt ({len(system_prompt or '')} chars) ---\n{system_prompt}"
+            f"\n--- user prompt ({len(prompt)} chars) ---\n{prompt}"
+            f"\n--- hashes this cassette holds ---\n{known or '    (cassette is empty)'}"
+        )
+
     def _replay(self, prompt: str, system_prompt: str | None = None) -> str:
         h = _hash_prompt(prompt, system_prompt)
         entries = self._playback_by_hash.get(h)
         if not entries:
             raise RuntimeError(
-                f"Cassette has no entry for prompt hash {h}.\n  Preview: {prompt[:80]!r}\nRe-record with --llm-mode=record."
+                f"Cassette has no entry for prompt hash {h}."
+                f"{self._prompt_dump(prompt, system_prompt)}"
+                "\nRe-record with --llm-mode=record."
             )
         idx = self._playback_used.get(h, 0)
         if idx >= len(entries):
             raise RuntimeError(
-                f"Cassette entry {h!r} used {idx} times but only {len(entries)} recorded.\n  Preview: {prompt[:80]!r}"
+                f"Cassette entry {h!r} used {idx} times but only {len(entries)} recorded."
+                f"{self._prompt_dump(prompt, system_prompt)}"
             )
         entry = entries[idx]
         self._playback_used[h] = idx + 1

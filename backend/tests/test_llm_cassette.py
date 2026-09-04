@@ -246,3 +246,75 @@ async def test_patch_mode_calls_real_when_entries_exhausted(cassette_dir):
     r2 = await client.complete(prompt)  # second use — cassette exhausted → calls real client
     assert r1 == "first"
     assert r2 == "real answer"
+
+
+class TestCacheMissIsDiagnosable:
+    """tunatale-hvbv: a miss must carry enough to identify WHICH prompt was built.
+
+    Two cassette misses in CI (2026-09-02, 2026-09-03) reported the same hash,
+    `sha256:7b78158eaf5882f2`, on different commits and different UTC dates — so
+    the prompt is stable and a FIFTH, unrecorded prompt is reachable in e2e. The
+    old message could not narrow it: all four recorded e2e prompts share their
+    first 80 characters, so the preview discriminated nothing, and the message
+    never showed the system prompt at all even though the hash covers it.
+    """
+
+    async def test_the_miss_reports_the_full_user_prompt_not_a_preview(self, cassette_dir):
+        cassette_path = cassette_dir / "empty.json"
+        _write_cassette(cassette_path, [])
+        client = CassetteLLMClient(mode="mock", cassette_path=cassette_path)
+
+        # Longer than the 80-char preview, and identical to another prompt for
+        # its first 80 chars — the shape that made the old message useless.
+        prompt = "x" * 80 + "THE-PART-THAT-DIFFERS"
+        with pytest.raises(RuntimeError, match="THE-PART-THAT-DIFFERS"):
+            await client.complete(prompt)
+
+    async def test_the_miss_reports_the_system_prompt_because_the_hash_covers_it(self, cassette_dir):
+        """The gap that would have hidden the cause entirely.
+
+        ``_hash_prompt`` hashes ``system_prompt`` + ``prompt``, so a varying
+        system prompt changes the hash — and the old message printed only the
+        user half, making such a miss undiagnosable from a CI log.
+        """
+        cassette_path = cassette_dir / "empty.json"
+        _write_cassette(cassette_path, [])
+        client = CassetteLLMClient(mode="mock", cassette_path=cassette_path)
+
+        with pytest.raises(RuntimeError, match="SYSTEM-HALF-MARKER"):
+            await client.complete("user half", system_prompt="SYSTEM-HALF-MARKER")
+
+    async def test_the_miss_lists_the_hashes_the_cassette_does_hold(self, cassette_dir):
+        """So a reader can tell "nothing recorded" from "recorded, but not this one"."""
+        cassette_path = cassette_dir / "some.json"
+        known = _hash_prompt("recorded prompt")
+        _write_cassette(
+            cassette_path,
+            [{"prompt_hash": known, "prompt_preview": "recorded prompt", "response": "r", "max_tokens": 8}],
+        )
+        client = CassetteLLMClient(mode="mock", cassette_path=cassette_path)
+
+        with pytest.raises(RuntimeError, match=known):
+            await client.complete("a different prompt")
+
+    async def test_an_empty_cassette_says_so_rather_than_printing_an_empty_list(self, cassette_dir):
+        cassette_path = cassette_dir / "empty.json"
+        _write_cassette(cassette_path, [])
+        client = CassetteLLMClient(mode="mock", cassette_path=cassette_path)
+
+        with pytest.raises(RuntimeError, match="(?i)cassette is empty"):
+            await client.complete("anything")
+
+    async def test_the_exhausted_entry_error_also_carries_the_full_prompt(self, cassette_dir):
+        """The sibling failure mode, same blindness: it previewed 80 chars too."""
+        prompt = "y" * 80 + "EXHAUSTED-TAIL"
+        cassette_path = cassette_dir / "one.json"
+        _write_cassette(
+            cassette_path,
+            [{"prompt_hash": _hash_prompt(prompt), "prompt_preview": "p", "response": "r", "max_tokens": 8}],
+        )
+        client = CassetteLLMClient(mode="mock", cassette_path=cassette_path)
+
+        await client.complete(prompt)
+        with pytest.raises(RuntimeError, match="EXHAUSTED-TAIL"):
+            await client.complete(prompt)
