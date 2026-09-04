@@ -33,6 +33,23 @@ class NorwegianPhonemePlanner:
     (or reopening the database) per call would put a filesystem stat and a
     connection on the render path hundreds of times per lesson.
 
+    ``db_path`` governs BOTH halves — the transcriptions read through
+    :meth:`_lexicon_or_none` and the syllable boundaries read through
+    :func:`lexicon_reading`. It used to govern only the first, so a planner
+    built over any non-default database took its boundaries from the installed
+    lexicon and its phonemes from the given one — the exact crossing
+    ``lexicon_syllables`` forbids ("boundaries and phonemes must come from the
+    SAME source"). Latent in production, where both were ``DB_PATH``
+    (tunatale-na4l).
+
+    ⚠️ Passing it does not make the two sources incapable of disagreeing.
+    :func:`lexicon_reading` is ``@lru_cache``'d at MODULE level on
+    ``(word, db_path)``; this lexicon is held per INSTANCE. A rebuild at the
+    same path leaves the cache serving the old split to a resolver reading the
+    new file, which is what ``_plan_against``'s absent / unknown-segment /
+    syllable-count gates exist to catch. They fire zero times in production and
+    are not dead — see ``TestTheTwoLexiconSourcesCanStillDesync``.
+
     The database is a gitignored BUILD ARTIFACT, so its absence is normal on a
     fresh clone or a fresh deploy and must not break rendering:
     :func:`app.plugins.languages.no.lexicon.NstLexicon.resolve` raises
@@ -184,7 +201,7 @@ class NorwegianPhonemePlanner:
            lesson stored before the boundaries moved carries the old text; give
            it IPA and it plays a syllable its caption does not name.
         """
-        reading = lexicon_reading(surface)
+        reading = lexicon_reading(surface, self._db_path)
         if reading is None:
             return None
         split, chosen_transcription = reading

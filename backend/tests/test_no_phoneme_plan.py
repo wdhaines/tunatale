@@ -21,6 +21,7 @@ from app.plugins.languages.no.lexicon import (
     NstLexicon,
     build_lexicon_db,
 )
+from app.plugins.languages.no.norwegian_breakdown import flat_syllables
 from app.plugins.languages.no.phoneme_plan import NorwegianPhonemePlanner
 
 # Oracle-derived fixture rows. SAMPA transcriptions verified against
@@ -691,3 +692,107 @@ class TestWholeWordWinsOverItsParts:
         """'spo' keeps the compound's ˌ; standalone 'sporet' would give it ˈ."""
         p = _planner(tmp_path, self.ROWS)
         assert p.plan_chunk("skisporet", (1, 2)) == "ˌspuː"
+
+
+class TestTheTwoLexiconSourcesCanStillDesync:
+    """tunatale-na4l: db_path is threaded now, but ONE cache still outlives it.
+
+    ``plan_chunk`` used to read its BOUNDARIES from the module-level ``DB_PATH``
+    while reading its TRANSCRIPTIONS from ``self._db_path`` — so any planner
+    built over a non-default database silently mixed two lexicons. That is
+    fixed: ``lexicon_reading`` is passed ``self._db_path``.
+
+    ⚠️ **It does not make the two sources incapable of disagreeing**, and the
+    four gates below are why that matters. ``lexicon_reading`` is
+    ``@lru_cache(maxsize=4096)`` at MODULE level, keyed on ``(word, db_path)``,
+    while the resolver is an ``NstLexicon`` held per planner INSTANCE. Rebuild
+    the database at the same path — which is exactly what ``BUILD_COMMAND``
+    does — and the cache keeps serving the old split to a planner whose
+    resolver reads the new file. Same path, two vintages.
+
+    So these branches are NOT dead code that fixing the bug orphaned, and they
+    must not be pragma'd away. They are the guard for the residual window, and
+    each test below drives one of them through that window rather than through
+    the old two-database bug.
+    """
+
+    @staticmethod
+    def _rebuild_at(db: Path, tmp_path: Path, rows: list[tuple[str, str, str, int]]) -> None:
+        """Replace the lexicon AT THE SAME PATH, as a rebuild would."""
+        db.unlink()
+        gz = tmp_path / "rebuilt.tsv.gz"
+        payload = "".join(f"{w}\t{p}\t{s}\t{c}\n" for w, p, s, c in rows)
+        gz.write_bytes(__import__("gzip").compress(payload.encode("utf-8"), mtime=0))
+        build_lexicon_db(gz, db)
+
+    def _desynced(
+        self, tmp_path: Path, before: list[tuple[str, str, str, int]], after: list[tuple[str, str, str, int]]
+    ) -> NorwegianPhonemePlanner:
+        """A planner whose cached split predates the lexicon its resolver reads."""
+        db = _make_db(tmp_path, before)
+        warm = NorwegianPhonemePlanner(db)
+        assert warm.plan_chunk("hagen", (0, 1)) is not None, "precondition: the pre-rebuild lexicon resolves"
+        self._rebuild_at(db, tmp_path, after)
+        return NorwegianPhonemePlanner(db)
+
+    def test_absent_after_a_rebuild_that_dropped_the_word(self, tmp_path: Path) -> None:
+        """Gate: resolution outcome ABSENT. Measured to fire 0 times in 20000
+        production words — because in production both sources are DB_PATH and
+        agree. It fires here, which is the only way it ever could."""
+        p = self._desynced(
+            tmp_path,
+            [("hagen", "NN", '"hA:$g@n', 1)],
+            [("snøen", "NN", '"sn2:$@n', 1)],  # hagen is gone
+        )
+        assert p.plan_chunk("hagen", (0, 1)) is None
+
+    def test_unknown_sampa_segment_after_a_rebuild(self, tmp_path: Path) -> None:
+        """Gate: SAMPA→IPA conversion fails for a candidate."""
+        p = self._desynced(
+            tmp_path,
+            [("hagen", "NN", '"hA:$g@n', 1)],
+            [("hagen", "NN", '"hA:$gQQn', 1)],  # 'QQn' is not a defined X-SAMPA segment
+        )
+        assert p.plan_chunk("hagen", (0, 1)) is None
+
+    def test_syllable_count_mismatch_after_a_rebuild(self, tmp_path: Path) -> None:
+        """Gate: the transcription no longer has as many syllables as the split."""
+        p = self._desynced(
+            tmp_path,
+            [("hagen", "NN", '"hA:$g@n', 1)],
+            [("hagen", "NN", '"hA:$g@$n@n', 1)],  # 3 syllables against a 2-syllable split
+        )
+        assert p.plan_chunk("hagen", (0, 1)) is None
+
+
+class TestBoundariesComeFromTheGivenDatabase:
+    """tunatale-na4l, the discriminating test: db_path governs BOUNDARIES too.
+
+    ⚠️ The desync tests above do NOT prove this fix. They were written first and
+    they pass with the fix reverted — with two databases in play they reach the
+    same gates by the bug's own route, so they are coverage for those gates and
+    nothing more. Running that control is what caught it.
+
+    What separates fixed from unfixed is a fixture whose split has the SAME
+    SYLLABLE COUNT as the installed lexicon's but a DIFFERENT boundary. Count
+    agreement is not boundary agreement (tunatale-xk1p) and every count-based
+    fixture goes green either way.
+
+        installed lexicon   '"hA:$g@n'  -> ['ha', 'gen']
+        this fixture        '"hAg$@n'   -> ['hag', 'en']
+
+    Unfixed, the planner reads ['ha','gen'] from the INSTALLED lexicon, matches
+    the repo's syllabification, and happily slices the FIXTURE's transcription —
+    boundaries and phonemes from two different databases, which is the crossing
+    the module invariant forbids. Fixed, it reads ['hag','en'] from the fixture,
+    sees it disagree with the repo's cut, and refuses.
+    """
+
+    def test_a_fixture_boundary_that_disagrees_with_the_repo_cut_refuses(self, tmp_path: Path) -> None:
+        assert flat_syllables("hagen") == ["ha", "gen"], "precondition: the repo cuts hagen ha|gen"
+
+        p = _planner(tmp_path, [("hagen", "NN", '"hAg$@n', 1)])
+
+        # Unfixed this returns 'ˈhɑ'-ish IPA sliced out of the fixture's reading
+        # while believing the installed lexicon's boundaries. Fixed, it refuses.
+        assert p.plan_chunk("hagen", (0, 1)) is None

@@ -260,7 +260,7 @@ class TestAmbiguousPosDidntHelp:
         # (split, None) = "all readings AGREED on this split", which is the path
         # these tests are about: no tiebreak fired, so plan_chunk must still
         # decide by span-agreement across candidates (tunatale-k318.5).
-        monkeypatch.setattr(pp_mod, "lexicon_reading", lambda _w: (["test", "word"], None))
+        monkeypatch.setattr(pp_mod, "lexicon_reading", lambda _w, _db=None: (["test", "word"], None))
         rows = [
             ("testword", "NN", '"tE$s@', 1),
             ("testword", "NN", '""tE$s@', 1),
@@ -310,7 +310,7 @@ class TestSabotageDrills:
         # (split, None) = "all readings AGREED on this split", which is the path
         # these tests are about: no tiebreak fired, so plan_chunk must still
         # decide by span-agreement across candidates (tunatale-k318.5).
-        monkeypatch.setattr(pp_mod, "lexicon_reading", lambda _w: (["test", "word"], None))
+        monkeypatch.setattr(pp_mod, "lexicon_reading", lambda _w, _db=None: (["test", "word"], None))
         rows = [
             ("testword", "NN", '"tE$s@', 1),
             ("testword", "NN", '""tE$s@', 1),
