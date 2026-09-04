@@ -93,10 +93,21 @@
 		<DayPicker curriculum={data.curriculum} onSelectDay={handleSelectDay} {progress} pipelineStates={pipelineStates} />
 		{#if manualStoryDay != null}
 			<ManualStoryPanel
-				curriculumId={data.curriculum.id}
-				day={manualStoryDay}
+				copyPrompt={async () => {
+					const r = await api.getStoryPrompt(data.curriculum.id, manualStoryDay!);
+					return r.system_prompt + '\n\n' + r.user_prompt;
+				}}
+				importRaw={async (raw) =>
+					api.importStory({ curriculum_id: data.curriculum.id, day: manualStoryDay!, raw })}
 				onImported={(id) => goto(`/c/${data.curriculum.id}/l/${id}`)}
-				onDeleted={() => {
+				onDelete={async () => {
+					// Two-click confirm lives in the panel (same pattern as the plan
+					// page's Reset chat button); the OPERATION lives here, because it
+					// is curriculum-shaped and a review session has no equivalent.
+					// Deletes this day's lessons/audio server-side (there may be none
+					// yet) so a wrongly planned day can be removed; existing SRS/Anki
+					// cards are untouched, and there is no renumbering.
+					await api.deleteCurriculumDay(data.curriculum.id, manualStoryDay!);
 					manualStoryDay = null;
 					refreshProgress();
 				}}

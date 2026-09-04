@@ -6,7 +6,9 @@ import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 
 const mockGoto = vi.fn();
-vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
+vi.mock("$app/navigation", () => ({
+  goto: (...args: unknown[]) => mockGoto(...args),
+}));
 
 vi.mock("$lib/api", () => ({
   api: {
@@ -87,7 +89,10 @@ const manualCurriculum = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  Object.defineProperty(pipelineStore, "status", { value: null, configurable: true });
+  Object.defineProperty(pipelineStore, "status", {
+    value: null,
+    configurable: true,
+  });
 });
 
 describe("/c/[curriculumId] page", () => {
@@ -99,9 +104,13 @@ describe("/c/[curriculumId] page", () => {
   });
 
   it("shows the committed day count and a link to the planner chat", () => {
-    const { getByText, getByRole } = render(Page, { props: { data: { curriculum } } });
+    const { getByText, getByRole } = render(Page, {
+      props: { data: { curriculum } },
+    });
     expect(getByText(/3 days/)).toBeTruthy();
-    const planLink = getByRole("link", { name: /plan next days/i }) as HTMLAnchorElement;
+    const planLink = getByRole("link", {
+      name: /plan next days/i,
+    }) as HTMLAnchorElement;
     expect(planLink.getAttribute("href")).toBe("/c/cid-1/plan");
   });
 
@@ -305,7 +314,9 @@ describe("/c/[curriculumId] page", () => {
     });
     mockRetryPipelineDay.mockRejectedValue(new Error("409 Conflict"));
 
-    const { getByText, findByText } = render(Page, { props: { data: { curriculum } } });
+    const { getByText, findByText } = render(Page, {
+      props: { data: { curriculum } },
+    });
     await fireEvent.click(getByText(/Day 1 ·/));
     expect(await findByText("409 Conflict")).toBeTruthy();
   });
@@ -355,8 +366,14 @@ describe("/c/[curriculumId] page", () => {
       const { getByText } = render(Page, { props: { data: { curriculum } } });
       expect(getByText("current: day 1 ready")).toBeTruthy();
     } finally {
-      Object.defineProperty(llmActivityStore, "events", { value: [], configurable: true });
-      Object.defineProperty(llmActivityStore, "currentLine", { value: "", configurable: true });
+      Object.defineProperty(llmActivityStore, "events", {
+        value: [],
+        configurable: true,
+      });
+      Object.defineProperty(llmActivityStore, "currentLine", {
+        value: "",
+        configurable: true,
+      });
     }
   });
 
@@ -400,6 +417,31 @@ describe("/c/[curriculumId] page", () => {
     });
   });
 
+  it("manual-mode: copy button calls getStoryPrompt and writes to clipboard", async () => {
+    mockGetLessonByDay.mockRejectedValue(new Error("Not Found"));
+    vi.mocked(api.getStoryPrompt).mockResolvedValue({
+      system_prompt: "sys",
+      user_prompt: "usr",
+    });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    const { getByText } = render(Page, {
+      props: { data: { curriculum: manualCurriculum } },
+    });
+    await fireEvent.click(getByText(/Day 1 ·/));
+    await waitFor(() => {
+      expect(getByText("Copy story prompt")).toBeTruthy();
+    });
+
+    await fireEvent.click(getByText("Copy story prompt"));
+
+    await waitFor(() => {
+      expect(api.getStoryPrompt).toHaveBeenCalledWith("cid-1", 1);
+      expect(writeText).toHaveBeenCalledWith("sys\n\nusr");
+    });
+  });
+
   it("auto-mode: selecting a lesson-less day renders NO story panel", async () => {
     mockGetLessonByDay.mockRejectedValue(new Error("Not Found"));
 
@@ -413,7 +455,10 @@ describe("/c/[curriculumId] page", () => {
 
   it("manual-mode: deleting a lesson-less day closes the panel and refreshes progress", async () => {
     mockGetLessonByDay.mockRejectedValue(new Error("Not Found"));
-    vi.mocked(api.deleteCurriculumDay).mockResolvedValue({ deleted_day: 1, days: 0 });
+    vi.mocked(api.deleteCurriculumDay).mockResolvedValue({
+      deleted_day: 1,
+      days: 0,
+    });
 
     const { getByText, container } = render(Page, {
       props: { data: { curriculum: manualCurriculum } },
