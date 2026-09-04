@@ -27,14 +27,18 @@ async function createPlan(request: APIRequestContext, backendURL: string) {
 }
 
 async function mockPlannerRoutes(page: Page, curriculumId: string) {
-	await page.route(`**/api/curriculum/${curriculumId}/plan/turn`, async (route) => {
+	// ⚠️ Matches ANY curriculum id, not just this one (tunatale-hvbv). Pinning the
+	// glob to a single id lets any request under a different id through to a real
+	// LLM call, which is how planner-chat.spec.ts leaked three cassette misses
+	// into CI. Callers must still register these BEFORE navigating.
+	await page.route('**/api/curriculum/*/plan/turn', async (route) => {
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
 			body: JSON.stringify({ reply: 'One day planned.', proposed: { start_day: 1, days: [CANNED_DAY] } }),
 		});
 	});
-	await page.route(`**/api/curriculum/${curriculumId}/plan/commit`, async (route) => {
+	await page.route('**/api/curriculum/*/plan/commit', async (route) => {
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
@@ -113,7 +117,7 @@ function dayPayload(state: string) {
 	});
 	await mockPlannerRoutes(page, curriculumId);
 	// Register AFTER mockPlannerRoutes so this commit handler takes priority (LIFO).
-	await page.route(`**/api/curriculum/${curriculumId}/plan/commit`, async (route) => {
+	await page.route('**/api/curriculum/*/plan/commit', async (route) => {
 		call = 0; // reset so post-commit pipeline walk starts from queued
 		await route.fulfill({
 			status: 200,
