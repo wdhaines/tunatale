@@ -57,8 +57,8 @@ class _FakeWriter:
         self.unsuspend_calls: list[list[int]] = []
         self.set_learning_state_calls: list[tuple[int, int, int, int]] = []
 
-    def update_note_fields(self, note_id: int, fields: dict) -> None:
-        pass
+    def update_note_fields(self, note_id: int, fields: dict) -> bool:
+        return True
 
     def suspend(self, card_ids: list[int]) -> None:
         self.suspend_calls.append(list(card_ids))

@@ -34,7 +34,7 @@ class FakeWriter:
         self.memory_state_calls: list[tuple] = []
 
     def update_note_fields(self, note_id, fields):
-        pass
+        return True
 
     def suspend(self, card_ids):
         self.suspended.extend(card_ids)

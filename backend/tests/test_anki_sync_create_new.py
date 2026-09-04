@@ -149,7 +149,7 @@ class FakeCreateWriter:
 
     # Stubs for the push path (not used in create_new tests)
     def update_note_fields(self, note_id, fields):
-        pass
+        return True
 
     def suspend(self, card_ids):
         pass
@@ -1399,7 +1399,7 @@ class _ReverseFakeWriter:
         pass
 
     def update_note_fields(self, *a):
-        pass
+        return True
 
     def suspend(self, *a):
         pass

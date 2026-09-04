@@ -52,8 +52,8 @@ class _FakeWriter:
         self.set_specific_value_calls: list[tuple[int, list[str], list[str]]] = []
         self.update_memory_state_calls: list[tuple[int, float, float, int | None]] = []
 
-    def update_note_fields(self, note_id: int, fields: dict) -> None:
-        pass
+    def update_note_fields(self, note_id: int, fields: dict) -> bool:
+        return True
 
     def suspend(self, card_ids: list[int]) -> None:
         self.suspend_calls.append(list(card_ids))

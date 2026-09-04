@@ -3990,3 +3990,52 @@ class TestSyncPushImage:
 
         assert db.get_image_filename(coll_id) is None  # collapsed
         assert results["collapsed_media"] == 1
+
+
+class TestMissingNoteDoesNotConsumeTheEdit(TestSyncPushImage):
+    """tunatale-7p4f. `update_note_fields` returns silently when the note is
+    absent from the collection being written — and peer-sync writes
+    `tt_collection`, not the user's. The push used to clear `dirty_fields` and
+    increment `notes_pushed` regardless, so the edit was destroyed and the
+    report counted a write that never happened.
+    """
+
+    def test_writer_reports_false_for_a_missing_note(self, fake_anki_db):
+        """The primitive: a write to an id that isn't there reports that it wrote
+        nothing, rather than being indistinguishable from success."""
+        import sqlite3
+
+        from app.plugins.anki_sync.sync_writer import OfflineWriter
+
+        conn = sqlite3.connect(fake_anki_db)
+        conn.row_factory = sqlite3.Row
+        writer = OfflineWriter(conn)
+
+        assert writer.update_note_fields(999_999_999_999, {"Front": "x"}) is False
+
+    def test_missing_note_keeps_the_flag_and_is_not_counted(self):
+        """The consequence: nothing reached Anki, so the edit stays pending and
+        the report does not claim a push."""
+        db = _make_tt_db()
+        guid = self._add_cloze(db)
+        db.set_dirty_fields(guid, "translation")
+
+        writer = FakeWriter()
+        writer.note_exists = False  # the note is absent from THIS collection
+
+        report = AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert db.get_dirty_fields(guid) == "translation", "the edit must survive for a later sync"
+        assert report.notes_pushed == 0, "a write that changed nothing is not a push"
+
+    def test_present_note_still_clears_and_counts(self):
+        """Control: the normal path is unchanged."""
+        db = _make_tt_db()
+        guid = self._add_cloze(db)
+        db.set_dirty_fields(guid, "translation")
+
+        writer = FakeWriter()
+        report = AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert db.get_dirty_fields(guid) == ""
+        assert report.notes_pushed == 1
