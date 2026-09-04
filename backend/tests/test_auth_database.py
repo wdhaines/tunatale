@@ -288,6 +288,83 @@ class TestPurgeExpiredSessions:
         assert db.purge_expired_sessions(now=now) == 1
 
 
+class TestCreatingASessionPurgesExpiredOnes:
+    """tunatale-re7p: nothing ever CALLED purge_expired_sessions.
+
+    The method was written, tested, and referenced in a sibling's docstring
+    ("Does not delete the expired row; purge_expired_sessions does that") — a
+    sentence true of the method and false of the system, because no code path
+    ran it. The sessions table therefore grew for the life of the deployment,
+    and an expired row is a credential the app declines to honour but has not
+    destroyed.
+
+    ⚠️ The oracle is the ROW COUNT, not whether auth rejects the token. Rejection
+    already passed before this change and cannot discriminate a purge from a
+    no-op — that is exactly why the gap survived having tests.
+
+    Login is the trigger: no scheduler to own, and the work is self-limiting
+    because it is bounded by the login rate.
+    """
+
+    def _session_rows(self, db: AuthDatabase) -> int:
+        with db._get_conn() as conn:
+            return conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+
+    def test_the_expired_row_is_gone_from_the_table_not_merely_rejected(self, db: AuthDatabase) -> None:
+        user = db.create_user("a@b.com", "pw")
+        db.create_session(user.id, ttl=timedelta(seconds=-1))
+        assert self._session_rows(db) == 1, "precondition: the expired row exists"
+
+        db.create_session(user.id, ttl=timedelta(hours=1))
+
+        # The fresh one, and nothing else. Before this change the count was 2.
+        assert self._session_rows(db) == 1
+
+    def test_a_live_session_survives_someone_elses_login(self, db: AuthDatabase) -> None:
+        """The purge must not be a logout-everyone."""
+        a = db.create_user("a@b.com", "pw")
+        b = db.create_user("c@d.com", "pw")
+        token_a, _ = db.create_session(a.id, ttl=timedelta(hours=1))
+
+        db.create_session(b.id)
+
+        assert db.get_session(token_a) is not None
+
+    def test_many_expired_rows_all_go(self, db: AuthDatabase) -> None:
+        """A backlog is cleared in one pass, not one row per login.
+
+        ⚠️ The rows are seeded with raw SQL on purpose. Looping over
+        ``create_session(ttl=-1)`` cannot build this state any more — each call
+        now purges the ones before it, so the loop leaves ONE row and the test
+        would assert against a fixture the feature had already dismantled. The
+        setup must not go through the mechanism under test.
+        """
+        user = db.create_user("a@b.com", "pw")
+        stale = _to_iso(datetime.now(UTC) - timedelta(days=1))
+        with db._get_conn() as conn:
+            for n in range(5):
+                conn.execute(
+                    "INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (f"stale-{n}", user.id, stale, stale, stale),
+                )
+            conn.commit()
+        assert self._session_rows(db) == 5, "precondition: a backlog exists"
+
+        db.create_session(user.id, ttl=timedelta(hours=1))
+
+        assert self._session_rows(db) == 1
+
+    def test_the_returned_token_still_works(self, db: AuthDatabase) -> None:
+        """A purge running inside create_session must not clobber its own row."""
+        user = db.create_user("a@b.com", "pw")
+        db.create_session(user.id, ttl=timedelta(seconds=-1))
+
+        token, _ = db.create_session(user.id, ttl=timedelta(hours=1))
+
+        assert db.get_session(token) is not None
+
+
 # ── Storage and schema tests ─────────────────────────────────────────────────
 
 

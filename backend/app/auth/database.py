@@ -374,6 +374,23 @@ class AuthDatabase:
         now = datetime.now(UTC)
         expires = now + ttl
         with self._get_conn() as conn:
+            # Opportunistic purge, in the same transaction as the insert
+            # (tunatale-re7p). Nothing called ``purge_expired_sessions`` at all,
+            # so the table grew for the life of the deployment and every expired
+            # row stayed on disk as a credential the app declines to honour but
+            # has not destroyed.
+            #
+            # Login is the trigger because it needs no scheduler to own — this
+            # repo has none, and adding one for this would be disproportionate —
+            # and the work is self-limiting: it is bounded by the login rate, and
+            # it runs immediately before adding the row that would otherwise be
+            # the next thing to expire.
+            #
+            # DELETE first, INSERT second: the new row's ``expires_at`` is in the
+            # future, so ordering cannot matter for correctness — but doing it in
+            # this order means the purge can never see, let alone remove, the
+            # session this call is about to hand out.
+            conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (_to_iso(now),))
             conn.execute(
                 "INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at) VALUES (?, ?, ?, ?, ?)",
                 (token_h, user_id, _to_iso(now), _to_iso(expires), _to_iso(now)),
