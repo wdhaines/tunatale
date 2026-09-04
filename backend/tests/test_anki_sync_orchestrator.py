@@ -573,6 +573,14 @@ class TestSyncPassword:
         with patch("app.plugins.anki_sync.sync_orchestrator.subprocess.run", side_effect=FileNotFoundError):
             assert _keychain_password("svc", "acct") is None
 
+    # ⚠️ A FIXTURE THAT ASSERTS A KEYCHAIN FACT MUST DECLARE ITS PLATFORM.
+    # These three passed on macOS and went red in CI the moment
+    # `_resolve_sync_password` learned that the Keychain does not exist on Linux
+    # (tunatale-pkk). They never stated a platform, so they silently inherited
+    # the runner's — exactly the shape `.claude/rules/testing.md` already forbids
+    # for day fixtures and the timezone, one axis over. Pass `platform=` rather
+    # than patching `sys.platform`: the parameter is the seam.
+
     def test_resolve_prefers_env_over_keychain(self):
         from app.plugins.anki_sync.sync_orchestrator import _resolve_sync_password
 
@@ -580,7 +588,7 @@ class TestSyncPassword:
             patch.object(settings, "sync_password", "from-env"),
             patch("app.plugins.anki_sync.sync_orchestrator._keychain_password") as mock_kc,
         ):
-            assert _resolve_sync_password() == "from-env"
+            assert _resolve_sync_password(platform="darwin") == "from-env"
             mock_kc.assert_not_called()
 
     def test_resolve_falls_back_to_keychain(self):
@@ -588,24 +596,30 @@ class TestSyncPassword:
 
         with (
             patch.object(settings, "sync_password", ""),
+            patch.object(settings, "sync_password_file", ""),
             patch.object(settings, "sync_username", "me@example.com"),
             patch.object(settings, "sync_keychain_service", "svc"),
             patch(
                 "app.plugins.anki_sync.sync_orchestrator._keychain_password", return_value="from-keychain"
             ) as mock_kc,
         ):
-            assert _resolve_sync_password() == "from-keychain"
+            assert _resolve_sync_password(platform="darwin") == "from-keychain"
             mock_kc.assert_called_once_with("svc", "me@example.com")
 
     def test_resolve_missing_raises(self):
+        """Pinned on darwin so it exercises the Keychain-exhausted branch. The
+        Linux branch has its own test in test_anki_secret_sources.py; asserting
+        only the shared prefix here would pass on either and discriminate
+        neither."""
         from app.plugins.anki_sync.sync_orchestrator import _resolve_sync_password
 
         with (
             patch.object(settings, "sync_password", ""),
+            patch.object(settings, "sync_password_file", ""),
             patch("app.plugins.anki_sync.sync_orchestrator._keychain_password", return_value=None),
-            pytest.raises(PeerSyncError, match="No AnkiWeb password"),
+            pytest.raises(PeerSyncError, match="Store it in the macOS Keychain"),
         ):
-            _resolve_sync_password()
+            _resolve_sync_password(platform="darwin")
 
 
 # ── Sociable peer-sync tests (Phase 7) ─────────────────────────────────────────
