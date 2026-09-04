@@ -441,6 +441,28 @@ class CreateReviewSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ImportReviewSessionRequest(BaseModel):
+    """A dialogue written elsewhere, pasted back onto an existing session.
+
+    Deliberately carries NO identifiers: the session id is in the path, and the
+    date and the review request come from the stored row. A body field for any
+    of them would be a way to make a paste silently become a different session,
+    which is the thing this route exists to avoid — see ``ImportLessonRequest``,
+    whose ``curriculum_id``/``day`` exist because a lesson genuinely is addressed
+    that way.
+    """
+
+    story: dict | None = None
+    raw: str | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_story_or_raw(self):
+        if (self.story is None) == (self.raw is None):
+            msg = "Exactly one of 'story' or 'raw' must be provided"
+            raise ValueError(msg)
+        return self
+
+
 class CreateReviewSessionResponse(BaseModel):
     """Response of POST /api/story/review-session.
 

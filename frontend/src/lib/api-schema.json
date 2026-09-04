@@ -1204,6 +1204,36 @@
         "title": "ImportPlanRequest",
         "type": "object"
       },
+      "ImportReviewSessionRequest": {
+        "description": "A dialogue written elsewhere, pasted back onto an existing session.\n\nDeliberately carries NO identifiers: the session id is in the path, and the\ndate and the review request come from the stored row. A body field for any\nof them would be a way to make a paste silently become a different session,\nwhich is the thing this route exists to avoid \u2014 see ``ImportLessonRequest``,\nwhose ``curriculum_id``/``day`` exist because a lesson genuinely is addressed\nthat way.",
+        "properties": {
+          "raw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw"
+          },
+          "story": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Story"
+          }
+        },
+        "title": "ImportReviewSessionRequest",
+        "type": "object"
+      },
       "ImportStoryResponse": {
         "description": "Response of POST /api/story/import.",
         "properties": {
@@ -5822,6 +5852,102 @@
           }
         },
         "summary": "Get Review Session",
+        "tags": [
+          "review-sessions"
+        ]
+      }
+    },
+    "/api/review-sessions/{session_id}/import": {
+      "post": {
+        "description": "Replace one session's dialogue with a hand-authored one, IN PLACE.\n\nThe manual escape hatch the lesson page has always had. It reaches a session\nonly because the addressing changed: ``ManualStoryPanel`` was keyed\n``{curriculum_id, day}``, and a session has neither (bd tunatale-w1i3).\n\n\u26a0\ufe0f THE ID, THE DATE AND THE REQUEST ALL SURVIVE. Keeping ``review_requested``\nis what makes \"reused 11 of 12\" comparable across a re-run; a re-selected\ndenominator would make the two numbers describe different questions.\n``review_used``, by contrast, is RECOMPUTED \u2014 ``build_lesson_from_story``\nmeasures it against the pasted dialogue. Carrying it forward would report the\nold model's score for the new text, which is the silently-plausible wrong\nnumber this epic keeps producing.\n\n\u26a0\ufe0f Nothing is written until the rebuild succeeds, mirroring\n``_generate_and_store``: a refusal must leave the dialogue the learner\nalready had intact rather than replacing it with nothing.\n\nNo SRS write happens here, by decision \u2014 replacing a session's text must not\ntouch scheduling state.",
+        "operationId": "import_review_session_api_review_sessions__session_id__import_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportReviewSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateReviewSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Review Session",
+        "tags": [
+          "review-sessions"
+        ]
+      }
+    },
+    "/api/review-sessions/{session_id}/prompt": {
+      "get": {
+        "description": "Export the prompt for rewriting THIS session by hand.\n\n\u26a0\ufe0f PINNED TO THE SESSION'S OWN REQUEST, never a fresh selection. The learner\ntakes this to a chat, writes a better dialogue, and pastes it back at\n``/import``, where coverage is measured against the stored\n``review_requested``. A freshly-selected prompt would ask for one set while\nthe meter scored another, and the readout would drop for a reason nothing on\nscreen could explain.\n\nThat is the same rule ``import_lesson`` follows (tunatale-fgeq.1): import\npaths pin, generation paths select. ``regenerate`` re-selecting is not an\ninconsistency with this \u2014 it generates new content, so \"what has decayed NOW\"\nis the right question there and the wrong one here.",
+        "operationId": "get_review_session_prompt_api_review_sessions__session_id__prompt_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetStoryPromptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Review Session Prompt",
         "tags": [
           "review-sessions"
         ]

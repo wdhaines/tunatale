@@ -44,14 +44,23 @@ from app.api.generation import (
 from app.api.models import (
     CreateReviewSessionRequest,
     CreateReviewSessionResponse,
+    GetStoryPromptResponse,
+    ImportReviewSessionRequest,
     ListReviewSessionsResponse,
     RenderAudioResponse,
     ReviewSessionResponse,
 )
 from app.audio.render_service import render_lesson_audio
 from app.generation.ids import mint_id
-from app.generation.story import NoReviewVocabularyError, StoryGenerationError
+from app.generation.json_parsing import parse_json_object
+from app.generation.story import (
+    NoReviewVocabularyError,
+    StoryGenerationError,
+    build_lesson_from_story,
+    build_review_session_prompts,
+)
 from app.llm.client import LLMError, LLMQuotaExceededError
+from app.storage.lesson_io import validate_story
 
 _logger = logging.getLogger(__name__)
 
@@ -211,6 +220,126 @@ async def regenerate_review_session(session_id: str, request: Request):
         Path(file_path).unlink(missing_ok=True)
 
     return result
+
+
+@router.get("/{session_id}/prompt", status_code=200, response_model=GetStoryPromptResponse)
+async def get_review_session_prompt(session_id: str, request: Request):
+    """Export the prompt for rewriting THIS session by hand.
+
+    ⚠️ PINNED TO THE SESSION'S OWN REQUEST, never a fresh selection. The learner
+    takes this to a chat, writes a better dialogue, and pastes it back at
+    ``/import``, where coverage is measured against the stored
+    ``review_requested``. A freshly-selected prompt would ask for one set while
+    the meter scored another, and the readout would drop for a reason nothing on
+    screen could explain.
+
+    That is the same rule ``import_lesson`` follows (tunatale-fgeq.1): import
+    paths pin, generation paths select. ``regenerate`` re-selecting is not an
+    inconsistency with this — it generates new content, so "what has decayed NOW"
+    is the right question there and the wrong one here.
+    """
+    store = request.state.content_store
+    row = store.get_review_session_row(session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Review session not found")
+
+    try:
+        prompts = build_review_session_prompts(
+            request.state.language,
+            _latest_cefr_level(store),
+            review_words=row["review_requested"] or (),
+        )
+    except NoReviewVocabularyError as e:
+        # A session stored without a request cannot be rewritten to a target.
+        # 409 rather than an empty prompt: a REVIEW prompt with no words is not a
+        # smaller prompt, it is a prompt with no content at all.
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+    return {"system_prompt": prompts.system_prompt, "user_prompt": prompts.user_prompt}
+
+
+@router.post("/{session_id}/import", status_code=200, response_model=CreateReviewSessionResponse)
+async def import_review_session(session_id: str, body: ImportReviewSessionRequest, request: Request):
+    """Replace one session's dialogue with a hand-authored one, IN PLACE.
+
+    The manual escape hatch the lesson page has always had. It reaches a session
+    only because the addressing changed: ``ManualStoryPanel`` was keyed
+    ``{curriculum_id, day}``, and a session has neither (bd tunatale-w1i3).
+
+    ⚠️ THE ID, THE DATE AND THE REQUEST ALL SURVIVE. Keeping ``review_requested``
+    is what makes "reused 11 of 12" comparable across a re-run; a re-selected
+    denominator would make the two numbers describe different questions.
+    ``review_used``, by contrast, is RECOMPUTED — ``build_lesson_from_story``
+    measures it against the pasted dialogue. Carrying it forward would report the
+    old model's score for the new text, which is the silently-plausible wrong
+    number this epic keeps producing.
+
+    ⚠️ Nothing is written until the rebuild succeeds, mirroring
+    ``_generate_and_store``: a refusal must leave the dialogue the learner
+    already had intact rather than replacing it with nothing.
+
+    No SRS write happens here, by decision — replacing a session's text must not
+    touch scheduling state.
+    """
+    store = request.state.content_store
+    row = store.get_review_session_row(session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Review session not found")
+
+    if body.raw is not None:
+        try:
+            story = parse_json_object(body.raw)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+    else:
+        story = body.story  # guaranteed non-None by the model validator
+
+    language = request.state.language
+    review_words = row["review_requested"] or ()
+    try:
+        # Validated BEFORE building, exactly as ``import_lesson`` does. Without
+        # it a story missing ``lines[].speaker`` reaches the speaker-warning pass
+        # and dies on a bare KeyError — a 500 for what is really a malformed
+        # paste, which is the whole reason validate_story exists.
+        validate_story(story)
+        lesson = build_lesson_from_story(story, language=language, review_words=review_words)
+    except (StoryGenerationError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    srs_db = getattr(request.state, "srs_db", None)
+    if srs_db is not None:
+        await annotate_chunk_upos_for_lesson(lesson, srs_db, **_injected_lemmatizer(request))
+
+    metadata = lesson.generation_metadata
+    store.save_review_session(
+        session_id,
+        request.state.language_code,
+        row["session_date"],
+        lesson,
+        review_requested=metadata.get("review_requested"),
+        review_used=metadata.get("review_used"),
+    )
+
+    # AFTER the write and only on success, exactly as regenerate does it: audio
+    # rows key on the session id, so renders of the dialogue we just replaced
+    # would still be served for the new one and the player would read a script no
+    # longer on screen.
+    for file_path in store.delete_review_session_audio(session_id):
+        Path(file_path).unlink(missing_ok=True)
+
+    if srs_db is not None:
+        task = asyncio.create_task(_prewarm_lesson(lesson, srs_db))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
+    return {
+        "id": session_id,
+        "session_date": row["session_date"],
+        "title": lesson.title,
+        "review_requested": metadata.get("review_requested", []),
+        "review_used": metadata.get("review_used", []),
+        "warnings": _logged_speaker_warnings(story, language),
+    }
 
 
 @router.get("", status_code=200, response_model=ListReviewSessionsResponse)
