@@ -23,6 +23,15 @@ _INFLECTIONS: frozenset[str] = frozenset(
         "n",
         "t",
         "e",
+        # tunatale-9yd0. The present participle, and an inflection rather than a
+        # compound constituent for exactly the reason "ens" is (tunatale-95zt):
+        # `ende` is a real Norwegian word, so it passes the content-stem gate by
+        # accident and the drill said "til | svar | ende". Peeled whole here
+        # (the loops sort longest-first), then folded onto its stem by
+        # _compound_buildup_units. Measured over the first 20000 wordlist
+        # entries: 47 words change, ALL of them -ende participles, zero
+        # collateral — the same shape 95zt measured for the genitive.
+        "ende",
     ]
 )
 

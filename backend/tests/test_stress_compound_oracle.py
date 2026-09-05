@@ -84,15 +84,19 @@ class TestAcceptancePairs:
         assert segment_compound(word) == expected
 
 
-# The five words rescued by reading ALL readings (tunatale-9yd0): their ``%``
-# sits only on the careful reading, which ``candidate_transcriptions`` (the
-# certainty finalists) would throw away.
+# The words rescued by reading ALL readings (tunatale-9yd0): their ``%`` sits
+# only on the careful reading, which ``candidate_transcriptions`` (the certainty
+# finalists) would throw away.
+#
+# ``arbeidende`` was a fifth entry until the ``-ende`` participle fix, which
+# merges it to a single part — so the accessor no longer decides it. Removed
+# rather than re-pinned: a control word that can no longer discriminate is
+# decoration, and leaving it here would suggest the control is wider than it is.
 _CONTROL_WORDS: dict[str, list[str]] = {
     "motstander": ["mot", "stand", "er"],
     "nedlagt": ["ned", "lag", "t"],
     "allmenne": ["all", "menn", "e"],
     "husholdninger": ["hus", "holdning", "er"],
-    "arbeidende": ["arbeid", "end", "e"],
 }
 
 
