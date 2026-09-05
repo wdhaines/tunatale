@@ -180,3 +180,42 @@ class TestTheApi:
                 resp = await client.get("/api/story/prompt?curriculum_id=c1&day=1&strategy=REVIEW")
         assert resp.status_code == 409
         assert "review" in resp.json()["detail"].lower()
+
+
+class TestKeyPhraseLength:
+    """A review session's key phrases must be CHUNKS, not the review words again.
+
+    The model was echoing single-word review vocabulary straight into
+    ``key_phrases`` — the 2026-09-02 session shipped ``dessuten`` and ``derimot``
+    as key phrases. Two costs, one pedagogical and one structural:
+
+    * a bare word gives the KEY_PHRASES buildup nothing to build up to, which is
+      the section's whole job; and
+    * a single-word key phrase resolves to the same card as its own lemma row,
+      which is the duplicate the listen preview then had to dedupe
+      (``api/srs.py::_kp_claimed_collocation_ids``).
+
+    The dedupe is the guarantee and stays regardless. This is the other half:
+    stop manufacturing the collision in the first place. Scoped to REVIEW — a
+    themed lesson's key phrases already come out multi-word.
+    """
+
+    def test_the_review_template_asks_for_multi_word_key_phrases(self):
+        template = get_strategy_prompt(ContentStrategy.REVIEW)
+        assert "key_phrases" in template
+        assert "multi-word" in template.lower()
+
+    def test_it_says_what_to_do_with_a_single_word_review_item(self):
+        """The rule has to be actionable, not just a prohibition: a review word
+        that IS one word still has to reach the learner somehow, and the answer
+        is the chunk around it in the dialogue."""
+        template = get_strategy_prompt(ContentStrategy.REVIEW).lower()
+        assert "dialogue" in template
+        assert "never a bare single word" in template
+
+    def test_the_themed_strategies_are_untouched(self):
+        """THE CONTROL. WIDER and DEEPER already produce multi-word key phrases
+        and their prompts are cassette-hashed; widening this rule to them would
+        move sha256(system + user) for every recorded story replay."""
+        for strategy in (ContentStrategy.WIDER, ContentStrategy.DEEPER):
+            assert "never a bare single word" not in get_strategy_prompt(strategy).lower()
