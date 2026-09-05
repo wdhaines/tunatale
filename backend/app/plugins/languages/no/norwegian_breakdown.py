@@ -450,6 +450,18 @@ def segment_compound(word: str) -> list[str]:
     if not word_lower:
         return []
 
+    # tunatale-9yd0: the NST lexicon's ``%`` (secondary stress) is Norwegian's
+    # own compound signal. A word the lexicon KNOWS whose transcription carries
+    # no ``%`` is not a prosodic compound — return it whole, overriding any
+    # split the heuristics below would produce. ``None`` (word absent from the
+    # lexicon: no transcription, no signal) means untouched; ``True`` (any
+    # reading carries ``%``) keeps its split.
+    from app.plugins.languages.no.lexicon_syllables import lexicon_has_secondary_stress
+
+    has_secondary = lexicon_has_secondary_stress(word_lower)
+    if has_secondary is False:
+        return [word_lower]
+
     ranks = _load_ranked_lexicon()
 
     for infl in sorted(_INFLECTIONS, key=lambda x: (len(x), x), reverse=True):

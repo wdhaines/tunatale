@@ -1,10 +1,10 @@
 """Unit tests for scripts/report_segmentation_disputes.py.
 
-The tally at ``--limit 4000`` and the six pinned rows below are the measured
+The tally at ``--limit 4000`` and the pinned rows below are the measured
 acceptance oracle (brief-bp-segmentation-report-and-voice-chip-2026-09-04.md
-§ Task A) — they were verified against the committed wordlist and
-``nst_lexicon.sqlite3`` BEFORE this test was written and must not be
-regenerated from the script's own output. The skip buckets
+§ Task A, re-measured 2026-09-05 after tunatale-9yd0) — they were verified
+against the committed wordlist and ``nst_lexicon.sqlite3``, not regenerated
+from the script's own output. The skip buckets
 (``parts_unalignable``, ``syll_unalignable``, ``lexicon_miss``) are
 constructed with small monkeypatched inputs, not by scanning the wordlist.
 """
@@ -35,25 +35,25 @@ from report_segmentation_disputes import (  # noqa: E402
 )
 
 # Hand-verified stem_disputed rows: (parts, syllables, disputed stem offsets).
+# tunatale-9yd0 shrank the disputed population: ekspert, forstår, hverandre
+# and billetter are now single_part (known words whose readings carry no ``%``
+# are not prosodic compounds), so only tyskland and spørsmålet remain.
 _ORACLE_ROWS: dict[str, tuple[tuple[str, ...], tuple[str, ...], tuple[int, ...]]] = {
-    "ekspert": (("eks", "per", "t"), ("ek", "spert"), (3,)),
-    "forstår": (("for", "står"), ("fo", "rstår"), (3,)),
-    "hverandre": (("hver", "andre"), ("hve", "ran", "dre"), (4,)),
-    "billetter": (("bil", "lett", "er"), ("bi", "lle", "tter"), (3,)),
     "tyskland": (("tysk", "land"), ("ty", "skland"), (4,)),
     "spørsmålet": (("spørs", "mål", "et"), ("spø", "rsmå", "let"), (5,)),
 }
 
-# The acceptance tally at --limit 4000, measured 2026-09-04.
+# The acceptance tally at --limit 4000, re-measured 2026-09-05 after
+# tunatale-9yd0 (see the docstring on test_acceptance_tally for why it shrank).
 _ORACLE_TALLY = {
-    "single_part": 3715,
+    "single_part": 3783,
     "parts_unalignable": 0,
-    "lexicon_miss": 21,
+    "lexicon_miss": 18,
     "syll_unalignable": 0,
-    "compared": 264,
-    "fully_agree": 108,
-    "only_infl_disputed": 69,
-    "stem_disputed": 87,
+    "compared": 199,
+    "fully_agree": 93,
+    "only_infl_disputed": 57,
+    "stem_disputed": 49,
 }
 
 
@@ -99,8 +99,10 @@ class TestClassify:
         assert classify("ekspert") == ("parts_unalignable", None)
 
     def test_lexicon_miss_when_word_absent_from_lexicon(self, monkeypatch) -> None:
+        # tunatale-9yd0: ekspert is single_part now, so a split word is needed
+        # to reach the lexicon consult — tyskland still splits.
         monkeypatch.setattr(repmod, "lexicon_syllable_split", lambda word: None)
-        assert classify("ekspert") == ("lexicon_miss", None)
+        assert classify("tyskland") == ("lexicon_miss", None)
 
     def test_syll_unalignable_when_syllables_do_not_join_back(self, monkeypatch) -> None:
         # parts join to the word; the patched syllables lose a letter.
@@ -109,21 +111,25 @@ class TestClassify:
         assert classify("ekspert") == ("syll_unalignable", None)
 
     def test_stem_dispute_even_when_no_inflection_was_peeled(self) -> None:
-        bucket, row = classify("forstår")
+        # tunatale-9yd0: forstår is single_part now; tyskland has the same
+        # no-peeled-inflection shape (its last part "land" is not an ending).
+        bucket, row = classify("tyskland")
         assert bucket == "stem_disputed"
         assert row is not None
-        assert row.disputed_offsets == (3,)
+        assert row.disputed_offsets == (4,)
 
 
 class TestBuildReport:
     def test_counts_each_bucket_and_keeps_stem_disputed_rows(self) -> None:
-        words = ["ekspert", "hagen", "snømann", "oppdaget", "forstå"]
+        # tunatale-9yd0: ekspert/forstå are single_part now; tyskland and
+        # spørsmålet are the surviving pinned stem-disputed rows.
+        words = ["tyskland", "hagen", "snømann", "oppdaget", "spørsmålet"]
         counts, rows = build_report(words)
-        assert counts["stem_disputed"] == 2  # ekspert, forstå
+        assert counts["stem_disputed"] == 2  # tyskland, spørsmålet
         assert counts["single_part"] == 1  # hagen
         assert counts["fully_agree"] == 1  # snømann
         assert counts["only_infl_disputed"] == 1  # oppdaget
-        assert [r.word for r in rows] == ["ekspert", "forstå"]
+        assert [r.word for r in rows] == ["tyskland", "spørsmålet"]
 
     def test_skip_buckets_never_leave_a_row(self, monkeypatch) -> None:
         monkeypatch.setattr(repmod, "segment_compound", lambda word: [word, "x"])
@@ -181,19 +187,21 @@ class TestReadWords:
     def test_a_decomposed_wordlist_is_normalized_to_nfc(self, tmp_path) -> None:
         """A decomposed source must not silently read as "nothing to compare".
 
-        ``forstår`` written as ``a`` + U+030A is 8 code points, not 7. Without
-        normalization every offset past the accent shifts, ``segment_compound``
-        matches no stem, and the word lands in ``single_part`` — a clean
-        negative that looks exactly like a corpus with no compounds.
+        ``spørsmålet`` written as ``a`` + U+030A is 11 code points, not 10.
+        Without normalization every offset past the accent shifts,
+        ``segment_compound`` matches no stem, and the word lands in
+        ``single_part`` — a clean negative that looks exactly like a corpus
+        with no compounds. tunatale-9yd0 retired the previous witness
+        (``forstår``): both its forms now land in ``single_part``.
         """
-        decomposed = unicodedata.normalize("NFD", "forstår")
-        assert len(decomposed) == 8
+        decomposed = unicodedata.normalize("NFD", "spørsmålet")
+        assert len(decomposed) == 11
         wl = tmp_path / "wl.txt"
         wl.write_text(decomposed + "\n", encoding="utf-8")
 
         (word,) = read_words(wl, 10)
-        assert word == "forstår"
-        assert len(word) == 7
+        assert word == "spørsmålet"
+        assert len(word) == 10
         assert classify(word)[0] == "stem_disputed"
         assert classify(decomposed)[0] == "single_part"
 
@@ -201,13 +209,13 @@ class TestReadWords:
 class TestMain:
     def test_runs_end_to_end_on_a_small_wordlist(self, tmp_path, capsys) -> None:
         wl = tmp_path / "wl.txt"
-        wl.write_text("# header\nekspert\nhagen\nsnømann\noppdaget\n", encoding="utf-8")
+        wl.write_text("# header\ntyskland\nhagen\nsnømann\noppdaget\n", encoding="utf-8")
         assert main(["--wordlist", str(wl)]) == 0
         out = capsys.readouterr().out
         assert "stem_disputed\t1" in out
         assert "only_infl_disputed\t1" in out
         assert "fully_agree\t1" in out
-        assert "ekspert\teks+per+t\tek-spert\t[3]" in out
+        assert "tyskland\ttysk+land\tty-skland\t[4]" in out
 
     def test_missing_wordlist_is_an_error(self, tmp_path, capsys) -> None:
         assert main(["--wordlist", str(tmp_path / "nope.txt")]) == 1
@@ -217,7 +225,14 @@ class TestMain:
 class TestPinned4000Tally:
     def test_acceptance_tally(self, capsys) -> None:
         """The full-corpus scan the oracle was measured on (fast: less than a
-        second, ~285 lexicon lookups over the committed 44 MB database)."""
+        second, ~285 lexicon lookups over the committed 44 MB database).
+
+        The tally is EXPECTED to be smaller than the 2026-09-04 measurement
+        (compared 264 -> 199): tunatale-9yd0 made known words without a
+        ``%`` secondary-stress reading stop being compounds, so genuine
+        over-splits retired from the disputed population into single_part. The
+        instrument did not break; the corpus genuinely has fewer disputes.
+        """
         assert main(["--limit", "4000"]) == 0
         out = capsys.readouterr().out
         table = {}

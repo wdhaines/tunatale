@@ -577,7 +577,8 @@ def test_is_content_stem_rejects_vowelless_candidate():
 def test_segment_compound_rejects_vowelless_parts():
     """The bogus splits collapse; the genuine compound underneath surfaces."""
     assert segment_compound("moralsk") == ["moralsk"]
-    assert segment_compound("forelske") == ["for", "elske"]
+    # tunatale-9yd0: forelske is a for- verb with no ``%`` — merged by design.
+    assert segment_compound("forelske") == ["forelske"]
     assert segment_compound("brystkreft") == ["bryst", "kreft"]
 
 

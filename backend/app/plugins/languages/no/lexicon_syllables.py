@@ -432,6 +432,37 @@ def lexicon_reading(word: str, db_path: Path | None = None) -> tuple[list[str], 
 
 
 @functools.lru_cache(maxsize=4096)
+def lexicon_has_secondary_stress(word: str, db_path: Path | None = None) -> bool | None:
+    """Whether ANY of *word*'s readings carries a ``%`` secondary-stress mark.
+
+    Returns ``None`` when *word* is ABSENT from the lexicon — no transcription,
+    no ``%`` signal, and the caller must leave the word untouched. Otherwise a
+    boolean: ``True`` when at least one (minimum-certainty) reading carries
+    ``%``, ``False`` when none does.
+
+    ``tunatale-9yd0``: the NST transcriptions' ``%`` mark is Norwegian's own
+    compound signal — a prosodic compound carries secondary stress on its second
+    element; a simplex word does not. ``segment_compound`` uses this to refuse
+    an over-split: a KNOWN word with no ``%`` reading is not a compound.
+
+    The ``any`` (not ``all``) is deliberate and conservative: a word with
+    several readings keeps its split if ANY reading carries ``%``. Mirrors
+    ``lexicon_syllable_split``'s caching and signature — opens a fresh lexicon
+    per distinct word, cached at module level, never opened on the import path.
+    """
+    from app.plugins.languages.no.lexicon import DB_PATH
+
+    path = DB_PATH if db_path is None else db_path
+    if not nst_lexicon_installed(path):
+        return None
+    with NstLexicon(path) as _lex:
+        candidates = _lex.all_transcriptions(word)
+    if not candidates:
+        return None
+    return any("%" in transcription for transcription in candidates)
+
+
+@functools.lru_cache(maxsize=4096)
 def lexicon_syllable_split(word: str, db_path: Path | None = None) -> list[str] | None:
     """The split every reading agrees on — or, when they disagree, the most
     enunciated one — else ``None``.

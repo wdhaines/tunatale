@@ -293,12 +293,13 @@ class TestFlatSyllables:
     def test_compound_single_syllable_parts_keep_going(self):
         """Monosyllabic parts must remain whole-word spans for TTS.
 
-        forstår = for + står, both monosyllabic.  Neither gets IPA; they go
-        to plan_chunk gate 2 (TTS) as whole-word spans.
+        tunatale-9yd0: forstår is no longer a compound (known word, no ``%``),
+        so its syllables come from the whole-word transcription — the retroflex
+        cut fo|rstår surfaces (second-order effect of the merge).
         """
         pieces = flat_syllables("forstår")
         assert pieces is not None
-        assert pieces == ["for", "står"]
+        assert pieces == ["fo", "rstår"]
 
     def test_compound_partial_adoption_undersøke(self):
         """undersøke: 'under' has no lexicon split, 'søke' adopts.
@@ -396,9 +397,13 @@ class TestFlatSyllables:
         assimilation ACROSS the compound seam (hverandre -> hve|ran|dre,
         forstår -> fo|rstår), which never happens in a drill where the parts
         are spoken separately. Adopting it would be the superseded design.
+
+        tunatale-9yd0: hverandre and forstår are no longer compounds (known
+        words, no ``%``), so their whole-word transcription now applies — the
+        seam assimilation surfaces, second-order effect of the merge.
         """
-        assert flat_syllables("hverandre") == ["hver", "an", "dre"]
-        assert flat_syllables("forstår") == ["for", "står"]
+        assert flat_syllables("hverandre") == ["hve", "ran", "dre"]
+        assert flat_syllables("forstår") == ["fo", "rstår"]
         assert flat_syllables("tyskland") == ["tysk", "land"]
 
 
