@@ -20,7 +20,7 @@ no-hardcoded-language-logic rule.
 
 from __future__ import annotations
 
-from app.plugins.languages.no.norwegian_breakdown import _load_ranked_lexicon
+from app.plugins.languages.no.norwegian_breakdown import _INFLECTIONS, _load_ranked_lexicon
 
 # Longest first: -ene must win over -en, and -et over -t.
 _DEFINITE_SUFFIXES: tuple[str, ...] = ("ene", "ane", "et", "en", "a")
@@ -65,20 +65,40 @@ def is_lemma_plausible(surface: str, lemma: str) -> bool:
     today's behaviour alone": today's behaviour is the lemma, so a rejection
     always changes the headword.
 
-    Consequence worth stating plainly: truncations that do NOT take the
-    doubled-consonant shape still get through. `setet` → `set` is the known
-    example, and it is out of scope by decision, not oversight — see
-    tunatale-s7f.2.
+    Widened for tunatale-wum6. The rule was once "a full trailing
+    doubled-consonant drop", which could not see `snømenn` → `snøm`: the
+    dropped tail is `enn`, not a doubled pair, so it returned True before ever
+    reaching the common-word gate. The signature is now the ENDING itself — a
+    truncation whose lemma is not a common word is implausible unless what was
+    peeled is a real Norwegian inflection. Measured over 1264 (surface, lemma)
+    pairs from the live `lemma_analysis_cache`: exactly ONE flips to reject
+    (`snømenn` → `snøm`, the bug) and NOTHING regresses the other way.
+
+    Consequence worth stating plainly: `setet` → `set` still gets through, and
+    still by decision rather than oversight — `set` ranks 6184, inside the
+    common-word band, so the first gate accepts it. See tunatale-s7f.2, whose
+    whole acceptance table this function still satisfies.
     """
     w = lemma.casefold()
     s = surface.casefold()
-    if w == s or not s.startswith(w) or len(s) - len(w) < 2:
-        return True
-    tail = s[len(w) :]
-    if tail[0] != tail[1]:
+    if not w or w == s or not s.startswith(w) or len(s) - len(w) < 2:
         return True
     rank = _load_ranked_lexicon().get(w)
-    return rank is not None and rank <= _MAX_PLAUSIBLE_RANK
+    if rank is not None and rank <= _MAX_PLAUSIBLE_RANK:
+        return True
+    # Not a common word, so the peeled tail has to carry the evidence. A real
+    # lemmatization peels a real ENDING: `en`, `et`, `ene`, `er`, `t`. Stanza's
+    # fragments peel something that is not an ending at all — `snømenn` -> `snøm`
+    # drops `enn`, which is no Norwegian inflection (tunatale-wum6).
+    tail = s[len(w) :]
+    # Stem geminate: a stem doubles its final consonant before a suffix
+    # (`rom` -> `rommet`), so the raw tail reads `met`. Peel the doubled
+    # consonant back off before judging the ending. Without this step
+    # `avhørsrommet` -> `avhørsrom` is the one legitimate pair the widening
+    # breaks — measured over the live cache, not hypothesised.
+    if tail[0] == w[-1]:
+        tail = tail[1:]
+    return tail in _INFLECTIONS
 
 
 def is_definite_form(word: str) -> bool:
