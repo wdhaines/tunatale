@@ -52,8 +52,8 @@ _ORACLE_TALLY = {
     "syll_unalignable": 0,
     "compared": 199,
     "fully_agree": 93,
-    "only_infl_disputed": 57,
-    "stem_disputed": 49,
+    "only_infl_disputed": 60,
+    "stem_disputed": 46,
 }
 
 
