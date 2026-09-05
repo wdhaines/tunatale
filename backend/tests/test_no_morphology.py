@@ -155,6 +155,50 @@ class TestIsLemmaPlausible:
 
         assert is_lemma_plausible("setet", "set") is True
 
+    def test_rejects_the_snom_truncation(self):
+        """tunatale-wum6: stanza returned `snøm` for `snømenn` (irregular plural
+        of `snømann`, mann→menn), and the non-word became the headword. The user
+        failed it twelve times, which is the expected outcome for a card that
+        cannot be answered.
+
+        The old signature could not see it: the dropped tail is `enn`, not a
+        doubled consonant, so the guard returned True before reaching the
+        common-word gate. What separates it from every legitimate case measured
+        is that `enn` is not a Norwegian inflectional ending at all — `en`,
+        `et`, `ene`, `er` are; `enn` is not.
+        """
+        from app.plugins.languages.no.morphology import is_lemma_plausible
+
+        assert is_lemma_plausible("snømenn", "snøm") is False
+
+    @pytest.mark.parametrize(
+        ("surface", "lemma"),
+        [
+            # Productive compounds absent from the 50k wordlist. These are the
+            # false-positive family the widening has to spare: rejecting them
+            # would key the card on the definite form (`snømannen`), a real word
+            # but the wrong shape, for a lemma that was perfectly correct.
+            ("snømannen", "snømann"),
+            ("billettautomaten", "billettautomat"),
+            ("koordinatene", "koordinat"),
+            ("retningslinjene", "retningslinje"),
+            # Stem geminate: `rom` doubles its final consonant before `-et`, so
+            # the raw dropped tail reads `met`. Without the geminate step this
+            # is the one legitimate row the widening would have broken —
+            # measured, not hypothesised.
+            ("avhørsrommet", "avhørsrom"),
+        ],
+    )
+    def test_widening_spares_real_compounds(self, surface, lemma):
+        """Measured over 1264 real (surface, lemma) pairs from the live
+        `lemma_analysis_cache`: the widened rule flips exactly ONE pair from
+        accept to reject — `snømenn`→`snøm` — with zero regressions in the
+        other direction. These rows are that measurement's guard rail.
+        """
+        from app.plugins.languages.no.morphology import is_lemma_plausible
+
+        assert is_lemma_plausible(surface, lemma) is True
+
 
 class TestLemmaPlausibleRegistry:
     def test_norwegian_exposes_a_checker(self):
