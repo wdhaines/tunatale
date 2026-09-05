@@ -171,6 +171,27 @@ class NstLexicon:
         floor = min(certainty for _pos, _transcription, certainty in rows)
         return w, [row for row in rows if row[2] == floor]
 
+    def all_transcriptions(self, word: str) -> frozenset[str]:
+        """EVERY reading on file, with no certainty reduction.
+
+        Deliberately not :meth:`candidate_transcriptions`, which runs
+        :meth:`_finalists` first and keeps only the minimum-certainty rows. That
+        reduction is right when choosing ONE pronunciation and wrong when asking
+        whether a property is attested ANYWHERE — the two questions want
+        opposite defaults.
+
+        ``tunatale-9yd0`` is the caller that needs this: a compound's secondary
+        stress often sits only on the careful reading, so 26 words in the first
+        20000 (``avdeling``, ``motstander``, ``opplysninger``, ``husholdninger``
+        …) carry ``%`` at certainty 2 and a reduced, unstressed reading at
+        certainty 1. Asked through the finalists those genuine compounds look
+        simplex and lose their buildup drill.
+        """
+        rows = self._rows(word.strip())
+        if not rows and word.strip().lower() != word.strip():
+            rows = self._rows(word.strip().lower())
+        return frozenset(transcription for _pos, transcription, _certainty in rows)
+
     def candidate_transcriptions(self, word: str, upos: str | None = None) -> frozenset[str]:
         """Every reading :meth:`resolve` would have had to choose between.
 
