@@ -726,6 +726,66 @@ def _listen_deferred_reason(
     return None
 
 
+def _kp_claimed_collocation_ids(
+    db,
+    lesson,
+    ignored: set[str],
+    today_start: datetime.datetime,
+    today_end: datetime.datetime,
+    end_of_day_utc: str,
+) -> set[int]:
+    """Collocation ids the key-phrase pass owns, so the word pass can stand down.
+
+    A single-word key phrase resolves to the SAME card as the lemma row for the
+    same word. That cannot happen in a curriculum lesson, whose key phrases are
+    multi-word (``spor i snøen``), and happens systematically in a review
+    session, whose key phrases are not phrases at all but individual vocabulary
+    items drawn from the deck (measured on the live ``no`` deck 2026-09-05:
+    ``dessuten`` and ``derimot`` each rendered twice, same ``item_id``, once as
+    ``kind: "word"`` and once as ``kind: "kp"``).
+
+    Two rows for one card is a duplicate on screen and a lost grade underneath:
+    the client sends them in separate maps (``word_ratings`` / ``kp_ratings``)
+    and both passes write one ``pending_listen_grades`` row, whose
+    ``ON CONFLICT … DO UPDATE`` makes the later write win silently — or, when
+    the word row is *confirmed*, applies a real review and leaves the key-phrase
+    pass to find the card already graded today and drop it. **The key-phrase row
+    survives**: it carries the better label and it is what a review session is
+    about.
+
+    Identity is the collocation id, NEVER the text — ``ta hensyn`` and
+    ``hensyn`` are two cards and must stay two rows.
+
+    Gated on exactly the conditions both key-phrase loops skip on, and on
+    nothing else. A key phrase that yields no row claims nothing, so the word
+    row survives; and the deferred/opt-in gate is deliberately absent, because
+    a deferred key phrase still RENDERS in the preview (inside its collapsed
+    group) and so still owns the card. Called by ``get_listen_preview`` and
+    ``mark_lesson_listened`` alike — the same reason ``_listen_deferred_reason``
+    is one function, and the same bug class (``6a5c718``) if it were two.
+    """
+    claimed: set[int] = set()
+    for kp in lesson.key_phrases:
+        if kp.phrase.lower() in ignored:
+            continue
+        item = db.get_collocation(kp.phrase)
+        if item is None:
+            continue
+        if item.syntactic_unit.card_type == "cloze":
+            continue
+        rec = item.directions.get(Direction.RECOGNITION)
+        if rec is None:
+            continue
+        if _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc) is None:
+            continue
+        kp_id = db.get_collocation_id_by_guid(item.guid)
+        # The row was just read back by guid, so its id exists — asserted rather
+        # than branched on, mirroring the commit loop's own `assert`.
+        assert kp_id is not None
+        claimed.add(kp_id)
+    return claimed
+
+
 def _release_review_kind(prev_dir: DirectionState) -> int | None:
     """Anki's review-ahead kind (3) for a card being released from the pending bucket.
 
@@ -1151,6 +1211,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     # not the ignore list, so the lemma is still offered on the next listen.
     skipped_lemmas: set[str] = set()
 
+    # Resolved BEFORE the word loop although the key-phrase loop runs after it:
+    # the word pass has to know which cards it must not touch, and pass order is
+    # what made the pre-fix behaviour so quiet (last writer won the upsert).
+    kp_claimed_ids = _kp_claimed_collocation_ids(db, lesson, ignored, today_start, today_end, end_of_day_utc)
+
     # Build variant index once for this listen request — mirrors the transcript's
     # _build_variant_index usage so /listen resolves the same cards the transcript
     # shows as tracked.
@@ -1214,6 +1279,14 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
             # the only place a permanently-unglossed card gets another attempt.
             if not existing.syntactic_unit.translation.strip() and not existing.syntactic_unit.extras:
                 pending_regloss.append((existing_id, existing.guid, lemma, lemma_to_sentence.get(lemma, "")))
+
+            # Owned by the key-phrase pass below — one card, one row, and that
+            # row is the key phrase. Placed AFTER the cloze backfill and the
+            # gloss retry above (which the key-phrase pass does not do, and
+            # which a claimed card should not lose) and before anything that
+            # grades.
+            if existing_id in kp_claimed_ids:
+                continue
 
             rec = existing.directions.get(Direction.RECOGNITION)
             if rec is None:
@@ -1799,6 +1872,10 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
     variant_index = _build_variant_index(db, lesson.language_code)
     inflection_index = _build_inflection_index(db, lesson.language_code)
 
+    # Same call, same arguments as mark_lesson_listened — a single-word key
+    # phrase owns its card and the word pass below stands down for it.
+    kp_claimed_ids = _kp_claimed_collocation_ids(db, lesson, ignored, today_start, today_end, end_of_day_utc)
+
     from app.srs.mastery import compute_mastery_progress
 
     # NEW-state rows are introductions, so they sort with the creations that
@@ -1836,6 +1913,12 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             lemma_candidates.append(lemma)
         else:
             existing_id, existing = res
+            # Owned by the key-phrase pass below. Dropping the row here rather
+            # than after assembly matters: a NEW-state row spends a slot of the
+            # shared introduction budget, and budgeting a row that then vanishes
+            # would make the preview's own "N now / N later" split wrong.
+            if existing_id in kp_claimed_ids:
+                continue
             if existing.syntactic_unit.card_type == "cloze":
                 continue
             rec = existing.directions.get(Direction.RECOGNITION)

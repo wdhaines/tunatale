@@ -343,6 +343,14 @@ STORY_PROMPT_REVIEW_TEMPLATE = """\
   and it is not negotiable
 - Each scene must have 5-12 lines of dialogue
 - Use 80%+ dialogue between characters
+
+**KEY PHRASES FOR A REVIEW SESSION**
+Every entry in "key_phrases" must be a multi-word chunk lifted from the dialogue
+you wrote — never a bare single word, and never a review word copied back from
+the list above. Where a review word is one word on its own, take the phrase
+around it in the dialogue that shows it doing its job (a verb with its object, a
+connector with the clause it introduces) and use that. A lone word gives the
+learner nothing to build up to, which is what the key-phrase drill is for.
 """
 
 
