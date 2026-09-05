@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, time
 
 import pytest
@@ -1892,3 +1893,152 @@ class TestSyncCreateNewNorwegian:
         item = db.get_collocation_by_guid(db.get_collocation("på").guid)
         assert Direction.PRODUCTION in item.directions
         assert Direction.RECOGNITION not in item.directions
+
+
+# ── TestSyncCreateNewClozeAudioMint (tunatale-skyv) ───────────────────────────
+
+
+class TestSyncCreateNewClozeAudioMint:
+    """A sync-minted cloze must reach Anki WITH [sound:], not without it.
+
+    The origin of tunatale-skyv: `promote_production_cards::_fallback_to_cloze`
+    writes a TT cloze collocation and stops — nothing synthesizes its sentence
+    audio. A later sync's `sync_create_new` then read
+    `get_sentence_audio_filename` (None), and `build_cloze_back_extra` omits the
+    `[sound:…]` part entirely when it is None. So the note was born with no audio
+    reference at all; the audio was never late, it was never a candidate.
+
+    Measured on the live Norwegian deck 2026-09-05: 84 cloze collocations,
+    3 with no `audio_tts_sentence` media row (`nedpå`, `uti`, `ålreit`, minted
+    2026-09-04 21:47–21:56), all three already pushed to the sync server.
+
+    The TTS network boundary is faked (`generate_tts_audio`, the same seam
+    `test_backfill_cloze_tts.py` uses); everything else is the real path.
+    """
+
+    @staticmethod
+    def _add_soundless_cloze(db) -> int:
+        unit = SyntacticUnit(
+            text="uti",
+            translation="out in",
+            word_count=1,
+            difficulty=1,
+            source="anki",
+            lemma="uti",
+            source_sentence="Han bor {{c1::uti}} skogen",
+            source_sentence_translation="He lives out in the forest",
+            card_type="cloze",
+        )
+        db.add_collocation(unit)
+        return db.get_collocation_by_lemma_with_id("uti")[0]
+
+    async def test_sync_minted_cloze_with_no_audio_gets_it_synthesized(self, tmp_path, monkeypatch):
+        """The gap itself: no media row -> sync_create_new synthesizes, then references it."""
+        import app.audio.cloze_tts as cloze_tts_mod
+        import app.plugins.anki_sync.sync as sync_mod
+
+        async def _fake_tts(text, voice=None):
+            return b"fake-mp3"
+
+        monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", _fake_tts)
+        monkeypatch.setattr(cloze_tts_mod, "_MEDIA_DIR", sync_mod._MEDIA_DIR)
+
+        db = _make_db()
+        coll_id = self._add_soundless_cloze(db)
+        assert db.get_sentence_audio_filename(coll_id) is None, "precondition: the skyv shape"
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn, media_dir=tmp_path)
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        # The media row now exists in TT...
+        filename = db.get_sentence_audio_filename(coll_id)
+        assert filename is not None, "sync_create_new must synthesize audio a cloze does not have"
+
+        # ...the note references it...
+        notes = anki_conn.execute("SELECT n.flds FROM notes n").fetchall()
+        assert len(notes) == 1
+        back_extra = notes[0][0].split("\x1f")[1]
+        assert f"[sound:{filename}]" in back_extra
+
+        # ...and the bytes actually reached Anki's media dir.
+        assert (tmp_path / filename).read_bytes() == b"fake-mp3"
+
+    async def test_tts_outage_still_creates_the_note_and_says_so(self, tmp_path, monkeypatch, caplog):
+        """Fail-open: a TTS outage must not block cloze creation, but must be audible.
+
+        Part C of the skyv instrument map: the cloze-mint path had NO instrument —
+        `sync_create_new`'s cloze branch, `create_cloze_note`, `build_cloze_back_extra`
+        and the whole of `sync_push` contain zero logger calls, so a soundless mint
+        left no byte anywhere. This is the grep string that did not exist.
+        """
+        import app.audio.cloze_tts as cloze_tts_mod
+        import app.plugins.anki_sync.sync as sync_mod
+
+        async def _exploding_tts(text, voice=None):
+            raise RuntimeError("edge-tts unreachable")
+
+        monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", _exploding_tts)
+        monkeypatch.setattr(cloze_tts_mod, "_MEDIA_DIR", sync_mod._MEDIA_DIR)
+
+        db = _make_db()
+        coll_id = self._add_soundless_cloze(db)
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn, media_dir=tmp_path)
+        with caplog.at_level(logging.WARNING, logger="app.anki.sync"):
+            await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+                deck_name="0. Slovene", model_name="Slovene Vocabulary"
+            )
+
+        # The note is created regardless — a vendor outage must not fail the mint closed.
+        notes = anki_conn.execute("SELECT n.flds FROM notes n").fetchall()
+        assert len(notes) == 1
+        assert "[sound:" not in notes[0][0]
+        assert db.get_sentence_audio_filename(coll_id) is None
+        # ...and it is no longer silent.
+        assert "CLOZE_MINT_NO_AUDIO" in caplog.text
+
+    async def test_existing_audio_is_not_resynthesized(self, tmp_path, monkeypatch):
+        """Idempotence: a cloze that already has audio must not trigger a TTS call.
+
+        Guards the cost side — sync runs every few minutes (measured: 8 syncs
+        between 21:39 and 22:06 on 2026-09-04), and tunatale-byw is the standing
+        lesson about per-item network calls inside the sync sequence.
+        """
+        import app.audio.cloze_tts as cloze_tts_mod
+        import app.plugins.anki_sync.sync as sync_mod
+
+        calls: list[str] = []
+
+        async def _counting_tts(text, voice=None):
+            calls.append(text)
+            return b"fake-mp3"
+
+        monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", _counting_tts)
+        monkeypatch.setattr(cloze_tts_mod, "_MEDIA_DIR", sync_mod._MEDIA_DIR)
+
+        db = _make_db()
+        coll_id = self._add_soundless_cloze(db)
+        (sync_mod._MEDIA_DIR / "tts_sentence_seeded.mp3").write_bytes(b"seeded")
+        db.add_media(
+            collocation_id=coll_id,
+            kind="audio_tts_sentence",
+            filename="tts_sentence_seeded.mp3",
+            path="media/tts_sentence_seeded.mp3",
+            anki_filename="",
+            sha256="seeded",
+            size_bytes=6,
+        )
+
+        anki_conn = _make_dual_collection_conn()
+        writer = OfflineWriter(anki_conn, media_dir=tmp_path)
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+
+        assert calls == [], "a cloze that already has audio must not hit the TTS boundary"
+        notes = anki_conn.execute("SELECT n.flds FROM notes n").fetchall()
+        assert "[sound:tts_sentence_seeded.mp3]" in notes[0][0]
