@@ -1,5 +1,11 @@
 """One-shot: bring every stored lesson's KEY_PHRASES section up to today's code.
 
+Walks BOTH lessons and review sessions. A review session is stored as a Lesson
+and drilled like one, but lives in its own table, so a driver that walks only
+`list_lessons` silently leaves it behind — which is exactly what happened on
+2026-09-05, when every lesson converted and the one session kept all four of
+its doubled buildup rungs.
+
 Per lesson, in this ORDER — and the order is forced, not stylistic:
 
   1. resync   rebuild the KEY_PHRASES section from lesson.key_phrases, so its
@@ -27,6 +33,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -39,6 +46,7 @@ from app.audio.tts_factory import get_tts_service  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.generation.section_builder import build_key_phrases_section  # noqa: E402
 from app.languages import get_phoneme_planner, get_preprocessor, resolve_db_path  # noqa: E402
+from app.models.lesson import Lesson  # noqa: E402
 from app.srs.database import SRSDatabase  # noqa: E402
 from app.storage.resync_key_phrases import _key_phrases_section, _voices  # noqa: E402
 from app.storage.store import ContentStore  # noqa: E402
@@ -103,8 +111,27 @@ async def main() -> int:
 
     from app.api.generation import annotate_chunk_upos_for_lesson
 
+    # Lessons AND review sessions. A session is stored as a Lesson and drilled
+    # like one, but lives in its own table — so `list_lessons` misses it, and it
+    # kept its stale KEY_PHRASES section through every earlier conversion
+    # (measured 2026-09-05: every lesson clean, 4 doubled cues left, all in the
+    # one session). The persist function travels WITH each item rather than
+    # being branched on below: `save_review_session` is INSERT OR REPLACE over
+    # the whole row and would null the coverage pair, so the session path must
+    # use `update_review_session_data` and nothing else.
+    def _content() -> list[tuple[str, Lesson, Callable[[str, Lesson], bool]]]:
+        items: list[tuple[str, Lesson, Callable[[str, Lesson], bool]]] = [
+            (lesson_id, lesson, store.update_lesson_data)
+            for lesson_id, _curriculum_id, _day, lesson in store.list_lessons()
+        ]
+        for row in store.list_review_sessions(code):
+            session = store.get_review_session(row["id"])
+            if session is not None:
+                items.append((row["id"], session, store.update_review_session_data))
+        return items
+
     converted = skipped = failed = 0
-    for lesson_id, _curriculum_id, _day, lesson in list(store.list_lessons()):
+    for lesson_id, lesson, persist in _content():
         if lesson.language_code != code:
             continue
         rebuilt = _rebuild_section(lesson)
@@ -148,7 +175,7 @@ async def main() -> int:
                     lesson_id=lesson_id,
                     lesson=lesson,
                 )
-            store.update_lesson_data(lesson_id, lesson)
+            persist(lesson_id, lesson)
             print(f"  OK  {lesson_id[:52]:54} {action:18} tags={n_tags}")
             converted += 1
         except Exception as e:  # noqa: BLE001 - one bad lesson must not abort the rest

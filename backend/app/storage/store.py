@@ -449,6 +449,31 @@ class ContentStore:
             if self._in_memory:
                 conn.commit()
 
+    def update_review_session_data(self, session_id: str, lesson: Lesson) -> bool:
+        """Rewrite an existing session's blob and title in place; ``False`` if absent.
+
+        The narrow counterpart to :meth:`update_lesson_data`, and it exists for
+        a sharper reason than that one. :meth:`save_review_session` is
+        ``INSERT OR REPLACE`` over the WHOLE row and takes the coverage pair as
+        arguments, so re-saving a session to change its body writes NULL over
+        ``review_requested_json`` / ``review_used_json``. Per that method's own
+        docstring ``None`` is "never measured" and renders as no readout at all,
+        so the loss is invisible — the meter simply stops appearing.
+
+        A one-shot migration that rewrites bodies (``regen_key_phrases.py``)
+        must therefore not use the save path. ``title`` is rewritten too because
+        :meth:`list_review_sessions` reads the denormalised column rather than
+        deserialising a Lesson per row.
+        """
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "UPDATE review_sessions SET data_json = ?, title = ? WHERE id = ?",
+                (lesson.to_json(), lesson.title, session_id),
+            )
+            if self._in_memory:
+                conn.commit()
+            return cursor.rowcount > 0
+
     def get_review_session(self, session_id: str) -> Lesson | None:
         with self._get_conn() as conn:
             row = conn.execute("SELECT data_json FROM review_sessions WHERE id = ?", (session_id,)).fetchone()
