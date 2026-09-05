@@ -914,7 +914,11 @@ def _no_lesson() -> Lesson:
                     _l2("hagen"),
                     _l2("gen", source_word="hagen", syllable_span=(1, 2)),
                     _l2("ha", source_word="hagen", syllable_span=(0, 1)),
-                    _l2("hagen"),
+                    # ONE closing rung. This fixture used to carry two, mirroring
+                    # a builder that appended the whole phrase twice; the cue
+                    # manifest derives its expected count from
+                    # build_word_breakdown_spans, so the stale copy made
+                    # cues.py raise "1 extra phrases remain".
                     _l2("hagen"),
                 ],
             )
@@ -1138,7 +1142,7 @@ class TestRendererPhonemePlanner:
                             source_word="hagen",
                             syllable_span=(0, 1),
                         ),
-                        Phrase(text="hagen", voice_id=l2, language_code="no"),
+                        # ONE closing rung — see the shared fixture above.
                         Phrase(text="hagen", voice_id=l2, language_code="no"),
                     ],
                 )

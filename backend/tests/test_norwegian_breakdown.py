@@ -829,13 +829,13 @@ def test_breakdown_compound_full_golden_sequence():
 def test_breakdown_geminate_spoken_as_ett_ter():
     """The 'etter' morpheme: lexicon e|tter, no geminate respelling (respell=False)."""
     result = build_norwegian_breakdown("etter")
-    assert result == ["etter", "tter", "e", "etter", "etter"]
+    assert result == ["etter", "tter", "e", "etter"]
 
 
 def test_breakdown_finne_no_lone_consonant():
     """finne is fi|nne from the lexicon — no geminate respelling."""
     result = build_norwegian_breakdown("finne")
-    assert result == ["finne", "nne", "fi", "finne", "finne"]
+    assert result == ["finne", "nne", "fi", "finne"]
 
 
 def test_breakdown_compound_without_inflection():
@@ -854,7 +854,6 @@ def test_breakdown_single_stem_per_syllable():
         "kning",
         "fors",
         "forskning",
-        "forskning",
     ]
 
 
@@ -865,7 +864,6 @@ def test_breakdown_single_stem_3_syllables():
         "rlig",
         "rlighet",
         "kjæ",
-        "kjærlighet",
         "kjærlighet",
     ]
 
@@ -879,7 +877,6 @@ def test_breakdown_simplex_root_no_gibberish():
         "li",
         "litiet",
         "po",
-        "politiet",
         "politiet",
     ]
 
@@ -905,7 +902,6 @@ def test_breakdown_multi_word_with_compound():
         "fly",
         "på",
         "på flyplassen",
-        "på flyplassen",
     ]
 
 
@@ -916,7 +912,6 @@ def test_breakdown_multi_word_non_compound():
         "pla",
         "plassen",
         "på",
-        "på plassen",
         "på plassen",
     ]
 
@@ -929,7 +924,6 @@ def test_breakdown_three_word_phrase():
         "er",
         "er her",
         "jeg",
-        "jeg er her",
         "jeg er her",
     ]
 

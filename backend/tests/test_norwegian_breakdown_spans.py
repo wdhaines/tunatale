@@ -751,7 +751,6 @@ class TestWordAbsentFromTheLexicon:
             "simuk",
             "kva",
             "kvasimuk",
-            "kvasimuk",
         ]
         assert all(c.source_word in (None, "kvasimuk") for c in chunks)
 

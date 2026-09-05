@@ -76,7 +76,12 @@ def _generic_breakdown_spans(phrase: str, words: list[str], language_code: str) 
         n = len(syls)
         for i in range(n - 1, -1, -1):
             chunks.append(BreakdownChunk(syls[i], source, (i, i + 1) if lossless else None))
-            if i < n - 1:
+            # `0 < i`, not just `i < n - 1`: at i == 0 the join IS the whole
+            # word, which is the closing rung appended below — emitting both
+            # made the buildup say the word twice, back to back. The bookend is
+            # the one kept, so the closing rung keeps the phrase's original case
+            # and punctuation instead of a lowercased slice.
+            if 0 < i < n - 1:
                 chunks.append(BreakdownChunk("".join(syls[i:]), source, (i, n) if lossless else None))
         chunks.append(BreakdownChunk(phrase, None, None))
         return chunks
@@ -100,10 +105,11 @@ def _generic_breakdown_spans(phrase: str, words: list[str], language_code: str) 
             if partial != phrase:
                 chunks.append(BreakdownChunk(partial, None, None))
 
+        # The closing rung, written once — see the single-word branch above. The
+        # loop used to append the phrase here and again after it.
         if word_index == 0:
             chunks.append(BreakdownChunk(phrase, None, None))
 
-    chunks.append(BreakdownChunk(phrase, None, None))
     return chunks
 
 
