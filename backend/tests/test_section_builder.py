@@ -31,8 +31,7 @@ def test_build_word_breakdown_single_multisyllable_word():
         "prosim",  # full phrase
         "sim",  # last syllable
         "pro",  # first syllable
-        "prosim",  # rebuilt word
-        "prosim",  # final repeat
+        "prosim",  # rebuilt word — the closing rung, said ONCE
     ]
 
 
@@ -44,8 +43,7 @@ def test_build_word_breakdown_two_words():
         "ber",  # last syllable of "dober"
         "do",  # first syllable
         "dober",  # rebuilt word
-        "dober dan",  # full phrase
-        "dober dan",  # final repeat
+        "dober dan",  # closing rung, said ONCE
     ]
 
 
@@ -63,8 +61,7 @@ def test_build_word_breakdown_three_words():
         "no",  # last syllable of eno
         "e",  # first syllable
         "eno",  # rebuilt
-        "eno kavo prosim",  # full phrase
-        "eno kavo prosim",  # final repeat
+        "eno kavo prosim",  # closing rung, said ONCE
     ]
 
 
@@ -73,10 +70,24 @@ def test_build_word_breakdown_starts_with_full_phrase():
     assert result[0] == "hvala lepa"
 
 
-def test_build_word_breakdown_ends_with_full_phrase_twice():
+def test_build_word_breakdown_ends_with_full_phrase_once():
+    """The buildup closes on the whole phrase, and does not repeat it.
+
+    This test used to be named `..._twice` and assert `result[-2]` was ALSO the
+    phrase. That was not a decision anyone made — the builder appended the
+    closing rung twice (once at `word_index == 0`, once after the loop), and the
+    test was written to whatever came out. The learner heard the whole phrase
+    twice with a ~2.1 s gap and nothing in between; measured on the live `no`
+    deck 2026-09-05, 5-8 times per lesson.
+
+    The compound path never had the second append and closes on one rung, which
+    is what `test_breakdown_compound_full_golden_sequence` pins as
+    "human-confirmed line-for-line" — that is the discriminator that made this a
+    bug rather than the design.
+    """
     result = build_word_breakdown("hvala lepa")
     assert result[-1] == "hvala lepa"
-    assert result[-2] == "hvala lepa"
+    assert result[-2] != "hvala lepa"
 
 
 def test_build_word_breakdown_whitespace_normalized():
@@ -377,7 +388,7 @@ def test_build_word_breakdown_norwegian_multi_word():
 def test_slovene_behavior_unchanged():
     """Slovene ('sl') should continue to use the classic syllable buildup."""
     result = build_word_breakdown("prosim", "sl")
-    assert result == ["prosim", "sim", "pro", "prosim", "prosim"]
+    assert result == ["prosim", "sim", "pro", "prosim"]
 
 
 def test_slow_speed_norwegian_slows_compounds():

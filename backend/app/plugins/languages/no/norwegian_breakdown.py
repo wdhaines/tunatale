@@ -976,9 +976,22 @@ def build_norwegian_breakdown_spans(phrase: str) -> list[BreakdownChunk]:
         # word separately from the bookend text, so this needs no rebuild — an
         # earlier version built every inner chunk with source_word=text and then
         # allocated a second copy of each to correct it.
+        inner = _build_syllable_inner_spans(syllables, core_word, respell=lexicon_split is None)
+        # `inner` always CLOSES on the whole word: its i == 0 iteration emits
+        # syllables[0] and then the join of syllables[0:]. For a one-word phrase
+        # that is the same rung as the closing bookend, so the buildup said the
+        # word twice, back to back (`de` `derimot` `derimot`). The BOOKEND is the
+        # one that survives — it keeps the original case and sentence
+        # punctuation, which the sliced chunk has lost (tunatale-7vxv), and it is
+        # a fresh render rather than a cut. Dropping it instead would silently
+        # change `Derimot.` to `derimot`.
+        #
+        # Trimmed HERE and not inside _build_syllable_inner_spans, because the
+        # multi-word branch calls the same helper and there the closing
+        # whole-WORD rung is one word of several — not redundant at all.
         return [
             BreakdownChunk(text, None, None),
-            *_build_syllable_inner_spans(syllables, core_word, respell=lexicon_split is None),
+            *inner[:-1],
             BreakdownChunk(text, None, None),
         ]
 
@@ -1012,10 +1025,14 @@ def build_norwegian_breakdown_spans(phrase: str) -> list[BreakdownChunk]:
             if partial != text:
                 breakdown.append(BreakdownChunk(partial, None, None))
 
+        # The closing rung, written once. The loop used to append the phrase here
+        # AND again after it, so every multi-word key phrase ended by saying the
+        # whole thing twice with nothing in between (`ta` `ta hensyn`
+        # `ta hensyn`). word_index reaches 0 on every path, so this is the only
+        # append needed.
         if word_index == 0:
             breakdown.append(BreakdownChunk(text, None, None))
 
-    breakdown.append(BreakdownChunk(text, None, None))
     return breakdown
 
 

@@ -589,8 +589,8 @@ class TestAnnotateChunkUpos:
 
         l2 = "nb-NO-PernilleNeural"
         en = "en-US-GuyNeural"
-        # Breakdown of "sporet": 5 chunks → expected 2+5=7 phrases
-        # No title phrase, so all 7 are in the section
+        # Breakdown of "sporet": 4 chunks → expected 2+4=6 phrases
+        # No title phrase, so all 6 are in the section
         lesson = Lesson(
             title="Day 1",
             language_code="no",
@@ -605,11 +605,12 @@ class TestAnnotateChunkUpos:
                         ),
                         Phrase(text="ret", voice_id=l2, language_code="no", source_word="sporet", syllable_span=(1, 2)),
                         Phrase(text="spo", voice_id=l2, language_code="no", source_word="sporet", syllable_span=(0, 1)),
+                        # ONE closing rung: the builder no longer appends the
+                        # whole phrase twice, and annotate_chunk_upos consumes
+                        # `2 + len(build_word_breakdown_spans(...))`, so a stale
+                        # second copy leaves a phrase unconsumed.
                         Phrase(
                             text="sporet", voice_id=l2, language_code="no", source_word="sporet", syllable_span=(0, 2)
-                        ),
-                        Phrase(
-                            text="sporet", voice_id=l2, language_code="no", source_word="sporet", syllable_span=(0, 0)
                         ),
                     ],
                 )
@@ -623,8 +624,8 @@ class TestAnnotateChunkUpos:
         lem = _UposLemmatizer(analyses)
 
         count = annotate_chunk_upos(lesson, srs_db, lemmatizer=lem, model_version="test-v1")
-        # 5 chunks all have source_word="sporet", all get tagged
-        assert count == 5
+        # 4 chunks all have source_word="sporet", all get tagged
+        assert count == 4
 
     def test_analysis_exception_warns_and_skips(self, tmp_path: Path, srs_db: SRSDatabase) -> None:
         """When analyze_sentence_cached raises, the key phrase is skipped with a warning."""
