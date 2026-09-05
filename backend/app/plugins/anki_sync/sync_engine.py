@@ -12,13 +12,14 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
+from app.audio.cloze_tts import synthesize_cloze_audios
 from app.cards.cloze_source import choose_cloze_sentence
 from app.cards.media.vocab_media import safe_stem as _safe_stem
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media
 from app.cards.number_image import number_value
 from app.common.guid import compute_guid
 from app.config import settings
-from app.languages import card_surface_variants
+from app.languages import card_surface_variants, get_tts_voice
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
 from app.models.syntactic_unit import SyntacticUnit, serialize_extras
 from app.plugins.anki_sync.sync_common import (
@@ -41,7 +42,7 @@ from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
 from app.srs.database import SRSDatabase
 from app.srs.direction_fields import SYNC_COMPARABLE_MODEL_FIELDS
 from app.srs.fsrs import is_day_level_last_review
-from app.srs.function_words import is_function_word, make_cloze_text
+from app.srs.function_words import is_function_word, make_cloze_text, uncloze_text
 from app.srs.queue_stats import resolve_bury_new, resolve_bury_review, resolve_learning_steps, resolve_relearning_steps
 
 # Logger name pinned to "app.anki.sync": BURY_TRACE assertions in
@@ -1544,6 +1545,47 @@ class AnkiSync:
                     item.syntactic_unit.source_sentence or "",
                 )
                 sentence_audio = self._db.get_sentence_audio_filename(coll_id)
+                if sentence_audio is None:
+                    # tunatale-skyv. `_fallback_to_cloze` writes the TT row and stops
+                    # ("Nothing is written to the collection here"), so a sync-minted
+                    # cloze arrives here with no `audio_tts_sentence` media row and
+                    # `build_cloze_back_extra` then omits the `[sound:]` part ENTIRELY.
+                    # The audio was not late — it was never a candidate, and no later
+                    # synthesis can reach a note whose Back Extra never referenced one.
+                    # Measured 2026-09-05: 3 of 84 Norwegian cloze collocations, all
+                    # already pushed to the sync server.
+                    #
+                    # This is the last moment before the note is written, and it is
+                    # the RIGHT one: the vocab branch of this same loop already awaits
+                    # `_media_fn` for Forvo/Pixabay when TT media is missing, and this
+                    # function is already `async` — so no `asyncio.run` is needed here
+                    # (the constraint that made the fix look blocked at the mint site,
+                    # `_fallback_to_cloze`, which is sync code).
+                    #
+                    # Fail-OPEN, like `srs.py::_persist_new_card`: a TTS outage must
+                    # not stop a cloze reaching Anki. Only the audio is lost, and the
+                    # `backfill_cloze_tts` remedy still covers that.
+                    try:
+                        await synthesize_cloze_audios(
+                            self._db,
+                            coll_id,
+                            uncloze_text(cloze_text),
+                            item.syntactic_unit.text,
+                            voice=get_tts_voice(settings.target_language),
+                        )
+                        sentence_audio = self._db.get_sentence_audio_filename(coll_id)
+                    except Exception:
+                        # The grep string that did not exist. Before this, the cloze
+                        # branch, `create_cloze_note`, `build_cloze_back_extra` and the
+                        # whole of `sync_push` emitted NOTHING, so a soundless mint left
+                        # no byte in any log — which is why skyv went unnoticed for 74
+                        # notes. WARNING, not INFO: the dev server's level suppresses
+                        # INFO, the same way it hid the `PRODUCTION_MINT` backlog.
+                        _log.warning(
+                            "CLOZE_MINT_NO_AUDIO text=%r cid=%d — TTS failed; note created with no [sound:]",
+                            item.syntactic_unit.text,
+                            coll_id,
+                        )
                 back_extra = build_cloze_back_extra(
                     item.syntactic_unit.translation,
                     item.syntactic_unit.source_sentence_translation,
