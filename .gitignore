@@ -99,3 +99,9 @@ docs/briefs/
 # store (embeddeddolt/, dolt/, proxieddb/), so the backlog itself was never at
 # risk; this is hygiene, not a disclosure fix.
 .beads/
+
+# ⚠️ A backup named *.db.<suffix> does NOT match the *.db rule above — the
+# filename no longer ENDS in .db. A 21.7 MB snapshot of the live Norwegian DB
+# reached this public repo that way on 2026-09-05, swept up by `git add -A`.
+*.db.*
+*.db-*
