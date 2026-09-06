@@ -603,6 +603,73 @@ class TestPromoteProductionCards:
         assert db.count_collocations() == 1
         assert _prod_cards(conn, 1000) == []
 
+    async def test_a_cached_llm_sentence_rescues_an_otherwise_unservable_word(self) -> None:
+        """The LLM tier `cloze_source`'s docstring names but never had (tunatale-keb0).
+
+        Same setup as the test above — the note's only example does not contain
+        the word — except a sentence has been pre-staged. The word gets a cloze
+        instead of nothing. 27 words sit in that unservable state on the live
+        Norwegian deck, all closed-class, so none of them has an image path
+        either.
+
+        The sentence is written OFF the critical path by
+        `prestage_cloze_sentences`; the mint only reads it, because the mint
+        makes no network call.
+        """
+        conn = _make_conn()
+        card_id = _add_note(conn, 1000, "beslutning", "decision", examples="Katten sover (<i>The cat sleeps</i>)")
+        db = SRSDatabase(":memory:")
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id, unpicturable=True)
+        db.set_cached_cloze_sentence("beslutning", "sl", sentence="Vi tok en beslutning i går.", status="determined")
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.minted, report.clozed, report.unservable) == (0, 1, 0)
+        rows, _total = db.list_collocations()
+        cloze = next(item for _id, item, _lang in rows if item.syntactic_unit.card_type == "cloze")
+        assert cloze.syntactic_unit.source_sentence == "Vi tok en {{c1::beslutning}} i går."
+
+    async def test_the_notes_own_example_still_beats_a_cached_sentence(self) -> None:
+        """A deck-authored sentence is real language; a generated one is a fallback.
+
+        Preferring the cache would quietly replace 98.7%% of the deck's own
+        examples with model output, which is a much larger change than the one
+        this feature is for.
+        """
+        conn = _make_conn()
+        card_id = _add_note(
+            conn, 1000, "beslutning", "decision", examples="Vi tok beslutning sammen (<i>We decided together</i>)"
+        )
+        db = SRSDatabase(":memory:")
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id, unpicturable=True)
+        db.set_cached_cloze_sentence(
+            "beslutning", "sl", sentence="EN HELT ANNEN SETNING med beslutning i.", status="determined"
+        )
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert report.clozed == 1
+        rows, _total = db.list_collocations()
+        cloze = next(item for _id, item, _lang in rows if item.syntactic_unit.card_type == "cloze")
+        assert cloze.syntactic_unit.source_sentence == "Vi tok {{c1::beslutning}} sammen"
+
+    async def test_a_cached_sentence_not_containing_the_word_is_refused(self) -> None:
+        """The cache is model output and gets the same boundary check as an example.
+
+        `generate_cloze_sentence` already verifies this, so reaching here means
+        the row predates a prompt change or was written by another path — and a
+        cloze whose answer is absent from its own sentence blanks nothing.
+        """
+        conn = _make_conn()
+        card_id = _add_note(conn, 1000, "beslutning", "decision", examples="Katten sover (<i>The cat sleeps</i>)")
+        db = SRSDatabase(":memory:")
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id, unpicturable=True)
+        db.set_cached_cloze_sentence("beslutning", "sl", sentence="Ingenting her.", status="determined")
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.clozed, report.unservable) == (0, 1)
+
     async def test_refuses_a_cloze_that_would_collide_with_the_word_itself(self) -> None:
         """A cloze row carries no disambig, so a word that has none either would
         share its identity — and `add_collocation` would merge into the vocab row

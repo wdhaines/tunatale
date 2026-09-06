@@ -154,3 +154,32 @@ def inflection_labels() -> frozenset[str]:
         for spec in profile.back_fields
         if spec.field_name == profile.inflections
     )
+
+
+def upos_for_disambig(label: str) -> str | None:
+    """Map a deck's own part-of-speech label onto UPOS, across every profile.
+
+    ``sync_reader`` resolves this per note through that note's own profile,
+    because it is holding the note. Callers that are NOT allowed to open the
+    collection still hold the same label — TT copies it onto the collocation as
+    ``disambig_key`` — but have no notetype to look a profile up by, so this
+    searches the profiles instead.
+
+    ⚠️ It exists because ``is_function_word(text, lang)`` **without** ``upos``
+    returns False for obvious function words (``enn``, ``mens``, ``fordi``,
+    ``hvis``): False there means "no POS supplied", not "open class". A caller
+    that reads it as the latter silently classifies every closed-class word as
+    open — which is the whole population ``cloze_prestage`` exists to serve.
+
+    Labels are deck vocabulary, not language facets, and the profiles agree on
+    them where they overlap; first match wins. ``None`` means the label is
+    unknown (or empty), and the caller must not read that as a word class.
+    """
+    key = (label or "").strip().casefold()
+    if not key:
+        return None
+    for profile in _PROFILES.values():
+        upos = profile.disambig_upos.get(key)
+        if upos is not None:
+            return upos
+    return None

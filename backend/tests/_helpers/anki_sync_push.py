@@ -24,10 +24,18 @@ class FakeWriter:
     #: Mirrors OfflineWriter: a write to a note absent from the collection
     #: being written reports that it wrote nothing. Set False to simulate that.
     note_exists: bool = True
+    cloze_text_exists: bool = True
+    cloze_text_raises: Exception | None = None
 
     def update_note_fields(self, note_id: int, fields: dict[str, str]) -> bool:
         self.calls.append(("update_note_fields", note_id, fields))
         return self.note_exists
+
+    def update_cloze_text(self, note_id: int, cloze_text: str, *, language_code: str) -> bool:
+        self.calls.append(("update_cloze_text", note_id, cloze_text))
+        if self.cloze_text_raises is not None:
+            raise self.cloze_text_raises
+        return self.cloze_text_exists
 
     def get_l2_field_for_note(self, note_id: int) -> str:
         self.calls.append(("get_l2_field_for_note", note_id))

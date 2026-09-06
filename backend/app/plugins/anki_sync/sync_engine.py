@@ -10,10 +10,11 @@ the importing module).
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 
 from app.audio.cloze_tts import synthesize_cloze_audios
-from app.cards.cloze_source import choose_cloze_sentence
+from app.cards.cloze_source import ClozeChoice, choose_cloze_sentence
 from app.cards.media.vocab_media import safe_stem as _safe_stem
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media
 from app.cards.number_image import number_value
@@ -1241,6 +1242,7 @@ class AnkiSync:
                 continue
             dirty_set = {f for f in dirty_fields_str.split(",") if f}
             fields: dict[str, str] = {}
+            cloze_text_update: str | None = None
             if item.syntactic_unit.card_type == "cloze":
                 # Cloze notes: any of {translation, sentence_translation, note, audio}
                 # dirty → rebuild Back Extra. Cloze has no separate "English" field.
@@ -1257,7 +1259,16 @@ class AnkiSync:
                         _copy_tt_media_to_anki(self._writer, sentence_audio)
                 if "source_sentence" in dirty_set:
                     # The cloze front (Anki "Text" field) is the clozed sentence.
-                    fields["Text"] = item.syntactic_unit.source_sentence or ""
+                    #
+                    # Routed to `update_cloze_text`, NOT into `fields`: for a
+                    # Cloze note "Text" is field 0, so it is also `sfld` (the
+                    # browser's sort column and Anki's dupe-check input) and the
+                    # source of `csum` and of the note's text-derived `guid`.
+                    # `update_note_fields` writes `flds` alone, which left all
+                    # three describing the previous sentence — invisible until a
+                    # later cloze produced the same text, computed a guid nothing
+                    # matched, and minted a duplicate note (tunatale-keb0).
+                    cloze_text_update = item.syntactic_unit.source_sentence or ""
             else:
                 if "text" in dirty_set:
                     l2_field = self._writer.get_l2_field_for_note(anki_note_id)
@@ -1278,7 +1289,7 @@ class AnkiSync:
                     fields["Image"] = f'<img src="{img}">' if img else ""
                     if img and not dry_run:
                         _copy_tt_media_to_anki(self._writer, img)
-            if not fields:
+            if not fields and cloze_text_update is None:
                 # A cloze note has no Image field and no bare L2 field, so stray
                 # "image"/"text" flags would never produce a field here and would
                 # pin dirty_fields across every future sync (the create/push cycle
@@ -1290,7 +1301,30 @@ class AnkiSync:
                 report.no_fields += 1
                 continue
             if not dry_run:
-                if not self._writer.update_note_fields(anki_note_id, fields):
+                if cloze_text_update is not None:
+                    # Before the Back Extra write, so a refused rewrite cannot
+                    # leave a note whose answer text describes a sentence that
+                    # never landed.
+                    try:
+                        wrote = self._writer.update_cloze_text(
+                            anki_note_id, cloze_text_update, language_code=settings.target_language
+                        )
+                    except DuplicateNoteError as exc:
+                        # Another note already holds this sentence. Keep the flag
+                        # — the regenerated text is still pending, and clearing
+                        # would discard it silently (the tunatale-7p4f discipline).
+                        _log.warning(
+                            "CLOZE_TEXT_COLLISION nid=%d — %r already belongs to note %d; keeping the flag",
+                            anki_note_id,
+                            cloze_text_update,
+                            exc.note_id,
+                        )
+                        report.write_noop += 1
+                        continue
+                    if not wrote:
+                        report.write_noop += 1
+                        continue
+                if fields and not self._writer.update_note_fields(anki_note_id, fields):
                     # The note is not in the collection being written — during
                     # peer-sync that is tt_collection, not the user's. Nothing
                     # reached Anki, so KEEP the flag for a later sync and do not
@@ -1986,9 +2020,33 @@ class AnkiSync:
             variants=card_surface_variants(settings.target_language, unit.text),
         )
         if choice is None:
+            # The LLM tier. `choose_cloze_sentence`'s docstring has always ended
+            # "the word needs the LLM tier, which is not built" — this is where
+            # its output arrives (tunatale-keb0). The sentence was generated and
+            # judged OFF the critical path by `prestage_cloze_sentences`; nothing
+            # here makes a network call.
+            #
+            # Second, not first: a deck-authored example is real language and
+            # `Example sentences` is 98.7% populated, so preferring the cache
+            # would swap almost the whole deck for model output — a far larger
+            # change than the one this is for.
+            cached = self._db.get_cached_cloze_sentence(unit.text, settings.target_language)
+            if cached is not None and re.search(rf"\b{re.escape(unit.text)}\b", cached.sentence, re.IGNORECASE):
+                # The boundary check is not redundant with the generator's. A
+                # cached row can predate a prompt change, and a cloze whose
+                # answer is absent from its own sentence blanks nothing —
+                # `make_cloze_text` would store the sentence unmarked and Anki
+                # would call the note an empty card.
+                choice = ClozeChoice(
+                    sentence=cached.sentence,
+                    gloss=unit.translation,
+                    surface=unit.text,
+                )
+
+        if choice is None:
             report.unservable += 1
             _log.warning(
-                "PRODUCTION_MINT_UNSERVABLE text=%r cid=%d — no image and no clozable example sentence",
+                "PRODUCTION_MINT_UNSERVABLE text=%r cid=%d — no image, no clozable example, no staged sentence",
                 unit.text,
                 cand.collocation_id,
             )

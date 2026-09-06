@@ -1105,3 +1105,62 @@ describe("DrillCard", () => {
     });
   });
 });
+
+describe("DrillCard cloze regenerate (tunatale-keb0)", () => {
+  const clozeItem = makeSRSItemDetail({
+    id: 42,
+    text: "han",
+    card_type: "cloze",
+    source_sentence: "{{c1::han}} kommer i morgen",
+    source_sentence_translation: "he is coming tomorrow",
+  });
+
+  const render_ = (props: Record<string, unknown> = {}) =>
+    render(DrillCard, {
+      item: clozeItem,
+      direction: "production",
+      onRate: vi.fn().mockResolvedValue(undefined),
+      ...props,
+    });
+
+  it("offers 'try again' on a revealed cloze", async () => {
+    const { getByRole, queryByRole } = render_({ onRegenerate: vi.fn() });
+    // Hidden before reveal: the control is about the sentence you have just
+    // read, and showing it on the prompt invites answering by rerolling.
+    expect(queryByRole("button", { name: /try again/i })).toBeNull();
+    await fireEvent.click(getByRole("button", { name: /show/i }));
+    expect(getByRole("button", { name: /try again/i })).toBeTruthy();
+  });
+
+  it("does not offer it on a vocab card", async () => {
+    const vocab = makeSRSItemDetail({ id: 7, text: "hus", translation: "house" });
+    const { getByRole, queryByRole } = render_({ item: vocab, onRegenerate: vi.fn() });
+    await fireEvent.click(getByRole("button", { name: /show/i }));
+    expect(queryByRole("button", { name: /try again/i })).toBeNull();
+  });
+
+  it("does not offer it when no handler is wired", async () => {
+    const { getByRole, queryByRole } = render_();
+    await fireEvent.click(getByRole("button", { name: /show/i }));
+    expect(queryByRole("button", { name: /try again/i })).toBeNull();
+  });
+
+  it("calls the handler with the item id", async () => {
+    const onRegenerate = vi.fn().mockResolvedValue(undefined);
+    const { getByRole } = render_({ onRegenerate });
+    await fireEvent.click(getByRole("button", { name: /show/i }));
+    await fireEvent.click(getByRole("button", { name: /try again/i }));
+    expect(onRegenerate).toHaveBeenCalledWith(42);
+  });
+
+  it("disables the control while a regenerate is in flight", async () => {
+    let release: () => void = () => {};
+    const onRegenerate = vi.fn(() => new Promise<void>((r) => (release = r)));
+    const { getByRole } = render_({ onRegenerate });
+    await fireEvent.click(getByRole("button", { name: /show/i }));
+    const btn = getByRole("button", { name: /try again/i }) as HTMLButtonElement;
+    await fireEvent.click(btn);
+    expect(btn.disabled).toBe(true);
+    release();
+  });
+});

@@ -5,6 +5,16 @@ Plain KV storage; the parity semantics of individual keys live with their
 consumers (queue_stats, sync).
 """
 
+from typing import NamedTuple
+
+
+class CachedClozeSentence(NamedTuple):
+    """A cached LLM cloze sentence and the judge's verdict on it."""
+
+    sentence: str
+    status: str
+    competitors: tuple[str, ...]
+
 
 class DbKvCacheMixin:
     """anki_state_cache accessors. Mixed into SRSDatabase; relies on SRSDatabaseBase infra."""
@@ -81,4 +91,57 @@ class DbKvCacheMixin:
 
         with self._get_conn() as conn:
             conn.execute("DELETE FROM anki_state_cache WHERE key = ?", (key,))
+            self._commit(conn)
+
+    def get_cached_cloze_sentence(
+        self, word: str, language_code: str, *, model_version: str = ""
+    ) -> CachedClozeSentence | None:
+        """The LLM-written cloze sentence for *word*, or ``None``.
+
+        Read by ``_fallback_to_cloze`` when the note's own examples carry no
+        blankable form of the word — the "LLM tier" ``choose_cloze_sentence``'s
+        docstring names but never had. Written off the critical path by
+        ``prestage_cloze_sentences`` (tunatale-keb0).
+        """
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT sentence, status, competitors FROM cloze_sentence_cache "
+                "WHERE word = ? AND language_code = ? AND model_version = ?",
+                (word, language_code, model_version),
+            ).fetchone()
+        if row is None:
+            return None
+        return CachedClozeSentence(
+            sentence=row["sentence"],
+            status=row["status"],
+            competitors=tuple(c for c in (row["competitors"] or "").split("\x1f") if c),
+        )
+
+    def set_cached_cloze_sentence(
+        self,
+        word: str,
+        language_code: str,
+        *,
+        sentence: str,
+        status: str,
+        competitors: tuple[str, ...] = (),
+        model_version: str = "",
+    ) -> None:
+        """Cache one generated cloze sentence and the judge's verdict on it.
+
+        The verdict rides along so a reader can see WHY a sentence was kept
+        without paying for the judgement again — and so the UI can offer "try
+        again" on the ones that stayed underdetermined.
+
+        Competitors are US-joined rather than comma-joined: a filler is a single
+        word here, but the separator must not be one a word can contain, and
+        comma is exactly what a model returns its list in.
+        """
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO cloze_sentence_cache "
+                "(word, language_code, model_version, sentence, status, competitors, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+                (word, language_code, model_version, sentence, status, "\x1f".join(competitors)),
+            )
             self._commit(conn)

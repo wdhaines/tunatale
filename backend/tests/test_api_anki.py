@@ -358,3 +358,113 @@ class TestPreStagesNextSyncsImages:
 
         assert response.status_code == 200
         assert db.get_image_filename(coll_id) is None
+
+
+class TestPreStagesClozeSentences:
+    """The sync also schedules a background cloze-sentence pre-stage (tunatale-keb0).
+
+    Sociable, the same shape as ``TestPreStagesNextSyncsImages``: the REAL
+    ``prestage_cloze_sentences`` runs, driven by the real endpoint, with only the
+    LLM double injected through ``app.state.llm`` — never patched.
+
+    What it proves: after a sync, a closed-class word whose own note carries no
+    clozable example has a sentence waiting, so the NEXT sync's promotion mints a
+    cloze for it instead of counting it ``unservable`` and giving it no card at
+    all.
+    """
+
+    @staticmethod
+    def _seed_closed_class(db, word="foran", english="in front of"):
+        from datetime import datetime
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
+
+        unit = SyntacticUnit(
+            text=word,
+            translation=english,
+            word_count=1,
+            difficulty=1,
+            source="anki",
+            frequency=0,
+            # The deck's own `Word class`. Load-bearing: without it
+            # `is_function_word` cannot tell a preposition from a noun and the
+            # pre-stage selects nothing.
+            disambig_key="preposition",
+        )
+        return db.upsert_by_guid(
+            unit,
+            "sl",
+            {
+                Direction.RECOGNITION: DirectionState(
+                    direction=Direction.RECOGNITION,
+                    due_at=due_at_rollover_utc(anki_today()),
+                    state=SRSState.REVIEW,
+                    reps=9,
+                    anki_card_id=10001,
+                    last_review=datetime.fromisoformat("2026-08-01T12:00:00+00:00"),
+                )
+            },
+            anki_note_id=1001,
+        )
+
+    class _LLM:
+        """Generator then judge, told apart by the system prompt."""
+
+        async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256):
+            if "blank" in (system_prompt or ""):
+                return "foran"
+            return "Bilen står foran huset, ikke bak det."
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    async def test_a_real_sync_prestages_a_cloze_sentence(self, fake_driver, tmp_path, monkeypatch):
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path / "media")
+        db = app.state.srs_db
+        self._seed_closed_class(db)
+        app.state.llm = self._LLM()
+
+        async def _fake_fetch(*a, **k):  # the image pre-stage runs too; keep it offline
+            raise RuntimeError("no network in tests")
+
+        with patch("app.api.anki.fetch_card_media", _fake_fetch):
+            response = await _post_peer_sync()
+
+        assert response.status_code == 200
+        cached = db.get_cached_cloze_sentence("foran", "sl")
+        assert cached is not None, "the background cloze pre-stage did not store a sentence"
+        assert cached.sentence == "Bilen står foran huset, ikke bak det."
+        assert cached.status == "determined"
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    async def test_the_limit_setting_can_disable_it(self, fake_driver, tmp_path, monkeypatch):
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path / "media")
+        monkeypatch.setattr("app.config.settings.prestage_cloze_limit", 0)
+        db = app.state.srs_db
+        self._seed_closed_class(db)
+        app.state.llm = self._LLM()
+
+        async def _fake_fetch(*a, **k):
+            raise RuntimeError("no network in tests")
+
+        with patch("app.api.anki.fetch_card_media", _fake_fetch):
+            response = await _post_peer_sync()
+
+        assert response.status_code == 200
+        assert db.get_cached_cloze_sentence("foran", "sl") is None
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    async def test_no_llm_configured_prestages_nothing(self, fake_driver, tmp_path, monkeypatch):
+        """Unlike the image query, there is no useful fallback without a model."""
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path / "media")
+        db = app.state.srs_db
+        self._seed_closed_class(db)
+        app.state.llm = None
+
+        async def _fake_fetch(*a, **k):
+            raise RuntimeError("no network in tests")
+
+        with patch("app.api.anki.fetch_card_media", _fake_fetch):
+            response = await _post_peer_sync()
+
+        assert response.status_code == 200
+        assert db.get_cached_cloze_sentence("foran", "sl") is None

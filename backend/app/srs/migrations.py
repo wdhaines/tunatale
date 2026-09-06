@@ -18,7 +18,7 @@ from app.storage.db_backup import snapshot_before_migration
 
 _logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 44
+CURRENT_VERSION = 45
 
 
 class SchemaTooNewError(RuntimeError):
@@ -1337,6 +1337,44 @@ def migrate_v42_to_v43(conn: sqlite3.Connection) -> None:
     _set_version(conn, 43)
 
 
+def migrate_v44_to_v45(conn: sqlite3.Connection) -> None:
+    """LLM-written cloze sentences, cached per word (``cloze_sentence_cache``).
+
+    ``choose_cloze_sentence`` returns ``None`` when the note's own examples carry
+    no blankable form of the word, and its docstring has always named the
+    remedy — *"the word needs the LLM tier, which is not built"*. Those words get
+    no production card at all: they are closed-class, so there is no image path
+    either. This is where that tier's output lands (tunatale-keb0).
+
+    Written by ``prestage_cloze_sentences`` off the critical path, read by
+    ``_fallback_to_cloze`` at mint time. The pre-stage is why this is a table
+    rather than a call: the mint makes no network call, and an LLM round trip
+    inside the sync is the regression ``prestage_production_images`` exists to
+    prevent.
+
+    ``model_version`` is in the key, mirroring ``image_query_cache``: a model
+    change invalidates cleanly instead of serving sentences written by a model
+    whose prompt has since changed. ``status`` and ``competitors`` carry the
+    judge's verdict so a reader can see WHY a sentence was kept without paying
+    for the judgement again.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cloze_sentence_cache (
+            word           TEXT NOT NULL,
+            language_code  TEXT NOT NULL,
+            model_version  TEXT NOT NULL,
+            sentence       TEXT NOT NULL,
+            status         TEXT NOT NULL,
+            competitors    TEXT NOT NULL DEFAULT '',
+            updated_at     TEXT NOT NULL,
+            PRIMARY KEY (word, language_code, model_version)
+        )
+        """
+    )
+    _set_version(conn, 45)
+
+
 def migrate_v43_to_v44(conn: sqlite3.Connection) -> None:
     """Record that a word's image search came back empty (``image_unavailable_at``).
 
@@ -1411,6 +1449,7 @@ _MIGRATIONS = {
     41: migrate_v41_to_v42,
     42: migrate_v42_to_v43,
     43: migrate_v43_to_v44,
+    44: migrate_v44_to_v45,
 }
 
 

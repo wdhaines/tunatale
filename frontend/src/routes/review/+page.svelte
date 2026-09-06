@@ -122,6 +122,33 @@
 		}
 	}
 
+	// tunatale-keb0. A cloze front shows the blanked sentence and nothing else, so
+	// a blank several words fit marks a right answer wrong. This asks for a
+	// sentence where only the intended word fits.
+	//
+	// The reply carries `changed`, and a false one is reported rather than
+	// swallowed: the words that reach this control are mostly ones no short
+	// sentence fully determines, so "nothing better was found" is a normal
+	// outcome and silently doing nothing would read as a broken button.
+	async function regenerateCloze(itemId: number) {
+		try {
+			const result = await api.regenerateClozeSentence(itemId);
+			if (!result.changed) {
+				error = 'No better sentence found — keeping the current one.';
+				return;
+			}
+			error = '';
+			// Re-key the card as `rate` does, so it re-renders with the new
+			// sentence collapsed back to the prompt: the point is to re-read the
+			// blank, and leaving the old answer revealed under a new sentence
+			// would show two different sentences at once.
+			await refreshFromServer();
+			reviewed += 1;
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		}
+	}
+
 	async function rate(rating: 'again' | 'hard' | 'good' | 'easy', timeMs: number) {
 		const { item, direction } = current;
 		try {
@@ -232,6 +259,7 @@
 					item={current.item}
 					direction={current.direction}
 					onRate={rate}
+					onRegenerate={regenerateCloze}
 					pendingRating={current.item.pending_rating === 'skip' ? null : current.item.pending_rating}
 				/>
 			{/key}

@@ -7,11 +7,16 @@
 		item,
 		direction,
 		onRate,
-		pendingRating = null
+		pendingRating = null,
+		onRegenerate = null
 	}: {
 		item: SRSItemDetail;
 		direction: 'recognition' | 'production';
 		onRate: (rating: Rating, timeMs: number) => Promise<void>;
+		// Ask for a different cloze sentence (tunatale-keb0). Optional: the
+		// control only appears where a caller wires it, so DrillCard stays usable
+		// in contexts that cannot regenerate (the listen preview, review sessions).
+		onRegenerate?: ((itemId: number) => Promise<void>) | null;
 		// The listen preview's provisional grade for this card, if any. Only the
 		// four gradeable ratings are meaningful here — "skip" (or no suggestion)
 		// means nothing is highlighted.
@@ -22,6 +27,27 @@
 	// orden"), and the part of speech appended in parens ("fange (noun)") only
 	// when the backend flagged the surface as ambiguous. Empty article/pos
 	// collapse to the bare word, so non-gendered languages are unaffected.
+	// A cloze front shows the blanked sentence and NOTHING else — no gloss, no
+	// word class — so the learner can legitimately produce any word that fits.
+	// That is what makes an underdetermined blank unfair, and why this control
+	// exists on clozes only.
+	let regenerating = $state(false);
+	const canRegenerate = $derived(
+		item.card_type === 'cloze' && !!item.source_sentence && onRegenerate !== null
+	);
+
+	// No re-entry guard and no null check: `canRegenerate` is what renders the
+	// button at all, and `disabled` is what stops a second click while one is in
+	// flight. A guard here would restate both and could never run.
+	async function requestRegenerate() {
+		regenerating = true;
+		try {
+			await onRegenerate?.(item.id);
+		} finally {
+			regenerating = false;
+		}
+	}
+
 	const headword = $derived(`${item.article ? item.article + ' ' : ''}${item.text}`);
 	const posLabel = $derived(item.pos ? ` (${item.pos})` : '');
 
@@ -227,6 +253,16 @@
 					{/if}
 					{#if item.source_sentence_translation}
 						<p class="answer-text english">{item.source_sentence_translation}</p>
+					{/if}
+					{#if canRegenerate}
+						<button
+							class="regen-btn"
+							onclick={requestRegenerate}
+							disabled={regenerating}
+							title="Ask for a sentence where only this word fits"
+						>
+							{regenerating ? 'Rewriting…' : '↻ Try again'}
+						</button>
 					{/if}
 				{:else}
 					{#if item.audio_url}
@@ -450,6 +486,22 @@
 		padding-left: 1.2rem;
 		margin: 0.25rem 0;
 	}
+	.regen-btn {
+		margin-top: 0.75rem;
+		padding: 0.35rem 0.75rem;
+		font-size: 0.85rem;
+		border: 1px solid var(--border, #ccc);
+		border-radius: 0.375rem;
+		background: transparent;
+		color: inherit;
+		cursor: pointer;
+	}
+
+	.regen-btn:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+
 	:global(.cloze-answer) {
 		background: var(--color-highlight, #fff3cd);
 		padding: 0.1em 0.3em;
