@@ -116,11 +116,20 @@ class PreStageReport(NamedTuple):
     #: that draws 30 pictures and fetches 0 has done no network work at all, and
     #: folding the two together would hide that from the only line anyone reads.
     rendered_number: int = 0
-    #: Fetches that RAISED. Counted apart from ``no_image`` on purpose: that one
-    #: means "searched, nothing picturable" and drives ``mark_image_unavailable``,
-    #: which routes the word to a permanent cloze. A 429 or a timeout is not
-    #: evidence about the word, so it must never reach that marker.
+    #: Fetches that could not reach a verdict — raised, or returned a TRANSIENT
+    #: image_status (`rate_limited`/`api_error`/unset), or produced no result to
+    #: read. Counted apart from ``no_image`` on purpose: that one means "searched,
+    #: nothing picturable" and drives ``mark_image_unavailable``, which routes the
+    #: word to a permanent cloze. A 429 or a timeout is not about the word, so a
+    #: fetch in this bucket must never reach that marker — it stays at the head
+    #: and is retried next pass (tunatale-fwe5).
     failed: int = 0
+    #: The subset of ``failed`` whose reason came back as an image_status rather
+    #: than an exception — "could not search", as opposed to "searched, nothing
+    #: there" (which is ``no_image``) or "raised" (the difference between the two
+    #: is ``failed - transient``). The durable line would otherwise read a
+    #: rate-limit as if the word had been searched and found wanting.
+    transient: int = 0
     #: Up to MAX_FAILURE_REASONS distinct redacted reasons, so the durable line
     #: names the CAUSE and not merely the count. Empty on a clean pass.
     failures: tuple[str, ...] = ()
@@ -155,7 +164,7 @@ def _log_prestage_summary(report: PreStageReport) -> None:
         f"PRESTAGE_IMAGES fetched={report.fetched} drawn={report.rendered_number} "
         f"already={report.already_had_image} "
         f"function_word={report.skipped_function_word} no_image={report.no_image} "
-        f"failed={report.failed}"
+        f"transient={report.transient} failed={report.failed}"
     )
     # Only when there ARE failures: `failed=0` already says a pass was clean, and
     # a dangling empty field just invites the reader to wonder what it means.
@@ -201,6 +210,7 @@ async def prestage_production_images(
     failed = 0
     failure_reasons: list[str] = []
     drawn = 0
+    transient = 0
     wanted = []
     for cand in db.list_words_awaiting_production(limit=SCAN_LIMIT):
         if len(wanted) >= limit:
@@ -304,13 +314,33 @@ async def prestage_production_images(
             )
             continue
         media = result[1]
-        if media is None or media.image_bytes is None:
-            # Not an error, and this is the ONLY place the fact is discoverable:
-            # the mint no longer fetches, so without this marker it could not tell
-            # "cannot be pictured" (cloze it) from "not staged yet" (wait). Record
-            # it, and the next mint routes the word to a cloze.
-            db.mark_image_unavailable(cand.collocation_id)
-            missing += 1
+        if media is None:
+            # No result object at all — no bytes, and no image_status to say why.
+            # Not a settled verdict; the word stays at the head and is retried
+            # next pass rather than being stamped unpicturable with no evidence.
+            failed += 1
+            transient += 1
+            continue
+        if media.image_bytes is None:
+            if media.image_status in ("skipped", "no_results"):
+                # Not an error, and this is the ONLY place the fact is discoverable:
+                # the mint no longer fetches, so without this marker it could not tell
+                # "cannot be pictured" (cloze it) from "not staged yet" (wait). Record
+                # it, and the next mint routes the word to a cloze.
+                db.mark_image_unavailable(cand.collocation_id)
+                missing += 1
+                logger.warning(
+                    "PRESTAGE_IMAGES no image for %r: image_status=%s",
+                    unit.text,
+                    media.image_status,
+                )
+            else:
+                # `rate_limited`, `api_error`, or an unset status — nothing the
+                # searches could not find, but something that never RAN. The same
+                # treatment as a raised fetch above: counted, not marked. The word
+                # stays at the head and is retried next pass.
+                failed += 1
+                transient += 1
             continue
 
         # Hash-suffixed, matching promote_production_cards and replace_item_image
@@ -340,6 +370,7 @@ async def prestage_production_images(
         no_image=missing,
         rendered_number=drawn,
         failed=failed,
+        transient=transient,
         failures=tuple(failure_reasons[:MAX_FAILURE_REASONS]),
     )
     _log_prestage_summary(report)
