@@ -11,6 +11,7 @@ import type { components } from "./api-types";
 export type ListenPreviewCandidate = components["schemas"]["ListenPreviewCandidate"];
 export type ListenPreview = components["schemas"]["ListenPreviewResponse"];
 export type CommitPendingResponse = components["schemas"]["CommitPendingResponse"];
+export type RegenerateClozeResponse = components["schemas"]["RegenerateClozeResponse"];
 export type CreateReviewSessionResponse = components["schemas"]["CreateReviewSessionResponse"];
 
 // SSR fetches go straight to the backend (the browser uses the Vite proxy via
@@ -1156,6 +1157,16 @@ export class TunaTaleAPI {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids }),
     });
+  }
+
+  /** Regenerate a cloze's sentence so its blank has one right answer (tunatale-keb0).
+   *
+   * `changed: false` means nothing better was produced and the stored sentence
+   * was kept — the caller must not report success on that. The Anki note is
+   * rewritten by the next sync, not by this call.
+   */
+  async regenerateClozeSentence(id: number): Promise<RegenerateClozeResponse> {
+    return this.request(`/api/srs/items/${id}/cloze/regenerate`, { method: "POST" });
   }
 
   async resetSRSItem(id: number): Promise<SRSItemDetail> {

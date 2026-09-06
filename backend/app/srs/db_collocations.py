@@ -268,6 +268,37 @@ class DbCollocationsMixin:
         except sqlite3.IntegrityError as exc:
             raise ValueError(f"text already exists: {text!r}") from exc
 
+    def set_cloze_sentence(self, row_id: int, sentence: str) -> None:
+        """Replace a cloze collocation's sentence and flag it for the next sync.
+
+        The ``/review`` "try again" control (tunatale-keb0) regenerates a cloze
+        whose blank admitted more than one right answer. It stops here: the row
+        is written and marked dirty, and ``sync_push`` carries it into Anki via
+        ``OfflineWriter.update_cloze_text``. Nothing on a request path may open
+        the collection (``.claude/rules/anki-safety-core.md``).
+
+        ⚠️ The guid is deliberately NOT recomputed. Unlike the Anki note's guid,
+        which ``create_cloze_note`` derives from the cloze TEXT, a collocation's
+        guid is built from its ``text`` — the word — so the sentence is not part
+        of it. Recomputing would strand the row's ``anki_note_id`` link and the
+        ``base_collocation_id`` link to the word this cloze covers.
+
+        Dirty flags are merged, never replaced: a sentence rewrite must not
+        discard a translation edit still waiting to push.
+        """
+        with self._get_conn() as conn:
+            cur = conn.execute("SELECT dirty_fields FROM collocations WHERE id = ?", (row_id,)).fetchone()
+            if cur is None:
+                return
+            existing = {f for f in (cur["dirty_fields"] or "").split(",") if f}
+            merged = ",".join(sorted(existing | {"source_sentence"}))
+            conn.execute(
+                "UPDATE collocations SET source_sentence = ?, dirty_fields = ?, "
+                "updated_at = datetime('now') WHERE id = ?",
+                (sentence, merged, row_id),
+            )
+            self._commit(conn)
+
     def delete_collocation(self, row_id: int) -> None:
         with self._get_conn() as conn:
             row = conn.execute("SELECT text FROM collocations WHERE id = ?", (row_id,)).fetchone()

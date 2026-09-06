@@ -3177,6 +3177,38 @@
         "title": "RefreshMediaResponse",
         "type": "object"
       },
+      "RegenerateClozeResponse": {
+        "description": "Response of POST /api/srs/items/{item_id}/cloze/regenerate.\n\n``changed`` is false when nothing usable came back and the stored sentence\nwas left alone \u2014 the caller must not report success on that.\n\n``status`` and ``competitors`` are the judge's verdict on the sentence now\nstored: ``\"determined\"`` (nothing else fits), ``\"underdetermined\"`` (these\nother words do), or ``\"unknown\"`` (the model said nothing usable). A\nregenerate can legitimately land on an underdetermined sentence \u2014 the words\nthis feature exists for are the ones no sentence fully constrains \u2014 so the\ncompetitor list is what tells the learner whether to try again.",
+        "properties": {
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "competitors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Competitors",
+            "type": "array"
+          },
+          "sentence": {
+            "title": "Sentence",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "changed",
+          "sentence",
+          "status",
+          "competitors"
+        ],
+        "title": "RegenerateClozeResponse",
+        "type": "object"
+      },
       "RenderAudioRequest": {
         "properties": {
           "lesson_id": {
@@ -6764,6 +6796,49 @@
           }
         },
         "summary": "Patch Item",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/items/{item_id}/cloze/regenerate": {
+      "post": {
+        "description": "Rewrite a cloze's sentence so its blank has one right answer (tunatale-keb0).\n\nThe learner has just met a card whose blank several words fit \u2014 *har ___\nhentet boka?* takes every pronoun, because Norwegian verbs do not inflect\nfor person \u2014 and asked for another. A new sentence is generated, judged\nblind, and kept only if it beats what is stored.\n\n\u26a0\ufe0f Writes the TT row and STOPS. The Anki note is rewritten by the next\nsync's ``sync_push`` through ``OfflineWriter.update_cloze_text``; nothing on\na request path may open the collection\n(``.claude/rules/anki-safety-core.md``). The card keeps its scheduling and\nrevlog either way \u2014 that is why the sentence is rewritten in place rather\nthan the note re-minted.",
+        "operationId": "regenerate_cloze_api_srs_items__item_id__cloze_regenerate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegenerateClozeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Regenerate Cloze",
         "tags": [
           "srs"
         ]

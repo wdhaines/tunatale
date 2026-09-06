@@ -1616,6 +1616,29 @@ describe("TunaTaleAPI", () => {
       );
     });
 
+    it("regenerateClozeSentence calls POST /api/srs/items/:id/cloze/regenerate", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            changed: true,
+            sentence: "Kari ringte. {{c1::Han}} tar toget.",
+            status: "determined",
+            competitors: [],
+          }),
+        ),
+      );
+
+      const result = await api.regenerateClozeSentence(42);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/items/42/cloze/regenerate`,
+        expect.objectContaining({ method: "POST" }),
+      );
+      expect(result.changed).toBe(true);
+      expect(result.status).toBe("determined");
+    });
+
     it("suspendSRSItem calls POST /api/srs/items/:id/suspend with suspended flag", async () => {
       const item = {
         id: 7,

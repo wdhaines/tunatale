@@ -334,6 +334,26 @@ class StatusResponse(BaseModel):
     status: str
 
 
+class RegenerateClozeResponse(BaseModel):
+    """Response of POST /api/srs/items/{item_id}/cloze/regenerate.
+
+    ``changed`` is false when nothing usable came back and the stored sentence
+    was left alone — the caller must not report success on that.
+
+    ``status`` and ``competitors`` are the judge's verdict on the sentence now
+    stored: ``"determined"`` (nothing else fits), ``"underdetermined"`` (these
+    other words do), or ``"unknown"`` (the model said nothing usable). A
+    regenerate can legitimately land on an underdetermined sentence — the words
+    this feature exists for are the ones no sentence fully constrains — so the
+    competitor list is what tells the learner whether to try again.
+    """
+
+    changed: bool
+    sentence: str
+    status: str
+    competitors: list[str]
+
+
 class MarkLessonReviewedResponse(BaseModel):
     """Response of POST /api/srs/lesson/{lesson_id}/reviewed."""
 

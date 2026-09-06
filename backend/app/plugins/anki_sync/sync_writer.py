@@ -215,6 +215,81 @@ class OfflineWriter:
         self._conn.commit()
         return True
 
+    def update_cloze_text(self, note_id: int, cloze_text: str, *, language_code: str) -> bool:
+        """Rewrite a minted cloze's sentence in place. Returns whether anything was written.
+
+        The ``/review`` "try again" control regenerates a cloze whose blank the
+        learner found underdetermined (tunatale-keb0). Rewriting in place — not
+        graving and re-minting — is what keeps the card's ``due``, ``ivl`` and
+        revlog, which is the whole point: the history is worth more than the
+        sentence it was earned on.
+
+        ⚠️ **NOT expressible as ``update_note_fields({"Text": …})``.** That writes
+        ``flds``/``mod``/``usn`` only, and a cloze's ``Text`` is field 0, from
+        which ``create_cloze_note`` derives three more columns:
+
+        - ``sfld`` — the browser's sort column and Anki's duplicate-check input.
+          Left stale, the browser lists the note under a sentence it no longer
+          has.
+        - ``csum`` — the checksum OF ``sfld``. Stale together with it.
+        - ``guid`` — ``compute_guid(cloze_text, language_code, "")``. This is the
+          one with teeth: ``create_cloze_note`` looks a note up by that hash
+          before inserting, so a stale guid means a later cloze producing this
+          same sentence finds nothing and mints a SECOND note for text already
+          in the deck.
+
+        Rewriting ``notes.guid`` is inside the envelope, not a new liberty:
+        ``.claude/rules/anki-sync.md`` records that a guid rewrite "stays within
+        incremental-sync territory", and the retired ``backfill_guids`` migration
+        did exactly this to every note in a deck. Its AnkiWeb full-sync warning
+        was about rewriting thousands at once; one note carrying ``usn = -1``
+        pushes incrementally like any edited note.
+
+        Raises :class:`DuplicateNoteError` when the new text belongs to a
+        DIFFERENT note, leaving this one untouched — two notes sharing a guid is
+        the collision hazard ``warn_if_guid_collisions`` exists to catch, and
+        ``create_cloze_note`` refuses it on the insert path for the same reason.
+        """
+        import hashlib
+
+        row = self._conn.execute("SELECT flds, mid FROM notes WHERE id = ?", (note_id,)).fetchone()
+        if row is None:
+            # Same contract as `update_note_fields` (tunatale-7p4f): the note is
+            # absent from THIS collection — during peer-sync that is
+            # `tt_collection` — which is recoverable, but the caller must be able
+            # to tell so it does not clear a dirty flag for a write that never
+            # landed.
+            return False
+
+        new_guid = compute_guid(cloze_text, language_code, "")
+        clash = self._conn.execute("SELECT id FROM notes WHERE guid = ? AND id != ?", (new_guid, note_id)).fetchone()
+        if clash is not None:
+            raise DuplicateNoteError(clash[0])
+
+        field_names = self._field_names_for_mid(row["mid"])
+        parts = row["flds"].split("\x1f")
+        try:
+            text_idx = field_names.index("Text")
+        except ValueError:
+            raise ValueError(f"Note {note_id} has no 'Text' field — not a Cloze note") from None
+        parts[text_idx] = cloze_text
+
+        ts = int(_time.time())
+        self._conn.execute(
+            "UPDATE notes SET flds = ?, sfld = ?, csum = ?, guid = ?, mod = ?, usn = -1 WHERE id = ?",
+            (
+                "\x1f".join(parts),
+                cloze_text,
+                int(hashlib.sha1(cloze_text.encode()).hexdigest()[:8], 16),
+                new_guid,
+                ts,
+                note_id,
+            ),
+        )
+        self._bump_col(ts)
+        self._conn.commit()
+        return True
+
     def suspend(self, card_ids: list[int]) -> None:
         ts = int(_time.time())
         placeholders = ",".join("?" * len(card_ids))

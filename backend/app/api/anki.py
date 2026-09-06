@@ -56,6 +56,7 @@ async def trigger_peer_sync(request: Request, background_tasks: BackgroundTasks,
     """
     from fastapi.concurrency import run_in_threadpool
 
+    from app.cards.cloze_prestage import prestage_cloze_sentences
     from app.cards.media.prestage import prestage_production_images
     from app.config import settings
     from app.plugins.anki_sync.sync_orchestrator import PeerSyncError, peer_sync
@@ -89,6 +90,20 @@ async def trigger_peer_sync(request: Request, background_tasks: BackgroundTasks,
             media_fn,
             language_code=language_code or settings.target_language,
             limit=settings.prestage_images_limit,
+        )
+
+    # Same reason, different tier: a word whose own note carries no clozable
+    # example gets NO production card at all today (`unservable`), and it is
+    # closed-class so there is no image path either. The sentence is written
+    # here rather than at mint time because the mint makes no network call
+    # (tunatale-keb0).
+    if not dry_run and llm is not None and settings.prestage_cloze_limit > 0:
+        background_tasks.add_task(
+            prestage_cloze_sentences,
+            db,
+            llm,
+            language_code=language_code or settings.target_language,
+            limit=settings.prestage_cloze_limit,
         )
 
     return {

@@ -658,7 +658,7 @@ Three classes:
   rebuilds a table. **Not reversible: the pre-migration snapshot IS the
   rollback.**
 
-28 of the 44 are additive, 3 are backfills, and 13 are destructive.
+29 of the 45 are additive, 3 are backfills, and 13 are destructive.
 
 | From → to | Class | What it does |
 |---|---|---|
@@ -706,6 +706,7 @@ Three classes:
 | v41 → v42 | **Destructive** | Rebuilds `pending_listen_grades` to widen the UNIQUE key to `(lesson_id, collocation_id, direction)` |
 | v42 → v43 | Additive | `collocations.base_collocation_id` + index — links a base cloze to the word whose production it carries |
 | v43 → v44 | Additive | `collocations.image_unavailable_at` — the pre-stage's verdict that a word cannot be pictured, which the mint reads instead of fetching |
+| v44 → v45 | Additive | `cloze_sentence_cache` — LLM-written cloze sentences for the closed-class words whose own notes carry no clozable example, written off the critical path because the mint makes no network call |
 
 `test_pre_migration_backup.py::TestReversibilityIsDocumented` fails if a new
 migration lands without a row here, so the table cannot silently fall behind

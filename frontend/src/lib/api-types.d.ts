@@ -1304,6 +1304,38 @@ export interface paths {
     patch: operations["patch_item_api_srs_items__item_id__patch"];
     trace?: never;
   };
+  "/api/srs/items/{item_id}/cloze/regenerate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Regenerate Cloze
+     * @description Rewrite a cloze's sentence so its blank has one right answer (tunatale-keb0).
+     *
+     *     The learner has just met a card whose blank several words fit — *har ___
+     *     hentet boka?* takes every pronoun, because Norwegian verbs do not inflect
+     *     for person — and asked for another. A new sentence is generated, judged
+     *     blind, and kept only if it beats what is stored.
+     *
+     *     ⚠️ Writes the TT row and STOPS. The Anki note is rewritten by the next
+     *     sync's ``sync_push`` through ``OfflineWriter.update_cloze_text``; nothing on
+     *     a request path may open the collection
+     *     (``.claude/rules/anki-safety-core.md``). The card keeps its scheduling and
+     *     revlog either way — that is why the sentence is rewritten in place rather
+     *     than the note re-minted.
+     */
+    post: operations["regenerate_cloze_api_srs_items__item_id__cloze_regenerate_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/srs/items/{item_id}/direction/{direction}/feedback": {
     parameters: {
       query?: never;
@@ -3179,6 +3211,30 @@ export interface components {
       unchanged: number;
       /** Updated */
       updated: number;
+    };
+    /**
+     * RegenerateClozeResponse
+     * @description Response of POST /api/srs/items/{item_id}/cloze/regenerate.
+     *
+     *     ``changed`` is false when nothing usable came back and the stored sentence
+     *     was left alone — the caller must not report success on that.
+     *
+     *     ``status`` and ``competitors`` are the judge's verdict on the sentence now
+     *     stored: ``"determined"`` (nothing else fits), ``"underdetermined"`` (these
+     *     other words do), or ``"unknown"`` (the model said nothing usable). A
+     *     regenerate can legitimately land on an underdetermined sentence — the words
+     *     this feature exists for are the ones no sentence fully constrains — so the
+     *     competitor list is what tells the learner whether to try again.
+     */
+    RegenerateClozeResponse: {
+      /** Changed */
+      changed: boolean;
+      /** Competitors */
+      competitors: string[];
+      /** Sentence */
+      sentence: string;
+      /** Status */
+      status: string;
     };
     /** RenderAudioRequest */
     RenderAudioRequest: {
@@ -5432,6 +5488,37 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["SrsItemResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  regenerate_cloze_api_srs_items__item_id__cloze_regenerate_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        item_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RegenerateClozeResponse"];
         };
       };
       /** @description Validation Error */

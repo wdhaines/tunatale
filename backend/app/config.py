@@ -156,6 +156,13 @@ class Settings(BaseSettings):
     # not change how many cards are minted, which is a settled pedagogical pacing
     # decision (2026-08-15), not a performance one.
     prestage_images_limit: int = 20
+    #: Words per pass for `prestage_cloze_sentences` (tunatale-keb0). Lower than
+    #: the image limit because each candidate is TWO Groq calls (generate, then
+    #: judge) rather than one Groq call plus a Pixabay fetch, and because the
+    #: population it serves is small and fixed — the ~27 closed-class words whose
+    #: own notes carry no clozable example. It is a backlog to drain, not a
+    #: stream to keep up with.
+    prestage_cloze_limit: int = 10
     # Which TTS adapter renders audio: "azure" (official Azure Speech, the
     # default) or "edge" (the unofficial Edge Read Aloud endpoint, retained as an
     # explicit escape hatch and retired by tunatale-i69). The switch is a human

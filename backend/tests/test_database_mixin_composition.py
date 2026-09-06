@@ -85,4 +85,10 @@ def test_public_method_count_pinned() -> None:
     #  BY NAME by live route handlers in api/srs.py, so a grep for "is this used?"
     #  answered yes about a different symbol. Their three behaviour tests were
     #  consolidated onto get_due_items/get_new_items, not deleted.)
-    assert count == 131
+    # +get_cached_cloze_sentence, set_cached_cloze_sentence (the LLM tier
+    #  `cloze_source`'s docstring names: a sentence for the closed-class words
+    #  whose own notes carry no clozable example, written off the critical path
+    #  because the mint makes no network call)
+    # +set_cloze_sentence (the /review "try again" control writes the regenerated
+    #  sentence and flags it; the next sync carries it to Anki — tunatale-keb0)
+    assert count == 134

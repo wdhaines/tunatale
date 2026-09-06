@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
+
+import pytest
 
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -15,6 +18,7 @@ from app.plugins.anki_sync.sync import (
     _local_today_4am,
     build_cloze_back_extra,
 )
+from app.plugins.anki_sync.sync_common import DuplicateNoteError
 from app.srs.anki_mirror.rollover import anki_today
 from app.srs.database import SRSDatabase
 from tests._helpers.anki_sync_push import FakeReader, FakeWriter  # noqa: F401
@@ -912,7 +916,15 @@ class TestSyncPush:
         assert db.get_dirty_fields(guid) == ""
 
     def test_dirty_source_sentence_pushes_cloze_text_field(self):
-        """A cloze card with dirty source_sentence pushes its Text (front) field."""
+        """A cloze card with dirty source_sentence pushes its Text (front) field.
+
+        The trigger is unchanged; the ROUTING moved (tunatale-keb0). "Text" is
+        field 0 of a Cloze note, so it is also ``sfld`` and the source of
+        ``csum`` and the text-derived ``guid`` — none of which
+        ``update_note_fields`` writes. ``update_cloze_text`` moves all four
+        together; see ``TestUpdateClozeText`` for what each one costs when it
+        goes stale.
+        """
         db = _make_tt_db()
         unit = SyntacticUnit(
             text="koliko",
@@ -933,9 +945,9 @@ class TestSyncPush:
         writer = FakeWriter()
         AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
 
-        call = next(c for c in writer.calls if c[0] == "update_note_fields")
+        call = next(c for c in writer.calls if c[0] == "update_cloze_text")
         assert call[1] == 8802
-        assert call[2]["Text"] == "{{c1::Koliko}} časa imaš?"
+        assert call[2] == "{{c1::Koliko}} časa imaš?"
         assert db.get_dirty_fields(guid) == ""
 
     def test_dirty_cloze_sentence_translation_writes_back_extra(self):
@@ -4072,3 +4084,241 @@ class TestPushBranchCounters(TestSyncPushImage):
         assert report.write_noop == 1
         assert report.notes_pushed == 0
         assert report.no_fields == 0, "a field WAS built; the write is what did nothing"
+
+
+class TestUpdateClozeText:
+    """Rewriting a minted cloze's sentence in place (tunatale-keb0).
+
+    The "try again" control in ``/review`` regenerates a cloze whose blank the
+    learner found underdetermined. Rewriting the sentence is NOT a plain field
+    write, because ``create_cloze_note`` derives three things from the cloze
+    text — the note ``guid``, the sort field ``sfld``, and its checksum ``csum``
+    — and ``update_note_fields`` writes none of them.
+
+    Rewriting ``notes.guid`` is established practice here, not new ground:
+    ``.claude/rules/anki-sync.md`` records that a guid rewrite "stays within
+    incremental-sync territory", which is what the retired ``backfill_guids``
+    migration did to every note in the deck. This does it to one note at a time.
+    """
+
+    @staticmethod
+    def _cloze_conn():
+        conn = _make_anki_full_db()
+        conn.execute(
+            "CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)"
+        )
+        conn.execute("CREATE TABLE fields (ntid INTEGER, ord INTEGER, name TEXT, config BLOB, PRIMARY KEY (ntid, ord))")
+        conn.execute("INSERT INTO notetypes VALUES (100, 'Cloze', 0, 0, x'')")
+        conn.execute("INSERT INTO fields VALUES (100, 0, 'Text', x''), (100, 1, 'Back Extra', x'')")
+        _seed_note_and_cards(conn, mid=100, flds=("{{c1::han}} kommer i morgen", "<i>he</i>", "", "", "", "", ""))
+        conn.commit()
+        return conn
+
+    def test_writes_text_guid_sfld_and_csum_together(self):
+        """All four move as one, or the note is internally inconsistent."""
+        from app.common.guid import compute_guid
+
+        conn = self._cloze_conn()
+        writer = OfflineWriter(conn)
+        new_text = "Kari kommer i morgen. {{c1::Hun}} tar toget."
+
+        assert writer.update_cloze_text(9001, new_text, language_code="no") is True
+
+        row = conn.execute("SELECT flds, sfld, csum, guid, usn, mod FROM notes WHERE id=9001").fetchone()
+        parts = row["flds"].split("\x1f")
+        assert parts[0] == new_text
+        assert parts[1] == "<i>he</i>", "Back Extra must survive untouched"
+        assert row["sfld"] == new_text, "browser sort column would otherwise show the old sentence"
+        assert row["csum"] == int(hashlib.sha1(new_text.encode()).hexdigest()[:8], 16)
+        assert row["guid"] == compute_guid(new_text, "no", "")
+        assert row["usn"] == -1
+        assert row["mod"] > 100
+
+    def test_guid_stays_derivable_so_a_later_mint_finds_the_note(self):
+        """The duplicate guard in `create_cloze_note` must still match.
+
+        It looks the note up by ``compute_guid(cloze_text, …)``. Leave the guid
+        stale and a later cloze that produces this same sentence computes a guid
+        nothing matches, and mints a SECOND note for text already in the deck.
+        """
+        from app.common.guid import compute_guid
+
+        conn = self._cloze_conn()
+        writer = OfflineWriter(conn)
+        new_text = "Kari kommer i morgen. {{c1::Hun}} tar toget."
+        writer.update_cloze_text(9001, new_text, language_code="no")
+
+        found = conn.execute("SELECT id FROM notes WHERE guid = ?", (compute_guid(new_text, "no", ""),)).fetchone()
+        assert found is not None and found["id"] == 9001
+
+    def test_scheduling_and_review_history_are_untouched(self):
+        """The whole reason for rewriting in place rather than re-minting."""
+        conn = self._cloze_conn()
+        before = [
+            dict(r)
+            for r in conn.execute("SELECT id, nid, due, ivl, queue, type, reps, lapses, factor FROM cards ORDER BY id")
+        ]
+        writer = OfflineWriter(conn)
+        writer.update_cloze_text(9001, "Noe helt annet med {{c1::hun}} i.", language_code="no")
+        after = [
+            dict(r)
+            for r in conn.execute("SELECT id, nid, due, ivl, queue, type, reps, lapses, factor FROM cards ORDER BY id")
+        ]
+        assert before == after
+
+    def test_bumps_col_mod_but_never_col_usn(self):
+        """anki-safety-core: bump `col.mod` after a write, NEVER set `col.usn = -1`."""
+        conn = self._cloze_conn()
+        conn.execute("UPDATE col SET usn = 7, mod = 100")
+        conn.commit()
+        writer = OfflineWriter(conn)
+        writer.update_cloze_text(9001, "Noe med {{c1::hun}} i.", language_code="no")
+        col = conn.execute("SELECT usn, mod FROM col").fetchone()
+        assert col["usn"] == 7, "the sync anchor must survive (Layer 61)"
+        assert col["mod"] > 100
+
+    def test_absent_note_returns_false_and_writes_nothing(self):
+        """Same contract as `update_note_fields` (tunatale-7p4f): the caller must be able to tell.
+
+        During peer-sync the collection being written is `tt_collection`, and a
+        note the user deleted there is recoverable state, not an error — but a
+        silent success would let the caller clear the dirty flag for a write that
+        never happened.
+        """
+        conn = self._cloze_conn()
+        writer = OfflineWriter(conn)
+        assert writer.update_cloze_text(999_999, "whatever {{c1::hun}}", language_code="no") is False
+        row = conn.execute("SELECT flds FROM notes WHERE id=9001").fetchone()
+        assert row["flds"].split("\x1f")[0] == "{{c1::han}} kommer i morgen"
+
+    def test_refuses_text_that_would_collide_with_another_note(self):
+        """Two notes sharing a guid is the GUID-collision hazard (Layer 33/35).
+
+        `create_cloze_note` raises `DuplicateNoteError` rather than insert one;
+        a rewrite has the same duty and must leave the note as it found it.
+        """
+        from app.common.guid import compute_guid
+
+        conn = self._cloze_conn()
+        other = "{{c1::hun}} er her"
+        conn.execute(
+            "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+            "VALUES (9002, ?, 100, 100, 0, '', ?, ?, 0, 0, '')",
+            (compute_guid(other, "no", ""), f"{other}\x1f", other),
+        )
+        conn.commit()
+        writer = OfflineWriter(conn)
+
+        with pytest.raises(DuplicateNoteError):
+            writer.update_cloze_text(9001, other, language_code="no")
+
+        row = conn.execute("SELECT flds FROM notes WHERE id=9001").fetchone()
+        assert row["flds"].split("\x1f")[0] == "{{c1::han}} kommer i morgen"
+
+    def test_rewriting_a_note_to_its_own_text_is_a_noop_not_a_collision(self):
+        """Idempotency: the note's own guid must not read as somebody else's."""
+        conn = self._cloze_conn()
+        writer = OfflineWriter(conn)
+        same = "{{c1::han}} kommer i morgen"
+        assert writer.update_cloze_text(9001, same, language_code="no") is True
+
+
+class TestClozeSentenceRewritePush:
+    """A regenerated cloze sentence reaches Anki through `update_cloze_text` (tunatale-keb0).
+
+    The push path already built a ``Text`` field when ``source_sentence`` went
+    dirty, but sent it through ``update_note_fields`` — which writes ``flds``
+    and nothing else. For a cloze that is the sort field, so ``sfld``, ``csum``
+    and the text-derived ``guid`` were all left describing the previous
+    sentence. The routing, not the trigger, is what changes here.
+    """
+
+    @staticmethod
+    def _seed(db, *, sentence="{{c1::han}} kommer i morgen", dirty="source_sentence"):
+        unit = SyntacticUnit(
+            text="han",
+            translation="he",
+            word_count=1,
+            difficulty=1,
+            source="anki",
+            lemma="han",
+            card_type="cloze",
+            source_sentence=sentence,
+            source_sentence_translation="he is coming tomorrow",
+        )
+        db.add_collocation(unit, language_code="sl")
+        item = db.get_collocation_by_lemma("han")
+        db.set_anki_ids(item.guid, 7777, {Direction.PRODUCTION: 70001})
+        db.set_dirty_fields(item.guid, dirty)
+        return item.guid
+
+    def test_dirty_source_sentence_routes_to_update_cloze_text(self):
+        db = _make_tt_db()
+        self._seed(db, sentence="Kari kommer. {{c1::Hun}} tar toget.")
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert "update_cloze_text" in writer.action_names()
+        call = next(c for c in writer.calls if c[0] == "update_cloze_text")
+        assert call[1] == 7777
+        assert call[2] == "Kari kommer. {{c1::Hun}} tar toget."
+
+    def test_text_is_not_smuggled_through_update_note_fields(self):
+        """The defect this fixes: a plain field write leaves sfld/csum/guid stale."""
+        db = _make_tt_db()
+        self._seed(db)
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        for name, _note_id, payload in (c for c in writer.calls if c[0] == "update_note_fields"):
+            assert "Text" not in payload, f"{name} must not carry the cloze Text field"
+
+    def test_sentence_and_back_extra_both_land_when_both_are_dirty(self):
+        """Two writes, both required — neither may swallow the other."""
+        db = _make_tt_db()
+        self._seed(db, dirty="source_sentence,sentence_translation")
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        names = writer.action_names()
+        assert "update_cloze_text" in names
+        call = next(c for c in writer.calls if c[0] == "update_note_fields")
+        assert "Back Extra" in call[2]
+
+    def test_dirty_flag_survives_a_guid_collision(self):
+        """A refused rewrite must not read as a completed push.
+
+        Same discipline as the `write_noop` branch (tunatale-7p4f): clearing the
+        flag here would silently destroy the regenerated sentence.
+        """
+        db = _make_tt_db()
+        guid = self._seed(db)
+        writer = FakeWriter()
+        writer.cloze_text_raises = DuplicateNoteError(4242)
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert db.get_dirty_fields(guid) == "source_sentence"
+
+    def test_absent_note_keeps_the_flag_for_a_later_sync(self):
+        db = _make_tt_db()
+        guid = self._seed(db)
+        writer = FakeWriter()
+        writer.cloze_text_exists = False
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert db.get_dirty_fields(guid) == "source_sentence"
+
+
+class TestUpdateClozeTextOnANonClozeNote:
+    def test_a_note_without_a_text_field_raises(self):
+        """Guard against pointing the cloze rewrite at a vocab note.
+
+        `update_note_fields` raises ValueError for an unknown field name; this
+        keeps that contract rather than silently writing field 0 of whatever
+        notetype it was handed — which for a vocab note is the L2 word.
+        """
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn)
+        writer = OfflineWriter(conn)
+        with pytest.raises(ValueError, match="no 'Text' field"):
+            writer.update_cloze_text(9001, "{{c1::han}} kommer", language_code="no")

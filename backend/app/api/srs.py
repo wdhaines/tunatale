@@ -40,6 +40,7 @@ from app.api.models import (
     MarkLessonReviewedResponse,
     NewCollocationsResponse,
     QueueStatsResponse,
+    RegenerateClozeResponse,
     ReviewQueueResponse,
     SetStateRequest,
     SrsItemResponse,
@@ -57,13 +58,16 @@ from app.audio.cloze_tts import synthesize_cloze_audios
 from app.common.guid import compute_guid
 from app.config import settings
 from app.languages import (
+    card_surface_variants,
     format_vocab_headword,
     get_gender_article,
+    get_language,
     get_lemma_plausible,
     get_tts_voice,
     get_wordfreq_lang,
     known_language_codes,
 )
+from app.llm.cloze_quality import ClozeVerdict, generate_cloze_sentence, judge_cloze
 from app.llm.translate import generate_word_gloss, translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -2185,6 +2189,104 @@ async def translate(body: TranslateRequest, request: Request):
         raise HTTPException(status_code=503, detail="LLM not configured")
     translation = await translate_term(llm, body.text, body.language_code)
     return {"translation": translation}
+
+
+@router.post("/items/{item_id}/cloze/regenerate", status_code=200, response_model=RegenerateClozeResponse)
+async def regenerate_cloze(item_id: int, request: Request):
+    """Rewrite a cloze's sentence so its blank has one right answer (tunatale-keb0).
+
+    The learner has just met a card whose blank several words fit — *har ___
+    hentet boka?* takes every pronoun, because Norwegian verbs do not inflect
+    for person — and asked for another. A new sentence is generated, judged
+    blind, and kept only if it beats what is stored.
+
+    ⚠️ Writes the TT row and STOPS. The Anki note is rewritten by the next
+    sync's ``sync_push`` through ``OfflineWriter.update_cloze_text``; nothing on
+    a request path may open the collection
+    (``.claude/rules/anki-safety-core.md``). The card keeps its scheduling and
+    revlog either way — that is why the sentence is rewritten in place rather
+    than the note re-minted.
+    """
+    db = request.state.srs_db
+    found = db.get_collocation_by_id(item_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    row_id, item, language_code = found
+    unit = item.syntactic_unit
+    if unit.card_type != "cloze":
+        raise HTTPException(status_code=409, detail="Not a cloze card")
+
+    llm = getattr(request.app.state, "llm", None)
+    if llm is None:
+        raise HTTPException(status_code=503, detail="LLM not configured")
+
+    language = get_language(language_code)
+    variants = card_surface_variants(language_code, unit.text)
+
+    async def _verdict(sentence: str):
+        return await judge_cloze(
+            llm, sentence=sentence, surface=unit.text, language=language.name, also_accept=variants
+        )
+
+    current = await _verdict(unit.source_sentence or "")
+
+    # Two attempts, not one and not a loop. The generator is sampled at a
+    # non-zero temperature so a second draw is a genuinely different sentence,
+    # but the words that reach this endpoint are mostly ones NO short sentence
+    # fully determines, so retrying until "determined" would spin on the common
+    # case while the learner waits.
+    best_sentence: str | None = None
+    best: ClozeVerdict | None = None
+    for _attempt in range(2):
+        candidate = await generate_cloze_sentence(
+            llm, word=unit.text, gloss=unit.translation, pos=unit.grammar or "", language=language.name
+        )
+        if candidate is None:
+            continue
+        verdict = await _verdict(candidate)
+        if best is None or _is_better(verdict, best):
+            best_sentence, best = candidate, verdict
+        if verdict.status == "determined":
+            break
+
+    # Keep what is stored unless the replacement is actually better. A generated
+    # sentence that is no improvement is churn: it costs the learner a card they
+    # have partly learned and buys nothing.
+    if best_sentence is None or best is None or not _is_better(best, current):
+        return {
+            "changed": False,
+            "sentence": unit.source_sentence or "",
+            "status": current.status,
+            "competitors": list(current.competitors),
+        }
+
+    stored = make_cloze_text(unit.text, best_sentence)
+    db.set_cloze_sentence(row_id, stored)
+    return {
+        "changed": True,
+        "sentence": stored,
+        "status": best.status,
+        "competitors": list(best.competitors),
+    }
+
+
+#: Fewer words that also fit is better, and a real verdict beats "unknown" —
+#: which means the model said nothing usable, not that the sentence is fine.
+_VERDICT_RANK = {"determined": 0, "underdetermined": 1, "unknown": 2}
+
+
+def _is_better(candidate: ClozeVerdict, incumbent: ClozeVerdict) -> bool:
+    """Is *candidate* a strictly better cloze sentence than *incumbent*?
+
+    Ranked by verdict first, then by how many other words fit. The tie-break
+    matters because most words here never reach "determined": going from ten
+    competitors to one is the real improvement the learner feels, and a rule
+    that only counted "determined" would report failure on it and keep the worse
+    sentence.
+    """
+    cand = (_VERDICT_RANK[candidate.status], len(candidate.competitors))
+    inc = (_VERDICT_RANK[incumbent.status], len(incumbent.competitors))
+    return cand < inc
 
 
 @router.post("/translate-missing", status_code=200, response_model=TranslateMissingResponse)
