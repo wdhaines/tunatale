@@ -1143,6 +1143,79 @@ class TestWordsAwaitingProduction:
         assert (cand.collocation_id, cand.anki_note_id) == (coll_id, 1000)
         assert cand.item.syntactic_unit.text == "hus"
 
+    # ── the cloze exclusion is STATE-AWARE (tunatale-fwe5) ────────────────────
+
+    def _cloze_for(self, db: SRSDatabase, base_id: int, *, state: SRSState) -> int:
+        """Give the word a cloze whose production direction is in *state*."""
+        db.add_collocation(
+            SyntacticUnit(
+                text="hus",
+                translation="",
+                word_count=1,
+                difficulty=1,
+                source="anki",
+                lemma="hus",
+                disambig_key="cloze:hus",
+                card_type="cloze",
+                source_sentence="Jeg ser {{c1::hus}}",
+            ),
+            language_code=LANG,
+        )
+        cloze_id = _cloze_id(db, "hus")
+        db.set_base_collocation_id(cloze_id, base_id)
+        db.set_state_by_id(cloze_id, state, Direction.PRODUCTION)
+        # Assert the seeding actually took. Without this, a helper that silently
+        # failed to set the state would make the freeing test red for the wrong
+        # reason and the fix would be written against a phantom.
+        actual = db.get_collocation_by_id(cloze_id)[1].directions[Direction.PRODUCTION].state
+        assert actual is state, f"seeding failed: cloze production state is {actual}, wanted {state}"
+        return cloze_id
+
+    def test_a_live_cloze_still_excludes_the_word(self, srs_db) -> None:
+        """The pre-existing invariant, and the one a state-aware rule could break.
+
+        A word served by a working cloze must NOT come back for an image mint —
+        that would give it two production cards. This is the false-positive
+        direction and it matters more than the freeing case: a wrong exclusion
+        costs one image, a wrong INCLUSION double-mints every clozed word in the
+        deck.
+        """
+        base_id = self._seed(srs_db, word="hus")
+        self._cloze_for(srs_db, base_id, state=SRSState.REVIEW)
+        assert srs_db.list_words_awaiting_production(limit=10) == []
+        assert srs_db.count_words_awaiting_production() == 0
+
+    def test_a_suspended_cloze_frees_the_word_for_an_image_mint(self, srs_db) -> None:
+        """tunatale-fwe5: suspend is how a cloze is retired without losing history.
+
+        The user's repair policy is "mint the new card, suspend the old cloze,
+        never grave" — suspend keeps the Anki card row and its whole revlog. But
+        suspending the ANKI card does not delete the TT cloze COLLOCATION, so a
+        state-blind exclusion left the word permanently out of the production
+        queue and the policy could not work in either order.
+
+        Measured on the live deck: `dag`, `tid` and `vise` sat outside the queue
+        for exactly this reason, while ranking 19th of 748 in deck order the
+        moment the clause was made state-aware.
+        """
+        base_id = self._seed(srs_db, word="hus")
+        self._cloze_for(srs_db, base_id, state=SRSState.SUSPENDED)
+        (cand,) = srs_db.list_words_awaiting_production(limit=10)
+        assert cand.collocation_id == base_id
+        assert srs_db.count_words_awaiting_production() == 1
+
+    def test_a_buried_cloze_does_NOT_free_the_word(self, srs_db) -> None:
+        """Buried is until tomorrow; suspended is until a human says otherwise.
+
+        Only the deliberate act frees the word. Treating BURIED as retirement
+        would mint an image card for every clozed word the sibling-burier
+        touched, silently and in bulk — the exact shape the false-positive test
+        above guards, arriving on a timer instead of by hand.
+        """
+        base_id = self._seed(srs_db, word="hus")
+        self._cloze_for(srs_db, base_id, state=SRSState.BURIED)
+        assert srs_db.list_words_awaiting_production(limit=10) == []
+
 
 class TestClozeMaterial:
     """``OfflineReader.get_cloze_material`` — the fallback's inputs, by profile."""

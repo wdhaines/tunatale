@@ -76,6 +76,29 @@ _AWAITING_PRODUCTION_WHERE = """
       AND NOT EXISTS (
         SELECT 1 FROM collocations z
         WHERE z.card_type = 'cloze' AND z.base_collocation_id = c.id
+          -- STATE-AWARE (tunatale-fwe5). A cloze only silences the word while it
+          -- is actually serving it. Suspending a cloze is how one is retired
+          -- WITHOUT losing its review history (a grave would discard the revlog),
+          -- and a state-blind exclusion made that impossible: suspending the Anki
+          -- card does not delete this TT collocation row, so the word stayed out
+          -- of the production queue forever and "mint the new card, suspend the
+          -- old cloze" could not work in either order.
+          --
+          -- SUSPENDED only, never BURIED: buried is until tomorrow, suspended is
+          -- until a human says otherwise. Treating a burial as retirement would
+          -- mint an image card for every clozed word the sibling-burier touched,
+          -- silently and in bulk.
+          --
+          -- Written as "no suspended production direction" rather than "state !=
+          -- suspended" so a cloze with NO production direction at all still
+          -- excludes. That row is malformed rather than retired, and the
+          -- conservative reading costs one image while the other double-mints.
+          AND NOT EXISTS (
+            SELECT 1 FROM collocation_directions zp
+            WHERE zp.collocation_id = z.id
+              AND zp.direction = 'production'
+              AND zp.state = 'suspended'
+          )
       )
 """
 
