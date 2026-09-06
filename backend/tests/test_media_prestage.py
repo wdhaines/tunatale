@@ -53,6 +53,7 @@ class _Media:
 
     image_bytes: bytes | None = b"\x89PNG-pretend"
     image_ext: str | None = "png"
+    image_status: str | None = None
 
 
 class _MediaFn:
@@ -178,7 +179,7 @@ class TestPreStaging:
 
     async def test_an_empty_image_search_stores_nothing_and_does_not_raise(self, db) -> None:
         coll_id = _add_word(db, "beslutning", "decision", note_id=1000, card_id=10000)
-        media_fn = _MediaFn(_Media(image_bytes=None))
+        media_fn = _MediaFn(_Media(image_bytes=None, image_status="no_results"))
 
         report = await prestage_production_images(db, media_fn, language_code=LANG, limit=10)
 
@@ -186,12 +187,21 @@ class TestPreStaging:
         assert db.get_image_filename(coll_id) is None
 
     async def test_a_media_fn_returning_none_is_tolerated(self, db) -> None:
-        """The pipeline can return None outright; a background job must not crash on it."""
-        _add_word(db, "beslutning", "decision", note_id=1000, card_id=10000)
+        """The pipeline can return None outright; a background job must not crash on it.
+
+        A bare None carries no image_status, so it is no verdict at all — retried
+        next pass (counted as a transient), never stamped unpicturable without
+        evidence.
+        """
+        coll_id = _add_word(db, "beslutning", "decision", note_id=1000, card_id=10000)
 
         report = await prestage_production_images(db, _MediaFn(None), language_code=LANG, limit=10)
 
-        assert (report.fetched, report.no_image) == (0, 1)
+        assert (report.fetched, report.no_image) == (0, 0)
+        assert report.failed == 1
+        assert report.transient == 1
+        assert db.get_image_filename(coll_id) is None
+        assert db.is_image_unavailable(coll_id) is False
 
     async def test_the_limit_bounds_the_number_of_live_fetches(self, db) -> None:
         for i in range(5):
@@ -335,7 +345,9 @@ class TestUnpicturableWords:
     async def test_an_empty_image_search_is_recorded_for_the_mint(self, db) -> None:
         coll_id = _add_word(db, "foranledning", "occasion", note_id=1000, card_id=10000)
 
-        report = await prestage_production_images(db, _MediaFn(_Media(image_bytes=None)), language_code=LANG, limit=10)
+        report = await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=None, image_status="no_results")), language_code=LANG, limit=10
+        )
 
         assert report.no_image == 1
         assert db.is_image_unavailable(coll_id), "the mint cannot cloze this word without the marker"
@@ -348,13 +360,131 @@ class TestUnpicturableWords:
         would starve the words that do.
         """
         _add_word(db, "foranledning", "occasion", note_id=1000, card_id=10000)
-        await prestage_production_images(db, _MediaFn(_Media(image_bytes=None)), language_code=LANG, limit=10)
+        await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=None, image_status="no_results")), language_code=LANG, limit=10
+        )
 
         again = _MediaFn()
         report = await prestage_production_images(db, again, language_code=LANG, limit=10)
 
         assert again.calls == [], "a word already known to be unpicturable cost another live fetch"
         assert report.fetched == 0
+
+
+class TestImageStatusSplitsTransientFromSettled:
+    """tunatale-fwe5 — a transient fetch failure must not stamp a permanent verdict.
+
+    ``mark_image_unavailable`` has no clearing path anywhere in the tree; once set,
+    ``promote_production_cards`` routes the word to a permanent cloze. So the only
+    statuses allowed to reach the marker are evidence ABOUT THE WORD: ``no_results``
+    (searched, nothing usable) and ``skipped`` (the explicit abstract-word
+    sentinel). ``rate_limited`` and ``api_error`` say "could not search" — nothing
+    about the word — so they get the same treatment as a raised fetch: counted,
+    not marked, retried next pass. An unset status with no bytes is the same
+    default: a wrong "mark" is permanent, while a wrong retry costs one more search.
+    """
+
+    async def test_rate_limited_does_not_mark_and_is_retried(self, db) -> None:
+        coll_id = _add_word(db, "beslutning", "decision", note_id=1000, card_id=10000)
+
+        report = await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=None, image_status="rate_limited")), language_code=LANG, limit=10
+        )
+
+        assert report.failed == 1
+        assert report.transient == 1
+        assert report.no_image == 0
+        assert db.is_image_unavailable(coll_id) is False
+
+    async def test_api_error_does_not_mark_and_is_retried(self, db) -> None:
+        coll_id = _add_word(db, "beslutning", "decision", note_id=1000, card_id=10000)
+
+        report = await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=None, image_status="api_error")), language_code=LANG, limit=10
+        )
+
+        assert report.failed == 1
+        assert report.transient == 1
+        assert report.no_image == 0
+        assert db.is_image_unavailable(coll_id) is False
+
+    async def test_no_results_marks_unavailable(self, db) -> None:
+        coll_id = _add_word(db, "foranledning", "occasion", note_id=1000, card_id=10000)
+
+        report = await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=None, image_status="no_results")), language_code=LANG, limit=10
+        )
+
+        assert report.no_image == 1
+        assert report.transient == 0
+        assert db.is_image_unavailable(coll_id) is True
+
+    async def test_skipped_marks_unavailable(self, db) -> None:
+        coll_id = _add_word(db, "foranledning", "occasion", note_id=1000, card_id=10000)
+
+        report = await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=None, image_status="skipped")), language_code=LANG, limit=10
+        )
+
+        assert report.no_image == 1
+        assert report.transient == 0
+        assert db.is_image_unavailable(coll_id) is True
+
+    async def test_ok_stores_and_marks_nothing(self, db, tmp_path) -> None:
+        coll_id = _add_word(db, "beslutning", "decision", note_id=1000, card_id=10000)
+
+        report = await prestage_production_images(
+            db,
+            _MediaFn(_Media(image_bytes=b"PNGBYTES", image_ext="png", image_status="ok")),
+            language_code=LANG,
+            limit=10,
+        )
+
+        assert report.fetched == 1
+        assert report.no_image == 0
+        assert (tmp_path / "media" / db.get_image_filename(coll_id)).read_bytes() == b"PNGBYTES"
+        assert db.is_image_unavailable(coll_id) is False
+
+    async def test_missing_status_with_no_bytes_is_not_marked(self, db) -> None:
+        """The safe default: an unset status is not a verdict about the word."""
+        coll_id = _add_word(db, "beslutning", "decision", note_id=1000, card_id=10000)
+
+        report = await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=None, image_status=None)), language_code=LANG, limit=10
+        )
+
+        assert report.no_image == 0
+        assert report.transient == 1
+        assert db.is_image_unavailable(coll_id) is False
+
+    async def test_the_summary_line_counts_transient_fetches(self, db, caplog) -> None:
+        """A reader must be able to tell "searched, nothing there" from "could not
+        search"; `no_image` keeps meaning the settled verdict and never counts these."""
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=10000)
+
+        with caplog.at_level("WARNING"):
+            await prestage_production_images(
+                db, _MediaFn(_Media(image_bytes=None, image_status="api_error")), language_code=LANG, limit=10
+            )
+
+        assert "PRESTAGE_IMAGES fetched=0" in caplog.text
+        assert "no_image=0" in caplog.text
+        assert "transient=1" in caplog.text
+
+    async def test_marking_unavailable_names_the_word_and_the_status(self, db, caplog) -> None:
+        """The mark moment must be findable by grep; before this change the word
+        and the reason appeared nowhere, and the defect had to be found with a
+        database query instead."""
+        _add_word(db, "foranledning", "occasion", note_id=1000, card_id=10000)
+
+        with caplog.at_level("WARNING"):
+            await prestage_production_images(
+                db, _MediaFn(_Media(image_bytes=None, image_status="no_results")), language_code=LANG, limit=10
+            )
+
+        assert "PRESTAGE_IMAGES" in caplog.text
+        assert "foranledning" in caplog.text
+        assert "no_results" in caplog.text
 
 
 class TestNumberWords:
