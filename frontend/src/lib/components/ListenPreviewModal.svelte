@@ -820,6 +820,21 @@
 		.modal {
 			padding: 1.25rem 0.75rem;
 		}
+		/* The "key phrase" tag does not fit next to the gloss at phone widths —
+		   it is the widest thing in `.sub` and it squeezes the gloss it sits
+		   beside. Dropped rather than shrunk: at 0.66rem it is already the
+		   smallest type in the modal, so there was nothing left to take.
+		   User's call, 2026-09-05 ("you can just hide it at that size").
+
+		   `display: none`, so it leaves the a11y tree too. That is a real
+		   (small) loss — the tag is the only thing on the row naming the
+		   candidate's kind — and the alternative, a visually-hidden variant
+		   kept for screen readers, is a different decision than the one asked
+		   for. Noted here so it is a choice on the record rather than an
+		   oversight to rediscover. */
+		.tag.kp {
+			display: none;
+		}
 	}
 	h2 {
 		margin: 0;

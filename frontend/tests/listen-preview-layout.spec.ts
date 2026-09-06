@@ -938,3 +938,64 @@ test("listen preview: revealing a short gloss does not grow the row", async ({ p
 		`row grew from ${before!.height} to ${after!.height} on reveal — a short gloss occupied one line already`,
 	).toBe(before!.height);
 });
+
+/**
+ * The "key phrase" tag does not fit on a phone, so it is dropped there.
+ *
+ * User, 2026-09-05: "the key phrase tag on the preview panel doesn't fit on
+ * mobile. You can just hide it at that size."
+ *
+ * This has to be a real-browser test: the tag is hidden by a media query, and
+ * jsdom performs no layout and evaluates no `@media`, so the vitest suite
+ * cannot see either half of this. A `textContent` assertion over there keeps
+ * passing whatever this CSS does — the same blind spot the top of this file
+ * was written for.
+ *
+ * ⚠️ A `kp` row is NOT produced by seeding a lesson whose story has a key
+ * phrase. `get_listen_preview` emits `kind: "kp"` only for a key phrase that
+ * ALREADY has a tracked collocation with a RECOGNITION direction; before that
+ * the same phrase arrives as a `create` row and carries no tag. Measured the
+ * hard way — the first cut of this test asserted on the tag straight after
+ * seeding and found zero of them, which looked like a broken selector and was
+ * a wrong premise about the fixture.
+ *
+ * Both directions are asserted deliberately. Hiding the tag at every width
+ * would also satisfy a phone-only test, and that is the likelier regression
+ * than the tag reappearing on mobile — the desktop case is what makes this a
+ * breakpoint rather than a deletion.
+ */
+test("listen preview: the key phrase tag is dropped on a phone and kept above it", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "backend not running");
+	const id = await curriculumId(request);
+
+	// Give "dober dan" a tracked card so the preview classifies it as `kp`
+	// rather than `create`. 409 means an earlier run already made it, which is
+	// fine — this file is serial and shares one seeded curriculum.
+	const created = await request.post(`${BACKEND}/api/srs/items`, {
+		data: { text: "dober dan", translation: "good day", language_code: "sl", word_count: 2 },
+	});
+	if (!created.ok() && created.status() !== 409)
+		throw new Error(`seeding the key phrase card failed: ${created.status()} ${await created.text()}`);
+
+	// 390 is PHONE, inside the modal's existing `@media (max-width: 430px)`.
+	await page.setViewportSize(PHONE);
+	let modal = await openPreview(page, id);
+	const kpPhone = modal.locator(".candidate .tag.kp").first();
+	// Present in the DOM, hidden by CSS. Asserting on ABSENCE would pass just as
+	// well if the fixture stopped producing a key-phrase row at all, which is
+	// exactly the vacuous-green this test would otherwise decay into.
+	await expect(kpPhone).toHaveCount(1);
+	await expect(kpPhone).toBeHidden();
+
+	// Above the breakpoint the tag carries information nothing else on the row
+	// does — which kind of candidate this is — so it must survive.
+	await page.setViewportSize({ width: 900, height: 844 });
+	modal = await openPreview(page, id);
+	const kpWide = modal.locator(".candidate .tag.kp").first();
+	await expect(kpWide).toHaveCount(1);
+	await expect(kpWide).toBeVisible();
+	await expect(kpWide).toHaveText(/key phrase/i);
+});
