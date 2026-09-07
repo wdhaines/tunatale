@@ -334,24 +334,75 @@ class StatusResponse(BaseModel):
     status: str
 
 
-class RegenerateClozeResponse(BaseModel):
-    """Response of POST /api/srs/items/{item_id}/cloze/regenerate.
+class ClozeSentenceVerdict(BaseModel):
+    """One cloze sentence and the blind judge's verdict on it (tunatale-keb0).
 
-    ``changed`` is false when nothing usable came back and the stored sentence
-    was left alone — the caller must not report success on that.
+    ``status`` is ``"determined"`` (nothing else fits the blank),
+    ``"underdetermined"`` (``competitors`` also fit), or ``"unknown"`` (the
+    model said nothing usable — which is not the same as "the sentence is
+    fine"). A cloze can legitimately be underdetermined: the words this feature
+    exists for are the ones no short sentence fully constrains, so the
+    competitor list, not the bare status, is what a reader judges by.
 
-    ``status`` and ``competitors`` are the judge's verdict on the sentence now
-    stored: ``"determined"`` (nothing else fits), ``"underdetermined"`` (these
-    other words do), or ``"unknown"`` (the model said nothing usable). A
-    regenerate can legitimately land on an underdetermined sentence — the words
-    this feature exists for are the ones no sentence fully constrains — so the
-    competitor list is what tells the learner whether to try again.
+    ``translation`` is the English for THIS sentence. It travels with the
+    sentence because the two are stored together and shown together on the card
+    back; a sentence carrying its predecessor's translation is the defect that
+    made the first version of this feature unsafe to confirm.
     """
 
-    changed: bool
     sentence: str
+    translation: str
     status: str
     competitors: list[str]
+
+
+class ProposeClozeResponse(BaseModel):
+    """Response of POST /api/srs/items/{item_id}/cloze/propose.
+
+    ⚠️ This endpoint WRITES NOTHING. It is one half of a confirm-before-write
+    pair: the caller shows ``current`` beside ``candidate`` and the human picks,
+    then ``PUT .../cloze/sentence`` stores the choice. The earlier one-shot
+    version wrote immediately and marked the row dirty, so a sync firing before
+    the learner could react had already rewritten the Anki note in place.
+
+    ``candidate`` is null when the generator produced nothing usable — a real
+    outcome on a rate-limited free tier, and one the caller must report rather
+    than render as an empty suggestion.
+
+    ``recommended`` is the machine's opinion only: true when the candidate has a
+    better verdict, or the same verdict with fewer competitors. It labels a
+    default; it does not gate the write. That is the point of the split.
+    """
+
+    current: ClozeSentenceVerdict
+    candidate: ClozeSentenceVerdict | None
+    recommended: bool
+
+
+class SetClozeSentenceRequest(BaseModel):
+    """Body of PUT /api/srs/items/{item_id}/cloze/sentence.
+
+    Either form is accepted: a sentence already carrying ``{{c1::...}}`` (what
+    ``propose`` returns) or a plain one (what a human types into the edit box).
+    ``make_cloze_text`` is idempotent, so the server wraps the second and passes
+    the first through. A sentence the word does not occur in is a 422 — it would
+    blank nothing, and Anki calls such a note an empty card.
+    """
+
+    sentence: str
+
+
+class SetClozeSentenceResponse(BaseModel):
+    """Response of PUT /api/srs/items/{item_id}/cloze/sentence.
+
+    ``sentence`` is what was actually stored (cloze-marked), which is not
+    necessarily what was sent. ``translation`` is the English the server
+    generated for it — empty when no LLM is configured or the call failed, which
+    is honest where keeping the previous sentence's translation was not.
+    """
+
+    sentence: str
+    translation: str
 
 
 class MarkLessonReviewedResponse(BaseModel):

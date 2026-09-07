@@ -131,6 +131,13 @@ def _settings_overrides(monkeypatch, tmp_path):
     monkeypatch.setattr("app.plugins.anki_sync.sync._MEDIA_DIR", tt_media)
     monkeypatch.setattr("app.api.srs._MEDIA_DIR", tt_media)
     monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tt_media)
+    # The fourth writer, and the one this list missed: cloze_tts.py's own comment
+    # flagged it ("conftest.py pins the other three by name and never pinned this
+    # one"). Three request paths now call synthesize_cloze_audios without an
+    # explicit media_dir — add-time clozes, inflection clozes, and the cloze
+    # sentence rewrite — so an unpinned default writes mp3s into the real
+    # backend/media during a test run.
+    monkeypatch.setattr("app.audio.cloze_tts._MEDIA_DIR", tt_media)
     # Model-name discovery caches to ~/.tunatale/anki_model_name.txt. Pin to tmp so
     # tests neither read a developer's real cache (masking failures — the file is
     # absent on CI) nor write the real one.

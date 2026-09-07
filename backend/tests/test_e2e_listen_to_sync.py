@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 
 import pytest
@@ -102,6 +103,30 @@ def _clean_app_state():
     for attr in ("srs_db", "content_store"):
         if hasattr(app.state, attr):
             delattr(app.state, attr)
+
+
+@pytest.fixture(autouse=True)
+def _seed_sentence_audio():
+    """Put the sentence mp3 this module's fixtures expect into the test media dir.
+
+    ``synthesize_cloze_audios`` skips synthesis when the file is already on disk,
+    so this stands in for a TTS render without stubbing one: the assertions below
+    are about the WIRING (row → Back Extra → ``[sound:]``), not about whether
+    Azure answered.
+
+    ⚠️ Not decoration. Until ``app.audio.cloze_tts._MEDIA_DIR`` was pinned in
+    conftest, this module's `[sound:tts_sentence_…]` assertion passed by reading
+    a real mp3 left in the developer's gitignored ``backend/media`` by some
+    earlier run — a green that no fresh checkout could reproduce. Deleting that
+    one file turned the test red on an unmodified tree; that control is what
+    found this.
+    """
+    import app.audio.cloze_tts as cloze_tts
+
+    for sentence in ("Kje je banka?",):
+        digest = hashlib.sha256(sentence.encode("utf-8")).hexdigest()[:16]
+        (cloze_tts._MEDIA_DIR / f"tts_sentence_{digest}.mp3").write_bytes(b"\xff\xfbfake")
+    yield
 
 
 class TestListenToSyncRoundTrip:

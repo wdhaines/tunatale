@@ -39,9 +39,11 @@ from app.api.models import (
     ListItemsResponse,
     MarkLessonReviewedResponse,
     NewCollocationsResponse,
+    ProposeClozeResponse,
     QueueStatsResponse,
-    RegenerateClozeResponse,
     ReviewQueueResponse,
+    SetClozeSentenceRequest,
+    SetClozeSentenceResponse,
     SetStateRequest,
     SrsItemResponse,
     SrsStatsResponse,
@@ -81,6 +83,7 @@ from app.srs.function_words import (
     make_cloze_text,
     make_morphology_cloze_text,
     normalize_sentence_key,
+    uncloze_text,
 )
 from app.srs.gloss_definiteness import align_gloss_definiteness
 from app.srs.gloss_verb_form import align_gloss_verb_form
@@ -2191,30 +2194,41 @@ async def translate(body: TranslateRequest, request: Request):
     return {"translation": translation}
 
 
-@router.post("/items/{item_id}/cloze/regenerate", status_code=200, response_model=RegenerateClozeResponse)
-async def regenerate_cloze(item_id: int, request: Request):
-    """Rewrite a cloze's sentence so its blank has one right answer (tunatale-keb0).
+async def _load_cloze(request: Request, item_id: int):
+    """Resolve a cloze item for both halves of the confirm-before-write pair.
 
-    The learner has just met a card whose blank several words fit — *har ___
-    hentet boka?* takes every pronoun, because Norwegian verbs do not inflect
-    for person — and asked for another. A new sentence is generated, judged
-    blind, and kept only if it beats what is stored.
-
-    ⚠️ Writes the TT row and STOPS. The Anki note is rewritten by the next
-    sync's ``sync_push`` through ``OfflineWriter.update_cloze_text``; nothing on
-    a request path may open the collection
-    (``.claude/rules/anki-safety-core.md``). The card keeps its scheduling and
-    revlog either way — that is why the sentence is rewritten in place rather
-    than the note re-minted.
+    404 for an unknown id, 409 for an item that is not a cloze — the control
+    that reaches these endpoints is only rendered on clozes, so a 409 means the
+    caller is out of date rather than the learner mistyping.
     """
     db = request.state.srs_db
     found = db.get_collocation_by_id(item_id)
     if found is None:
         raise HTTPException(status_code=404, detail="Item not found")
     row_id, item, language_code = found
-    unit = item.syntactic_unit
-    if unit.card_type != "cloze":
+    if item.syntactic_unit.card_type != "cloze":
         raise HTTPException(status_code=409, detail="Not a cloze card")
+    return db, row_id, item, language_code
+
+
+@router.post("/items/{item_id}/cloze/propose", status_code=200, response_model=ProposeClozeResponse)
+async def propose_cloze_sentence(item_id: int, request: Request):
+    """Offer a replacement cloze sentence for a human to accept (tunatale-keb0).
+
+    `choose_cloze_sentence` picked the first example containing the word and
+    never asked whether the blank had one right answer — *har ___ hentet boka?*
+    takes every pronoun, because Norwegian verbs do not inflect for person. This
+    generates another sentence, judges it blind, and hands both to the caller.
+
+    ⚠️ WRITES NOTHING, and that is the point. The first version of this control
+    persisted on the single click that produced it: the row was marked dirty
+    immediately, so a sync firing before the learner had read the new sentence
+    had already rewritten the Anki note in place — guid, `sfld` and `csum` with
+    it. There was nothing left to undo cheaply. The write now lives in
+    ``PUT .../cloze/sentence``, behind a human.
+    """
+    db, _row_id, item, language_code = await _load_cloze(request, item_id)
+    unit = item.syntactic_unit
 
     llm = getattr(request.app.state, "llm", None)
     if llm is None:
@@ -2223,18 +2237,28 @@ async def regenerate_cloze(item_id: int, request: Request):
     language = get_language(language_code)
     variants = card_surface_variants(language_code, unit.text)
 
-    async def _verdict(sentence: str):
+    async def _verdict(sentence: str) -> ClozeVerdict:
         return await judge_cloze(
             llm, sentence=sentence, surface=unit.text, language=language.name, also_accept=variants
         )
 
-    current = await _verdict(unit.source_sentence or "")
+    stored = unit.source_sentence or ""
+    current_verdict = await _verdict(stored)
+    current = {
+        "sentence": stored,
+        # The stored translation, NOT a fresh one: this pane shows what the card
+        # says today, so re-translating it here would hide the very mismatch a
+        # reader is being asked to judge.
+        "translation": unit.source_sentence_translation or "",
+        "status": current_verdict.status,
+        "competitors": list(current_verdict.competitors),
+    }
 
     # Two attempts, not one and not a loop. The generator is sampled at a
     # non-zero temperature so a second draw is a genuinely different sentence,
     # but the words that reach this endpoint are mostly ones NO short sentence
     # fully determines, so retrying until "determined" would spin on the common
-    # case while the learner waits.
+    # case while the learner waits. Pressing "Suggest another" is the loop.
     best_sentence: str | None = None
     best: ClozeVerdict | None = None
     for _attempt in range(2):
@@ -2249,25 +2273,87 @@ async def regenerate_cloze(item_id: int, request: Request):
         if verdict.status == "determined":
             break
 
-    # Keep what is stored unless the replacement is actually better. A generated
-    # sentence that is no improvement is churn: it costs the learner a card they
-    # have partly learned and buys nothing.
-    if best_sentence is None or best is None or not _is_better(best, current):
-        return {
-            "changed": False,
-            "sentence": unit.source_sentence or "",
-            "status": current.status,
-            "competitors": list(current.competitors),
-        }
+    if best_sentence is None or best is None:
+        return {"current": current, "candidate": None, "recommended": False}
 
-    stored = make_cloze_text(unit.text, best_sentence)
-    db.set_cloze_sentence(row_id, stored)
     return {
-        "changed": True,
-        "sentence": stored,
-        "status": best.status,
-        "competitors": list(best.competitors),
+        "current": current,
+        "candidate": {
+            "sentence": make_cloze_text(unit.text, best_sentence),
+            # Translated HERE and not at apply time, so the human confirms the
+            # English they were shown. `translate_term` is fail-soft (empty
+            # string on any error), and an empty translation is honest where the
+            # previous sentence's would be a lie.
+            "translation": await translate_term(llm, best_sentence, language.name),
+            "status": best.status,
+            "competitors": list(best.competitors),
+        },
+        "recommended": _is_better(best, current_verdict),
     }
+
+
+@router.put("/items/{item_id}/cloze/sentence", status_code=200, response_model=SetClozeSentenceResponse)
+async def set_cloze_sentence(item_id: int, body: SetClozeSentenceRequest, request: Request):
+    """Store a cloze sentence the human chose or typed (tunatale-keb0).
+
+    The write half of the confirm-before-write pair. Takes the sentence as given
+    — a proposal accepted verbatim, or one edited by hand — so a near-miss is
+    fixable without re-rolling the generator.
+
+    Three things move together, because a card whose parts describe different
+    sentences is worse than one with a bad sentence:
+
+    1. ``source_sentence`` — cloze-marked, via the idempotent ``make_cloze_text``.
+    2. ``sentence_translation`` — regenerated for the sentence being stored, or
+       ``""``. Never carried over: the stored English described the sentence
+       being replaced.
+    3. the ``audio_tts_sentence`` media row — the clip is named after
+       ``sha256(sentence)``, so after a rewrite it speaks the OLD sentence. It is
+       dropped and re-synthesized.
+
+    ⚠️ Writes the TT row and STOPS. The Anki note is rewritten by the next sync's
+    ``sync_push`` through ``OfflineWriter.update_cloze_text``; nothing on a
+    request path may open the collection
+    (``.claude/rules/anki-safety-core.md``). The card keeps its scheduling and
+    revlog either way — that is why the sentence is rewritten in place rather
+    than the note re-minted.
+    """
+    db, row_id, item, language_code = await _load_cloze(request, item_id)
+    unit = item.syntactic_unit
+
+    stored = make_cloze_text(unit.text, body.sentence.strip())
+    if not stored or "{{c1::" not in stored:
+        # A sentence the answer does not occur in blanks nothing: Anki would
+        # call the note an empty card, and the learner would be shown the
+        # answer as the question.
+        raise HTTPException(status_code=422, detail=f"{unit.text!r} does not occur in that sentence")
+
+    plain = uncloze_text(stored)
+    llm = getattr(request.app.state, "llm", None)
+    # No 503 when the LLM is missing: the sentence is the thing the human
+    # confirmed, and refusing to store it because the translator is down would
+    # discard their decision. `translate_term` already fails soft to "".
+    translation = await translate_term(llm, plain, get_language(language_code).name) if llm is not None else ""
+    db.set_cloze_sentence(row_id, stored, translation)
+
+    # Delete first, then synthesize. If TTS fails the card is left with no
+    # sentence audio — the state `backfill_cloze_tts` exists to repair, and the
+    # one the 3 skyv cards were already in. The alternative order would keep a
+    # clip that reads a different sentence aloud, which is a wrong answer spoken
+    # over the right one.
+    db.delete_all_media_for_kind(row_id, "audio_tts_sentence")
+    try:
+        await synthesize_cloze_audios(db, row_id, plain, unit.text, voice=get_tts_voice(language_code))
+    except Exception:
+        # Fail-OPEN, like `_persist_new_card`: a TTS outage must not undo a
+        # sentence the human accepted.
+        _logger.warning(
+            "CLOZE_REWRITE_NO_AUDIO text=%r cid=%d — TTS failed; sentence stored with no [sound:]",
+            unit.text,
+            row_id,
+        )
+
+    return {"sentence": stored, "translation": translation}
 
 
 #: Fewer words that also fit is better, and a real verdict beats "unknown" —
@@ -2281,8 +2367,11 @@ def _is_better(candidate: ClozeVerdict, incumbent: ClozeVerdict) -> bool:
     Ranked by verdict first, then by how many other words fit. The tie-break
     matters because most words here never reach "determined": going from ten
     competitors to one is the real improvement the learner feels, and a rule
-    that only counted "determined" would report failure on it and keep the worse
-    sentence.
+    that only counted "determined" would report failure on it.
+
+    Advisory since the confirm-before-write split: it decides which of two
+    drafts is offered and whether the offer is flagged "recommended". It no
+    longer decides what is stored — a human does.
     """
     cand = (_VERDICT_RANK[candidate.status], len(candidate.competitors))
     inc = (_VERDICT_RANK[incumbent.status], len(incumbent.competitors))

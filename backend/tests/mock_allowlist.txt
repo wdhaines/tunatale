@@ -12,6 +12,7 @@ app.*.settings.*
 app.plugins.anki_sync.sync._MEDIA_DIR
 app.api.srs._MEDIA_DIR
 app.cards.media.vocab_media._MEDIA_DIR
+app.audio.cloze_tts._MEDIA_DIR                   # the fourth writer of the same constant; cloze_tts.py's own comment flagged it as missed
 app.plugins.anki_sync.model_discovery._CACHE_PATH
 # Process/engine boundaries — heavy external subprocesses or lazy NLP model load
 app.cards.media.normalize._apply_normalization   # ffmpeg subprocess boundary (loudnorm apply pass)

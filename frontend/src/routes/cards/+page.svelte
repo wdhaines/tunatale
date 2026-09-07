@@ -4,6 +4,7 @@
 	import type { SRSItemDetail, SRSListParams, QueueStats } from '$lib/api';
 	import { syncStore } from '$lib/stores/sync.svelte';
 	import ImageEditModal from '$lib/components/ImageEditModal.svelte';
+	import ClozeSentenceModal from '$lib/components/ClozeSentenceModal.svelte';
 	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
 
 	const PAGE_SIZE = 50;
@@ -26,6 +27,11 @@
 	let syncStatus = $state<string | null>(null);
 	let openMenuId = $state<number | null>(null);
 	let imageEditItem = $state<SRSItemDetail | null>(null);
+	// Rewriting a cloze's sentence lives HERE, not on the drill card's answer
+	// side (tunatale-keb0). It is card maintenance: it changes what the card
+	// asks for good, and it belongs beside the other maintenance actions rather
+	// than one stray click away from a grade button.
+	let clozeEditItem = $state<SRSItemDetail | null>(null);
 	// Row to highlight + scroll to, from a /cards?focus=<id> deep-link (the
 	// "Card details" link on the Review screen). null when not deep-linked.
 	let focusId = $state<number | null>(null);
@@ -350,6 +356,9 @@
 							{#if openMenuId === item.id}
 								<div class="menu" role="menu">
 									<button role="menuitem" onclick={() => { closeMenu(); imageEditItem = item; }}>Change image…</button>
+									{#if item.card_type === 'cloze'}
+										<button role="menuitem" onclick={() => { closeMenu(); clozeEditItem = item; }}>Cloze sentence…</button>
+									{/if}
 									<button role="menuitem" onclick={() => startEdit(item)}>Edit</button>
 									<button role="menuitem" onclick={() => { closeMenu(); resetItem(item.id); }}>Reset</button>
 									<button role="menuitem" onclick={() => { closeMenu(); toggleSuspend(item); }}>
@@ -375,6 +384,10 @@
 
 {#if imageEditItem}
 	<ImageEditModal item={imageEditItem} onclose={() => imageEditItem = null} onupdated={() => { imageEditItem = null; loadItems(); }} />
+{/if}
+
+{#if clozeEditItem}
+	<ClozeSentenceModal item={clozeEditItem} onclose={() => clozeEditItem = null} onupdated={() => { clozeEditItem = null; loadItems(); }} />
 {/if}
 
 <style>

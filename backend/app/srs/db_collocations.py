@@ -268,20 +268,34 @@ class DbCollocationsMixin:
         except sqlite3.IntegrityError as exc:
             raise ValueError(f"text already exists: {text!r}") from exc
 
-    def set_cloze_sentence(self, row_id: int, sentence: str) -> None:
-        """Replace a cloze collocation's sentence and flag it for the next sync.
+    def set_cloze_sentence(self, row_id: int, sentence: str, translation: str) -> None:
+        """Replace a cloze collocation's sentence AND its translation, flagged for sync.
 
-        The ``/review`` "try again" control (tunatale-keb0) regenerates a cloze
-        whose blank admitted more than one right answer. It stops here: the row
-        is written and marked dirty, and ``sync_push`` carries it into Anki via
-        ``OfflineWriter.update_cloze_text``. Nothing on a request path may open
-        the collection (``.claude/rules/anki-safety-core.md``).
+        The Cards viewer's "Cloze sentence…" control (tunatale-keb0) rewrites a
+        cloze whose blank admitted more than one right answer. It stops here: the
+        row is written and marked dirty, and ``sync_push`` carries it into Anki
+        via ``OfflineWriter.update_cloze_text``. Nothing on a request path may
+        open the collection (``.claude/rules/anki-safety-core.md``).
+
+        ⚠️ ``translation`` is REQUIRED, not optional, and that is the whole
+        reason this signature changed. The first version wrote ``source_sentence``
+        alone, which left ``sentence_translation`` describing the sentence that
+        had just been replaced — an English line under a Norwegian sentence it
+        does not translate, on both the ``/review`` back and the Anki note's Back
+        Extra. Passing ``""`` to mean "no translation available" is deliberate
+        and correct; there is no overload that means "leave the old one".
 
         ⚠️ The guid is deliberately NOT recomputed. Unlike the Anki note's guid,
         which ``create_cloze_note`` derives from the cloze TEXT, a collocation's
         guid is built from its ``text`` — the word — so the sentence is not part
         of it. Recomputing would strand the row's ``anki_note_id`` link and the
         ``base_collocation_id`` link to the word this cloze covers.
+
+        Both dirty flags are needed and they do different jobs: ``source_sentence``
+        routes to ``update_cloze_text`` (field 0, so also ``sfld``/``csum``/guid),
+        while ``sentence_translation`` is what rebuilds Back Extra — and Back Extra
+        is also where the sentence ``[sound:]`` is re-emitted, so a re-synthesized
+        clip reaches the note through this same flag.
 
         Dirty flags are merged, never replaced: a sentence rewrite must not
         discard a translation edit still waiting to push.
@@ -291,11 +305,11 @@ class DbCollocationsMixin:
             if cur is None:
                 return
             existing = {f for f in (cur["dirty_fields"] or "").split(",") if f}
-            merged = ",".join(sorted(existing | {"source_sentence"}))
+            merged = ",".join(sorted(existing | {"source_sentence", "sentence_translation"}))
             conn.execute(
-                "UPDATE collocations SET source_sentence = ?, dirty_fields = ?, "
+                "UPDATE collocations SET source_sentence = ?, sentence_translation = ?, dirty_fields = ?, "
                 "updated_at = datetime('now') WHERE id = ?",
-                (sentence, merged, row_id),
+                (sentence, translation, merged, row_id),
             )
             self._commit(conn)
 
