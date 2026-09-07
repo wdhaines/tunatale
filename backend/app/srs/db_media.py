@@ -164,6 +164,40 @@ class DbMediaMixin:
             ).fetchall()
         return {r[0] for r in rows}
 
+    def image_digest_owner(self, sha256: str, *, exclude_collocation_id: int) -> int | None:
+        """Which OTHER card already holds an image with these exact bytes?
+
+        Returns that collocation's id, or None if the bytes are unused.
+
+        The cross-card half of a guard that existed only within one pass.
+        ``used_image_urls`` and the pre-stage's ``seen_digests`` both live for the
+        duration of a single run, so two words fetched in DIFFERENT passes could
+        each be handed the same picture — and identical bytes hash to one
+        filename, so the second store is a no-op that silently points two cards
+        at one file rather than overwriting anything.
+
+        Measured on the Norwegian deck 2026-09-06: 16 image files each shown on
+        two or more different words, every one with a live production card —
+        `bitte`/`veldig`/`meget` on one "very" picture, `vite`/`kjenne` on one
+        "know", `mene`/`tenke` on one "think". 349 glosses are shared by more
+        than one card, so the input is plentiful.
+
+        ⚠️ This is a defect about the CARD, not about the file. A production
+        front shows the picture and asks for the word; when two words share it
+        the prompt admits more than one right answer and marks a right answer
+        wrong — the same shape as the underdetermined cloze of tunatale-keb0.
+
+        ``exclude_collocation_id`` keeps a card's own image from reading as a
+        collision when it is re-stored.
+        """
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT collocation_id FROM media WHERE kind = 'image' AND sha256 = ? "
+                "AND collocation_id IS NOT NULL AND collocation_id != ? LIMIT 1",
+                (sha256, exclude_collocation_id),
+            ).fetchone()
+        return None if row is None else row["collocation_id"]
+
     def find_media_by_sha256(self, collocation_id: int, kind: str, sha256: str) -> dict[str, Any] | None:
         """Return the media row matching ``(collocation_id, kind, sha256)``, or None.
 

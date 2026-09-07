@@ -8,6 +8,8 @@ these tests make no outbound HTTP.
 
 from __future__ import annotations
 
+from hashlib import sha256
+
 import pytest
 
 from app.cards.media import vocab_media
@@ -15,14 +17,24 @@ from app.cards.media.pipeline import MediaResult
 
 
 class _FakeDB:
-    """Records add_media calls; that's all generate_vocab_media touches."""
+    """Records add_media calls, and answers the cross-card duplicate lookup.
 
-    def __init__(self) -> None:
+    ``owned_digests`` maps an image's full sha256 to the collocation that already
+    holds those bytes — the state ``image_digest_owner`` reads. Empty by default,
+    so the common case is "nothing else has this picture".
+    """
+
+    def __init__(self, owned_digests: dict[str, int] | None = None) -> None:
         self.media: list[tuple] = []
+        self.owned_digests = owned_digests or {}
 
     def add_media(self, coll_id, kind, filename, path, anki_filename, sha256, size_bytes) -> int:
         self.media.append((coll_id, kind, filename, path, anki_filename, sha256, size_bytes))
         return len(self.media)
+
+    def image_digest_owner(self, sha256: str, *, exclude_collocation_id: int) -> int | None:
+        owner = self.owned_digests.get(sha256)
+        return None if owner is None or owner == exclude_collocation_id else owner
 
     # generate_image_query is injected, so these are only here for the real-fn path
     def get_image_query(self, *_a, **_k):  # pragma: no cover - not hit (query injected)
@@ -83,10 +95,10 @@ async def test_stores_image_and_audio(media_dir) -> None:
         db, 7, "nasvidenje", "goodbye", llm=object(), pixabay_key="k", _query_fn=_query, _fetch_fn=_fetch
     )
 
-    assert out == {"audio": "sl_nasvidenje.mp3", "image": "img_goodbye.jpg"}
+    assert out == {"audio": "sl_nasvidenje.mp3", "image": "img_goodbye_d083ab05.jpg"}
     # Files written to the (tmp) media dir.
     assert (media_dir / "sl_nasvidenje.mp3").read_bytes() == b"AUD"
-    assert (media_dir / "img_goodbye.jpg").read_bytes() == b"IMG"
+    assert (media_dir / "img_goodbye_d083ab05.jpg").read_bytes() == b"IMG"
     # Media rows recorded: audio_forvo + image.
     kinds = {row[1] for row in db.media}
     assert kinds == {"audio_forvo", "image"}
@@ -167,7 +179,7 @@ async def test_image_ext_defaults_to_jpg(media_dir) -> None:
     out = await vocab_media.generate_vocab_media(
         db, 1, "voda", "water", llm=object(), pixabay_key="k", _query_fn=_query, _fetch_fn=_fetch
     )
-    assert out == {"image": "img_water.jpg"}
+    assert out == {"image": "img_water_d083ab05.jpg"}
 
 
 async def test_none_media_result_stores_nothing(media_dir) -> None:
@@ -275,5 +287,84 @@ async def test_image_ok_sets_status(media_dir) -> None:
     out = await vocab_media.generate_vocab_media(
         db, 1, "voda", "water", llm=object(), pixabay_key="k", _query_fn=_query, _fetch_fn=_fetch
     )
-    assert out["image"] == "img_water.jpg"
+    assert out["image"] == "img_water_d083ab05.jpg"
     assert out["image_status"] == "ok"
+
+
+class TestAddTimeImagesAreUniquePerCard:
+    """Two defects in the add-time image write, both measured 2026-09-06.
+
+    1. It was the ONE write path that named its file bare — `img_<gloss>.<ext>` —
+       while the pre-stage, `promote_production_cards` and `replace_item_image`
+       all hash-suffix. `store_tt_media` writes with `write_bytes`, so a second
+       card sharing an English gloss overwrote the first card's picture in place,
+       silently changing a card the learner already knew. Found as 3 Slovene
+       files whose on-disk bytes no longer matched their recorded sha256, all
+       three bare-named.
+    2. Nothing asked whether another card already held those exact bytes. On the
+       Norwegian deck 16 image files were each shown on 2+ different words, all
+       with live production cards — `vite` and `kjenne` are both "know", and one
+       photo cannot ask for a particular one of them.
+    """
+
+    @staticmethod
+    async def _generate(db, *, image_bytes=b"IMG", coll_id=7, english="goodbye"):
+        async def _query(*_a, **_k):
+            return "waving goodbye"
+
+        async def _fetch(*_a, **_k):
+            return MediaResult(image_bytes=image_bytes, image_ext="jpg", image_status="ok")
+
+        return await vocab_media.generate_vocab_media(
+            db, coll_id, "nasvidenje", english, llm=object(), pixabay_key="k", _query_fn=_query, _fetch_fn=_fetch
+        )
+
+    async def test_the_filename_carries_the_digest(self, media_dir) -> None:
+        """A shared gloss must not resolve to one filename."""
+        db = _FakeDB()
+        first = await self._generate(db, image_bytes=b"FIRST", english="decision")
+        second = await self._generate(db, image_bytes=b"SECOND", english="decision", coll_id=8)
+
+        assert first["image"] != second["image"], "two pictures, two filenames"
+        assert sha256(b"FIRST").hexdigest()[:8] in first["image"]
+        assert sha256(b"SECOND").hexdigest()[:8] in second["image"]
+        # And neither overwrote the other on disk.
+        assert (media_dir / first["image"]).read_bytes() == b"FIRST"
+        assert (media_dir / second["image"]).read_bytes() == b"SECOND"
+
+    async def test_bytes_another_card_already_holds_are_not_stored(self, media_dir) -> None:
+        """`vite` and `kjenne` must not end up fronted by the same photograph."""
+        db = _FakeDB(owned_digests={sha256(b"IMG").hexdigest(): 42})
+
+        out = await self._generate(db)
+
+        assert "image" not in out
+        # The FETCH was fine; what we declined was the store. Two facts, two keys.
+        assert out["image_status"] == "ok"
+        assert out["image_duplicate_of"] == 42
+        assert db.media == [], "nothing written"
+        assert list(media_dir.glob("img_*")) == []
+
+    async def test_a_cards_own_picture_is_not_a_collision(self, media_dir) -> None:
+        """Re-storing the same card's image must still work — the lookup excludes
+        the card being written, or a refresh would refuse itself."""
+        db = _FakeDB(owned_digests={sha256(b"IMG").hexdigest(): 7})
+
+        out = await self._generate(db, coll_id=7)
+
+        assert out["image"].startswith("img_goodbye_")
+        assert len(db.media) == 1
+
+    async def test_a_refused_duplicate_leaves_the_word_for_the_pre_stage(self, media_dir, caplog) -> None:
+        """Not silent: the word is now imageless, and something must say so.
+
+        It stays a pre-stage candidate — the mint queue, or the repair queue if
+        its production card already exists — and that pass retries with the URL
+        set populated.
+        """
+        db = _FakeDB(owned_digests={sha256(b"IMG").hexdigest(): 42})
+
+        with caplog.at_level("WARNING"):
+            await self._generate(db)
+
+        assert "duplicates collocation 42" in caplog.text

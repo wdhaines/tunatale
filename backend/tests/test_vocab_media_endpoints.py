@@ -47,11 +47,11 @@ async def test_create_item_attaches_media_inline(api_app_state, fake_media):
 
     assert resp.status_code == 201
     data = resp.json()
-    assert data["image_url"] == "/api/srs/media/img_goodbye.jpg"
+    assert data["image_url"] == "/api/srs/media/img_goodbye_6b3cf57c.jpg"
     assert data["audio_url"] == "/api/srs/media/sl_nasvidenje.mp3"
 
     # Media rows persisted against the new collocation.
-    assert db.get_image_filename(data["id"]) == "img_goodbye.jpg"
+    assert db.get_image_filename(data["id"]) == "img_goodbye_6b3cf57c.jpg"
     assert db.get_audio_filename(data["id"]) == "sl_nasvidenje.mp3"
 
 
@@ -84,5 +84,5 @@ async def test_base_card_vocab_attaches_media_inline(api_app_state, fake_media):
     assert resp.status_code == 200
     data = resp.json()
     assert data["was_created"] is True
-    assert data["item"]["image_url"] == "/api/srs/media/img_sea.jpg"
+    assert data["item"]["image_url"] == "/api/srs/media/img_sea_6b3cf57c.jpg"
     assert data["item"]["audio_url"] == "/api/srs/media/sl_morje.mp3"

@@ -74,7 +74,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 45
+        assert CURRENT_VERSION == 46
 
     def test_migrates_v42_to_v43_adds_base_collocation_id(self, tmp_path):
         """The link that stops a cloze-covered word reading as two words.
@@ -2370,7 +2370,7 @@ class TestMigrateV37ToV38:
     """Tests for v37→v38 (lesson_listens table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 45
+        assert CURRENT_VERSION == 46
 
     def test_v37_to_v38_creates_lesson_listens_table_and_index(self):
         from app.srs.migrations import migrate_v37_to_v38
@@ -2413,7 +2413,7 @@ class TestMigrateV37ToV38:
         try:
             tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "lesson_listens" in tables
-            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 45
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 46
         finally:
             db.close()
 
@@ -2440,7 +2440,7 @@ class TestMigrateV38ToV39:
     """Tests for v38→v39 (lesson_reviews table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 45
+        assert CURRENT_VERSION == 46
 
     def test_v38_to_v39_creates_lesson_reviews_table_and_index(self):
         from app.srs.migrations import migrate_v38_to_v39
@@ -2483,7 +2483,7 @@ class TestMigrateV38ToV39:
         try:
             tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "lesson_reviews" in tables
-            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 45
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 46
         finally:
             db.close()
 
@@ -2500,7 +2500,7 @@ class TestMigrateV38ToV39:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         assert "lesson_listens" in tables
         assert "lesson_reviews" in tables
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 45
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 46
 
 
 class TestMigrationDriverAtomicity:
@@ -2733,3 +2733,101 @@ class TestMigrateV41ToV42:
 
         assert conn.execute("SELECT COUNT(*) FROM pending_listen_grades").fetchone()[0] == 1
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 42
+
+
+class TestMigrateV45ToV46:
+    """Sweep media rows whose collocation is gone (2026-09-06).
+
+    Eight of them on the Norwegian deck, including two copies each of
+    ``img_alibi.jpg`` / ``img_Lund.jpg`` / ``img_Hansen.jpg`` — debris from the
+    2026-07-29 ignore-list incident.
+
+    ⚠️ Debris, NOT an ongoing leak — which is why this is a migration and not a
+    change to ``delete_collocation``. Verified by control before the migration
+    was written: seed a collocation with an image row, call
+    ``delete_collocation``, count what survives (0). The FK is
+    ``ON DELETE CASCADE`` and ``db_base`` sets ``PRAGMA foreign_keys = ON``. The
+    orphans predate that; several migrations here rebuild tables under
+    ``PRAGMA foreign_keys = OFF``, where rows can outlive their parent.
+    """
+
+    def _orphaned_conn(self):
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        migrate(conn)
+        live = conn.execute("SELECT id FROM collocations WHERE text = 'banka'").fetchone()[0]
+        # One live row, one pointing nowhere. Inserted with FKs off, which is how
+        # the real ones arrived — a table rebuild, not an ordinary delete.
+        conn.execute("PRAGMA foreign_keys = OFF")
+        for coll_id, name in ((live, "img_bank_aaaaaaaa.jpg"), (999_999, "img_alibi.jpg")):
+            conn.execute(
+                "INSERT INTO media (collocation_id, kind, filename, path, anki_filename, sha256, bytes) "
+                "VALUES (?, 'image', ?, ?, ?, ?, ?)",
+                (coll_id, name, f"media/{name}", name, "0" * 64, 1),
+            )
+        conn.execute("PRAGMA user_version = 45")
+        conn.commit()
+        return conn, live
+
+    def test_deletes_the_orphan_and_keeps_the_live_row(self):
+        from app.srs.migrations import migrate_v45_to_v46
+
+        conn, live = self._orphaned_conn()
+        assert conn.execute("SELECT COUNT(*) FROM media").fetchone()[0] == 2
+
+        migrate_v45_to_v46(conn)
+
+        rows = conn.execute("SELECT collocation_id, filename FROM media").fetchall()
+        assert [tuple(r) for r in rows] == [(live, "img_bank_aaaaaaaa.jpg")]
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 46
+
+    def test_is_idempotent(self):
+        from app.srs.migrations import migrate_v45_to_v46
+
+        conn, live = self._orphaned_conn()
+        migrate_v45_to_v46(conn)
+        conn.execute("PRAGMA user_version = 45")
+        migrate_v45_to_v46(conn)
+
+        assert conn.execute("SELECT COUNT(*) FROM media").fetchone()[0] == 1
+
+    def test_a_null_collocation_id_is_not_swept(self):
+        """A media row with no owner at all is a different thing from one whose
+        owner was deleted, and this migration makes no claim about it."""
+        from app.srs.migrations import migrate_v45_to_v46
+
+        conn, _live = self._orphaned_conn()
+        conn.execute(
+            "INSERT INTO media (collocation_id, kind, filename, path, anki_filename, sha256, bytes) "
+            "VALUES (NULL, 'image', 'img_unowned.jpg', 'media/x', 'x', ?, 1)",
+            ("0" * 64,),
+        )
+
+        migrate_v45_to_v46(conn)
+
+        names = {r[0] for r in conn.execute("SELECT filename FROM media")}
+        assert "img_unowned.jpg" in names
+        assert "img_alibi.jpg" not in names
+
+    def test_the_cascade_still_covers_an_ordinary_delete(self):
+        """The control that made this a migration rather than a code change.
+
+        If this ever goes red, the orphans are a live leak and
+        ``delete_collocation`` is where the fix belongs — not here.
+        """
+        from app.models.syntactic_unit import SyntacticUnit
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(":memory:")
+        db.add_collocation(
+            SyntacticUnit(text="prøve", translation="try", word_count=1, difficulty=1, source="anki", lemma="prøve"),
+            language_code="no",
+        )
+        coll_id = db.get_collocation_id_by_guid(db.get_collocation_by_lemma("prøve").guid)
+        db.add_media(coll_id, "image", "img_try_deadbeef.jpg", "media/x.jpg", "x.jpg", "0" * 64, 10)
+        assert db.get_image_filename(coll_id) is not None
+
+        db.delete_collocation(coll_id)
+
+        with db._get_conn() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM media WHERE collocation_id = ?", (coll_id,)).fetchone()[0] == 0
