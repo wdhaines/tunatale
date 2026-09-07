@@ -38,7 +38,7 @@ from hashlib import sha256
 
 import pytest
 
-from app.cards.media.prestage import prestage_production_images
+from app.cards.media.prestage import IMAGE_REPAIR_LIMIT, prestage_production_images
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
@@ -90,6 +90,47 @@ def _add_word(
             anki_card_id=card_id,
             last_review=datetime.fromisoformat("2026-08-01T12:00:00+00:00"),
         )
+    }
+    return db.upsert_by_guid(unit, LANG, directions, anki_note_id=note_id)
+
+
+def _add_repair_word(
+    db: SRSDatabase,
+    word: str,
+    english: str,
+    *,
+    note_id: int,
+    card_id: int,
+) -> int:
+    """Seed a word that ALREADY has a production card and no image.
+
+    The repair population. A row reaches this state without ever passing the
+    mint router: ``upsert_by_guid`` creates whatever directions the Anki
+    collection reports, so a note the user made in Anki with both templates
+    arrives complete — and ``_AWAITING_PRODUCTION_WHERE`` then excludes it from
+    the queue the pre-stage walks, forever. Its one image attempt was the
+    best-effort add-time fetch, which records nothing on a miss.
+    """
+    unit = SyntacticUnit(
+        text=word, translation=english, word_count=1, difficulty=1, source="anki", frequency=0, disambig_key="noun"
+    )
+    directions = {
+        Direction.RECOGNITION: DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=due_at_rollover_utc(anki_today()),
+            state=SRSState.REVIEW,
+            reps=9,
+            anki_card_id=card_id,
+            last_review=datetime.fromisoformat("2026-08-01T12:00:00+00:00"),
+        ),
+        Direction.PRODUCTION: DirectionState(
+            direction=Direction.PRODUCTION,
+            due_at=due_at_rollover_utc(anki_today()),
+            state=SRSState.LEARNING,
+            reps=2,
+            anki_card_id=card_id + 1,
+            last_review=datetime.fromisoformat("2026-08-01T12:00:00+00:00"),
+        ),
     }
     return db.upsert_by_guid(unit, LANG, directions, anki_note_id=note_id)
 
@@ -894,3 +935,213 @@ class TestTheFailureCauseIsNamed:
         assert report.failed == 6
         assert report.failures == ("RuntimeError:429 Too Many Requests",)
         assert line.count("429 Too Many Requests") == 1
+
+
+class TestRepairingProductionCardsWithNoImage:
+    """The blind spot the mint queue's predicate creates (2026-09-06).
+
+    ``_AWAITING_PRODUCTION_WHERE`` excludes any row that already has a production
+    direction — right for minting, wrong for image acquisition, because the
+    pre-stage walks the same list. A vocab row can acquire that direction without
+    ever passing the mint router (``upsert_by_guid`` mirrors whatever Anki
+    reports), so its ONLY image attempt was the add-time fetch in
+    ``generate_vocab_media``, which is best-effort and records nothing on a miss:
+    no media row, and no ``image_unavailable_at`` either.
+
+    Found on the real deck: `den gangen`, 1 of 815 Norwegian vocab production
+    cards, imageless and clozeless since 2026-08-31 while its three batch-mates —
+    added in the same two seconds — all got pictures. Nothing retried it and
+    nothing counted it, which is the part worth fixing: the population was
+    invisible, not merely unserved.
+
+    ⚠️ A cloze is NOT the alternative remedy here. ``_fallback_to_cloze`` is
+    reachable only from the mint router, which by construction never sees these
+    rows. An image is the only front they can get.
+    """
+
+    async def test_a_production_card_with_no_image_is_repaired(self, db, tmp_path) -> None:
+        coll_id = _add_repair_word(db, "den gangen", "that time", note_id=1000, card_id=10000)
+        media_fn = _MediaFn(_Media(image_bytes=b"REPAIRED", image_ext="jpg"))
+
+        report = await prestage_production_images(db, media_fn, language_code=LANG, limit=10)
+
+        assert report.repaired == 1
+        filename = db.get_image_filename(coll_id)
+        assert filename is not None
+        assert (tmp_path / "media" / filename).read_bytes() == b"REPAIRED"
+
+    async def test_the_repair_flags_the_row_so_the_picture_reaches_anki(self, db) -> None:
+        """Without this the repair is visible in TT and invisible in Anki.
+
+        The card already exists with an empty Image field, so the picture reaches
+        it only through ``sync_push``'s vocab branch — which writes ``Image`` only
+        for a row flagged "image". ``store_tt_media`` alone sets no flag.
+        """
+        coll_id = _add_repair_word(db, "den gangen", "that time", note_id=1000, card_id=10000)
+
+        await prestage_production_images(db, _MediaFn(), language_code=LANG, limit=10)
+
+        _rid, item, _lang = db.get_collocation_by_id(coll_id)
+        assert "image" in db.get_dirty_fields(item.guid)
+
+    async def test_a_mint_candidate_is_not_flagged_dirty(self, db) -> None:
+        """The discriminator. A word awaiting production has no Anki card yet —
+        ``mint_production_card`` writes the Image field when it creates one, so a
+        flag here would queue a redundant field write on every such word."""
+        coll_id = _add_word(db, "beslutning", "decision", note_id=1000, card_id=10000)
+
+        report = await prestage_production_images(db, _MediaFn(), language_code=LANG, limit=10)
+
+        assert report.fetched == 1 and report.repaired == 0
+        _rid, item, _lang = db.get_collocation_by_id(coll_id)
+        assert "image" not in db.get_dirty_fields(item.guid)
+
+    async def test_a_production_card_that_already_has_an_image_is_left_alone(self, db) -> None:
+        coll_id = _add_repair_word(db, "hus", "house", note_id=1000, card_id=10000)
+        db.add_media(coll_id, "image", "img_house_aaaaaaaa.jpg", "media/x.jpg", "x.jpg", "0" * 64, 1)
+        media_fn = _MediaFn()
+
+        report = await prestage_production_images(db, media_fn, language_code=LANG, limit=10)
+
+        assert media_fn.calls == []
+        assert report.repaired == 0
+
+    async def test_a_production_card_served_by_a_cloze_is_left_alone(self, db) -> None:
+        """A clozed word has a front already; an image would be a second one."""
+        base_id = _add_repair_word(db, "beslutning", "decision", note_id=1000, card_id=10000)
+        db.add_collocation(
+            SyntacticUnit(
+                text="beslutning",
+                translation="",
+                word_count=1,
+                difficulty=1,
+                source="anki",
+                lemma="beslutning",
+                disambig_key="cloze:beslutning",
+                card_type="cloze",
+                source_sentence="Det var en vanskelig {{c1::beslutning}}.",
+            ),
+            language_code=LANG,
+        )
+        # NOT get_collocation_by_lemma: the word's vocab row carries the same
+        # lemma, so that lookup is ambiguous and silently returns the wrong row —
+        # which made the first version of this test pass a base id to itself and
+        # go red for the wrong reason.
+        with db._get_conn() as conn:
+            cloze_id = conn.execute(
+                "SELECT id FROM collocations WHERE card_type = 'cloze' AND lemma = 'beslutning'"
+            ).fetchone()["id"]
+        db.set_base_collocation_id(cloze_id, base_id)
+        assert db.get_base_collocation_id(cloze_id) == base_id, "seeding failed: the cloze is not linked"
+        media_fn = _MediaFn()
+
+        report = await prestage_production_images(db, media_fn, language_code=LANG, limit=10)
+
+        assert media_fn.calls == []
+        assert report.repair_queue == 0
+
+    async def test_a_settled_unpicturable_card_stops_being_retried(self, db) -> None:
+        """Otherwise the repair queue costs a live fetch on the same word forever.
+
+        The first pass searches and gets ``no_results``, which is a verdict about
+        the word rather than about the network, so it is recorded — and the query
+        then excludes the row.
+        """
+        _add_repair_word(db, "janez", "Janez", note_id=1000, card_id=10000)
+        media_fn = _MediaFn(_Media(image_bytes=None, image_status="no_results"))
+
+        first = await prestage_production_images(db, media_fn, language_code=LANG, limit=10)
+        assert first.repair_queue == 1 and first.no_image == 1
+
+        second = await prestage_production_images(db, media_fn, language_code=LANG, limit=10)
+        assert second.repair_queue == 0
+        assert len(media_fn.calls) == 1, "the word must be searched once, not once per pass"
+
+    async def test_settled_rows_do_not_starve_a_repairable_one(self, db) -> None:
+        """Why ``image_unavailable_at IS NULL`` is in the SQL and not only in triage.
+
+        ``_triage`` skips a settled row either way, so the clause looks redundant
+        — a sabotage drill removing it left every other test in this class green.
+        It earns its place under BUDGET pressure: the query returns
+        ``IMAGE_REPAIR_LIMIT`` rows in deck order, so without the clause three
+        settled words with low note ids fill that window and the repairable word
+        behind them is never returned at all. Permanently, since deck order is
+        immutable.
+        """
+        for i in range(IMAGE_REPAIR_LIMIT):
+            settled = _add_repair_word(db, f"unpicturable{i}", f"abstract {i}", note_id=100 + i, card_id=1000 + i * 10)
+            db.mark_image_unavailable(settled)
+        # A higher note id, so it sorts BEHIND all three in deck order.
+        wanted = _add_repair_word(db, "den gangen", "that time", note_id=9000, card_id=90000)
+
+        report = await prestage_production_images(db, _MediaFn(), language_code=LANG, limit=0)
+
+        assert report.repaired == 1
+        assert db.get_image_filename(wanted) is not None
+
+    async def test_a_transient_failure_leaves_the_card_in_the_queue(self, db) -> None:
+        """A 429 is not a claim about the word (tunatale-fwe5, same rule as the
+        mint queue): it must not settle the row out of the repair queue."""
+        _add_repair_word(db, "den gangen", "that time", note_id=1000, card_id=10000)
+        media_fn = _MediaFn(_Media(image_bytes=None, image_status="rate_limited"))
+
+        first = await prestage_production_images(db, media_fn, language_code=LANG, limit=10)
+        assert first.transient == 1 and first.repaired == 0
+
+        second = await prestage_production_images(db, media_fn, language_code=LANG, limit=10)
+        assert second.repair_queue == 1, "a rate-limited word must still be waiting"
+
+    async def test_the_repair_budget_is_additive_not_carved_out_of_limit(self, db) -> None:
+        """The reason ``IMAGE_REPAIR_LIMIT`` exists as a separate number.
+
+        The Norwegian mint queue is 1487 rows deep and fills ``limit`` on every
+        pass. A repair sharing that budget would never get a turn, and the fix
+        would be inert on the only deck that has the bug.
+        """
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=10000)
+        repair_id = _add_repair_word(db, "den gangen", "that time", note_id=1001, card_id=10001)
+        # Distinct bytes per word: identical bytes hash to one filename and the
+        # digest guard drops the second, which would mask the budget question.
+        media_fn = _MediaFn(_Media(image_bytes=b"MINT"), _Media(image_bytes=b"REPAIR"))
+
+        report = await prestage_production_images(db, media_fn, language_code=LANG, limit=1)
+
+        assert report.fetched == 1, "the mint queue's budget is spent in full"
+        assert report.repaired == 1, "and the repair still ran"
+        assert db.get_image_filename(repair_id) is not None
+
+    async def test_the_repair_queue_is_bounded_per_pass(self, db) -> None:
+        for i in range(IMAGE_REPAIR_LIMIT + 2):
+            _add_repair_word(db, f"ord{i}", f"word {i}", note_id=1000 + i, card_id=10000 + i * 10)
+        media_fn = _MediaFn(*(_Media(image_bytes=f"PIC{i}".encode()) for i in range(IMAGE_REPAIR_LIMIT + 2)))
+
+        report = await prestage_production_images(db, media_fn, language_code=LANG, limit=0)
+
+        assert report.repaired == IMAGE_REPAIR_LIMIT
+        assert len(media_fn.calls) == IMAGE_REPAIR_LIMIT
+
+    async def test_a_number_word_is_drawn_and_still_flagged_dirty(self, db) -> None:
+        """Drawing costs no network call, but the Anki card still needs telling."""
+        coll_id = _add_repair_word(db, "fem", "five", note_id=1000, card_id=10000)
+        media_fn = _MediaFn()
+
+        report = await prestage_production_images(db, media_fn, language_code=LANG, limit=10)
+
+        assert media_fn.calls == [], "a number is drawn, never searched for"
+        assert report.rendered_number == 1
+        assert db.get_image_filename(coll_id).endswith(".svg")
+        _rid, item, _lang = db.get_collocation_by_id(coll_id)
+        assert "image" in db.get_dirty_fields(item.guid)
+
+    async def test_the_summary_line_reports_the_repair_queue(self, db, caplog) -> None:
+        """The property that was actually missing: this population was invisible.
+
+        A standing ``repair_queue>0`` with ``repaired=0`` is the signal to look.
+        """
+        _add_repair_word(db, "den gangen", "that time", note_id=1000, card_id=10000)
+
+        with caplog.at_level("WARNING"):
+            await prestage_production_images(db, _MediaFn(), language_code=LANG, limit=10)
+
+        assert "repair_queue=1" in caplog.text
+        assert "repaired=1" in caplog.text
