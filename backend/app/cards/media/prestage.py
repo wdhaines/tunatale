@@ -154,6 +154,16 @@ class PreStageReport(NamedTuple):
     #: standing non-zero here with ``repaired=0`` is the signal to look: the queue
     #: is not draining.
     repair_queue: int = 0
+    #: Fetches that came back with bytes ANOTHER card already holds. Counted, not
+    #: stored: identical bytes hash to one filename, so storing would point two
+    #: cards at one picture and leave a production front that admits more than one
+    #: right answer. Each one is re-fetched once with the offending URL excluded;
+    #: this counts the collisions detected, not the words left imageless.
+    duplicate_image: int = 0
+    #: Collisions the single re-fetch resolved. ``duplicate_image - recovered`` is
+    #: the number of words still waiting, and a standing gap there means Pixabay
+    #: has nothing else for that query — a real signal, not noise.
+    recovered_duplicate: int = 0
     #: Up to MAX_FAILURE_REASONS distinct redacted reasons, so the durable line
     #: names the CAUSE and not merely the count. Empty on a clean pass.
     failures: tuple[str, ...] = ()
@@ -189,7 +199,8 @@ def _log_prestage_summary(report: PreStageReport) -> None:
         f"already={report.already_had_image} "
         f"function_word={report.skipped_function_word} no_image={report.no_image} "
         f"transient={report.transient} failed={report.failed} "
-        f"repair_queue={report.repair_queue} repaired={report.repaired}"
+        f"repair_queue={report.repair_queue} repaired={report.repaired} "
+        f"duplicate={report.duplicate_image} recovered={report.recovered_duplicate}"
     )
     # Only when there ARE failures: `failed=0` already says a pass was clean, and
     # a dangling empty field just invites the reader to wonder what it means.
@@ -237,6 +248,8 @@ async def prestage_production_images(
     drawn = 0
     transient = 0
     repaired = 0
+    duplicate_image = 0
+    recovered_duplicate = 0
     wanted = []
     #: Collocation ids whose picture must be flagged dirty once stored. A mint
     #: candidate needs no flag — `mint_production_card` writes the Image field
@@ -354,6 +367,42 @@ async def prestage_production_images(
     # Pass 3 — store serially, in deck order, so the writes are deterministic and
     # the digest guard sees a stable sequence.
     seen_digests: set[str] = set()
+    duplicates: list = []
+
+    def _bar_url(media) -> None:
+        """Exclude the URL that produced a duplicate from every later search.
+
+        The set is the pipeline's own filter (``h["webformatURL"] not in
+        used_urls``), and ``fetch_card_media`` reports the URL it downloaded, so
+        the retry below asks the same query and is handed the NEXT candidate.
+        """
+        if media.image_url:
+            used_image_urls.add(media.image_url)
+
+    def _store(cand, media, digest_full: str) -> None:
+        """Write one accepted picture and account for it. Shared by passes 3 and 4."""
+        nonlocal fetched, repaired
+        unit = cand.item.syntactic_unit
+        seen_digests.add(digest_full[:8])
+        # Hash-suffixed, matching promote_production_cards and replace_item_image.
+        # The bare `img_<gloss>.<ext>` form that add-time used to write is gone
+        # (2026-09-06): a shared English gloss is common ("beslutning" and
+        # "avgjørelse" are both "decision") and the bare form had the second write
+        # overwrite the first word's picture in place, silently changing a card
+        # the learner already knew.
+        filename = f"{safe_stem(unit.translation, 'img')}_{digest_full[:8]}.{media.image_ext or 'jpg'}"
+        store_tt_media(db, cand.collocation_id, "image", filename, media.image_bytes)
+        if cand.collocation_id in repair_ids:
+            # The card is already in Anki with an empty Image field, so the
+            # picture reaches it only through `sync_push`'s vocab branch, which
+            # writes `Image` only for a row flagged "image". Without this the
+            # repair is visible in TT and invisible in Anki — the shape of the
+            # bug it exists to fix, one layer along.
+            db.add_dirty_field_by_id(cand.collocation_id, "image")
+            repaired += 1
+        else:
+            fetched += 1
+
     for cand, result in zip(wanted, results, strict=True):
         unit = cand.item.syntactic_unit
         if isinstance(result, BaseException):
@@ -407,29 +456,69 @@ async def prestage_production_images(
         # gloss is common ("beslutning" and "avgjørelse" are both "decision"), and
         # the bare form has the second write overwrite the first word's picture in
         # place — silently changing a card the learner already knows.
-        digest = hashlib.sha256(media.image_bytes).hexdigest()[:8]
-        if digest in seen_digests:
-            # Two words came back with the SAME picture. Identical bytes hash to
-            # one filename, so storing both would point two cards at one image —
-            # the duplicate-image bug `used_image_urls` exists to prevent, which
-            # concurrency can slip past. Leave this word imageless; the next pass
-            # retries it with the URL set already populated.
-            missing += 1
+        digest_full = hashlib.sha256(media.image_bytes).hexdigest()
+        if digest_full[:8] in seen_digests:
+            # Two words came back with the SAME picture WITHIN this pass.
+            # Identical bytes hash to one filename, so storing both would point
+            # two cards at one image — the duplicate-image bug `used_image_urls`
+            # exists to prevent, which concurrency can slip past.
+            duplicates.append(cand)
+            _bar_url(media)
+            duplicate_image += 1
             continue
-        seen_digests.add(digest)
 
-        filename = f"{safe_stem(unit.translation, 'img')}_{digest}.{media.image_ext or 'jpg'}"
-        store_tt_media(db, cand.collocation_id, "image", filename, media.image_bytes)
-        if cand.collocation_id in repair_ids:
-            # The card is already in Anki with an empty Image field, so the
-            # picture reaches it only through `sync_push`'s vocab branch, which
-            # writes `Image` only for a row flagged "image". Without this the
-            # repair is visible in TT and invisible in Anki — the shape of the
-            # bug it exists to fix, one layer along.
-            db.add_dirty_field_by_id(cand.collocation_id, "image")
-            repaired += 1
-        else:
-            fetched += 1
+        owner = db.image_digest_owner(digest_full, exclude_collocation_id=cand.collocation_id)
+        if owner is not None:
+            # ...and the same picture ACROSS passes, which `seen_digests` cannot
+            # see: it lives for one run, and so does `used_image_urls`, so two
+            # words fetched in different passes were each handed the same top hit
+            # and nothing noticed. Measured 2026-09-06: 16 Norwegian image files
+            # each shown on two or more different words, every one with a live
+            # production card.
+            duplicates.append(cand)
+            _bar_url(media)
+            duplicate_image += 1
+            logger.warning(
+                "PRESTAGE_IMAGES duplicate image for %r — collocation %d already holds those bytes",
+                unit.text,
+                owner,
+            )
+            continue
+
+        _store(cand, media, digest_full)
+
+    # Pass 4 — one re-fetch per collision, serially.
+    #
+    # This is what makes the skip CONVERGE. `used_image_urls` now carries the URL
+    # that produced each duplicate, so the search filters it out and the chooser
+    # takes the next candidate. Without it the skip is a permanent no-op: the set
+    # starts empty every pass, Pixabay returns the same top hit, and the word is
+    # refused forever — a quieter version of the bug it replaced.
+    #
+    # Serial and bounded to ONE attempt each: a collision is rare (16 files across
+    # a 1034-image deck), so there is nothing to overlap, and a loop would spend
+    # the whole free-tier budget on a query whose results are simply exhausted.
+    # A word that is still duplicate after its retry stays imageless and shows up
+    # as `duplicate - recovered` in the summary line.
+    for cand in duplicates:
+        try:
+            media = await _fetch(cand)
+        except Exception as exc:  # noqa: BLE001 — one word's retry must not end the pass
+            failed += 1
+            reason = _failure_reason(exc)
+            if reason not in failure_reasons:
+                failure_reasons.append(reason)
+            continue
+        media = media[1]
+        if media is None or media.image_bytes is None:
+            continue
+        digest_full = hashlib.sha256(media.image_bytes).hexdigest()
+        if digest_full[:8] in seen_digests:
+            continue
+        if db.image_digest_owner(digest_full, exclude_collocation_id=cand.collocation_id) is not None:
+            continue
+        _store(cand, media, digest_full)
+        recovered_duplicate += 1
 
     report = PreStageReport(
         fetched=fetched,
@@ -441,6 +530,8 @@ async def prestage_production_images(
         transient=transient,
         repaired=repaired,
         repair_queue=repair_queued,
+        duplicate_image=duplicate_image,
+        recovered_duplicate=recovered_duplicate,
         failures=tuple(failure_reasons[:MAX_FAILURE_REASONS]),
     )
     _log_prestage_summary(report)

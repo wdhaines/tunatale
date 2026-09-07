@@ -49,11 +49,18 @@ LANG = "no"
 
 @dataclass
 class _Media:
-    """Stand-in for the media pipeline's result."""
+    """Stand-in for the media pipeline's result.
+
+    ``image_url`` is on the real ``MediaResult`` and the pre-stage now reads it:
+    the URL that produced a duplicate is added to ``used_image_urls`` so the
+    retry is handed the next candidate instead of the same one forever. A double
+    missing the field made the guard raise rather than run.
+    """
 
     image_bytes: bytes | None = b"\x89PNG-pretend"
     image_ext: str | None = "png"
     image_status: str | None = None
+    image_url: str | None = None
 
 
 class _MediaFn:
@@ -284,8 +291,12 @@ class TestPreStaging:
 
         await prestage_production_images(db, _Recorder(), language_code=LANG, limit=10)
 
-        assert len(seen) == 2
-        assert seen[0] is seen[1], "both fetches must share one set, or duplicates slip through"
+        # Three calls, not two: the default `_MediaFn` hands both words the same
+        # bytes, so the second is refused as a duplicate and re-fetched once with
+        # the offending URL barred. That retry is the thing that makes refusing
+        # converge instead of looping, so it must share the set too.
+        assert len(seen) == 3
+        assert seen[0] is seen[1] is seen[2], "every fetch must share one set, or duplicates slip through"
         assert seen[0] is not None
 
 
@@ -1145,3 +1156,210 @@ class TestRepairingProductionCardsWithNoImage:
 
         assert "repair_queue=1" in caplog.text
         assert "repaired=1" in caplog.text
+
+
+class TestOnePictureNeverServesTwoWords:
+    """The guard that existed only within one pass (2026-09-06).
+
+    ``used_image_urls`` and ``seen_digests`` both live for the duration of one
+    run, so two words fetched in DIFFERENT passes were each handed the same top
+    hit and nothing noticed. Identical bytes hash to one filename, so the second
+    store overwrote nothing — it simply pointed two cards at one file.
+
+    Measured on the Norwegian deck: 16 image files each shown on two or more
+    different words, every one with a live production card. `bitte`/`veldig`/
+    `meget` shared one "very" picture; `vite`/`kjenne` one "know"; `mene`/`tenke`
+    one "think". 349 glosses are used by more than one card.
+
+    ⚠️ The defect is in the CARD, not the file. A production front shows the
+    picture and asks for the word, so when two words share it the prompt admits
+    more than one right answer — the same shape as the underdetermined cloze of
+    tunatale-keb0, arriving by a different route.
+    """
+
+    async def test_bytes_another_card_already_holds_are_not_stored_again(self, db) -> None:
+        first = _add_word(db, "vite", "know", note_id=1000, card_id=10000)
+        await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=b"KNOW", image_url="u1")), language_code=LANG, limit=10
+        )
+        assert db.get_image_filename(first) is not None
+
+        # A later pass, a different word, the same picture back from Pixabay.
+        second = _add_word(db, "kjenne", "know", note_id=1001, card_id=10001)
+        report = await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=b"KNOW", image_url="u1")), language_code=LANG, limit=10
+        )
+
+        assert report.duplicate_image == 1
+        assert report.fetched == 0
+        assert db.get_image_filename(second) is None, "two words must not share one picture"
+
+    async def test_the_retry_bars_the_url_that_collided_so_refusing_converges(self, db) -> None:
+        """Without this the refusal is a permanent no-op.
+
+        ``used_image_urls`` starts empty every pass, so Pixabay returns the same
+        top hit and the word is refused forever — quieter than the bug it
+        replaced, and just as permanent. The URL that produced the collision is
+        added to the set, so the retry is handed the next candidate.
+        """
+        _add_word(db, "vite", "know", note_id=1000, card_id=10000)
+        await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=b"KNOW", image_url="u1")), language_code=LANG, limit=10
+        )
+
+        second = _add_word(db, "kjenne", "know", note_id=1001, card_id=10001)
+        seen_url_sets: list[set] = []
+
+        class _SecondChoice(_MediaFn):
+            """Returns the taken picture until its URL is barred, then another."""
+
+            async def __call__(self, word, english, **kwargs):
+                used = kwargs.get("used_image_urls") or set()
+                seen_url_sets.append(set(used))
+                if "u1" in used:
+                    return _Media(image_bytes=b"KNOW-2", image_url="u2")
+                return _Media(image_bytes=b"KNOW", image_url="u1")
+
+        report = await prestage_production_images(db, _SecondChoice(), language_code=LANG, limit=10)
+
+        assert report.duplicate_image == 1
+        assert report.recovered_duplicate == 1
+        assert db.get_image_filename(second) is not None
+        assert seen_url_sets[0] == set(), "the first attempt asks freely"
+        assert "u1" in seen_url_sets[1], "the retry must bar the URL that collided"
+
+    async def test_a_word_still_duplicate_after_its_retry_is_left_imageless(self, db) -> None:
+        """One attempt, not a loop: a query whose results are exhausted would
+        otherwise spend the whole free-tier budget on one word. The gap between
+        `duplicate` and `recovered` in the summary is how that shows up."""
+        _add_word(db, "vite", "know", note_id=1000, card_id=10000)
+        await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=b"KNOW", image_url="u1")), language_code=LANG, limit=10
+        )
+
+        second = _add_word(db, "kjenne", "know", note_id=1001, card_id=10001)
+        stubborn = _MediaFn(_Media(image_bytes=b"KNOW", image_url="u1"))
+
+        report = await prestage_production_images(db, stubborn, language_code=LANG, limit=10)
+
+        assert (report.duplicate_image, report.recovered_duplicate) == (1, 0)
+        assert db.get_image_filename(second) is None
+        assert len(stubborn.calls) == 2, "one fetch and one retry — never a loop"
+
+    async def test_a_card_re_storing_its_own_picture_is_not_a_collision(self, db) -> None:
+        """The lookup excludes the card being written, or a refresh refuses itself."""
+        coll_id = _add_word(db, "vite", "know", note_id=1000, card_id=10000)
+        await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=b"KNOW", image_url="u1")), language_code=LANG, limit=10
+        )
+        stored = db.get_image_filename(coll_id)
+
+        # Same card, same bytes: `already_had_image` short-circuits before the
+        # digest check, so this asserts the row is intact rather than replaced.
+        report = await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=b"KNOW", image_url="u1")), language_code=LANG, limit=10
+        )
+
+        assert report.duplicate_image == 0
+        assert db.get_image_filename(coll_id) == stored
+
+    async def test_a_repaired_card_is_also_held_to_uniqueness(self, db) -> None:
+        """The repair queue writes through the same store, so it inherits the guard."""
+        _add_word(db, "vite", "know", note_id=1000, card_id=10000)
+        await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=b"KNOW", image_url="u1")), language_code=LANG, limit=10
+        )
+
+        repair = _add_repair_word(db, "kjenne", "know", note_id=1001, card_id=10001)
+        report = await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=b"KNOW", image_url="u1")), language_code=LANG, limit=10
+        )
+
+        assert report.repaired == 0
+        assert report.duplicate_image == 1
+        assert db.get_image_filename(repair) is None
+
+    async def test_the_summary_line_reports_duplicates(self, db, caplog) -> None:
+        _add_word(db, "vite", "know", note_id=1000, card_id=10000)
+        await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=b"KNOW", image_url="u1")), language_code=LANG, limit=10
+        )
+        _add_word(db, "kjenne", "know", note_id=1001, card_id=10001)
+
+        with caplog.at_level("WARNING"):
+            await prestage_production_images(
+                db, _MediaFn(_Media(image_bytes=b"KNOW", image_url="u1")), language_code=LANG, limit=10
+            )
+
+        assert "duplicate=1 recovered=0" in caplog.text
+        assert "already holds those bytes" in caplog.text
+
+    async def test_a_retry_that_raises_is_counted_not_fatal(self, db) -> None:
+        """One word's retry must not end the pass, for the reason `return_exceptions`
+        exists in pass 2: the caller schedules this as a background task, where an
+        escaped exception is swallowed and the whole batch is abandoned invisibly."""
+        _add_word(db, "vite", "know", note_id=1000, card_id=10000)
+        await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=b"KNOW", image_url="u1")), language_code=LANG, limit=10
+        )
+        _add_word(db, "kjenne", "know", note_id=1001, card_id=10001)
+
+        class _FailsOnRetry(_MediaFn):
+            async def __call__(self, word, english, **kwargs):
+                if (kwargs.get("used_image_urls") or set()) & {"u1"}:
+                    raise RuntimeError("pixabay timeout on retry")
+                return _Media(image_bytes=b"KNOW", image_url="u1")
+
+        report = await prestage_production_images(db, _FailsOnRetry(), language_code=LANG, limit=10)
+
+        assert report.duplicate_image == 1
+        assert report.recovered_duplicate == 0
+        assert report.failed == 1
+        assert any("pixabay timeout" in f for f in report.failures), "the reason must reach the durable line"
+
+    async def test_a_retry_that_finds_nothing_stores_nothing(self, db) -> None:
+        _add_word(db, "vite", "know", note_id=1000, card_id=10000)
+        await prestage_production_images(
+            db, _MediaFn(_Media(image_bytes=b"KNOW", image_url="u1")), language_code=LANG, limit=10
+        )
+        second = _add_word(db, "kjenne", "know", note_id=1001, card_id=10001)
+
+        class _EmptyOnRetry(_MediaFn):
+            async def __call__(self, word, english, **kwargs):
+                if (kwargs.get("used_image_urls") or set()) & {"u1"}:
+                    return _Media(image_bytes=None, image_status="no_results")
+                return _Media(image_bytes=b"KNOW", image_url="u1")
+
+        report = await prestage_production_images(db, _EmptyOnRetry(), language_code=LANG, limit=10)
+
+        assert report.recovered_duplicate == 0
+        assert db.get_image_filename(second) is None
+
+    async def test_one_systematic_retry_fault_is_reported_once(self, db) -> None:
+        """The de-duplication `MAX_FAILURE_REASONS` documents, on the retry path.
+
+        A systematic fault produces one message per word; `failed=` already
+        carries the multiplicity, and the reason list is there for the KIND. An
+        unbounded tail here fills the one file the operator greps.
+        """
+        for i, (word, gloss) in enumerate((("vite", "know"), ("mene", "think"))):
+            _add_word(db, word, gloss, note_id=1000 + i, card_id=10000 + i * 10)
+            await prestage_production_images(
+                db, _MediaFn(_Media(image_bytes=f"PIC{i}".encode(), image_url=f"u{i}")), language_code=LANG, limit=10
+            )
+        _add_word(db, "kjenne", "know", note_id=2000, card_id=20000)
+        _add_word(db, "tenke", "think", note_id=2001, card_id=20010)
+
+        class _AlwaysFailsOnRetry(_MediaFn):
+            """Both words collide, both retries hit the same outage."""
+
+            async def __call__(self, word, english, **kwargs):
+                used = kwargs.get("used_image_urls") or set()
+                if used & {"u0", "u1"}:
+                    raise RuntimeError("pixabay unreachable")
+                return _Media(image_bytes=b"PIC0" if english == "know" else b"PIC1", image_url="u0")
+
+        report = await prestage_production_images(db, _AlwaysFailsOnRetry(), language_code=LANG, limit=10)
+
+        assert report.failed == 2, "both retries failed"
+        assert len(report.failures) == 1, "one KIND of failure, reported once"

@@ -18,7 +18,7 @@ from app.storage.db_backup import snapshot_before_migration
 
 _logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 45
+CURRENT_VERSION = 46
 
 
 class SchemaTooNewError(RuntimeError):
@@ -1375,6 +1375,37 @@ def migrate_v44_to_v45(conn: sqlite3.Connection) -> None:
     _set_version(conn, 45)
 
 
+def migrate_v45_to_v46(conn: sqlite3.Connection) -> None:
+    """Delete media rows whose collocation no longer exists.
+
+    Eight of them on the Norwegian deck (2026-09-06), including two copies each
+    of ``img_alibi.jpg`` / ``img_Lund.jpg`` / ``img_Hansen.jpg`` — the 2026-07-29
+    ignore-list incident's debris.
+
+    ⚠️ Debris, NOT an ongoing leak, and the difference is the reason this is a
+    migration and not a change to ``delete_collocation``. The FK is declared
+    ``ON DELETE CASCADE`` and ``db_base`` sets ``PRAGMA foreign_keys = ON``, so a
+    delete today takes its media with it — verified by control before this was
+    written: seed a collocation with an image row, call ``delete_collocation``,
+    count what is left (0). The orphans predate that guarantee; several
+    migrations here rebuild tables under ``PRAGMA foreign_keys = OFF``, which is
+    where rows can outlive their parent.
+
+    Rows only. The files they named stay on disk: a migration that reaches into
+    the filesystem is not transactional, would run against a developer's real
+    ``backend/media`` during tests, and an unreferenced jpg costs nothing beside
+    the 331 MB of generated audio already there.
+    """
+    conn.execute(
+        """
+        DELETE FROM media
+        WHERE collocation_id IS NOT NULL
+          AND collocation_id NOT IN (SELECT id FROM collocations)
+        """
+    )
+    _set_version(conn, 46)
+
+
 def migrate_v43_to_v44(conn: sqlite3.Connection) -> None:
     """Record that a word's image search came back empty (``image_unavailable_at``).
 
@@ -1450,6 +1481,7 @@ _MIGRATIONS = {
     42: migrate_v42_to_v43,
     43: migrate_v43_to_v44,
     44: migrate_v44_to_v45,
+    45: migrate_v45_to_v46,
 }
 
 

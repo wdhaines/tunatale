@@ -180,9 +180,37 @@ async def generate_vocab_media(
 
     if media.image_bytes is not None:
         ext = media.image_ext or "jpg"
-        img_filename = f"{safe_stem(english, 'img')}.{ext}"
-        store_tt_media(db, coll_id, "image", img_filename, media.image_bytes)
-        stored["image"] = img_filename
+        digest_full = hashlib.sha256(media.image_bytes).hexdigest()
+        owner = db.image_digest_owner(digest_full, exclude_collocation_id=coll_id)
+        if owner is not None:
+            # Another card already shows this exact picture. Storing it would
+            # point two cards at one file and leave a production front that
+            # admits more than one right answer — `vite` and `kjenne` are both
+            # "know", and one photo cannot ask for a particular one of them.
+            # Left imageless on purpose: the word is then a candidate for the
+            # pre-stage (mint queue, or the repair queue if its production card
+            # already exists), which retries with the URL set populated.
+            logger.warning(
+                "image for %r duplicates collocation %d — not stored; the word stays imageless for the pre-stage",
+                word,
+                owner,
+            )
+            # A separate key, NOT `image_status`: that one describes the FETCH,
+            # which succeeded ("ok"), and the block below would overwrite this
+            # anyway. Two different facts — "Pixabay answered" and "we declined
+            # to store what it sent" — and one key cannot hold both.
+            stored["image_duplicate_of"] = owner
+        else:
+            # Hash-suffixed, matching the pre-stage, `promote_production_cards`
+            # and `replace_item_image`. This used to be the BARE `img_<gloss>.<ext>`
+            # — the one write path that omitted the digest — and a shared English
+            # gloss is common, so the second card glossed "note" overwrote the
+            # first's picture in place, silently changing a card the learner
+            # already knew. Measured 2026-09-06: 3 Slovene files whose bytes no
+            # longer matched their recorded sha256, all three bare-named.
+            img_filename = f"{safe_stem(english, 'img')}_{digest_full[:8]}.{ext}"
+            store_tt_media(db, coll_id, "image", img_filename, media.image_bytes)
+            stored["image"] = img_filename
 
     audio_status = getattr(media, "audio_status", None)
     if audio_status is not None:

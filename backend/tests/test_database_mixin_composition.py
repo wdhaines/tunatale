@@ -97,4 +97,7 @@ def test_public_method_count_pinned() -> None:
     #  must keep excluding rows with a production direction or the mint doubles
     #  the card — the exclusion is right for minting and was silently wrong for
     #  image acquisition, which walks the same list)
-    assert count == 135
+    # +image_digest_owner (does any OTHER card already hold these exact image
+    #  bytes? The cross-card half of a guard that lived only within one pass —
+    #  16 Norwegian image files were each shown on 2+ different words)
+    assert count == 136
