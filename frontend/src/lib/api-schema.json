@@ -109,6 +109,38 @@
         "title": "ClientLogResponse",
         "type": "object"
       },
+      "ClozeSentenceVerdict": {
+        "description": "One cloze sentence and the blind judge's verdict on it (tunatale-keb0).\n\n``status`` is ``\"determined\"`` (nothing else fits the blank),\n``\"underdetermined\"`` (``competitors`` also fit), or ``\"unknown\"`` (the\nmodel said nothing usable \u2014 which is not the same as \"the sentence is\nfine\"). A cloze can legitimately be underdetermined: the words this feature\nexists for are the ones no short sentence fully constrains, so the\ncompetitor list, not the bare status, is what a reader judges by.\n\n``translation`` is the English for THIS sentence. It travels with the\nsentence because the two are stored together and shown together on the card\nback; a sentence carrying its predecessor's translation is the defect that\nmade the first version of this feature unsafe to confirm.",
+        "properties": {
+          "competitors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Competitors",
+            "type": "array"
+          },
+          "sentence": {
+            "title": "Sentence",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "translation": {
+            "title": "Translation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sentence",
+          "translation",
+          "status",
+          "competitors"
+        ],
+        "title": "ClozeSentenceVerdict",
+        "type": "object"
+      },
       "CommitPendingResponse": {
         "description": "Response of POST /lesson/{id}/commit-pending.",
         "properties": {
@@ -2685,6 +2717,35 @@
         "title": "PlanTurnResponse",
         "type": "object"
       },
+      "ProposeClozeResponse": {
+        "description": "Response of POST /api/srs/items/{item_id}/cloze/propose.\n\n\u26a0\ufe0f This endpoint WRITES NOTHING. It is one half of a confirm-before-write\npair: the caller shows ``current`` beside ``candidate`` and the human picks,\nthen ``PUT .../cloze/sentence`` stores the choice. The earlier one-shot\nversion wrote immediately and marked the row dirty, so a sync firing before\nthe learner could react had already rewritten the Anki note in place.\n\n``candidate`` is null when the generator produced nothing usable \u2014 a real\noutcome on a rate-limited free tier, and one the caller must report rather\nthan render as an empty suggestion.\n\n``recommended`` is the machine's opinion only: true when the candidate has a\nbetter verdict, or the same verdict with fewer competitors. It labels a\ndefault; it does not gate the write. That is the point of the split.",
+        "properties": {
+          "candidate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClozeSentenceVerdict"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current": {
+            "$ref": "#/components/schemas/ClozeSentenceVerdict"
+          },
+          "recommended": {
+            "title": "Recommended",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "current",
+          "candidate",
+          "recommended"
+        ],
+        "title": "ProposeClozeResponse",
+        "type": "object"
+      },
       "ProposedBatch": {
         "description": "Non-null value of GetCurriculumResponse.proposed: an uncommitted planner batch.",
         "properties": {
@@ -3177,38 +3238,6 @@
         "title": "RefreshMediaResponse",
         "type": "object"
       },
-      "RegenerateClozeResponse": {
-        "description": "Response of POST /api/srs/items/{item_id}/cloze/regenerate.\n\n``changed`` is false when nothing usable came back and the stored sentence\nwas left alone \u2014 the caller must not report success on that.\n\n``status`` and ``competitors`` are the judge's verdict on the sentence now\nstored: ``\"determined\"`` (nothing else fits), ``\"underdetermined\"`` (these\nother words do), or ``\"unknown\"`` (the model said nothing usable). A\nregenerate can legitimately land on an underdetermined sentence \u2014 the words\nthis feature exists for are the ones no sentence fully constrains \u2014 so the\ncompetitor list is what tells the learner whether to try again.",
-        "properties": {
-          "changed": {
-            "title": "Changed",
-            "type": "boolean"
-          },
-          "competitors": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Competitors",
-            "type": "array"
-          },
-          "sentence": {
-            "title": "Sentence",
-            "type": "string"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "changed",
-          "sentence",
-          "status",
-          "competitors"
-        ],
-        "title": "RegenerateClozeResponse",
-        "type": "object"
-      },
       "RenderAudioRequest": {
         "properties": {
           "lesson_id": {
@@ -3556,6 +3585,39 @@
           "title"
         ],
         "title": "ReviewSessionSummary",
+        "type": "object"
+      },
+      "SetClozeSentenceRequest": {
+        "description": "Body of PUT /api/srs/items/{item_id}/cloze/sentence.\n\nEither form is accepted: a sentence already carrying ``{{c1::...}}`` (what\n``propose`` returns) or a plain one (what a human types into the edit box).\n``make_cloze_text`` is idempotent, so the server wraps the second and passes\nthe first through. A sentence the word does not occur in is a 422 \u2014 it would\nblank nothing, and Anki calls such a note an empty card.",
+        "properties": {
+          "sentence": {
+            "title": "Sentence",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sentence"
+        ],
+        "title": "SetClozeSentenceRequest",
+        "type": "object"
+      },
+      "SetClozeSentenceResponse": {
+        "description": "Response of PUT /api/srs/items/{item_id}/cloze/sentence.\n\n``sentence`` is what was actually stored (cloze-marked), which is not\nnecessarily what was sent. ``translation`` is the English the server\ngenerated for it \u2014 empty when no LLM is configured or the call failed, which\nis honest where keeping the previous sentence's translation was not.",
+        "properties": {
+          "sentence": {
+            "title": "Sentence",
+            "type": "string"
+          },
+          "translation": {
+            "title": "Translation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sentence",
+          "translation"
+        ],
+        "title": "SetClozeSentenceResponse",
         "type": "object"
       },
       "SetGenerationModeResponse": {
@@ -6801,10 +6863,10 @@
         ]
       }
     },
-    "/api/srs/items/{item_id}/cloze/regenerate": {
+    "/api/srs/items/{item_id}/cloze/propose": {
       "post": {
-        "description": "Rewrite a cloze's sentence so its blank has one right answer (tunatale-keb0).\n\nThe learner has just met a card whose blank several words fit \u2014 *har ___\nhentet boka?* takes every pronoun, because Norwegian verbs do not inflect\nfor person \u2014 and asked for another. A new sentence is generated, judged\nblind, and kept only if it beats what is stored.\n\n\u26a0\ufe0f Writes the TT row and STOPS. The Anki note is rewritten by the next\nsync's ``sync_push`` through ``OfflineWriter.update_cloze_text``; nothing on\na request path may open the collection\n(``.claude/rules/anki-safety-core.md``). The card keeps its scheduling and\nrevlog either way \u2014 that is why the sentence is rewritten in place rather\nthan the note re-minted.",
-        "operationId": "regenerate_cloze_api_srs_items__item_id__cloze_regenerate_post",
+        "description": "Offer a replacement cloze sentence for a human to accept (tunatale-keb0).\n\n`choose_cloze_sentence` picked the first example containing the word and\nnever asked whether the blank had one right answer \u2014 *har ___ hentet boka?*\ntakes every pronoun, because Norwegian verbs do not inflect for person. This\ngenerates another sentence, judges it blind, and hands both to the caller.\n\n\u26a0\ufe0f WRITES NOTHING, and that is the point. The first version of this control\npersisted on the single click that produced it: the row was marked dirty\nimmediately, so a sync firing before the learner had read the new sentence\nhad already rewritten the Anki note in place \u2014 guid, `sfld` and `csum` with\nit. There was nothing left to undo cheaply. The write now lives in\n``PUT .../cloze/sentence``, behind a human.",
+        "operationId": "propose_cloze_sentence_api_srs_items__item_id__cloze_propose_post",
         "parameters": [
           {
             "in": "path",
@@ -6821,7 +6883,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegenerateClozeResponse"
+                  "$ref": "#/components/schemas/ProposeClozeResponse"
                 }
               }
             },
@@ -6838,7 +6900,60 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Regenerate Cloze",
+        "summary": "Propose Cloze Sentence",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/items/{item_id}/cloze/sentence": {
+      "put": {
+        "description": "Store a cloze sentence the human chose or typed (tunatale-keb0).\n\nThe write half of the confirm-before-write pair. Takes the sentence as given\n\u2014 a proposal accepted verbatim, or one edited by hand \u2014 so a near-miss is\nfixable without re-rolling the generator.\n\nThree things move together, because a card whose parts describe different\nsentences is worse than one with a bad sentence:\n\n1. ``source_sentence`` \u2014 cloze-marked, via the idempotent ``make_cloze_text``.\n2. ``sentence_translation`` \u2014 regenerated for the sentence being stored, or\n   ``\"\"``. Never carried over: the stored English described the sentence\n   being replaced.\n3. the ``audio_tts_sentence`` media row \u2014 the clip is named after\n   ``sha256(sentence)``, so after a rewrite it speaks the OLD sentence. It is\n   dropped and re-synthesized.\n\n\u26a0\ufe0f Writes the TT row and STOPS. The Anki note is rewritten by the next sync's\n``sync_push`` through ``OfflineWriter.update_cloze_text``; nothing on a\nrequest path may open the collection\n(``.claude/rules/anki-safety-core.md``). The card keeps its scheduling and\nrevlog either way \u2014 that is why the sentence is rewritten in place rather\nthan the note re-minted.",
+        "operationId": "set_cloze_sentence_api_srs_items__item_id__cloze_sentence_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetClozeSentenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetClozeSentenceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Cloze Sentence",
         "tags": [
           "srs"
         ]

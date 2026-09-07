@@ -1304,7 +1304,7 @@ export interface paths {
     patch: operations["patch_item_api_srs_items__item_id__patch"];
     trace?: never;
   };
-  "/api/srs/items/{item_id}/cloze/regenerate": {
+  "/api/srs/items/{item_id}/cloze/propose": {
     parameters: {
       query?: never;
       header?: never;
@@ -1314,22 +1314,64 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Regenerate Cloze
-     * @description Rewrite a cloze's sentence so its blank has one right answer (tunatale-keb0).
+     * Propose Cloze Sentence
+     * @description Offer a replacement cloze sentence for a human to accept (tunatale-keb0).
      *
-     *     The learner has just met a card whose blank several words fit — *har ___
-     *     hentet boka?* takes every pronoun, because Norwegian verbs do not inflect
-     *     for person — and asked for another. A new sentence is generated, judged
-     *     blind, and kept only if it beats what is stored.
+     *     `choose_cloze_sentence` picked the first example containing the word and
+     *     never asked whether the blank had one right answer — *har ___ hentet boka?*
+     *     takes every pronoun, because Norwegian verbs do not inflect for person. This
+     *     generates another sentence, judges it blind, and hands both to the caller.
      *
-     *     ⚠️ Writes the TT row and STOPS. The Anki note is rewritten by the next
-     *     sync's ``sync_push`` through ``OfflineWriter.update_cloze_text``; nothing on
-     *     a request path may open the collection
+     *     ⚠️ WRITES NOTHING, and that is the point. The first version of this control
+     *     persisted on the single click that produced it: the row was marked dirty
+     *     immediately, so a sync firing before the learner had read the new sentence
+     *     had already rewritten the Anki note in place — guid, `sfld` and `csum` with
+     *     it. There was nothing left to undo cheaply. The write now lives in
+     *     ``PUT .../cloze/sentence``, behind a human.
+     */
+    post: operations["propose_cloze_sentence_api_srs_items__item_id__cloze_propose_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/srs/items/{item_id}/cloze/sentence": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Set Cloze Sentence
+     * @description Store a cloze sentence the human chose or typed (tunatale-keb0).
+     *
+     *     The write half of the confirm-before-write pair. Takes the sentence as given
+     *     — a proposal accepted verbatim, or one edited by hand — so a near-miss is
+     *     fixable without re-rolling the generator.
+     *
+     *     Three things move together, because a card whose parts describe different
+     *     sentences is worse than one with a bad sentence:
+     *
+     *     1. ``source_sentence`` — cloze-marked, via the idempotent ``make_cloze_text``.
+     *     2. ``sentence_translation`` — regenerated for the sentence being stored, or
+     *        ``""``. Never carried over: the stored English described the sentence
+     *        being replaced.
+     *     3. the ``audio_tts_sentence`` media row — the clip is named after
+     *        ``sha256(sentence)``, so after a rewrite it speaks the OLD sentence. It is
+     *        dropped and re-synthesized.
+     *
+     *     ⚠️ Writes the TT row and STOPS. The Anki note is rewritten by the next sync's
+     *     ``sync_push`` through ``OfflineWriter.update_cloze_text``; nothing on a
+     *     request path may open the collection
      *     (``.claude/rules/anki-safety-core.md``). The card keeps its scheduling and
      *     revlog either way — that is why the sentence is rewritten in place rather
      *     than the note re-minted.
      */
-    post: operations["regenerate_cloze_api_srs_items__item_id__cloze_regenerate_post"];
+    put: operations["set_cloze_sentence_api_srs_items__item_id__cloze_sentence_put"];
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -1875,6 +1917,32 @@ export interface components {
     ClientLogResponse: {
       /** Accepted */
       accepted: number;
+    };
+    /**
+     * ClozeSentenceVerdict
+     * @description One cloze sentence and the blind judge's verdict on it (tunatale-keb0).
+     *
+     *     ``status`` is ``"determined"`` (nothing else fits the blank),
+     *     ``"underdetermined"`` (``competitors`` also fit), or ``"unknown"`` (the
+     *     model said nothing usable — which is not the same as "the sentence is
+     *     fine"). A cloze can legitimately be underdetermined: the words this feature
+     *     exists for are the ones no short sentence fully constrains, so the
+     *     competitor list, not the bare status, is what a reader judges by.
+     *
+     *     ``translation`` is the English for THIS sentence. It travels with the
+     *     sentence because the two are stored together and shown together on the card
+     *     back; a sentence carrying its predecessor's translation is the defect that
+     *     made the first version of this feature unsafe to confirm.
+     */
+    ClozeSentenceVerdict: {
+      /** Competitors */
+      competitors: string[];
+      /** Sentence */
+      sentence: string;
+      /** Status */
+      status: string;
+      /** Translation */
+      translation: string;
     };
     /**
      * CommitPendingResponse
@@ -3049,6 +3117,30 @@ export interface components {
       reply: string;
     };
     /**
+     * ProposeClozeResponse
+     * @description Response of POST /api/srs/items/{item_id}/cloze/propose.
+     *
+     *     ⚠️ This endpoint WRITES NOTHING. It is one half of a confirm-before-write
+     *     pair: the caller shows ``current`` beside ``candidate`` and the human picks,
+     *     then ``PUT .../cloze/sentence`` stores the choice. The earlier one-shot
+     *     version wrote immediately and marked the row dirty, so a sync firing before
+     *     the learner could react had already rewritten the Anki note in place.
+     *
+     *     ``candidate`` is null when the generator produced nothing usable — a real
+     *     outcome on a rate-limited free tier, and one the caller must report rather
+     *     than render as an empty suggestion.
+     *
+     *     ``recommended`` is the machine's opinion only: true when the candidate has a
+     *     better verdict, or the same verdict with fewer competitors. It labels a
+     *     default; it does not gate the write. That is the point of the split.
+     */
+    ProposeClozeResponse: {
+      candidate: components["schemas"]["ClozeSentenceVerdict"] | null;
+      current: components["schemas"]["ClozeSentenceVerdict"];
+      /** Recommended */
+      recommended: boolean;
+    };
+    /**
      * ProposedBatch
      * @description Non-null value of GetCurriculumResponse.proposed: an uncommitted planner batch.
      */
@@ -3212,30 +3304,6 @@ export interface components {
       /** Updated */
       updated: number;
     };
-    /**
-     * RegenerateClozeResponse
-     * @description Response of POST /api/srs/items/{item_id}/cloze/regenerate.
-     *
-     *     ``changed`` is false when nothing usable came back and the stored sentence
-     *     was left alone — the caller must not report success on that.
-     *
-     *     ``status`` and ``competitors`` are the judge's verdict on the sentence now
-     *     stored: ``"determined"`` (nothing else fits), ``"underdetermined"`` (these
-     *     other words do), or ``"unknown"`` (the model said nothing usable). A
-     *     regenerate can legitimately land on an underdetermined sentence — the words
-     *     this feature exists for are the ones no sentence fully constrains — so the
-     *     competitor list is what tells the learner whether to try again.
-     */
-    RegenerateClozeResponse: {
-      /** Changed */
-      changed: boolean;
-      /** Competitors */
-      competitors: string[];
-      /** Sentence */
-      sentence: string;
-      /** Status */
-      status: string;
-    };
     /** RenderAudioRequest */
     RenderAudioRequest: {
       /** Lesson Id */
@@ -3386,6 +3454,35 @@ export interface components {
       session_date: string;
       /** Title */
       title: string;
+    };
+    /**
+     * SetClozeSentenceRequest
+     * @description Body of PUT /api/srs/items/{item_id}/cloze/sentence.
+     *
+     *     Either form is accepted: a sentence already carrying ``{{c1::...}}`` (what
+     *     ``propose`` returns) or a plain one (what a human types into the edit box).
+     *     ``make_cloze_text`` is idempotent, so the server wraps the second and passes
+     *     the first through. A sentence the word does not occur in is a 422 — it would
+     *     blank nothing, and Anki calls such a note an empty card.
+     */
+    SetClozeSentenceRequest: {
+      /** Sentence */
+      sentence: string;
+    };
+    /**
+     * SetClozeSentenceResponse
+     * @description Response of PUT /api/srs/items/{item_id}/cloze/sentence.
+     *
+     *     ``sentence`` is what was actually stored (cloze-marked), which is not
+     *     necessarily what was sent. ``translation`` is the English the server
+     *     generated for it — empty when no LLM is configured or the call failed, which
+     *     is honest where keeping the previous sentence's translation was not.
+     */
+    SetClozeSentenceResponse: {
+      /** Sentence */
+      sentence: string;
+      /** Translation */
+      translation: string;
     };
     /**
      * SetGenerationModeResponse
@@ -5501,7 +5598,7 @@ export interface operations {
       };
     };
   };
-  regenerate_cloze_api_srs_items__item_id__cloze_regenerate_post: {
+  propose_cloze_sentence_api_srs_items__item_id__cloze_propose_post: {
     parameters: {
       query?: never;
       header?: never;
@@ -5518,7 +5615,42 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["RegenerateClozeResponse"];
+          "application/json": components["schemas"]["ProposeClozeResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  set_cloze_sentence_api_srs_items__item_id__cloze_sentence_put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        item_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SetClozeSentenceRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SetClozeSentenceResponse"];
         };
       };
       /** @description Validation Error */

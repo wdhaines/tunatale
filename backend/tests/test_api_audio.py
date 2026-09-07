@@ -1277,6 +1277,62 @@ class TestClozeTTSIntegration:
         coll = db.get_collocation_by_lemma("kje")
         assert coll is not None
 
+    async def test_listen_does_not_resynthesize_a_cloze_that_already_has_audio(self, monkeypatch):
+        """A second listen of the same lesson must not re-render sentence audio.
+
+        The false arm of ``if sent and not db.get_sentence_audio_filename(...)``.
+        It used to be reached by accident: ``app.audio.cloze_tts._MEDIA_DIR`` was
+        the only one of the four media constants conftest did not pin, so the
+        first listen found a real mp3 already sitting in the developer's
+        gitignored ``backend/media``, wrote a media row off it, and the second
+        listen skipped. Pinning that constant removed the accident along with the
+        coverage; this asserts the behaviour on purpose instead.
+        """
+        import app.api.srs as srs_mod
+        from app.models.lesson import Lesson, Phrase, Section, SectionType
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="sl",
+            sections=[
+                Section(
+                    section_type=SectionType.NATURAL_SPEED,
+                    phrases=[Phrase(text="Kje je banka?", voice_id="female-1", language_code="sl", role="female-1")],
+                )
+            ],
+            key_phrases=[],
+        )
+        db = SRSDatabase(":memory:")
+        store = ContentStore(":memory:")
+        store.save_lesson("lesson-ct4", "curriculum-1", 1, lesson)
+        app.state.srs_db = db
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            assert (await client.post("/api/srs/listen", json={"content_id": "lesson-ct4"})).status_code == 200
+
+        # Stand in for a render that landed: give every cloze row its sentence clip.
+        for lemma in ("kje", "je"):
+            coll = db.get_collocation_by_lemma(lemma)
+            coll_id = db.get_collocation_id_by_guid(coll.guid)
+            db.add_media(
+                coll_id, "audio_tts_sentence", "tts_sentence_x.mp3", "/tmp/x.mp3", "tts_sentence_x.mp3", "0" * 64, 1
+            )
+
+        calls: list[int] = []
+
+        async def _count(db_, collocation_id, sentence, word, *, voice=None):
+            calls.append(collocation_id)
+
+        monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", _count)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            assert (await client.post("/api/srs/listen", json={"content_id": "lesson-ct4"})).status_code == 200
+
+        assert calls == []
+
 
 class TestAudioErrorMapping:
     """TTS RuntimeError → 503 with adapter message."""

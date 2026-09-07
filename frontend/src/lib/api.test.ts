@@ -1616,27 +1616,59 @@ describe("TunaTaleAPI", () => {
       );
     });
 
-    it("regenerateClozeSentence calls POST /api/srs/items/:id/cloze/regenerate", async () => {
+    it("proposeClozeSentence calls POST /api/srs/items/:id/cloze/propose", async () => {
       vi.stubGlobal(
         "fetch",
         vi.fn().mockResolvedValue(
           mockOk({
-            changed: true,
-            sentence: "Kari ringte. {{c1::Han}} tar toget.",
-            status: "determined",
-            competitors: [],
+            current: {
+              sentence: "{{c1::han}} kommer i morgen",
+              translation: "he is coming tomorrow",
+              status: "underdetermined",
+              competitors: ["hun", "jeg"],
+            },
+            candidate: {
+              sentence: "Kari ringte. {{c1::Han}} tar toget.",
+              translation: "Kari called. He takes the train.",
+              status: "determined",
+              competitors: [],
+            },
+            recommended: true,
           }),
         ),
       );
 
-      const result = await api.regenerateClozeSentence(42);
+      const result = await api.proposeClozeSentence(42);
 
       expect(fetch).toHaveBeenCalledWith(
-        `${BASE}/api/srs/items/42/cloze/regenerate`,
+        `${BASE}/api/srs/items/42/cloze/propose`,
         expect.objectContaining({ method: "POST" }),
       );
-      expect(result.changed).toBe(true);
-      expect(result.status).toBe("determined");
+      expect(result.candidate?.status).toBe("determined");
+      expect(result.recommended).toBe(true);
+    });
+
+    it("setClozeSentence PUTs the sentence to /api/srs/items/:id/cloze/sentence", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            sentence: "Kari ringte. {{c1::Han}} tar toget.",
+            translation: "Kari called. He takes the train.",
+          }),
+        ),
+      );
+
+      const result = await api.setClozeSentence(42, "Kari ringte. Han tar toget.");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/items/42/cloze/sentence`,
+        expect.objectContaining({
+          method: "PUT",
+          body: JSON.stringify({ sentence: "Kari ringte. Han tar toget." }),
+        }),
+      );
+      expect(result.translation).toBe("Kari called. He takes the train.");
     });
 
     it("suspendSRSItem calls POST /api/srs/items/:id/suspend with suspended flag", async () => {

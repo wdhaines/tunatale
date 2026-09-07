@@ -11,7 +11,9 @@ import type { components } from "./api-types";
 export type ListenPreviewCandidate = components["schemas"]["ListenPreviewCandidate"];
 export type ListenPreview = components["schemas"]["ListenPreviewResponse"];
 export type CommitPendingResponse = components["schemas"]["CommitPendingResponse"];
-export type RegenerateClozeResponse = components["schemas"]["RegenerateClozeResponse"];
+export type ClozeSentenceVerdict = components["schemas"]["ClozeSentenceVerdict"];
+export type ProposeClozeResponse = components["schemas"]["ProposeClozeResponse"];
+export type SetClozeSentenceResponse = components["schemas"]["SetClozeSentenceResponse"];
 export type CreateReviewSessionResponse = components["schemas"]["CreateReviewSessionResponse"];
 
 // SSR fetches go straight to the backend (the browser uses the Vite proxy via
@@ -1159,14 +1161,30 @@ export class TunaTaleAPI {
     });
   }
 
-  /** Regenerate a cloze's sentence so its blank has one right answer (tunatale-keb0).
+  /** Offer a replacement cloze sentence, so a human can compare before deciding.
    *
-   * `changed: false` means nothing better was produced and the stored sentence
-   * was kept — the caller must not report success on that. The Anki note is
+   * ⚠️ WRITES NOTHING (tunatale-keb0). `candidate` is null when the generator
+   * produced nothing usable — a real outcome on a rate-limited free tier, and
+   * one the caller must report rather than render as an empty suggestion.
+   * `recommended` labels the default; it does not gate the write.
+   */
+  async proposeClozeSentence(id: number): Promise<ProposeClozeResponse> {
+    return this.request(`/api/srs/items/${id}/cloze/propose`, { method: "POST" });
+  }
+
+  /** Store the cloze sentence the human accepted or typed (tunatale-keb0).
+   *
+   * Takes a sentence with or without `{{c1::…}}`; the server wraps a plain one.
+   * The stored English and the sentence audio are regenerated alongside it, so
+   * the card's parts never describe different sentences. The Anki note is
    * rewritten by the next sync, not by this call.
    */
-  async regenerateClozeSentence(id: number): Promise<RegenerateClozeResponse> {
-    return this.request(`/api/srs/items/${id}/cloze/regenerate`, { method: "POST" });
+  async setClozeSentence(id: number, sentence: string): Promise<SetClozeSentenceResponse> {
+    return this.request(`/api/srs/items/${id}/cloze/sentence`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sentence }),
+    });
   }
 
   async resetSRSItem(id: number): Promise<SRSItemDetail> {

@@ -47,7 +47,6 @@ vi.mock("$lib/api", () => ({
     markLessonReviewed: vi.fn(),
     commitPending: vi.fn(),
     getLesson: vi.fn(),
-    regenerateClozeSentence: vi.fn(),
   },
 }));
 
@@ -61,7 +60,6 @@ const mockSubmitDrill = vi.mocked(api.submitDrill);
 const mockCommitPending = vi.mocked(api.commitPending);
 const mockMarkLessonReviewed = vi.mocked(api.markLessonReviewed);
 const mockGetLesson = vi.mocked(api.getLesson);
-const mockRegenerateCloze = vi.mocked(api.regenerateClozeSentence);
 
 // The header only reads `title`; the rest satisfies LessonDetail's shape.
 const lessonDetail = (title: string): LessonDetail => ({
@@ -1322,63 +1320,26 @@ describe("review/+page.svelte", () => {
   });
 });
 
-describe("cloze 'try again' (tunatale-keb0)", () => {
-  const clozeItem = () =>
-    makeReviewQueueItem({
-      id: 42,
-      text: "han",
-      card_type: "cloze",
-      source_sentence: "{{c1::han}} kommer i morgen",
-      source_sentence_translation: "he is coming tomorrow",
-      direction: "production",
+describe("cloze rewrite is not reachable from the drill card (tunatale-keb0)", () => {
+  // The "Card details \u2197" link beside the card is the route to it now. Kept as
+  // a guard because the control used to live here and its removal is the point.
+  it("offers no rewrite control, only the card-details link", async () => {
+    mockFetchReviewQueue.mockResolvedValue({
+      queue: [
+        makeReviewQueueItem({
+          id: 42,
+          text: "han",
+          card_type: "cloze",
+          source_sentence: "{{c1::han}} kommer i morgen",
+          source_sentence_translation: "he is coming tomorrow",
+          direction: "production",
+        }),
+      ],
     });
-
-  const reveal = async () => {
     render(ReviewPage);
-    const show = await screen.findByRole("button", { name: /show/i });
-    await fireEvent.click(show);
-  };
+    await fireEvent.click(await screen.findByRole("button", { name: /show/i }));
 
-  it("refetches the queue after a successful regenerate", async () => {
-    mockFetchReviewQueue.mockResolvedValue({ queue: [clozeItem()] });
-    mockRegenerateCloze.mockResolvedValue({
-      changed: true,
-      sentence: "Kari ringte. {{c1::Han}} tar toget.",
-      status: "determined",
-      competitors: [],
-    });
-    await reveal();
-
-    await fireEvent.click(screen.getByRole("button", { name: /try again/i }));
-
-    expect(mockRegenerateCloze).toHaveBeenCalledWith(42);
-    // Once on mount, once after the rewrite — the new sentence has to be fetched
-    // for the card to show it.
-    expect(mockFetchReviewQueue.mock.calls.length).toBeGreaterThan(1);
-  });
-
-  it("says so when nothing better was found, rather than silently doing nothing", async () => {
-    mockFetchReviewQueue.mockResolvedValue({ queue: [clozeItem()] });
-    mockRegenerateCloze.mockResolvedValue({
-      changed: false,
-      sentence: "{{c1::han}} kommer i morgen",
-      status: "underdetermined",
-      competitors: ["hun", "jeg"],
-    });
-    await reveal();
-
-    await fireEvent.click(screen.getByRole("button", { name: /try again/i }));
-
-    expect(await screen.findByText(/No better sentence found/)).toBeTruthy();
-  });
-
-  it("surfaces a failure instead of leaving the button spinning", async () => {
-    mockFetchReviewQueue.mockResolvedValue({ queue: [clozeItem()] });
-    mockRegenerateCloze.mockRejectedValue(new Error("LLM not configured"));
-    await reveal();
-
-    await fireEvent.click(screen.getByRole("button", { name: /try again/i }));
-
-    expect(await screen.findByText(/LLM not configured/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /try again/i })).toBeNull();
+    expect(screen.getByRole("link", { name: /card details/i })).toBeTruthy();
   });
 });

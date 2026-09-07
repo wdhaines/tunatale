@@ -29,6 +29,8 @@ vi.mock("$lib/api", () => {
       setItemImageFromUrl: vi.fn(),
       uploadItemImage: vi.fn(),
       removeItemImage: vi.fn(),
+      proposeClozeSentence: vi.fn(),
+      setClozeSentence: vi.fn(),
     },
   };
 });
@@ -43,6 +45,8 @@ const mockSuspend = vi.mocked(api.suspendSRSItem);
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 const mockFetchImageCandidates = vi.mocked(api.fetchImageCandidates);
 const mockRemoveItemImage = vi.mocked(api.removeItemImage);
+const mockProposeCloze = vi.mocked(api.proposeClozeSentence);
+const mockSetCloze = vi.mocked(api.setClozeSentence);
 import { syncStore } from "$lib/stores/sync.svelte";
 import { makeSRSItemDetail } from "../../test/factories";
 
@@ -992,6 +996,100 @@ describe("cards/+page.svelte", () => {
     await fireEvent.click(await findByText("Change image…"));
 
     expect(await findByText("Edit Image")).toBeTruthy();
+  });
+
+  // tunatale-keb0: rewriting a cloze's sentence lives here, not on the drill
+  // card's answer side. It is card maintenance, and the previous placement put
+  // it one stray click from a grade button — with no confirmation behind it.
+  it("Cloze sentence menu item opens the rewrite dialog", async () => {
+    const item = makeSRSItemDetail({
+      id: 42,
+      text: "han",
+      card_type: "cloze",
+      source_sentence: "{{c1::han}} kommer i morgen",
+    });
+    mockList.mockResolvedValue({ items: [item], total: 1 });
+
+    const { findByText, findByLabelText } = render(CardsPage);
+    await findByText("han");
+
+    await openRowMenu(findByLabelText, "han");
+    await fireEvent.click(await findByText("Cloze sentence…"));
+
+    expect(await findByText(/Cloze sentence — han/)).toBeTruthy();
+    // Opening the dialog asks the model nothing and writes nothing.
+    expect(mockProposeCloze).not.toHaveBeenCalled();
+  });
+
+  it("closes the rewrite dialog on Cancel, having written nothing", async () => {
+    mockList.mockResolvedValue({
+      items: [
+        makeSRSItemDetail({
+          id: 42,
+          text: "han",
+          card_type: "cloze",
+          source_sentence: "{{c1::han}} kommer i morgen",
+        }),
+      ],
+      total: 1,
+    });
+    const { findByText, findByLabelText, queryByText } = render(CardsPage);
+    await findByText("han");
+    await openRowMenu(findByLabelText, "han");
+    await fireEvent.click(await findByText("Cloze sentence…"));
+    await findByText(/Cloze sentence — han/);
+
+    await fireEvent.click(await findByText("Cancel"));
+
+    await waitFor(() => expect(queryByText(/Cloze sentence — han/)).toBeNull());
+    expect(mockSetCloze).not.toHaveBeenCalled();
+  });
+
+  it("closes and reloads the list once a sentence is stored", async () => {
+    mockList.mockResolvedValue({
+      items: [
+        makeSRSItemDetail({
+          id: 42,
+          text: "han",
+          card_type: "cloze",
+          source_sentence: "{{c1::han}} kommer i morgen",
+        }),
+      ],
+      total: 1,
+    });
+    mockSetCloze.mockResolvedValue({
+      sentence: "Kari ringte. {{c1::Han}} tar toget.",
+      translation: "Kari called.",
+    });
+    const { findByText, findByLabelText, getByLabelText, queryByText } = render(CardsPage);
+    await findByText("han");
+    await openRowMenu(findByLabelText, "han");
+    await fireEvent.click(await findByText("Cloze sentence…"));
+    await findByText(/Cloze sentence — han/);
+
+    const callsBefore = mockList.mock.calls.length;
+    await fireEvent.input(getByLabelText(/sentence to store/i), {
+      target: { value: "Kari ringte. Han tar toget." },
+    });
+    await fireEvent.click(await findByText("Use this sentence"));
+
+    await waitFor(() => expect(queryByText(/Cloze sentence — han/)).toBeNull());
+    // The row's sentence changed, so the list it came from is stale.
+    expect(mockList.mock.calls.length).toBeGreaterThan(callsBefore);
+  });
+
+  it("offers no cloze rewrite on a vocab card", async () => {
+    mockList.mockResolvedValue({
+      items: [makeSRSItemDetail({ id: 1, text: "zdravo" })],
+      total: 1,
+    });
+    const { findByText, findByLabelText, queryByText } = render(CardsPage);
+    await findByText("zdravo");
+
+    await openRowMenu(findByLabelText, "zdravo");
+
+    expect(await findByText("Change image…")).toBeTruthy();
+    expect(queryByText("Cloze sentence…")).toBeNull();
   });
 
   it("clicking thumbnail with image_url opens modal", async () => {
