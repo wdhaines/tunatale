@@ -66,6 +66,20 @@ SCAN_LIMIT = 200
 #: ~40s for a full refill, comfortably inside the gap between two syncs.
 PRESTAGE_CONCURRENCY = 5
 
+#: Live fetches per pass spent on the REPAIR queue
+#: (``list_production_cards_missing_images``), on top of ``limit`` rather than
+#: inside it.
+#:
+#: On top, because sharing would make the repair inert: the mint queue is 1487
+#: rows deep on the Norwegian deck and fills ``limit`` on every pass, so a repair
+#: that waited its turn would never get one. Small, because the queue it drains
+#: is normally one or two rows — a card reaches it only by acquiring a production
+#: direction outside the mint router AND losing its single add-time fetch, which
+#: has happened twice across both decks (`den gangen`, `janez`). If it is ever
+#: deep, the count in PRESTAGE_IMAGES says so, which is the property that was
+#: missing: this population used to be invisible, not merely unserved.
+IMAGE_REPAIR_LIMIT = 3
+
 
 #: How many DISTINCT failure reasons ride the durable log line, and how much of
 #: each. The pre-stage runs after every sync, so an unbounded tail here fills the
@@ -130,6 +144,16 @@ class PreStageReport(NamedTuple):
     #: is ``failed - transient``). The durable line would otherwise read a
     #: rate-limit as if the word had been searched and found wanting.
     transient: int = 0
+    #: Images acquired for the REPAIR queue — production cards that already exist
+    #: in Anki with no image and no cloze. Counted apart from ``fetched`` because
+    #: they are a different claim: ``fetched`` staged a picture for a card not yet
+    #: minted, this one repaired a card the learner is already being shown. It is
+    #: also the only number that says the repair queue is being drained at all.
+    repaired: int = 0
+    #: Repair candidates seen this pass, whether or not a picture was found. A
+    #: standing non-zero here with ``repaired=0`` is the signal to look: the queue
+    #: is not draining.
+    repair_queue: int = 0
     #: Up to MAX_FAILURE_REASONS distinct redacted reasons, so the durable line
     #: names the CAUSE and not merely the count. Empty on a clean pass.
     failures: tuple[str, ...] = ()
@@ -164,7 +188,8 @@ def _log_prestage_summary(report: PreStageReport) -> None:
         f"PRESTAGE_IMAGES fetched={report.fetched} drawn={report.rendered_number} "
         f"already={report.already_had_image} "
         f"function_word={report.skipped_function_word} no_image={report.no_image} "
-        f"transient={report.transient} failed={report.failed}"
+        f"transient={report.transient} failed={report.failed} "
+        f"repair_queue={report.repair_queue} repaired={report.repaired}"
     )
     # Only when there ARE failures: `failed=0` already says a pass was clean, and
     # a dangling empty field just invites the reader to wonder what it means.
@@ -211,16 +236,31 @@ async def prestage_production_images(
     failure_reasons: list[str] = []
     drawn = 0
     transient = 0
+    repaired = 0
     wanted = []
-    for cand in db.list_words_awaiting_production(limit=SCAN_LIMIT):
-        if len(wanted) >= limit:
-            break
+    #: Collocation ids whose picture must be flagged dirty once stored. A mint
+    #: candidate needs no flag — `mint_production_card` writes the Image field
+    #: itself when it creates the card. A REPAIR candidate's Anki card already
+    #: exists, so `store_tt_media` alone would leave the picture visible in TT and
+    #: absent from Anki forever: `sync_push`'s vocab branch only writes `Image`
+    #: when "image" is in the row's dirty set.
+    repair_ids: set[int] = set()
 
+    def _triage(cand, *, repair: bool) -> None:
+        """Sort one candidate into fetch / draw / skip. Shared by both queues.
+
+        Both queues get the SAME filters, deliberately. A repair candidate that
+        is a function word is left alone for the reason the mint router leaves
+        one alone — a picture of "foran" is noise, and this queue has no cloze
+        fallback to offer instead, so the choice is a meaningless picture or the
+        English-only front it has today. The quieter of the two wins.
+        """
+        nonlocal already, drawn, skipped
         unit = cand.item.syntactic_unit
 
         if db.get_image_filename(cand.collocation_id) is not None:
             already += 1
-            continue
+            return
 
         # A number word is DRAWN, not searched for (tunatale-elrj). Checked before
         # every other filter below, and deliberately so in two directions:
@@ -244,21 +284,40 @@ async def prestage_production_images(
             image = render_count_svg(value)
             digest = hashlib.sha256(image).hexdigest()[:8]
             store_tt_media(db, cand.collocation_id, "image", f"count_{value:03d}_{digest}.svg", image)
+            if repair:
+                db.add_dirty_field_by_id(cand.collocation_id, "image")
             drawn += 1
-            continue
+            return
 
         if db.is_image_unavailable(cand.collocation_id):
             # Already searched, already came back empty. Without this the same
             # unpicturable word costs a live fetch on every pass forever; the mint
             # reads the same marker and clozes the word instead of minting it.
+            # For a repair candidate the query itself already excludes these, so
+            # this is the mint queue's guard — kept shared rather than branched.
             already += 1
-            continue
+            return
 
         if is_function_word(unit.text, language_code):
             skipped += 1
-            continue
+            return
 
+        if repair:
+            repair_ids.add(cand.collocation_id)
         wanted.append(cand)
+
+    for cand in db.list_words_awaiting_production(limit=SCAN_LIMIT):
+        if len(wanted) >= limit:
+            break
+        _triage(cand, repair=False)
+
+    # The repair queue, on its own budget. See IMAGE_REPAIR_LIMIT for why it is
+    # additive rather than carved out of `limit`, and
+    # `_PRODUCTION_MISSING_IMAGE_WHERE` for how a card gets here at all.
+    repair_start = len(wanted)
+    for cand in db.list_production_cards_missing_images(limit=IMAGE_REPAIR_LIMIT):
+        _triage(cand, repair=True)
+    repair_queued = len(wanted) - repair_start
 
     semaphore = asyncio.Semaphore(PRESTAGE_CONCURRENCY)
 
@@ -361,7 +420,16 @@ async def prestage_production_images(
 
         filename = f"{safe_stem(unit.translation, 'img')}_{digest}.{media.image_ext or 'jpg'}"
         store_tt_media(db, cand.collocation_id, "image", filename, media.image_bytes)
-        fetched += 1
+        if cand.collocation_id in repair_ids:
+            # The card is already in Anki with an empty Image field, so the
+            # picture reaches it only through `sync_push`'s vocab branch, which
+            # writes `Image` only for a row flagged "image". Without this the
+            # repair is visible in TT and invisible in Anki — the shape of the
+            # bug it exists to fix, one layer along.
+            db.add_dirty_field_by_id(cand.collocation_id, "image")
+            repaired += 1
+        else:
+            fetched += 1
 
     report = PreStageReport(
         fetched=fetched,
@@ -371,6 +439,8 @@ async def prestage_production_images(
         rendered_number=drawn,
         failed=failed,
         transient=transient,
+        repaired=repaired,
+        repair_queue=repair_queued,
         failures=tuple(failure_reasons[:MAX_FAILURE_REASONS]),
     )
     _log_prestage_summary(report)

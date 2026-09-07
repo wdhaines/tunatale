@@ -102,6 +102,46 @@ _AWAITING_PRODUCTION_WHERE = """
       )
 """
 
+#: The blind spot of the predicate above, stated as its own query.
+#:
+#: ``_AWAITING_PRODUCTION_WHERE`` excludes any row that ALREADY has a production
+#: direction, which is right for minting — a second mint would double the card —
+#: and wrong for image acquisition, because the pre-stage walks the same list.
+#: A vocab row can acquire its production direction WITHOUT passing the mint
+#: router at all: ``upsert_by_guid`` creates whatever directions the Anki
+#: collection reports, so a note the user made in Anki with both templates
+#: arrives complete. Its one and only image attempt was the add-time fetch in
+#: ``generate_vocab_media``, which is best-effort and records nothing on a miss —
+#: no media row, and no ``image_unavailable_at`` either. Nothing retried it and
+#: nothing counted it.
+#:
+#: Found 2026-09-06 on the Norwegian deck: `den gangen`, 1 of 815 vocab
+#: production cards, imageless and clozeless since 2026-08-31. Its three
+#: batch-mates, added in the same two seconds, all got pictures; it lost its
+#: candidates to the shared ``used_image_urls`` set and no second look existed.
+#:
+#: ⚠️ The cloze fallback is NOT an alternative remedy for this population.
+#: ``_fallback_to_cloze`` is reachable only from the mint router, which by
+#: construction never sees these rows. An image is the only front they can get,
+#: which is why this query exists rather than a widening of the one above.
+#:
+#: ``image_unavailable_at IS NULL`` is what terminates the drain: a word searched
+#: and found unpicturable drops out here, exactly as it does for the mint queue.
+_PRODUCTION_MISSING_IMAGE_WHERE = """
+    FROM collocations c
+    JOIN collocation_directions p ON p.collocation_id = c.id AND p.direction = 'production'
+    WHERE c.card_type = 'vocab'
+      AND c.anki_note_id IS NOT NULL
+      AND c.image_unavailable_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM media m WHERE m.collocation_id = c.id AND m.kind = 'image'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM collocations z
+        WHERE z.card_type = 'cloze' AND z.base_collocation_id = c.id
+      )
+"""
+
 
 class DbSyncMixin:
     """Dirty tracking + Anki ID mapping. Mixed into SRSDatabase; relies on SRSDatabaseBase infra."""
@@ -658,6 +698,37 @@ class DbSyncMixin:
             rows = conn.execute(
                 f"""
                 SELECT c.* {_AWAITING_PRODUCTION_WHERE}
+                ORDER BY c.anki_note_id ASC, c.id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [
+                ProductionCandidate(row["guid"], self._row_to_item(conn, row), row["id"], row["anki_note_id"])
+                for row in rows
+            ]
+
+    def list_production_cards_missing_images(self, limit: int) -> list[ProductionCandidate]:
+        """Return up to *limit* production cards that have no image and no cloze.
+
+        The repair queue. These rows are NOT mint candidates — they already hold
+        a production direction, which is exactly why the mint queue cannot see
+        them and why they were never retried. See
+        ``_PRODUCTION_MISSING_IMAGE_WHERE`` for how a row gets into this state.
+
+        Ordered by ``anki_note_id`` for the same reason
+        ``list_words_awaiting_production`` is: the key must be IMMUTABLE, or a
+        review session rewrites the head between the pass that fetches and the
+        one that reads. Frequency order is a free side benefit here, not the
+        point — this queue is normally a handful of rows deep.
+
+        Returns the same ``ProductionCandidate`` shape as the mint queue so the
+        pre-stage can run both through one fetch loop.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT c.* {_PRODUCTION_MISSING_IMAGE_WHERE}
                 ORDER BY c.anki_note_id ASC, c.id ASC
                 LIMIT ?
                 """,

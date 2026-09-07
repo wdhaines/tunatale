@@ -91,4 +91,10 @@ def test_public_method_count_pinned() -> None:
     #  because the mint makes no network call)
     # +set_cloze_sentence (the /review "try again" control writes the regenerated
     #  sentence and flags it; the next sync carries it to Anki — tunatale-keb0)
-    assert count == 134
+    # +list_production_cards_missing_images (the repair queue: production cards
+    #  that already exist in Anki with no image and no cloze. A separate query
+    #  rather than a widening of list_words_awaiting_production, because that one
+    #  must keep excluding rows with a production direction or the mint doubles
+    #  the card — the exclusion is right for minting and was silently wrong for
+    #  image acquisition, which walks the same list)
+    assert count == 135
