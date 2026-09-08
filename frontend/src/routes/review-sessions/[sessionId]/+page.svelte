@@ -228,7 +228,7 @@
 		{/snippet}
 		{#snippet noAudio()}
 			<div class="prepare">
-				<button type="button" onclick={prepareAudio} disabled={preparing}>
+				<button type="button" class="btn-primary" onclick={prepareAudio} disabled={preparing}>
 					{preparing ? 'Preparing…' : 'Prepare audio'}
 				</button>
 				{#if renderError}

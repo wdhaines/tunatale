@@ -402,6 +402,35 @@
 		box-shadow: var(--shadow-sm);
 		padding: 1.25rem;
 	}
+	/* Shared primary action button — the pill the lesson page's Render Audio has
+	   always been, promoted here so a second page cannot silently miss it.
+	   Svelte scopes a page's `button {}` rule to that page, so the review-session
+	   page's Prepare audio fell through to the UA default (bd tunatale-kfcg).
+
+	   ⚠️ NOT applied by a sweep over every bare `button {}` rule in the app: the
+	   four that exist are not the same rule. `cards/+page.svelte` is a NEUTRAL
+	   surface button (`--radius`, a border, surface background) and would be
+	   redesigned, not deduplicated; `login` (weight 700, .95rem) and `DrillCard`
+	   (no hover, no disabled) carry deliberate deltas. Migrating those is
+	   follow-up work with its own visual review. */
+	:global(.btn-primary) {
+		margin-top: 0.75rem;
+		padding: 0.55rem 1.4rem;
+		background: var(--color-primary);
+		color: var(--color-on-primary);
+		border: none;
+		border-radius: var(--radius-pill);
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.15s ease;
+	}
+	:global(.btn-primary:not(:disabled):hover) {
+		background: var(--color-primary-hover);
+	}
+	:global(.btn-primary:disabled) {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
 	:global(.pulse) {
 		animation: pulse 1.2s ease-in-out infinite;
 	}
