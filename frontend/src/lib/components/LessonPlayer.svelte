@@ -8,6 +8,7 @@
 	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
 	import { lessonPlayerPref, pillsForSection } from '$lib/stores/lessonPlayerPref.svelte';
 	import { handsFreePref } from '$lib/stores/handsFreePref.svelte';
+	import { playerCollapsedPref } from '$lib/stores/playerCollapsedPref.svelte';
 	import type { EnglishMode } from '$lib/stores/lessonPlayerPref.svelte';
 	import { createPlaybackController } from '$lib/playback/playbackController.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
@@ -158,6 +159,13 @@
 	const captionRevealed = $derived(
 		ctrl.currentCue != null && revealedCueIndex === ctrl.currentCue.index
 	);
+
+	// Collapse is a READ-mode affordance: on Read the transcript is the content
+	// and this card's height comes straight out of it. In Listen the player IS
+	// the content, so the preference is ignored there rather than gutting it.
+	// Gating the effect (not just the button) is what keeps a collapse chosen on
+	// Read from following you into Listen.
+	let collapsed = $derived(compact && playerCollapsedPref.collapsed);
 
 	let selectedSectionType = $derived(resolveSectionType(phase, enunLevel, englishMode));
 	let enunIndex = $derived(ENUNCIATION_OPTIONS.findIndex((o) => o.level === enunLevel));
@@ -311,6 +319,7 @@
 	onMount(() => {
 		captionBlurPref.init();
 		voicePref.init();
+		playerCollapsedPref.init();
 
 		// Seed the persisted phase/enunciation/English selection and make it
 		// effective. Gated on trackMode: without per-section cues the phase
@@ -380,7 +389,7 @@
 
 <section class="player" class:compact>
 
-	{#if trackMode}
+	{#if trackMode && !collapsed}
 		<div class="phase-row">
 			<button
 				class="phase-btn"
@@ -411,7 +420,7 @@
 		</button>
 	</div>
 
-	{#if hasCues}
+	{#if hasCues && !collapsed}
 		<div class="sentence-row">
 			<button class="ctrl-btn small" onclick={() => ctrl.restartSection()} title="Restart section">
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><rect x="2" y="2" width="2" height="12" rx="1" fill="currentColor"/><polygon points="14,2 6,8 14,14" fill="currentColor"/></svg>
@@ -454,7 +463,7 @@
 		</div>
 	</div>
 
-	{#if (trackMode && hasAllSections) || (hasCues && !compact)}
+	{#if ((trackMode && hasAllSections) || (hasCues && !compact)) && !collapsed}
 		<!-- Independent setting chips (field:value), NOT a segmented pick-one:
 		     the phase row above owns the segmented look. Each chip toggles on its
 		     own; the accent (.active) marks a non-default value. -->
@@ -517,6 +526,25 @@
 		</div>
 	{/if}
 
+	{#if compact}
+		<!-- Read-mode only. A thin strip at the FOOT of the card rather than an
+		     icon floated into a corner: absolute positioning would overlap the
+		     phase row at narrow widths, and a full-width affordance is what
+		     reads as "this card opens and closes". -->
+		<button
+			class="collapse-toggle"
+			aria-expanded={!collapsed}
+			aria-label={collapsed ? 'Show player controls' : 'Hide player controls'}
+			title={collapsed ? 'Show controls' : 'Hide controls'}
+			onclick={() => playerCollapsedPref.set(!playerCollapsedPref.collapsed)}
+		>
+			<svg viewBox="0 0 16 16" width="0.9em" height="0.9em" aria-hidden="true"
+			     style="transform: rotate({collapsed ? 0 : 180}deg); transition: transform 0.15s">
+				<polygon points="3,6 13,6 8,11.5" fill="currentColor" />
+			</svg>
+		</button>
+	{/if}
+
 	{#if hasCues && !compact}
 		<!-- Subtitle sits BELOW the controls: the player is a sticky header, so the
 		     line reads nearest the content. Compact (Read mode) omits it — the
@@ -574,6 +602,35 @@
 		display: flex;
 		justify-content: center;
 		gap: 0.5rem;
+	}
+	/* Quiet by default — it is chrome, not a control you reach for mid-lesson.
+	   Full width so the whole strip is the target: at 44px tall it clears the
+	   touch-target floor the other buttons use. */
+	.collapse-toggle {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 100%;
+		min-height: 44px;
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: var(--color-text-muted, #6b7280);
+		cursor: pointer;
+		border-radius: var(--radius-pill, 999px);
+	}
+	.collapse-toggle:hover {
+		background: var(--color-surface-2);
+		color: var(--color-text);
+	}
+	.collapse-toggle:focus-visible {
+		outline: 2px solid var(--color-accent, currentColor);
+		outline-offset: -2px;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.collapse-toggle svg {
+			transition: none !important;
+		}
 	}
 	.ctrl-btn {
 		min-width: 48px;

@@ -9,6 +9,7 @@ import { tick } from "svelte";
 import { maybePrefetchLesson } from "$lib/sw/prefetch";
 import { captionBlurPref } from "$lib/stores/captionBlurPref.svelte";
 import { voicePref } from "$lib/stores/voicePref.svelte";
+import { playerCollapsedPref } from "$lib/stores/playerCollapsedPref.svelte";
 import type { Cue, LessonAudio } from "$lib/api";
 import type { PlaybackController } from "$lib/playback/playbackController.svelte";
 
@@ -44,6 +45,11 @@ beforeEach(() => {
   vi.mocked(maybePrefetchLesson).mockClear();
   captionBlurPref.set(true);
   voicePref.set(false);
+  // Reset the collapse singleton's IN-MEMORY state too, not just storage.
+  // Measured by sabotage: with onMount's init() removed, "restores a stored
+  // collapse on mount" still passed, because the previous test's set(true) was
+  // still sitting in the store. Clearing storage alone does not clear that.
+  playerCollapsedPref.set(false);
   localStorage.clear();
 });
 
@@ -878,6 +884,118 @@ describe("LessonPlayer", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
       const scrubber = container.querySelector<HTMLInputElement>(".scrubber")!;
       fireEvent.input(scrubber, { target: { value: "5.0" } });
+    });
+  });
+
+  describe("collapsible controls on Read", () => {
+    const KEY = "playerCollapsed";
+    const HIDDEN = [".phase-row", ".sentence-row", ".controls-row"];
+    const KEPT = [".transport-row", ".scrubber-row"];
+
+    function readMode() {
+      return render(LessonPlayer, {
+        props: { audio: audioWithAllSections, compact: true },
+      });
+    }
+
+    it("offers a collapse toggle on Read", () => {
+      const { container } = readMode();
+      const t = container.querySelector<HTMLButtonElement>(".collapse-toggle");
+      expect(t).toBeTruthy();
+      expect(t!.getAttribute("aria-expanded")).toBe("true");
+    });
+
+    it("does NOT offer one in Listen — there the player IS the content", () => {
+      const { container } = render(LessonPlayer, {
+        props: { audio: audioWithAllSections, compact: false },
+      });
+      expect(container.querySelector(".collapse-toggle")).toBeFalsy();
+    });
+
+    it("starts expanded: every row is present", () => {
+      const { container } = readMode();
+      for (const sel of [...HIDDEN, ...KEPT]) {
+        expect(container.querySelector(sel), `${sel} at rest`).toBeTruthy();
+      }
+    });
+
+    it("collapsing drops the set-once rows and KEEPS playback reachable", () => {
+      // The point of the feature: space back, without giving up the transport.
+      const { container } = readMode();
+      fireEvent.click(container.querySelector<HTMLButtonElement>(".collapse-toggle")!);
+      for (const sel of HIDDEN) {
+        expect(container.querySelector(sel), `${sel} should be hidden`).toBeFalsy();
+      }
+      for (const sel of KEPT) {
+        expect(container.querySelector(sel), `${sel} must survive`).toBeTruthy();
+      }
+      expect(container.querySelector(".play-btn")).toBeTruthy();
+    });
+
+    it("expanding again restores every row", () => {
+      const { container } = readMode();
+      const t = container.querySelector<HTMLButtonElement>(".collapse-toggle")!;
+      fireEvent.click(t);
+      expect(t.getAttribute("aria-expanded")).toBe("false");
+      fireEvent.click(t);
+      expect(t.getAttribute("aria-expanded")).toBe("true");
+      for (const sel of [...HIDDEN, ...KEPT]) {
+        expect(container.querySelector(sel), `${sel} restored`).toBeTruthy();
+      }
+    });
+
+    it("collapsing does NOT interrupt playback", () => {
+      // ⚠️ The one thing that would make this feature worse than no feature.
+      // Collapsing is a rendering decision; it must not reach the controller.
+      let ctrl!: PlaybackController;
+      const { container } = render(PillSyncHarness, {
+        props: {
+          audio: audioWithAllSections,
+          onController: (c: PlaybackController) => {
+            ctrl = c;
+          },
+        },
+      });
+      ctrl.play();
+      expect(ctrl.playing).toBe(true);
+      const t = container.querySelector<HTMLButtonElement>(".collapse-toggle");
+      // The harness renders Listen mode, so drive the store directly — the
+      // claim under test is "collapsing does not touch the controller", not
+      // where the button lives.
+      expect(t).toBeFalsy();
+      playerCollapsedPref.set(true);
+      expect(ctrl.playing).toBe(true);
+      playerCollapsedPref.set(false);
+      expect(ctrl.playing).toBe(true);
+    });
+
+    it("persists, so the next lesson opens the way you left it", () => {
+      const { container } = readMode();
+      fireEvent.click(container.querySelector<HTMLButtonElement>(".collapse-toggle")!);
+      expect(localStorage.getItem(KEY)).toBe("on");
+    });
+
+    it("restores a stored collapse on mount", () => {
+      localStorage.setItem(KEY, "on");
+      const { container } = readMode();
+      expect(container.querySelector(".collapse-toggle")!.getAttribute("aria-expanded")).toBe(
+        "false",
+      );
+      for (const sel of HIDDEN) {
+        expect(container.querySelector(sel), `${sel} hidden on mount`).toBeFalsy();
+      }
+    });
+
+    it("a stored collapse does NOT strip the Listen player", () => {
+      // The preference is global but the EFFECT is Read-only; without that gate
+      // collapsing on Read would quietly gut the Listen player too.
+      localStorage.setItem(KEY, "on");
+      const { container } = render(LessonPlayer, {
+        props: { audio: audioWithAllSections, compact: false },
+      });
+      for (const sel of [...HIDDEN, ...KEPT]) {
+        expect(container.querySelector(sel), `${sel} in Listen`).toBeTruthy();
+      }
     });
   });
 
