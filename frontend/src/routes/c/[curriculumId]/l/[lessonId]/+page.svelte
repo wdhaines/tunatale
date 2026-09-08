@@ -4,6 +4,7 @@
 	import { api } from '$lib/api';
 	import type { LessonAudio, TranscriptData, ListenResponse, PeerSyncResult, DayProgress } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
+	import { handsFreePref } from '$lib/stores/handsFreePref.svelte';
 	import LessonPlayer from '$lib/components/LessonPlayer.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import Transcript from '$lib/components/Transcript.svelte';
@@ -122,6 +123,20 @@
 			? orderedLessons[currentIndex + 1]
 			: null
 	);
+
+	// A hands-free run that has played all of its passes carries on into the
+	// next day, so a drive does not end at a lesson boundary. The baton is what
+	// tells the arriving page to open at Key Phrases and start playing; without
+	// it, that page would just sit there.
+	//
+	// No next day means the run stops here, which is the right end of a
+	// curriculum — never a wrap back to day one.
+	function onSequenceEnd() {
+		const next = nextLesson;
+		if (!next) return;
+		handsFreePref.armHandoff();
+		void goto(`/c/${data.curriculum.id}/l/${next.lesson_id}`);
+	}
 
 	// SvelteKit reuses this component on same-route param changes (e.g. the
 	// Regenerate button's goto, or lesson→lesson nav). The untracked local
@@ -400,6 +415,7 @@
 		{reading}
 		{navHeight}
 		bind:controller={playbackController}
+		{onSequenceEnd}
 	>
 		{#snippet headerAbove()}
 				<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>

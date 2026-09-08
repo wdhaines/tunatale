@@ -38,6 +38,13 @@
 		/** Sticky offset, so the card sits directly below the global nav. */
 		navHeight?: number;
 		controller?: PlaybackController | null;
+		/**
+		 * Forwarded to the player: called when a hands-free run finishes its last
+		 * pass. What comes next differs per surface — the next day for a lesson,
+		 * the next session for a review — so the shell carries it without
+		 * deciding it.
+		 */
+		onSequenceEnd?: () => void;
 		/** Full-width band ABOVE the title row: breadcrumb, day pager. */
 		headerAbove?: Snippet;
 		/** Column one of the title row; the toggle takes column two. */
@@ -59,6 +66,7 @@
 		reading,
 		navHeight = 0,
 		controller = $bindable(null),
+		onSequenceEnd,
 		headerAbove,
 		header,
 		headerBelow,
@@ -99,6 +107,7 @@
 				compact={mode !== 'listen'}
 				lessonTitle={title}
 				bind:controller
+				{onSequenceEnd}
 			/>
 		{/key}
 	{:else if noAudio}

@@ -35,6 +35,7 @@ const mockGetTranscript = vi.mocked(api.getTranscript);
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  sessionStorage.clear();
   stubViewport(false); // desktop default → Read, unless a test overrides
   lessonModePref.set("read"); // reset the singleton's in-memory state
   localStorage.clear(); // ...without leaving the persisted override set() just wrote
@@ -56,6 +57,159 @@ const d = (day: number, position: number, lesson_id: string): DayProgress => ({
   day,
   position,
   lesson_id,
+});
+
+// A track-mode lesson: every section carries its own cue manifest, which is what
+// turns on the phase/enunciation model and with it hands-free. The default
+// `audio` fixture has no sections at all, so the player would render none of it.
+function sectionCue(sectionIndex: number, sectionType: string) {
+  return {
+    index: 0,
+    start_ms: 0,
+    end_ms: 800,
+    section_index: sectionIndex,
+    section_type: sectionType,
+    phrase_index: 0,
+    role: "speaker",
+    language_code: "sl",
+    text: "Dober dan",
+    ref: { kind: "line" as const, target_index: 0 },
+  };
+}
+
+const trackAudio = {
+  audio_id: "a1",
+  lesson_id: "l1",
+  sections: [
+    {
+      audio_id: "s0",
+      section_index: 0,
+      section_type: "key_phrases",
+      title: "Key Phrases",
+      cues: [sectionCue(0, "key_phrases")],
+    },
+    {
+      audio_id: "s1",
+      section_index: 1,
+      section_type: "natural_speed",
+      title: "Natural Speed",
+      cues: [sectionCue(1, "natural_speed")],
+    },
+    {
+      audio_id: "s2",
+      section_index: 2,
+      section_type: "slow_speed",
+      title: "Slow Speed",
+      cues: [sectionCue(2, "slow_speed")],
+    },
+    {
+      audio_id: "s3",
+      section_index: 3,
+      section_type: "translated",
+      title: "Translated",
+      cues: [sectionCue(3, "translated")],
+    },
+    {
+      audio_id: "s4",
+      section_index: 4,
+      section_type: "slow_translated",
+      title: "Slow Translated",
+      cues: [sectionCue(4, "slow_translated")],
+    },
+  ],
+  cues: [sectionCue(1, "natural_speed")],
+};
+
+// Records the element the controller builds with `new Audio()`, which is never
+// in the document and so cannot be reached by query.
+function captureAudio(): { els: HTMLAudioElement[]; restore: () => void } {
+  const els: HTMLAudioElement[] = [];
+  const Orig = globalThis.Audio;
+  class Recording extends Orig {
+    constructor(src?: string) {
+      super(src);
+      els.push(this);
+    }
+  }
+  globalThis.Audio = Recording as unknown as typeof Audio;
+  return {
+    els,
+    restore: () => {
+      globalThis.Audio = Orig;
+    },
+  };
+}
+
+describe("hands-free carries on into the next day", () => {
+  // Seeded so the player opens ON the last pass of the sequence: ending that
+  // track is what completes the run.
+  function seedOnLastPass() {
+    localStorage.setItem("handsFree", "on");
+    localStorage.setItem(
+      "lessonPlayerSelection",
+      JSON.stringify({ phase: "dialogue", enunciation: "natural", english: "l2_first" }),
+    );
+  }
+
+  it("navigates to the next day and arms the hand-off baton", async () => {
+    seedOnLastPass();
+    mockGetProgress.mockResolvedValue([d(1, 1, "lid-1"), d(2, 2, "lid-2")]);
+    const cap = captureAudio();
+    try {
+      render(Page, {
+        props: { data: { curriculum, lesson, audio: trackAudio, transcript: null } },
+      });
+      await waitFor(() => expect(cap.els.length).toBeGreaterThan(0));
+      expect(mockGoto).not.toHaveBeenCalled();
+
+      cap.els[0].dispatchEvent(new Event("ended"));
+
+      expect(mockGoto).toHaveBeenCalledWith("/c/cid-1/l/lid-2");
+      // Without the baton the next page loads paused and on the saved
+      // selection — the run would silently die at the lesson boundary.
+      expect(sessionStorage.getItem("handsFreeHandoff")).toBe("1");
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("stops on the LAST day rather than wrapping to day one", async () => {
+    seedOnLastPass();
+    mockGetProgress.mockResolvedValue([d(1, 1, "lid-1"), d(2, 2, "lid-2")]);
+    const cap = captureAudio();
+    try {
+      render(Page, {
+        props: {
+          data: { curriculum, lesson: { ...lesson, day: 2 }, audio: trackAudio, transcript: null },
+        },
+      });
+      await waitFor(() => expect(cap.els.length).toBeGreaterThan(0));
+      cap.els[0].dispatchEvent(new Event("ended"));
+      expect(mockGoto).not.toHaveBeenCalled();
+      expect(sessionStorage.getItem("handsFreeHandoff")).toBeNull();
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("hands-free OFF never navigates, however the track ends", async () => {
+    localStorage.setItem(
+      "lessonPlayerSelection",
+      JSON.stringify({ phase: "dialogue", enunciation: "natural", english: "l2_first" }),
+    );
+    mockGetProgress.mockResolvedValue([d(1, 1, "lid-1"), d(2, 2, "lid-2")]);
+    const cap = captureAudio();
+    try {
+      render(Page, {
+        props: { data: { curriculum, lesson, audio: trackAudio, transcript: null } },
+      });
+      await waitFor(() => expect(cap.els.length).toBeGreaterThan(0));
+      cap.els[0].dispatchEvent(new Event("ended"));
+      expect(mockGoto).not.toHaveBeenCalled();
+    } finally {
+      cap.restore();
+    }
+  });
 });
 
 describe("prev/next lesson links in the player header", () => {
