@@ -889,8 +889,11 @@ describe("LessonPlayer", () => {
 
   describe("collapsible controls on Read", () => {
     const KEY = "playerCollapsed";
-    const HIDDEN = [".phase-row", ".sentence-row", ".controls-row"];
-    const KEPT = [".transport-row", ".scrubber-row"];
+    // ⚠️ .phase-row is KEPT, not hidden. It is the ONLY way to move between Key
+    // Phrases and Dialogue — collapsing it strands you in whichever half you
+    // were in. Space saved is never worth removing the only route somewhere.
+    const HIDDEN = [".sentence-row", ".controls-row"];
+    const KEPT = [".phase-row", ".transport-row", ".scrubber-row"];
 
     function readMode() {
       return render(LessonPlayer, {
@@ -903,6 +906,40 @@ describe("LessonPlayer", () => {
       const t = container.querySelector<HTMLButtonElement>(".collapse-toggle");
       expect(t).toBeTruthy();
       expect(t!.getAttribute("aria-expanded")).toBe("true");
+    });
+
+    it("the toggle carries a WORD, not just a chevron", () => {
+      // A bare icon at the foot of the card reads as decoration. It has to say
+      // what it does before anyone will press it.
+      const { container } = readMode();
+      const t = container.querySelector<HTMLButtonElement>(".collapse-toggle")!;
+      expect(t.textContent?.trim()).toMatch(/controls/i);
+    });
+
+    it("the label says what the NEXT press does, and flips with the state", () => {
+      const { container } = readMode();
+      const t = container.querySelector<HTMLButtonElement>(".collapse-toggle")!;
+      const expanded = t.textContent!.trim();
+      expect(expanded).toMatch(/hide/i);
+      fireEvent.click(t);
+      const collapsed = t.textContent!.trim();
+      expect(collapsed).toMatch(/show/i);
+      expect(collapsed).not.toBe(expanded);
+    });
+
+    it("keeps the phase toggle reachable while collapsed", () => {
+      // The user-reported miss: without this row there is no route between Key
+      // Phrases and Dialogue at all.
+      const { container } = readMode();
+      fireEvent.click(container.querySelector<HTMLButtonElement>(".collapse-toggle")!);
+      const phase = container.querySelector(".phase-row");
+      expect(phase).toBeTruthy();
+      const btns = phase!.querySelectorAll("button");
+      expect(btns.length).toBe(2);
+      expect(Array.from(btns).map((b) => b.textContent?.trim())).toEqual([
+        "Key Phrases",
+        "Dialogue",
+      ]);
     });
 
     it("does NOT offer one in Listen — there the player IS the content", () => {

@@ -389,7 +389,11 @@
 
 <section class="player" class:compact>
 
-	{#if trackMode && !collapsed}
+	<!-- NOT gated on `collapsed`: this row is the only way to move between Key
+	     Phrases and Dialogue, so collapsing it would strand the reader in
+	     whichever half they were already in. Space is never worth removing the
+	     only route somewhere. -->
+	{#if trackMode}
 		<div class="phase-row">
 			<button
 				class="phase-btn"
@@ -538,10 +542,11 @@
 			title={collapsed ? 'Show controls' : 'Hide controls'}
 			onclick={() => playerCollapsedPref.set(!playerCollapsedPref.collapsed)}
 		>
-			<svg viewBox="0 0 16 16" width="0.9em" height="0.9em" aria-hidden="true"
+			<svg viewBox="0 0 16 16" width="0.85em" height="0.85em" aria-hidden="true"
 			     style="transform: rotate({collapsed ? 0 : 180}deg); transition: transform 0.15s">
 				<polygon points="3,6 13,6 8,11.5" fill="currentColor" />
 			</svg>
+			<span>{collapsed ? 'Show controls' : 'Hide controls'}</span>
 		</button>
 	{/if}
 
@@ -610,18 +615,22 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		gap: 0.4rem;
 		width: 100%;
 		min-height: 44px;
+		margin-top: 0.25rem;
 		padding: 0;
 		border: none;
-		background: transparent;
-		color: var(--color-text-muted, #6b7280);
+		border-top: 1px solid var(--color-border, rgba(128, 128, 128, 0.25));
+		background: var(--color-surface-2);
+		color: var(--color-text);
+		font-size: 0.82rem;
+		font-weight: 500;
 		cursor: pointer;
 		border-radius: var(--radius-pill, 999px);
 	}
 	.collapse-toggle:hover {
-		background: var(--color-surface-2);
-		color: var(--color-text);
+		filter: brightness(1.08);
 	}
 	.collapse-toggle:focus-visible {
 		outline: 2px solid var(--color-accent, currentColor);
