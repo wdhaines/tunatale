@@ -136,6 +136,24 @@
 			: null
 	);
 
+	// Terse enough to keep the stats line on ONE row — the whole point of merging
+	// it — with the sentence it replaced kept as the tooltip.
+	//
+	// ⚠️ MEASURED, and the obvious wording does NOT fit. At 390px the line has
+	// 327px and its natural width with "12/12 reused" is 356 — it wrapped to two
+	// rows and the card got 5px TALLER than before the merge. The bare fraction
+	// is 42px narrower and lands at ~314. The word "reused" lives in the tooltip
+	// instead, which matches how the rest of this line already works: terse
+	// count, detail on tap.
+	const coverageSegment = $derived(
+		coverage === null
+			? null
+			: {
+					text: `${data.session.review_used.length}/${data.session.review_requested.length}`,
+					tooltip: `${coverage} words you were forgetting`
+				}
+	);
+
 	// The same listen flow a lesson has: nothing about it was ever day-scoped,
 	// and /api/srs/content/{id}/… now resolves a session too.
 	const listen = createListenActions(contentBinding);
@@ -317,10 +335,10 @@
 			</div>
 		{/snippet}
 		{#snippet headerBelow()}
-			{#if coverage}
-				<p class="coverage">{coverage} words you were forgetting</p>
-			{/if}
-			<MasteryLine {transcript} />
+			<!-- The reused figure rides the stats line instead of owning one. As its
+			     own paragraph it cost ~17px of a phone's first screen to carry a
+			     single number; the full phrasing survives in the tooltip. -->
+			<MasteryLine {transcript} extra={coverageSegment} />
 		{/snippet}
 		{#snippet actions()}
 			<ListenActions
@@ -460,10 +478,6 @@
 		h1 {
 			font-size: 1.05rem;
 		}
-	}
-	.coverage {
-		margin: 0;
-		font-size: 0.9rem;
 	}
 	.muted {
 		color: var(--color-muted);

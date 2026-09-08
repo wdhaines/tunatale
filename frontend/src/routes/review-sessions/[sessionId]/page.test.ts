@@ -466,18 +466,23 @@ describe("the reader", () => {
     expect(await findByText(/no transcript available/i)).toBeTruthy();
   });
 
-  it("says which forgotten words it managed to use", () => {
-    const { getByText } = render(Page, { props: { data: data() } });
+  it("says which forgotten words it managed to use", async () => {
+    // The readout moved ONTO the stats line to save a row (see "header density"
+    // below); the sentence is now the segment's tooltip rather than body text.
+    // Still asserted, at its new address — the claim was never "it is a <p>".
+    const { container, findByText } = render(Page, { props: { data: data() } });
 
-    expect(getByText(/reused 1 of 2/i)).toBeTruthy();
+    expect(await findByText("1/2")).toBeTruthy();
+    expect(container.innerHTML).toMatch(/reused 1 of 2 words you were forgetting/i);
   });
 
   it("shows no readout when the session was never measured", () => {
     const session = sessionBody({ review_requested: [], review_used: [] });
-    const { queryByText } = render(Page, {
+    const { queryByText, container } = render(Page, {
       props: { data: data({ session }) },
     });
 
+    expect(container.innerHTML).not.toMatch(/reused/i);
     expect(queryByText(/reused/i)).toBeNull();
   });
 
@@ -909,6 +914,47 @@ describe("header density on a phone", () => {
     const tools = container.querySelector(".tools-card")!;
     expect(tools).toBeTruthy();
     expect(tools.textContent).toMatch(/built from what has decayed/i);
+  });
+
+  it("the reused figure rides the stats line, not a row of its own", async () => {
+    // ⚠️ MEASURED, and the first attempt made things WORSE. With the segment
+    // reading "12/12 reused" the line's natural width was 356px against 327px
+    // available, so it wrapped to two rows and the card came out 5px TALLER than
+    // before the merge. The bare fraction fits. A merge that wraps saves nothing.
+    const { container, findByText } = render(Page, { props: { data: data() } });
+    expect(container.querySelector("p.coverage")).toBeFalsy();
+    expect(await findByText("1/2")).toBeTruthy();
+    expect(container.querySelector(".mastery-line .mastery-extra")).toBeTruthy();
+  });
+
+  it("the sentence it replaced survives as the segment's tooltip", async () => {
+    // Terse on the line, explained on tap — the same idiom the other segments
+    // already use for their lemma lists.
+    const { container, findByText } = render(Page, { props: { data: data() } });
+    await findByText("1/2");
+    expect(container.querySelector(".mastery-extra")).toBeTruthy();
+    expect(container.innerHTML).toMatch(/reused 1 of 2 words you were forgetting/);
+  });
+
+  it("the reused segment opens its tooltip from the keyboard", async () => {
+    // It is a role=button with tabindex, so Enter must do what a tap does —
+    // the same contract the lemma segments beside it already have.
+    const { container, findByText } = render(Page, { props: { data: data() } });
+    await findByText("1/2");
+    const extra = container.querySelector<HTMLElement>(".mastery-extra")!;
+    expect(extra.getAttribute("role")).toBe("button");
+    expect(extra.getAttribute("tabindex")).toBe("0");
+    await fireEvent.keyDown(extra, { key: "Enter" });
+    // A key that is NOT Enter must be inert — the other half of the branch.
+    await fireEvent.keyDown(extra, { key: "a" });
+    expect(container.querySelector(".mastery-extra")).toBeTruthy();
+  });
+
+  it("no segment at all when coverage is unmeasurable", () => {
+    // Empty means UNMEASURABLE, not zero — "0/0" would read as a grade.
+    const session = sessionBody({ review_requested: [], review_used: [] });
+    const { container } = render(Page, { props: { data: { session, audio: null } } });
+    expect(container.querySelector(".mastery-extra")).toBeFalsy();
   });
 
   it("the back link and the date share one row", () => {

@@ -12,7 +12,25 @@
 	 * day-scoped when the review-session reader was being built; extracting it
 	 * makes the truth structural.
 	 */
-	let { transcript }: { transcript: TranscriptData | null } = $props();
+	/**
+	 * *extra* appends one more segment to the same line — same separator, same
+	 * type. It exists so a caller with its own one-number observation does not
+	 * need a SECOND line for it: on a phone a standalone stat line costs ~17px,
+	 * and stacked stat lines are the easiest vertical space in the card to give
+	 * back. `tooltip` carries the full phrasing, because the terse form has to be
+	 * short enough to keep the line from wrapping — a merge that wraps saves
+	 * nothing.
+	 */
+	let {
+		transcript,
+		extra = null
+	}: {
+		transcript: TranscriptData | null;
+		/** `tooltip` is REQUIRED: the on-line text has to be terse enough not to
+		 *  wrap, so the full phrasing has nowhere else to live. An optional one
+		 *  produced a branch nothing ever took. */
+		extra?: { text: string; tooltip: string } | null;
+	} = $props();
 
 	const mastery = $derived(transcript ? lessonMastery(transcript) : null);
 	const pct = $derived(mastery?.pct ?? null);
@@ -40,7 +58,7 @@
 {#if mastery && pct !== null}
 	<p class="mastery-line">
 		<span class="mastery-pct" style:color={masteryColor(pct)}>{Math.round(pct * 100)}%</span>
-		{#each segments as seg, i (seg.key)}{#if i > 0}<span class="mastery-sep">·</span>{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}
+		{#each segments as seg, i (seg.key)}{#if i > 0}<span class="mastery-sep">·</span>{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}{#if extra}<span class="mastery-sep">·</span><Tooltip translation={extra.tooltip}><span class="mastery-segment mastery-extra" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{extra.text}</span></Tooltip>{/if}
 	</p>
 {/if}
 
