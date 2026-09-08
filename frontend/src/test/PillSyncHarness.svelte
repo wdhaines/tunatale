@@ -11,11 +11,13 @@
 	let {
 		audio,
 		onController,
-		onSequenceEnd
+		onSequenceEnd,
+		compact = false
 	}: {
 		audio: LessonAudio;
 		onController: (c: PlaybackController) => void;
 		onSequenceEnd?: () => void;
+		compact?: boolean;
 	} = $props();
 	let controller = $state<PlaybackController | null>(null);
 
@@ -24,4 +26,4 @@
 	});
 </script>
 
-<LessonPlayer {audio} bind:controller {onSequenceEnd} />
+<LessonPlayer {audio} bind:controller {onSequenceEnd} {compact} />

@@ -408,6 +408,33 @@
 		</div>
 	{/if}
 
+	{#if collapsed}
+		<!-- Collapsed: ONE row instead of two. transport (44px) + scrubber (38px)
+		     was the largest remaining block in the card, and a collapsed player
+		     does not need the ±10s pair — the scrubber seeks, and the sentence
+		     row that does the fine navigation is hidden here anyway. Play/pause
+		     and seeking both stay reachable, which is the contract. -->
+		<div class="compact-bar">
+			<button class="ctrl-btn play-btn compact-play" onclick={() => ctrl.togglePlay()} title={ctrl.playing ? 'Pause' : 'Play'}>
+				{#if ctrl.playing}
+					<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><rect x="3" y="2" width="4" height="12" rx="1" fill="currentColor"/><rect x="9" y="2" width="4" height="12" rx="1" fill="currentColor"/></svg>
+				{:else}
+					<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="4,2 14,8 4,14" fill="currentColor"/></svg>
+				{/if}
+			</button>
+			<input
+				type="range"
+				min={0}
+				max={ctrl.duration || 1}
+				step={0.1}
+				value={ctrl.currentTime}
+				oninput={(e) => ctrl.seekTo(parseFloat((e.target as HTMLInputElement).value))}
+				class="scrubber"
+				aria-label="Seek"
+			/>
+			<span class="compact-time">{formatTime(ctrl.currentTime)} / {formatTime(ctrl.duration)}</span>
+		</div>
+	{:else}
 	<div class="transport-row">
 		<button class="ctrl-btn" onclick={() => ctrl.seekBy(-10)} title="Rewind 10s">
 			<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="12,2 4,8 12,14" fill="currentColor"/></svg>10s
@@ -466,6 +493,7 @@
 			<span>{formatTime(ctrl.duration)}</span>
 		</div>
 	</div>
+	{/if}
 
 	{#if ((trackMode && hasAllSections) || (hasCues && !compact)) && !collapsed}
 		<!-- Independent setting chips (field:value), NOT a segmented pick-one:
@@ -528,26 +556,6 @@
 				</button>
 			{/if}
 		</div>
-	{/if}
-
-	{#if compact}
-		<!-- Read-mode only. A thin strip at the FOOT of the card rather than an
-		     icon floated into a corner: absolute positioning would overlap the
-		     phase row at narrow widths, and a full-width affordance is what
-		     reads as "this card opens and closes". -->
-		<button
-			class="collapse-toggle"
-			aria-expanded={!collapsed}
-			aria-label={collapsed ? 'Show player controls' : 'Hide player controls'}
-			title={collapsed ? 'Show controls' : 'Hide controls'}
-			onclick={() => playerCollapsedPref.set(!playerCollapsedPref.collapsed)}
-		>
-			<svg viewBox="0 0 16 16" width="0.85em" height="0.85em" aria-hidden="true"
-			     style="transform: rotate({collapsed ? 0 : 180}deg); transition: transform 0.15s">
-				<polygon points="3,6 13,6 8,11.5" fill="currentColor" />
-			</svg>
-			<span>{collapsed ? 'Show controls' : 'Hide controls'}</span>
-		</button>
 	{/if}
 
 	{#if hasCues && !compact}
@@ -615,38 +623,32 @@
 		justify-content: center;
 		gap: 0.5rem;
 	}
-	/* Quiet by default — it is chrome, not a control you reach for mid-lesson.
-	   Full width so the whole strip is the target: at 44px tall it clears the
-	   touch-target floor the other buttons use. */
-	.collapse-toggle {
+	/* One row: play, scrubber, and a single time readout. The scrubber flexes so
+	   the bar fills the card at any width. */
+	.compact-bar {
 		display: flex;
 		align-items: center;
-		justify-content: center;
-		gap: 0.4rem;
-		width: 100%;
-		min-height: 44px;
-		margin-top: 0.25rem;
-		padding: 0;
-		border: none;
-		border-top: 1px solid var(--color-border, rgba(128, 128, 128, 0.25));
-		background: var(--color-surface-2);
-		color: var(--color-text);
-		font-size: 0.82rem;
-		font-weight: 500;
-		cursor: pointer;
-		border-radius: var(--radius-pill, 999px);
+		gap: 0.6rem;
 	}
-	.collapse-toggle:hover {
-		filter: brightness(1.08);
+	.compact-bar .scrubber {
+		flex: 1;
+		min-width: 0;
 	}
-	.collapse-toggle:focus-visible {
-		outline: 2px solid var(--color-accent, currentColor);
-		outline-offset: -2px;
+	/* .play-btn is `flex: 1` in the full transport row, where it SHOULD dominate.
+	   In the compact bar the scrubber is the thing that wants the width, so the
+	   growth is switched off here — otherwise the button takes a third of the bar
+	   and the scrubber ends up too short to seek accurately. */
+	.compact-play {
+		flex: 0 0 auto;
+		min-width: 3.25rem;
+		padding: 0.5rem 0.9rem;
 	}
-	@media (prefers-reduced-motion: reduce) {
-		.collapse-toggle svg {
-			transition: none !important;
-		}
+	.compact-time {
+		flex: 0 0 auto;
+		font-size: 0.78rem;
+		color: var(--color-muted);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
 	}
 	.ctrl-btn {
 		min-width: 48px;

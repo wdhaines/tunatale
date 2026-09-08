@@ -93,7 +93,7 @@
 			<div class="header-band">{@render headerAbove()}</div>
 		{/if}
 		{@render header()}
-		<ReadListenToggle />
+		<ReadListenToggle collapsible={audio != null} />
 		{#if headerBelow}
 			<div class="header-band">{@render headerBelow()}</div>
 		{/if}
@@ -163,6 +163,20 @@
 			gap: 0.45rem;
 			padding: 0.7rem 0.9rem;
 		}
+		/* Column two holds the Read/Listen pill AND the collapse button, and every
+		   pixel it takes comes out of the title's column — which is what decides
+		   whether a long title is two lines or three. */
+		.player-header {
+			column-gap: 0.5rem;
+		}
+		/* ⚠️ TRIED AND REVERTED: giving the title the full width by moving the
+		   controls up beside the breadcrumb. It works (title 3 lines -> 2) but it
+		   is worth SIX pixels — the control cluster is taller than the crumb row
+		   it joins, so most of the title's saving is spent moving it. It also
+		   contradicts a pinned invariant: page.interactions.test.ts requires the
+		   toggle to sit immediately after the title area as a direct child of this
+		   grid, from a 2026-07-31 incident where it got orphaned onto its own row.
+		   Six pixels does not buy a shared-layout rewrite. */
 	}
 	.muted {
 		color: var(--color-muted);

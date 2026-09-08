@@ -888,12 +888,17 @@ describe("LessonPlayer", () => {
   });
 
   describe("collapsible controls on Read", () => {
-    const KEY = "playerCollapsed";
+    // The BUTTON lives in ReadListenToggle now (beside the Read/Listen pill —
+    // a full-width strip cost a 44px row to save 100). What belongs here is the
+    // player's half of the contract: it follows the pref, and only on Read.
     // ⚠️ .phase-row is KEPT, not hidden. It is the ONLY way to move between Key
     // Phrases and Dialogue — collapsing it strands you in whichever half you
     // were in. Space saved is never worth removing the only route somewhere.
-    const HIDDEN = [".sentence-row", ".controls-row"];
-    const KEPT = [".phase-row", ".transport-row", ".scrubber-row"];
+    // Collapsed swaps the two-row transport+scrubber for ONE compact bar, so the
+    // contract is stated as a CAPABILITY rather than a row list: play/pause and
+    // seeking must stay reachable, whatever they are rendered as.
+    const HIDDEN = [".sentence-row", ".controls-row", ".transport-row", ".scrubber-row"];
+    const KEPT = [".phase-row", ".compact-bar"];
 
     function readMode() {
       return render(LessonPlayer, {
@@ -901,91 +906,123 @@ describe("LessonPlayer", () => {
       });
     }
 
-    it("offers a collapse toggle on Read", () => {
+    it("the player no longer carries the button itself", () => {
       const { container } = readMode();
-      const t = container.querySelector<HTMLButtonElement>(".collapse-toggle");
-      expect(t).toBeTruthy();
-      expect(t!.getAttribute("aria-expanded")).toBe("true");
-    });
-
-    it("the toggle carries a WORD, not just a chevron", () => {
-      // A bare icon at the foot of the card reads as decoration. It has to say
-      // what it does before anyone will press it.
-      const { container } = readMode();
-      const t = container.querySelector<HTMLButtonElement>(".collapse-toggle")!;
-      expect(t.textContent?.trim()).toMatch(/controls/i);
-    });
-
-    it("the label says what the NEXT press does, and flips with the state", () => {
-      const { container } = readMode();
-      const t = container.querySelector<HTMLButtonElement>(".collapse-toggle")!;
-      const expanded = t.textContent!.trim();
-      expect(expanded).toMatch(/hide/i);
-      fireEvent.click(t);
-      const collapsed = t.textContent!.trim();
-      expect(collapsed).toMatch(/show/i);
-      expect(collapsed).not.toBe(expanded);
-    });
-
-    it("keeps the phase toggle reachable while collapsed", () => {
-      // The user-reported miss: without this row there is no route between Key
-      // Phrases and Dialogue at all.
-      const { container } = readMode();
-      fireEvent.click(container.querySelector<HTMLButtonElement>(".collapse-toggle")!);
-      const phase = container.querySelector(".phase-row");
-      expect(phase).toBeTruthy();
-      const btns = phase!.querySelectorAll("button");
-      expect(btns.length).toBe(2);
-      expect(Array.from(btns).map((b) => b.textContent?.trim())).toEqual([
-        "Key Phrases",
-        "Dialogue",
-      ]);
-    });
-
-    it("does NOT offer one in Listen — there the player IS the content", () => {
-      const { container } = render(LessonPlayer, {
-        props: { audio: audioWithAllSections, compact: false },
-      });
       expect(container.querySelector(".collapse-toggle")).toBeFalsy();
     });
 
-    it("starts expanded: every row is present", () => {
+    it("starts expanded: the full rows are present, the compact bar is not", () => {
       const { container } = readMode();
-      for (const sel of [...HIDDEN, ...KEPT]) {
+      for (const sel of [
+        ".phase-row",
+        ".sentence-row",
+        ".controls-row",
+        ".transport-row",
+        ".scrubber-row",
+      ]) {
         expect(container.querySelector(sel), `${sel} at rest`).toBeTruthy();
       }
+      expect(container.querySelector(".compact-bar")).toBeFalsy();
     });
 
-    it("collapsing drops the set-once rows and KEEPS playback reachable", () => {
-      // The point of the feature: space back, without giving up the transport.
+    it("collapsing drops the set-once rows and KEEPS playback reachable", async () => {
+      localStorage.setItem("playerCollapsed", "on");
       const { container } = readMode();
-      fireEvent.click(container.querySelector<HTMLButtonElement>(".collapse-toggle")!);
+      await tick();
       for (const sel of HIDDEN) {
         expect(container.querySelector(sel), `${sel} should be hidden`).toBeFalsy();
       }
       for (const sel of KEPT) {
         expect(container.querySelector(sel), `${sel} must survive`).toBeTruthy();
       }
-      expect(container.querySelector(".play-btn")).toBeTruthy();
+      // The capability, not the markup: something plays, and something seeks.
+      const bar = container.querySelector(".compact-bar")!;
+      expect(bar.querySelector(".play-btn")).toBeTruthy();
+      expect(bar.querySelector('input[type="range"]')).toBeTruthy();
     });
 
-    it("expanding again restores every row", () => {
+    it("keeps the phase toggle reachable while collapsed", async () => {
+      // The user-reported miss: without this row there is no route between Key
+      // Phrases and Dialogue at all.
+      localStorage.setItem("playerCollapsed", "on");
       const { container } = readMode();
-      const t = container.querySelector<HTMLButtonElement>(".collapse-toggle")!;
-      fireEvent.click(t);
-      expect(t.getAttribute("aria-expanded")).toBe("false");
-      fireEvent.click(t);
-      expect(t.getAttribute("aria-expanded")).toBe("true");
-      for (const sel of [...HIDDEN, ...KEPT]) {
-        expect(container.querySelector(sel), `${sel} restored`).toBeTruthy();
-      }
+      await tick();
+      const phase = container.querySelector(".phase-row");
+      expect(phase).toBeTruthy();
+      expect(
+        Array.from(phase!.querySelectorAll("button")).map((b) => b.textContent?.trim()),
+      ).toEqual(["Key Phrases", "Dialogue"]);
     });
 
-    it("collapsing does NOT interrupt playback", () => {
-      // ⚠️ The one thing that would make this feature worse than no feature.
-      // Collapsing is a rendering decision; it must not reach the controller.
+    it("the compact bar's play button actually plays and pauses", async () => {
+      // ⚠️ Asserting the button EXISTS is not asserting it WORKS — the coverage
+      // gate caught that gap here, and the first version of this test was also
+      // vacuous: it rendered the harness in Listen mode, where .compact-play does
+      // not exist, and skipped its own assertions behind an `if`. The harness
+      // takes `compact` now so the bar is genuinely on screen.
+      localStorage.setItem("playerCollapsed", "on");
       let ctrl!: PlaybackController;
       const { container } = render(PillSyncHarness, {
+        props: {
+          audio: audioWithAllSections,
+          compact: true,
+          onController: (c: PlaybackController) => {
+            ctrl = c;
+          },
+        },
+      });
+      await tick();
+      const btn = container.querySelector<HTMLButtonElement>(".compact-play");
+      expect(btn, "the compact bar must be rendered for this test to mean anything").toBeTruthy();
+      expect(ctrl.playing).toBe(false);
+      await fireEvent.click(btn!);
+      expect(ctrl.playing).toBe(true);
+      // ⚠️ Only the play direction is asserted, and that is a HARNESS limit, not
+      // a gap in the feature: togglePlay deliberately branches on the element's
+      // real `paused` rather than the `playing` flag, and jsdom's `paused` never
+      // flips under the mocked play/pause. The existing full-transport test has
+      // the same shape for the same reason. Pause is covered where it can be —
+      // playbackController's own suite drives the element directly.
+    });
+
+    it("the compact bar's scrubber seeks the controller", async () => {
+      localStorage.setItem("playerCollapsed", "on");
+      let ctrl!: PlaybackController;
+      const { container } = render(PillSyncHarness, {
+        props: {
+          audio: audioWithAllSections,
+          compact: true,
+          onController: (c: PlaybackController) => {
+            ctrl = c;
+          },
+        },
+      });
+      await tick();
+      const range = container.querySelector<HTMLInputElement>('.compact-bar input[type="range"]')!;
+      expect(range).toBeTruthy();
+      // Within `max`, which is `ctrl.duration || 1` and therefore 1 here: jsdom
+      // reports no duration, so a larger value would be clamped and the test
+      // would pass or fail for reasons that have nothing to do with seeking.
+      await fireEvent.input(range, { target: { value: "0.5" } });
+      expect(ctrl.currentTime).toBeCloseTo(0.5, 3);
+    });
+
+    it("reacts to the pref changing while mounted", async () => {
+      const { container } = readMode();
+      await tick();
+      expect(container.querySelector(".controls-row")).toBeTruthy();
+      playerCollapsedPref.set(true);
+      await tick();
+      expect(container.querySelector(".controls-row")).toBeFalsy();
+      playerCollapsedPref.set(false);
+      await tick();
+      expect(container.querySelector(".controls-row")).toBeTruthy();
+    });
+
+    it("collapsing does NOT interrupt playback", async () => {
+      // ⚠️ The one thing that would make this feature worse than no feature.
+      let ctrl!: PlaybackController;
+      render(PillSyncHarness, {
         props: {
           audio: audioWithAllSections,
           onController: (c: PlaybackController) => {
@@ -995,44 +1032,32 @@ describe("LessonPlayer", () => {
       });
       ctrl.play();
       expect(ctrl.playing).toBe(true);
-      const t = container.querySelector<HTMLButtonElement>(".collapse-toggle");
-      // The harness renders Listen mode, so drive the store directly — the
-      // claim under test is "collapsing does not touch the controller", not
-      // where the button lives.
-      expect(t).toBeFalsy();
       playerCollapsedPref.set(true);
+      await tick();
       expect(ctrl.playing).toBe(true);
       playerCollapsedPref.set(false);
+      await tick();
       expect(ctrl.playing).toBe(true);
     });
 
-    it("persists, so the next lesson opens the way you left it", () => {
-      const { container } = readMode();
-      fireEvent.click(container.querySelector<HTMLButtonElement>(".collapse-toggle")!);
-      expect(localStorage.getItem(KEY)).toBe("on");
-    });
-
-    it("restores a stored collapse on mount", () => {
-      localStorage.setItem(KEY, "on");
-      const { container } = readMode();
-      expect(container.querySelector(".collapse-toggle")!.getAttribute("aria-expanded")).toBe(
-        "false",
-      );
-      for (const sel of HIDDEN) {
-        expect(container.querySelector(sel), `${sel} hidden on mount`).toBeFalsy();
-      }
-    });
-
-    it("a stored collapse does NOT strip the Listen player", () => {
+    it("a stored collapse does NOT strip the Listen player", async () => {
       // The preference is global but the EFFECT is Read-only; without that gate
       // collapsing on Read would quietly gut the Listen player too.
-      localStorage.setItem(KEY, "on");
+      localStorage.setItem("playerCollapsed", "on");
       const { container } = render(LessonPlayer, {
         props: { audio: audioWithAllSections, compact: false },
       });
-      for (const sel of [...HIDDEN, ...KEPT]) {
+      await tick();
+      for (const sel of [
+        ".phase-row",
+        ".sentence-row",
+        ".controls-row",
+        ".transport-row",
+        ".scrubber-row",
+      ]) {
         expect(container.querySelector(sel), `${sel} in Listen`).toBeTruthy();
       }
+      expect(container.querySelector(".compact-bar")).toBeFalsy();
     });
   });
 

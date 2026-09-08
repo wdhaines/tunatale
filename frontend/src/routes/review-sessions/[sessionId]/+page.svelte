@@ -458,7 +458,7 @@
 	   heading. Measured, not guessed. */
 	@media (max-width: 430px) {
 		h1 {
-			font-size: 1.12rem;
+			font-size: 1.05rem;
 		}
 	}
 	.coverage {
