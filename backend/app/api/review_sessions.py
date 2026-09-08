@@ -42,8 +42,10 @@ from app.api.generation import (
     annotate_chunk_upos_for_lesson,
 )
 from app.api.models import (
+    CreateReviewSessionFromPasteRequest,
     CreateReviewSessionRequest,
     CreateReviewSessionResponse,
+    GetReviewSessionDraftPromptResponse,
     GetStoryPromptResponse,
     ImportReviewSessionRequest,
     ListReviewSessionsResponse,
@@ -161,6 +163,120 @@ async def _generate_and_store(request: Request, *, session_id: str | None, sessi
     task = asyncio.create_task(_prewarm_lesson(lesson, srs_db))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
+
+    return {
+        "id": session_id,
+        "session_date": session_date,
+        "title": lesson.title,
+        "review_requested": metadata.get("review_requested", []),
+        "review_used": metadata.get("review_used", []),
+        "warnings": _logged_speaker_warnings(metadata.get("story"), language),
+    }
+
+
+# ── manual mode at CREATE time (bd tunatale-jmwb) ────────────────────────────
+#
+# ⚠️ THESE TWO MUST STAY ABOVE THE `/{session_id}` ROUTES. FastAPI resolves in
+# declaration order, and `GET /{session_id}` matches "prompt" perfectly happily —
+# it would answer 404 "Review session not found", which is indistinguishable from
+# a genuinely missing session. So an ordinary tidy-up that sorted these routes
+# would silently disable manual mode. `test_it_is_not_shadowed_by_the_session_
+# detail_route` is the guard.
+#
+# Why stateless rather than a draft row: minting a story-less session at click
+# time would invent a state the list, detail and render surfaces have never had
+# to draw, and orphan one every time a learner asks for a prompt and never pastes.
+# The pinned word list rides in the client between the two calls instead, which is
+# exactly what "import paths pin, generation paths select" already means.
+@router.get("/prompt", status_code=200, response_model=GetReviewSessionDraftPromptResponse)
+async def get_review_session_draft_prompt(request: Request):
+    """The prompt for a session that does not exist yet — and NO generation.
+
+    This is the whole point of the bead: manual mode was id-scoped, so reaching it
+    meant generating a session first and throwing its dialogue away. A story call
+    is the most expensive thing TT does (tunatale-yet7), and it was being spent on
+    output the learner had already decided to replace.
+
+    Selection happens HERE, once, and the chosen words are returned so the import
+    can be told them rather than guessing.
+    """
+    store = request.state.content_store
+    srs_db = getattr(request.state, "srs_db", None)
+    try:
+        prompts = build_review_session_prompts(
+            request.state.language,
+            _latest_cefr_level(store),
+            srs_db=srs_db,
+        )
+    except NoReviewVocabularyError as e:
+        # 409 with the learner's wording, matching auto-create: this is a normal
+        # Tuesday, not a broken button.
+        raise HTTPException(status_code=409, detail=_NOTHING_DUE) from e
+
+    return {
+        "system_prompt": prompts.system_prompt,
+        "user_prompt": prompts.user_prompt,
+        "review_words": list(prompts.review_words),
+    }
+
+
+@router.post("/import", status_code=201, response_model=CreateReviewSessionResponse)
+async def create_review_session_from_paste(body: CreateReviewSessionFromPasteRequest, request: Request):
+    """Create a session FROM a hand-written dialogue, generating nothing.
+
+    201 and the same body as auto-create, because the outcome is the same kind of
+    thing — the caller should not have to care which door it came through.
+
+    ⚠️ ``review_requested`` is the list the CLIENT hands back, never a fresh
+    selection: it is what ``GET /prompt`` asked for, and re-selecting would score
+    an overnight rewrite against a set that had since moved. ``review_used`` IS
+    recomputed, by ``build_lesson_from_story``, against the pasted text — carrying
+    a number forward would report one text's score for another, which is this
+    epic's characteristic silently-plausible wrong answer.
+    """
+    if body.raw is not None:
+        try:
+            story = parse_json_object(body.raw)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+    else:
+        story = body.story  # guaranteed non-None by the model validator
+
+    store = request.state.content_store
+    language = request.state.language
+    review_words = tuple(body.review_words)
+
+    await ensure_dialogue_glosses(story, getattr(request.app.state, "llm", None), language)
+
+    try:
+        # Validated BEFORE building, exactly as import_lesson and the rewrite route
+        # do: a story missing lines[].speaker otherwise dies on a bare KeyError in
+        # the speaker-warning pass — a 500 for what is really a malformed paste.
+        validate_story(story)
+        lesson = build_lesson_from_story(story, language=language, review_words=review_words)
+    except (StoryGenerationError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    srs_db = getattr(request.state, "srs_db", None)
+    if srs_db is not None:
+        await annotate_chunk_upos_for_lesson(lesson, srs_db, **_injected_lemmatizer(request))
+
+    session_id = mint_id(lesson.title)
+    metadata = lesson.generation_metadata
+    session_date = date.today().isoformat()
+    store.save_review_session(
+        session_id,
+        request.state.language_code,
+        session_date,
+        lesson,
+        review_requested=metadata.get("review_requested"),
+        review_used=metadata.get("review_used"),
+    )
+
+    if srs_db is not None:
+        task = asyncio.create_task(_prewarm_lesson(lesson, srs_db))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
     return {
         "id": session_id,

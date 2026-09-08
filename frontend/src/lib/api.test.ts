@@ -299,6 +299,58 @@ describe("TunaTaleAPI", () => {
       expect(result.id).toBe("sess-1");
     });
 
+    it("getReviewSessionDraftPrompt asks the id-less route and returns the words", async () => {
+      // The word list is the reason this route exists separately: nothing
+      // server-side remembers the request, so the caller has to carry it.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            system_prompt: "SYS",
+            user_prompt: "USER",
+            review_words: ["oppf\u00f8re", "dessuten"],
+          }),
+        ),
+      );
+
+      const result = await api.getReviewSessionDraftPrompt();
+
+      const [url] = vi.mocked(fetch).mock.calls[0] as [string];
+      expect(url).toBe(`${BASE}/api/review-sessions/prompt`);
+      expect(result.review_words).toEqual(["oppf\u00f8re", "dessuten"]);
+    });
+
+    it("createReviewSessionFromPaste sends the paste AND the pinned words", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            id: "sess-9",
+            session_date: "2026-09-08",
+            title: "By Hand",
+            review_requested: ["oppf\u00f8re"],
+            review_used: [],
+            warnings: [],
+          }),
+        ),
+      );
+
+      const result = await api.createReviewSessionFromPaste('{"title":"By Hand"}', [
+        "oppf\u00f8re",
+      ]);
+
+      const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(`${BASE}/api/review-sessions/import`);
+      expect(init.method).toBe("POST");
+      // Dropping review_words here would 422, or worse make the server re-select
+      // and score the dialogue against words the learner never saw.
+      expect(JSON.parse(init.body as string)).toEqual({
+        raw: '{"title":"By Hand"}',
+        review_words: ["oppf\u00f8re"],
+      });
+      expect(result.id).toBe("sess-9");
+    });
+
     it("puts the status on the error so a refusal is not read as a failure", async () => {
       // 409 "nothing due" is a normal Tuesday and the page renders it as a
       // message. Without the status it could only be told apart by matching the

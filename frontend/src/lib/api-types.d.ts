@@ -803,6 +803,64 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/review-sessions/import": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Create Review Session From Paste
+     * @description Create a session FROM a hand-written dialogue, generating nothing.
+     *
+     *     201 and the same body as auto-create, because the outcome is the same kind of
+     *     thing — the caller should not have to care which door it came through.
+     *
+     *     ⚠️ ``review_requested`` is the list the CLIENT hands back, never a fresh
+     *     selection: it is what ``GET /prompt`` asked for, and re-selecting would score
+     *     an overnight rewrite against a set that had since moved. ``review_used`` IS
+     *     recomputed, by ``build_lesson_from_story``, against the pasted text — carrying
+     *     a number forward would report one text's score for another, which is this
+     *     epic's characteristic silently-plausible wrong answer.
+     */
+    post: operations["create_review_session_from_paste_api_review_sessions_import_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/review-sessions/prompt": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Review Session Draft Prompt
+     * @description The prompt for a session that does not exist yet — and NO generation.
+     *
+     *     This is the whole point of the bead: manual mode was id-scoped, so reaching it
+     *     meant generating a session first and throwing its dialogue away. A story call
+     *     is the most expensive thing TT does (tunatale-yet7), and it was being spent on
+     *     output the learner had already decided to replace.
+     *
+     *     Selection happens HERE, once, and the chosen words are returned so the import
+     *     can be told them rather than guessing.
+     */
+    get: operations["get_review_session_draft_prompt_api_review_sessions_prompt_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/review-sessions/{session_id}": {
     parameters: {
       query?: never;
@@ -2006,6 +2064,26 @@ export interface components {
       word_count: number;
     };
     /**
+     * CreateReviewSessionFromPasteRequest
+     * @description A hand-written dialogue that BECOMES a session, rather than replacing one.
+     *
+     *     The sibling of ``ImportReviewSessionRequest``, which carries no identifiers
+     *     because the session id is in the path. Here there is no path id and no stored
+     *     row, so ``review_words`` must travel in the body — it is the pinned request
+     *     ``GET /prompt`` just handed out, and the denominator the session's coverage
+     *     line will be measured against.
+     */
+    CreateReviewSessionFromPasteRequest: {
+      /** Raw */
+      raw?: string | null;
+      /** Review Words */
+      review_words: string[];
+      /** Story */
+      story?: {
+        [key: string]: unknown;
+      } | null;
+    };
+    /**
      * CreateReviewSessionRequest
      * @description Body of POST /api/story/review-session — deliberately empty.
      *
@@ -2291,6 +2369,26 @@ export interface components {
       lesson_id: string;
       /** Sections */
       sections: unknown[];
+    };
+    /**
+     * GetReviewSessionDraftPromptResponse
+     * @description Response of GET /api/review-sessions/prompt — a prompt for a session that
+     *     does not exist yet (bd tunatale-jmwb).
+     *
+     *     ⚠️ ``review_words`` IS PART OF THE CONTRACT, not diagnostic decoration. No row
+     *     exists to remember what was asked for, so the caller carries the list and hands
+     *     it back to ``POST /api/review-sessions/import``. Dropping it would force that
+     *     route to re-select, and a learner who wrote their dialogue overnight would have
+     *     it scored against a set that had since decayed differently — the meter reading
+     *     low for a reason nothing on screen explains.
+     */
+    GetReviewSessionDraftPromptResponse: {
+      /** Review Words */
+      review_words: string[];
+      /** System Prompt */
+      system_prompt: string;
+      /** User Prompt */
+      user_prompt: string;
     };
     /**
      * GetStoryPromptResponse
@@ -4930,6 +5028,59 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  create_review_session_from_paste_api_review_sessions_import_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateReviewSessionFromPasteRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CreateReviewSessionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_review_session_draft_prompt_api_review_sessions_prompt_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GetReviewSessionDraftPromptResponse"];
         };
       };
     };
