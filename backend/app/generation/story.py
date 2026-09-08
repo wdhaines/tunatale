@@ -7,6 +7,7 @@ import logging
 from collections.abc import Sequence
 from typing import NamedTuple
 
+from app.generation.glossing import ensure_dialogue_glosses
 from app.generation.json_parsing import parse_json_object
 from app.generation.prompts import (
     _build_cefr_block,
@@ -310,6 +311,10 @@ class StoryGenerator:
                     max_tokens = self._bump_max_tokens_after_truncation(max_tokens)
                 logger.warning("Story JSON parse failed on attempt %d/2: %s", attempt + 1, failure)
                 continue
+            # Splicing the glosses into `data` BEFORE the build is what keeps this
+            # change small: build_lesson_from_story, the stored `story` blob and the
+            # paste round-trip all see the shape they always did.
+            await ensure_dialogue_glosses(data, self._llm, language)
             return self._parse_response(data, language=language, review_words=prompts.review_words)
         raise failure
 

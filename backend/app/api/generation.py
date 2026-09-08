@@ -20,6 +20,7 @@ from app.api.models import (
     LessonResponse,
     LessonSourceResponse,
 )
+from app.generation.glossing import ensure_dialogue_glosses
 from app.generation.ids import mint_id
 from app.generation.json_parsing import parse_json_object
 from app.generation.story import NoReviewVocabularyError, StoryGenerationError, build_story_prompts
@@ -336,6 +337,12 @@ async def import_story(body: ImportLessonRequest, request: Request):
             raise HTTPException(status_code=422, detail=str(e)) from e
     else:
         story = body.story  # guaranteed non-None by model validator
+
+    # The exported prompt is byte-identical to the generate-path prompt, so it no
+    # longer asks for dialogue_glosses either (bd tunatale-yet7). Without this a
+    # pasted story would build a lesson with no hover translations at all. A story
+    # pasted WITH glosses — an older prompt, or hand-added — skips the call.
+    await ensure_dialogue_glosses(story, getattr(request.app.state, "llm", None), language)
 
     try:
         lesson_id, lesson = import_lesson(

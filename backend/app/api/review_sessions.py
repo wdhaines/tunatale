@@ -51,6 +51,7 @@ from app.api.models import (
     ReviewSessionResponse,
 )
 from app.audio.render_service import render_lesson_audio
+from app.generation.glossing import ensure_dialogue_glosses
 from app.generation.ids import mint_id
 from app.generation.json_parsing import parse_json_object
 from app.generation.story import (
@@ -296,6 +297,10 @@ async def import_review_session(session_id: str, body: ImportReviewSessionReques
 
     language = request.state.language
     review_words = row["review_requested"] or ()
+    # Same reason as import_story: the exported prompt no longer asks for glosses
+    # (bd tunatale-yet7), so a pasted session needs its own gloss pass or it lands
+    # with no hover translations.
+    await ensure_dialogue_glosses(story, getattr(request.app.state, "llm", None), language)
     try:
         # Validated BEFORE building, exactly as ``import_lesson`` does. Without
         # it a story missing ``lines[].speaker`` reaches the speaker-warning pass

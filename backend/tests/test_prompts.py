@@ -178,6 +178,6 @@ def test_norwegian_prompt_contains_bokmal_style_notes():
 def test_norwegian_prompt_keeps_shared_sections():
     """Dropping the morphology block must not drop the shared instructions."""
     prompt = build_story_system_prompt(get_language("no"))
-    assert "dialogue_glosses" in prompt
+    assert "VOICE ASSIGNMENT PROTOCOL" in prompt
     assert "SCENE HEADER FORMAT" in prompt
     assert "5-12" in prompt or "5–12" in prompt

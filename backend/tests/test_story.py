@@ -432,7 +432,10 @@ class TestStoryGenerationResilience:
             curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER
         )
         assert isinstance(lesson, Lesson)
-        assert client.complete.call_count == 2
+        # Two story attempts (the retry this test is about) plus the gloss pass
+        # (bd tunatale-yet7) — asserted as a sum so the retry count stays legible
+        # rather than being absorbed into a bare 3.
+        assert client.complete.call_count == 2 + 1
 
     async def test_invalid_json_twice_raises_after_two_attempts(self, language):
         from app.generation.story import StoryGenerationError

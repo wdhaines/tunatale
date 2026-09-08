@@ -492,6 +492,10 @@ class TestStoryPromptEndpoint:
         assert generate_resp.status_code == 201
 
         exported_user_prompt = prompt_resp.json()["user_prompt"]
-        (llm_call,) = recording_llm.complete.call_args_list
-        actual_user_prompt = llm_call.args[0]
+        # The FIRST call is the story; generation makes a second, unrelated call for
+        # the gloss array (bd tunatale-yet7). Indexing rather than unpacking keeps
+        # this guard about prompt drift instead of silently also asserting a call
+        # count that belongs to a different concern.
+        story_call = recording_llm.complete.call_args_list[0]
+        actual_user_prompt = story_call.args[0]
         assert exported_user_prompt == actual_user_prompt
