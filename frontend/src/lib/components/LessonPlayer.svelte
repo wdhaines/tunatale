@@ -439,16 +439,16 @@
 				     different axis from the on-screen transport pills, hence the
 				     headphone marker + dashed treatment to set it apart. -->
 				<button
-					class="sentence-skip-toggle"
-					aria-pressed={ctrl.sentenceSkip}
-					title="What the ⏮ ⏭ headphone / car buttons skip"
-					onclick={() => ctrl.setSentenceSkip(!ctrl.sentenceSkip)}
+					class="hands-free-toggle"
+					aria-pressed={ctrl.handsFree}
+					title="Plays each pass in order without input — natural, enunciated, then English after. The ⏮ ⏭ headphone / car buttons step by sentence."
+					onclick={() => ctrl.setHandsFree(!ctrl.handsFree)}
 				>
 					<span class="chip-label">
 						<svg viewBox="0 0 16 16" width="0.85em" height="0.85em" style="vertical-align:-1px"><path d="M8 1.5a5.5 5.5 0 0 0-5.5 5.5v3.5a1.5 1.5 0 0 0 1.5 1.5h1v-4h-2V7a5 5 0 0 1 10 0v2h-2v4h1a1.5 1.5 0 0 0 1.5-1.5V7A5.5 5.5 0 0 0 8 1.5z" fill="currentColor"/></svg>
-						Keys skip
+						Hands-free
 					</span>
-					<span class="chip-value">{ctrl.sentenceSkip ? 'Sentence' : 'Section'}</span>
+					<span class="chip-value">{ctrl.handsFree ? 'On' : 'Off'}</span>
 				</button>
 			{/if}
 		</div>
@@ -562,7 +562,7 @@
 	   the physical ⏮⏭ buttons", distinct from both the filled transport pills
 	   and the solid-outline audio setting chips beside it. Sized like the other
 	   setting chips it now sits among. */
-	.sentence-skip-toggle {
+	.hands-free-toggle {
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
@@ -578,20 +578,20 @@
 		cursor: pointer;
 		transition: border-color 0.15s ease, background 0.15s ease;
 	}
-	.sentence-skip-toggle .chip-label {
+	.hands-free-toggle .chip-label {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.25rem;
 	}
-	.sentence-skip-toggle:hover {
+	.hands-free-toggle:hover {
 		border-color: var(--color-muted);
 	}
-	.sentence-skip-toggle[aria-pressed="true"] {
+	.hands-free-toggle[aria-pressed="true"] {
 		border-color: var(--color-primary);
 		border-style: solid;
 		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
 	}
-	.sentence-skip-toggle[aria-pressed="true"] .chip-value {
+	.hands-free-toggle[aria-pressed="true"] .chip-value {
 		color: var(--color-primary);
 	}
 	.scrubber-row {

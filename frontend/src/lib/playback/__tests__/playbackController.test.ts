@@ -1005,7 +1005,7 @@ describe("playbackController", () => {
       expect(typeof ctrl.duration).toBe("number");
       expect(typeof ctrl.playbackRate).toBe("number");
       expect(typeof ctrl.playing).toBe("boolean");
-      expect(typeof ctrl.sentenceSkip).toBe("boolean");
+      expect(typeof ctrl.handsFree).toBe("boolean");
       // At t=0 with first cue at 0ms, currentSectionIndex is 0
       expect(ctrl.currentSectionIndex).toBe(0);
     });
@@ -1188,16 +1188,16 @@ describe("playbackController", () => {
     });
   });
 
-  describe("sentenceSkip toggle", () => {
+  describe("handsFree toggle", () => {
     it("defaults to false", () => {
       const ctrl = createController();
-      expect(ctrl.sentenceSkip).toBe(false);
+      expect(ctrl.handsFree).toBe(false);
     });
 
     it("can be set to true", () => {
       const ctrl = createController();
-      ctrl.setSentenceSkip(true);
-      expect(ctrl.sentenceSkip).toBe(true);
+      ctrl.setHandsFree(true);
+      expect(ctrl.handsFree).toBe(true);
     });
 
     it("toggles previoustrack/nexttrack behavior", () => {
@@ -1271,7 +1271,7 @@ describe("playbackController", () => {
       expect(audioEl.currentTime).toBe(42);
     });
 
-    it("previoustrack calls prevSection by default, prevCue when sentenceSkip=true", () => {
+    it("previoustrack calls prevSection by default, prevCue when handsFree=true", () => {
       const mediaSession = makeFakeMediaSession();
       let prevHandler: (() => void) | null = null;
       mediaSession.setActionHandler = vi.fn((action: string, handler: any) => {
@@ -1283,8 +1283,8 @@ describe("playbackController", () => {
       // default: prevSection goes to section 0
       prevHandler!();
       expect(audioEl.currentTime).toBeCloseTo(0, 3);
-      // enable sentence skip
-      ctrl.setSentenceSkip(true);
+      // enable hands free
+      ctrl.setHandsFree(true);
       audioEl.currentTime = 1.6;
       audioEl.dispatchEvent(new Event("timeupdate"));
       prevHandler!();
@@ -1292,7 +1292,7 @@ describe("playbackController", () => {
       expect(audioEl.currentTime).toBeCloseTo(0, 3);
     });
 
-    it("nexttrack calls nextSection by default, nextCue when sentenceSkip=true", () => {
+    it("nexttrack calls nextSection by default, nextCue when handsFree=true", () => {
       const mediaSession = makeFakeMediaSession();
       let nextHandler: (() => void) | null = null;
       mediaSession.setActionHandler = vi.fn((action: string, handler: any) => {
@@ -1303,7 +1303,7 @@ describe("playbackController", () => {
       audioEl.dispatchEvent(new Event("timeupdate"));
       nextHandler!();
       expect(audioEl.currentTime).toBeCloseTo(1.5, 3);
-      ctrl.setSentenceSkip(true);
+      ctrl.setHandsFree(true);
       // Now at sec 1, cue 2; nextCue advances to next group (cue 3, line 1)
       audioEl.currentTime = 1.6;
       audioEl.dispatchEvent(new Event("timeupdate"));
@@ -1312,16 +1312,258 @@ describe("playbackController", () => {
     });
   });
 
-  describe("sentenceSkip toggle", () => {
+  describe("handsFree toggle", () => {
     it("defaults to false", () => {
       const ctrl = createController();
-      expect(ctrl.sentenceSkip).toBe(false);
+      expect(ctrl.handsFree).toBe(false);
     });
 
     it("can be set to true", () => {
       const ctrl = createController();
-      ctrl.setSentenceSkip(true);
-      expect(ctrl.sentenceSkip).toBe(true);
+      ctrl.setHandsFree(true);
+      expect(ctrl.handsFree).toBe(true);
+    });
+  });
+
+  describe("hands-free advance on ended", () => {
+    const naturalCues: Cue[] = [
+      makeCue({
+        index: 0,
+        start_ms: 0,
+        end_ms: 500,
+        section_index: 0,
+        section_type: "natural_speed",
+        phrase_index: 0,
+        text: "Dober dan",
+        ref: { kind: "line", target_index: 0 },
+      }),
+      makeCue({
+        index: 1,
+        start_ms: 500,
+        end_ms: 1000,
+        section_index: 0,
+        section_type: "natural_speed",
+        phrase_index: 1,
+        text: "Kako si",
+        ref: { kind: "line", target_index: 1 },
+      }),
+    ];
+    const slowCues: Cue[] = [
+      makeCue({
+        index: 0,
+        start_ms: 0,
+        end_ms: 500,
+        section_index: 1,
+        section_type: "slow_speed",
+        phrase_index: 0,
+        text: "Dober dan",
+        ref: { kind: "line", target_index: 0 },
+      }),
+      makeCue({
+        index: 1,
+        start_ms: 500,
+        end_ms: 1000,
+        section_index: 1,
+        section_type: "slow_speed",
+        phrase_index: 1,
+        text: "Kako si",
+        ref: { kind: "line", target_index: 1 },
+      }),
+    ];
+    const translatedCues: Cue[] = [
+      makeCue({
+        index: 0,
+        start_ms: 0,
+        end_ms: 500,
+        section_index: 2,
+        section_type: "translated",
+        phrase_index: 0,
+        text: "Good day",
+        ref: { kind: "line", target_index: 0 },
+      }),
+      makeCue({
+        index: 1,
+        start_ms: 500,
+        end_ms: 1000,
+        section_index: 2,
+        section_type: "translated",
+        phrase_index: 1,
+        text: "How are you",
+        ref: { kind: "line", target_index: 1 },
+      }),
+    ];
+    const keyCues: Cue[] = [
+      makeCue({
+        index: 0,
+        start_ms: 0,
+        end_ms: 800,
+        section_index: 3,
+        section_type: "key_phrases",
+        phrase_index: 0,
+        text: "kavo prosim",
+        ref: { kind: "key_phrase", target_index: 0 },
+      }),
+    ];
+    const hfAudio: LessonAudio = {
+      audio_id: "a1",
+      lesson_id: "l1",
+      sections: [
+        {
+          audio_id: "sec-natural",
+          section_index: 0,
+          section_type: "natural_speed",
+          title: "Natural Speed",
+          cues: naturalCues,
+        },
+        {
+          audio_id: "sec-slow",
+          section_index: 1,
+          section_type: "slow_speed",
+          title: "Slow Speed",
+          cues: slowCues,
+        },
+        {
+          audio_id: "sec-translated",
+          section_index: 2,
+          section_type: "translated",
+          title: "Translated",
+          cues: translatedCues,
+        },
+        {
+          audio_id: "sec-key",
+          section_index: 3,
+          section_type: "key_phrases",
+          title: "Key Phrases",
+          cues: keyCues,
+        },
+      ],
+      cues: naturalCues,
+    };
+
+    it("hands-free OFF: ended leaves the track ended, no advance", () => {
+      const mediaSession = makeFakeMediaSession();
+      const ctrl = createController({
+        audio: hfAudio,
+        mediaSession: mediaSession as unknown as MediaSession,
+      });
+      audioEl.currentTime = 0.8;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(ctrl.activeSectionType).toBe("natural_speed");
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(ctrl.activeSectionType).toBe("natural_speed");
+      expect(audioEl.src).toBe("/api/audio/a1");
+      expect(audioEl.play).not.toHaveBeenCalled();
+      expect(ctrl.playing).toBe(false);
+      expect(mediaSession.playbackState).toBe("none");
+    });
+
+    it("hands-free ON on natural_speed: ended selects slow_speed and resumes playback", () => {
+      const ctrl = createController({ audio: hfAudio });
+      ctrl.setHandsFree(true);
+      expect(ctrl.activeSectionType).toBe("natural_speed");
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(ctrl.activeSectionType).toBe("slow_speed");
+      expect(audioEl.src).toBe("/api/audio/sec-slow");
+      expect(audioEl.play).toHaveBeenCalled();
+    });
+
+    it("the advance resumes through the SWAP path, not just the belt-and-braces play()", () => {
+      // ⚠️ THE ORDERING GUARD, and it exists because the other advance tests do
+      // NOT provide one: they assert audioEl.play() was called, and the explicit
+      // `void audioEl.play()` in the ended handler satisfies that under EITHER
+      // ordering. Measured by sabotage drill 2026-09-08 — moving the advance
+      // below `playing = false` left all 129 tests green.
+      //
+      // selectTrack captures `wasPlayingBeforeSwap = playing`, and the resume
+      // it drives fires on loadedmetadata. That capture is only true because
+      // the advance runs BEFORE `playing = false`. Clearing the mock after
+      // `ended` is what isolates the swap-path resume from the explicit call.
+      const ctrl = createController({ audio: hfAudio });
+      ctrl.setHandsFree(true);
+      audioEl.dispatchEvent(new Event("play"));
+      expect(ctrl.playing).toBe(true);
+
+      audioEl.dispatchEvent(new Event("ended"));
+      vi.mocked(audioEl.play).mockClear();
+
+      (audioEl as unknown as { duration: number }).duration = 200;
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+
+      expect(audioEl.play).toHaveBeenCalled();
+    });
+
+    it("hands-free ON on slow_speed: ended selects translated", () => {
+      const ctrl = createController({ audio: hfAudio });
+      ctrl.setHandsFree(true);
+      ctrl.selectTrack("slow_speed");
+      expect(ctrl.activeSectionType).toBe("slow_speed");
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(ctrl.activeSectionType).toBe("translated");
+      expect(audioEl.src).toBe("/api/audio/sec-translated");
+      expect(audioEl.play).toHaveBeenCalled();
+    });
+
+    it("hands-free ON on translated (last in sequence): ended does NOT advance, behaves as OFF", () => {
+      const mediaSession = makeFakeMediaSession();
+      const ctrl = createController({
+        audio: hfAudio,
+        mediaSession: mediaSession as unknown as MediaSession,
+      });
+      ctrl.setHandsFree(true);
+      ctrl.selectTrack("translated");
+      expect(ctrl.activeSectionType).toBe("translated");
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(ctrl.activeSectionType).toBe("translated");
+      expect(audioEl.play).not.toHaveBeenCalled();
+      expect(ctrl.playing).toBe(false);
+      expect(mediaSession.playbackState).toBe("none");
+    });
+
+    it("hands-free ON on a section NOT in the sequence: ended does not advance", () => {
+      const ctrl = createController({ audio: hfAudio });
+      ctrl.setHandsFree(true);
+      ctrl.selectTrack("key_phrases");
+      expect(ctrl.activeSectionType).toBe("key_phrases");
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(ctrl.activeSectionType).toBe("key_phrases");
+      expect(audioEl.play).not.toHaveBeenCalled();
+    });
+
+    it("the advance starts at the BEGINNING of the next pass (applied seek is 0)", () => {
+      const ctrl = createController({ audio: hfAudio });
+      ctrl.setHandsFree(true);
+      // Put the playhead mid-track so a position-preserving swap would land at
+      // the matching line (0.5s), not the start — proving fromStart wins.
+      audioEl.currentTime = 0.8;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(ctrl.currentCue?.ref).toBeTruthy();
+      audioEl.dispatchEvent(new Event("ended"));
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(audioEl.currentTime).toBe(0);
+    });
+
+    it("turning hands-free OFF restores the section active when it was turned ON", () => {
+      const ctrl = createController({ audio: hfAudio });
+      expect(ctrl.activeSectionType).toBe("natural_speed");
+      ctrl.setHandsFree(true);
+      ctrl.selectTrack("translated"); // simulate an advance while ON
+      expect(ctrl.activeSectionType).toBe("translated");
+      ctrl.setHandsFree(false);
+      expect(ctrl.activeSectionType).toBe("natural_speed");
+    });
+
+    it("mediaSession metadata artist changes across an advance", () => {
+      const mediaSession = makeFakeMediaSession();
+      const ctrl = createController({
+        audio: hfAudio,
+        mediaSession: mediaSession as unknown as MediaSession,
+      });
+      expect(mediaSession.metadata?.artist).toBe("Natural Speed");
+      ctrl.setHandsFree(true);
+      audioEl.dispatchEvent(new Event("ended"));
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(mediaSession.metadata?.artist).toBe("Slow Speed");
     });
   });
 

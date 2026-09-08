@@ -361,26 +361,26 @@ describe("LessonPlayer", () => {
       expect(container.querySelector(".sentence-row")).toBeFalsy();
     });
 
-    it("renders sentence/section toggle showing current mode", () => {
+    it("renders hands-free toggle showing current mode", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
-      const toggle = container.querySelector(".sentence-skip-toggle");
+      const toggle = container.querySelector(".hands-free-toggle");
       expect(toggle).toBeTruthy();
-      // Default is Section mode (sentenceSkip = false)
-      expect(toggle!.textContent).toContain("Section");
+      // Default is Off (handsFree = false)
+      expect(toggle!.textContent).toContain("Off");
     });
 
-    it("clicking the toggle switches between Sentence and Section modes", () => {
+    it("clicking the toggle switches between On and Off modes", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
-      const toggle = container.querySelector<HTMLButtonElement>(".sentence-skip-toggle")!;
-      // Default: Section
-      expect(toggle.textContent).toContain("Section");
-      expect(toggle.textContent).not.toContain("Sentence");
+      const toggle = container.querySelector<HTMLButtonElement>(".hands-free-toggle")!;
+      // Default: Off
+      expect(toggle.textContent).toContain("Off");
+      expect(toggle.textContent).not.toContain("On");
       fireEvent.click(toggle);
-      // Now: Sentence
-      expect(toggle.textContent).toContain("Sentence");
+      // Now: On
+      expect(toggle.textContent).toContain("On");
       fireEvent.click(toggle);
-      // Back to Section
-      expect(toggle.textContent).toContain("Section");
+      // Back to Off
+      expect(toggle.textContent).toContain("Off");
     });
   });
 
@@ -866,12 +866,12 @@ describe("LessonPlayer", () => {
       fireEvent.click(btn);
     });
 
-    it("toggles sentence skip via the toggle button", () => {
+    it("toggles hands-free via the toggle button", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
-      const toggle = container.querySelector<HTMLButtonElement>(".sentence-skip-toggle")!;
-      expect(toggle.textContent).toContain("Section");
+      const toggle = container.querySelector<HTMLButtonElement>(".hands-free-toggle")!;
+      expect(toggle.textContent).toContain("Off");
       fireEvent.click(toggle);
-      expect(toggle.textContent).toContain("Sentence");
+      expect(toggle.textContent).toContain("On");
     });
 
     it("fires seek on scrubber input", () => {
