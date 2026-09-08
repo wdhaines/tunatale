@@ -1020,6 +1020,40 @@ describe("LessonPlayer", () => {
       expect(h.ctrl.activeSectionType).toBe("natural_speed");
     });
 
+    it("the Enunciated chip lights up when hands-free reaches the slow pass", async () => {
+      // ⚠️ THE USER-REPORTED BUG: "when we go to the enunciated section on hands
+      // free mode, the enunciated button is not getting highlighted." The chip's
+      // highlight is `enunLevel !== 'natural'`, and the slow_* mirror used to
+      // return no enunciation at all — so an enunciated track played under a
+      // pill that still said Natural.
+      const h = mount();
+      await tick();
+      const chip = h.container.querySelector<HTMLButtonElement>(".enunciation-btn")!;
+      expect(chip.textContent).toContain("Natural");
+      expect(chip.classList.contains("active")).toBe(false);
+
+      h.ctrl.selectTrack("slow_speed"); // as the hands-free advance does
+      await tick();
+
+      expect(chip.textContent).toContain("Enunciated");
+      expect(chip.classList.contains("active")).toBe(true);
+    });
+
+    it("landing on the slow pass keeps a 0.8x drill at 0.8x", async () => {
+      // The control for the promotion: a level that IS recoverable must survive.
+      localStorage.setItem(
+        SEL_KEY,
+        JSON.stringify({ phase: "dialogue", enunciation: "enunciated_0.8", english: "off" }),
+      );
+      const h = mount();
+      await tick();
+      h.ctrl.selectTrack("slow_speed");
+      await tick();
+      const chip = h.container.querySelector<HTMLButtonElement>(".enunciation-btn")!;
+      expect(chip.textContent).toContain("0.8");
+      expect(chip.classList.contains("active")).toBe(true);
+    });
+
     it("the end of the sequence reaches the page's onSequenceEnd", async () => {
       // The controller builds its element with `new Audio()`, so it is never in
       // the document and cannot be found by query. Recording it at construction

@@ -28,14 +28,34 @@ function defaultSelection(): PlayerSelection {
   return { phase: "dialogue", enunciation: "natural", english: "off" };
 }
 
+// The enunciated level a slow_* section implies, given whatever the pill holds
+// now. Which of the three enunciated rates is playing is genuinely not
+// recoverable from the section type — slow_speed is slow_speed at 1.0x, 0.9x
+// and 0.8x — so an enunciated level already selected is kept.
+//
+// ⚠️ What is recoverable is that it is NOT natural, and failing to say so was a
+// bug. The old version returned no enunciation at all and left the pill alone,
+// which is right only when the user cycled the pill to GET here. Every other
+// route in — a hands-free advance, a transcript ▶ tap — selects the track
+// directly, so the pill sat on "Natural", unhighlighted, while an enunciated
+// track played. It also desynced resolveSectionType, which then computed
+// natural_speed for a player on slow_speed.
+function enunciatedLevel(current: string | undefined): string {
+  return current !== undefined && current !== "natural" ? current : "enunciated";
+}
+
 // Reverse-map the section type actually playing back onto the player pills, so
 // the controls mirror the audio even when something outside the player (a
-// transcript ▶ tap) switches the track. Fields left undefined are not forced:
-// key_phrases leaves enunciation/English (hidden in that phase) untouched, and
-// the slow sections leave the enunciation *level* (natural vs the three
-// enunciated rates isn't recoverable from the section type alone — the pill
-// already holds it).
-export function pillsForSection(sectionType: string | null): {
+// transcript ▶ tap, a hands-free advance) switches the track. Fields left
+// undefined are not forced: key_phrases leaves enunciation/English (hidden in
+// that phase) untouched.
+//
+// *currentEnunciation* is the level the pill holds now, and is consulted only
+// by the slow_* cases — see enunciatedLevel.
+export function pillsForSection(
+  sectionType: string | null,
+  currentEnunciation?: string,
+): {
   phase?: PlayerPhase;
   enunciation?: string;
   english?: EnglishMode;
@@ -50,11 +70,23 @@ export function pillsForSection(sectionType: string | null): {
     case "en_translated":
       return { phase: "dialogue", enunciation: "natural", english: "en_first" };
     case "slow_speed":
-      return { phase: "dialogue", english: "off" };
+      return {
+        phase: "dialogue",
+        enunciation: enunciatedLevel(currentEnunciation),
+        english: "off",
+      };
     case "slow_translated":
-      return { phase: "dialogue", english: "l2_first" };
+      return {
+        phase: "dialogue",
+        enunciation: enunciatedLevel(currentEnunciation),
+        english: "l2_first",
+      };
     case "slow_en_translated":
-      return { phase: "dialogue", english: "en_first" };
+      return {
+        phase: "dialogue",
+        enunciation: enunciatedLevel(currentEnunciation),
+        english: "en_first",
+      };
     default:
       return {};
   }

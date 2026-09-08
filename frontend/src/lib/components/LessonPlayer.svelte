@@ -246,7 +246,16 @@
 	// pins the 1.
 	let mounted = false;
 	$effect(() => {
-		const p = pillsForSection(ctrl.activeSectionType);
+		// enunLevel is read through untrack because this effect also WRITES it:
+		// the slow_* mirror needs to know whether an enunciated rate is already
+		// chosen (keep it) or the pill sits on Natural (promote it). Tracking it
+		// would make the effect depend on its own output — the cycle the untrack
+		// note below is about, reached from the read side instead of the write
+		// side. Only activeSectionType drives this effect.
+		const p = pillsForSection(
+			ctrl.activeSectionType,
+			untrack(() => enunLevel)
+		);
 		if (p.phase !== undefined) phase = p.phase;
 		if (p.enunciation !== undefined) enunLevel = p.enunciation;
 		if (p.english !== undefined) englishMode = p.english;

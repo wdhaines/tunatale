@@ -148,16 +148,69 @@ describe("pillsForSection", () => {
   });
 
   it("maps slow_speed to Dialogue · English-off (keeping the enunciation level)", () => {
-    expect(pillsForSection("slow_speed")).toEqual({ phase: "dialogue", english: "off" });
+    expect(pillsForSection("slow_speed", "enunciated_0.8")).toEqual({
+      phase: "dialogue",
+      enunciation: "enunciated_0.8",
+      english: "off",
+    });
   });
 
   it("maps slow_translated to Dialogue · L2-first English (keeping the enunciation level)", () => {
-    expect(pillsForSection("slow_translated")).toEqual({ phase: "dialogue", english: "l2_first" });
+    expect(pillsForSection("slow_translated", "enunciated_0.9")).toEqual({
+      phase: "dialogue",
+      enunciation: "enunciated_0.9",
+      english: "l2_first",
+    });
+  });
+
+  describe("a slow section reached WITHOUT the pill (hands-free, transcript tap)", () => {
+    // ⚠️ THE BUG THIS CLOSES. The level really is unrecoverable from the section
+    // type — slow_speed could be any of the three enunciated rates — so this
+    // used to return no `enunciation` at all and leave the pill on whatever it
+    // held. That is right when the user cycled the pill to GET here, and wrong
+    // for every other route in: hands-free selects slow_speed directly, so the
+    // pill stayed on "Natural" while an enunciated track played, unhighlighted.
+    it("promotes a natural pill to plain Enunciated for slow_speed", () => {
+      expect(pillsForSection("slow_speed", "natural")).toEqual({
+        phase: "dialogue",
+        enunciation: "enunciated",
+        english: "off",
+      });
+    });
+
+    it("promotes a natural pill to plain Enunciated for slow_translated", () => {
+      expect(pillsForSection("slow_translated", "natural")).toEqual({
+        phase: "dialogue",
+        enunciation: "enunciated",
+        english: "l2_first",
+      });
+    });
+
+    it("promotes a natural pill to plain Enunciated for slow_en_translated", () => {
+      expect(pillsForSection("slow_en_translated", "natural")).toEqual({
+        phase: "dialogue",
+        enunciation: "enunciated",
+        english: "en_first",
+      });
+    });
+
+    it("does NOT overwrite an already-enunciated rate — that one IS recoverable", () => {
+      // The original intent survives: someone drilling at 0.8x who lands on a
+      // slow section by any route keeps 0.8x.
+      for (const level of ["enunciated", "enunciated_0.9", "enunciated_0.8"]) {
+        expect(pillsForSection("slow_speed", level).enunciation).toBe(level);
+      }
+    });
+
+    it("with no current level supplied at all, still names an enunciated one", () => {
+      expect(pillsForSection("slow_speed").enunciation).toBe("enunciated");
+    });
   });
 
   it("maps slow_en_translated to Dialogue · English-first (keeping the enunciation level)", () => {
-    expect(pillsForSection("slow_en_translated")).toEqual({
+    expect(pillsForSection("slow_en_translated", "enunciated_0.8")).toEqual({
       phase: "dialogue",
+      enunciation: "enunciated_0.8",
       english: "en_first",
     });
   });
