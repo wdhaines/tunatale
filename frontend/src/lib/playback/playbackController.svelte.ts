@@ -1,6 +1,11 @@
 import { untrack } from "svelte";
 import type { Cue, CueRef, LessonAudio } from "$lib/api";
 
+// The hands-free pass sequence, in order of playback. One const so a later
+// change is a single edit. Matches LessonPlayer.svelte's pill model
+// (resolveSectionType): natural_speed -> slow_speed -> translated.
+export const HANDS_FREE_SEQUENCE = ["natural_speed", "slow_speed", "translated"] as const;
+
 export interface PlaybackController {
   readonly currentCue: Cue | null;
   readonly currentSectionIndex: number | null;
@@ -9,7 +14,7 @@ export interface PlaybackController {
   readonly currentTime: number;
   readonly duration: number;
   readonly playbackRate: number;
-  readonly sentenceSkip: boolean;
+  readonly handsFree: boolean;
   readonly repeatLatched: boolean;
   readonly activeSectionType: string | null;
   readonly activeCues: Cue[] | null;
@@ -27,12 +32,12 @@ export interface PlaybackController {
   prevCue(): void;
   repeatCue(): void;
   toggleRepeatLatch(): void;
-  selectTrack(sectionType: string, seekRef?: CueRef | null): void;
+  selectTrack(sectionType: string, seekRef?: CueRef | null, fromStart?: boolean): void;
   findPlayableCue(ref: CueRef): Cue | null;
   playRef(ref: CueRef): void;
   setRate(rate: number): void;
   setEnunciationRate(rate: number): void;
-  setSentenceSkip(v: boolean): void;
+  setHandsFree(v: boolean): void;
   destroy(): void;
 }
 
@@ -129,7 +134,14 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   let duration = $state(audioEl.duration || 0);
   let rate = $state(1);
   let enunciationRate = 1;
-  let sentenceSkip = $state(false);
+  let handsFree = $state(false);
+  // Section type captured when hands-free turned ON, so turning it OFF can
+  // restore the user's saved phase/enunciation/English preference. null until
+  // first enabled. LessonPlayer's pill-mirror $effect follows
+  // ctrl.activeSectionType and calls persistSelection(), so without this
+  // restore one use of hands-free would silently rewrite the saved selection
+  // to "English After" (translated).
+  let handsFreeRestoreSection: string | null = null;
   let repeatLatched = $state(false);
   // The cue captured when the latch engaged — pinned, never re-read from
   // currentCue, so the loop cannot drift onto the next sentence.
@@ -292,6 +304,20 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       void audioEl.play();
       return;
     }
+    // Hands-free: advance to the next pass of the sequence, starting from the
+    // beginning of that track. MUST run BEFORE `playing = false` below —
+    // selectTrack captures wasPlayingBeforeSwap = playing to decide whether to
+    // resume after the swap; if it ran after that assignment the resume would
+    // be lost and the next pass would load and sit silent (looking exactly
+    // like "hands-free doesn't work").
+    if (handsFree && activeSectionType !== null) {
+      const idx = (HANDS_FREE_SEQUENCE as readonly string[]).indexOf(activeSectionType);
+      if (idx !== -1 && idx < HANDS_FREE_SEQUENCE.length - 1) {
+        selectTrack(HANDS_FREE_SEQUENCE[idx + 1], null, true);
+        void audioEl.play();
+        return;
+      }
+    }
     playing = false;
     if (mediaSession) mediaSession.playbackState = "none";
     updatePositionState();
@@ -342,14 +368,14 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       doSeek(audioEl.currentTime + 10);
     });
     ms.setActionHandler("previoustrack", () => {
-      if (sentenceSkip) {
+      if (handsFree) {
         prevCueAction();
       } else {
         prevSection();
       }
     });
     ms.setActionHandler("nexttrack", () => {
-      if (sentenceSkip) {
+      if (handsFree) {
         nextCueAction();
       } else {
         nextSection();
@@ -475,14 +501,24 @@ export function createPlaybackController(deps: Deps): PlaybackController {
 
   // --- Track selection (B2) ---
 
-  function selectTrack(sectionType: string, seekRef: CueRef | null = null): void {
+  function selectTrack(
+    sectionType: string,
+    seekRef: CueRef | null = null,
+    fromStart = false,
+  ): void {
     cancelRepeatLatch();
     const section = audioSections.find((s) => s.section_type === sectionType);
     if (!section) return;
 
     // Where to land in the new track: an explicit seekRef (a transcript ▶ tap)
     // wins; otherwise preserve the current line's position across the swap.
-    const prevRef = seekRef ?? currentCue?.ref ?? null;
+    // fromStart bypasses both: advancing a hands-free pass must start at the
+    // BEGINNING of the next track (at `ended` the current cue is the last
+    // line, so position-preservation would land at the END of the next pass).
+    let prevRef: CueRef | null = null;
+    if (!fromStart) {
+      prevRef = seekRef ?? currentCue?.ref ?? null;
+    }
 
     // Guard: prevent the browser's pause/emptied events from clobbering resume.
     // Capture the *intent* to resume from `playing`, not `!audioEl.paused`: a
@@ -650,8 +686,8 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     get playbackRate() {
       return rate;
     },
-    get sentenceSkip() {
-      return sentenceSkip;
+    get handsFree() {
+      return handsFree;
     },
     get repeatLatched() {
       return repeatLatched;
@@ -708,8 +744,18 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       enunciationRate = newRate;
       applyEnunciationRate();
     },
-    setSentenceSkip(v: boolean) {
-      sentenceSkip = v;
+    setHandsFree(v: boolean) {
+      // Capture the active section when turning ON so turning OFF restores it.
+      // Restore only if a capture exists. See the handsFreeRestoreSection note.
+      if (v !== handsFree) {
+        if (v) {
+          handsFreeRestoreSection = activeSectionType;
+        } else if (handsFreeRestoreSection !== null) {
+          selectTrack(handsFreeRestoreSection);
+          handsFreeRestoreSection = null;
+        }
+      }
+      handsFree = v;
     },
     destroy() {
       destroyed = true;
