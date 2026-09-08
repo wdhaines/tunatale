@@ -50,6 +50,7 @@ from app.api.models import (
     ImportReviewSessionRequest,
     ListReviewSessionsResponse,
     RenderAudioResponse,
+    ReviewSessionRenderStatusResponse,
     ReviewSessionResponse,
 )
 from app.audio.render_service import render_lesson_audio
@@ -80,6 +81,24 @@ _FALLBACK_CEFR_LEVEL = "A2"
 # than rewritten: "no vocabulary is due" is the part that tells them this is a
 # normal Tuesday and not a broken button.
 _NOTHING_DUE = "Nothing to review right now — no vocabulary is due in this language today"
+
+
+def _renders_in_flight(app) -> set[str]:
+    """The set of session ids currently rendering, held on ``app.state``.
+
+    ⚠️ In memory, and deliberately NOT a table. The marker's honest lifetime is
+    the render's, and the render lives in this process's event loop. A restart
+    kills the render, so a marker that survived the restart would be a lie
+    needing exactly the reconciliation this module's docstring says a session
+    does not have. Created lazily on first use because the tests set
+    ``app.state.*`` by hand and never run the lifespan; a lifespan-only
+    initialiser would ``AttributeError`` under test.
+    """
+    renders = getattr(app.state, "review_renders", None)
+    if renders is None:
+        renders = set()
+        app.state.review_renders = renders
+    return renders
 
 
 def _latest_cefr_level(store) -> str:
@@ -500,7 +519,7 @@ async def get_review_session(session_id: str, request: Request):
 
 @router.post(
     "/{session_id}/render",
-    status_code=202,
+    status_code=200,
     response_model=RenderAudioResponse,
     # cues[].ref omits target_index on narration cues — a plain response_model
     # would re-add "target_index": null to every narration ref.
@@ -513,11 +532,22 @@ async def render_review_session(session_id: str, request: Request):
     alone, so this reuses it verbatim; ``audio_files`` rows land under the
     session id and ``GET /api/audio/lesson/{id}`` then serves them with no
     change at all.
+
+    ⚠️ A session id already rendering is refused with 409, BEFORE the render
+    starts — a second POST from another tab would otherwise double-render. The
+    id is dropped again in a ``finally``, so a render that finishes OR fails
+    releases the session; the ``finally`` is what keeps one failed render from
+    wedging the button forever.
     """
     store = request.state.content_store
     lesson = store.get_review_session(session_id)
     if lesson is None:
         raise HTTPException(status_code=404, detail="Review session not found")
+
+    renders = _renders_in_flight(request.app)
+    if session_id in renders:
+        raise HTTPException(status_code=409, detail="A render is already in progress for this session")
+    renders.add(session_id)
 
     try:
         return await render_lesson_audio(
@@ -529,3 +559,26 @@ async def render_review_session(session_id: str, request: Request):
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
+    finally:
+        renders.discard(session_id)
+
+
+@router.get(
+    "/{session_id}/render-status",
+    status_code=200,
+    response_model=ReviewSessionRenderStatusResponse,
+)
+async def get_review_session_render_status(session_id: str, request: Request):
+    """Whether a render is currently in flight for this session.
+
+    The page polls this on mount: the render outlives the page, so navigating
+    away aborts the fetch but not the work, and the page must be able to pick
+    the render back up when it returns. Declared after the render route on
+    purpose — ``render-status`` is two segments so it never collides with
+    ``GET /{session_id}``, and the parameterised routes must stay below the
+    id-less ones.
+    """
+    store = request.state.content_store
+    if store.get_review_session_row(session_id) is None:
+        raise HTTPException(status_code=404, detail="Review session not found")
+    return {"rendering": session_id in _renders_in_flight(request.app)}

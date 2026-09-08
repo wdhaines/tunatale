@@ -18,6 +18,7 @@ def _clean_app_state():
         "audio_dir",
         "srs_db",
         "pipeline",
+        "review_renders",
     ):
         if hasattr(app.state, attr):
             delattr(app.state, attr)

@@ -203,6 +203,18 @@ describe("TunaTaleAPI", () => {
       expect(result.audio_id).toBe("a1");
     });
 
+    it("getReviewSessionRenderStatus GETs the session's render-status path", async () => {
+      // The page polls this on mount so it can pick up a render that outlived a
+      // previous visit. A plain GET, returning whether a render is in flight.
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ rendering: false })));
+
+      const result = await api.getReviewSessionRenderStatus("sess-1");
+
+      const url = vi.mocked(fetch).mock.calls[0]?.[0];
+      expect(url).toBe(`${BASE}/api/review-sessions/sess-1/render-status`);
+      expect(result.rendering).toBe(false);
+    });
+
     it("createReviewSession POSTs an empty body and no identifiers", async () => {
       // The empty body IS the interface: the route rejects a curriculum_id or a
       // day with a 422, because a session belongs to no plan.
