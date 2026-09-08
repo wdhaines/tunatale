@@ -161,7 +161,9 @@ class TestAutoGeneratePath:
             strategy=ContentStrategy.WIDER,
             srs_db=seeded_db,
         )
-        sent_user_prompt = client.complete.call_args.args[0]
+        # call_args_list[0], not call_args: the LAST call is now the gloss pass
+        # (bd tunatale-yet7), which carries dialogue rather than review words.
+        sent_user_prompt = client.complete.call_args_list[0].args[0]
         assert SL_WORD in sent_user_prompt
 
 

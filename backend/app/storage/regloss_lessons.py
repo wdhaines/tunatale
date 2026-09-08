@@ -20,10 +20,9 @@ meaning was never captured), so we re-translate from the stored dialogue.
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 
+from app.generation.glossing import parse_gloss_array
 from app.languages import get_language, resolve_db_path
 from app.models.language import Language
 from app.models.lesson import Lesson, SectionType
@@ -50,15 +49,6 @@ Dialogue:
 """
 
 
-def _strip_fences(raw: str) -> str:
-    """Strip markdown code fences from an LLM response."""
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*\n?", "", raw)
-        raw = re.sub(r"\n?```\s*$", "", raw)
-        raw = raw.strip()
-    return raw
-
-
 def dialogue_lines(lesson: Lesson) -> list[str]:
     """L2 NATURAL_SPEED phrase texts — the lines the transcript glosses."""
     lines: list[str] = []
@@ -73,19 +63,6 @@ def dialogue_lines(lesson: Lesson) -> list[str]:
 
 def build_regloss_prompt(lines: list[str], language_name: str) -> str:
     return _REGLOSS_PROMPT.format(language_name=language_name, dialogue="\n".join(lines))
-
-
-def parse_gloss_array(raw: str) -> list[dict]:
-    """Parse the LLM response into a list of ``{word, translation}`` dicts.
-
-    Accepts a bare JSON array or an object wrapping it under ``dialogue_glosses``
-    (the generation schema), tolerating markdown fences. Non-dict entries are
-    dropped defensively.
-    """
-    data = json.loads(_strip_fences(raw.strip()))
-    if isinstance(data, dict):
-        data = data.get("dialogue_glosses", [])
-    return [g for g in data if isinstance(g, dict)]
 
 
 def _surface_lemma_map(lines: list[str], lemmatizer: Lemmatizer, language_code: str) -> dict[str, str]:
@@ -187,3 +164,6 @@ if __name__ == "__main__":  # pragma: no cover — CLI guard
     import asyncio
 
     asyncio.run(_main())
+
+
+__all__ = ["build_regloss_prompt", "dialogue_lines", "parse_gloss_array", "regloss_all", "regloss_lesson"]

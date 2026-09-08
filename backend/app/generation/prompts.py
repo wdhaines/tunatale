@@ -72,23 +72,13 @@ Respond with ONLY a JSON object matching this schema (no markdown fences, no pre
         {{"speaker": "female-1", "text": "{language_code} dialogue line", "translation": "English translation"}}
       ]
     }}
-  ],
-  "dialogue_glosses": [
-    {{"word": "lowercased_word", "translation": "English translation", "base": "bare dictionary form, VERBS ONLY"}}
   ]{morphology_schema}
 }}
 
-The "dialogue_glosses" array MUST contain an entry for EVERY unique word that appears
-in the dialogue lines — including articles, prepositions, pronouns, auxiliary verbs,
-proper names, interjections, and all other words. If a word appears in any dialogue line
-in any scene, it must have a gloss entry. No exceptions. Give each word's lowercase form
-and a concise English translation. This enables word-level hover translations
-in the learning UI.
-
-The "base" key is OPTIONAL and VERBS ONLY: the bare English dictionary form with no
-leading "to" (e.g. "show", not "to show" — matching the word-gloss convention), used
-when the card fronts the infinitive. Non-verbs and any entry with no dictionary form
-must OMIT it entirely.
+⚠️ Do NOT emit a "dialogue_glosses" array. Per-word glosses are requested separately
+(bd tunatale-yet7): they must cover EVERY unique dialogue word, so they grew with the
+dialogue while the completion cap could not, and at 58% of the response they pushed
+generation past Groq's per-request ceiling. Spend the budget on the story.
 
 {morphology_block}
 
