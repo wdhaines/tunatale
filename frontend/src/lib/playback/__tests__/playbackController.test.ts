@@ -180,6 +180,7 @@ describe("playbackController", () => {
       lessonTitle: string;
       audioUrl: string;
       sectionUrl: (audioId: string) => string;
+      onHandsFreeEnd: () => void;
     }> = {},
   ) {
     const ms = overrides.mediaSession !== undefined ? overrides.mediaSession : null;
@@ -192,6 +193,7 @@ describe("playbackController", () => {
       audioUrl: overrides.audioUrl ?? "/api/audio/a1",
       audio: overrides.audio ?? lessonAudio,
       sectionUrl: overrides.sectionUrl ?? ((id: string) => `/api/audio/${id}`),
+      onHandsFreeEnd: overrides.onHandsFreeEnd,
     });
   }
 
@@ -1459,6 +1461,30 @@ describe("playbackController", () => {
       cues: naturalCues,
     };
 
+    it("play() attaches a rejection handler, so a blocked autoplay stays quiet", () => {
+      // The hand-off between lessons calls play() with no user gesture directly
+      // behind it, and a browser that blocks autoplay REJECTS rather than
+      // throwing.
+      //
+      // ⚠️ Two more obvious versions of this test do NOT discriminate, both
+      // measured by sabotage against a play() with its .catch removed:
+      //   "expect(() => ctrl.play()).not.toThrow()"  — stayed green; an
+      //      unhandled rejection is reported to the runtime, not the caller.
+      //   a process.on("unhandledRejection") listener — also stayed green; this
+      //      runner does not surface it there.
+      // So assert the thing that actually differs: that a handler was attached
+      // to the promise play() returned.
+      const ctrl = createController({ audio: hfAudio });
+      const rejected = Promise.reject(new Error("NotAllowedError: play() failed"));
+      const attach = vi.spyOn(rejected, "catch");
+      vi.mocked(audioEl.play).mockReturnValueOnce(rejected);
+
+      ctrl.play();
+
+      expect(attach).toHaveBeenCalled();
+      rejected.catch(() => {}); // settle it so the runner stays clean
+    });
+
     it("hands-free OFF: ended leaves the track ended, no advance", () => {
       const mediaSession = makeFakeMediaSession();
       const ctrl = createController({
@@ -1590,6 +1616,80 @@ describe("playbackController", () => {
       audioEl.dispatchEvent(new Event("ended"));
       audioEl.dispatchEvent(new Event("loadedmetadata"));
       expect(audioEl.currentTime).toBe(0);
+    });
+
+    it("reaching the END of the sequence calls onHandsFreeEnd", () => {
+      // The controller is per-lesson and cannot load the next one; it reports
+      // that the sequence finished and the PAGE decides where that goes.
+      const onHandsFreeEnd = vi.fn();
+      const ctrl = createController({ audio: hfAudio, onHandsFreeEnd });
+      ctrl.setHandsFree(true);
+      ctrl.selectTrack("translated");
+      expect(onHandsFreeEnd).not.toHaveBeenCalled();
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(onHandsFreeEnd).toHaveBeenCalledTimes(1);
+      expect(ctrl.playing).toBe(false);
+    });
+
+    it("an ADVANCE does not call onHandsFreeEnd — only the last pass does", () => {
+      const onHandsFreeEnd = vi.fn();
+      const ctrl = createController({ audio: hfAudio, onHandsFreeEnd });
+      ctrl.setHandsFree(true);
+      ctrl.selectTrack("key_phrases");
+      audioEl.dispatchEvent(new Event("ended")); // -> natural_speed
+      audioEl.dispatchEvent(new Event("ended")); // -> slow_speed
+      audioEl.dispatchEvent(new Event("ended")); // -> translated
+      expect(ctrl.activeSectionType).toBe("translated");
+      expect(onHandsFreeEnd).not.toHaveBeenCalled();
+      audioEl.dispatchEvent(new Event("ended")); // sequence exhausted
+      expect(onHandsFreeEnd).toHaveBeenCalledTimes(1);
+    });
+
+    it("hands-free OFF never calls onHandsFreeEnd, even on the last pass", () => {
+      const onHandsFreeEnd = vi.fn();
+      const ctrl = createController({ audio: hfAudio, onHandsFreeEnd });
+      ctrl.selectTrack("translated");
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(onHandsFreeEnd).not.toHaveBeenCalled();
+    });
+
+    it("a section OUTSIDE the sequence does not call onHandsFreeEnd", () => {
+      // slow_translated is not a pass of the sequence, so its end is not the
+      // sequence ending — advancing the lesson off it would be a surprise.
+      const onHandsFreeEnd = vi.fn();
+      const ctrl = createController({ audio: hfAudio, onHandsFreeEnd });
+      ctrl.setHandsFree(true);
+      ctrl.selectTrack("slow_translated");
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(onHandsFreeEnd).not.toHaveBeenCalled();
+    });
+
+    it("a latched repeat wins over the end signal", () => {
+      // The latch loops the last sentence forever ON PURPOSE; handing off to the
+      // next lesson mid-drill would defeat it.
+      const onHandsFreeEnd = vi.fn();
+      const ctrl = createController({ audio: hfAudio, onHandsFreeEnd });
+      ctrl.setHandsFree(true);
+      ctrl.selectTrack("translated");
+      audioEl.currentTime = 0.6;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      ctrl.toggleRepeatLatch();
+      expect(ctrl.repeatLatched).toBe(true);
+      // `ended` fires with the playhead AT the end of the track — latchLoopCheck
+      // gates on exactly that, so seeking there is what makes this the real
+      // event rather than a hand-made one that skips the loop path.
+      audioEl.currentTime = 1.0;
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(onHandsFreeEnd).not.toHaveBeenCalled();
+      expect(audioEl.play).toHaveBeenCalled(); // it looped instead
+    });
+
+    it("no onHandsFreeEnd supplied: the last pass still just stops", () => {
+      const ctrl = createController({ audio: hfAudio });
+      ctrl.setHandsFree(true);
+      ctrl.selectTrack("translated");
+      expect(() => audioEl.dispatchEvent(new Event("ended"))).not.toThrow();
+      expect(ctrl.playing).toBe(false);
     });
 
     it("turning hands-free OFF restores the section active when it was turned ON", () => {

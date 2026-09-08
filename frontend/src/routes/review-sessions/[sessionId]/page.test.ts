@@ -57,6 +57,7 @@ vi.mock("$lib/api", () => ({
     createReviewSession: vi.fn(),
     getReviewSessionPrompt: vi.fn(),
     importReviewSession: vi.fn(),
+    listReviewSessions: vi.fn(),
   },
 }));
 
@@ -234,6 +235,11 @@ beforeEach(() => {
   // The page's render-status onMount destructures the result, so an unstubbed
   // mock would return undefined and throw on mount in every test.
   mockRenderStatus.mockResolvedValue({ rendering: false });
+  // The hands-free hand-off asks for sibling sessions on mount; default to none
+  // so every existing test keeps the "no successor" behaviour.
+  vi.mocked(api.listReviewSessions).mockResolvedValue([] as never);
+  localStorage.clear();
+  sessionStorage.clear();
 });
 
 describe("load", () => {
@@ -883,5 +889,150 @@ describe("the reader", () => {
         });
       });
     });
+  });
+});
+
+describe("hands-free carries on into the next review session", () => {
+  function sectionCue(sectionIndex: number, sectionType: string) {
+    return {
+      index: 0,
+      start_ms: 0,
+      end_ms: 800,
+      section_index: sectionIndex,
+      section_type: sectionType,
+      phrase_index: 0,
+      role: "speaker",
+      language_code: "no",
+      text: "Toget er forsinket",
+      ref: { kind: "line" as const, target_index: 0 },
+    };
+  }
+
+  const trackAudio = {
+    audio_id: "a1",
+    lesson_id: "sess-1",
+    sections: [
+      {
+        audio_id: "s0",
+        section_index: 0,
+        section_type: "key_phrases",
+        title: "Key Phrases",
+        cues: [sectionCue(0, "key_phrases")],
+      },
+      {
+        audio_id: "s1",
+        section_index: 1,
+        section_type: "natural_speed",
+        title: "Natural Speed",
+        cues: [sectionCue(1, "natural_speed")],
+      },
+      {
+        audio_id: "s2",
+        section_index: 2,
+        section_type: "slow_speed",
+        title: "Slow Speed",
+        cues: [sectionCue(2, "slow_speed")],
+      },
+      {
+        audio_id: "s3",
+        section_index: 3,
+        section_type: "translated",
+        title: "Translated",
+        cues: [sectionCue(3, "translated")],
+      },
+      {
+        audio_id: "s4",
+        section_index: 4,
+        section_type: "slow_translated",
+        title: "Slow Translated",
+        cues: [sectionCue(4, "slow_translated")],
+      },
+    ],
+    cues: [sectionCue(1, "natural_speed")],
+  };
+
+  function captureAudio() {
+    const els: HTMLAudioElement[] = [];
+    const Orig = globalThis.Audio;
+    class Recording extends Orig {
+      constructor(src?: string) {
+        super(src);
+        els.push(this);
+      }
+    }
+    globalThis.Audio = Recording as unknown as typeof Audio;
+    return {
+      els,
+      restore: () => {
+        globalThis.Audio = Orig;
+      },
+    };
+  }
+
+  // Opens ON the last pass of the sequence, so ending that track completes the run.
+  function seedOnLastPass() {
+    localStorage.setItem("handsFree", "on");
+    localStorage.setItem(
+      "lessonPlayerSelection",
+      JSON.stringify({ phase: "dialogue", enunciation: "natural", english: "l2_first" }),
+    );
+  }
+
+  const pageData = () => ({ session: sessionBody(), audio: trackAudio });
+
+  it("navigates to the next session by DATE and arms the hand-off baton", async () => {
+    seedOnLastPass();
+    vi.mocked(api.listReviewSessions).mockResolvedValue([
+      { id: "sess-2", session_date: "2026-09-07" },
+      { id: "sess-1", session_date: "2026-09-02" },
+    ] as never);
+    const cap = captureAudio();
+    try {
+      render(Page, { props: { data: pageData() } });
+      await vi.waitFor(() => expect(cap.els.length).toBeGreaterThan(0));
+      // The sibling list is fetched on mount; the hand-off cannot resolve until
+      // it lands, so wait for the fetch rather than racing it.
+      await vi.waitFor(() => expect(api.listReviewSessions).toHaveBeenCalled());
+
+      cap.els[0].dispatchEvent(new Event("ended"));
+
+      expect(mockGoto).toHaveBeenCalledWith("/review-sessions/sess-2");
+      expect(sessionStorage.getItem("handsFreeHandoff")).toBe("1");
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("stops on the newest session rather than wrapping to the oldest", async () => {
+    seedOnLastPass();
+    vi.mocked(api.listReviewSessions).mockResolvedValue([
+      { id: "sess-0", session_date: "2026-08-20" },
+      { id: "sess-1", session_date: "2026-09-02" },
+    ] as never);
+    const cap = captureAudio();
+    try {
+      render(Page, { props: { data: pageData() } });
+      await vi.waitFor(() => expect(api.listReviewSessions).toHaveBeenCalled());
+      cap.els[0].dispatchEvent(new Event("ended"));
+      expect(mockGoto).not.toHaveBeenCalled();
+      expect(sessionStorage.getItem("handsFreeHandoff")).toBeNull();
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("a failed sibling fetch leaves the reader working and simply does not advance", async () => {
+    seedOnLastPass();
+    vi.mocked(api.listReviewSessions).mockRejectedValue(new Error("offline"));
+    const cap = captureAudio();
+    try {
+      const { getByText } = render(Page, { props: { data: pageData() } });
+      await vi.waitFor(() => expect(api.listReviewSessions).toHaveBeenCalled());
+      cap.els[0].dispatchEvent(new Event("ended"));
+      expect(mockGoto).not.toHaveBeenCalled();
+      expect(getByText("A Missed Train")).toBeTruthy();
+    } finally {
+      cap.restore();
+    }
   });
 });

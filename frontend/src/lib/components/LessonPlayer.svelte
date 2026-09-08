@@ -7,6 +7,7 @@
 	import type { CacheStorageLike } from '$lib/sw/audio-cache';
 	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
 	import { lessonPlayerPref, pillsForSection } from '$lib/stores/lessonPlayerPref.svelte';
+	import { handsFreePref } from '$lib/stores/handsFreePref.svelte';
 	import type { EnglishMode } from '$lib/stores/lessonPlayerPref.svelte';
 	import { createPlaybackController } from '$lib/playback/playbackController.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
@@ -20,9 +21,23 @@
 		compact?: boolean;
 		lessonTitle?: string;
 		controller?: PlaybackController | null;
+		/**
+		 * Called when a hands-free run finishes its last pass. The player knows
+		 * the run ended; only the PAGE knows what comes after this lesson (the
+		 * next day, the next review session), so the decision lives there. Left
+		 * unset, the run simply stops — which is the correct behaviour on the
+		 * last item and on any page with no successor.
+		 */
+		onSequenceEnd?: () => void;
 	}
 
-	let { audio, compact = false, lessonTitle = '', controller = $bindable(null) }: Props = $props();
+	let {
+		audio,
+		compact = false,
+		lessonTitle = '',
+		controller = $bindable(null),
+		onSequenceEnd
+	}: Props = $props();
 
 	// audio/lessonTitle are fixed for the life of an instance — the page recreates
 	// the player via {#key audio.audio_id} — so snapshot them once at init.
@@ -36,7 +51,11 @@
 		audio: init.audio,
 		// Without this, selectTrack falls back to identity and sets audioEl.src to
 		// a bare section id — a broken relative URL that never loads.
-		sectionUrl: (id) => api.audioUrl(id)
+		sectionUrl: (id) => api.audioUrl(id),
+		// Read through the closure rather than captured: `onSequenceEnd` is a
+		// prop, and the controller is built once at init, so capturing the value
+		// here would freeze whatever the first render passed.
+		onHandsFreeEnd: () => onSequenceEnd?.()
 	});
 
 	controller = ctrl;
@@ -165,6 +184,14 @@
 		lessonPlayerPref.set({ phase, enunciation: enunLevel, english: englishMode });
 	}
 
+	// Toggling is a real user choice, so it persists — that is what carries the
+	// mode across the navigation hands-free performs at the end of a run.
+	function onHandsFreeClick() {
+		const next = !ctrl.handsFree;
+		ctrl.setHandsFree(next);
+		handsFreePref.set(next);
+	}
+
 	function onPhaseClick(p: Phase) {
 		phase = p;
 		applyTrack();
@@ -227,7 +254,13 @@
 		// the fields a section type cannot carry — pillsForSection omits the
 		// enunciation LEVEL for the slow_* sections, and both level and English
 		// for key_phrases.
-		if (mounted) untrack(() => persistSelection());
+		// ⚠️ NOT while hands-free is driving. The mirror exists to follow a track
+		// the USER chose from outside the player; a hands-free advance is the
+		// player moving itself, and persisting it saved "English: After" as a
+		// preference nobody picked — which then opened the NEXT lesson in a mode
+		// nobody picked. The pills still follow (the chip must stay truthful);
+		// only the write is suppressed.
+		if (mounted && !ctrl.handsFree) untrack(() => persistSelection());
 	});
 
 	// --- Prefetch section URLs ---
@@ -283,6 +316,27 @@
 			enunLevel = sel.enunciation;
 			englishMode = sel.english;
 			applyTrack();
+
+			// Hands-free is seeded AFTER the saved selection is already the active
+			// track, and that order is load-bearing: setHandsFree(true) captures
+			// the current section as its restore point, so capturing here makes
+			// "hands-free off" return to what the user actually chose rather than
+			// to the Key Phrases the hand-off below jumps to.
+			handsFreePref.init();
+			// Consumed unconditionally — a baton left lying around would fire on
+			// some later, unrelated mount.
+			const handedOff = handsFreePref.consumeHandoff();
+			if (handsFreePref.enabled) {
+				ctrl.setHandsFree(true);
+				if (handedOff) {
+					// Arrived because the previous item's sequence finished: start
+					// this one at the top of the sequence, not on the pass that
+					// happened to end. Deliberately not persisted — see the mirror.
+					phase = 'key_phrases';
+					applyTrack();
+					ctrl.play();
+				}
+			}
 		}
 
 		// The mirror $effect above must not persist during its first run, which
@@ -442,7 +496,7 @@
 					class="hands-free-toggle"
 					aria-pressed={ctrl.handsFree}
 					title="Plays each pass in order without input — natural, enunciated, then English after. The ⏮ ⏭ headphone / car buttons step by sentence."
-					onclick={() => ctrl.setHandsFree(!ctrl.handsFree)}
+					onclick={onHandsFreeClick}
 				>
 					<span class="chip-label">
 						<svg viewBox="0 0 16 16" width="0.85em" height="0.85em" style="vertical-align:-1px"><path d="M8 1.5a5.5 5.5 0 0 0-5.5 5.5v3.5a1.5 1.5 0 0 0 1.5 1.5h1v-4h-2V7a5 5 0 0 1 10 0v2h-2v4h1a1.5 1.5 0 0 0 1.5-1.5V7A5.5 5.5 0 0 0 8 1.5z" fill="currentColor"/></svg>

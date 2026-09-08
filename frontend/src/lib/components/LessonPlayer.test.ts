@@ -881,6 +881,177 @@ describe("LessonPlayer", () => {
     });
   });
 
+  describe("hands-free across lessons", () => {
+    const SEL_KEY = "lessonPlayerSelection";
+    const HF_KEY = "handsFree";
+    const BATON = "handsFreeHandoff";
+
+    function mount(onSequenceEnd?: () => void) {
+      let ctrl!: PlaybackController;
+      const r = render(PillSyncHarness, {
+        props: {
+          audio: audioWithAllSections,
+          onController: (c: PlaybackController) => {
+            ctrl = c;
+          },
+          onSequenceEnd,
+        },
+      });
+      return {
+        ...r,
+        get ctrl() {
+          return ctrl;
+        },
+      };
+    }
+
+    beforeEach(() => {
+      sessionStorage.clear();
+    });
+
+    it("restores hands-free ON from storage, so it survives the navigation it caused", () => {
+      localStorage.setItem(HF_KEY, "on");
+      const { container } = mount();
+      const toggle = container.querySelector<HTMLButtonElement>(".hands-free-toggle")!;
+      expect(toggle.textContent).toContain("On");
+      expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    });
+
+    it("the toggle persists, so the next lesson mounts with it still on", () => {
+      const { container } = mount();
+      const toggle = container.querySelector<HTMLButtonElement>(".hands-free-toggle")!;
+      fireEvent.click(toggle);
+      expect(localStorage.getItem(HF_KEY)).toBe("on");
+      fireEvent.click(toggle);
+      expect(localStorage.getItem(HF_KEY)).toBe("off");
+    });
+
+    it("a hands-free run does NOT rewrite the saved English setting", async () => {
+      // ⚠️ THE USER-REPORTED BUG. The pill mirror follows whatever track is
+      // playing and persists it, so hands-free's own advance through
+      // `translated` used to save "English: After" as if it had been chosen.
+      // The next lesson then opened in a mode nobody picked.
+      localStorage.setItem(
+        SEL_KEY,
+        JSON.stringify({ phase: "dialogue", enunciation: "natural", english: "off" }),
+      );
+      const h = mount();
+      await tick();
+      fireEvent.click(h.container.querySelector<HTMLButtonElement>(".hands-free-toggle")!);
+      await tick();
+
+      h.ctrl.selectTrack("slow_speed");
+      await tick();
+      h.ctrl.selectTrack("translated");
+      await tick();
+
+      expect(JSON.parse(localStorage.getItem(SEL_KEY)!).english).toBe("off");
+      expect(JSON.parse(localStorage.getItem(SEL_KEY)!).phase).toBe("dialogue");
+    });
+
+    it("with hands-free OFF the mirror still persists — the suppression is scoped", async () => {
+      // The control for the test above: if the mirror stopped persisting
+      // outright, that test would pass for the wrong reason.
+      localStorage.setItem(
+        SEL_KEY,
+        JSON.stringify({ phase: "dialogue", enunciation: "natural", english: "off" }),
+      );
+      const h = mount();
+      await tick();
+      h.ctrl.selectTrack("translated");
+      await tick();
+      expect(JSON.parse(localStorage.getItem(SEL_KEY)!).english).toBe("l2_first");
+    });
+
+    it("arriving on the hand-off baton opens at Key Phrases and starts playing", async () => {
+      localStorage.setItem(HF_KEY, "on");
+      localStorage.setItem(
+        SEL_KEY,
+        JSON.stringify({ phase: "dialogue", enunciation: "natural", english: "l2_first" }),
+      );
+      sessionStorage.setItem(BATON, "1");
+      const h = mount();
+      await tick();
+      expect(h.ctrl.activeSectionType).toBe("key_phrases");
+      const phaseBtn = h.container.querySelector<HTMLButtonElement>(".phase-btn")!;
+      expect(phaseBtn.textContent).toContain("Key Phrases");
+      expect(phaseBtn.classList.contains("active")).toBe(true);
+      expect(h.ctrl.playing).toBe(true);
+      // One-shot: the baton is spent, so a refresh of this page won't autoplay.
+      expect(sessionStorage.getItem(BATON)).toBeNull();
+    });
+
+    it("hands-free ON but NO baton: opens on the saved selection, silent", async () => {
+      // Opening a lesson by hand with hands-free left on must not start playing
+      // at you, and must not drag you to Key Phrases.
+      localStorage.setItem(HF_KEY, "on");
+      localStorage.setItem(
+        SEL_KEY,
+        JSON.stringify({ phase: "dialogue", enunciation: "natural", english: "off" }),
+      );
+      const h = mount();
+      await tick();
+      expect(h.ctrl.activeSectionType).toBe("natural_speed");
+      expect(h.ctrl.playing).toBe(false);
+    });
+
+    it("a baton with hands-free OFF is ignored and cleared", async () => {
+      sessionStorage.setItem(BATON, "1");
+      const h = mount();
+      await tick();
+      expect(h.ctrl.playing).toBe(false);
+      expect(sessionStorage.getItem(BATON)).toBeNull();
+    });
+
+    it("turning hands-free off restores the SAVED track, not the pass it ended on", async () => {
+      localStorage.setItem(
+        SEL_KEY,
+        JSON.stringify({ phase: "dialogue", enunciation: "natural", english: "off" }),
+      );
+      const h = mount();
+      await tick();
+      const toggle = h.container.querySelector<HTMLButtonElement>(".hands-free-toggle")!;
+      fireEvent.click(toggle);
+      await tick();
+      h.ctrl.selectTrack("translated"); // as an advance would
+      await tick();
+      fireEvent.click(toggle);
+      await tick();
+      expect(h.ctrl.activeSectionType).toBe("natural_speed");
+    });
+
+    it("the end of the sequence reaches the page's onSequenceEnd", async () => {
+      // The controller builds its element with `new Audio()`, so it is never in
+      // the document and cannot be found by query. Recording it at construction
+      // is what lets this assert the WIRING (prop -> controller dep) rather than
+      // re-testing the controller's own end-of-sequence logic, which
+      // playbackController.test.ts already pins.
+      const created: HTMLAudioElement[] = [];
+      const OrigAudio = globalThis.Audio;
+      class RecordingAudio extends OrigAudio {
+        constructor(src?: string) {
+          super(src);
+          created.push(this);
+        }
+      }
+      globalThis.Audio = RecordingAudio as unknown as typeof Audio;
+      try {
+        const onSequenceEnd = vi.fn();
+        localStorage.setItem(HF_KEY, "on");
+        const h = mount(onSequenceEnd);
+        await tick();
+        h.ctrl.selectTrack("translated");
+        await tick();
+        expect(created.length).toBeGreaterThan(0);
+        expect(onSequenceEnd).not.toHaveBeenCalled();
+        created[0].dispatchEvent(new Event("ended"));
+        expect(onSequenceEnd).toHaveBeenCalledTimes(1);
+      } finally {
+        globalThis.Audio = OrigAudio;
+      }
+    });
+  });
+
   describe("bindable controller", () => {
     it("accepts a controller bindable prop without error", () => {
       const { container } = render(LessonPlayer, {

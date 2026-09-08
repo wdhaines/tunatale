@@ -14,7 +14,10 @@
 	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
 	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
 	import ManualStoryPanel from '$lib/components/ManualStoryPanel.svelte';
-	import { invalidateAll } from '$app/navigation';
+	import { invalidateAll, goto } from '$app/navigation';
+	import { handsFreePref } from '$lib/stores/handsFreePref.svelte';
+	import { nextSessionAfter } from '$lib/reading/nextReviewSession';
+	import type { SessionOrderable } from '$lib/reading/nextReviewSession';
 
 
 	// The reader for a review session.
@@ -76,6 +79,28 @@
 	};
 
 	const reading = createReadingActions(contentBinding);
+
+	// Sibling sessions, for the hands-free hand-off only. Fetched here rather
+	// than in `load` for the same reason the transcript is: it is side chrome,
+	// and a failure must leave the reader working. An empty list simply means
+	// the run stops at the end of this session.
+	let siblingSessions: SessionOrderable[] = $state([]);
+	onMount(async () => {
+		try {
+			siblingSessions = await api.listReviewSessions();
+		} catch {
+			// Non-critical: no successor is the same outcome as an unknown one.
+		}
+	});
+
+	// The session equivalent of the lesson page's next-day hand-off. A session
+	// has no day, so date order is the ordering — see nextReviewSession.ts.
+	function onSequenceEnd() {
+		const next = nextSessionAfter(siblingSessions, data.session.id);
+		if (!next) return;
+		handsFreePref.armHandoff();
+		void goto(`/review-sessions/${next.id}`);
+	}
 
 	const MONTHS = [
 		'January',
@@ -272,6 +297,7 @@
 		{transcriptLoading}
 		{reading}
 		bind:controller={playbackController}
+		{onSequenceEnd}
 	>
 		{#snippet headerAbove()}
 			<a class="back" href="/">← Lessons</a>

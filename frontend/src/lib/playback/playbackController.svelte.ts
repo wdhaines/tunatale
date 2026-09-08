@@ -62,6 +62,12 @@ interface Deps {
   audioUrl: string;
   audio: LessonAudio;
   sectionUrl?: (audioId: string) => string;
+  // Fired when a hands-free run reaches the end of HANDS_FREE_SEQUENCE and has
+  // no further pass to play. The controller is built around ONE lesson's audio
+  // and deliberately does not learn to load another: what comes next (the next
+  // day, the next review session) is the page's question, and only the page can
+  // answer it. So this reports the fact and stops.
+  onHandsFreeEnd?: () => void;
 }
 
 function getRefGroupKey(cue: Cue): string {
@@ -337,6 +343,18 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       if (next !== undefined) {
         selectTrack(next, null, true);
         void audioEl.play();
+        return;
+      }
+      // In the sequence with nothing left to play: the run is COMPLETE, as
+      // distinct from a track that merely ended. Reported after the state below
+      // is settled, so a handler that navigates cannot observe a half-updated
+      // controller. idx === -1 (a section outside the sequence) is not a
+      // completion and stays silent.
+      if (idx !== -1) {
+        playing = false;
+        if (mediaSession) mediaSession.playbackState = "none";
+        updatePositionState();
+        deps.onHandsFreeEnd?.();
         return;
       }
     }
@@ -722,7 +740,14 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     },
 
     play() {
-      audioEl.play();
+      // The hand-off between lessons calls this without a user gesture directly
+      // behind it, and a browser that blocks autoplay REJECTS rather than
+      // throwing. Unhandled, that surfaces as a console error on a path the
+      // user experiences simply as "it didn't start" — the transport is right
+      // there, so swallow it rather than making a blocked autoplay look like a
+      // crash.
+      const started = audioEl.play();
+      if (started && typeof started.catch === "function") started.catch(() => {});
     },
     pause() {
       audioEl.pause();
