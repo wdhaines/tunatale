@@ -1404,6 +1404,18 @@ describe("playbackController", () => {
         ref: { kind: "key_phrase", target_index: 0 },
       }),
     ];
+    const slowTranslatedCues: Cue[] = [
+      makeCue({
+        index: 0,
+        start_ms: 0,
+        end_ms: 500,
+        section_index: 4,
+        section_type: "slow_translated",
+        phrase_index: 0,
+        text: "Good day",
+        ref: { kind: "line", target_index: 0 },
+      }),
+    ];
     const hfAudio: LessonAudio = {
       audio_id: "a1",
       lesson_id: "l1",
@@ -1435,6 +1447,13 @@ describe("playbackController", () => {
           section_type: "key_phrases",
           title: "Key Phrases",
           cues: keyCues,
+        },
+        {
+          audio_id: "sec-slow-translated",
+          section_index: 4,
+          section_type: "slow_translated",
+          title: "Slow Translated",
+          cues: slowTranslatedCues,
         },
       ],
       cues: naturalCues,
@@ -1519,14 +1538,45 @@ describe("playbackController", () => {
       expect(mediaSession.playbackState).toBe("none");
     });
 
-    it("hands-free ON on a section NOT in the sequence: ended does not advance", () => {
+    it("hands-free ON on key_phrases: ended selects natural_speed and resumes playback", () => {
+      // The user's ask: key phrases should END and move on to the dialogue on
+      // their own, rather than stopping the car-stereo dead at the last phrase.
       const ctrl = createController({ audio: hfAudio });
       ctrl.setHandsFree(true);
       ctrl.selectTrack("key_phrases");
       expect(ctrl.activeSectionType).toBe("key_phrases");
       audioEl.dispatchEvent(new Event("ended"));
-      expect(ctrl.activeSectionType).toBe("key_phrases");
+      expect(ctrl.activeSectionType).toBe("natural_speed");
+      expect(audioEl.src).toBe("/api/audio/sec-natural");
+      expect(audioEl.play).toHaveBeenCalled();
+    });
+
+    it("hands-free ON on a section NOT in the sequence: ended does not advance", () => {
+      const ctrl = createController({ audio: hfAudio });
+      ctrl.setHandsFree(true);
+      ctrl.selectTrack("slow_translated");
+      expect(ctrl.activeSectionType).toBe("slow_translated");
+      vi.mocked(audioEl.play).mockClear();
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(ctrl.activeSectionType).toBe("slow_translated");
       expect(audioEl.play).not.toHaveBeenCalled();
+    });
+
+    it("a pass the lesson does not have is SKIPPED, not replayed as a silent loop", () => {
+      // selectTrack no-ops on a missing section, so advancing blindly to
+      // HANDS_FREE_SEQUENCE[idx + 1] would leave the same track selected and
+      // then call play() on it — an ended track restarts, so the pass would
+      // repeat forever with no way out but the transport.
+      const noSlow: LessonAudio = {
+        ...hfAudio,
+        sections: hfAudio.sections.filter((s) => s.section_type !== "slow_speed"),
+      };
+      const ctrl = createController({ audio: noSlow });
+      ctrl.setHandsFree(true);
+      expect(ctrl.activeSectionType).toBe("natural_speed");
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(ctrl.activeSectionType).toBe("translated");
+      expect(audioEl.src).toBe("/api/audio/sec-translated");
     });
 
     it("the advance starts at the BEGINNING of the next pass (applied seek is 0)", () => {

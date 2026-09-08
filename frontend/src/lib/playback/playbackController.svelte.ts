@@ -3,8 +3,20 @@ import type { Cue, CueRef, LessonAudio } from "$lib/api";
 
 // The hands-free pass sequence, in order of playback. One const so a later
 // change is a single edit. Matches LessonPlayer.svelte's pill model
-// (resolveSectionType): natural_speed -> slow_speed -> translated.
-export const HANDS_FREE_SEQUENCE = ["natural_speed", "slow_speed", "translated"] as const;
+// (resolveSectionType): key_phrases -> natural_speed -> slow_speed -> translated.
+//
+// key_phrases leads because a hands-free listen that STARTS in the Key Phrases
+// phase should hand off to the dialogue on its own rather than stopping the
+// stereo dead at the last phrase. It only ever leads for a listener already on
+// that track: the advance is indexed from whatever is playing, so turning
+// hands-free on mid-dialogue still starts at that pass and never rewinds into
+// the key phrases.
+export const HANDS_FREE_SEQUENCE = [
+  "key_phrases",
+  "natural_speed",
+  "slow_speed",
+  "translated",
+] as const;
 
 export interface PlaybackController {
   readonly currentCue: Cue | null;
@@ -312,8 +324,18 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     // like "hands-free doesn't work").
     if (handsFree && activeSectionType !== null) {
       const idx = (HANDS_FREE_SEQUENCE as readonly string[]).indexOf(activeSectionType);
-      if (idx !== -1 && idx < HANDS_FREE_SEQUENCE.length - 1) {
-        selectTrack(HANDS_FREE_SEQUENCE[idx + 1], null, true);
+      // Skip to the next pass this lesson actually HAS. selectTrack no-ops on a
+      // missing section, so advancing blindly to idx + 1 would leave the same
+      // track selected and then play() it — an ended element restarts, so the
+      // pass would repeat forever with no escape but the transport.
+      const next =
+        idx === -1
+          ? undefined
+          : HANDS_FREE_SEQUENCE.slice(idx + 1).find((t) =>
+              audioSections.some((s) => s.section_type === t),
+            );
+      if (next !== undefined) {
+        selectTrack(next, null, true);
         void audioEl.play();
         return;
       }
