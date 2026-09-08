@@ -77,4 +77,26 @@
 	.mastery-sep {
 		margin: 0 0.3em;
 	}
+	/* On a phone this line is the width budget for every segment on it, and the
+	   separators alone were ~39px of it — five gaps at 0.6em. Tightening them,
+	   plus a slightly smaller face, buys back enough room for the trailing
+	   segment to carry a WORD instead of a bare number. Desktop keeps the roomier
+	   spacing.
+
+	   ⚠️ IT IS A TIGHT FIT AND THAT IS DELIBERATE, NOT AN OVERSIGHT: measured at
+	   323px of 327 available on a 390px screen, so ~4px of slack. If a future
+	   session carries a wider figure (a four-digit review count, a longer
+	   locale), the line WRAPS — which costs ~15px and is exactly the state this
+	   merge replaced. The failure mode is bounded and self-correcting, so it is
+	   preferred to dropping a segment or shrinking the type further. Re-measure
+	   with the whitespace:nowrap clone probe before adding anything to this
+	   line. */
+	@media (max-width: 430px) {
+		.mastery-line {
+			font-size: 0.78rem;
+		}
+		.mastery-sep {
+			margin: 0 0.12em;
+		}
+	}
 </style>

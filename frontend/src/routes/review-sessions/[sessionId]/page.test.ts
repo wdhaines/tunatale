@@ -472,7 +472,7 @@ describe("the reader", () => {
     // Still asserted, at its new address — the claim was never "it is a <p>".
     const { container, findByText } = render(Page, { props: { data: data() } });
 
-    expect(await findByText("1/2")).toBeTruthy();
+    expect(await findByText("1/2 reused")).toBeTruthy();
     expect(container.innerHTML).toMatch(/reused 1 of 2 words you were forgetting/i);
   });
 
@@ -923,7 +923,7 @@ describe("header density on a phone", () => {
     // before the merge. The bare fraction fits. A merge that wraps saves nothing.
     const { container, findByText } = render(Page, { props: { data: data() } });
     expect(container.querySelector("p.coverage")).toBeFalsy();
-    expect(await findByText("1/2")).toBeTruthy();
+    expect(await findByText("1/2 reused")).toBeTruthy();
     expect(container.querySelector(".mastery-line .mastery-extra")).toBeTruthy();
   });
 
@@ -931,7 +931,7 @@ describe("header density on a phone", () => {
     // Terse on the line, explained on tap — the same idiom the other segments
     // already use for their lemma lists.
     const { container, findByText } = render(Page, { props: { data: data() } });
-    await findByText("1/2");
+    await findByText("1/2 reused");
     expect(container.querySelector(".mastery-extra")).toBeTruthy();
     expect(container.innerHTML).toMatch(/reused 1 of 2 words you were forgetting/);
   });
@@ -940,7 +940,7 @@ describe("header density on a phone", () => {
     // It is a role=button with tabindex, so Enter must do what a tap does —
     // the same contract the lemma segments beside it already have.
     const { container, findByText } = render(Page, { props: { data: data() } });
-    await findByText("1/2");
+    await findByText("1/2 reused");
     const extra = container.querySelector<HTMLElement>(".mastery-extra")!;
     expect(extra.getAttribute("role")).toBe("button");
     expect(extra.getAttribute("tabindex")).toBe("0");

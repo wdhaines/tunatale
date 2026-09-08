@@ -149,7 +149,7 @@
 		coverage === null
 			? null
 			: {
-					text: `${data.session.review_used.length}/${data.session.review_requested.length}`,
+					text: `${data.session.review_used.length}/${data.session.review_requested.length} reused`,
 					tooltip: `${coverage} words you were forgetting`
 				}
 	);
