@@ -1268,6 +1268,17 @@ class ReviewSessionResponse(LessonResponse):
     session_date: str
 
 
+class ReviewSessionRenderStatusResponse(BaseModel):
+    """Response of GET /api/review-sessions/{session_id}/render-status.
+
+    Whether a render is currently in flight for this session — the marker lives
+    on the server in memory, not in a table, so nothing here survives a restart
+    to lie about it.
+    """
+
+    rendering: bool
+
+
 class LessonSourceResponse(BaseModel):
     """Response of GET /api/story/{lesson_id}/source (``lesson_io.export_lesson``).
 

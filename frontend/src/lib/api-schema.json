@@ -3525,6 +3525,20 @@
         "title": "ReviewQueueResponse",
         "type": "object"
       },
+      "ReviewSessionRenderStatusResponse": {
+        "description": "Response of GET /api/review-sessions/{session_id}/render-status.\n\nWhether a render is currently in flight for this session \u2014 the marker lives\non the server in memory, not in a table, so nothing here survives a restart\nto lie about it.",
+        "properties": {
+          "rendering": {
+            "title": "Rendering",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "rendering"
+        ],
+        "title": "ReviewSessionRenderStatusResponse",
+        "type": "object"
+      },
       "ReviewSessionResponse": {
         "description": "Response of GET /api/review-sessions/{session_id}.\n\nA lesson read plus a date, MINUS the ``day`` it has no right to.\n``serialize_lesson`` leaves that key out for a session, but the inherited\n``day: int | None = None`` would still serialize as ``null`` \u2014 so the ROUTE\nmust set ``response_model_exclude_unset=True``. That is a route setting, not\nsomething this model can enforce, which is why the route carries the warning.",
         "properties": {
@@ -6223,7 +6237,7 @@
     },
     "/api/review-sessions/{session_id}/render": {
       "post": {
-        "description": "Render a session's audio through the ordinary audio pipeline.\n\n``render_lesson_audio`` takes no curriculum and no day and keys on the id\nalone, so this reuses it verbatim; ``audio_files`` rows land under the\nsession id and ``GET /api/audio/lesson/{id}`` then serves them with no\nchange at all.",
+        "description": "Render a session's audio through the ordinary audio pipeline.\n\n``render_lesson_audio`` takes no curriculum and no day and keys on the id\nalone, so this reuses it verbatim; ``audio_files`` rows land under the\nsession id and ``GET /api/audio/lesson/{id}`` then serves them with no\nchange at all.\n\n\u26a0\ufe0f A session id already rendering is refused with 409, BEFORE the render\nstarts \u2014 a second POST from another tab would otherwise double-render. The\nid is dropped again in a ``finally``, so a render that finishes OR fails\nreleases the session; the ``finally`` is what keeps one failed render from\nwedging the button forever.",
         "operationId": "render_review_session_api_review_sessions__session_id__render_post",
         "parameters": [
           {
@@ -6237,7 +6251,7 @@
           }
         ],
         "responses": {
-          "202": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -6259,6 +6273,49 @@
           }
         },
         "summary": "Render Review Session",
+        "tags": [
+          "review-sessions"
+        ]
+      }
+    },
+    "/api/review-sessions/{session_id}/render-status": {
+      "get": {
+        "description": "Whether a render is currently in flight for this session.\n\nThe page polls this on mount: the render outlives the page, so navigating\naway aborts the fetch but not the work, and the page must be able to pick\nthe render back up when it returns. Declared after the render route on\npurpose \u2014 ``render-status`` is two segments so it never collides with\n``GET /{session_id}``, and the parameterised routes must stay below the\nid-less ones.",
+        "operationId": "get_review_session_render_status_api_review_sessions__session_id__render_status_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewSessionRenderStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Review Session Render Status",
         "tags": [
           "review-sessions"
         ]

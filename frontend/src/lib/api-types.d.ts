@@ -1012,8 +1012,41 @@ export interface paths {
      *     alone, so this reuses it verbatim; ``audio_files`` rows land under the
      *     session id and ``GET /api/audio/lesson/{id}`` then serves them with no
      *     change at all.
+     *
+     *     ⚠️ A session id already rendering is refused with 409, BEFORE the render
+     *     starts — a second POST from another tab would otherwise double-render. The
+     *     id is dropped again in a ``finally``, so a render that finishes OR fails
+     *     releases the session; the ``finally`` is what keeps one failed render from
+     *     wedging the button forever.
      */
     post: operations["render_review_session_api_review_sessions__session_id__render_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/review-sessions/{session_id}/render-status": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Review Session Render Status
+     * @description Whether a render is currently in flight for this session.
+     *
+     *     The page polls this on mount: the render outlives the page, so navigating
+     *     away aborts the fetch but not the work, and the page must be able to pick
+     *     the render back up when it returns. Declared after the render route on
+     *     purpose — ``render-status`` is two segments so it never collides with
+     *     ``GET /{session_id}``, and the parameterised routes must stay below the
+     *     id-less ones.
+     */
+    get: operations["get_review_session_render_status_api_review_sessions__session_id__render_status_get"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -3494,6 +3527,18 @@ export interface components {
       queue: components["schemas"]["QueueItemResponse"][];
     };
     /**
+     * ReviewSessionRenderStatusResponse
+     * @description Response of GET /api/review-sessions/{session_id}/render-status.
+     *
+     *     Whether a render is currently in flight for this session — the marker lives
+     *     on the server in memory, not in a table, so nothing here survives a restart
+     *     to lie about it.
+     */
+    ReviewSessionRenderStatusResponse: {
+      /** Rendering */
+      rendering: boolean;
+    };
+    /**
      * ReviewSessionResponse
      * @description Response of GET /api/review-sessions/{session_id}.
      *
@@ -5225,12 +5270,43 @@ export interface operations {
     requestBody?: never;
     responses: {
       /** @description Successful Response */
-      202: {
+      200: {
         headers: {
           [name: string]: unknown;
         };
         content: {
           "application/json": components["schemas"]["RenderAudioResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_review_session_render_status_api_review_sessions__session_id__render_status_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReviewSessionRenderStatusResponse"];
         };
       };
       /** @description Validation Error */

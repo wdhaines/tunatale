@@ -43,6 +43,7 @@ vi.mock("$lib/api", () => ({
     getReviewSession: vi.fn(),
     getLessonAudio: vi.fn(),
     renderReviewSession: vi.fn(),
+    getReviewSessionRenderStatus: vi.fn(),
     getTranscript: vi.fn(),
     submitDrill: vi.fn(),
     fetchLessonReviewQueue: vi.fn(),
@@ -69,6 +70,7 @@ const mockGetSession = vi.mocked(api.getReviewSession);
 const mockGetAudio = vi.mocked(api.getLessonAudio);
 const mockRender = vi.mocked(api.renderReviewSession);
 const mockSessionTranscript = vi.mocked(api.getTranscript);
+const mockRenderStatus = vi.mocked(api.getReviewSessionRenderStatus);
 
 const TRANSCRIPT = {
   lesson_id: "sess-1",
@@ -229,6 +231,9 @@ beforeEach(() => {
   lessonModePref.set("read");
   vi.mocked(listenedStore.has).mockReturnValue(false);
   mockSessionTranscript.mockResolvedValue(TRANSCRIPT);
+  // The page's render-status onMount destructures the result, so an unstubbed
+  // mock would return undefined and throw on mount in every test.
+  mockRenderStatus.mockResolvedValue({ rendering: false });
 });
 
 describe("load", () => {
@@ -490,6 +495,139 @@ describe("the reader", () => {
     // markup that no longer exists.
     await vi.waitFor(() => expect(container.querySelector("section.player")).toBeTruthy());
     expect(mockRender).toHaveBeenCalledWith("sess-1");
+  });
+
+  it("returning to a page whose render is still running shows the indicator", async () => {
+    // The render outlives the page; a fresh visit must not see a silent button
+    // while the work it cannot see is still going.
+    mockRenderStatus.mockResolvedValue({ rendering: true });
+    const { findByRole } = render(Page, { props: { data: data() } });
+
+    const button = await findByRole("button", { name: /preparing/i });
+    expect(button).toHaveProperty("disabled", true);
+    expect(mockRenderStatus).toHaveBeenCalledWith("sess-1");
+  });
+
+  it("when the server says the render finished, the audio arrives", async () => {
+    // Poll until the status flips false, then the player appears. The sequence
+    // is true (mount) → true (the poll reschedules itself) → false (finish), so
+    // a still-rendering poll is exercised as well as the finish.
+    vi.useFakeTimers();
+    try {
+      mockRenderStatus
+        .mockResolvedValueOnce({ rendering: true })
+        .mockResolvedValueOnce({ rendering: true })
+        .mockResolvedValueOnce({ rendering: false });
+      mockGetAudio.mockResolvedValue({
+        audio_id: "a1",
+        lesson_id: "sess-1",
+        sections: [],
+      });
+      const { container, findByRole, queryByRole } = render(Page, { props: { data: data() } });
+
+      const button = await findByRole("button", { name: /preparing/i });
+      expect(button).toBeTruthy();
+
+      // Two poll cycles: the first sees still-rendering and reschedules.
+      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(2000);
+
+      await vi.waitFor(() => expect(container.querySelector("section.player")).toBeTruthy());
+      // The indicator released: the prepare button is gone, replaced by the player.
+      expect(queryByRole("button", { name: /prepare audio/i })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the indicator but no audio when the finished render reads it back as missing", async () => {
+    // Once the server says the render is done the audio is re-read; if that read
+    // fails the player is not shown, but the indicator is released so the button
+    // is not left spinning.
+    vi.useFakeTimers();
+    try {
+      mockRenderStatus
+        .mockResolvedValueOnce({ rendering: true })
+        .mockResolvedValueOnce({ rendering: false });
+      mockGetAudio.mockRejectedValue(new Error("404"));
+      const { queryByRole, findByRole } = render(Page, { props: { data: data() } });
+
+      const button = await findByRole("button", { name: /preparing/i });
+      expect(button).toBeTruthy();
+
+      await vi.advanceTimersByTimeAsync(2000);
+
+      const released = await findByRole("button", { name: /prepare audio/i });
+      expect(released).toHaveProperty("disabled", false);
+      expect(queryByRole("button", { name: /preparing/i })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives up polling when the session has disappeared (404)", async () => {
+    // A 404 from the status read means the session is gone and the render cannot
+    // finish — releasing the indicator without treating it as a server blip.
+    vi.useFakeTimers();
+    try {
+      const err = new Error("Review session not found") as Error & { status?: number };
+      err.status = 404;
+      mockRenderStatus.mockResolvedValueOnce({ rendering: true }).mockRejectedValue(err);
+      const { findByRole, queryByText } = render(Page, { props: { data: data() } });
+
+      const button = await findByRole("button", { name: /preparing/i });
+      expect(button).toBeTruthy();
+
+      await vi.advanceTimersByTimeAsync(2000);
+
+      const released = await findByRole("button", { name: /prepare audio/i });
+      expect(released).toHaveProperty("disabled", false);
+      expect(queryByText(/Review session not found/i)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a 409 from prepare resumes the indicator instead of reporting an error", async () => {
+    // Another tab (or an earlier visit) is already rendering this session — that
+    // is not a failure, so it must not surface as one.
+    const err = new Error("A render is already in progress for this session") as Error & {
+      status?: number;
+    };
+    err.status = 409;
+    mockRender.mockRejectedValue(err);
+    const { getByRole, findByRole, queryByText } = render(Page, {
+      props: { data: data() },
+    });
+
+    await fireEvent.click(getByRole("button", { name: /prepare audio/i }));
+
+    expect(queryByText(/already in progress/i)).toBeNull();
+    const button = await findByRole("button", { name: /preparing/i });
+    expect(button).toHaveProperty("disabled", true);
+  });
+
+  it("a status read that keeps failing gives up rather than polling forever", async () => {
+    // The cap is the failure story — an uncapped loop would poll a dead server
+    // forever, so after enough consecutive failures the page releases.
+    vi.useFakeTimers();
+    try {
+      // First call resolves true (starting the poll on mount), then every poll
+      // call fails. The initial mount would otherwise swallow the rejection and
+      // never begin polling.
+      mockRenderStatus
+        .mockResolvedValueOnce({ rendering: true })
+        .mockRejectedValue(new Error("backend down"));
+      const { getByRole, findByText } = render(Page, { props: { data: data() } });
+
+      // 5 rejected polls at 2s each exhausts the cap.
+      await vi.advanceTimersByTimeAsync(2000 * 5);
+
+      await findByText(/backend down/i);
+      expect(getByRole("button", { name: /prepare audio/i })).toHaveProperty("disabled", false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reports a failed render instead of silently doing nothing", async () => {

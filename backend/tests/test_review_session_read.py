@@ -25,6 +25,7 @@ exists to correct — one layer down and in a URL rather than a button.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -171,7 +172,7 @@ class TestRendering:
     async def test_it_renders(self, renderable):
         resp = await self._render("sess-1")
 
-        assert resp.status_code == 202
+        assert resp.status_code == 200
         assert renderable.get_audio_file_row(resp.json()["audio_id"]) is not None
 
     async def test_the_audio_is_reachable_through_the_existing_route(self, renderable):
@@ -204,6 +205,114 @@ class TestRendering:
 
         assert resp.status_code == 503
         assert "ffmpeg" in resp.json()["detail"]
+
+
+# ── render status ──────────────────────────────────────────────────────────
+#
+# An in-flight render marker lives on the server, in memory (`app.state`), and
+# the page polls it on mount. The claimed id is added at the start of a render
+# and dropped in a `finally`, so a render that finishes OR fails must read
+# `rendering: false` again — a failed render wedging the button forever is the
+# exact bug these tests exist to keep out.
+
+
+class TestRenderStatus:
+    @pytest.fixture
+    def renderable(self, stored, tmp_path):
+        renderer = AsyncMock()
+        renderer.render = AsyncMock(side_effect=_fake_render)
+        app.state.renderer = renderer
+        app.state.audio_dir = tmp_path
+        stored.save_review_session("sess-1", "sl", "2026-09-02", _make_mock_lesson_with_sections())
+        return stored
+
+    async def _render(self, session_id: str):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            return await client.post(f"/api/review-sessions/{session_id}/render")
+
+    async def _status(self, session_id: str):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            return await client.get(f"/api/review-sessions/{session_id}/render-status")
+
+    async def test_reports_false_when_nothing_is_running(self, renderable):
+        resp = await self._status("sess-1")
+
+        assert resp.status_code == 200
+        assert resp.json()["rendering"] is False
+
+    async def test_reports_true_while_a_render_is_in_flight(self, renderable):
+        gate = asyncio.Event()
+
+        async def _blocking_render(*args, **kwargs):
+            await gate.wait()
+            return _fake_render(*args, **kwargs)
+
+        app.state.renderer.render = AsyncMock(side_effect=_blocking_render)
+
+        task = asyncio.create_task(self._render("sess-1"))
+        await asyncio.sleep(0)
+
+        resp = await self._status("sess-1")
+
+        assert resp.status_code == 200
+        assert resp.json()["rendering"] is True
+
+        gate.set()
+        await task
+
+    async def test_unknown_session_is_404(self, renderable):
+        resp = await self._status("nope")
+
+        assert resp.status_code == 404
+
+    async def test_a_second_render_while_one_is_in_flight_is_409(self, renderable):
+        gate = asyncio.Event()
+
+        async def _blocking_render(*args, **kwargs):
+            await gate.wait()
+            return _fake_render(*args, **kwargs)
+
+        app.state.renderer.render = AsyncMock(side_effect=_blocking_render)
+
+        task = asyncio.create_task(self._render("sess-1"))
+        await asyncio.sleep(0)
+
+        try:
+            # ⚠️ wait_for, not a bare await. WITHOUT the refusal this second call
+            # blocks on the same gate the first render is holding, so the test
+            # HANGS rather than failing — measured by sabotage drill 2026-09-08,
+            # which deadlocked pytest instead of going red. A guard whose
+            # regression signature is a hung CI job is not a guard.
+            resp = await asyncio.wait_for(self._render("sess-1"), timeout=5)
+        finally:
+            gate.set()
+            await task
+
+        assert resp.status_code == 409
+        assert "already in progress" in resp.json()["detail"]
+
+    async def test_reports_false_again_after_a_render_finishes(self, renderable):
+        resp_1 = await self._status("sess-1")
+        assert resp_1.json()["rendering"] is False
+
+        await self._render("sess-1")
+
+        resp_2 = await self._status("sess-1")
+        assert resp_2.status_code == 200
+        assert resp_2.json()["rendering"] is False
+
+    async def test_reports_false_again_after_a_render_fails(self, renderable):
+        """The `finally` proof: a render that raises must not leave the session
+        wedged as permanently-rendering, or one failure would grey out the
+        button forever."""
+        app.state.renderer.render = AsyncMock(side_effect=RuntimeError("ffmpeg not found"))
+
+        resp_1 = await self._render("sess-1")
+        assert resp_1.status_code == 503
+
+        resp_2 = await self._status("sess-1")
+        assert resp_2.status_code == 200
+        assert resp_2.json()["rendering"] is False
 
 
 # ── the transcript comes from the SHARED content route ───────────────────────

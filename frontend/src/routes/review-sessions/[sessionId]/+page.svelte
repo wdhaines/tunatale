@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { LessonAudio, TranscriptData } from '$lib/api';
 	import LessonReader from '$lib/components/LessonReader.svelte';
@@ -41,6 +41,16 @@
 	let error = $state('');
 	let regenerating = $state(false);
 	let showRegenHelp = $state(false);
+
+	// The render outlives this page: navigating away aborts the fetch but not the
+	// server-side work, so on return the page polls the server until the render
+	// is done rather than guessing. `preparing` is still local state, but it is
+	// now SEEDED from and RELEASED by the server instead of being the only record
+	// that a render exists.
+	const RENDER_POLL_MS = 2000;
+	const RENDER_POLL_MAX_FAILURES = 5;
+	let pollTimer: ReturnType<typeof setTimeout> | null = null;
+	let pollFailures = 0;
 
 	// ⚠️ THE SAME ACTIONS THE LESSON PAGE USES, from one implementation. Tapping
 	// a word grades it, the popovers create cards and cloze inflections, undo
@@ -122,6 +132,59 @@
 		}
 	});
 
+	// NOT appended to the onMount above — that one awaits the transcript first
+	// and can take seconds on a cold backend, and the render indicator must not
+	// wait behind it. On return to a page whose render is still running (it
+	// outlived the page), pick it back up.
+	onMount(async () => {
+		try {
+			const { rendering } = await api.getReviewSessionRenderStatus(data.session.id);
+			if (rendering) {
+				preparing = true;
+				pollFailures = 0;
+				pollRenderStatus();
+			}
+		} catch {
+			/* nothing in flight that we can see */
+		}
+	});
+
+	onDestroy(() => {
+		if (pollTimer) clearTimeout(pollTimer);
+	});
+
+	// setTimeout, never setInterval — a slow response must not overlap itself.
+	function pollRenderStatus() {
+		pollTimer = setTimeout(async () => {
+			try {
+				const { rendering } = await api.getReviewSessionRenderStatus(data.session.id);
+				if (rendering) {
+					pollFailures = 0;
+					pollRenderStatus();
+					return;
+				}
+				preparing = false;
+				audio = await api.getLessonAudio(data.session.id).catch(() => null);
+			} catch (e) {
+				const status = (e as Error & { status?: number }).status;
+				if (status === 404) {
+					// The session is gone; the render cannot finish.
+					preparing = false;
+					return;
+				}
+				pollFailures += 1;
+				if (pollFailures >= RENDER_POLL_MAX_FAILURES) {
+					// The cap is the failure story — an uncapped retry loop would
+					// poll forever against a dead server.
+					preparing = false;
+					renderError = e instanceof Error ? e.message : String(e);
+					return;
+				}
+				pollRenderStatus();
+			}
+		}, RENDER_POLL_MS);
+	}
+
 	/**
 	 * Rewrite this session's dialogue, keeping the session.
 	 *
@@ -179,9 +242,22 @@
 		try {
 			await api.renderReviewSession(data.session.id);
 			audio = await api.getLessonAudio(data.session.id);
+			preparing = false;
 		} catch (e) {
+			const status = (e as Error & { status?: number }).status;
+			if (status === 409) {
+				// Another tab or an earlier visit is already rendering this
+				// session — that is not an error. Keep preparing and poll until
+				// the render we cannot see finishes.
+				//
+				// Reset the budget with the chain, not only on a good poll: a
+				// chain that ended AT the cap never resets, so without this the
+				// next chain would give up after a single blip.
+				pollFailures = 0;
+				pollRenderStatus();
+				return;
+			}
 			renderError = e instanceof Error ? e.message : String(e);
-		} finally {
 			preparing = false;
 		}
 	}
