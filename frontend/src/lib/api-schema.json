@@ -271,6 +271,46 @@
         "title": "CreateItemRequest",
         "type": "object"
       },
+      "CreateReviewSessionFromPasteRequest": {
+        "description": "A hand-written dialogue that BECOMES a session, rather than replacing one.\n\nThe sibling of ``ImportReviewSessionRequest``, which carries no identifiers\nbecause the session id is in the path. Here there is no path id and no stored\nrow, so ``review_words`` must travel in the body \u2014 it is the pinned request\n``GET /prompt`` just handed out, and the denominator the session's coverage\nline will be measured against.",
+        "properties": {
+          "raw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw"
+          },
+          "review_words": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Review Words",
+            "type": "array"
+          },
+          "story": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Story"
+          }
+        },
+        "required": [
+          "review_words"
+        ],
+        "title": "CreateReviewSessionFromPasteRequest",
+        "type": "object"
+      },
       "CreateReviewSessionRequest": {
         "additionalProperties": false,
         "description": "Body of POST /api/story/review-session \u2014 deliberately empty.\n\n\u26a0\ufe0f ``extra=\"forbid\"`` is the interface carrying the decision. A review\nsession is drawn from the WHOLE language deck, so there is no curriculum to\nname and no day to pick; silently ignoring a ``curriculum_id`` would let a\ncaller believe it had scoped the session to one plan. Rejecting it says so.",
@@ -894,6 +934,33 @@
           "sections"
         ],
         "title": "GetLessonAudioResponse",
+        "type": "object"
+      },
+      "GetReviewSessionDraftPromptResponse": {
+        "description": "Response of GET /api/review-sessions/prompt \u2014 a prompt for a session that\ndoes not exist yet (bd tunatale-jmwb).\n\n\u26a0\ufe0f ``review_words`` IS PART OF THE CONTRACT, not diagnostic decoration. No row\nexists to remember what was asked for, so the caller carries the list and hands\nit back to ``POST /api/review-sessions/import``. Dropping it would force that\nroute to re-select, and a learner who wrote their dialogue overnight would have\nit scored against a set that had since decayed differently \u2014 the meter reading\nlow for a reason nothing on screen explains.",
+        "properties": {
+          "review_words": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Review Words",
+            "type": "array"
+          },
+          "system_prompt": {
+            "title": "System Prompt",
+            "type": "string"
+          },
+          "user_prompt": {
+            "title": "User Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "system_prompt",
+          "user_prompt",
+          "review_words"
+        ],
+        "title": "GetReviewSessionDraftPromptResponse",
         "type": "object"
       },
       "GetStoryPromptResponse": {
@@ -5903,6 +5970,70 @@
           }
         },
         "summary": "Create Review Session",
+        "tags": [
+          "review-sessions"
+        ]
+      }
+    },
+    "/api/review-sessions/import": {
+      "post": {
+        "description": "Create a session FROM a hand-written dialogue, generating nothing.\n\n201 and the same body as auto-create, because the outcome is the same kind of\nthing \u2014 the caller should not have to care which door it came through.\n\n\u26a0\ufe0f ``review_requested`` is the list the CLIENT hands back, never a fresh\nselection: it is what ``GET /prompt`` asked for, and re-selecting would score\nan overnight rewrite against a set that had since moved. ``review_used`` IS\nrecomputed, by ``build_lesson_from_story``, against the pasted text \u2014 carrying\na number forward would report one text's score for another, which is this\nepic's characteristic silently-plausible wrong answer.",
+        "operationId": "create_review_session_from_paste_api_review_sessions_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReviewSessionFromPasteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateReviewSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Review Session From Paste",
+        "tags": [
+          "review-sessions"
+        ]
+      }
+    },
+    "/api/review-sessions/prompt": {
+      "get": {
+        "description": "The prompt for a session that does not exist yet \u2014 and NO generation.\n\nThis is the whole point of the bead: manual mode was id-scoped, so reaching it\nmeant generating a session first and throwing its dialogue away. A story call\nis the most expensive thing TT does (tunatale-yet7), and it was being spent on\noutput the learner had already decided to replace.\n\nSelection happens HERE, once, and the chosen words are returned so the import\ncan be told them rather than guessing.",
+        "operationId": "get_review_session_draft_prompt_api_review_sessions_prompt_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetReviewSessionDraftPromptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Review Session Draft Prompt",
         "tags": [
           "review-sessions"
         ]

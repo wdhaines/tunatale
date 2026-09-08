@@ -728,6 +728,32 @@ export class TunaTaleAPI {
     });
   }
 
+  /** The prompt for a session that does not exist yet — costs no generation.
+   *
+   * `review_words` comes back because nothing server-side remembers what was
+   * asked for: the caller holds it and hands it to `createReviewSessionFromPaste`
+   * (bd tunatale-jmwb). Losing it between the two calls means the session's
+   * coverage line gets measured against a set the learner never saw.
+   */
+  async getReviewSessionDraftPrompt(): Promise<{
+    system_prompt: string;
+    user_prompt: string;
+    review_words: string[];
+  }> {
+    return this.request("/api/review-sessions/prompt");
+  }
+
+  async createReviewSessionFromPaste(
+    raw: string,
+    reviewWords: string[],
+  ): Promise<CreateReviewSessionResponse> {
+    return this.request("/api/review-sessions/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ raw, review_words: reviewWords }),
+    });
+  }
+
   async createReviewSession(): Promise<CreateReviewSessionResponse> {
     return this.request("/api/review-sessions", {
       method: "POST",

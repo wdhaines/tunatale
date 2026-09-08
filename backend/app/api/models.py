@@ -579,6 +579,54 @@ class GetStoryPromptResponse(BaseModel):
     user_prompt: str
 
 
+class GetReviewSessionDraftPromptResponse(BaseModel):
+    """Response of GET /api/review-sessions/prompt — a prompt for a session that
+    does not exist yet (bd tunatale-jmwb).
+
+    ⚠️ ``review_words`` IS PART OF THE CONTRACT, not diagnostic decoration. No row
+    exists to remember what was asked for, so the caller carries the list and hands
+    it back to ``POST /api/review-sessions/import``. Dropping it would force that
+    route to re-select, and a learner who wrote their dialogue overnight would have
+    it scored against a set that had since decayed differently — the meter reading
+    low for a reason nothing on screen explains.
+    """
+
+    system_prompt: str
+    user_prompt: str
+    review_words: list[str]
+
+
+class CreateReviewSessionFromPasteRequest(BaseModel):
+    """A hand-written dialogue that BECOMES a session, rather than replacing one.
+
+    The sibling of ``ImportReviewSessionRequest``, which carries no identifiers
+    because the session id is in the path. Here there is no path id and no stored
+    row, so ``review_words`` must travel in the body — it is the pinned request
+    ``GET /prompt`` just handed out, and the denominator the session's coverage
+    line will be measured against.
+    """
+
+    story: dict | None = None
+    raw: str | None = None
+    review_words: list[str]
+
+    @model_validator(mode="after")
+    def _exactly_one_story_or_raw(self):
+        if (self.story is None) == (self.raw is None):
+            msg = "Exactly one of 'story' or 'raw' must be provided"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _review_words_not_empty(self):
+        # Refused at the door rather than stored: a session with no request cannot
+        # report coverage, and its own /prompt route would then 409 forever.
+        if not self.review_words:
+            msg = "'review_words' must not be empty"
+            raise ValueError(msg)
+        return self
+
+
 class StorySection(BaseModel):
     """One element of ImportStoryResponse.sections / GenerateStoryResponse.sections."""
 

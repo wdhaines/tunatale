@@ -4,6 +4,7 @@
 	import { api } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import { languageStore } from '$lib/stores/language.svelte';
+	import ManualStoryPanel from '$lib/components/ManualStoryPanel.svelte';
 
 	// Tagline names the active L2 (falls back to a generic line before the language
 	// list has loaded, or in a single-language deployment that hasn't resolved yet).
@@ -39,6 +40,9 @@
 	}
 	let sessions: ReviewSession[] = $state([]);
 	let creatingSession = $state(false);
+	// The pinned request from GET /prompt, held between copy and paste. Client-side
+	// on purpose — see the stateless rationale on bd tunatale-jmwb.
+	let draftWords: string[] = $state([]);
 	let sessionError = $state('');
 	// Held apart from sessionError on purpose: a 409 is not a failure. With
 	// nothing due there is genuinely nothing to review today, and styling that as
@@ -346,6 +350,27 @@
 				{creatingSession ? 'Working…' : '+ New review session'}
 			</button>
 		</div>
+		<!--
+			Manual mode is a fold-away beside the button, not a second button: the
+			auto path stays the one-click default, and writing a session by hand is
+			the deliberate detour (bd tunatale-jmwb). Before this, reaching it meant
+			generating a session and discarding its dialogue — a wasted story call,
+			the most expensive thing TT does.
+		-->
+		<details class="manual-session">
+			<summary>Write one by hand instead</summary>
+			<ManualStoryPanel
+				copyPrompt={async () => {
+					// The words are stashed, not just displayed: nothing server-side
+					// remembers this request, so the import has to be told them.
+					const r = await api.getReviewSessionDraftPrompt();
+					draftWords = r.review_words;
+					return r.system_prompt + '\n\n' + r.user_prompt;
+				}}
+				importRaw={async (raw) => api.createReviewSessionFromPaste(raw, draftWords)}
+				onImported={(id) => goto(`/review-sessions/${id}`)}
+			/>
+		</details>
 		<p class="muted small rs-blurb">
 			Built from the words you are closest to forgetting, across everything you have learned —
 			not from any one curriculum.
@@ -388,6 +413,21 @@
 </main>
 
 <style>
+	.manual-session {
+		margin-top: 0.75rem;
+	}
+	.manual-session summary {
+		cursor: pointer;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--color-muted);
+		padding: 0.25rem 0;
+		border-radius: 4px;
+		user-select: none;
+	}
+	.manual-session summary:hover {
+		color: var(--color-text);
+	}
 	.review-sessions {
 		margin-top: 2.5rem;
 		padding-top: 1.5rem;
