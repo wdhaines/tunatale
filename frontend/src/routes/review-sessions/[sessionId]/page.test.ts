@@ -892,6 +892,40 @@ describe("the reader", () => {
   });
 });
 
+describe("header density on a phone", () => {
+  const data = () => ({ session: sessionBody(), audio: null });
+
+  it("the standing explainer is NOT in the sticky card", () => {
+    // It said the same thing on every visit and cost 48px of a 390px phone's
+    // first screen. Moved, not deleted — see the next test.
+    const { container } = render(Page, { props: { data: data() } });
+    const card = container.querySelector(".player-card")!;
+    expect(card).toBeTruthy();
+    expect(card.textContent).not.toMatch(/built from what has decayed/i);
+  });
+
+  it("...it moved into Session tools, still one tap away", () => {
+    const { container } = render(Page, { props: { data: data() } });
+    const tools = container.querySelector(".tools-card")!;
+    expect(tools).toBeTruthy();
+    expect(tools.textContent).toMatch(/built from what has decayed/i);
+  });
+
+  it("the back link and the date share one row", () => {
+    // Each was ~17px on its own line and neither fills a phone's width.
+    const { container } = render(Page, { props: { data: data() } });
+    const row = container.querySelector(".crumb-row")!;
+    expect(row).toBeTruthy();
+    expect(row.querySelector("a.back")).toBeTruthy();
+    expect(row.querySelector("p.date")).toBeTruthy();
+  });
+
+  it("the date is still shown — compacting must not lose it", () => {
+    const { getByText } = render(Page, { props: { data: data() } });
+    expect(getByText(/2 September/)).toBeTruthy();
+  });
+});
+
 describe("hands-free carries on into the next review session", () => {
   function sectionCue(sectionIndex: number, sectionType: string) {
     return {

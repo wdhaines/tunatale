@@ -300,11 +300,16 @@
 		{onSequenceEnd}
 	>
 		{#snippet headerAbove()}
-			<a class="back" href="/">← Lessons</a>
+			<!-- Back link and date share ONE row. Each was ~17px on its own line and
+			     neither fills a phone's width, so stacking them spent a whole row on
+			     whitespace above a title that already needs three. -->
+			<div class="crumb-row">
+				<a class="back" href="/">← Lessons</a>
+				<p class="date">{formatSessionDate(data.session.session_date)}</p>
+			</div>
 		{/snippet}
 		{#snippet header()}
 			<div class="title-area">
-				<p class="date">{formatSessionDate(data.session.session_date)}</p>
 				<h1>{data.session.title}</h1>
 				{#if error}
 					<p class="error" role="alert">{error}</p>
@@ -316,10 +321,6 @@
 				<p class="coverage">{coverage} words you were forgetting</p>
 			{/if}
 			<MasteryLine {transcript} />
-			<p class="muted">
-				A review session — built from what has decayed across your whole deck, with no theme
-				and no place in any curriculum.
-			</p>
 		{/snippet}
 		{#snippet actions()}
 			<ListenActions
@@ -347,6 +348,13 @@
 	     curriculumId and a day to write back to. -->
 	<details class="card tools-card">
 		<summary>Session tools</summary>
+		<!-- The standing explainer lives HERE now. It is identical on every visit,
+		     so it was spending 48px of a 390px-wide phone's first screen to tell a
+		     returning reader something they already know. Still one tap away. -->
+		<p class="muted">
+			A review session — built from what has decayed across your whole deck, with no theme
+			and no place in any curriculum.
+		</p>
 		<AudioDownloads {audio} />
 		<div class="regen-row">
 			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
@@ -433,10 +441,25 @@
 		color: var(--color-muted);
 		font-size: 0.9rem;
 	}
+	.crumb-row {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.75rem;
+	}
 	h1 {
 		margin: 0;
 		font-size: 1.35rem;
 		text-wrap: balance;
+	}
+	/* A long session title ("The Rain and the Party at the Sports Club") runs to
+	   THREE lines at 1.35rem on a 390px phone — 78px, the single tallest thing
+	   in the card. 1.12rem lands it in two without making it stop reading as the
+	   heading. Measured, not guessed. */
+	@media (max-width: 430px) {
+		h1 {
+			font-size: 1.12rem;
+		}
 	}
 	.coverage {
 		margin: 0;

@@ -48,6 +48,18 @@
 			background 0.15s ease,
 			color 0.15s ease;
 	}
+	/* On a phone this pill sits in column two of the card header, and its `auto`
+	   width is taken out of the TITLE's column. Measured on a 390px screen: the
+	   pill claimed ~160px and squeezed "The Rain and the Party at the Sports
+	   Club" into 164px — three lines, the tallest single thing in the card.
+	   Trimming the horizontal padding gives those pixels back to the title. The
+	   label text is untouched; only the padding shrinks, and the control keeps
+	   its full height, so the touch target is unchanged. */
+	@media (max-width: 430px) {
+		.toggle-pill button {
+			padding: 0.35rem 0.6rem;
+		}
+	}
 	.toggle-pill button.active {
 		background: var(--color-bg, #fff);
 		color: var(--color-text);

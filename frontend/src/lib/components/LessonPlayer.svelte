@@ -579,6 +579,13 @@
 		flex-direction: column;
 		gap: 0.75rem;
 	}
+	/* Five stacked rows at 0.75rem spend 48px on gaps alone. On a phone that is
+	   the difference between the transcript starting on-screen and not. */
+	@media (max-width: 430px) {
+		.player {
+			gap: 0.5rem;
+		}
+	}
 
 	.current-line {
 		font-size: 1.3rem;

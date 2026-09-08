@@ -155,6 +155,15 @@
 		grid-column: 1 / -1;
 		min-width: 0;
 	}
+	/* Measured on a 390px phone: 96px of a 402px card was padding and gaps —
+	   nearly a quarter of it, and more than any single control. Tightened only
+	   where the screen is actually short of room; the desktop card is unchanged. */
+	@media (max-width: 430px) {
+		.player-card {
+			gap: 0.45rem;
+			padding: 0.7rem 0.9rem;
+		}
+	}
 	.muted {
 		color: var(--color-muted);
 	}
