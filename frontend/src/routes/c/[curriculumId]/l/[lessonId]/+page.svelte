@@ -437,7 +437,7 @@
 		{/snippet}
 		{#snippet noAudio()}
 				<div class="render-row">
-					<button onclick={handleRenderAudio} disabled={audioLoading}>
+					<button class="btn-primary" onclick={handleRenderAudio} disabled={audioLoading}>
 						{audioLoading ? 'Rendering…' : 'Render Audio'}
 					</button>
 					{#if thisDayPipeline && !audioLoading}
@@ -582,24 +582,6 @@
 		font-weight: 800;
 		letter-spacing: -0.01em;
 	}
-	button {
-		margin-top: 0.75rem;
-		padding: 0.55rem 1.4rem;
-		background: var(--color-primary);
-		color: var(--color-on-primary);
-		border: none;
-		border-radius: var(--radius-pill);
-		font-weight: 600;
-		cursor: pointer;
-		transition: background 0.15s ease;
-	}
-	button:not(:disabled):hover {
-		background: var(--color-primary-hover);
-	}
-	button:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
 	.error {
 		color: var(--color-danger);
 		margin: 0;
@@ -657,10 +639,18 @@
 	.review-words {
 		color: var(--color-text);
 	}
+	/* Padding, pill radius, weight and cursor were inherited from the page's bare
+	   `button {}` rule until it moved to :global(.btn-primary) (bd tunatale-kfcg).
+	   Restated here verbatim rather than left to inheritance: this button only ever
+	   meant to override the three colour properties above. */
 	.regen-btn {
 		background: transparent;
 		color: var(--color-danger);
 		border: 1px solid var(--color-danger);
+		padding: 0.55rem 1.4rem;
+		border-radius: var(--radius-pill);
+		font-weight: 600;
+		cursor: pointer;
 	}
 	.regen-btn:not(:disabled):hover {
 		background: color-mix(in srgb, var(--color-danger) 12%, transparent);
