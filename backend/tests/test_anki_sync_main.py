@@ -146,6 +146,13 @@ class TestRunFullSync:
         assert calls == ["guid_collisions", "recognition_only", "orphans", "create", "push", "pull", "promote"]
         # The soak heartbeat is the real file the phase writes, not a mock marker.
         assert "SYNC_SOAK" in soak_log.read_text()
+        # bd tunatale-resh: a RUNNING total, not just this sync's count. The
+        # existing `conflicts=N` is per-sync, so a conflict three syncs ago is
+        # invisible — and a conflict is the record of a local edit being thrown
+        # away. The total is what makes "has this ever happened?" answerable by
+        # grepping the log, and it is the only caller of `list_sync_conflicts`,
+        # which vulture nominated as dead precisely because nothing read it.
+        assert "conflicts_total=" in soak_log.read_text()
         # Every deck-config refresh fired — this is the gap that bit the peer path.
         assert set(refreshed) == set(_REFRESH_FUNCS)
         assert isinstance(create, CreateNewReport)
@@ -865,7 +872,9 @@ class TestSyncSoakLog:
 
         text = log_path.read_text()
         assert "SYNC_SOAK pull_notes=2" in text
-        assert "pull_notes=2 pull_dirs=5 conflicts=0 recompute_divergences=1" in text
+        # `conflicts_total=?` and not `=0`: this caller passes db=None, and a 0
+        # would assert "this has never happened" on no evidence (bd tunatale-resh).
+        assert "pull_notes=2 pull_dirs=5 conflicts=0 conflicts_total=? recompute_divergences=1" in text
         assert "push_notes=1 push_dirs=3" in text
         assert "RECOMPUTE_DIVERGENCE cid=785 dir=production" in text
         assert "replay_s=11.9706 anki_s=2.5138 replay_d=7.3830 anki_d=7.3830" in text
@@ -997,7 +1006,10 @@ class TestSyncSoakLog:
         # revlog for this card, so its forward replay (s=1.0) cannot reproduce
         # Anki's s=21.5 — a genuine recompute divergence, which is exactly the
         # signal the soak exists to surface.
-        assert "SYNC_SOAK pull_notes=0 pull_dirs=1 conflicts=0 recompute_divergences=1" in text
+        # `=0` here, `=?` in the test above: THIS caller threads a real db, that
+        # one passes None. The two spellings are the point — a measured zero and
+        # "not asked" must not read the same (bd tunatale-resh).
+        assert "SYNC_SOAK pull_notes=0 pull_dirs=1 conflicts=0 conflicts_total=0 recompute_divergences=1" in text
         assert "RECOMPUTE_DIVERGENCE cid=1 dir=recognition" in text
         assert "anki_s=21.5000" in text
         # And TT's row now carries Anki's state — the pull actually wrote.

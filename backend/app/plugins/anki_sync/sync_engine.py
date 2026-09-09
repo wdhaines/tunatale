@@ -544,6 +544,23 @@ class AnkiSync:
             resolution=resolution,
         )
         report.conflicts.append(conflict)
+        # bd tunatale-resh. The COUNT of conflicts already reached SYNC_SOAK and
+        # the CLI summary; WHICH card lost WHAT reached nothing — it went only to
+        # `sync_conflicts`, a table no app code reads. This resolution DISCARDS an
+        # unpushed local edit (the dirty flag is dropped, so it is never pushed),
+        # so the line has to carry both values or it cannot tell you what was lost.
+        #
+        # ⚠️ Logged BEFORE the dry_run guard on purpose: a dry run writes no row,
+        # which makes the log its only record, not a lesser one.
+        _log.warning(
+            "SYNC_CONFLICT guid=%s direction=%s field=%s resolution=%s local=%r remote=%r",
+            guid,
+            direction,
+            field,
+            resolution,
+            local,
+            remote,
+        )
         if not dry_run:
             self._db.record_sync_conflict(
                 guid=guid,
