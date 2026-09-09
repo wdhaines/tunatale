@@ -20,7 +20,66 @@ no-hardcoded-language-logic rule.
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Iterator
+from pathlib import Path
+
+from app.plugins.languages.no.lexicon import DB_PATH, NstLexicon, nst_lexicon_installed
 from app.plugins.languages.no.norwegian_breakdown import _INFLECTIONS, _load_ranked_lexicon
+
+#: Appended to a lemma to ask "is a real word one character away?". Order is the
+#: order they are tried; the first hit rejects.
+_NEIGHBOUR_SUFFIXES: tuple[str, ...] = ("e", "n", "t")
+
+
+@contextlib.contextmanager
+def _open_nst(db_path: Path | None = None) -> Iterator[NstLexicon | None]:
+    """Yield a lexicon, or ``None`` when the database has not been built.
+
+    ⚠️ Opened and closed PER CALL rather than cached in a module-level singleton.
+    A cached one cannot survive this repo's test isolation: conftest's autouse
+    ``_autoclose_sqlite_connections`` closes every connection a test opens,
+    directly rather than through ``NstLexicon.close()``, so a cached object keeps
+    a non-None handle to a dead connection and every later caller gets "Cannot
+    operate on a closed database". Closing here also satisfies tunatale-a5p2,
+    whose warning was about NOT closing. MEASURED: 0.12 ms per call, 24 ms across
+    a 208-lemma lesson.
+
+    ``db_path`` exists so the not-built path is reachable with a real absent file
+    instead of a patch — the mock-boundary checker rejects
+    ``patch("app.…nst_lexicon_installed")``, correctly: a capability gate is
+    testable by handing it an absent capability.
+    """
+    path = db_path if db_path is not None else DB_PATH
+    if not nst_lexicon_installed(path):
+        yield None
+        return
+    lexicon = NstLexicon(path)
+    try:
+        yield lexicon
+    finally:
+        lexicon.close()
+
+
+def _better_lemma_one_char_away(word: str, lexicon: NstLexicon | None) -> bool:
+    """True when *word* is absent from NST but a one-char extension of it is there.
+
+    The signature of a truncated lemma: `mapp` is not a word, `mappe` is.
+
+    ⚠️ BOTH halves are required, and the second is what makes this usable. A bare
+    "absent from NST" screen false-alarms on COMPOUNDS — `vårkonsert`,
+    `billettautomat`, `åttitall` are real indefinite singulars a fixed
+    pronunciation lexicon cannot enumerate, because Norwegian compounding is
+    productive. Those have no neighbour either, so requiring one exempts the whole
+    class. Measured over the live `lemma_analysis_cache`: 8 artifacts caught, zero
+    compounds touched.
+
+    ``lexicon`` of ``None`` (not built) returns False — never a guess.
+    """
+    if lexicon is None or lexicon.all_transcriptions(word):
+        return False
+    return any(lexicon.all_transcriptions(word + suffix) for suffix in _NEIGHBOUR_SUFFIXES)
+
 
 # Longest first: -ene must win over -en, and -et over -t.
 _DEFINITE_SUFFIXES: tuple[str, ...] = ("ene", "ane", "et", "en", "a")
@@ -55,8 +114,12 @@ def is_lemma_plausible(surface: str, lemma: str) -> bool:
     ``_MAX_PLAUSIBLE_RANK``): that separates the real `nytt` → `ny` (rank 195)
     from the fragment `trøtt` → `trø` (rank 49800).
 
-    Deliberately narrow outside that signature: a lemma that is not a truncation
-    of the surface is always accepted. Neither error is free, so the rule fires
+    ⚠️ "A lemma that is not a truncation of the surface is always accepted" was
+    true until tunatale-q1ir and is NOT any more: ``_better_lemma_one_char_away``
+    runs first and rejects `rør` -> `rure`, which is not a truncation of anything.
+    It also overrides the sub-2-character drop that `gluten` -> `glute` used to
+    slip through. Outside those, the rule below is still deliberately narrow.
+    Neither error is free, so the rule fires
     only where the evidence is strong. Rejecting makes callers key the card on
     the surface as it appeared, so a false *positive* mints a card for a
     non-word, while a false *negative* mints one on an inflected form (`trøtt`
@@ -81,7 +144,15 @@ def is_lemma_plausible(surface: str, lemma: str) -> bool:
     """
     w = lemma.casefold()
     s = surface.casefold()
-    if not w or w == s or not s.startswith(w) or len(s) - len(w) < 2:
+    if not w or w == s:
+        return True
+    # ⚠️ MUST run before the early return below. Two of the three shapes this
+    # catches ARE that early return: `gluten` -> `glute` is a one-character drop,
+    # and `rure` is not a prefix of `rør` at all.
+    with _open_nst() as lexicon:
+        if _better_lemma_one_char_away(w, lexicon):
+            return False
+    if not s.startswith(w) or len(s) - len(w) < 2:
         return True
     rank = _load_ranked_lexicon().get(w)
     if rank is not None and rank <= _MAX_PLAUSIBLE_RANK:

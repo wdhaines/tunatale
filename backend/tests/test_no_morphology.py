@@ -14,7 +14,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.plugins.languages.no.morphology import is_definite_form
+from app.plugins.languages.no.morphology import (
+    _better_lemma_one_char_away,
+    _open_nst,
+    is_definite_form,
+    is_lemma_plausible,
+)
 
 
 class TestIsDefiniteForm:
@@ -198,6 +203,61 @@ class TestIsLemmaPlausible:
         from app.plugins.languages.no.morphology import is_lemma_plausible
 
         assert is_lemma_plausible(surface, lemma) is True
+
+    @pytest.mark.parametrize(
+        ("surface", "lemma", "expected"),
+        [
+            ("mappen", "mapp", False),
+            ("kaffen", "kaff", False),
+            ("programvaren", "programvar", False),
+            ("gluten", "glute", False),
+            ("eksamen", "eksame", False),
+            ("lyktene", "lykte", False),
+            ("rør", "rure", False),
+            ("avstikker", "avstikk", False),
+            ("fortsett", "fortse", False),
+            ("snømenn", "snøm", False),
+            ("vårkonserten", "vårkonsert", True),
+            ("billettautomaten", "billettautomat", True),
+            ("åttitallet", "åttitall", True),
+            ("setet", "set", True),
+            ("vinteren", "vinter", True),
+            ("nytt", "ny", True),
+            ("snømann", "snømann", True),
+        ],
+    )
+    def test_neighbour_screen_oracle(self, surface, lemma, expected):
+        assert is_lemma_plausible(surface, lemma) is expected
+
+    def test_the_screen_is_inert_without_a_built_lexicon(self):
+        """The NST database is a BUILD ARTIFACT, so "not there" is an ordinary
+        state a checkout can be in — the screen must go quiet, never guess.
+
+        ⚠️ Asserted by passing the dependency in, NOT by patching
+        `nst_lexicon_installed`. That patch is a string-form `patch("app.…")` and
+        `scripts/check_mock_boundaries.py` fails the build on it — correctly: the
+        thing under test is a capability gate, and a gate is testable by handing
+        it the absent capability.
+        """
+        assert _better_lemma_one_char_away("mapp", None) is False
+
+    def test_an_unbuilt_lexicon_really_does_report_absent(self, tmp_path):
+        """The other half of the pair above, and the reason neither is vacuous
+        alone: `_better_lemma_one_char_away` handles None, and this is what
+        actually produces the None."""
+        with _open_nst(tmp_path / "never-built.sqlite3") as lexicon:
+            assert lexicon is None
+
+    def test_a_built_lexicon_is_opened(self):
+        """The other side, so the None above is not the only path ever taken."""
+        with _open_nst() as lexicon:
+            assert lexicon is not None
+
+    def test_the_whole_predicate_is_inert_without_a_lexicon(self, tmp_path):
+        """End to end: no database, and `mappen` -> `mapp` is accepted again,
+        exactly as it was before this screen existed."""
+        with _open_nst(tmp_path / "never-built.sqlite3") as lexicon:
+            assert _better_lemma_one_char_away("mapp", lexicon) is False
 
 
 class TestLemmaPlausibleRegistry:
