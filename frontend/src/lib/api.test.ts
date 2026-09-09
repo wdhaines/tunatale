@@ -267,6 +267,23 @@ describe("TunaTaleAPI", () => {
       expect(result.session_date).toBe("2026-09-02");
     });
 
+    it("reglossReviewSession POSTs to the regloss path, not regenerate", async () => {
+      // The two routes are one path segment apart and do very different things:
+      // regenerate replaces the dialogue, regloss keeps it. Hitting the wrong one
+      // would silently destroy text the reader asked to have glossed.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockOk({ id: "sess-1", gloss_entry_count: 237, warnings: [] })),
+      );
+
+      const result = await api.reglossReviewSession("sess-1");
+
+      const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(`${BASE}/api/review-sessions/sess-1/regloss`);
+      expect(init.method).toBe("POST");
+      expect(result.gloss_entry_count).toBe(237);
+    });
+
     it("getReviewSessionPrompt GETs the prompt for manual paste", async () => {
       vi.stubGlobal(
         "fetch",

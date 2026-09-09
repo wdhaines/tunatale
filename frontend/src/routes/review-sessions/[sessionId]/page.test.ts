@@ -54,6 +54,7 @@ vi.mock("$lib/api", () => ({
     audioUrl: vi.fn((id: string) => `/audio/${id}`),
     audioZipUrl: vi.fn((id: string) => `/audio/lesson/${id}/zip`),
     regenerateReviewSession: vi.fn(),
+    reglossReviewSession: vi.fn(),
     createReviewSession: vi.fn(),
     getReviewSessionPrompt: vi.fn(),
     importReviewSession: vi.fn(),
@@ -1150,5 +1151,77 @@ describe("a session that lost its glosses says so", () => {
       props: { data: { session: sessionBody({ gloss_entry_count: 237 }), audio: null } },
     });
     expect(queryByText(/no hover translations/i)).toBeNull();
+  });
+});
+
+describe("repairing a session that lost its glosses", () => {
+  // y0bk.4. The repair action appears only when there is something to repair —
+  // a measured zero. It must NOT appear for a session that was never measured
+  // (null), because offering to "restore" glosses nobody established were
+  // missing invites a pointless LLM call on every pre-existing session.
+
+  const withCount = (n: number | null) => ({
+    session: sessionBody({ gloss_entry_count: n }),
+    audio: null,
+  });
+
+  it("offers the repair when the count is a measured zero", () => {
+    const { getByRole } = render(Page, { props: { data: withCount(0) } });
+    expect(getByRole("button", { name: /restore glosses/i })).toBeTruthy();
+  });
+
+  it("does not offer it when the count was never measured", () => {
+    const { queryByRole } = render(Page, { props: { data: withCount(null) } });
+    expect(queryByRole("button", { name: /restore glosses/i })).toBeNull();
+  });
+
+  it("does not offer it when the glosses are present", () => {
+    const { queryByRole } = render(Page, { props: { data: withCount(237) } });
+    expect(queryByRole("button", { name: /restore glosses/i })).toBeNull();
+  });
+
+  it("re-glosses THIS session, without rewriting its dialogue", async () => {
+    vi.mocked(api.reglossReviewSession).mockResolvedValue({
+      id: "sess-1",
+      gloss_entry_count: 237,
+      warnings: [],
+    });
+    const { getByRole } = render(Page, { props: { data: withCount(0) } });
+
+    await fireEvent.click(getByRole("button", { name: /restore glosses/i }));
+
+    expect(api.reglossReviewSession).toHaveBeenCalledWith("sess-1");
+    // The distinction that matters: a rewrite would replace the text the user
+    // already has, which is not what "my hovers are missing" asks for.
+    expect(api.regenerateReviewSession).not.toHaveBeenCalled();
+  });
+
+  it("survives the transcript refetch failing after a successful re-gloss", async () => {
+    // Two independent calls: the repair succeeded and is persisted server-side,
+    // so a failed refetch must not surface as a failed repair. The page keeps
+    // rendering with no transcript rather than throwing.
+    vi.mocked(api.reglossReviewSession).mockResolvedValue({
+      id: "sess-1",
+      gloss_entry_count: 237,
+      warnings: [],
+    });
+    vi.mocked(api.getTranscript).mockRejectedValue(new Error("transcript 500"));
+    const { getByRole, queryByRole } = render(Page, { props: { data: withCount(0) } });
+
+    await fireEvent.click(getByRole("button", { name: /restore glosses/i }));
+
+    expect(api.reglossReviewSession).toHaveBeenCalledWith("sess-1");
+    expect(queryByRole("alert")).toBeNull();
+  });
+
+  it("surfaces a failure instead of silently leaving the session unglossed", async () => {
+    // The whole epic is about a gloss loss that reported nothing. A repair that
+    // fails quietly would be the same bug wearing a button.
+    vi.mocked(api.reglossReviewSession).mockRejectedValue(new Error("Groq is rate limited"));
+    const { getByRole, findByRole } = render(Page, { props: { data: withCount(0) } });
+
+    await fireEvent.click(getByRole("button", { name: /restore glosses/i }));
+
+    expect((await findByRole("alert")).textContent).toContain("Groq is rate limited");
   });
 });

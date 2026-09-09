@@ -43,6 +43,7 @@
 	let playbackController: PlaybackController | null = $state(null);
 	let error = $state('');
 	let regenerating = $state(false);
+	let reglossing = $state(false);
 	let showRegenHelp = $state(false);
 
 	// The render outlives this page: navigating away aborts the fetch but not the
@@ -229,6 +230,33 @@
 	}
 
 	/**
+	 * Re-run the gloss pass over this session's stored story.
+	 *
+	 * ⚠️ NOT `regenerateReviewSession`. A rewrite replaces the dialogue, which is
+	 * not what a reader missing hover translations is asking for — they want the
+	 * text they have, glossed. The route keeps the story and replaces only
+	 * `dialogue_glosses`.
+	 *
+	 * No confirm dialog: unlike a rewrite this destroys nothing. The story, the
+	 * cards and any rendered audio all survive.
+	 */
+	async function handleRegloss() {
+		reglossing = true;
+		error = '';
+		try {
+			await api.reglossReviewSession(data.session.id);
+			transcriptLoading = true;
+			await invalidateAll();
+			transcript = await api.getTranscript(data.session.id).catch(() => null);
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			reglossing = false;
+			transcriptLoading = false;
+		}
+	}
+
+	/**
 	 * Rewrite this session's dialogue, keeping the session.
 	 *
 	 * ⚠️ NOT `createReviewSession()`. That mints a new id at a new URL and leaves
@@ -390,6 +418,18 @@
 			and no place in any curriculum.
 		</p>
 		<AudioDownloads {audio} />
+		<!-- Shown ONLY on a measured zero. `=== 0`, never falsiness: null means a
+		     session stored before the count existed, and offering to "restore"
+		     glosses nobody established were missing would put a pointless LLM call
+		     in front of every pre-existing session. -->
+		{#if data.session.gloss_entry_count === 0}
+			<div class="regen-row">
+				<button class="regen-btn" onclick={handleRegloss} disabled={reglossing}>
+					{reglossing ? 'Restoring…' : 'Restore glosses'}
+				</button>
+				<span class="muted">Keeps the dialogue — only the hover translations are rebuilt.</span>
+			</div>
+		{/if}
 		<div class="regen-row">
 			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
 				{regenerating ? 'Rewriting…' : 'Rewrite dialogue'}
