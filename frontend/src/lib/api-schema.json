@@ -3327,6 +3327,33 @@
         "title": "RefreshMediaResponse",
         "type": "object"
       },
+      "ReglossReviewSessionResponse": {
+        "description": "Response of POST /api/review-sessions/{session_id}/regloss.",
+        "properties": {
+          "gloss_entry_count": {
+            "title": "Gloss Entry Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "gloss_entry_count",
+          "warnings"
+        ],
+        "title": "ReglossReviewSessionResponse",
+        "type": "object"
+      },
       "RenderAudioRequest": {
         "properties": {
           "lesson_id": {
@@ -6263,6 +6290,49 @@
           }
         },
         "summary": "Regenerate Review Session",
+        "tags": [
+          "review-sessions"
+        ]
+      }
+    },
+    "/api/review-sessions/{session_id}/regloss": {
+      "post": {
+        "description": "Re-run the gloss pass on a stored session's story.\n\nSessions can be stored with zero hover translations when\n``ensure_dialogue_glosses`` degrades. This repairs them without touching the\nstory itself \u2014 only ``dialogue_glosses`` inside the story blob is replaced,\nthen the lesson is rebuilt through the same derivation the import route uses.\n\n\u26a0\ufe0f Uses ``update_review_session_data``, NEVER ``save_review_session``:\nthe latter is ``INSERT OR REPLACE`` over the whole row and writes NULL over\nthe coverage pair, making the meter silently disappear.",
+        "operationId": "regloss_review_session_api_review_sessions__session_id__regloss_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReglossReviewSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Regloss Review Session",
         "tags": [
           "review-sessions"
         ]

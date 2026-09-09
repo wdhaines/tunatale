@@ -995,6 +995,35 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/review-sessions/{session_id}/regloss": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Regloss Review Session
+     * @description Re-run the gloss pass on a stored session's story.
+     *
+     *     Sessions can be stored with zero hover translations when
+     *     ``ensure_dialogue_glosses`` degrades. This repairs them without touching the
+     *     story itself — only ``dialogue_glosses`` inside the story blob is replaced,
+     *     then the lesson is rebuilt through the same derivation the import route uses.
+     *
+     *     ⚠️ Uses ``update_review_session_data``, NEVER ``save_review_session``:
+     *     the latter is ``INSERT OR REPLACE`` over the whole row and writes NULL over
+     *     the coverage pair, making the meter silently disappear.
+     */
+    post: operations["regloss_review_session_api_review_sessions__session_id__regloss_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/review-sessions/{session_id}/render": {
     parameters: {
       query?: never;
@@ -3439,6 +3468,18 @@ export interface components {
       /** Updated */
       updated: number;
     };
+    /**
+     * ReglossReviewSessionResponse
+     * @description Response of POST /api/review-sessions/{session_id}/regloss.
+     */
+    ReglossReviewSessionResponse: {
+      /** Gloss Entry Count */
+      gloss_entry_count: number;
+      /** Id */
+      id: string;
+      /** Warnings */
+      warnings: string[];
+    };
     /** RenderAudioRequest */
     RenderAudioRequest: {
       /** Lesson Id */
@@ -5251,6 +5292,37 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["CreateReviewSessionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  regloss_review_session_api_review_sessions__session_id__regloss_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReglossReviewSessionResponse"];
         };
       };
       /** @description Validation Error */

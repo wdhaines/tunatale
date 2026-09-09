@@ -49,6 +49,7 @@ from app.api.models import (
     GetStoryPromptResponse,
     ImportReviewSessionRequest,
     ListReviewSessionsResponse,
+    ReglossReviewSessionResponse,
     RenderAudioResponse,
     ReviewSessionRenderStatusResponse,
     ReviewSessionResponse,
@@ -594,3 +595,60 @@ async def get_review_session_render_status(session_id: str, request: Request):
     if store.get_review_session_row(session_id) is None:
         raise HTTPException(status_code=404, detail="Review session not found")
     return {"rendering": session_id in _renders_in_flight(request.app)}
+
+
+@router.post(
+    "/{session_id}/regloss",
+    status_code=200,
+    response_model=ReglossReviewSessionResponse,
+)
+async def regloss_review_session(session_id: str, request: Request):
+    """Re-run the gloss pass on a stored session's story.
+
+    Sessions can be stored with zero hover translations when
+    ``ensure_dialogue_glosses`` degrades. This repairs them without touching the
+    story itself — only ``dialogue_glosses`` inside the story blob is replaced,
+    then the lesson is rebuilt through the same derivation the import route uses.
+
+    ⚠️ Uses ``update_review_session_data``, NEVER ``save_review_session``:
+    the latter is ``INSERT OR REPLACE`` over the whole row and writes NULL over
+    the coverage pair, making the meter silently disappear.
+    """
+    store = request.state.content_store
+    row = store.get_review_session_row(session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Review session not found")
+
+    lesson = store.get_review_session(session_id)
+    story = lesson.generation_metadata.get("story")
+    if story is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This session has no stored story to re-gloss",
+        )
+
+    story.pop("dialogue_glosses", None)
+    language = request.state.language
+    await ensure_dialogue_glosses(story, getattr(request.app.state, "llm", None), language)
+
+    try:
+        validate_story(story)
+        lesson = build_lesson_from_story(
+            story,
+            language=language,
+            review_words=row["review_requested"] or (),
+        )
+    except (StoryGenerationError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    store.update_review_session_data(session_id, lesson)
+
+    metadata = lesson.generation_metadata
+    warnings: list[str] = []
+    if metadata.get("gloss_entry_count") == 0:
+        warnings.append("This session has no hover translations")
+    return {
+        "id": session_id,
+        "gloss_entry_count": metadata.get("gloss_entry_count", 0),
+        "warnings": warnings,
+    }

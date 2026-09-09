@@ -727,6 +727,18 @@ export class TunaTaleAPI {
     return this.request(`/api/review-sessions/${id}`);
   }
 
+  /**
+   * Re-run the gloss pass over a stored session's story, keeping the dialogue.
+   *
+   * Distinct from `regenerateReviewSession`, deliberately: a rewrite replaces
+   * the text, which is not what "my hover translations are missing" asks for.
+   */
+  async reglossReviewSession(
+    id: string,
+  ): Promise<{ id: string; gloss_entry_count: number; warnings: string[] }> {
+    return this.request(`/api/review-sessions/${id}/regloss`, { method: "POST" });
+  }
+
   async renderReviewSession(id: string): Promise<LessonAudio> {
     return this.request(`/api/review-sessions/${id}/render`, {
       method: "POST",
