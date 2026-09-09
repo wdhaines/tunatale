@@ -44,10 +44,9 @@ PREVIEW_URL = "/api/srs/content/lesson-no/listen-preview"
 SENTENCE = "Snømenn"
 
 
-def _setup(monkeypatch, *, seed_existing: bool):
+def _setup(monkeypatch, language_no, *, seed_existing: bool):
     """A Norwegian one-word lesson whose only token lemmatizes to a fragment."""
     import app.api.srs as srs_mod
-    from app.languages import get_language
     from app.srs.database import SRSDatabase
     from app.storage.store import ContentStore
 
@@ -91,7 +90,7 @@ def _setup(monkeypatch, *, seed_existing: bool):
         )
     app.state.srs_db = db
     app.state.content_store = store
-    app.state.language = get_language("no")
+    app.state.language = language_no
     return db
 
 
@@ -103,9 +102,9 @@ async def _preview() -> dict:
 
 
 class TestPreviewKeysOnTheSameLemmaAsCommit:
-    async def test_the_truncated_lemma_is_never_offered(self, monkeypatch):
+    async def test_the_truncated_lemma_is_never_offered(self, monkeypatch, language_no):
         """`snøm` is not a word and no card would ever be keyed on it."""
-        _setup(monkeypatch, seed_existing=False)
+        _setup(monkeypatch, language_no, seed_existing=False)
 
         body = await _preview()
 
@@ -113,16 +112,16 @@ class TestPreviewKeysOnTheSameLemmaAsCommit:
             f"preview offered the truncated lemma: {body['candidates']}"
         )
 
-    async def test_a_create_row_shows_the_surface_the_card_would_use(self, monkeypatch):
+    async def test_a_create_row_shows_the_surface_the_card_would_use(self, monkeypatch, language_no):
         """With no existing card, the offered headword is the surface as it appeared."""
-        _setup(monkeypatch, seed_existing=False)
+        _setup(monkeypatch, language_no, seed_existing=False)
 
         body = await _preview()
 
         creates = [r for r in body["candidates"] if r["kind"] == "create"]
         assert [r["text"] for r in creates] == ["snømenn"]
 
-    async def test_an_existing_surface_card_is_found_not_re_offered(self, monkeypatch):
+    async def test_an_existing_surface_card_is_found_not_re_offered(self, monkeypatch, language_no):
         """THE reported bug, and it is a LABEL bug, not a creation bug.
 
         ⚠️ The lookup already SUCCEEDS: `_resolve_card_for_lemma` finds the
@@ -132,7 +131,7 @@ class TestPreviewKeysOnTheSameLemmaAsCommit:
         been absent from `collocations` since it was graved. The row simply named
         a non-word, on every listen, indefinitely.
         """
-        _setup(monkeypatch, seed_existing=True)
+        _setup(monkeypatch, language_no, seed_existing=True)
 
         body = await _preview()
 

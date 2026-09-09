@@ -8,6 +8,36 @@ paths:
 
 *Path-scoped rule: auto-loads when a backend test file is read. The frontend coverage gate lives in `frontend-coverage-gate.md` (scoped to `frontend/**`).*
 
+## Which language a new test uses
+
+**Norwegian.** Decided 2026-09-09 — it is the active development language, and
+new backend tests use `language_code="no"` / the `language_no` conftest fixture.
+
+This is not only preference. The `no` plugin registers facets `sl` does not —
+`lemma_plausible_fn`, `breakdown_spans_fn`, `alignment`, a syllabifier — so a
+Slovene test silently skips those paths and a bug living in one is unreachable.
+`tunatale-q5pl` is the worked example: the listen preview labelled a word `snøm`,
+a lemma fragment no card is ever keyed on, and it survived because EVERY preview
+test is Slovene and `get_lemma_plausible("sl")` is `None`, making the screen a
+no-op and the bug invisible.
+
+- ⚠️ The `language` fixture is **Slovene** and is the obvious thing to reach for.
+  Use `language_no` for new work; `language` stays for the ~100 modules on it.
+- ⚠️ Stub the lemmatizer, don't load stanza:
+  `tests/_helpers/lemmatizer.py::StubLemmatizer` plus
+  `monkeypatch.setattr(srs_mod, "get_lemmatizer", …)`. Pattern:
+  `test_api_base_cards.py::test_truncated_lemma_falls_back_to_surface`.
+- **Norwegian tests pass in CI** — measured on PR #137. CI's backend jobs set no
+  `TARGET_LANGUAGE`, plugin `discover()` registers both languages regardless, and
+  `backend` / `backend-hostile-tz` / `backend-hostile-hour` all went green with a
+  Norwegian test in the suite. This does NOT cancel the local-vs-CI language trap,
+  which is about tests asserting the configured language *set*
+  (`settings.database_urls`) — those still need their settings monkeypatched.
+  Naming a language explicitly is fine.
+- **Do not retro-migrate.** ~101 test modules are Slovene and most are
+  language-agnostic in substance; churning them buys nothing and risks
+  parity-sensitive tests.
+
 ## Test Types
 
 - **Unit tests** — pure functions/models, no I/O, no network

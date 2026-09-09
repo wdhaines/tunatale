@@ -182,10 +182,37 @@ def _autoclose_sqlite_connections(monkeypatch):
 
 @pytest.fixture
 def language():
-    """Slovene language configuration."""
+    """Slovene language configuration.
+
+    ⚠️ NOT the default for new tests — see ``language_no``. Kept as-is because
+    ~100 existing test modules depend on it; renaming or re-pointing it would be
+    a large diff across parity-sensitive tests for no behavioural gain.
+    """
     from app.languages import get_language
 
     return get_language("sl")
+
+
+@pytest.fixture
+def language_no():
+    """Norwegian language configuration — the default for NEW tests.
+
+    Norwegian is the active development language (2026-09-09), and the `no`
+    plugin registers facets `sl` does not: ``lemma_plausible_fn``,
+    ``breakdown_spans_fn``, ``alignment``, a syllabifier. A Slovene test silently
+    skips those paths, so a bug living in one is unreachable.
+
+    That is not hypothetical. `tunatale-q5pl` — the listen preview naming a word
+    `snøm`, a lemma fragment no card is ever keyed on — survived because EVERY
+    preview test is Slovene and ``get_lemma_plausible("sl")`` is ``None``, which
+    makes the screen a no-op and the bug invisible.
+
+    ⚠️ Stub the lemmatizer rather than loading stanza:
+    ``tests/_helpers/lemmatizer.py::StubLemmatizer``.
+    """
+    from app.languages import get_language
+
+    return get_language("no")
 
 
 @pytest.fixture
