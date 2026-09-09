@@ -138,3 +138,119 @@ test("transcript: the speaker chip sits beside its line on a phone, not above it
 	// And the chip is not jammed against the first word.
 	expect(body!.x - (chip!.x + chip!.width)).toBeGreaterThanOrEqual(4);
 });
+
+/**
+ * The key-phrase list has the SAME inversion the dialogue line had: stacked on a
+ * phone, compact on desktop. Each mobile row spends a full-width 44px play
+ * button — measured 308px of a 691px block, 45% of it — while the
+ * `min-width: 641px` block already makes it an inline button.
+ *
+ * ⚠️ The button renders only when a playable cue exists, so the list is
+ * button-less until audio is rendered — and e2e never renders audio (that is a
+ * live TTS round trip). The audio response is therefore stubbed. Without the
+ * stub this test would pass vacuously against a row that has no button in it at
+ * all, which is the exact shape of a test that cannot fail.
+ */
+async function stubAudio(page: import("@playwright/test").Page, lessonId: string) {
+	await page.route("**/api/audio/lesson/*", async (route) => {
+		const cue = (index: number, targetIndex: number) => ({
+			index,
+			start_ms: index * 1000,
+			end_ms: index * 1000 + 900,
+			section_index: 0,
+			section_type: "key_phrases",
+			phrase_index: targetIndex,
+			role: "female-1",
+			language_code: "sl",
+			text: "dober dan",
+			ref: { kind: "key_phrase", target_index: targetIndex },
+		});
+		await route.fulfill({
+			status: 200,
+			contentType: "application/json",
+			body: JSON.stringify({
+				audio_id: "stub-audio",
+				lesson_id: lessonId,
+				sections: [
+					{
+						audio_id: "stub-audio",
+						section_index: 0,
+						section_type: "key_phrases",
+						title: "Key Phrases",
+						cues: [cue(0, 0)],
+					},
+				],
+				cues: [cue(0, 0)],
+			}),
+		});
+	});
+}
+
+test("transcript: the key-phrase play button sits beside its text on a phone", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+	await page.setViewportSize(PHONE);
+	const cid = await curriculumId(request);
+	await stubAudio(page, "any");
+
+	await page.goto(`/c/${cid}`);
+	await page.getByRole("button", { name: "Day 1" }).click();
+	await page.getByRole("button", { name: "Read", exact: true }).click();
+
+	const row = page.locator(".key-phrases-list li").first();
+	const btn = row.locator(".seek-btn");
+	// If this times out the stub stopped working — do NOT relax it into an
+	// optional check, or the geometry below starts measuring a row with no
+	// button and passes for the wrong reason.
+	await expect(btn).toBeVisible({ timeout: 15000 });
+
+	const b = await btn.boundingBox();
+	const text = await row.locator(".kp-text").boundingBox();
+	const li = await row.boundingBox();
+	expect(b && text && li).toBeTruthy();
+
+	// BESIDE, not below: the button starts right of the text and shares its rows.
+	expect(b!.x).toBeGreaterThanOrEqual(text!.x + text!.width - 1);
+	expect(b!.y).toBeLessThan(text!.y + text!.height);
+
+	// The row costs its tallest child plus padding, not text THEN button.
+	expect(li!.height).toBeLessThan(text!.height + b!.height);
+
+	// The tap target survives the compaction — this is the whole risk of the
+	// change, and 44x44 is the floor the full-width button was buying.
+	expect(b!.width).toBeGreaterThanOrEqual(44);
+	expect(b!.height).toBeGreaterThanOrEqual(44);
+});
+
+test("transcript: the desktop key-phrase button keeps its full-height target", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+	await page.setViewportSize({ width: 1280, height: 900 });
+	const cid = await curriculumId(request);
+	await stubAudio(page, "any");
+
+	await page.goto(`/c/${cid}`);
+	await page.getByRole("button", { name: "Day 1" }).click();
+	await page.getByRole("button", { name: "Read", exact: true }).click();
+
+	const row = page.locator(".key-phrases-list li").first();
+	const btn = row.locator(".seek-btn");
+	await expect(btn).toBeVisible({ timeout: 15000 });
+
+	const b = await btn.boundingBox();
+	const text = await row.locator(".kp-text").boundingBox();
+	expect(b && text).toBeTruthy();
+
+	// The desktop button STRETCHES to the row rather than sitting at its declared
+	// 28px min-height, and that is worth 10px of click target (23x38, not 23x28).
+	// The mobile rule sets `align-items: center`; without the explicit
+	// `align-items: stretch` in the min-width:641px block it inherits here and
+	// silently shrinks this. Row height does not change either way, so a
+	// height-only check cannot see it — measure the BUTTON.
+	expect(b!.height).toBeGreaterThanOrEqual(text!.height - 1);
+	expect(b!.height).toBeGreaterThan(30);
+});

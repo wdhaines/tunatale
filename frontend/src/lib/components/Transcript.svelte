@@ -808,14 +808,30 @@
 	}
 	.key-phrases-list li {
 		display: flex;
-		flex-direction: column;
+		/* Row on EVERY viewport, same inversion the dialogue line had: this was
+		   `column` with a min-width:641px override flipping it to `row`, so the
+		   phone paid a full-width play button per phrase while the desktop got the
+		   compact one. Measured at 390x844 — 7 phrases 691.3px -> 435.4px (-37%),
+		   and an 8-phrase review session 787.5px -> 447.2px (-43%). The button
+		   alone was 308px of that 691px block, 45% of it. */
+		flex-direction: row;
+		align-items: center;
+		gap: 0.5rem;
 		padding: 0.25rem 0;
 		border-bottom: 1px solid var(--color-border);
 	}
 	.kp-text {
 		display: flex;
+		/* Phrase over translation, NOT side by side. Measured both: side-by-side
+		   wins 14px on a lesson and LOSES 25px on a review session, whose phrases
+		   are longer ("det var en nydelig stemning i salen") and wrap once they
+		   only get half the width. The stacked pair is the one that holds on both. */
 		flex-direction: column;
 		gap: 0.1rem;
+		/* Takes the slack so the button keeps its slot at the right edge, and
+		   min-width:0 lets a long phrase shrink instead of pushing the row wide. */
+		flex: 1;
+		min-width: 0;
 	}
 	.kp-phrase {
 		font-weight: 500;
@@ -824,11 +840,15 @@
 		color: var(--color-muted);
 		font-style: italic;
 	}
-	/* Mobile: the play button spans the full width of the stacked key-phrase row
-	   for an easy tap target. Reverts to a compact inline button on desktop. */
+	/* ⚠️ 44x44 is the POINT, not the full width. The button used to span the row
+	   for an easy tap target; inline it keeps the same 44px height and takes a
+	   44px floor on width, so the target survives the compaction intact — only
+	   the 316px of empty button either side of the glyph is given back. Shrinking
+	   below 44 in either axis is what would actually cost something. */
 	.key-phrases-list .seek-btn {
-		width: 100%;
-		margin-top: 0.35rem;
+		width: auto;
+		min-width: 44px;
+		margin-top: 0;
 		min-height: 44px;
 	}
 	.scene-header {
@@ -1128,12 +1148,21 @@
 			font-weight: 400;
 		}
 		.key-phrases-list li {
-			flex-direction: row;
-			justify-content: space-between;
+			/* Direction is no longer set here — row is the default now. Desktop
+			   keeps its tighter gutter and the smaller pointer-sized target. */
 			gap: 0;
+			/* ⚠️ Explicitly restated, and it is load-bearing. The mobile rule now
+			   sets `align-items: center`, which would inherit here and shrink the
+			   desktop button from the row height to its declared `min-height`.
+			   MEASURED: 23x38 -> 23x28 at 1280px, i.e. a 10px smaller click target
+			   on a surface this change was not about. Row height is identical
+			   either way, so the regression would have been invisible in a
+			   height-only check — a stretch-vs-center control is what found it. */
+			align-items: stretch;
 		}
 		.key-phrases-list .seek-btn {
 			width: auto;
+			min-width: 0;
 			margin-top: 0;
 			min-height: 28px;
 		}
