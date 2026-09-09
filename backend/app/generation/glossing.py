@@ -52,6 +52,10 @@ exactly as written and a concise English translation appropriate to how it is
 used in these lines. Conjugated and inflected forms get their specific
 translation, NOT the dictionary form (e.g. "boste" -> "you will", "sem" -> "I am").
 
+Every "word" value must be a SINGLE word. Do not emit phrases or multi-word
+entries — a phrase like "ses neste tirsdag" must appear only as its individual
+words. Whole-phrase meanings are carried elsewhere and are not wanted here.
+
 The "base" key is OPTIONAL and VERBS ONLY: the bare English dictionary form with
 no leading "to" (e.g. "show", not "to show"), used when a card fronts the
 infinitive. Non-verbs and any entry with no dictionary form must OMIT it entirely.
@@ -73,14 +77,59 @@ def _strip_fences(raw: str) -> str:
     return raw
 
 
+def _recover_entries(text: str) -> tuple[list[dict], int]:
+    """Recover individual ``{...}`` dicts from malformed JSON via ``raw_decode``.
+
+    Returns the recovered dicts in their original order, plus a count of the
+    object starts that could NOT be decoded.
+
+    ⚠️ The drop count is taken at ``{`` boundaries where decoding FAILED, not from
+    ``text.count("{")``. A brace inside a translation value ("the { brace") sits
+    inside an entry ``raw_decode`` consumes whole, so it is never visited here —
+    where a raw brace count would inflate the denominator and report phantom
+    losses. This log line is the only signal that a partial parse happened at all
+    (bd tunatale-y0bk), so a wrong number in it defeats its own purpose.
+    """
+    decoder = json.JSONDecoder()
+    recovered: list[dict] = []
+    dropped = 0
+    idx = 0
+    while idx < len(text):
+        try:
+            obj, end = decoder.raw_decode(text, idx)
+        except ValueError:  # JSONDecodeError is a ValueError
+            if text[idx] == "{":
+                dropped += 1
+            idx += 1
+            continue
+        if isinstance(obj, dict):
+            recovered.append(obj)
+        idx = end
+    return recovered, dropped
+
+
 def parse_gloss_array(raw: str) -> list[dict]:
     """Parse an LLM response into a list of ``{word, translation, base?}`` dicts.
 
     Accepts a bare JSON array or an object wrapping it under ``dialogue_glosses``
     (the generation schema), tolerating markdown fences. Non-dict entries are
     dropped defensively.
+
+    When a well-formed parse fails, falls back to recovering individual ``{...}``
+    dicts in order.  Recovered entries keep their original position.  A WARNING
+    is logged with the counts.
     """
-    data = json.loads(_strip_fences(raw.strip()))
+    stripped = _strip_fences(raw.strip())
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError:
+        recovered, dropped = _recover_entries(stripped)
+        logger.warning(
+            "Gloss array was malformed — recovered %d entries, dropped %d",
+            len(recovered),
+            dropped,
+        )
+        return recovered
     if isinstance(data, dict):
         data = data.get("dialogue_glosses", [])
     return [g for g in data if isinstance(g, dict)]

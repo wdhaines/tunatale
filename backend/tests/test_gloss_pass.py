@@ -9,6 +9,8 @@ stored ``story`` blob, and the paste round-trip are all unchanged in shape.
 """
 
 import json
+import logging
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -18,6 +20,7 @@ from app.generation.glossing import (
     dialogue_lines_from_story,
     ensure_dialogue_glosses,
     gloss_max_tokens,
+    parse_gloss_array,
 )
 from app.generation.story import StoryGenerator
 from app.models.curriculum import CurriculumDay
@@ -113,6 +116,19 @@ class TestGlossPrompt:
         prompt = build_gloss_prompt(["Dober dan!"], "Slovene")
         assert "base" in prompt
         assert "VERBS ONLY" in prompt
+
+    def test_asks_for_single_words_only(self):
+        """Multi-word entries are where the model loses its JSON syntax.
+
+        Both live captures of the malformed response broke on a PHRASE entry --
+        `{"word":"stemningen i koret er god igjen":...}` and
+        `{"word":"tirsdag":"tirsdag"}` -- while every single-word entry in the same
+        response was well formed. Pinned for the same reason as the base key above:
+        dropping the instruction is silent, and shows up only as glosses that
+        quietly went missing a day later.
+        """
+        prompt = build_gloss_prompt(["Dober dan!"], "Slovene")
+        assert "SINGLE word" in prompt
 
 
 class TestGlossMaxTokens:
@@ -233,3 +249,59 @@ class TestGlossFailureDegrades:
         )
         assert lesson.title == "Ordering Coffee"
         assert "gloss pass" in caplog.text.lower()
+
+
+_FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+class TestParseGlossArrayResilience:
+    """parse_gloss_array must survive a malformed entry and recover the rest."""
+
+    def test_malformed_fixture_returns_237_entries(self):
+        raw = (_FIXTURES / "gloss_response_malformed.json").read_text(encoding="utf-8")
+        result = parse_gloss_array(raw)
+        assert len(result) == 237
+
+    def test_wellformed_fixture_returns_235_via_fast_path(self):
+        raw = (_FIXTURES / "gloss_response_wellformed.json").read_text(encoding="utf-8")
+        result = parse_gloss_array(raw)
+        assert len(result) == 235
+
+    def test_fence_wrapped_array_still_parses(self):
+        arr = [{"word": "a", "translation": "b"}]
+        fenced = "```json\n" + json.dumps(arr) + "\n```"
+        assert parse_gloss_array(fenced) == arr
+
+    def test_dialogue_glosses_wrapper_still_parses(self):
+        arr = [{"word": "a", "translation": "b"}]
+        wrapped = json.dumps({"dialogue_glosses": arr})
+        assert parse_gloss_array(wrapped) == arr
+
+    def test_non_dict_members_still_dropped(self):
+        raw = json.dumps([{"word": "a", "translation": "b"}, 42, "str", None])
+        assert parse_gloss_array(raw) == [{"word": "a", "translation": "b"}]
+
+    def test_unrecoverable_garbage_returns_empty(self):
+        assert parse_gloss_array("totally not json {{{") == []
+
+    def test_truncated_response_keeps_the_complete_entries(self):
+        """`finish_reason=length` is a live failure here, not a hypothetical.
+
+        The gloss call sizes its own cap, so a cut-off array is exactly the shape
+        the epic's TPM bead is about. A truncated tail must cost its own entry and
+        nothing else.
+        """
+        raw = json.dumps([{"word": w, "translation": w.upper()} for w in "abc"])
+        assert len(parse_gloss_array(raw[: int(len(raw) * 0.8)])) == 2
+
+    def test_dropped_count_ignores_a_brace_inside_a_translation(self, caplog):
+        """The log line is the ONLY signal a partial parse happened — see y0bk.3.
+
+        A raw `text.count("{")` denominator counts braces inside translation
+        values, which `raw_decode` swallows as part of a good entry, and reports
+        losses that did not occur.
+        """
+        raw = '[{"word":"a","translation":"the { brace"},{"word":"b":"malformed"},{"word":"c","translation":"d"}]'
+        with caplog.at_level(logging.WARNING):
+            assert len(parse_gloss_array(raw)) == 2
+        assert "dropped 1" in caplog.text
