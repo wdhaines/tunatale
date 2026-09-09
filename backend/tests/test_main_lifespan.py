@@ -34,9 +34,16 @@ async def test_lifespan_populates_app_state(tmp_path, monkeypatch):
         assert test_app.state.audio_dir.is_absolute()
         # In mock mode, the LLM client should be wrapped with CassetteLLMClient
         assert isinstance(test_app.state.curriculum_planner._llm, CassetteLLMClient)
-        # ActivityLog is wired and the real client's on_call points to it
+        # ActivityLog is wired and the real client's on_call feeds it.
+        # ⚠️ Asserted by BEHAVIOUR, not identity. The callback is wrapped by
+        # `llm_failure_mirror` so a failed call also reaches the durable warning
+        # sink (bd tunatale-y0bk.6), and an identity check would forbid ever
+        # wrapping it — while proving nothing about whether events arrive.
         assert test_app.state.activity_log is not None
-        assert test_app.state.llm._real_client.on_call == test_app.state.activity_log.record_llm_call
+        before, _ = test_app.state.activity_log.events_since(0)
+        test_app.state.llm._real_client.on_call({"provider": "groq", "status": "success"})
+        after, _ = test_app.state.activity_log.events_since(0)
+        assert len(after) == len(before) + 1
         # Pipeline is wired
         assert test_app.state.pipeline is not None
 

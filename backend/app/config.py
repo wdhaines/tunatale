@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     # Durable per-sync soak log: every non-dry sync (CLI or API) appends a
     # SYNC_SOAK heartbeat + one RECOMPUTE_DIVERGENCE line per divergence.
     sync_log: Path = Path("~/.tunatale/logs/sync.log").expanduser()
+    # Durable WARNING sink. Everything else on the generation path is volatile:
+    # the dev server logs to a tty with no redirect, and /api/llm/activity is a
+    # 300-event in-memory ring a --reload empties. bd tunatale-y0bk.6.
+    # ⚠️ UTC, unlike sync.log above, which is local — see app/logging_sink.py.
+    warning_log: Path = Path("~/.tunatale/logs/warnings.log").expanduser()
 
     # The browser's equivalent of sync.log. OFF by default and pinned so by a
     # test: this is a write endpoint that appends browser-supplied text to a
