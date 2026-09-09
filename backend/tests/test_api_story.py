@@ -132,6 +132,7 @@ class TestStoryEndpoints:
             "sections",
             "review_requested",
             "review_used",
+            "gloss_entry_count",
             "day",
         }
         assert set(data["key_phrases"][0].keys()) == {"phrase", "translation"}
@@ -145,6 +146,7 @@ class TestStoryEndpoints:
             "sections",
             "review_requested",
             "review_used",
+            "gloss_entry_count",
             "day",
         }
 

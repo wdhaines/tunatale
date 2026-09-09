@@ -175,6 +175,10 @@ function sessionBody(overrides: Record<string, unknown> = {}) {
         ],
       },
     ],
+    // Defaults to "never measured", which is what a session stored before the
+    // count existed reports — and the state in which the page must stay silent.
+    // The three gloss tests override it explicitly.
+    gloss_entry_count: null,
     ...overrides,
   };
 }
@@ -1114,5 +1118,37 @@ describe("hands-free carries on into the next review session", () => {
     } finally {
       cap.restore();
     }
+  });
+});
+
+describe("a session that lost its glosses says so", () => {
+  // y0bk.3. The gloss pass degrades silently by design — it keeps an expensive
+  // story rather than 502ing — and on 2026-09-08 two sessions shipped with zero
+  // hover translations while the only signal was a log line on a terminal with
+  // no file sink. A human noticing missing hovers was the first alarm.
+  //
+  // 0 and null are NOT the same and must not render the same: null means a
+  // session stored before the count existed, and claiming its glosses are
+  // missing would be a fabrication about every session in the store.
+
+  it("shows a notice when the count is a measured zero", () => {
+    const { getByText } = render(Page, {
+      props: { data: { session: sessionBody({ gloss_entry_count: 0 }), audio: null } },
+    });
+    expect(getByText(/no hover translations/i)).toBeTruthy();
+  });
+
+  it("says nothing when the count was never measured", () => {
+    const { queryByText } = render(Page, {
+      props: { data: { session: sessionBody({ gloss_entry_count: null }), audio: null } },
+    });
+    expect(queryByText(/no hover translations/i)).toBeNull();
+  });
+
+  it("says nothing when the glosses are present", () => {
+    const { queryByText } = render(Page, {
+      props: { data: { session: sessionBody({ gloss_entry_count: 237 }), audio: null } },
+    });
+    expect(queryByText(/no hover translations/i)).toBeNull();
   });
 });

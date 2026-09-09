@@ -478,6 +478,9 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
             "verb_base_glosses": verb_base_glosses,
             "sentence_translations": sentence_translations,
             "morphology_focus": data.get("morphology_focus", []),
+            # How many gloss entries the model returned — the raw count, not
+            # the expanded token_glosses map (which carries extra lemma keys).
+            "gloss_entry_count": len(glosses),
             # What the prompt ASKED for and what the story actually used. Kept
             # on the lesson so the answer survives the log buffer.
             "review_requested": list(review_words),

@@ -152,6 +152,44 @@ class TestReadingOne:
         assert resp.status_code == 404
 
 
+# ── gloss_entry_count ─────────────────────────────────────────────────────────
+
+
+class TestGlossEntryCount:
+    async def test_it_survives_response_model_exclude_unset(self, stored):
+        """gloss_entry_count must not vanish from the session response.
+
+        The GET /{session_id} route uses response_model_exclude_unset=True to
+        keep `day` out of the payload. A field that silently vanishes under
+        that filter is this bead's own failure mode.
+        """
+        lesson = _lesson()
+        lesson.generation_metadata["gloss_entry_count"] = 42
+        stored.save_review_session("sess-gloss", "sl", "2026-09-02", lesson)
+
+        body = (await _get("/api/review-sessions/sess-gloss")).json()
+
+        assert body["gloss_entry_count"] == 42
+
+    async def test_none_when_absent(self, stored):
+        """A lesson stored before this field existed reports None, not 0."""
+        stored.save_review_session("sess-old", "sl", "2026-09-02", _lesson())
+
+        body = (await _get("/api/review-sessions/sess-old")).json()
+
+        assert body["gloss_entry_count"] is None
+
+    async def test_zero_when_measured_and_empty(self, stored):
+        """Measured zero must stay distinguishable from unmeasured None."""
+        lesson = _lesson()
+        lesson.generation_metadata["gloss_entry_count"] = 0
+        stored.save_review_session("sess-zero", "sl", "2026-09-02", lesson)
+
+        body = (await _get("/api/review-sessions/sess-zero")).json()
+
+        assert body["gloss_entry_count"] == 0
+
+
 # ── rendering ────────────────────────────────────────────────────────────────
 
 

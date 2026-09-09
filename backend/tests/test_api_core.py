@@ -413,6 +413,7 @@ class TestCurriculumEndpoints:
             "sections",
             "review_requested",
             "review_used",
+            "gloss_entry_count",
         }
         # The shared model still has `day` (get_lesson sets it); this route
         # simply doesn't emit it — the two assertions must not match.
@@ -424,6 +425,7 @@ class TestCurriculumEndpoints:
             "sections",
             "review_requested",
             "review_used",
+            "gloss_entry_count",
             "day",
         }
 
