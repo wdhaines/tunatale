@@ -132,14 +132,64 @@ class TestGlossPrompt:
         assert "SINGLE word" in prompt
 
 
+class TestGlossMaxTokensIsSizedFromTheWork:
+    """y0bk.5 — the cap is sized from the dialogue, not from what is left.
+
+    Claiming the whole remaining budget made the call reserve ~7,800 of Groq's
+    8,000-token-per-minute free-tier bucket (prompt ~900 + cap 6,934), so it could
+    only land when nothing else was in flight. It is not: the vocab-media and
+    image-query calls run concurrently on the same bucket, and the gloss call 429'd
+    twice on 2026-09-08 while they were going.
+    """
+
+    def _lines(self, unique_words: int) -> list[str]:
+        return [" ".join(f"ord{i}" for i in range(unique_words))]
+
+    def test_reserves_far_less_than_the_whole_bucket(self):
+        """A realistic dialogue must leave room for the pipeline beside it.
+
+        ~206 unique words is what the measured 2026-09-08 session had.
+        """
+        assert gloss_max_tokens(self._lines(206)) < 5500
+
+    def test_still_clears_what_a_real_array_needed(self):
+        """MEASURED, not guessed. Live captures: 217 entries -> 2,037 completion
+        tokens (9.4/entry) and 241 -> 2,497 (10.4/entry); the pre-split historical
+        worst case was 16.1/entry with multi-word entries. The cap must clear the
+        worst of those with room, or this trades 429s for truncation — which is
+        the failure bd tunatale-yet7 was filed for.
+        """
+        assert gloss_max_tokens(self._lines(206)) > 206 * 16.1
+
+    def test_never_exceeds_what_the_budget_allows(self):
+        """The old ceiling still binds: a dialogue big enough that the work-based
+        estimate would exceed the remaining budget is clamped, not allowed through
+        to a 413."""
+        lines = ["Dober dan, kako ste danes?"] * 400
+        prompt_tokens = len(build_gloss_prompt(lines, "Slovene")) // 4
+        assert prompt_tokens + gloss_max_tokens(lines) < 8000
+
+    def test_a_tiny_dialogue_still_gets_a_floor(self):
+        """One line must not produce a cap so small the array cannot finish."""
+        assert gloss_max_tokens(["Hei!"]) >= 256
+
+
 class TestGlossMaxTokens:
     def test_sized_from_the_free_tier_budget(self):
         """Must clear the 3,213 tokens the measured 200-entry array needed.
 
         regloss_lessons hardcodes 2048, which would have moved the truncation
         rather than fixing it — the trap this sizing exists to avoid.
+
+        ⚠️ The input changed with y0bk.5 and the reason is worth keeping. It was
+        `["Dober dan!"] * 50` — fifty IDENTICAL lines, i.e. two unique words. That
+        stood in for "a 200-entry array" only because the old cap was derived from
+        the leftover budget, where line count moved the number and vocabulary did
+        not. Sizing from the work inverts that: an array has one entry per unique
+        WORD, so the old input now correctly asks for a small cap. Two hundred
+        distinct words is what a 200-entry array actually looks like.
         """
-        assert gloss_max_tokens(["Dober dan!"] * 50) > 3213
+        assert gloss_max_tokens([" ".join(f"ord{i}" for i in range(200))]) > 3213
 
     def test_leaves_room_for_the_prompt(self):
         """prompt + completion must stay under Groq's 8000/request reservation."""

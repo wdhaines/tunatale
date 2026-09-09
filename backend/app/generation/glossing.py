@@ -37,6 +37,23 @@ _GLOSS_MARGIN = 128
 # the ~3.5-4 these languages actually run at): overestimating the prompt only
 # shrinks the completion cap, while underestimating it risks a hard 413.
 _CHARS_PER_TOKEN = 3
+# Completion tokens allowed per gloss entry. MEASURED, with a deliberate 1.5x
+# margin over the worst case seen: live captures ran 9.4 tok/entry (217 entries ->
+# 2,037 completion tokens) and 10.4 (241 -> 2,497), and the pre-split historical
+# worst case — when entries were multi-word and their translations longer — was
+# 16.1. At 24 the cap clears that worst case with half again to spare while
+# reserving roughly 2,000 fewer tokens than claiming the whole budget did.
+#
+# ⚠️ Raising this is cheap and lowering it is NOT. Too low truncates the array
+# (finish_reason=length), which is the failure bd tunatale-yet7 exists for; too
+# high only costs bucket headroom. Measure before touching it, and prefer the
+# entries-per-response number from a real capture over a token estimate.
+_TOKENS_PER_ENTRY = 24
+
+#: Stripped before counting a word. Language-agnostic on purpose — this is a
+#: budget estimate, and the registry has no business in one.
+_PUNCTUATION = ".,!?\"'—–:;()[]«»…"
+
 # Floor for a dialogue so large the estimate leaves nothing. Such a story would
 # have failed its own call first; if one ever reaches here the request 413s, and
 # the caller's degradation path turns that into a warning rather than a 502.
@@ -159,6 +176,17 @@ def build_gloss_prompt(lines: list[str], language_name: str) -> str:
     return _GLOSS_PROMPT.format(language_name=language_name, dialogue="\n".join(lines))
 
 
+def _unique_words(lines: list[str]) -> set[str]:
+    """The distinct surface words in *lines* — one gloss entry each, near enough.
+
+    Deliberately crude: this sizes a token budget, not a lexicon. Splitting on
+    whitespace and stripping punctuation over-counts a little (a hyphenated form
+    counts once, a possessive counts as its own word), and over-counting is the
+    safe direction — it raises the cap.
+    """
+    return {w.strip(_PUNCTUATION).casefold() for line in lines for w in line.split() if w.strip(_PUNCTUATION)}
+
+
 def gloss_max_tokens(lines: list[str]) -> int:
     """Completion cap for the gloss call, sized from what is left of the budget.
 
@@ -170,7 +198,12 @@ def gloss_max_tokens(lines: list[str]) -> int:
     prompt_chars = len(build_gloss_prompt(lines, "X" * 16))
     estimated_prompt_tokens = prompt_chars // _CHARS_PER_TOKEN
     available = _GROQ_FREE_TIER_REQUEST_BUDGET - estimated_prompt_tokens - _GLOSS_MARGIN
-    return max(_GLOSS_MIN_TOKENS, available)
+    # Sized from the WORK, then clamped by what the budget allows. The array has
+    # one entry per unique word, so the dialogue's own vocabulary is the estimate
+    # — a count nothing else has to supply and that cannot drift out of step with
+    # the prompt.
+    needed = len(_unique_words(lines)) * _TOKENS_PER_ENTRY
+    return max(_GLOSS_MIN_TOKENS, min(needed, available))
 
 
 async def generate_dialogue_glosses(lines: list[str], llm, language: Language) -> list[dict]:
