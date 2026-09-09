@@ -1028,6 +1028,41 @@ def _analyze_lesson_words(lesson, db) -> _LessonWords:
     return words
 
 
+def _card_key_for_lemma(
+    lemma: str,
+    first_surface: str,
+    *,
+    is_func: bool,
+    lemma_plausible: Callable[[str, str], bool] | None,
+) -> str:
+    """The lemma a card is actually keyed on — THE one place that decision lives.
+
+    Stanza can return a truncated fragment as the lemma (`trøtt` → `trø`,
+    `snømenn` → `snøm`). When the fragment fails the language's plausibility
+    check, the card is keyed on the surface as it appeared instead: the headword
+    stays a real word, and the surface key means the next listen resolves the
+    same card rather than spawning a duplicate.
+
+    ⚠️ Called by ``mark_lesson_listened`` AND by the listen preview, so the two
+    cannot disagree about a word's identity — the same "by construction rather
+    than by coincidence" the preview's gloss lookup already gets by reusing
+    ``_resolve_gloss_translation``.
+
+    bd tunatale-q5pl is what this extraction is for. The commit path had this
+    logic inline and the preview never had it at all, so a listen resolved the
+    real `snømenn` card while the preview offered `snøm` — a non-word, labelled
+    with the found card's own translation. Nothing was ever mis-CREATED; the
+    preview simply named the wrong thing, on every listen, indefinitely.
+
+    ``lemma_plausible`` of ``None`` is "cannot tell" (Slovene, ``en``) and keeps
+    the lemma, never a guess. Function words keep theirs too: they are carded on
+    the lemma by design and never take the surface fallback.
+    """
+    if is_func or lemma_plausible is None or lemma_plausible(first_surface, lemma):
+        return lemma
+    return first_surface.casefold()
+
+
 def _resolve_card_for_lemma(
     db,
     lemma: str,
@@ -1460,9 +1495,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
         # and the surface key means the next listen resolves the same card rather
         # than spawning a duplicate (a `trø` lookup falls back to the `trøtt` row).
         first_surface = lemma_to_first_surface.get(lemma, lemma)
-        card_lemma = lemma
-        if not is_func and lemma_plausible is not None and not lemma_plausible(first_surface, lemma):
-            card_lemma = first_surface.casefold()
+        card_lemma = _card_key_for_lemma(lemma, first_surface, is_func=is_func, lemma_plausible=lemma_plausible)
         unit = SyntacticUnit(
             text=format_vocab_headword(card_lemma, upos_for_lemma, lesson.language_code) if not is_func else lemma,
             translation=_resolve_gloss_translation(
@@ -1864,6 +1897,10 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
     db = request.state.srs_db
 
     words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
+    # Same predicate mark_lesson_listened resolves, for the same reason: a
+    # truncated lemma must not be the name on a row the commit path would key
+    # somewhere else.
+    lemma_plausible = get_lemma_plausible(lesson.language_code)
 
     # Corpus-frequency ranker for creation candidates — mirrors
     # mark_lesson_listened: the SAME callable must stamp `will_create` here and
@@ -1892,6 +1929,10 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
 
     candidates: list[dict] = []
     lemma_candidates: list[str] = []
+    # lemma → the key a card is actually made on. Populated in the word loop so
+    # the create rows below reuse the SAME decision (function-word status
+    # included) instead of recomputing it with a guessed `is_func`.
+    card_key_by_lemma: dict[str, str] = {}
     # (row, created_today, ranking text, is_key_phrase) for every NEW-state
     # candidate, in candidate order. Held back from `candidates` until the
     # shared introduction budget is allocated below, which is what stamps their
@@ -1906,7 +1947,21 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
         if is_func and is_clozes_only_verb(lemma, lesson.language_code):
             continue
 
-        res = _resolve_card_for_lemma(db, lemma, words.surfaces.get(lemma, set()), variant_index, inflection_index)
+        # The identity a listen would card this word under. `lemma` stays the key
+        # for every LOOKUP below (glosses, surfaces, occurrences are all keyed on
+        # the lemmatizer's output); `card_key` is what the row is NAMED, and what
+        # a card is resolved and created on — exactly the split mark_lesson_listened
+        # makes. For a plausible lemma the two are the same string and nothing
+        # changes. bd tunatale-q5pl.
+        card_key = _card_key_for_lemma(
+            lemma,
+            words.first_surface.get(lemma, lemma),
+            is_func=is_func,
+            lemma_plausible=lemma_plausible,
+        )
+        card_key_by_lemma[lemma] = card_key
+
+        res = _resolve_card_for_lemma(db, card_key, words.surfaces.get(lemma, set()), variant_index, inflection_index)
         if res is None:
             # Untracked → ranked/budget-truncated below, mirroring
             # mark_lesson_listened exactly.
@@ -1946,7 +2001,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             deferred = _listen_deferred_reason(rec, grade_cls, today, horizon)
             row = {
                 "kind": "word",
-                "text": lemma,
+                "text": card_key,
                 "item_id": existing_id,
                 "grade_class": grade_cls,
                 "rating": "good",
@@ -2053,7 +2108,11 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
     creates = [
         {
             "kind": "create",
-            "text": lemma,
+            # The headword a listen would actually mint, not the lemmatizer's raw
+            # output — the create row and the card it promises must agree.
+            # `lemma` stays the key for the gloss lookup below, exactly as
+            # mark_lesson_listened does it. bd tunatale-q5pl.
+            "text": card_key_by_lemma.get(lemma, lemma),
             "item_id": None,
             "grade_class": "create",
             "rating": "good",
