@@ -894,8 +894,18 @@
 	}
 	.dialogue-line {
 		display: flex;
-		flex-direction: column;
-		gap: 0.15rem;
+		/* Row on EVERY viewport, phones most of all. This used to be `column` with
+		   a min-width:641px override flipping it to `row`, which had it backwards:
+		   the wide screen got the compact layout and the narrow one spent a whole
+		   row on a 1.4rem letter before the text started. Measured at 390x844 over
+		   44 lines: 4495.5px of dialogue stacked, 2337.5px beside (-48%), document
+		   6410px -> 4252px. */
+		flex-direction: row;
+		/* 0.35rem, not the 0.15rem the stack used: beside the chip that gap is the
+		   only thing separating a pill from the first word, and 2.4px reads as
+		   jammed. Costs 41px of the 2,199px the flip saves. `align-items` is free
+		   either way — measured identical for stretch and baseline. */
+		gap: 0.35rem;
 		padding: 0.3rem 0;
 		border-bottom: 1px solid var(--color-border);
 		font-size: 0.95rem;
@@ -1104,7 +1114,8 @@
 
 	@media (min-width: 641px) {
 		.dialogue-line {
-			flex-direction: row;
+			/* Direction is no longer set here — row is the default now. Desktop only
+			   widens the gutter, which it can afford. */
 			gap: 0.75rem;
 		}
 		.dialogue-role {
