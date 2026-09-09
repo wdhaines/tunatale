@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 import sqlite3
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
@@ -405,6 +406,58 @@ class TestSyncPull:
         assert item.syntactic_unit.translation == "bank (financial)"
         # Conflict recorded in DB
         assert len(db.list_sync_conflicts()) == 1
+
+    def test_the_conflict_is_logged_with_what_was_lost(self, caplog):
+        """bd tunatale-resh. A conflict silently DISCARDS the user's own edit.
+
+        The condition is narrow — Anki's translation differs AND TT has an
+        unpushed local edit to that field — so the resolution `anki_wins` throws
+        away work the learner did in TT and drops the dirty flag, meaning it is
+        never pushed. That is worth a line someone can find afterwards.
+
+        The COUNT already reached SYNC_SOAK and the CLI summary before this. What
+        did not was WHICH card lost WHAT, which is the whole complaint: the
+        `sync_conflicts` table holds exactly that and nothing reads it.
+        """
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        db.set_dirty_fields(guid, "translation")
+        records = [make_note_record(anki_guid=guid, translation="bank (financial)", cards=[])]
+
+        with caplog.at_level(logging.WARNING):
+            AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert "SYNC_CONFLICT" in caplog.text
+        # Both sides, or the line cannot tell you what was lost.
+        assert "bank (financial)" in caplog.text
+        assert guid in caplog.text
+        assert "translation" in caplog.text
+
+    def test_no_conflict_logs_nothing(self, caplog):
+        """A clean merge must stay quiet, or the WARN becomes noise and the one
+        line that matters is lost in it."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        records = [make_note_record(anki_guid=guid, translation="bank (financial)", cards=[])]
+
+        with caplog.at_level(logging.WARNING):
+            AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert "SYNC_CONFLICT" not in caplog.text
+
+    def test_a_dry_run_still_logs(self, caplog):
+        """A dry run does not write the table, so the log is the ONLY record it
+        leaves — which makes it more important there, not less."""
+        db = _make_tt_db()
+        guid = _add_banka(db)
+        db.set_dirty_fields(guid, "translation")
+        records = [make_note_record(anki_guid=guid, translation="bank (financial)", cards=[])]
+
+        with caplog.at_level(logging.WARNING):
+            AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull(dry_run=True)
+
+        assert "SYNC_CONFLICT" in caplog.text
+        assert db.list_sync_conflicts() == []
 
     def test_dirty_bit_cleared_after_conflict(self):
         """After anki_wins conflict on 'translation', dirty_fields no longer contains it."""

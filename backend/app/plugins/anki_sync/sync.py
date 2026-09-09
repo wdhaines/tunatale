@@ -246,9 +246,22 @@ def _write_sync_soak_log(
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().isoformat(timespec="seconds")
+    # `db` is optional on this helper and some callers pass None, so the total is
+    # reported as "?" rather than guessed at 0 — a zero here would read as "this
+    # has never happened", which is exactly the claim the caller cannot support.
+    conflicts_total = len(db.list_sync_conflicts()) if db is not None else "?"
     lines = [
         f"{ts} SYNC_SOAK pull_notes={pull.notes_updated} "
+        # ⚠️ TWO conflict numbers, and the second is the useful one. `conflicts`
+        # is this sync's count; `conflicts_total` is every conflict the
+        # collection has ever recorded. A conflict DISCARDS an unpushed local
+        # edit, so "did that ever happen?" needs an answer that outlives the sync
+        # that caused it — and the per-sync count cannot give one. bd
+        # tunatale-resh. This is also the only caller of `list_sync_conflicts`,
+        # which vulture nominated as dead because nothing read the table it
+        # guards; deleting the reader would have cemented the silence.
         f"pull_dirs={pull.directions_updated} conflicts={len(pull.conflicts)} "
+        f"conflicts_total={conflicts_total} "
         f"recompute_divergences={len(pull.recompute_divergences)} "
         f"push_notes={push.notes_pushed} push_dirs={push.directions_pushed}"
     ]
