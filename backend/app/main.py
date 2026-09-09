@@ -28,6 +28,7 @@ from app.llm.activity import ActivityLog  # noqa: E402
 from app.llm.cassette import CassetteLLMClient  # noqa: E402
 from app.llm.client import LLMClient, reasoning_params_for_model  # noqa: E402
 from app.llm.usage_ledger import UsageLedger  # noqa: E402
+from app.logging_sink import install_warning_file_handler, llm_failure_mirror  # noqa: E402
 from app.models.lesson import SectionType  # noqa: E402
 from app.srs.database import SRSDatabase  # noqa: E402
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for  # noqa: E402
@@ -122,13 +123,20 @@ async def lifespan(app: FastAPI):
     _assert_prod_profile()
     discover()
 
+    # Durable WARNING sink, installed here rather than at import so the path
+    # comes from Settings and a test can point it somewhere else. Fails open.
+    install_warning_file_handler(settings.warning_log)
+
     activity_log = ActivityLog()
     real_client = LLMClient(
         groq_api_key=settings.groq_api_key,
         groq_model=settings.llm_model,
         groq_extra_body_params=reasoning_params_for_model(settings.llm_model),
         usage_ledger=UsageLedger(settings.llm_usage_ledger_path),
-        on_call=activity_log.record_llm_call,
+        # Wrapped, not raw: LLMClient warns on some failure paths and not
+        # others (a hard failure with allow_fallback=False raises silently), and
+        # every outcome passes through this callback. See llm_failure_mirror.
+        on_call=llm_failure_mirror(activity_log.record_llm_call),
         allow_fallback=settings.llm_allow_fallback,
         tokens_per_day_limit=settings.groq_tokens_per_day_limit,
         requests_per_day_limit=settings.groq_requests_per_day_limit,
