@@ -23,6 +23,7 @@ from app.generation.glossing import (
     parse_gloss_array,
 )
 from app.generation.story import StoryGenerator
+from app.llm.client import LLMError
 from app.models.curriculum import CurriculumDay
 from app.models.strategy import ContentStrategy
 
@@ -222,6 +223,44 @@ class TestEnsureDialogueGlosses:
         await ensure_dialogue_glosses(story, client, language)
         assert "dialogue_glosses" not in story
         assert "no usable entries" in caplog.text
+
+
+class TestGlossPassRetriesOnce:
+    """y0bk.2 — the gloss pass retries once when the first response is empty."""
+
+    async def test_empty_then_good_retries_and_succeeds(self, language, caplog):
+        story = _story()
+        client = MagicMock()
+        client.complete = AsyncMock(side_effect=["[]", '[{"word":"a","translation":"b"}]'])
+        await ensure_dialogue_glosses(story, client, language)
+        assert client.complete.await_count == 2
+        assert story["dialogue_glosses"] == [{"word": "a", "translation": "b"}]
+        assert "retrying once" in caplog.text
+
+    async def test_empty_twice_logs_and_degrades(self, language, caplog):
+        story = _story()
+        client = MagicMock()
+        client.complete = AsyncMock(side_effect=["[]", "[]"])
+        await ensure_dialogue_glosses(story, client, language)
+        assert client.complete.await_count == 2
+        assert "dialogue_glosses" not in story
+        assert "retry also returned no usable entries" in caplog.text
+
+    async def test_good_first_time_skips_retry(self, language):
+        story = _story()
+        client = MagicMock()
+        client.complete = AsyncMock(return_value='[{"word":"a","translation":"b"}]')
+        await ensure_dialogue_glosses(story, client, language)
+        assert client.complete.await_count == 1
+
+    async def test_exception_does_not_retry(self, language, caplog):
+        story = _story()
+        client = MagicMock()
+        client.complete = AsyncMock(side_effect=LLMError("boom"))
+        await ensure_dialogue_glosses(story, client, language)
+        assert client.complete.await_count == 1
+        assert "dialogue_glosses" not in story
+        assert "Gloss pass failed" in caplog.text
 
 
 class TestGlossFailureDegrades:

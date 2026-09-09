@@ -212,6 +212,15 @@ async def ensure_dialogue_glosses(data: dict, llm, language: Language) -> None:
         logger.warning("Gloss pass failed (%s); lesson keeps its story, loses hover glosses: %s", language.code, e)
         return
     if not glosses:
-        logger.warning("Gloss pass returned no usable entries (%s); lesson loses hover glosses", language.code)
-        return
+        logger.warning("Gloss pass returned no usable entries (%s), retrying once", language.code)
+        try:
+            glosses = await generate_dialogue_glosses(lines, llm, language)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Gloss retry failed (%s); lesson keeps its story, loses hover glosses: %s", language.code, e)
+            return
+        if not glosses:
+            logger.warning(
+                "Gloss retry also returned no usable entries (%s); lesson loses hover glosses", language.code
+            )
+            return
     data["dialogue_glosses"] = glosses

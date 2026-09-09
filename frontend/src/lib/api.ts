@@ -718,6 +718,11 @@ export class TunaTaleAPI {
     // generated session is always measured, so nothing turns on it here.
     review_requested: string[];
     review_used: string[];
+    // How many entries the gloss pass returned. NULLABLE, unlike the two above:
+    // a session stored before this field existed has never been measured, and
+    // reporting that as 0 would tell its reader the glosses are missing when
+    // nobody ever looked. The page keys its notice off `=== 0` for that reason.
+    gloss_entry_count: number | null;
   }> {
     return this.request(`/api/review-sessions/${id}`);
   }

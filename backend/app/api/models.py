@@ -545,6 +545,7 @@ class CreateReviewSessionResponse(BaseModel):
     title: str
     review_requested: list[str]
     review_used: list[str]
+    gloss_entry_count: int | None = None
     warnings: list[str]
 
 
@@ -1252,6 +1253,7 @@ class LessonResponse(BaseModel):
     # actually used. Empty is "unmeasurable", not "none landed".
     review_requested: list[str] = []
     review_used: list[str] = []
+    gloss_entry_count: int | None = None
     day: int | None = None  # omitted when unset
 
 

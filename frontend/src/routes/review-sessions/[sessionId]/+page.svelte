@@ -332,6 +332,22 @@
 				{#if error}
 					<p class="error" role="alert">{error}</p>
 				{/if}
+				<!-- y0bk.3. The gloss pass degrades silently on purpose — it keeps a story
+				     that is already paid for rather than 502ing — so without this the only
+				     trace of a total loss is a log line on a terminal with no file sink.
+				     Two sessions shipped that way on 2026-09-08 and a human noticing dead
+				     hovers was the first alarm.
+
+				     ⚠️ `=== 0` and NOT a falsy check: null means a session stored before the
+				     count existed, and telling its reader the glosses are missing would be a
+				     fabrication about every session in the store. Same measured-zero versus
+				     never-measured distinction the reused figure above already makes.
+
+				     Costs a row only in the failure case, so it does not undo the header
+				     compaction in 4293cd3. -->
+				{#if data.session.gloss_entry_count === 0}
+					<p class="gloss-notice">No hover translations — the gloss pass came back empty.</p>
+				{/if}
 			</div>
 		{/snippet}
 		{#snippet headerBelow()}
@@ -496,6 +512,14 @@
 		color: var(--color-danger, #9c2f2a);
 		margin: 0;
 		font-size: 0.9rem;
+	}
+	/* Muted, not danger-red: the session plays and reads fine, it is one
+	   enrichment that is missing. Styling it as an error would teach the reader
+	   to dismiss the row, which is the opposite of what it is for. */
+	.gloss-notice {
+		color: var(--color-text-muted, #6b6b6b);
+		margin: 0;
+		font-size: 0.85rem;
 	}
 	/* The `<details>` chrome is duplicated from the lesson reader rather than
 	   shared, deliberately: a shared shell would have to style content each page

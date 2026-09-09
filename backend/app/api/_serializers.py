@@ -28,6 +28,7 @@ def serialize_lesson(lesson_id: str, lesson: Lesson, *, day: int | None = None) 
         # must not read as a failed generation.
         "review_requested": list(lesson.generation_metadata.get("review_requested", [])),
         "review_used": list(lesson.generation_metadata.get("review_used", [])),
+        "gloss_entry_count": lesson.generation_metadata.get("gloss_entry_count"),
     }
     if day is not None:
         result["day"] = day

@@ -252,3 +252,51 @@ class TestCreatingFromAPaste:
         )
         listing = await _get("/api/review-sessions")
         assert created.json()["id"] in [s["id"] for s in listing.json()["sessions"]]
+
+
+class TestGlossWarningOnPaste:
+    async def test_zero_glosses_warns_no_hover_translations(self, stored, seeded_db):
+        from unittest.mock import AsyncMock
+
+        client = MagicMock()
+        client.complete = AsyncMock(return_value="not json at all")
+        app.state.llm = client
+
+        resp = await _post(
+            "/api/review-sessions/import",
+            {"story": _story("Dober dan!"), "review_words": WORDS},
+        )
+
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["gloss_entry_count"] == 0
+        assert any("no hover translations" in w for w in body["warnings"])
+
+
+class TestNoGlossWarningWhenGlossesArePresent:
+    """The other side of the warning, which had no coverage at all.
+
+    Every other create-from-paste test here posts a story with no
+    ``dialogue_glosses``, so all of them take the warning branch. A warning that
+    fires unconditionally is worse than none: the reader learns to ignore the
+    row. A story that ARRIVES glossed short-circuits ``ensure_dialogue_glosses``,
+    which is what makes this reachable without an LLM double.
+    """
+
+    async def test_glossed_paste_reports_a_count_and_no_warning(self, stored, seeded_db):
+        story = _story("Dober dan!")
+        story["dialogue_glosses"] = [
+            {"word": "dober", "translation": "good"},
+            {"word": "dan", "translation": "day"},
+        ]
+        app.state.srs_db = seeded_db
+
+        resp = await _post(
+            "/api/review-sessions/import",
+            {"story": story, "review_words": WORDS},
+        )
+
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["gloss_entry_count"] == 2
+        assert not any("no hover translations" in w for w in body["warnings"])

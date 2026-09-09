@@ -523,3 +523,36 @@ class TestRegenerating:
 
         assert resp.status_code == 409
         assert stored.get_review_session("sess-1").title == "The Old Dialogue"
+
+
+# ── gloss warning ────────────────────────────────────────────────────────────
+
+
+class TestGlossWarningOnCreate:
+    @pytest.fixture
+    def stored(self):
+        store = ContentStore(":memory:")
+        store.save_curriculum("c1", Curriculum(id="c1", topic="t", language_code="sl", cefr_level="A2", days=[_day()]))
+        app.state.content_store = store
+        app.state.language = get_language("sl")
+        return store
+
+    async def test_zero_glosses_warns_no_hover_translations(self, stored, seeded_db):
+        """When the gloss pass degrades, the create response carries a warning."""
+        import json
+
+        story = _story()
+        story.pop("dialogue_glosses", None)
+        client = MagicMock()
+        client.complete = AsyncMock(side_effect=[json.dumps(story), "not json at all"])
+        client.last_finish_reason = "stop"
+        app.state.story_generator = StoryGenerator(llm_client=client)
+        app.state.srs_db = seeded_db
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+            resp = await http.post("/api/review-sessions", json={})
+
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["gloss_entry_count"] == 0
+        assert any("no hover translations" in w for w in body["warnings"])

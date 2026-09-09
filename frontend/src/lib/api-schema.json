@@ -321,6 +321,17 @@
       "CreateReviewSessionResponse": {
         "description": "Response of POST /api/story/review-session.\n\nDated, not numbered \u2014 a session has no position in a sequence to report.",
         "properties": {
+          "gloss_entry_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gloss Entry Count"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1799,6 +1810,17 @@
               }
             ],
             "title": "Day"
+          },
+          "gloss_entry_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gloss Entry Count"
           },
           "id": {
             "title": "Id",
@@ -3552,6 +3574,17 @@
               }
             ],
             "title": "Day"
+          },
+          "gloss_entry_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gloss Entry Count"
           },
           "id": {
             "title": "Id",

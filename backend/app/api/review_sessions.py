@@ -183,13 +183,17 @@ async def _generate_and_store(request: Request, *, session_id: str | None, sessi
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
+    warnings = _logged_speaker_warnings(metadata.get("story"), language)
+    if metadata.get("gloss_entry_count") == 0:
+        warnings.append("This session has no hover translations")
     return {
         "id": session_id,
         "session_date": session_date,
         "title": lesson.title,
         "review_requested": metadata.get("review_requested", []),
         "review_used": metadata.get("review_used", []),
-        "warnings": _logged_speaker_warnings(metadata.get("story"), language),
+        "gloss_entry_count": metadata.get("gloss_entry_count"),
+        "warnings": warnings,
     }
 
 
@@ -297,13 +301,17 @@ async def create_review_session_from_paste(body: CreateReviewSessionFromPasteReq
         _background_tasks.add(task)
         task.add_done_callback(_background_tasks.discard)
 
+    warnings = _logged_speaker_warnings(metadata.get("story"), language)
+    if metadata.get("gloss_entry_count") == 0:
+        warnings.append("This session has no hover translations")
     return {
         "id": session_id,
         "session_date": session_date,
         "title": lesson.title,
         "review_requested": metadata.get("review_requested", []),
         "review_used": metadata.get("review_used", []),
-        "warnings": _logged_speaker_warnings(metadata.get("story"), language),
+        "gloss_entry_count": metadata.get("gloss_entry_count"),
+        "warnings": warnings,
     }
 
 
@@ -472,13 +480,17 @@ async def import_review_session(session_id: str, body: ImportReviewSessionReques
         _background_tasks.add(task)
         task.add_done_callback(_background_tasks.discard)
 
+    warnings = _logged_speaker_warnings(story, language)
+    if metadata.get("gloss_entry_count") == 0:
+        warnings.append("This session has no hover translations")
     return {
         "id": session_id,
         "session_date": row["session_date"],
         "title": lesson.title,
         "review_requested": metadata.get("review_requested", []),
         "review_used": metadata.get("review_used", []),
-        "warnings": _logged_speaker_warnings(story, language),
+        "gloss_entry_count": metadata.get("gloss_entry_count"),
+        "warnings": warnings,
     }
 
 

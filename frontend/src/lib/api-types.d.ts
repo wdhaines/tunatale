@@ -2133,6 +2133,8 @@ export interface components {
      *     Dated, not numbered — a session has no position in a sequence to report.
      */
     CreateReviewSessionResponse: {
+      /** Gloss Entry Count */
+      gloss_entry_count?: number | null;
       /** Id */
       id: string;
       /** Review Requested */
@@ -2781,6 +2783,8 @@ export interface components {
     LessonResponse: {
       /** Day */
       day?: number | null;
+      /** Gloss Entry Count */
+      gloss_entry_count?: number | null;
       /** Id */
       id: string;
       /** Key Phrases */
@@ -3551,6 +3555,8 @@ export interface components {
     ReviewSessionResponse: {
       /** Day */
       day?: number | null;
+      /** Gloss Entry Count */
+      gloss_entry_count?: number | null;
       /** Id */
       id: string;
       /** Key Phrases */

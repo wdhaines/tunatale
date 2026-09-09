@@ -29,6 +29,7 @@ meter would read low for a reason nothing on screen could explain.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -325,3 +326,51 @@ class TestWithAnSrsDatabaseAttached:
         await _post("/api/review-sessions/sess-1/import", {"story": _story("Kavo prosim.")})
 
         assert _sched() == before
+
+
+class TestGlossWarningOnRewritePaste:
+    async def test_zero_glosses_warns_no_hover_translations(self, stored):
+        client = MagicMock()
+        client.complete = AsyncMock(return_value="not json at all")
+        app.state.llm = client
+
+        resp = await _post(
+            "/api/review-sessions/sess-1/import",
+            {"story": _story("Kavo prosim.")},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["gloss_entry_count"] == 0
+        assert any("no hover translations" in w for w in body["warnings"])
+
+
+class TestNoGlossWarningWhenGlossesArePresent:
+    """The other side of the warning, and it was genuinely untested.
+
+    Every other paste test here pastes a story with no ``dialogue_glosses`` and
+    no usable ``app.state.llm``, so all of them take the warning branch — the
+    "glosses are fine, say nothing" path had no coverage at all until this. A
+    warning that fires unconditionally is worse than no warning, because a
+    reader learns to ignore the row.
+
+    A story that ARRIVES glossed short-circuits ``ensure_dialogue_glosses``
+    entirely, which is what makes this reachable without an LLM double.
+    """
+
+    async def test_glossed_paste_reports_a_count_and_no_warning(self, stored):
+        story = _story("Dober dan!")
+        story["dialogue_glosses"] = [
+            {"word": "dober", "translation": "good"},
+            {"word": "dan", "translation": "day"},
+        ]
+
+        resp = await _post(
+            "/api/review-sessions/sess-1/import",
+            {"story": story},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["gloss_entry_count"] == 2
+        assert not any("no hover translations" in w for w in body["warnings"])
