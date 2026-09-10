@@ -3,6 +3,8 @@ import { rmSync } from 'node:fs';
 
 import { defineConfig, devices } from '@playwright/test';
 
+import { cassetteMissLogName } from './tests/cassette-misses';
+
 // Worker count, overridable so a spare-core machine isn't stuck at the
 // measured-safe default. `workers: 2` used to be a literal below with the
 // comment "measure at 2 before building for N" — this IS building for N.
@@ -59,6 +61,9 @@ if (!process.env.TT_E2E_DBS_CLEANED) {
 	const dbFiles = ['../backend/tunatale-test-auth.db'];
 	for (let i = 0; i < WORKER_COUNT; i++) {
 		dbFiles.push(`../backend/tunatale-test-${i}.db`, `../backend/tunatale-test-no-${i}.db`);
+		// The backends only ever APPEND to their miss log, so without this a
+		// previous run's misses would fail this one (tests/global-teardown.ts).
+		dbFiles.push(`../backend/${cassetteMissLogName(i)}`);
 	}
 	for (const f of dbFiles) rmSync(f, { force: true });
 
@@ -109,6 +114,11 @@ function backendServer(i: number) {
 		timeout: 30000,
 		env: {
 			LLM_MODE: 'mock',
+			// Every cassette miss is appended here, relative to this backend's cwd,
+			// and tests/global-teardown.ts fails the run on any line. Without it a
+			// miss the app swallows fail-soft is a WARNING nobody reads — how the
+			// gloss pass missed its entry on every run for a day (tunatale-1l26.7).
+			LLM_CASSETTE_MISS_LOG: `./${cassetteMissLogName(i)}`,
 			PIPELINE_AUTOSTART: 'false',
 			DATABASE_URL: `sqlite:///./tunatale-test-${i}.db`,
 			// Redirect the Phase-5 multi-language map at test DBs. _language_db_map()
@@ -211,6 +221,7 @@ function frontendServer(i: number) {
 
 export default defineConfig({
 	globalSetup: './tests/global-setup.ts',
+	globalTeardown: './tests/global-teardown.ts',
 	webServer: [
 		...Array.from({ length: WORKER_COUNT }, (_, i) => backendServer(i)),
 		...Array.from({ length: WORKER_COUNT }, (_, i) => frontendServer(i))

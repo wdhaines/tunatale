@@ -434,3 +434,37 @@ async def test_lifespan_opens_the_auth_db(tmp_path, monkeypatch):
         assert auth_path.exists()
         user = test_app.state.auth_db.create_user("lifespan@example.com", "pw")
         assert test_app.state.auth_db.get_user_by_id(user.id) is not None
+
+
+async def test_lifespan_hands_the_cassette_miss_log_to_the_llm_client(tmp_path, monkeypatch):
+    """tunatale-1l26.7: the setting must REACH the client, proven by behaviour.
+
+    Playwright's global teardown fails the e2e run on any line in this file.
+    If the lifespan stopped passing the setting through, no miss would ever be
+    written and the teardown would pass on an empty file: the guard present in
+    config and absent in effect (the shape of tunatale-vnf.15's inert channel
+    pin). So this drives a real miss through the wired client, not an attribute.
+    """
+    import pytest
+
+    from app.config import settings
+    from app.main import lifespan
+
+    miss_log = tmp_path / "e2e-cassette-misses.log"
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setattr(settings, "llm_mode", "mock")
+    monkeypatch.setattr(settings, "llm_cassette_miss_log", miss_log)
+
+    test_app = FastAPI()
+    async with lifespan(test_app):
+        with pytest.raises(RuntimeError, match="Cassette has no entry"):
+            await test_app.state.llm.complete("a prompt no cassette will ever hold")
+
+    assert "a prompt no cassette will ever hold" in miss_log.read_text()
+
+
+def test_the_cassette_miss_log_is_off_by_default():
+    """Only the e2e webServer env turns it on; a dev server must not accumulate a miss file."""
+    from app.config import Settings
+
+    assert Settings.model_fields["llm_cassette_miss_log"].default is None
