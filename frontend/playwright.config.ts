@@ -287,7 +287,16 @@ export default defineConfig({
 			//   the RUNNER, channel inside `use`         → chromium-1234           (full)
 			// The probe is `ps -ax -o command= | grep ms-playwright` while a spec
 			// runs. Re-run it if you touch this block — an inert option here looks
-			// exactly like a working one.
+			// exactly like a working one. Re-run 2026-09-10 on the 1.63.0 bump:
+			// chromium-1243 (full) — still in effect.
+			//
+			// ⚠️ THE FULL BROWSER SEGFAULTS TOO, at the same 0x1b0 (tunatale-1l26.6,
+			// CI run 34176264474 — `chromium-1234/chrome-linux64/chrome`). So this
+			// pin is NOT the fix for that crash. The same fault offset in two
+			// executables built from one Chromium source points at shared
+			// browser-process code; the pin is kept because the rate fell from ~3-5
+			// in 60 runs to 1 in ~330 after it, not because it cured anything — and
+			// even that drop is confounded (workers: 2 landed three days later).
 			//
 			// The spread comes FIRST so a device descriptor cannot clobber it.
 			use: { ...devices['Desktop Chrome'], channel: 'chromium' }

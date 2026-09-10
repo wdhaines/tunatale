@@ -26,8 +26,12 @@ import { expect, PORTS, test } from './fixtures';
  */
 
 /**
- * No service worker for this spec — it is a confound AND the prime suspect in
- * `tunatale-vnf.15`.
+ * No service worker for this spec — it is a confound, and it WAS the prime
+ * suspect in `tunatale-vnf.15`. ⚠️ Point 2 below is history, not a live
+ * hypothesis: the SEGV has since recurred in a spec that does no cross-origin
+ * fetch (tooltip-popover, 2026-08-18) and then on the FULL browser, not
+ * `chrome-headless-shell` (transcript-overflow, 2026-09-08 — tunatale-1l26.6).
+ * Blocking the worker stays for point 1 alone.
  *
  * SvelteKit auto-registers `src/service-worker.ts`, in dev too, and it registers
  * **per origin** — so this file's two origins each get their own registration in
@@ -73,21 +77,46 @@ async function fetchFromPage(page: import('@playwright/test').Page, url: string)
 	}, url);
 }
 
+/**
+ * The endpoint both cases probe. It must be one whose answer the page could
+ * only have read if CORS let it, and whose status carries no OTHER meaning.
+ *
+ * ⚠️ It was `/api/health` until 2026-09-10, and that was a flake
+ * (tunatale-yp7b). Health returns 503 whenever one of its four dependency
+ * probes exceeds its 2 s budget — correctly, since the container healthcheck
+ * reads the status code — and a loaded gate can make a cold SQLite read that
+ * slow. The cross-origin read had still SUCCEEDED (`res.ok` true) while the
+ * spec failed on `503`: a test of the CORS seam going red on a verdict about
+ * database latency. Reproduced deterministically by pointing AUDIO_DIR at a
+ * missing directory: `Expected: 200 / Received: 503` at the status line, with
+ * the CORS assertion one line above it passing.
+ *
+ * `/api/auth/status` has neither problem. It is unauthenticated by design
+ * (it is asked before a session exists), touches no database or disk, and its
+ * body is pinned to one boolean by `test_status_leaks_nothing_beyond_the_flag`
+ * — so asserting the exact body is stable, and it is a STRONGER claim than a
+ * status code: it proves the browser handed the response body to the page,
+ * which is precisely what CORS decides.
+ */
+const PROBE_PATH = '/api/auth/status';
+
 test('CORS: an allowlisted origin may read the API cross-origin', async ({ page, backendURL }) => {
 	// The page origin must be the worker's OWN frontend port, spelled
 	// `localhost` — that spelling is what the worker's backend CORS_ORIGINS
 	// allowlists. Relative goto('/') would land here too, but keeping the
 	// absolute form makes the localhost/127.0.0.1 pairing below visible.
 	await page.goto(`http://localhost:${PORTS.frontend()}/`);
-	const res = await fetchFromPage(page, `${backendURL}/api/health`);
+	const res = await fetchFromPage(page, `${backendURL}${PROBE_PATH}`);
 	expect(res.ok, `expected the allowlisted origin to succeed, got ${res.error}`).toBe(true);
 	expect(res.status).toBe(200);
+	// AUTH_ENABLED is 'true' for every e2e backend (playwright.config.ts).
+	expect(JSON.parse(res.body ?? 'null')).toEqual({ auth_enabled: true });
 });
 
 test('CORS: an unlisted origin is refused by the browser', async ({ page, backendURL }) => {
-	// Same server, same port — only the host spelling differs, and that alone
-	// puts the page on an origin the backend does not list.
+	// Same server, same port, same path — only the host spelling differs, and
+	// that alone puts the page on an origin the backend does not list.
 	await page.goto(`http://127.0.0.1:${PORTS.frontend()}/`);
-	const res = await fetchFromPage(page, `${backendURL}/api/health`);
+	const res = await fetchFromPage(page, `${backendURL}${PROBE_PATH}`);
 	expect(res.ok, `unlisted origin read the API: ${res.status} ${res.body}`).toBe(false);
 });
