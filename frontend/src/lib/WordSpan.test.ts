@@ -272,13 +272,12 @@ describe("WordSpan", () => {
       expect(getByRole("button").className).toContain("word-unknown");
     });
 
-    it("applies inline masteryColor style for known active_state (green, on the ramp)", () => {
+    it("does not apply any inline style to the word (mastery text color removed)", () => {
       const { getByRole } = render(WordSpan, {
         props: { word: makeWordToken({ active_state: "known", progress: 1 }) },
       });
       const el = getByRole("button");
-      // KNOWN is rendered on the green end of the mastery ramp, not the old static gray.
-      expect(el.getAttribute("style")).toContain("color:");
+      expect(el.getAttribute("style")).toBeNull();
       expect(el.className).not.toContain("word-known");
     });
 
@@ -316,47 +315,6 @@ describe("WordSpan", () => {
         props: { word: makeWordToken({ active_state: "ignored", srs_item_id: null }) },
       });
       expect(getByRole("button").className).toContain("word-ignored");
-    });
-
-    it("does not apply masteryColor for ignored active_state", () => {
-      const { getByRole } = render(WordSpan, {
-        props: {
-          word: makeWordToken({ active_state: "ignored", progress: 0.5, srs_item_id: null }),
-        },
-      });
-      expect(getByRole("button").getAttribute("style")).toBe("");
-    });
-
-    it("applies inline masteryColor style for new active_state (dynamic)", () => {
-      const { getByRole } = render(WordSpan, {
-        props: { word: makeWordToken({ active_state: "new", progress: 0.5 }) },
-      });
-      const el = getByRole("button");
-      expect(el.getAttribute("style")).toContain("color:");
-    });
-
-    it("applies inline masteryColor style for learning active_state (dynamic)", () => {
-      const { getByRole } = render(WordSpan, {
-        props: { word: makeWordToken({ active_state: "learning", progress: 0.3 }) },
-      });
-      const el = getByRole("button");
-      expect(el.getAttribute("style")).toContain("color:");
-    });
-
-    it("applies inline masteryColor style for review active_state (dynamic)", () => {
-      const { getByRole } = render(WordSpan, {
-        props: { word: makeWordToken({ active_state: "review", progress: 0.8 }) },
-      });
-      const el = getByRole("button");
-      expect(el.getAttribute("style")).toContain("color:");
-    });
-
-    it("applies inline masteryColor style for relearning active_state (dynamic)", () => {
-      const { getByRole } = render(WordSpan, {
-        props: { word: makeWordToken({ active_state: "relearning", progress: 0.1 }) },
-      });
-      const el = getByRole("button");
-      expect(el.getAttribute("style")).toContain("color:");
     });
   });
 
@@ -448,19 +406,115 @@ describe("WordSpan", () => {
     expect(container.querySelector('[role="tooltip"]')).not.toBeNull();
   });
 
-  it("updates color reactively when active_state changes", async () => {
-    const { getByRole, rerender } = render(WordSpan, {
-      props: { word: makeWordToken({ active_state: "new", progress: 0 }) },
+  describe("twin rails", () => {
+    it("renders no rails for a word with no band fields", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken() },
+      });
+      expect(container.querySelector(".word-rails")).toBeNull();
     });
 
-    expect(getByRole("button").getAttribute("style")).toContain("color:");
+    it("renders no rails when bands are explicitly null (untracked word)", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ understand_band: null, produce_band: null }) },
+      });
+      expect(container.querySelector(".word-rails")).toBeNull();
+    });
+
+    it("renders an understand rail filled to the band width", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ understand_band: "weeks" }) },
+      });
+      const rails = container.querySelector(".word-rails");
+      expect(rails).not.toBeNull();
+      const fills = rails!.querySelectorAll(".rail-fill");
+      expect(fills.length).toBe(1);
+      expect(fills[0].getAttribute("style")).toContain("width: 60%;");
+      expect(fills[0].getAttribute("style")).toContain("var(--band-weeks)");
+    });
+
+    it("renders one rail per non-null direction band", () => {
+      const { container } = render(WordSpan, {
+        props: {
+          word: makeWordToken({ understand_band: "days", produce_band: "solid" }),
+        },
+      });
+      const rails = container.querySelector(".word-rails");
+      expect(rails!.querySelectorAll(".rail").length).toBe(2);
+      const fills = rails!.querySelectorAll(".rail-fill");
+      expect(fills.length).toBe(2);
+      expect(fills[1].getAttribute("style")).toContain("width: 100%;");
+      expect(fills[1].getAttribute("style")).toContain("var(--band-solid)");
+    });
+
+    it("omits the bottom rail when only the understand band is set", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ understand_band: "new" }) },
+      });
+      const rails = container.querySelector(".word-rails");
+      expect(rails!.querySelectorAll(".rail").length).toBe(1);
+    });
+
+    it("draws an empty (unfilled) track for a produce band like suspended", () => {
+      const { container } = render(WordSpan, {
+        props: {
+          word: makeWordToken({ understand_band: "learning", produce_band: "suspended" }),
+        },
+      });
+      const rails = container.querySelector(".word-rails");
+      expect(rails!.querySelectorAll(".rail").length).toBe(2);
+      expect(rails!.querySelectorAll(".rail-fill").length).toBe(1);
+    });
+
+    it('draws an empty solid track for a "new" band', () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ understand_band: "new", produce_band: "new" }) },
+      });
+      const rails = container.querySelector(".word-rails");
+      expect(rails!.querySelectorAll(".rail-fill").length).toBe(0);
+      expect(rails!.querySelector(".rail")!.className).not.toContain("rail-dashed");
+    });
+
+    it('draws a dashed empty track for the "none" (no card) band', () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ understand_band: "none" }) },
+      });
+      const rails = container.querySelector(".word-rails");
+      expect(rails!.querySelectorAll(".rail-fill").length).toBe(0);
+      expect(rails!.querySelector(".rail")!.className).toContain("rail-dashed");
+    });
+
+    it("skips rails when hideRails is true even with bands present", () => {
+      const { container } = render(WordSpan, {
+        props: {
+          word: makeWordToken({ understand_band: "days", produce_band: "days" }),
+          hideRails: true,
+        },
+      });
+      expect(container.querySelector(".word-rails")).toBeNull();
+    });
+
+    it("marks the rails container aria-hidden", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ understand_band: "learning" }) },
+      });
+      expect(container.querySelector(".word-rails")!.getAttribute("aria-hidden")).toBe("true");
+    });
+  });
+
+  it("renders rails reactively when bands change", async () => {
+    const { container, rerender } = render(WordSpan, {
+      props: { word: makeWordToken({ understand_band: "weeks" }) },
+    });
+
+    expect(container.querySelector(".word-rails")).not.toBeNull();
 
     await rerender({ word: makeWordToken({ active_state: "ignored", srs_item_id: null }) });
 
     await waitFor(() => {
-      // flips off the ramp: inline color cleared, static class applied
-      expect(getByRole("button").className).toContain("word-ignored");
-      expect(getByRole("button").getAttribute("style")).toBe("");
+      // bands gone → rails gone, static class applied
+      expect(container.querySelector(".word-rails")).toBeNull();
+      expect(container.querySelector(".word")!.className).toContain("word-ignored");
     });
   });
 

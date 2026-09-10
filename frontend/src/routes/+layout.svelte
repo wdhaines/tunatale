@@ -335,6 +335,15 @@
 
 		--font-sans: ui-rounded, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui,
 			'Helvetica Neue', sans-serif;
+
+		/* Twin-rail mastery bands (bd tunatale-yh47): one colour per strength band;
+		   --band-track is the empty rail behind every fill. */
+		--band-learning: #f76560;
+		--band-days: #cc621d;
+		--band-weeks: #946900;
+		--band-months: #5f602a;
+		--band-solid: #2c4f28;
+		--band-track: #e4e9e6;
 	}
 
 	/* Dark theme is opt-in via [data-theme='dark'] (set by the boot script /
@@ -362,6 +371,14 @@
 
 		--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.25);
 		--shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+
+		/* Twin-rail mastery bands — dark equivalents (see light block above). */
+		--band-learning: #a03f40;
+		--band-days: #bb5e1f;
+		--band-weeks: #bd8c1d;
+		--band-months: #abb77c;
+		--band-solid: #acd9a2;
+		--band-track: #2b302e;
 	}
 
 	/* ─────────────────────────  Global base  ───────────────────────── */

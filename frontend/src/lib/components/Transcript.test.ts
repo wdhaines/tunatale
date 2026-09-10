@@ -450,13 +450,12 @@ describe("Transcript", () => {
       expect(onCollocationStateChange).not.toHaveBeenCalled();
     });
 
-    it("collocation wrapper tints its background by mastery (on-ramp state)", () => {
+    it("collocation span no longer tints its background (twin rails replaced the color)", () => {
       const { container } = render(Transcript, {
         props: defaultProps({ transcript: transcriptWithCollocation }),
       });
       const span = container.querySelector(".collocation-span") as HTMLElement;
-      // 'learning' is on the ramp; with no collocation_progress it defaults to 0 → faint red.
-      expect(span.getAttribute("style")).toContain("rgba(195, 34, 34, 0.15)");
+      expect(span.getAttribute("style")).toBeNull();
       expect(span.className).not.toContain("coll-bg-ignored");
     });
 
@@ -710,8 +709,13 @@ describe("Transcript", () => {
     });
   });
 
-  describe("collocation background colors", () => {
-    function makeCollTranscript(state: string, progress: number | null = null): TranscriptData {
+  describe("collocation rails (twin-rail era)", () => {
+    function makeCollTranscript(
+      state: string,
+      opts: { progress?: number | null; uBand?: string | null; pBand?: string | null } = {},
+    ): TranscriptData {
+      const uBand = opts.uBand ?? null;
+      const pBand = opts.pBand ?? null;
       return {
         lesson_id: "l1",
         key_phrases: [],
@@ -730,7 +734,9 @@ describe("Transcript", () => {
                 collocation_srs_state: state,
                 collocation_lemma: "dober dan",
                 collocation_translation: null,
-                collocation_progress: progress,
+                collocation_progress: opts.progress ?? null,
+                collocation_understand_band: uBand,
+                collocation_produce_band: pBand,
                 card_type: null,
                 active_state: "new",
                 active_direction: null,
@@ -751,7 +757,9 @@ describe("Transcript", () => {
                 collocation_srs_state: state,
                 collocation_lemma: "dober dan",
                 collocation_translation: null,
-                collocation_progress: progress,
+                collocation_progress: opts.progress ?? null,
+                collocation_understand_band: uBand,
+                collocation_produce_band: pBand,
                 card_type: null,
                 active_state: "new",
                 active_direction: null,
@@ -767,38 +775,70 @@ describe("Transcript", () => {
       };
     }
 
-    it("on-ramp state (review) tints background by mastery progress", () => {
+    it("does not render a rail pair when bands are null (off-band span)", () => {
       const { container } = render(Transcript, {
-        props: defaultProps({ transcript: makeCollTranscript("review", 1) }),
+        props: defaultProps({ transcript: makeCollTranscript("review", { progress: 1 }) }),
       });
-      const span = container.querySelector(".collocation-span") as HTMLElement;
-      expect(span.getAttribute("style")).toContain("rgba(34, 195, 34, 0.15)");
-      expect(span.className).not.toContain("coll-bg-ignored");
+      expect(container.querySelector(".collocation-span .word-rails")).toBeNull();
     });
 
-    it("on-ramp state (known) tints background by mastery progress", () => {
+    it("renders a rail pair filled from the collocation bands", () => {
       const { container } = render(Transcript, {
-        props: defaultProps({ transcript: makeCollTranscript("known", 0.5) }),
+        props: defaultProps({
+          transcript: makeCollTranscript("review", {
+            progress: 0.5,
+            uBand: "weeks",
+            pBand: "solid",
+          }),
+        }),
       });
-      const span = container.querySelector(".collocation-span") as HTMLElement;
-      expect(span.getAttribute("style")).toContain("rgba(195, 195, 34, 0.15)");
+      const rails = container.querySelector(".collocation-span .word-rails");
+      expect(rails).not.toBeNull();
+      const fills = rails!.querySelectorAll(".rail-fill");
+      expect(fills.length).toBe(2);
+      expect(fills[0].getAttribute("style")).toContain("width: 60%;");
+      expect(fills[0].getAttribute("style")).toContain("var(--band-weeks)");
+      expect(fills[1].getAttribute("style")).toContain("width: 100%;");
+      expect(fills[1].getAttribute("style")).toContain("var(--band-solid)");
     });
 
-    it("on-ramp state (relearning) tints background by mastery progress", () => {
+    it("renders a single (understand) rail when the produce band is null", () => {
       const { container } = render(Transcript, {
-        props: defaultProps({ transcript: makeCollTranscript("relearning", 0) }),
+        props: defaultProps({ transcript: makeCollTranscript("review", { uBand: "days" }) }),
       });
-      const span = container.querySelector(".collocation-span") as HTMLElement;
-      expect(span.getAttribute("style")).toContain("rgba(195, 34, 34, 0.15)");
+      const rails = container.querySelector(".collocation-span .word-rails");
+      expect(rails!.querySelectorAll(".rail").length).toBe(1);
     });
 
-    it("suspended state stays off the ramp → coll-bg-ignored, no inline tint", () => {
+    it("draws an empty unfilled track for a suspended produce band", () => {
       const { container } = render(Transcript, {
-        props: defaultProps({ transcript: makeCollTranscript("suspended", 0.9) }),
+        props: defaultProps({
+          transcript: makeCollTranscript("review", { uBand: "learning", pBand: "suspended" }),
+        }),
+      });
+      const rails = container.querySelector(".collocation-span .word-rails");
+      expect(rails!.querySelectorAll(".rail").length).toBe(2);
+      expect(rails!.querySelectorAll(".rail-fill").length).toBe(1);
+    });
+
+    it('draws a dashed empty rail for the "none" (no card) band', () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: makeCollTranscript("review", { uBand: "none" }) }),
+      });
+      const rails = container.querySelector(".collocation-span .word-rails");
+      expect(rails!.querySelectorAll(".rail-fill").length).toBe(0);
+      expect(rails!.querySelector(".rail")!.className).toContain("rail-dashed");
+    });
+
+    it("suspended state stays off the ramp → coll-bg-ignored class, no inline style", () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({
+          transcript: makeCollTranscript("suspended", { progress: 0.9, uBand: "days" }),
+        }),
       });
       const span = container.querySelector(".collocation-span") as HTMLElement;
       expect(span.className).toContain("coll-bg-ignored");
-      expect(span.getAttribute("style") ?? "").not.toContain("hsla");
+      expect(span.getAttribute("style")).toBeNull();
     });
 
     it("ignored state stays off the ramp → coll-bg-ignored", () => {
@@ -808,13 +848,13 @@ describe("Transcript", () => {
       expect(container.querySelector(".collocation-span")!.className).toContain("coll-bg-ignored");
     });
 
-    it("unrecognized non-suspended state is treated as on-ramp (tinted, not gray)", () => {
+    it("suppresses inner-word rails inside the collocation (one span-level pair instead)", () => {
       const { container } = render(Transcript, {
-        props: defaultProps({ transcript: makeCollTranscript("exotic", 0) }),
+        props: defaultProps({
+          transcript: makeCollTranscript("review", { uBand: "months", pBand: "months" }),
+        }),
       });
-      const span = container.querySelector(".collocation-span") as HTMLElement;
-      expect(span.className).not.toContain("coll-bg-ignored");
-      expect(span.getAttribute("style")).toContain("background-color");
+      expect(container.querySelectorAll(".word-rails").length).toBe(1);
     });
   });
 
@@ -3069,10 +3109,15 @@ describe("Transcript", () => {
       const { container } = render(Transcript, {
         props: defaultProps({ transcript: transcriptCollocationInnerWords }),
       });
-      const span = container.querySelector(".collocation-span");
-      expect(span).not.toBeNull();
-      expect(span!.querySelectorAll(".word").length).toBe(2);
-      expect(elementsSpaceSeparated(span!)).toBe(true);
+      const words = container.querySelector(".collocation-words");
+      expect(words).not.toBeNull();
+      // The wrapper holds the space-separated word run; the span-level rail pair
+      // sits beside it as a SIBLING, so the whole span is no longer the space
+      // separator's home.
+      expect(container.querySelector(".collocation-span")!.querySelectorAll(".word").length).toBe(
+        2,
+      );
+      expect(elementsSpaceSeparated(words!)).toBe(true);
     });
   });
 });

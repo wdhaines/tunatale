@@ -2,7 +2,7 @@
 	import type { WordToken } from './api';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import type { TooltipActions } from '$lib/components/Tooltip.svelte';
-	import { masteryColor } from '$lib/mastery';
+	import { railStyle } from '$lib/masteryBands';
 
 	interface Props {
 		word: WordToken;
@@ -15,6 +15,7 @@
 		sentence?: string;
 		tooltipActions?: TooltipActions;
 		showGloss?: boolean;
+		hideRails?: boolean;
 	}
 
 	let {
@@ -27,7 +28,8 @@
 		selected = false,
 		sentence,
 		tooltipActions,
-		showGloss = false
+		showGloss = false,
+		hideRails = false
 	}: Props = $props();
 
 	function fire() {
@@ -47,13 +49,10 @@
 		fire();
 	}
 
-	// KNOWN renders on the green end of the mastery ramp (its progress is ~1.0),
-	// NOT as a static gray — only unknown/suspended/ignored stay off the ramp.
-	const dynamicStyle = $derived(
-		word.active_state !== 'unknown' && word.active_state !== 'suspended' && word.active_state !== 'ignored'
-			? `color: ${masteryColor(word.progress ?? 0)};`
-			: ''
-	);
+	// Twin rails (bd tunatale-yh47): per-direction bands decode into fill
+	// geometry (or null — no rail rendered — for untracked words).
+	const railUnderstand = $derived(railStyle(word.understand_band ?? null));
+	const railProduce = $derived(railStyle(word.produce_band ?? null));
 
 	const colorClass = $derived(
 		word.active_state === 'unknown'
@@ -159,13 +158,28 @@
 			class="word {colorClass}"
 			class:word-selected={selected}
 			class:word-due={word.is_due}
-			style={dynamicStyle}
 			role="button"
 			tabindex="0"
 			data-line-index={lineIndex}
 			data-word-index={wordIndex}
 			onkeydown={handleKeydown}
 		><span class="punct">{word.prefix_punct ?? ''}</span>{word.surface}<span class="punct">{word.suffix_punct ?? ''}</span></span>
+		{#if !hideRails && word.understand_band != null}
+			<span class="word-rails" aria-hidden="true">
+				<span class="rail {railUnderstand.dashed ? 'rail-dashed' : ''}">
+					{#if railUnderstand.fillStyle}
+						<span class="rail-fill" style={railUnderstand.fillStyle}></span>
+					{/if}
+				</span>
+				{#if word.produce_band != null}
+					<span class="rail {railProduce.dashed ? 'rail-dashed' : ''}">
+						{#if railProduce.fillStyle}
+							<span class="rail-fill" style={railProduce.fillStyle}></span>
+						{/if}
+					</span>
+				{/if}
+			</span>
+		{/if}
 		{#if showGloss && word.translation}
 			<span class="word-gloss">{word.translation}</span>
 		{/if}
@@ -184,6 +198,11 @@
 		padding: 0 1px;
 		margin: 0 -1px;
 		transition: background-color 0.1s;
+		/* Column flex: `align-self: flex-start` keeps the word at its own
+		   content width rather than stretching to the wrapper; the rails below
+		   stretch instead. Without it the word's box would be the wrapper
+		   width and its content crushed between the 1px paddings. */
+		align-self: flex-start;
 	}
 	.word:hover {
 		opacity: 0.8;
@@ -204,24 +223,77 @@
 		background-color: rgba(99, 102, 241, 0.2);
 	}
 	.word-wrapper {
+		/* Column flex, but `align-items: center` (the old default here) was
+		   exactly what killed the rails in the first pass (bd tunatale-yh47):
+		   a centered flex item sizes to its own content, and `.word-rails` has
+		   none — measured 0px-wide rails in transcript-rails.spec.ts. Stretch
+		   lets the rails fill the wrapper (which shrink-to-fits to the word's
+		   outer width, the widest child). The word itself opts out with
+		   align-self: flex-start so it keeps its own width; the negative-margin
+		   hover box and one-space glyph rhythm are untouched — only the rails
+		   below change. */
 		display: inline-flex;
 		flex-direction: column;
-		align-items: center;
+		align-items: stretch;
 		vertical-align: top;
 	}
-	.word-wrapper-gloss {
-		margin-bottom: 1.1rem;
-	}
 	.word-gloss {
+		align-self: center;
 		font-size: 0.7rem;
 		color: var(--color-muted, #6b7280);
 		line-height: 1.1;
 		white-space: nowrap;
 	}
+	.word-wrapper-gloss {
+		margin-bottom: 1.1rem;
+	}
 	.punct {
-		/* Neutral foreground so punctuation stays uncolored even when the word
-		   carries a mastery-ramp color — and legible in dark mode (was #000). */
+		/* Neutral foreground so punctuation stays uncolored — even when the
+		   word would have carried a mastery-ramp color — and legible in dark
+		   mode (was #000). */
 		color: var(--color-text);
 		font-weight: normal;
+	}
+	/* Twin rails (bd tunatale-yh47). `.word-rails` stretches to the word's
+	   own width (stretched by the wrapper, whose width IS the word's box — the
+	   only other child, the optional gloss, is center-aligned on top of it).
+	   The bottom margin is the clearance that keeps a rail off the NEXT wrapped
+	   row's text: without it the rail's bottom edge lands exactly on the next
+	   row's word top (measured gap 0.0px across every rail, transcript-rails
+	   e2e). Flex grows the word box with line-height, so `.dialogue-words`
+	   line-height alone can never buy this space — the rail owns it. */
+	.word-rails {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		margin-top: 2px;
+		margin-bottom: 6px;
+	}
+	.rail {
+		display: block;
+		width: 100%;
+		height: 4px;
+		border-radius: 1px;
+		background-color: var(--band-track, #e4e9e6);
+		overflow: hidden;
+	}
+	.rail-fill {
+		display: block;
+		height: 100%;
+	}
+	.rail-dashed {
+		/* "No card" must read differently from "not started" (an empty track):
+		   clear the track colour, and draw thinner dashes in the muted ink.
+		   Dashes in the track colour over a track-coloured background painted a
+		   solid track — the two states were indistinguishable. */
+		height: 2px;
+		margin-block: 1px;
+		background-color: transparent;
+		background-image: repeating-linear-gradient(
+			90deg,
+			var(--color-muted, #6b7280) 0 3px,
+			transparent 3px 6px
+		);
+		opacity: 0.7;
 	}
 </style>

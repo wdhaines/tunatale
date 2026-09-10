@@ -6,7 +6,8 @@
 	import type { ReadableLesson, TranscriptData, WordToken } from '$lib/api';
 	import { buildScenes, fallbackScenes, cueHighlight } from '$lib/transcriptScenes';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
-	import { masteryBackgroundColor, masteryColor } from '$lib/mastery';
+	import { masteryColor } from '$lib/mastery';
+	import { railStyle } from '$lib/masteryBands';
 
 	interface CreatePhraseArgs {
 		text: string;
@@ -297,9 +298,10 @@
 		showAddPhrase = false;
 	}
 
-	// A collocation's background tint tracks its mastery on the same red→green ramp
-	// as single words (its `collocation_progress`), EXCEPT suspended/ignored, which
-	// stay off the ramp (gray + strikethrough) — mirroring WordSpan's color logic.
+	/* A collocation used to tint its background on the mastery ramp; since the
+	twin rails (bd tunatale-yh47) the strength is carried by the span-level rail
+	pair below instead. suspended/ignored keep the off-ramp gray + strikethrough,
+	mirroring WordSpan's color logic. */
 	function collocationOffRamp(state: string | null): boolean {
 		return state === 'suspended' || state === 'ignored';
 	}
@@ -569,29 +571,47 @@
 											<span
 												class="collocation-span"
 												class:coll-bg-ignored={collOffRamp}
-												style={collOffRamp
-													? ''
-													: `background-color: ${masteryBackgroundColor(segment.words[0].collocation_progress ?? 0)};`}
 												role="button"
 												tabindex="0"
 												data-span-id={segment.span_id}
 												onkeydown={(e) => handleCollocationKeydown(e, segment)}
 											>
-												{#each segment.words as cw, innerIdx (innerIdx)}
-													{@const wIdx = wordIndexInLine(segments, segIdx, innerIdx)}
-													{#if innerIdx > 0}{@html ' '}{/if}
-													<WordSpan
-														word={cw}
-														onWordClick={onWordClick}
-														requireModifier={true}
-														altHover={drilledIn}
-														lineIndex={lineIndex}
-														wordIndex={wIdx}
-														selected={wordIsSelected(lineIndex, wIdx)}
-														sentence={lineSentence}
-														tooltipActions={tooltipActions}
-													/>
-												{/each}
+												<span class="collocation-words">
+													{#each segment.words as cw, innerIdx (innerIdx)}
+														{@const wIdx = wordIndexInLine(segments, segIdx, innerIdx)}
+														{#if innerIdx > 0}{@html ' '}{/if}
+														<WordSpan
+															word={cw}
+															onWordClick={onWordClick}
+															requireModifier={true}
+															altHover={drilledIn}
+															lineIndex={lineIndex}
+															wordIndex={wIdx}
+															selected={wordIsSelected(lineIndex, wIdx)}
+															sentence={lineSentence}
+															tooltipActions={tooltipActions}
+															hideRails={true}
+														/>
+													{/each}
+												</span>
+												{#if segment.words[0].collocation_understand_band != null}
+													{@const collRailU = railStyle(segment.words[0].collocation_understand_band ?? null)}
+													{@const collRailP = railStyle(segment.words[0].collocation_produce_band ?? null)}
+													<span class="word-rails" aria-hidden="true">
+														<span class="rail {collRailU.dashed ? 'rail-dashed' : ''}">
+															{#if collRailU.fillStyle}
+																<span class="rail-fill" style={collRailU.fillStyle}></span>
+															{/if}
+														</span>
+														{#if segment.words[0].collocation_produce_band != null}
+															<span class="rail {collRailP.dashed ? 'rail-dashed' : ''}">
+																{#if collRailP.fillStyle}
+																	<span class="rail-fill" style={collRailP.fillStyle}></span>
+																{/if}
+															</span>
+														{/if}
+													</span>
+												{/if}
 											</span>
 										</Tooltip>
 									{:else}
@@ -973,7 +993,13 @@
 	}
 	.dialogue-words {
 		display: block;
-		line-height: 1.6;
+		/* Raised from 1.6 when the twin rails arrived (bd tunatale-yh47): the
+		   extra leading gives a rail a cleaner visual slot under its word.
+		   NOTE it does NOT keep a rail off the next wrapped row's text — flex
+		   grows the word box with the line-height, so the leading is consumed
+		   by the word itself; that clearance comes from `.word-rails`' bottom
+		   margin (see component sibling rules), which the rails spec measures. */
+		line-height: 1.8;
 		user-select: text;
 	}
 	/* Interlinear L1 reads as a deliberate pair under the L2 line: indented and
@@ -986,12 +1012,20 @@
 		font-size: 0.9rem;
 	}
 	.collocation-span {
-		display: inline;
-		border-bottom: 2px solid var(--color-primary, #2563eb);
-		padding-bottom: 1px;
+		/* Column flex so the word run and its rail pair stack, with the words on
+		   top; inline-flex keeps the phrase inline-level (shrink-to-fit width),
+		   `vertical-align: top` matches the per-word wrappers' alignment. */
+		display: inline-flex;
+		flex-direction: column;
+		vertical-align: top;
 		cursor: pointer;
 		border-radius: 2px;
 		transition: background-color 0.1s;
+	}
+	/* The inner words flow inline (blockified by the flex layout) and wrap like
+	   normal text; the rail pair below stretches to the phrase's width. */
+	.collocation-words {
+		display: inline;
 	}
 	.collocation-span:hover {
 		filter: brightness(0.95);
@@ -1003,6 +1037,45 @@
 	.coll-bg-ignored {
 		background-color: rgba(156, 163, 175, 0.15);
 		text-decoration: line-through;
+	}
+	/* Twin rails — same classes WordSpan uses, re-declared because Svelte scoping
+	   gives each component its own hashed selectors. WordSpan's `.word-rails` is
+	   per-word; here it is the single pair under a collocation phrase. The bottom
+	   margin clears the row below the phrase exactly as the per-word rails do
+	   (flex grows the word box with line-height, so only this margin buys space). */
+	.word-rails {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		margin-top: 2px;
+		margin-bottom: 6px;
+	}
+	.rail {
+		display: block;
+		width: 100%;
+		height: 4px;
+		border-radius: 1px;
+		background-color: var(--band-track, #e4e9e6);
+		overflow: hidden;
+	}
+	.rail-fill {
+		display: block;
+		height: 100%;
+	}
+	.rail-dashed {
+		/* "No card" must read differently from "not started" (an empty track):
+		   clear the track colour, and draw thinner dashes in the muted ink.
+		   Dashes in the track colour over a track-coloured background painted a
+		   solid track — the two states were indistinguishable. */
+		height: 2px;
+		margin-block: 1px;
+		background-color: transparent;
+		background-image: repeating-linear-gradient(
+			90deg,
+			var(--color-muted, #6b7280) 0 3px,
+			transparent 3px 6px
+		);
+		opacity: 0.7;
 	}
 	.phrase-confirm-bar {
 		display: flex;
