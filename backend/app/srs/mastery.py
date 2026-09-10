@@ -10,9 +10,9 @@ what the transcript color ramp should track.
 
 from __future__ import annotations
 
-import datetime
 import math
 from collections.abc import Iterable
+from typing import Literal
 
 from app.models.srs_item import Direction, DirectionState, SRSState
 
@@ -26,6 +26,54 @@ MASTERY_STABILITY_CEILING_DAYS = 120.0
 # In-steps (learning/relearning) cards sit at a fixed low floor: they are being
 # acquired, not yet on the stability ramp.
 _LEARNING_FLOOR = 0.15
+
+# Each side of a word (recognition, production) is shown as a BAND named by how
+# long its memory holds, not as a percentage (bd tunatale-yh47, 2026-09-10).
+# Lower edges are inclusive: stability 7.0 is "weeks", 30.0 is "months".
+BAND_WEEKS_FROM_DAYS = 7.0
+BAND_MONTHS_FROM_DAYS = 30.0
+# The top band ("half a year +") and "well known" are ONE threshold on
+# stability. It replaced a due-date rule (next review > 365 days out): a due date
+# depends on the deck's desired retention and moves when reviews are
+# rescheduled, so the same memory read differently from deck to deck.
+WELL_KNOWN_STABILITY_DAYS = 180.0
+
+MasteryBand = Literal["none", "new", "learning", "days", "weeks", "months", "solid", "suspended"]
+
+
+def _strength_stability(ds: DirectionState) -> float | None:
+    """The stability a band is read from, or None when the state has no strength.
+
+    A REVIEW card carries it; so does a BURIED card that has been reviewed —
+    burying hides a card for the day and does not weaken the memory. A buried
+    card with no reps was buried while still new.
+    """
+    if ds.state == SRSState.REVIEW or (ds.state == SRSState.BURIED and ds.reps > 0):
+        return ds.stability
+    return None
+
+
+def direction_band(ds: DirectionState | None) -> MasteryBand:
+    """The band one side of a word sits in. ``None`` (no card) reads ``"none"``,
+    which is distinct from ``"new"`` (a card that has never been studied)."""
+    if ds is None:
+        return "none"
+    if ds.state == SRSState.SUSPENDED:
+        return "suspended"
+    if ds.state == SRSState.KNOWN:
+        return "solid"
+    if ds.state in (SRSState.LEARNING, SRSState.RELEARNING):
+        return "learning"
+    stability = _strength_stability(ds)
+    if stability is None:
+        return "new"
+    if stability < BAND_WEEKS_FROM_DAYS:
+        return "days"
+    if stability < BAND_MONTHS_FROM_DAYS:
+        return "weeks"
+    if stability < WELL_KNOWN_STABILITY_DAYS:
+        return "months"
+    return "solid"
 
 
 def component_mastery(ds: DirectionState) -> float:
@@ -75,42 +123,17 @@ def compute_mastery_progress(directions: Iterable[DirectionState]) -> float | No
     return sum(ms) / len(ms) if ms else None
 
 
-def is_due_beyond_horizon(due_at: datetime.datetime | str, today: datetime.date, horizon: int) -> bool:
-    """True when a card's due date is more than *horizon* days past *today*.
+def is_well_known(rec: DirectionState | None) -> bool:
+    """True when a direction's memory holds for :data:`WELL_KNOWN_STABILITY_DAYS`.
 
-    ``due_at`` is datetime-or-string depending on load path — the same idiom
-    ``_listen_grade_class`` uses. ``today`` is always ``anki_today()``, i.e. a
-    ``date`` (the Anki day, not ``date.today()``); an unparseable ``due_at`` is
-    not beyond the horizon.
+    Exactly the top band: ``direction_band(rec) == "solid"``. The listen preview
+    stops asking about such a word (only while it is not yet due — the caller's
+    ``"ahead"`` guard) and the transcript renders it as known; both read this ONE
+    predicate, so the display and the preview cannot disagree about a word.
 
-    Lives here rather than in ``api/srs.py`` (where it started) so the listen
-    preview and the transcript can share ONE definition of the cutoff — the
-    display saying "review" while the preview says "well known" is exactly the
-    divergence this move exists to make impossible.
+    LEARNING/RELEARNING are never well known, whatever stability they carry:
+    suppressing a card being acquired would hide work the user owes. Marked-known
+    cards are well known whether they arrive as ``SRSState.KNOWN`` or, after a
+    sync, as REVIEW with a very large stability.
     """
-    if isinstance(due_at, datetime.datetime):
-        due_date = due_at.date()
-    else:
-        try:
-            due_date = datetime.date.fromisoformat(str(due_at)[:10])
-        except ValueError:
-            return False
-    return (due_date - today).days > horizon
-
-
-def is_well_known(rec: DirectionState | None, today: datetime.date, horizon: int) -> bool:
-    """True when a recognition direction is scheduled past the horizon.
-
-    "Well known" = REVIEW state with a real due date more than *horizon* days
-    out. LEARNING/RELEARNING are never well-known however far the due date
-    drifts (suppressing a card being acquired would hide work the user owes),
-    and a NULL ``due_at`` is not well-known either — a card whose schedule is
-    unknown stays visible.
-
-    Marked-known cards land here after a sync returns them as REVIEW due
-    ~2126, which is how the far-future rule covers them without depending on
-    ``SRSState.KNOWN`` surviving the round trip.
-    """
-    if rec is None or rec.state != SRSState.REVIEW or rec.due_at is None:
-        return False
-    return is_due_beyond_horizon(rec.due_at, today, horizon)
+    return direction_band(rec) == "solid"

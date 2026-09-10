@@ -405,8 +405,8 @@ class TestTranscriptEndpoint:
 
     async def test_transcript_includes_well_known(self):
         """Payload must carry well_known, or the dialogue and the mastery line
-        cannot show a past-the-horizon word as known — the flag would stay
-        trapped in the listen-preview response where it started."""
+        cannot show a well-known word as known — the flag would stay trapped in
+        the listen-preview response where it started."""
         from datetime import UTC, datetime
 
         from app.models.srs_item import Direction, SRSState
@@ -432,8 +432,10 @@ class TestTranscriptEndpoint:
         item = db.get_collocation("banka")
         rec = item.directions[Direction.RECOGNITION]
         rec.state = SRSState.REVIEW
-        # Years out — the shape a marked-known card comes back from a sync with.
+        # The shape a marked-known card comes back from a sync with: REVIEW,
+        # due decades out, a huge stability. Stability is what makes it known.
         rec.due_at = datetime(2099, 1, 1, 4, 0, tzinfo=UTC)
+        rec.stability = 79250.0
         db.update_direction(item.guid, Direction.RECOGNITION, rec)
 
         store = ContentStore(":memory:")

@@ -7,7 +7,6 @@ from datetime import date
 
 from app.cards.cloze_source import parse_inflection_forms
 from app.cards.field_map import inflection_labels
-from app.config import settings
 from app.languages import card_surface_variants, get_variant_separator
 from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
@@ -345,11 +344,6 @@ def extract_transcript(
         # is_due bolding divergence).
         today = anki_today()
 
-    # Read live, not passed in: the transcript's "known" rendering and the
-    # listen preview's suppression must key off the SAME configured cutoff, and
-    # a parameter would let a caller (or a stale default) set a second one.
-    horizon_days = settings.listen_due_horizon_days
-
     natural_speed = next(
         (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
         None,
@@ -535,7 +529,11 @@ def extract_transcript(
                     recognition_reviewable_flag = rec_ds is not None and _is_read_reviewable(rec_ds)
                     recognition_state_val = rec_ds.state.value if rec_ds is not None else None
                     recognition_is_due_flag = _is_due(rec_ds, today) if rec_ds is not None else False
-                    well_known_flag = is_well_known(rec_ds, today, horizon_days)
+                    # A due card is never "known", however strong: the preview
+                    # applies the same guard (it defers only "ahead" cards), and
+                    # the mastery line's due bucket relies on the two being
+                    # exclusive, which the old due-date rule guaranteed for free.
+                    well_known_flag = is_well_known(rec_ds) and not recognition_is_due_flag
                     valid_components = [c for c in components if c is not None]
                     progress_val = compute_mastery_progress(valid_components)
 
