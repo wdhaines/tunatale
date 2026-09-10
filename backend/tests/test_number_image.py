@@ -68,6 +68,33 @@ class TestNumberValue:
         assert _config("no")["values"]["en"] == 1
         assert number_value("en", "no") is None
 
+    @pytest.mark.parametrize(("word", "value"), [("sju", 7), ("tjue", 20), ("tretti", 30)])
+    def test_the_produced_half_of_a_doublet_is_the_one_that_draws(self, word, value) -> None:
+        """Norwegian carries two words for 7, 20 and 30; the deck has both of some.
+
+        Which one draws is a learning decision, not a data-cleanliness one. The
+        user chose the radical forms on 2026-09-09: `sju`, `tjue`, `tretti` are
+        the ones to produce, so they are the ones that get a counting picture.
+
+        Found because `sju` was carrying a Pixabay PHOTO (`img_seven_*.jpg`,
+        cid 3174). It was absent from `values` — deliberately, to satisfy the
+        injectivity invariant below — so `number_value` returned None and the
+        word fell straight through to the photo route the picture exists to
+        replace. The invariant was never the problem; the doublet had simply
+        been arbitrated in favour of `syv`.
+        """
+        assert number_value(word, "no") == value
+
+    def test_the_recognition_only_half_of_a_doublet_is_excluded_not_deleted(self) -> None:
+        """`syv` is recognition-only: it keeps its value and loses its picture.
+
+        Excluded rather than dropped, so the file still records that the deck
+        carries it and knows what it means — the same shape as `en`/`ene`, and
+        what keeps `values` injective AFTER exclusion.
+        """
+        assert number_value("syv", "no") is None
+        assert _config("no")["values"]["syv"] == 7
+
     def test_zero_is_refused(self) -> None:
         """An empty frame is indistinguishable from a render that failed."""
         assert _config("no")["values"]["null"] == 0
@@ -91,8 +118,13 @@ class TestVocabularyFiles:
 
         Two surfaces sharing a quantity would share one rendered file, which is
         the duplicate-image ambiguity the pre-stage's digest guard exists to
-        prevent — reached by a different road. `sju` is absent from Norwegian for
-        exactly this reason.
+        prevent — reached by a different road.
+
+        This used to add "which is why `sju` is absent from Norwegian". It is no
+        longer absent, and that reading of the invariant was the bug: an omitted
+        word is not a neutral one, it is a word routed to a Pixabay photo. The
+        rule constrains what may RENDER, and `exclude` is how a doublet's
+        unproduced half satisfies it without leaving the file.
 
         The requirement is on what SURVIVES `exclude`, not on the raw map: an
         excluded word never renders, so it cannot collide with anything. That is
