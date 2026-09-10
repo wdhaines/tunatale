@@ -48,6 +48,10 @@
 	// nothing due there is genuinely nothing to review today, and styling that as
 	// an error trains the learner to read a working feature as broken.
 	let nothingDue = $state('');
+	// Warnings the auto-generate route returns in its 201 body (unmapped speaker
+	// voice, no hover glosses, …). Same shape and presentation as the paste
+	// paths' importWarnings — this used to be dropped at the call site.
+	let sessionWarnings: string[] = $state([]);
 
 	// C3: raw day-lists fetched once per curriculum; progress is derived from
 	// listenedStore so it reacts to late hydration / in-session markListened.
@@ -187,8 +191,10 @@
 		creatingSession = true;
 		sessionError = '';
 		nothingDue = '';
+		sessionWarnings = [];
 		try {
 			const created = await api.createReviewSession();
+			sessionWarnings = created.warnings;
 			sessions = [
 				{
 					id: created.id,
@@ -382,6 +388,13 @@
 		{#if sessionError}
 			<p class="error" role="alert">{sessionError}</p>
 		{/if}
+		{#if sessionWarnings.length > 0}
+			<ul class="warnings">
+			{#each sessionWarnings as w (w)}
+				<li>{w}</li>
+			{/each}
+			</ul>
+		{/if}
 
 		{#if sessions.length === 0}
 			<p class="muted small">No review sessions yet.</p>
@@ -450,6 +463,15 @@
 	}
 	.rs-nothing-due {
 		margin: 0 0 0.75rem;
+	}
+	.warnings {
+		margin: 0 0 0.75rem;
+		padding: 0 0 0 1.25rem;
+		font-size: 0.82rem;
+		color: var(--color-warning, #b8860b);
+	}
+	.warnings li {
+		margin: 0.15rem 0;
 	}
 
 	main {
