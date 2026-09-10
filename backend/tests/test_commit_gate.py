@@ -274,3 +274,66 @@ class TestSentinelSurvivesAWorktree:
         plain = tmp_path / "not-a-repo"
         plain.mkdir()
         assert Path(hook.sentinel_path(str(plain))) == plain / ".git" / "tt-test-pass"
+
+
+class TestTreeIdNamesTheTreeARunTested:
+    """``tree_id`` is column 7 of ``.git/tt-test-history.log`` (2026-09-10).
+
+    The history kept timestamp, step, exit code, elapsed and load, but not WHICH
+    TREE a run tested. So a red followed by a green could be a flake or a fix
+    and nothing on disk said which. 29 of 131 local runs had test-only failures
+    that could not be classified. With the tree recorded, "same tree, red then
+    green" is a query. Before, it was a guess.
+    """
+
+    def test_an_unchanged_tree_keeps_its_id(self, repo_with_worktree: tuple[Path, Path, Path]) -> None:
+        root, _, _ = repo_with_worktree
+        hook = _load_hook()
+        assert hook.tree_id(str(root)) == hook.tree_id(str(root))
+
+    def test_an_edit_changes_the_id(self, repo_with_worktree: tuple[Path, Path, Path]) -> None:
+        root, _, _ = repo_with_worktree
+        hook = _load_hook()
+        before = hook.tree_id(str(root))
+        (root / "seed.txt").write_text("edited\n")
+        assert hook.tree_id(str(root)) != before
+
+    def test_two_clean_trees_at_different_commits_differ(self, repo_with_worktree: tuple[Path, Path, Path]) -> None:
+        """Why HEAD is in the id: ``tree_fingerprint`` hashes only what differs FROM
+        HEAD, so every clean checkout fingerprints identically. Alone it would call
+        a red at one commit and a green at the next "the same tree"."""
+        root, _, _ = repo_with_worktree
+        hook = _load_hook()
+        before = hook.tree_id(str(root))
+        (root / "seed.txt").write_text("second\n")
+        subprocess.run(["git", "commit", "-qam", "second"], cwd=root, check=True, timeout=60, capture_output=True)
+        assert hook.tree_fingerprint(str(root)) == hook.tree_fingerprint(str(root))  # clean again
+        assert hook.tree_id(str(root)) != before
+
+    def test_the_id_leads_with_the_commit_a_reader_can_look_up(
+        self, repo_with_worktree: tuple[Path, Path, Path]
+    ) -> None:
+        root, _, _ = repo_with_worktree
+        hook = _load_hook()
+        head = subprocess.run(
+            ["git", "rev-parse", "--short=10", "HEAD"], cwd=root, capture_output=True, text=True, check=True, timeout=60
+        ).stdout.strip()
+        assert hook.tree_id(str(root)).startswith(head + "+")
+
+    def test_the_cli_prints_it_and_exits_0(self) -> None:
+        """test.sh calls this once per run; it must print one token and never fail the gate."""
+        proc = subprocess.run(
+            [sys.executable, str(_HOOK), "--print-tree-id"], capture_output=True, text=True, timeout=60
+        )
+        assert proc.returncode == 0
+        out = proc.stdout.strip()
+        assert out and "\t" not in out and "\n" not in out  # one TSV-safe column
+        assert out == _load_hook().tree_id(str(_REPO_ROOT))
+
+    def test_outside_a_repo_it_still_returns_a_token(self, tmp_path: Path) -> None:
+        """A history line with an unknown tree beats a history line that was never written."""
+        hook = _load_hook()
+        plain = tmp_path / "not-a-repo"
+        plain.mkdir()
+        tid = hook.tree_id(str(plain))
+        assert tid.startswith("nohead+")

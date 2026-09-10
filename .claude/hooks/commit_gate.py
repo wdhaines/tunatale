@@ -11,6 +11,9 @@ Modes:
   --record    Write the current tree fingerprint to <git-dir>/tt-test-pass
               (per-worktree; see sentinel_path).
               Called by test.sh after the full suite passes.
+  --print-tree-id
+              Print tree_id() — HEAD plus the fingerprint — and exit 0. test.sh
+              stamps it on every line of .git/tt-test-history.log (column 7).
   (default)   PreToolUse hook: reads the tool-call JSON on stdin, prints an
               "ask" decision when the fingerprint is missing or stale, exits
               0 silently otherwise (allow).
@@ -207,7 +210,24 @@ def tree_fingerprint(root):
     return h.hexdigest()
 
 
+def tree_id(root):
+    """One TSV-safe token naming the exact tree a ./test.sh run tested.
+
+    ``<HEAD short sha>+<fingerprint[:12]>``. HEAD is needed because
+    ``tree_fingerprint`` hashes only what differs FROM HEAD, so every clean
+    checkout fingerprints identically. Column 7 of .git/tt-test-history.log:
+    "same tree, red then green" is what separates a flake from a fix, and
+    nothing on disk recorded the tree before 2026-09-10.
+    """
+    probe = _git(["rev-parse", "--short=10", "HEAD"], root)
+    head = probe.stdout.decode().strip() if probe.returncode == 0 else ""
+    return f"{head or 'nohead'}+{tree_fingerprint(root)[:12]}"
+
+
 def main():
+    if "--print-tree-id" in sys.argv:
+        print(tree_id(REPO_ROOT))
+        return 0
     if "--record" in sys.argv:
         with open(sentinel_path(REPO_ROOT), "w") as fh:
             fh.write(tree_fingerprint(REPO_ROOT) + "\n")

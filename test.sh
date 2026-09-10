@@ -86,9 +86,20 @@ full_log="$ROOT/.git/tt-test-last.log"
 # starts flaking the data is already there instead of needing another campaign.
 tt_test_history="$ROOT/.git/tt-test-history.log"
 
+# Column 7: WHICH TREE this run tested (commit_gate.py::tree_id, HEAD plus the
+# dirty-tree fingerprint). Computed ONCE, before any step, so every line of one
+# run carries the same id even if files change mid-run. Without it a red then a
+# green reads the same whether the code changed in between (a fix) or not (a
+# flake): 29 of 131 runs through 2026-09-10 had test-only failures nobody could
+# classify. Same-tree flakes, any step:
+#   awk -F'\t' 'NF>=7{k=$7 FS $3; if($4=="0")p[k]=1; else f[k]=1} END{for(k in f) if(k in p) print k}' .git/tt-test-history.log
+# "?" rather than aborting: a history line with an unknown tree beats none.
+tt_tree_id=$(python3 "$ROOT/.claude/hooks/commit_gate.py" --print-tree-id 2>/dev/null) || tt_tree_id="?"
+
 # Wraps one check with a banner (replacing the old bare `echo "=== X ==="`) plus
-# a history line: timestamp, group, step name, exit code, elapsed seconds, and
-# 1-min load average. `"$@" && rc=0 || rc=$?` is the standard way to capture a
+# a history line: timestamp, group, step name, exit code, elapsed seconds,
+# 1-min load average, and the tree id above. `"$@" && rc=0 || rc=$?` is the
+# standard way to capture a
 # failing command's status under `set -e` without tripping errexit on the spot
 # — a bare `"$@"; rc=$?` would abort at the failing command before the second
 # line ever ran. `return "$rc"` then re-raises it, so a failed step still aborts
@@ -105,8 +116,8 @@ log_step() {
   "$@" && rc=0 || rc=$?
   elapsed=$(awk -v a="$t0" -v b="$EPOCHREALTIME" 'BEGIN { printf "%.1f", b - a }')
   load=$(uptime | sed -E 's/.*load averages?: *//' | awk '{print $1}' | tr -d ',')
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$group" "$name" "$rc" "$elapsed" "${load:-?}" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$group" "$name" "$rc" "$elapsed" "${load:-?}" "${tt_tree_id:-?}" \
     >>"$tt_test_history"
   return "$rc"
 }
