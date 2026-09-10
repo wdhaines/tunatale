@@ -62,7 +62,7 @@ def _build_section_filename(topic: str, day: int, section_index: int, section_ty
 
 @router.post(
     "/render",
-    status_code=202,
+    status_code=200,
     response_model=RenderAudioResponse,
     # cues[].ref omits target_index on narration cues ({"kind": "narration"})
     # — a plain response_model would re-add "target_index": null to every

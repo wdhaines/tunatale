@@ -4152,7 +4152,7 @@ export interface operations {
     };
     responses: {
       /** @description Successful Response */
-      202: {
+      200: {
         headers: {
           [name: string]: unknown;
         };

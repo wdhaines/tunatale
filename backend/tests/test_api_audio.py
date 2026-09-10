@@ -85,7 +85,7 @@ class TestAudioEndpoints:
             response = await client.post("/api/audio/render", json={"lesson_id": "nonexistent"})
         assert response.status_code == 404
 
-    async def test_audio_render_returns_202(self, tmp_path):
+    async def test_audio_render_returns_200(self, tmp_path):
         from app.storage.store import ContentStore
 
         mock_renderer = AsyncMock()
@@ -103,7 +103,7 @@ class TestAudioEndpoints:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
 
-        assert response.status_code == 202
+        assert response.status_code == 200
         data = response.json()
         assert "audio_id" in data
         assert store.get_audio_file_row(data["audio_id"]) is not None
@@ -127,7 +127,7 @@ class TestAudioEndpoints:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
 
-        assert response.status_code == 202
+        assert response.status_code == 200
         data = response.json()
         assert "sections" in data
         assert len(data["sections"]) == len(mock_lesson.sections)
@@ -159,7 +159,7 @@ class TestAudioEndpoints:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             # First render
             resp1 = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
-            assert resp1.status_code == 202
+            assert resp1.status_code == 200
             after_first = store.list_audio_files_for_lesson(lesson_id)
             assert len(after_first) == expected_count, (
                 f"Expected {expected_count} rows after first render, got {len(after_first)}"
@@ -167,7 +167,7 @@ class TestAudioEndpoints:
 
             # Second render — should replace, not append
             resp2 = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
-            assert resp2.status_code == 202
+            assert resp2.status_code == 200
             after_second = store.list_audio_files_for_lesson(lesson_id)
             assert len(after_second) == expected_count, (
                 f"Expected {expected_count} rows after re-render, got {len(after_second)}"
@@ -201,7 +201,7 @@ class TestAudioEndpoints:
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp1 = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
-            assert resp1.status_code == 202
+            assert resp1.status_code == 200
             assert len(store.list_audio_files_for_lesson(lesson_id)) == expected_count
 
             # Second render fails mid-flight — now returns 503.
@@ -267,7 +267,7 @@ class TestAudioEndpoints:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
 
-        assert response.status_code == 202
+        assert response.status_code == 200
         data = response.json()
         assert "cues" in data
         assert len(data["cues"]) > 0
@@ -296,7 +296,7 @@ class TestAudioEndpoints:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
 
-        assert response.status_code == 202
+        assert response.status_code == 200
         data = response.json()
         full_row = store.get_audio_file_row(data["audio_id"])
         assert full_row is not None
@@ -321,7 +321,7 @@ class TestAudioEndpoints:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
 
-        assert response.status_code == 202
+        assert response.status_code == 200
         data = response.json()
         assert set(data.keys()) == {"audio_id", "lesson_id", "sections", "cues"}
         assert set(data["sections"][0].keys()) == {"audio_id", "section_index", "section_type", "title"}
