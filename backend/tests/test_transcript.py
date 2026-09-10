@@ -2467,3 +2467,209 @@ class TestWellKnown:
 
     def test_untracked_word_is_not_well_known(self):
         assert self._word("banka").well_known is False
+
+
+class TestDirectionBands:
+    """Twin rails (bd tunatale-yh47): per-direction mastery bands on each word.
+
+    understand_band / produce_band come from ``direction_band()`` over the
+    resolved card's own directions; the stability fields ride only real
+    strength bands of non-KNOWN states; collocation spans carry their own
+    card's bands on every span word.
+    """
+
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.lemmatizer = LowercaseLemmatizer()
+        self.today = date(2026, 6, 1)
+
+    def _add_vocab(self, text: str, lemma: str | None = None) -> None:
+        unit = SyntacticUnit(text=text, translation="x", word_count=1, difficulty=1, source="llm", lemma=lemma or text)
+        self.db.add_collocation(unit, language_code="sl")
+
+    def _set_direction(self, text: str, direction: Direction, state: SRSState, stability: float) -> None:
+        item = self.db.get_collocation(text)
+        ds = item.directions[direction]
+        ds.state = state
+        ds.stability = stability
+        ds.reps = 3
+        ds.due_at = datetime(2099, 1, 1, 4, 0, tzinfo=UTC)
+        ds.last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        self.db.update_direction(item.guid, direction, ds)
+
+    def _add_inflection_cloze(self, surface: str, lemma: str, stability: float) -> None:
+        self.db.add_collocation(
+            SyntacticUnit(
+                text=surface,
+                translation="x",
+                word_count=1,
+                difficulty=1,
+                source="llm",
+                lemma=lemma,
+                disambig_key="morph:adj-nom-f-sg",
+                card_type="cloze",
+                source_sentence=f"Lepa je {surface}.",
+            ),
+            language_code="sl",
+        )
+        self._set_direction(surface, Direction.PRODUCTION, SRSState.REVIEW, stability)
+
+    def _word(self, text: str, lemmatizer: object = None) -> object:
+        lesson = _make_lesson([("female-1", text)])
+        result = extract_transcript(lesson, self.db, lemmatizer or self.lemmatizer, today=self.today)
+        return result.dialogue_lines[0].words[0]
+
+    def test_base_word_understand_and_produce_bands(self):
+        """Case 1: both directions graduated — recognitions maps to "months",
+        production to "days", and both carry their real stability."""
+        self._add_vocab("banka", lemma="banka")
+        self._set_direction("banka", Direction.RECOGNITION, SRSState.REVIEW, 45.0)
+        self._set_direction("banka", Direction.PRODUCTION, SRSState.REVIEW, 5.0)
+
+        word = self._word("banka")
+        assert word.understand_band == "months"
+        assert word.understand_stability == 45.0
+        assert word.produce_band == "days"
+        assert word.produce_stability == 5.0
+
+    def test_missing_production_direction_is_none(self):
+        """Case 2: a recognition-only card (the Norwegian import shape) has no
+        production direction → "none", even though recognition is "solid"."""
+        self._add_vocab("banka", lemma="banka")
+        self._set_direction("banka", Direction.RECOGNITION, SRSState.REVIEW, 200.0)
+        with self.db._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM collocation_directions WHERE direction = 'production'"
+                " AND collocation_id = (SELECT id FROM collocations WHERE text = 'banka')"
+            )
+            conn.commit()
+
+        word = self._word("banka")
+        assert word.understand_band == "solid"
+        assert word.understand_stability == 200.0
+        assert word.produce_band == "none"
+        assert word.produce_stability is None
+
+    def test_production_new_band_has_no_stability(self):
+        """Case 3: a NEW production card is "new" — a real band, but a default
+        1.0 stability that is not a measurement, so no stability rides it."""
+        self._add_vocab("banka", lemma="banka")
+        self._set_direction("banka", Direction.RECOGNITION, SRSState.REVIEW, 12.0)
+        self._set_direction("banka", Direction.PRODUCTION, SRSState.NEW, 1.0)
+
+        word = self._word("banka")
+        assert word.understand_band == "weeks"
+        assert word.understand_stability == 12.0
+        assert word.produce_band == "new"
+        assert word.produce_stability is None
+
+    def test_inflection_cloze_production_wins_and_understand_reads_base(self):
+        """Case 4: an exact-surface inflection cloze's production IS the word's
+        own production rail ("days", the cloze's REVIEW 3), while understand
+        reads the BASE card ("months", REVIEW 60) — the card step 2 of the
+        resolution order would have found for this lemma."""
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_lemma("lepa", "lep")
+
+        self._add_vocab("lep", lemma="lep")
+        self._set_direction("lep", Direction.RECOGNITION, SRSState.REVIEW, 60.0)
+        self._set_direction("lep", Direction.PRODUCTION, SRSState.NEW, 1.0)
+        self._add_inflection_cloze("lepa", "lep", stability=3.0)
+
+        word = self._word("lepa", stub)
+        assert word.understand_band == "months"  # the BASE, not "none"
+        assert word.understand_stability == 60.0
+        assert word.produce_band == "days"  # the CLOZE's production, not "new"
+        assert word.produce_stability == 3.0
+
+    def test_inflected_surface_without_exact_cloze_reads_base_production(self):
+        """Case 5: the same inflected surface with NO exact-surface cloze reads
+        the base's OWN production band ("new"). Cases 4 vs 5 differ only in
+        whether the cloze exists — swapping which card produce reads fails one."""
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_lemma("lepa", "lep")
+
+        self._add_vocab("lep", lemma="lep")
+        self._set_direction("lep", Direction.RECOGNITION, SRSState.REVIEW, 60.0)
+        self._set_direction("lep", Direction.PRODUCTION, SRSState.NEW, 1.0)
+
+        word = self._word("lepa", stub)
+        assert word.understand_band == "months"
+        assert word.produce_band == "new"  # base production, no cloze to read
+        assert word.produce_stability is None
+
+    def test_cloze_without_base_card_understand_is_none(self):
+        """A cloze whose lemma has no base card read "none" for understand."""
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_lemma("lepa", "lep")
+        self._add_inflection_cloze("lepa", "lep", stability=3.0)
+
+        word = self._word("lepa", stub)
+        assert word.understand_band == "none"
+        assert word.understand_stability is None
+        assert word.produce_band == "days"
+        assert word.produce_stability == 3.0
+
+    def test_known_recognition_is_solid_with_no_stability(self):
+        """Case 6: a KNOWN recognition card reads "solid" but carries no
+        stability — a marked-known card's stability is not a measurement."""
+        self._add_vocab("banka", lemma="banka")
+        self._set_direction("banka", Direction.RECOGNITION, SRSState.KNOWN, 500.0)
+
+        word = self._word("banka")
+        assert word.understand_band == "solid"
+        assert word.understand_stability is None
+
+    def test_untracked_word_all_six_none(self):
+        """Case 7: no card → every rail field stays None; the frontend draws
+        no rails at all."""
+        word = self._word("banka")
+        assert word.understand_band is None
+        assert word.produce_band is None
+        assert word.understand_stability is None
+        assert word.produce_stability is None
+        assert word.collocation_understand_band is None
+        assert word.collocation_produce_band is None
+
+    def test_collocation_span_carries_span_bands(self):
+        """Case 8: every word of a matched span carries the SPAN card's bands;
+        an off-span word in the same line leaves both None."""
+        unit = SyntacticUnit(
+            text="kje je banka",
+            translation="where is the bank",
+            word_count=3,
+            difficulty=2,
+            source="llm",
+            lemma=None,
+        )
+        self.db.add_collocation(unit, language_code="sl")
+        item = self.db.get_collocation("kje je banka")
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.REVIEW
+        rec.stability = 40.0
+        rec.reps = 3
+        rec.due_at = datetime(2099, 1, 1, 4, 0, tzinfo=UTC)
+        rec.last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        self.db.update_direction(item.guid, Direction.RECOGNITION, rec)
+        prod = item.directions[Direction.PRODUCTION]
+        prod.state = SRSState.LEARNING
+        prod.reps = 1
+        prod.due_at = datetime(2099, 1, 1, 4, 0, tzinfo=UTC)
+        self.db.update_direction(item.guid, Direction.PRODUCTION, prod)
+
+        lesson = _make_lesson([("female-1", "kje je banka in drugo")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        words = result.dialogue_lines[0].words
+        for w in words[:3]:
+            assert w.collocation_understand_band == "months"  # recognition REVIEW 40
+            assert w.collocation_produce_band == "learning"
+        off_span = words[3]
+        assert off_span.collocation_span_id is None
+        assert off_span.collocation_understand_band is None
+        assert off_span.collocation_produce_band is None

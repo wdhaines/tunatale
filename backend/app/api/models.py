@@ -796,7 +796,7 @@ class TranscriptKeyPhrase(BaseModel):
 class TranscriptWord(BaseModel):
     """One element of TranscriptDialogueLine.words.
 
-    The 25 fields the handler projects out of ``transcript.WordToken``. Note
+    The 31 fields the handler projects out of ``transcript.WordToken``. Note
     that ``WordToken.collocation_is_due`` is deliberately NOT among them — it is
     computed but never serialized, and adding it here would not surface it (the
     model can only filter, never invent).
@@ -827,6 +827,12 @@ class TranscriptWord(BaseModel):
     recognition_state: str | None
     recognition_is_due: bool
     well_known: bool
+    understand_band: str | None
+    produce_band: str | None
+    understand_stability: float | None
+    produce_stability: float | None
+    collocation_understand_band: str | None
+    collocation_produce_band: str | None
 
 
 class TranscriptDialogueLine(BaseModel):

@@ -2198,6 +2198,12 @@ async def build_transcript_payload(content_id: str, lesson, request: Request) ->
                         "recognition_state": w.recognition_state,
                         "recognition_is_due": w.recognition_is_due,
                         "well_known": w.well_known,
+                        "understand_band": w.understand_band,
+                        "produce_band": w.produce_band,
+                        "understand_stability": w.understand_stability,
+                        "produce_stability": w.produce_stability,
+                        "collocation_understand_band": w.collocation_understand_band,
+                        "collocation_produce_band": w.collocation_produce_band,
                     }
                     for w in line.words
                 ],

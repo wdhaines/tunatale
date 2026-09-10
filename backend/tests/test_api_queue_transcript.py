@@ -226,6 +226,12 @@ class TestTranscriptEndpoint:
             "recognition_state",
             "recognition_is_due",
             "well_known",
+            "understand_band",
+            "produce_band",
+            "understand_stability",
+            "produce_stability",
+            "collocation_understand_band",
+            "collocation_produce_band",
         }
         # The models must agree with those literals — this is the half that
         # `response_model=` can silently break, so assert it explicitly rather

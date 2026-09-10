@@ -3839,7 +3839,7 @@ export interface components {
      * TranscriptWord
      * @description One element of TranscriptDialogueLine.words.
      *
-     *     The 25 fields the handler projects out of ``transcript.WordToken``. Note
+     *     The 31 fields the handler projects out of ``transcript.WordToken``. Note
      *     that ``WordToken.collocation_is_due`` is deliberately NOT among them — it is
      *     computed but never serialized, and adding it here would not surface it (the
      *     model can only filter, never invent).
@@ -3853,6 +3853,8 @@ export interface components {
       card_type: string | null;
       /** Collocation Lemma */
       collocation_lemma: string | null;
+      /** Collocation Produce Band */
+      collocation_produce_band: string | null;
       /** Collocation Progress */
       collocation_progress: number | null;
       /** Collocation Span Id */
@@ -3863,6 +3865,8 @@ export interface components {
       collocation_start: boolean;
       /** Collocation Translation */
       collocation_translation: string | null;
+      /** Collocation Understand Band */
+      collocation_understand_band: string | null;
       /** Inflectable */
       inflectable: boolean;
       /** Inflection Feature */
@@ -3875,6 +3879,10 @@ export interface components {
       lemma: string;
       /** Prefix Punct */
       prefix_punct: string;
+      /** Produce Band */
+      produce_band: string | null;
+      /** Produce Stability */
+      produce_stability: number | null;
       /** Progress */
       progress: number | null;
       /** Recognition Is Due */
@@ -3893,6 +3901,10 @@ export interface components {
       surface: string;
       /** Translation */
       translation: string | null;
+      /** Understand Band */
+      understand_band: string | null;
+      /** Understand Stability */
+      understand_stability: number | null;
       /** Well Known */
       well_known: boolean;
     };
