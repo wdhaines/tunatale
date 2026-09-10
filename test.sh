@@ -195,7 +195,21 @@ backend_pid=$!
 
   log_step frontend "Frontend tests (with coverage)" bun run test:coverage
 
-  log_step frontend "E2E smoke tests" bun run test:e2e
+  # Playwright clears test-results/ at the START of every run, so re-running to
+  # see whether a red is a flake is also what destroys the trace that would have
+  # explained it (2026-09-09: a card-image failure was gone before it was read).
+  # CI has kept these since tunatale-1l26 (upload-artifact, 90-day retention,
+  # per-ATTEMPT so a rerun cannot bury the red one); the LOCAL gate was the only
+  # place the evidence still evaporated. Same reasoning, same reason it matters:
+  # two occurrences held at once is what turns a flake into a pattern.
+  # Copy the evidence out before anyone can do that. Never masks the failure:
+  # the `|| true` is on the PRESERVE, and the `false` re-raises the real one.
+  if ! log_step frontend "E2E smoke tests" bun run test:e2e; then
+    kept=$(uv --directory "$ROOT/backend" run python "$ROOT/backend/scripts/preserve_e2e_artifacts.py" \
+             "$ROOT/frontend/test-results" "$ROOT/.git/tt-e2e-failures" 2>/dev/null || true)
+    [ -n "$kept" ] && echo "E2E artifacts preserved (the next run would have deleted them): $kept"
+    false
+  fi
 ) >"$frontend_log" 2>&1 &
 frontend_pid=$!
 
