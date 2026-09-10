@@ -217,4 +217,77 @@ describe("making a review session", () => {
     });
     await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
   });
+
+  it("shows BOTH warnings the server returned, as visible text", async () => {
+    // Two DISTINCT strings on purpose: a broken render that shows only the
+    // first still passes a one-string fixture (bd tunatale-gmup).
+    mockCreateSession.mockResolvedValue({
+      id: "fresh",
+      session_date: "2026-09-03",
+      title: "The Late Bus",
+      review_requested: ["oppføre"],
+      review_used: ["oppføre"],
+      warnings: [
+        "Speaker 'x-fake-ml1' not found — using the default voice instead.",
+        "No hover-side glosses were baked for this session's dialogues.",
+      ],
+    });
+    const { findByRole, findByText } = render(Page);
+
+    await fireEvent.click(await findByRole("button", { name: /new review session/i }));
+
+    expect(await findByText(/speaker 'x-fake-ml1' not found/i)).toBeTruthy();
+    expect(await findByText(/no hover-side glosses were baked/i)).toBeTruthy();
+  });
+
+  it("renders NO warnings element when the server returns none", async () => {
+    // Query for ABSENCE, not empty text: `[]` must render nothing at all,
+    // not an empty <ul> that a bare `.warnings`-exists assertion would bless.
+    mockCreateSession.mockResolvedValue({
+      id: "fresh",
+      session_date: "2026-09-03",
+      title: "The Late Bus",
+      review_requested: ["oppføre"],
+      review_used: ["oppføre"],
+      warnings: [],
+    });
+    const { findByRole, container } = render(Page);
+
+    await fireEvent.click(await findByRole("button", { name: /new review session/i }));
+    await waitFor(() => expect(mockCreateSession).toHaveBeenCalledTimes(1));
+
+    expect(container.querySelector(".warnings")).toBeNull();
+  });
+
+  it("clears an earlier warning when the next attempt fails", async () => {
+    // The RESET is what this pins, not the reassignment. Drilled 2026-09-09:
+    // with a second SUCCEEDING call, deleting `sessionWarnings = []` from the
+    // top of handleNewReviewSession leaves this green, because the assignment
+    // `sessionWarnings = created.warnings` overwrites the stale list anyway.
+    // On a FAILING attempt `created` never exists, so the explicit clear is the
+    // only thing that can remove the previous attempt's warning.
+    mockCreateSession
+      .mockResolvedValueOnce({
+        id: "first",
+        session_date: "2026-09-03",
+        title: "First session",
+        review_requested: ["oppføre"],
+        review_used: ["oppføre"],
+        warnings: ["Speaker 'x-fake-ml1' not found — using the default voice instead."],
+      })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("POST /api/review-sessions: Nothing to review right now"), {
+          status: 409,
+        }),
+      );
+    const { findByRole, findByText, queryByText } = render(Page);
+
+    const button = await findByRole("button", { name: /new review session/i });
+    await fireEvent.click(button);
+    expect(await findByText(/speaker 'x-fake-ml1' not found/i)).toBeTruthy();
+
+    await fireEvent.click(button);
+    expect(await findByText(/nothing to review right now/i)).toBeTruthy();
+    expect(queryByText(/speaker 'x-fake-ml1' not found/i)).toBeNull();
+  });
 });

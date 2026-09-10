@@ -559,8 +559,14 @@ class TestNumberWords:
         assert db.get_image_filename(coll_id) is not None
 
     async def test_the_stored_picture_shows_exactly_that_many_objects(self, db, tmp_path) -> None:
-        """The oracle a fetched photo could never satisfy."""
-        coll_id = _add_word(db, "syv", "seven", note_id=1000, card_id=10000)
+        """The oracle a fetched photo could never satisfy.
+
+        `sju`, not `syv`: Norwegian has two words for 7 and only the produced
+        half draws. This fixture said `syv` until 2026-09-09 and went red the
+        moment the doublet was arbitrated the other way — correctly, since an
+        excluded word is supposed to stop rendering.
+        """
+        coll_id = _add_word(db, "sju", "seven", note_id=1000, card_id=10000)
 
         await prestage_production_images(db, _MediaFn(), language_code=LANG, limit=10)
 
