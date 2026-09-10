@@ -394,3 +394,63 @@ class TestParseGlossArrayResilience:
         with caplog.at_level(logging.WARNING):
             assert len(parse_gloss_array(raw)) == 2
         assert "dropped 1" in caplog.text
+
+
+class TestParseGlossArrayStripsMarkup:
+    """bd tunatale-vayt: the model can put HTML inside a gloss.
+
+    Seen live on 2026-09-10, recorded verbatim in tests/cassettes/e2e.json
+    (sha256:b6897cfc57d5e773): {"word": "vz<span></span>amem", ...}. Kept as-is,
+    it becomes a gloss keyed on a word no dialogue contains, and the real word
+    goes unglossed with nothing naming the cause. Stripping recovers it.
+    """
+
+    def test_the_observed_entry_recovers_its_word(self):
+        raw = json.dumps([{"word": "vz<span></span>amem", "translation": "I take", "base": "take"}])
+        assert parse_gloss_array(raw) == [{"word": "vzamem", "translation": "I take", "base": "take"}]
+
+    def test_every_text_field_is_stripped(self):
+        raw = json.dumps(
+            [
+                {"word": "<b>hus</b>", "translation": "<i>house</i>"},
+                {"word": "spiser", "translation": "eats", "base": "<em>eat</em>"},
+                {"word": '<span style="font-style:italic">bok</span>', "translation": "book<br>"},
+            ]
+        )
+        assert parse_gloss_array(raw) == [
+            {"word": "hus", "translation": "house"},
+            {"word": "spiser", "translation": "eats", "base": "eat"},
+            {"word": "bok", "translation": "book"},
+        ]
+
+    def test_an_entry_that_was_only_markup_is_dropped(self):
+        raw = json.dumps([{"word": "<br>", "translation": "x"}, {"word": "og", "translation": "and"}])
+        assert parse_gloss_array(raw) == [{"word": "og", "translation": "and"}]
+
+    def test_angle_brackets_that_are_not_tags_survive(self):
+        """The false-positive direction: `<` followed by a space, a digit, or nothing tag-like is text."""
+        entries = [
+            {"word": "mindre", "translation": "less (<), as in a < b"},
+            {"word": "elsker", "translation": "love <3"},
+            {"word": "pil", "translation": "arrow -> or <-"},
+            # A `<` with a `>` later on the line is where a naive `<[^>]+>` strips text.
+            {"word": "mellom", "translation": "between, as in a < b > c"},
+            {"word": "fram", "translation": "back <- and forward ->"},
+        ]
+        assert parse_gloss_array(json.dumps(entries)) == entries
+
+    def test_the_recovery_path_strips_too(self):
+        raw = '[{"word":"<b>hus</b>","translation":"house"},{"word":"b":"malformed"}]'
+        assert parse_gloss_array(raw) == [{"word": "hus", "translation": "house"}]
+
+    def test_stripping_is_logged_naming_what_changed(self, caplog):
+        raw = json.dumps([{"word": "vz<span></span>amem", "translation": "I take"}])
+        with caplog.at_level(logging.WARNING):
+            parse_gloss_array(raw)
+        assert "vz<span></span>amem" in caplog.text
+        assert "vzamem" in caplog.text
+
+    def test_clean_input_logs_nothing(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            parse_gloss_array(json.dumps([{"word": "hus", "translation": "house"}]))
+        assert "markup" not in caplog.text.lower()

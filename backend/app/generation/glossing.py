@@ -125,6 +125,47 @@ def _recover_entries(text: str) -> tuple[list[dict], int]:
     return recovered, dropped
 
 
+# A tag needs a LETTER after `<` (or `</`), so "a < b", "<3" and "<-" are text,
+# not markup. Attributes may contain anything but angle brackets.
+_MARKUP_TAG = re.compile(r"</?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?/?>")
+_GLOSS_TEXT_FIELDS = ("word", "translation", "base")
+
+
+def _strip_markup(entries: list[dict]) -> list[dict]:
+    """Remove HTML tags the model put inside gloss text (bd tunatale-vayt).
+
+    Seen live: ``{"word": "vz<span></span>amem"}``. Kept verbatim, that becomes a
+    gloss keyed on a word no dialogue contains, and ``vzamem`` goes unglossed with
+    nothing naming why. Stripping recovers the word. An entry whose word was
+    ONLY markup is dropped. Every change is logged, because a recovery nobody can
+    see is how this went unnoticed.
+    """
+    cleaned: list[dict] = []
+    changed: list[str] = []
+    dropped = 0
+    for entry in entries:
+        out = dict(entry)
+        for field in _GLOSS_TEXT_FIELDS:
+            value = out.get(field)
+            if isinstance(value, str) and _MARKUP_TAG.search(value):
+                out[field] = _MARKUP_TAG.sub("", value).strip()
+                if field == "word":
+                    changed.append(f"{value!r}->{out[field]!r}")
+        if isinstance(out.get("word"), str) and not out["word"]:
+            dropped += 1
+            continue
+        cleaned.append(out)
+    if changed or dropped:
+        logger.warning(
+            "Gloss response carried markup — stripped from %d word(s), dropped %d markup-only entr%s: %s",
+            len(changed),
+            dropped,
+            "y" if dropped == 1 else "ies",
+            ", ".join(changed[:10]),
+        )
+    return cleaned
+
+
 def parse_gloss_array(raw: str) -> list[dict]:
     """Parse an LLM response into a list of ``{word, translation, base?}`` dicts.
 
@@ -135,6 +176,9 @@ def parse_gloss_array(raw: str) -> list[dict]:
     When a well-formed parse fails, falls back to recovering individual ``{...}``
     dicts in order.  Recovered entries keep their original position.  A WARNING
     is logged with the counts.
+
+    Either way, HTML tags inside ``word``/``translation``/``base`` are stripped
+    (see ``_strip_markup``).
     """
     stripped = _strip_fences(raw.strip())
     try:
@@ -146,10 +190,10 @@ def parse_gloss_array(raw: str) -> list[dict]:
             len(recovered),
             dropped,
         )
-        return recovered
+        return _strip_markup(recovered)
     if isinstance(data, dict):
         data = data.get("dialogue_glosses", [])
-    return [g for g in data if isinstance(g, dict)]
+    return _strip_markup([g for g in data if isinstance(g, dict)])
 
 
 def dialogue_lines_from_story(data: dict) -> list[str]:
