@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     # 300-event in-memory ring a --reload empties. bd tunatale-y0bk.6.
     # ⚠️ UTC, unlike sync.log above, which is local — see app/logging_sink.py.
     warning_log: Path = Path("~/.tunatale/logs/warnings.log").expanduser()
+    # Where a mock-mode cassette miss is appended, one line each, before it
+    # raises. None = off. Only the e2e webServer env sets it, and Playwright's
+    # global teardown fails the run on any line: a fail-soft caller (the gloss
+    # pass) otherwise swallows the raise and the run stays green (tunatale-1l26.7).
+    llm_cassette_miss_log: Path | None = None
 
     # The browser's equivalent of sync.log. OFF by default and pinned so by a
     # test: this is a write endpoint that appends browser-supplied text to a

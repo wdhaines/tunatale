@@ -146,7 +146,12 @@ async def lifespan(app: FastAPI):
 
     # Wrap with cassettes unless explicitly in live mode
     if settings.llm_mode != "live":
-        llm = CassetteLLMClient(mode=settings.llm_mode, cassette_path=cassette_path, real_client=real_client)
+        llm = CassetteLLMClient(
+            mode=settings.llm_mode,
+            cassette_path=cassette_path,
+            real_client=real_client,
+            miss_log=settings.llm_cassette_miss_log,
+        )
     else:
         llm = real_client
 

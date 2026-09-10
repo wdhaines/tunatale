@@ -48,10 +48,12 @@ class CassetteLLMClient:
         mode: str,  # "mock" | "live" | "record" | "patch"
         cassette_path: Path,
         real_client: LLMClient | None = None,
+        miss_log: Path | None = None,
     ) -> None:
         self._mode = mode
         self._cassette_path = cassette_path
         self._real_client = real_client
+        self._miss_log = miss_log
         self.last_provider: str | None = None
         self.last_finish_reason: str | None = None
         self.last_usage: dict = {}
@@ -127,10 +129,26 @@ class CassetteLLMClient:
             f"\n--- hashes this cassette holds ---\n{known or '    (cassette is empty)'}"
         )
 
+    def _record_miss(self, h: str, prompt: str, reason: str) -> None:
+        """Append one line per miss to ``miss_log``, which a caller cannot swallow.
+
+        The raise that follows is enough when a test calls the client directly.
+        It is NOT enough when a fail-soft caller sits in between — the gloss pass
+        catches it by design, so from 96878b8 every e2e run missed its gloss entry
+        and stayed green (tunatale-1l26.7). Playwright's global teardown fails the
+        run on any line here. Off unless the e2e webServer env sets it.
+        """
+        if self._miss_log is None:
+            return
+        preview = prompt[:120].replace("\n", " ")
+        with self._miss_log.open("a") as f:
+            f.write(f"{h}\t{reason}\t{preview}\n")
+
     def _replay(self, prompt: str, system_prompt: str | None = None) -> str:
         h = _hash_prompt(prompt, system_prompt)
         entries = self._playback_by_hash.get(h)
         if not entries:
+            self._record_miss(h, prompt, "no entry")
             raise RuntimeError(
                 f"Cassette has no entry for prompt hash {h}."
                 f"{self._prompt_dump(prompt, system_prompt)}"
@@ -138,6 +156,7 @@ class CassetteLLMClient:
             )
         idx = self._playback_used.get(h, 0)
         if idx >= len(entries):
+            self._record_miss(h, prompt, f"exhausted after {len(entries)}")
             raise RuntimeError(
                 f"Cassette entry {h!r} used {idx} times but only {len(entries)} recorded."
                 f"{self._prompt_dump(prompt, system_prompt)}"

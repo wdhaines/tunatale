@@ -318,3 +318,86 @@ class TestCacheMissIsDiagnosable:
         await client.complete(prompt)
         with pytest.raises(RuntimeError, match="EXHAUSTED-TAIL"):
             await client.complete(prompt)
+
+
+class TestMissesAreRecordedForTheGate:
+    """tunatale-1l26.7: a miss must be visible even when a caller swallows it.
+
+    ``_replay`` already raises, but the gloss pass is fail-soft by design, so
+    from 96878b8 (2026-09-09) every e2e run missed its gloss entry, logged a
+    WARNING, and shipped the lesson unglossed while every gate stayed green.
+    ``miss_log`` is the side channel a caller cannot catch: each miss is
+    appended there BEFORE the raise, and Playwright's global teardown fails the
+    run on any line in it.
+    """
+
+    async def test_a_miss_is_appended_to_the_miss_log_and_still_raises(self, cassette_dir, tmp_path):
+        cassette_path = cassette_dir / "empty.json"
+        _write_cassette(cassette_path, [])
+        miss_log = tmp_path / "misses.log"
+        client = CassetteLLMClient(mode="mock", cassette_path=cassette_path, miss_log=miss_log)
+
+        with pytest.raises(RuntimeError, match="Cassette has no entry"):
+            await client.complete("unrecorded prompt", system_prompt="sys")
+
+        assert _hash_prompt("unrecorded prompt", "sys") in miss_log.read_text()
+
+    async def test_misses_append_rather_than_overwrite(self, cassette_dir, tmp_path):
+        """Two misses in one run are two lines — the second must not erase the first."""
+        cassette_path = cassette_dir / "empty.json"
+        _write_cassette(cassette_path, [])
+        miss_log = tmp_path / "misses.log"
+        client = CassetteLLMClient(mode="mock", cassette_path=cassette_path, miss_log=miss_log)
+
+        for prompt in ("first miss", "second miss"):
+            with pytest.raises(RuntimeError):
+                await client.complete(prompt)
+
+        lines = miss_log.read_text().splitlines()
+        assert len(lines) == 2
+        assert _hash_prompt("first miss") in lines[0]
+        assert _hash_prompt("second miss") in lines[1]
+
+    async def test_the_line_names_the_prompt_so_the_teardown_error_is_readable(self, cassette_dir, tmp_path):
+        """The teardown prints these lines; a bare hash would send the reader to the backend log."""
+        cassette_path = cassette_dir / "empty.json"
+        _write_cassette(cassette_path, [])
+        miss_log = tmp_path / "misses.log"
+        client = CassetteLLMClient(mode="mock", cassette_path=cassette_path, miss_log=miss_log)
+
+        with pytest.raises(RuntimeError):
+            await client.complete("Below are Norwegian dialogue lines.\nList every word.")
+
+        assert "Below are Norwegian dialogue lines. List every word." in miss_log.read_text()
+
+    async def test_an_exhausted_entry_is_a_miss_too(self, cassette_dir, tmp_path):
+        """The sibling failure: recorded once, asked twice. Equally a fixture gap."""
+        prompt = "asked twice"
+        cassette_path = cassette_dir / "one.json"
+        _write_cassette(
+            cassette_path,
+            [{"prompt_hash": _hash_prompt(prompt), "prompt_preview": "p", "response": "r", "max_tokens": 8}],
+        )
+        miss_log = tmp_path / "misses.log"
+        client = CassetteLLMClient(mode="mock", cassette_path=cassette_path, miss_log=miss_log)
+
+        assert await client.complete(prompt) == "r"
+        assert not miss_log.exists()  # a hit writes nothing
+        with pytest.raises(RuntimeError, match="used 1 times"):
+            await client.complete(prompt)
+
+        assert _hash_prompt(prompt) in miss_log.read_text()
+
+    async def test_without_a_miss_log_nothing_is_written(self, cassette_dir, tmp_path, monkeypatch):
+        """Off by default: pytest's own cassette runs raise into the test, which is loud already."""
+        monkeypatch.chdir(tmp_path)
+        cassette_path = cassette_dir / "empty.json"
+        _write_cassette(cassette_path, [])
+        client = CassetteLLMClient(mode="mock", cassette_path=cassette_path)
+        # Snapshot, not a literal listing: autouse fixtures put their own dirs here.
+        before = set(tmp_path.rglob("*"))
+
+        with pytest.raises(RuntimeError):
+            await client.complete("anything")
+
+        assert set(tmp_path.rglob("*")) == before
