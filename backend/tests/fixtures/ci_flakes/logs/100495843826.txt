@@ -1,0 +1,48 @@
+﻿2026-09-03T02:05:04.9520296Z Current runner version: '2.337.0'
+2026-09-03T02:05:04.9550506Z ##[group]Runner Image Provisioner
+2026-09-03T02:05:04.9551519Z Hosted Compute Agent
+
+2026-09-03T02:05:39.2631172Z Running 57 tests using 2 workers
+2026-09-03T02:05:46.3199998Z [WebServer] INFO:httpx:HTTP Request: GET http://127.0.0.1:42921/img.png "HTTP/1.1 200 OK"
+2026-09-03T02:05:46.6618171Z [WebServer] WARNING:app.generation.story:LLM omitted 5 word(s) from dialogue_glosses (sl): dan dober enainštirideset lepa prosim
+2026-09-03T02:05:48.9109649Z [WebServer] INFO:app.generation.story:Generating story for day 1 (wider)
+2026-09-03T02:06:36.3586725Z ················································F········
+2026-09-03T02:06:36.3593817Z 
+2026-09-03T02:06:36.3604459Z   1) [chromium] › tests/smoke.spec.ts:48:1 › review page loads ─────────────────────────────────────
+2026-09-03T02:06:36.3605112Z 
+2026-09-03T02:06:36.3605339Z     Error: expect(locator).toBeVisible() failed
+2026-09-03T02:06:36.3605715Z 
+2026-09-03T02:06:36.3605924Z     Locator: getByText(/Done for today|Loading/)
+2026-09-03T02:06:36.3606418Z     Expected: visible
+2026-09-03T02:06:36.3606790Z     Timeout: 5000ms
+2026-09-03T02:06:36.3607161Z     Error: element(s) not found
+2026-09-03T02:06:36.3607420Z 
+2026-09-03T02:06:36.3608330Z     Call log:
+2026-09-03T02:06:36.3608719Z       - Expect "toBeVisible" with timeout 5000ms
+2026-09-03T02:06:36.3609296Z       - waiting for getByText(/Done for today|Loading/)
+2026-09-03T02:06:36.3609641Z 
+2026-09-03T02:06:36.3609648Z 
+2026-09-03T02:06:36.3609795Z       52 | 	await expect(
+2026-09-03T02:06:36.3610142Z       53 | 		page.getByText(/Done for today|Loading/)
+2026-09-03T02:06:36.3610665Z     > 54 | 	).toBeVisible({ timeout: 5000 });
+2026-09-03T02:06:36.3611108Z          | 	  ^
+2026-09-03T02:06:36.3611431Z       55 | });
+2026-09-03T02:06:36.3611770Z       56 |
+2026-09-03T02:06:36.3612332Z       57 | test('review page loads (with backend)', async ({ page, request, backendURL }) => {
+2026-09-03T02:06:36.3613197Z         at /home/runner/work/tunatale/tunatale/frontend/tests/smoke.spec.ts:54:4
+2026-09-03T02:06:36.3613715Z 
+2026-09-03T02:06:36.3614117Z     Error Context: test-results/smoke-review-page-loads-chromium/error-context.md
+2026-09-03T02:06:36.3614630Z 
+2026-09-03T02:06:36.3615438Z     attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+2026-09-03T02:06:36.3616287Z     test-results/smoke-review-page-loads-chromium/trace.zip
+2026-09-03T02:06:36.3616808Z     Usage:
+2026-09-03T02:06:36.3616996Z 
+2026-09-03T02:06:36.3617399Z         npx playwright show-trace test-results/smoke-review-page-loads-chromium/trace.zip
+2026-09-03T02:06:36.3618174Z 
+2026-09-03T02:06:36.3618793Z     ────────────────────────────────────────────────────────────────────────────────────────────────
+2026-09-03T02:06:36.3619330Z 
+2026-09-03T02:06:36.3619486Z   1 failed
+2026-09-03T02:06:36.3620282Z     [chromium] › tests/smoke.spec.ts:48:1 › review page loads ──────────────────────────────────────
+2026-09-03T02:06:36.3621010Z   56 passed (1.1m)
+2026-09-03T02:06:36.3744862Z error: script "test:e2e" exited with code 1
+2026-09-03T02:06:36.3763429Z ##[error]Process completed with exit code 1.

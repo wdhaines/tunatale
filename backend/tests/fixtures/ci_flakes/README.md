@@ -9,7 +9,7 @@ in `tests/test_report_ci_flakes.py`, where a reader can see they are made up.
   (2026-08-31), which is OUTSIDE that window and must never be reported.
 - `jobs/<run>_<attempt>.json`: `GET /actions/runs/<run>/attempts/<n>/jobs`,
   trimmed to id/name/conclusion/status/head_sha/steps.
-- `logs/<job>.log`: `GET /actions/jobs/<job>/logs`, cut to the failure region
+- `logs/<job>.txt`: `GET /actions/jobs/<job>/logs`, cut to the failure region
   and with most `[WebServer]` chatter removed. The per-line timestamp prefix is
   real; the raw API output for these jobs held no ANSI escapes.
 
@@ -25,3 +25,9 @@ in `tests/test_report_ci_flakes.py`, where a reader can see they are made up.
 
 Re-capture only by re-running the same `gh api` calls. Never hand-edit a
 fixture to make a test pass.
+
+⚠️ The job logs are `.txt`, not `.log`: the root .gitignore has `*.log`, and
+the first commit of this directory lost all six to it silently (`git add`
+skips ignored files without a word). Local runs passed on files that existed
+only on disk, and CI failed. `test_every_fixture_file_is_tracked_by_git` now
+catches that before a push.

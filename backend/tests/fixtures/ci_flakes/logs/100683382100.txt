@@ -1,0 +1,49 @@
+﻿2026-09-03T14:16:14.5031552Z Current runner version: '2.337.0'
+2026-09-03T14:16:14.5067410Z ##[group]Runner Image Provisioner
+2026-09-03T14:16:14.5069555Z Hosted Compute Agent
+
+2026-09-03T14:16:52.9724981Z Running 57 tests using 2 workers
+2026-09-03T14:17:17.6680799Z [WebServer] Traceback (most recent call last):
+2026-09-03T14:17:17.6971417Z [WebServer]     raise RuntimeError(
+2026-09-03T14:17:17.6972492Z [WebServer]         f"Cassette has no entry for prompt hash {h}.\n  Preview: {prompt[:80]!r}\nRe-record with --llm-mode=record."
+2026-09-03T14:17:17.6974434Z [WebServer] RuntimeError: Cassette has no entry for prompt hash sha256:7b78158eaf5882f2.
+2026-09-03T14:17:47.6152485Z ····································F····················
+2026-09-03T14:17:47.6159259Z 
+2026-09-03T14:17:47.6169158Z   1) [chromium] › tests/planner-chat.spec.ts:25:1 › planner chat: route-mocked turn + commit render the full propose/commit UI loop 
+2026-09-03T14:17:47.6170147Z 
+2026-09-03T14:17:47.6170582Z     Error: expect(locator).toBeVisible() failed
+2026-09-03T14:17:47.6170970Z 
+2026-09-03T14:17:47.6171382Z     Locator: getByText('Here are two ideas for your coffee curriculum!')
+2026-09-03T14:17:47.6172115Z     Expected: visible
+2026-09-03T14:17:47.6172566Z     Timeout: 5000ms
+2026-09-03T14:17:47.6173026Z     Error: element(s) not found
+2026-09-03T14:17:47.6173362Z 
+2026-09-03T14:17:47.6173919Z     Call log:
+2026-09-03T14:17:47.6174361Z       - Expect "toBeVisible" with timeout 5000ms
+2026-09-03T14:17:47.6175180Z       - waiting for getByText('Here are two ideas for your coffee curriculum!')
+2026-09-03T14:17:47.6175730Z 
+2026-09-03T14:17:47.6175748Z 
+2026-09-03T14:17:47.6175907Z       65 |
+2026-09-03T14:17:47.6176328Z       66 | 	// 5. Assert reply and proposal cards render
+2026-09-03T14:17:47.6177119Z     > 67 | 	await expect(page.getByText(CANNED_TURN_REPLY)).toBeVisible();
+2026-09-03T14:17:47.6178109Z          | 	                                                ^
+2026-09-03T14:17:47.6178824Z       68 |
+2026-09-03T14:17:47.6179209Z       69 | 	for (const day of CANNED_DAYS) {
+2026-09-03T14:17:47.6179948Z       70 | 		await expect(page.getByText(`Day ${day.day}`, { exact: true })).toBeVisible();
+2026-09-03T14:17:47.6180948Z         at /home/runner/work/tunatale/tunatale/frontend/tests/planner-chat.spec.ts:67:50
+2026-09-03T14:17:47.6181548Z 
+2026-09-03T14:17:47.6182272Z     Error Context: test-results/planner-chat-planner-chat--3c415-full-propose-commit-UI-loop-chromium/error-context.md
+2026-09-03T14:17:47.6183601Z 
+2026-09-03T14:17:47.6184274Z     attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+2026-09-03T14:17:47.6185478Z     test-results/planner-chat-planner-chat--3c415-full-propose-commit-UI-loop-chromium/trace.zip
+2026-09-03T14:17:47.6186713Z     Usage:
+2026-09-03T14:17:47.6186957Z 
+2026-09-03T14:17:47.6187766Z         npx playwright show-trace test-results/planner-chat-planner-chat--3c415-full-propose-commit-UI-loop-chromium/trace.zip
+2026-09-03T14:17:47.6188887Z 
+2026-09-03T14:17:47.6189479Z     ────────────────────────────────────────────────────────────────────────────────────────────────
+2026-09-03T14:17:47.6190011Z 
+2026-09-03T14:17:47.6190190Z   1 failed
+2026-09-03T14:17:47.6191285Z     [chromium] › tests/planner-chat.spec.ts:25:1 › planner chat: route-mocked turn + commit render the full propose/commit UI loop 
+2026-09-03T14:17:47.6192285Z   56 passed (1.0m)
+2026-09-03T14:17:47.6334033Z error: script "test:e2e" exited with code 1
+2026-09-03T14:17:47.6351954Z ##[error]Process completed with exit code 1.

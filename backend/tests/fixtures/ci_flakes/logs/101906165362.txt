@@ -1,0 +1,90 @@
+﻿2026-09-08T01:19:40.7938695Z Current runner version: '2.337.0'
+2026-09-08T01:19:40.7965855Z ##[group]Runner Image Provisioner
+2026-09-08T01:19:40.7966902Z Hosted Compute Agent
+
+2026-09-08T01:20:17.5623752Z Running 58 tests using 2 workers
+2026-09-08T01:20:25.9906049Z [WebServer] INFO:httpx:HTTP Request: GET http://127.0.0.1:46185/img.png "HTTP/1.1 200 OK"
+2026-09-08T01:20:26.3284433Z [WebServer] WARNING:app.generation.story:LLM omitted 5 word(s) from dialogue_glosses (sl): dan dober enainštirideset lepa prosim
+2026-09-08T01:20:28.6097698Z [WebServer] INFO:app.generation.story:Generating story for day 1 (wider)
+2026-09-08T01:21:04.4061038Z ····················································F°°°··
+2026-09-08T01:21:04.4067319Z 
+2026-09-08T01:21:04.4071335Z   1) [chromium] › tests/transcript-overflow.spec.ts:123:1 › lesson page: Read mode never overflows horizontally 
+2026-09-08T01:21:04.4072151Z 
+2026-09-08T01:21:04.4072566Z     Error: browser.newContext: Target page, context or browser has been closed
+2026-09-08T01:21:04.4073015Z     Browser logs:
+2026-09-08T01:21:04.4073144Z 
+2026-09-08T01:21:04.4087047Z     <launching> /home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-edgeupdater --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,BoundaryEventDispatchTracksNodeRemoval,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,BlockOriginHeaderModificationOnRedirect,Translate,AutoDeElevate,OptimizationHints,msForceBrowserSignIn,msEdgeUpdateLaunchServicesPreferredVersion --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --disable-updater-scheduler --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --headless --hide-scrollbars --mute-audio --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 --no-sandbox --user-data-dir=/tmp/playwright_chromiumdev_profile-cjfPOG --remote-debugging-pipe --no-startup-window
+2026-09-08T01:21:04.4096568Z     <launched> pid=3062
+2026-09-08T01:21:04.4097402Z     [pid=3062][err] [3062:3076:0908/012018.547800:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+2026-09-08T01:21:04.4098735Z     [pid=3062][err] [3062:3076:0908/012018.548357:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+2026-09-08T01:21:04.4100723Z     [pid=3062][err] [3062:3076:0908/012019.400295:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+2026-09-08T01:21:04.4102026Z     [pid=3062][err] [3062:3062:0908/012019.428055:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+2026-09-08T01:21:04.4103262Z     [pid=3062][err] [3062:3062:0908/012019.428114:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+2026-09-08T01:21:04.4104508Z     [pid=3062][err] [3062:3076:0908/012019.429228:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+2026-09-08T01:21:04.4105768Z     [pid=3062][err] [3062:3076:0908/012019.429278:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+2026-09-08T01:21:04.4107282Z     [pid=3062][err] [3062:3062:0908/012019.433489:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+2026-09-08T01:21:04.4108510Z     [pid=3062][err] [3062:3062:0908/012019.437318:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+2026-09-08T01:21:04.4110092Z     [pid=3062][err] [3062:3062:0908/012019.437334:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+2026-09-08T01:21:04.4111342Z     [pid=3062][err] [3062:3076:0908/012019.437964:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+2026-09-08T01:21:04.4113220Z     [pid=3062][err] [3062:3062:0908/012019.448973:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.Properties.GetAll: object_path= /org/freedesktop/UPower/devices/DisplayDevice: org.freedesktop.DBus.Error.ServiceUnknown: The name org.freedesktop.UPower was not provided by any .service files
+2026-09-08T01:21:04.4114916Z     [pid=3062][err] [3062:3062:0908/012019.449063:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+2026-09-08T01:21:04.4116177Z     [pid=3062][err] [3062:3076:0908/012019.452338:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+2026-09-08T01:21:04.4117415Z     [pid=3062][err] [3062:3062:0908/012019.454496:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+2026-09-08T01:21:04.4118666Z     [pid=3062][err] [3062:3076:0908/012019.465625:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")
+2026-09-08T01:21:04.4120206Z     [pid=3062][err] [3062:3062:0908/012019.472007:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type: 
+2026-09-08T01:21:04.4121343Z     [pid=3062][err] [3062:3080:0908/012035.544369:ERROR:google_apis/gcm/engine/registration_request.cc:291] Registration response error message: DEPRECATED_ENDPOINT
+2026-09-08T01:21:04.4122478Z     [pid=3062][err] [0908/012057.205132:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq: No such file or directory (2)
+2026-09-08T01:21:04.4123730Z     [pid=3062][err] [0908/012057.205200:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq: No such file or directory (2)
+2026-09-08T01:21:04.4124563Z     [pid=3062][err] Received signal 11 SEGV_MAPERR 0000000001b0
+2026-09-08T01:21:04.4125155Z     [pid=3062][err] #0 0x55d4c6c576f3 (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x69f56f2)
+2026-09-08T01:21:04.4125904Z     [pid=3062][err] #1 0x55d4cb6cf0e4 (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0xb46d0e3)
+2026-09-08T01:21:04.4126515Z     [pid=3062][err] #2 0x7fe442245330 (/usr/lib/x86_64-linux-gnu/libc.so.6+0x4532f)
+2026-09-08T01:21:04.4127128Z     [pid=3062][err] #3 0x55d4c92ae45a (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x904c459)
+2026-09-08T01:21:04.4127847Z     [pid=3062][err] #4 0x55d4c927593d (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x901393c)
+2026-09-08T01:21:04.4128564Z     [pid=3062][err] #5 0x55d4c90d1b72 (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x8e6fb71)
+2026-09-08T01:21:04.4129686Z     [pid=3062][err] #6 0x55d4c90cd61c (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x8e6b61b)
+2026-09-08T01:21:04.4130413Z     [pid=3062][err] #7 0x55d4c521949d (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x4fb749c)
+2026-09-08T01:21:04.4131141Z     [pid=3062][err] #8 0x55d4c52190b4 (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x4fb70b3)
+2026-09-08T01:21:04.4131875Z     [pid=3062][err] #9 0x55d4d018e304 (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0xff2c303)
+2026-09-08T01:21:04.4132603Z     [pid=3062][err] #10 0x55d4c521940f (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x4fb740e)
+2026-09-08T01:21:04.4133329Z     [pid=3062][err] #11 0x55d4c5218e76 (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x4fb6e75)
+2026-09-08T01:21:04.4134057Z     [pid=3062][err] #12 0x55d4c521c40e (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x4fba40d)
+2026-09-08T01:21:04.4134964Z     [pid=3062][err] #13 0x55d4c9224fe5 (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x8fc2fe4)
+2026-09-08T01:21:04.4135698Z     [pid=3062][err] #14 0x55d4c3423261 (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x31c1260)
+2026-09-08T01:21:04.4136455Z     [pid=3062][err] #15 0x55d4c3428494 (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x31c6493)
+2026-09-08T01:21:04.4137196Z     [pid=3062][err] #16 0x55d4c4e1f0cd (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x4bbd0cc)
+2026-09-08T01:21:04.4137922Z     [pid=3062][err] #17 0x55d4c4e1e7a1 (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x4bbc7a0)
+2026-09-08T01:21:04.4138651Z     [pid=3062][err] #18 0x55d4c5f51772 (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x5cef771)
+2026-09-08T01:21:04.4139625Z     [pid=3062][err] #19 0x55d4c695d723 (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x66fb722)
+2026-09-08T01:21:04.4140360Z     [pid=3062][err] #20 0x55d4c63748dc (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x61128db)
+2026-09-08T01:21:04.4141095Z     [pid=3062][err] #21 0x55d4c6378d3f (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x6116d3e)
+2026-09-08T01:21:04.4141813Z     [pid=3062][err] #22 0x55d4c6374ba6 (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x6112ba5)
+2026-09-08T01:21:04.4142559Z     [pid=3062][err] #23 0x55d4c63741ce (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x61121cd)
+2026-09-08T01:21:04.4143285Z     [pid=3062][err] #24 0x55d4c63738a5 (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x61118a4)
+2026-09-08T01:21:04.4143900Z     [pid=3062][err] #25 0x7fe44222a1ca (/usr/lib/x86_64-linux-gnu/libc.so.6+0x2a1c9)
+2026-09-08T01:21:04.4144388Z     [pid=3062][err] #26 0x7fe44222a28b (/usr/lib/x86_64-linux-gnu/libc.so.6+0x2a28a)
+2026-09-08T01:21:04.4145004Z     [pid=3062][err] #27 0x55d4c6e54fba (/home/runner/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome+0x6bf2fb9)
+2026-09-08T01:21:04.4145688Z     [pid=3062][err]   r8: 0000000000000070  r9: 000000000000002f r10: 0000000000000009 r11: 000005d403521f80
+2026-09-08T01:21:04.4146290Z     [pid=3062][err]  r12: 0000000000000000 r13: 000005d4024f61c0 r14: 00000000000000a8 r15: 0000000000000000
+2026-09-08T01:21:04.4146898Z     [pid=3062][err]   di: 00007fff8ea9b2c8  si: 00000000000000a8  bp: 00007fff8ea9b170  bx: 00007fff8ea9b2c8
+2026-09-08T01:21:04.4147491Z     [pid=3062][err]   dx: 0000000000000009  ax: 0000000000000000  cx: 74736f686c61636f  sp: 00007fff8ea9af70
+2026-09-08T01:21:04.4148089Z     [pid=3062][err]   ip: 000055d4c492b91d efl: 0000000000010202 cgf: 002b000000000033 erf: 0000000000000004
+2026-09-08T01:21:04.4148619Z     [pid=3062][err]  trp: 000000000000000e msk: 0000000000000000 cr2: 00000000000001b0
+2026-09-08T01:21:04.4149498Z     [pid=3062][err] [end of stack trace]
+2026-09-08T01:21:04.4149698Z 
+2026-09-08T01:21:04.4150112Z     Error Context: test-results/transcript-overflow-lesson-af989-ever-overflows-horizontally-chromium/error-context.md
+2026-09-08T01:21:04.4150616Z 
+2026-09-08T01:21:04.4151080Z     attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+2026-09-08T01:21:04.4151779Z     test-results/transcript-overflow-lesson-af989-ever-overflows-horizontally-chromium/trace.zip
+2026-09-08T01:21:04.4152287Z     Usage:
+2026-09-08T01:21:04.4152400Z 
+2026-09-08T01:21:04.4152828Z         npx playwright show-trace test-results/transcript-overflow-lesson-af989-ever-overflows-horizontally-chromium/trace.zip
+2026-09-08T01:21:04.4153347Z 
+2026-09-08T01:21:04.4153664Z     ────────────────────────────────────────────────────────────────────────────────────────────────
+2026-09-08T01:21:04.4153962Z 
+2026-09-08T01:21:04.4154044Z   1 failed
+2026-09-08T01:21:04.4156430Z     [chromium] › tests/transcript-overflow.spec.ts:123:1 › lesson page: Read mode never overflows horizontally 
+2026-09-08T01:21:04.4157299Z   3 did not run
+2026-09-08T01:21:04.4157641Z   54 passed (54.7s)
+2026-09-08T01:21:04.4205550Z error: script "test:e2e" exited with code 1
+2026-09-08T01:21:04.4223234Z ##[error]Process completed with exit code 1.

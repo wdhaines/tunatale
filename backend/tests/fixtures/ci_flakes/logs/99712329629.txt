@@ -1,0 +1,43 @@
+﻿2026-09-01T02:09:38.2412765Z Current runner version: '2.337.0'
+2026-09-01T02:09:38.2439402Z ##[group]Runner Image Provisioner
+2026-09-01T02:09:38.2440481Z Hosted Compute Agent
+
+2026-09-01T02:10:15.4235815Z Running 52 tests using 2 workers
+2026-09-01T02:10:25.2095352Z [WebServer] INFO:httpx:HTTP Request: GET http://127.0.0.1:39213/img.png "HTTP/1.1 200 OK"
+2026-09-01T02:10:27.7614609Z [WebServer] WARNING:app.generation.story:LLM omitted 5 word(s) from dialogue_glosses (sl): dan dober enainštirideset lepa prosim
+2026-09-01T02:10:30.3074385Z [WebServer] INFO:app.generation.story:Generating story for day 1 (wider)
+2026-09-01T02:11:30.9231637Z ························T···························
+2026-09-01T02:11:30.9238168Z 
+2026-09-01T02:11:30.9249054Z   1) [chromium] › tests/auth-login.spec.ts:78:1 › a session that dies mid-visit lands on the login page, not a broken one 
+2026-09-01T02:11:30.9249898Z 
+2026-09-01T02:11:30.9250105Z     Test timeout of 30000ms exceeded.
+2026-09-01T02:11:30.9250422Z 
+2026-09-01T02:11:30.9250690Z     Error: locator.click: Test timeout of 30000ms exceeded.
+2026-09-01T02:11:30.9251228Z     Call log:
+2026-09-01T02:11:30.9251680Z       - waiting for getByRole('link', { name: 'Review' })
+2026-09-01T02:11:30.9252063Z 
+2026-09-01T02:11:30.9252073Z 
+2026-09-01T02:11:30.9252247Z       89 | 	await context.clearCookies();
+2026-09-01T02:11:30.9252680Z       90 |
+2026-09-01T02:11:30.9253184Z     > 91 | 	await page.getByRole('link', { name: 'Review' }).click();
+2026-09-01T02:11:30.9253736Z          | 	                                                 ^
+2026-09-01T02:11:30.9254156Z       92 |
+2026-09-01T02:11:30.9254500Z       93 | 	await page.waitForURL('**/login?next=%2Freview');
+2026-09-01T02:11:30.9255220Z       94 | 	await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+2026-09-01T02:11:30.9256148Z         at /home/runner/work/tunatale/tunatale/frontend/tests/auth-login.spec.ts:91:51
+2026-09-01T02:11:30.9257000Z 
+2026-09-01T02:11:30.9257656Z     Error Context: test-results/auth-login-a-session-that--6f9e4-login-page-not-a-broken-one-chromium/error-context.md
+2026-09-01T02:11:30.9258471Z 
+2026-09-01T02:11:30.9259167Z     attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+2026-09-01T02:11:30.9260243Z     test-results/auth-login-a-session-that--6f9e4-login-page-not-a-broken-one-chromium/trace.zip
+2026-09-01T02:11:30.9261066Z     Usage:
+2026-09-01T02:11:30.9261246Z 
+2026-09-01T02:11:30.9261997Z         npx playwright show-trace test-results/auth-login-a-session-that--6f9e4-login-page-not-a-broken-one-chromium/trace.zip
+2026-09-01T02:11:30.9264162Z 
+2026-09-01T02:11:30.9264610Z     ────────────────────────────────────────────────────────────────────────────────────────────────
+2026-09-01T02:11:30.9265143Z 
+2026-09-01T02:11:30.9265306Z   1 failed
+2026-09-01T02:11:30.9265993Z     [chromium] › tests/auth-login.spec.ts:78:1 › a session that dies mid-visit lands on the login page, not a broken one 
+2026-09-01T02:11:30.9266887Z   51 passed (1.4m)
+2026-09-01T02:11:30.9385512Z error: script "test:e2e" exited with code 1
+2026-09-01T02:11:30.9406064Z ##[error]Process completed with exit code 1.

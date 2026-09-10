@@ -1,0 +1,172 @@
+﻿2026-09-03T18:43:21.1019791Z Current runner version: '2.337.0'
+2026-09-03T18:43:21.1043209Z ##[group]Runner Image Provisioner
+2026-09-03T18:43:21.1044057Z Hosted Compute Agent
+
+2026-09-03T18:44:36.8208743Z =================================== FAILURES ===================================
+2026-09-03T18:44:36.8209686Z _ TestNativeGradeMatchesSyncWriteback.test_native_equals_sync_for_each_interval _
+2026-09-03T18:44:36.8210839Z [gw0] linux -- Python 3.14.7 /home/runner/work/tunatale/tunatale/backend/.venv/bin/python
+2026-09-03T18:44:36.8211485Z 
+2026-09-03T18:44:36.8212205Z self = <tests.test_colday_helper_consistency.TestNativeGradeMatchesSyncWriteback object at 0x7f6dfea26e90>
+2026-09-03T18:44:36.8213151Z 
+2026-09-03T18:44:36.8213452Z     def test_native_equals_sync_for_each_interval(self):
+2026-09-03T18:44:36.8214119Z         today = compute_anki_day_index(_COL_CRT, 4, _NOW)
+2026-09-03T18:44:36.8214497Z         for interval in (1, 3, 21, 77):
+2026-09-03T18:44:36.8214949Z             native = _review_due_at_from_interval(_NOW.date(), interval, _COL_CRT, _NOW)
+2026-09-03T18:44:36.8215463Z             sync = compute_due_at(2, today + interval, _COL_CRT)
+2026-09-03T18:44:36.8216223Z >           assert native == sync, f"native/sync diverge at interval={interval}"
+2026-09-03T18:44:36.8216728Z E           AssertionError: native/sync diverge at interval=1
+2026-09-03T18:44:36.8217499Z E           assert datetime.datetime(2026, 5, 26, 4, 0, tzinfo=datetime.timezone.utc) == datetime.datetime(2026, 5, 25, 4, 0, tzinfo=datetime.timezone.utc)
+2026-09-03T18:44:36.8218079Z 
+2026-09-03T18:44:36.8218289Z tests/test_colday_helper_consistency.py:103: AssertionError
+2026-09-03T18:44:36.8219142Z _ TestNativeGradeMatchesSyncWriteback.test_native_due_date_advances_by_interval _
+2026-09-03T18:44:36.8219829Z [gw0] linux -- Python 3.14.7 /home/runner/work/tunatale/tunatale/backend/.venv/bin/python
+2026-09-03T18:44:36.8220200Z 
+2026-09-03T18:44:36.8220599Z self = <tests.test_colday_helper_consistency.TestNativeGradeMatchesSyncWriteback object at 0x7f6dfea26fd0>
+2026-09-03T18:44:36.8221098Z 
+2026-09-03T18:44:36.8221268Z     def test_native_due_date_advances_by_interval(self):
+2026-09-03T18:44:36.8221694Z         today = compute_anki_day_index(_COL_CRT, 4, _NOW)
+2026-09-03T18:44:36.8222157Z         today_date = review_due_at_for_col_day(_COL_CRT, today).date()
+2026-09-03T18:44:36.8222572Z         for interval in (1, 3, 21, 77):
+2026-09-03T18:44:36.8223010Z             native = _review_due_at_from_interval(_NOW.date(), interval, _COL_CRT, _NOW)
+2026-09-03T18:44:36.8223552Z >           assert (native.date() - today_date).days == interval
+2026-09-03T18:44:36.8223937Z E           assert 2 == 1
+2026-09-03T18:44:36.8224337Z E            +  where 2 = (datetime.date(2026, 5, 26) - datetime.date(2026, 5, 24)).days
+2026-09-03T18:44:36.8225024Z E            +    where datetime.date(2026, 5, 26) = <built-in method date of datetime.datetime object at 0x7f6dfdfd1c80>()
+2026-09-03T18:44:36.8226017Z E            +      where <built-in method date of datetime.datetime object at 0x7f6dfdfd1c80> = datetime.datetime(2026, 5, 26, 4, 0, tzinfo=datetime.timezone.utc).date
+2026-09-03T18:44:36.8226632Z 
+2026-09-03T18:44:36.8226834Z tests/test_colday_helper_consistency.py:110: AssertionError
+2026-09-03T18:44:36.8227383Z _ TestReviewScheduling.test_review_again_uses_integer_col_day_elapsed_LAYER_50 _
+2026-09-03T18:44:36.8228019Z [gw2] linux -- Python 3.14.7 /home/runner/work/tunatale/tunatale/backend/.venv/bin/python
+2026-09-03T18:44:36.8228542Z 
+2026-09-03T18:44:36.8228828Z self = <tests.test_fsrs.TestReviewScheduling object at 0x7f7b03328950>
+2026-09-03T18:44:36.8229139Z 
+2026-09-03T18:44:36.8229350Z     def test_review_again_uses_integer_col_day_elapsed_LAYER_50(self):
+2026-09-03T18:44:36.8230008Z         """REVIEW + AGAIN: grade-time R must use INTEGER col-day diff, NOT
+2026-09-03T18:44:36.8230431Z         fractional days.
+2026-09-03T18:44:36.8230691Z     
+2026-09-03T18:44:36.8231023Z         Layer 50 finding (supersedes the prior 'fractional' hypothesis):
+2026-09-03T18:44:36.8231525Z         Anki's grade-time path computes ``days_elapsed = next_day_at
+2026-09-03T18:44:36.8232233Z         .elapsed_days_since(lrt)`` — u64 integer division by 86400
+2026-09-03T18:44:36.8232744Z         (``rslib/.../timestamp.rs:31``). It is integer regardless of whether
+2026-09-03T18:44:36.8233254Z         ``lrt`` has sub-day precision. The dual-branch fractional/integer
+2026-09-03T18:44:36.8233774Z         behavior lives only in queue-sort ``extract_fsrs_retrievability``,
+2026-09-03T18:44:36.8234226Z         NOT in the answering path.
+2026-09-03T18:44:36.8234515Z     
+2026-09-03T18:44:36.8234836Z         Two cards graded at the same moment, with ``last_review`` on the
+2026-09-03T18:44:36.8235340Z         SAME calendar day but at different sub-day times, must produce
+2026-09-03T18:44:36.8235852Z         IDENTICAL new stabilities (because they share the same integer
+2026-09-03T18:44:36.8236356Z         col-day index). The previous test asserted the opposite, pinning
+2026-09-03T18:44:36.8236879Z         an empirical bug discovered in the 2026-05-22 Stage 3b measurement:
+2026-09-03T18:44:36.8237406Z         TT computed fractional elapsed at grade time (5.5 days) while Anki
+2026-09-03T18:44:36.8238032Z         computed integer (5 days), producing 5-7% systematic drift on every
+2026-09-03T18:44:36.8238673Z         sub-day-precise REVIEW grade.
+2026-09-03T18:44:36.8239001Z         """
+2026-09-03T18:44:36.8239258Z         from dataclasses import replace
+2026-09-03T18:44:36.8239632Z         from datetime import datetime as _dt
+2026-09-03T18:44:36.8239951Z     
+2026-09-03T18:44:36.8240273Z         col_crt = 1388836800  # user's real col_crt; doesn't change result
+2026-09-03T18:44:36.8240729Z         grade_dt = _dt(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
+2026-09-03T18:44:36.8241081Z     
+2026-09-03T18:44:36.8241364Z         def _grade_again_with_last_review_at(last_review_dt):
+2026-09-03T18:44:36.8241738Z             item = _review_item()
+2026-09-03T18:44:36.8242086Z             ds = item.directions[Direction.RECOGNITION]
+2026-09-03T18:44:36.8242518Z             item.directions[Direction.RECOGNITION] = replace(
+2026-09-03T18:44:36.8242983Z                 ds, last_review=last_review_dt, stability=5.0, difficulty=7.0
+2026-09-03T18:44:36.8243380Z             )
+2026-09-03T18:44:36.8243629Z             return schedule(
+2026-09-03T18:44:36.8243913Z                 item,
+2026-09-03T18:44:36.8244171Z                 Rating.AGAIN,
+2026-09-03T18:44:36.8244471Z                 review_date=grade_dt.date(),
+2026-09-03T18:44:36.8244790Z                 now=grade_dt,
+2026-09-03T18:44:36.8245073Z                 col_crt=col_crt,
+2026-09-03T18:44:36.8245343Z             )
+2026-09-03T18:44:36.8245567Z     
+2026-09-03T18:44:36.8245898Z         # Two cards graded at the same moment, with last_review at different
+2026-09-03T18:44:36.8246415Z         # sub-day times WITHIN THE SAME col-day window. col_crt=1388836800
+2026-09-03T18:44:36.8246910Z         # (12:00 UTC) puts col-day boundaries at 16:00 UTC. Both times below
+2026-09-03T18:44:36.8247393Z         # fall in the [16:00 UTC 5/11, 16:00 UTC 5/12) col-day window, so
+2026-09-03T18:44:36.8247968Z         # Anki's integer col-day diff is identical → identical new_s.
+2026-09-03T18:44:36.8248666Z         early = _dt(2026, 5, 11, 17, 0, 1, tzinfo=UTC)  # just past col-day boundary
+2026-09-03T18:44:36.8249172Z         late = _dt(2026, 5, 11, 22, 0, 0, tzinfo=UTC)  # later same col-day
+2026-09-03T18:44:36.8249544Z     
+2026-09-03T18:44:36.8249822Z         r_early = _grade_again_with_last_review_at(early)
+2026-09-03T18:44:36.8250234Z         r_late = _grade_again_with_last_review_at(late)
+2026-09-03T18:44:36.8250565Z     
+2026-09-03T18:44:36.8251005Z         s_early = r_early.directions[Direction.RECOGNITION].stability
+2026-09-03T18:44:36.8251490Z         s_late = r_late.directions[Direction.RECOGNITION].stability
+2026-09-03T18:44:36.8251876Z     
+2026-09-03T18:44:36.8252108Z >       assert s_early == s_late, (
+2026-09-03T18:44:36.8252551Z             f"Layer 50: lapse formula must use INTEGER col-day elapsed at grade time. "
+2026-09-03T18:44:36.8253129Z             f"Same col-day grades produced different s={s_early} vs {s_late}; "
+2026-09-03T18:44:36.8253653Z             f"means TT still uses fractional days_elapsed at grade time."
+2026-09-03T18:44:36.8254042Z         )
+2026-09-03T18:44:36.8254867Z E       AssertionError: Layer 50: lapse formula must use INTEGER col-day elapsed at grade time. Same col-day grades produced different s=1.2993 vs 1.2532; means TT still uses fractional days_elapsed at grade time.
+2026-09-03T18:44:36.8255777Z E       assert 1.2993 == 1.2532
+2026-09-03T18:44:36.8255973Z 
+2026-09-03T18:44:36.8256106Z tests/test_fsrs.py:231: AssertionError
+2026-09-03T18:44:36.8256590Z _ TestReviewScheduling.test_review_good_uses_integer_col_day_elapsed_LAYER_50 __
+2026-09-03T18:44:36.8257234Z [gw2] linux -- Python 3.14.7 /home/runner/work/tunatale/tunatale/backend/.venv/bin/python
+2026-09-03T18:44:36.8257622Z 
+2026-09-03T18:44:36.8257852Z self = <tests.test_fsrs.TestReviewScheduling object at 0x7f7b035f5c70>
+2026-09-03T18:44:36.8258170Z 
+2026-09-03T18:44:36.8258508Z     def test_review_good_uses_integer_col_day_elapsed_LAYER_50(self):
+2026-09-03T18:44:36.8259079Z         """REVIEW + GOOD: same Layer 50 invariant for the recall path.
+2026-09-03T18:44:36.8259455Z     
+2026-09-03T18:44:36.8259878Z         Both grade-time call sites — ``schedule()`` (REVIEW+passing) and
+2026-09-03T18:44:36.8260431Z         ``_schedule_review_again`` (REVIEW+AGAIN) — must use integer col-day
+2026-09-03T18:44:36.8260944Z         elapsed. Empirical verification: bit-exact match against Anki across
+2026-09-03T18:44:36.8261872Z         all 65 REVIEW→REVIEW single passing grades in the 2026-05-22
+2026-09-03T18:44:36.8262309Z         measurement snapshots.
+2026-09-03T18:44:36.8262580Z         """
+2026-09-03T18:44:36.8262817Z         from dataclasses import replace
+2026-09-03T18:44:36.8263133Z         from datetime import datetime as _dt
+2026-09-03T18:44:36.8263433Z     
+2026-09-03T18:44:36.8263641Z         col_crt = 1388836800
+2026-09-03T18:44:36.8263941Z         grade_dt = _dt(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
+2026-09-03T18:44:36.8264247Z     
+2026-09-03T18:44:36.8264527Z         def _grade_good_with_last_review_at(last_review_dt):
+2026-09-03T18:44:36.8264877Z             item = _review_item()
+2026-09-03T18:44:36.8265211Z             ds = item.directions[Direction.RECOGNITION]
+2026-09-03T18:44:36.8265603Z             item.directions[Direction.RECOGNITION] = replace(
+2026-09-03T18:44:36.8266047Z                 ds, last_review=last_review_dt, stability=5.0, difficulty=7.0
+2026-09-03T18:44:36.8266412Z             )
+2026-09-03T18:44:36.8266641Z             return schedule(
+2026-09-03T18:44:36.8266906Z                 item,
+2026-09-03T18:44:36.8267159Z                 Rating.GOOD,
+2026-09-03T18:44:36.8267437Z                 review_date=grade_dt.date(),
+2026-09-03T18:44:36.8267733Z                 now=grade_dt,
+2026-09-03T18:44:36.8268004Z                 col_crt=col_crt,
+2026-09-03T18:44:36.8268262Z             )
+2026-09-03T18:44:36.8268683Z     
+2026-09-03T18:44:36.8269010Z         # Same col-day-window times as the AGAIN test above.
+2026-09-03T18:44:36.8269384Z         early = _dt(2026, 5, 11, 17, 0, 1, tzinfo=UTC)
+2026-09-03T18:44:36.8269732Z         late = _dt(2026, 5, 11, 22, 0, 0, tzinfo=UTC)
+2026-09-03T18:44:36.8270168Z     
+2026-09-03T18:44:36.8270430Z         r_early = _grade_good_with_last_review_at(early)
+2026-09-03T18:44:36.8270800Z         r_late = _grade_good_with_last_review_at(late)
+2026-09-03T18:44:36.8271082Z     
+2026-09-03T18:44:36.8271351Z         s_early = r_early.directions[Direction.RECOGNITION].stability
+2026-09-03T18:44:36.8271761Z         s_late = r_late.directions[Direction.RECOGNITION].stability
+2026-09-03T18:44:36.8272245Z     
+2026-09-03T18:44:36.8272440Z >       assert s_early == s_late, (
+2026-09-03T18:44:36.8272808Z             f"Layer 50: recall formula must use INTEGER col-day elapsed at grade time. "
+2026-09-03T18:44:36.8273276Z             f"Same col-day grades produced different s={s_early} vs {s_late}."
+2026-09-03T18:44:36.8273626Z         )
+2026-09-03T18:44:36.8274151Z E       AssertionError: Layer 50: recall formula must use INTEGER col-day elapsed at grade time. Same col-day grades produced different s=15.2809 vs 13.9857.
+2026-09-03T18:44:36.8274736Z E       assert 15.2809 == 13.9857
+2026-09-03T18:44:36.8274901Z 
+2026-09-03T18:44:36.8275006Z tests/test_fsrs.py:276: AssertionError
+2026-09-03T18:44:36.8275330Z =========================== short test summary info ============================
+2026-09-03T18:44:36.8276145Z FAILED tests/test_colday_helper_consistency.py::TestNativeGradeMatchesSyncWriteback::test_native_equals_sync_for_each_interval - AssertionError: native/sync diverge at interval=1
+2026-09-03T18:44:36.8277147Z assert datetime.datetime(2026, 5, 26, 4, 0, tzinfo=datetime.timezone.utc) == datetime.datetime(2026, 5, 25, 4, 0, tzinfo=datetime.timezone.utc)
+2026-09-03T18:44:36.8278022Z FAILED tests/test_colday_helper_consistency.py::TestNativeGradeMatchesSyncWriteback::test_native_due_date_advances_by_interval - assert 2 == 1
+2026-09-03T18:44:36.8278862Z  +  where 2 = (datetime.date(2026, 5, 26) - datetime.date(2026, 5, 24)).days
+2026-09-03T18:44:36.8279475Z  +    where datetime.date(2026, 5, 26) = <built-in method date of datetime.datetime object at 0x7f6dfdfd1c80>()
+2026-09-03T18:44:36.8280258Z  +      where <built-in method date of datetime.datetime object at 0x7f6dfdfd1c80> = datetime.datetime(2026, 5, 26, 4, 0, tzinfo=datetime.timezone.utc).date
+2026-09-03T18:44:36.8281648Z FAILED tests/test_fsrs.py::TestReviewScheduling::test_review_again_uses_integer_col_day_elapsed_LAYER_50 - AssertionError: Layer 50: lapse formula must use INTEGER col-day elapsed at grade time. Same col-day grades produced different s=1.2993 vs 1.2532; means TT still uses fractional days_elapsed at grade time.
+2026-09-03T18:44:36.8282728Z assert 1.2993 == 1.2532
+2026-09-03T18:44:36.8283590Z FAILED tests/test_fsrs.py::TestReviewScheduling::test_review_good_uses_integer_col_day_elapsed_LAYER_50 - AssertionError: Layer 50: recall formula must use INTEGER col-day elapsed at grade time. Same col-day grades produced different s=15.2809 vs 13.9857.
+2026-09-03T18:44:36.8284468Z assert 15.2809 == 13.9857
+2026-09-03T18:44:36.8284786Z ============ 4 failed, 6374 passed, 67 skipped in 62.19s (0:01:02) =============
+2026-09-03T18:44:37.0609185Z ##[error]Process completed with exit code 1.
+2026-09-03T18:44:37.0717750Z Post job cleanup.

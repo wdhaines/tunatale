@@ -49,11 +49,27 @@ class FakeGh:
         m = re.search(r"/actions/jobs/(\d+)/logs", endpoint)
         if m:
             jid = int(m[1])
-            path = FIX / "logs" / f"{jid}.log"
-            if jid in self.missing_logs or not path.exists():
+            if jid in self.missing_logs:
                 raise GhError(endpoint, "HTTP 410: logs expired")
-            return path.read_text()
+            # An ABSENT fixture must be loud, not an "expired log": the first
+            # version mapped both to GhError, so when *.log fixtures were
+            # gitignored out of the commit, CI saw plausible UNCLASSIFIED
+            # records instead of a missing file.
+            return (FIX / "logs" / f"{jid}.txt").read_text()
         raise AssertionError(f"unexpected endpoint {endpoint}")
+
+
+def test_every_fixture_file_is_tracked_by_git() -> None:
+    """The root .gitignore has `*.log`. The first commit of these fixtures lost all
+    six job logs to it: `git add <dir>` skipped them silently, the local run passed
+    on files that existed only on disk, and CI went red. Fails locally, before a push."""
+    import subprocess
+
+    on_disk = {p.relative_to(FIX).as_posix() for p in FIX.rglob("*") if p.is_file()}
+    tracked = subprocess.run(
+        ["git", "ls-files", "--", "."], cwd=FIX, capture_output=True, text=True, check=True
+    ).stdout.split()
+    assert on_disk - set(tracked) == set(), "fixture files git will not commit (gitignored or never added)"
 
 
 def never_contains(fix: str, sha: str) -> bool | None:
