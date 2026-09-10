@@ -23,6 +23,51 @@ const { email, password } = JSON.parse(readFileSync(CREDENTIALS, 'utf8')) as {
 	password: string;
 };
 
+/**
+ * Counts the page's in-flight `/api/` requests, so a test can wait for an SPA
+ * page's own background loads to finish (tunatale-1l26.8).
+ *
+ * NOT `page.waitForLoadState('networkidle')`: that is a lifecycle state of the
+ * DOCUMENT, reached once per document load. Sign-in reaches `/` by a
+ * client-side navigation, so no new document exists and the state was already
+ * reached on /login. The wait returns at once whatever is pending. Measured: it
+ * returned in under 1ms with `/api/curriculum` in flight, which is also what
+ * tunatale-vnf.17's `networkidle_ms=1` probe was actually seeing.
+ *
+ * Attach BEFORE the navigation whose requests matter: a request that started
+ * before `track` was called is never counted.
+ */
+function trackApiRequests(page: import('@playwright/test').Page) {
+	let inflight = 0;
+	let lastChange = Date.now();
+	const isApi = (r: import('@playwright/test').Request) =>
+		new URL(r.url()).pathname.startsWith('/api/');
+	page.on('request', (r) => {
+		if (isApi(r)) {
+			inflight++;
+			lastChange = Date.now();
+		}
+	});
+	const settle = (r: import('@playwright/test').Request) => {
+		if (isApi(r)) {
+			inflight--;
+			lastChange = Date.now();
+		}
+	};
+	page.on('requestfinished', settle);
+	page.on('requestfailed', settle);
+	return {
+		/** Resolves once no `/api/` request is pending and none has started or ended for `quietMs`. */
+		async settled(quietMs = 500): Promise<void> {
+			await expect
+				.poll(() => inflight === 0 && Date.now() - lastChange >= quietMs, {
+					message: 'the page\'s own /api/ requests never settled'
+				})
+				.toBe(true);
+		}
+	};
+}
+
 async function signIn(page: import('@playwright/test').Page): Promise<void> {
 	// ⚠️ HYDRATION, NOT POLITENESS. `goto` resolves on document load, but the
 	// form's submit handler only exists after hydration. Filling and clicking an
@@ -79,6 +124,7 @@ test('a session that dies mid-visit lands on the login page, not a broken one', 
 	page,
 	context
 }) => {
+	const api = trackApiRequests(page);
 	await page.goto('/login');
 	await signIn(page);
 	await page.waitForURL('/');
@@ -97,6 +143,25 @@ test('a session that dies mid-visit lands on the login page, not a broken one', 
 	//   fails HERE          -> the app never left /login after signIn;
 	//   fails at the CLICK  -> the nav was up and something took it away.
 	await expect(page.getByRole('link', { name: 'Review' })).toBeVisible();
+
+	// The landing page must finish loading BEFORE the session dies (tunatale-1l26.8).
+	//
+	// `/`'s onMount is a sequential chain — curricula, then review sessions, then
+	// one progress call per curriculum — and none of it is gated on the nav, so
+	// the Review link is visible while the chain is still running. Under load a
+	// link of that chain can leave AFTER clearCookies: it 401s, the interceptor
+	// redirects to /login?next=%2F, the whole nav unmounts, and the click below
+	// burns 30s on a link that no longer exists. The APP is right in that case —
+	// a dead session did land on the login page — but the test is about the
+	// click being what discovers it, so it must not race the page's own fetches.
+	//
+	// Measured from a preserved trace (stress run, load ~40): the
+	// discriminator above passed at 15111ms, `GET /api/review-sessions` left at
+	// ~15110ms, clearCookies ran at 15112ms, and that request came back 401.
+	// There is no DOM signal for "the chain is done", so this waits on the
+	// page's own /api/ traffic — see trackApiRequests for why that is not
+	// `networkidle`, which is the wait tunatale-vnf.17 tried and withdrew.
+	await api.settled();
 
 	// The cookie expiring is indistinguishable, from the browser's side, from
 	// this. The layout guard cannot catch it — it already ran and passed — so
