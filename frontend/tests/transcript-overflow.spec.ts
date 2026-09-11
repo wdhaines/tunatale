@@ -497,6 +497,24 @@ test("lesson page: a HOVER-revealed tooltip near the left margin never leaves th
 			// DOM order, so a GLOBAL nth() would hover a different element than
 			// the one whose rect this loop collected.
 			const word = page.locator(".transcript-wrapper .tt-wrap").nth(t.index);
+			// Close the previous word's popover first. The targets are the
+			// leftmost words, i.e. stacked row starts, and a hover-revealed popover
+			// stays open while the pointer sits on it — once the popover grew its
+			// two "Understand / Produce" lines (tunatale-yh47.6) it reached the row
+			// below on CI's Linux metrics, and its `.tt-side` intercepted the next
+			// hover. Parking the pointer off the transcript makes each measurement
+			// about one popover, and also keeps `shown[0]` below unambiguous.
+			await page.mouse.move(0, 0);
+			await expect
+				.poll(() =>
+					page.evaluate(
+						() =>
+							[...document.querySelectorAll(".tt")].filter(
+								(el) => getComputedStyle(el).display !== "none",
+							).length,
+					),
+				)
+				.toBe(0);
 			await word.hover();
 			await expect(word.locator(".tt").first()).toBeVisible({ timeout: 5000 });
 
