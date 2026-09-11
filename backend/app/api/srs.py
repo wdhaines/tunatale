@@ -2219,6 +2219,7 @@ async def build_transcript_payload(content_id: str, lesson, request: Request) ->
                         "produce_stability": w.produce_stability,
                         "understand_progress": w.understand_progress,
                         "produce_progress": w.produce_progress,
+                        "overdue_ratio": w.overdue_ratio,
                         "collocation_understand_band": w.collocation_understand_band,
                         "collocation_produce_band": w.collocation_produce_band,
                     }

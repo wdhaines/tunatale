@@ -330,6 +330,25 @@ describe("WordSpan", () => {
       });
       expect(getByRole("button").className).not.toContain("word-due");
     });
+
+    // bd tunatale-yh47.3 (user's rule): overdue extends the due bold — overdue
+    // by >= 1x its stability reads heavier, >= 3x heaviest. Boundaries pinned.
+    it.each([
+      [null, false, false],
+      [0, false, false],
+      [0.99, false, false],
+      [1, true, false],
+      [2.99, true, false],
+      [3, false, true],
+      [12, false, true],
+    ] as const)("overdue_ratio %s → overdue %s, far %s", (ratio, overdue, far) => {
+      const { getByRole } = render(WordSpan, {
+        props: { word: makeWordToken({ is_due: true, overdue_ratio: ratio }) },
+      });
+      const cls = getByRole("button").classList;
+      expect(cls.contains("word-overdue")).toBe(overdue);
+      expect(cls.contains("word-overdue-far")).toBe(far);
+    });
   });
 
   it("has no title attribute on the word span", () => {

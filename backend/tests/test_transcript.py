@@ -2471,6 +2471,58 @@ class TestWellKnown:
         assert self._word("banka").well_known is False
 
 
+class TestOverdueRatio:
+    """bd tunatale-yh47.3: the reader extends a due word's bold by how far past
+    due it is, measured in multiples of the active direction's stability
+    (user's rule: >= 1x -> heavier, >= 3x -> heaviest). The backend supplies the
+    ratio; the weights are presentation."""
+
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.today = date(2026, 6, 1)
+
+    def _word_due(self, due: date | None, stability: float) -> object:
+        self.db.add_collocation(
+            SyntacticUnit(text="banka", translation="x", word_count=1, difficulty=1, source="llm", lemma="banka"),
+            language_code="sl",
+        )
+        item = self.db.get_collocation("banka")
+        ds = item.directions[Direction.RECOGNITION]
+        ds.state = SRSState.REVIEW
+        ds.stability = stability
+        ds.reps = 3
+        ds.last_review = datetime(2026, 4, 1, tzinfo=UTC)
+        ds.due_at = datetime(due.year, due.month, due.day, 4, 0, tzinfo=UTC) if due else None
+        self.db.update_direction(item.guid, Direction.RECOGNITION, ds)
+        # Recognition-only (the Norwegian import shape), so recognition is the
+        # ACTIVE direction — the one `is_due`, and so the bold, reads.
+        with self.db._get_conn() as conn:
+            conn.execute("DELETE FROM collocation_directions WHERE direction = 'production'")
+            conn.commit()
+        lesson = _make_lesson([("female-1", "banka")])
+        return extract_transcript(lesson, self.db, LowercaseLemmatizer(), today=self.today).dialogue_lines[0].words[0]
+
+    def test_ratio_is_days_overdue_over_stability(self):
+        """Due 2026-05-22, today 2026-06-01: 10 days over a 5-day memory = 2.0."""
+        word = self._word_due(date(2026, 5, 22), 5.0)
+        assert word.is_due is True
+        assert word.overdue_ratio == 2.0
+
+    def test_due_today_is_zero(self):
+        word = self._word_due(date(2026, 6, 1), 5.0)
+        assert word.overdue_ratio == 0.0
+
+    def test_not_due_is_none(self):
+        word = self._word_due(date(2026, 6, 10), 5.0)
+        assert word.is_due is False
+        assert word.overdue_ratio is None
+
+    def test_zero_stability_is_none(self):
+        """No measured memory, no ratio — never a division by zero."""
+        word = self._word_due(date(2026, 5, 22), 0.0)
+        assert word.overdue_ratio is None
+
+
 class TestDirectionBands:
     """Twin rails (bd tunatale-yh47): per-direction mastery bands on each word.
 

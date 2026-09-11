@@ -265,6 +265,9 @@ export interface WordToken {
   // when the band is a real strength band (days+); KNOWN has no meaningful
   // stability. Optional, same rationale as the siblings.
   // each side's mastery 0–1; bd tunatale-yh47.7
+  // Days past due over the active direction's stability; null unless due.
+  // Drives the reader's heavier bold for overdue words (bd tunatale-yh47.3).
+  overdue_ratio?: number | null;
   understand_progress?: number | null;
   produce_progress?: number | null;
   understand_band?: string | null;
