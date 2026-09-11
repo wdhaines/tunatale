@@ -111,6 +111,21 @@ def component_mastery(ds: DirectionState) -> float:
     return max(0.0, min(1.0, mastery))
 
 
+def side_progress(ds: DirectionState | None) -> float | None:
+    """One side of a word's mastery, for the lesson roll-up's per-side percent.
+
+    The old blended percent split by direction (bd tunatale-yh47.7): a missing
+    card scores 0.0, exactly as :func:`compute_mastery_progress` scores an
+    absent production component, and a SUSPENDED side is None so the roll-up
+    leaves it out of that side's mean, as the blend excludes it.
+    """
+    if ds is None:
+        return 0.0
+    if ds.state == SRSState.SUSPENDED:
+        return None
+    return component_mastery(ds)
+
+
 def compute_mastery_progress(directions: Iterable[DirectionState]) -> float | None:
     """Mean component_mastery over the learn-set. SUSPENDED components excluded.
     None if the set is empty (→ caller renders as not-on-the-ramp).

@@ -3889,6 +3889,8 @@ export interface components {
       prefix_punct: string;
       /** Produce Band */
       produce_band: string | null;
+      /** Produce Progress */
+      produce_progress: number | null;
       /** Produce Stability */
       produce_stability: number | null;
       /** Progress */
@@ -3911,6 +3913,8 @@ export interface components {
       translation: string | null;
       /** Understand Band */
       understand_band: string | null;
+      /** Understand Progress */
+      understand_progress: number | null;
       /** Understand Stability */
       understand_stability: number | null;
       /** Well Known */

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+import pytest
+
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -2562,6 +2564,43 @@ class TestDirectionBands:
         assert word.understand_stability == 12.0
         assert word.produce_band == "new"
         assert word.produce_stability is None
+
+    def test_side_progress_is_component_mastery_per_direction(self):
+        """bd tunatale-yh47.7: the lesson roll-up's per-side percent is the old
+        blended formula split — each side is ``component_mastery`` of the SAME
+        direction its band reads. log10(45)/log10(120) = 0.795127…,
+        log10(5)/log10(120) = 0.336176…"""
+        self._add_vocab("banka", lemma="banka")
+        self._set_direction("banka", Direction.RECOGNITION, SRSState.REVIEW, 45.0)
+        self._set_direction("banka", Direction.PRODUCTION, SRSState.REVIEW, 5.0)
+
+        word = self._word("banka")
+        assert word.understand_progress == pytest.approx(0.795127, abs=1e-6)
+        assert word.produce_progress == pytest.approx(0.336176, abs=1e-6)
+
+    def test_side_progress_absent_is_zero_suspended_is_none(self):
+        """No production card scores 0.0 (the old absent-production rule);
+        a suspended side is None so the roll-up leaves it out of that side's
+        mean, as compute_mastery_progress excludes suspended components."""
+        self._add_vocab("banka", lemma="banka")
+        self._set_direction("banka", Direction.RECOGNITION, SRSState.SUSPENDED, 45.0)
+        with self.db._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM collocation_directions WHERE direction = 'production'"
+                " AND collocation_id = (SELECT id FROM collocations WHERE text = 'banka')"
+            )
+            conn.commit()
+
+        word = self._word("banka")
+        assert word.understand_progress is None
+        assert word.produce_progress == 0.0
+
+    def test_side_progress_untracked_word_is_none(self):
+        """An untracked word has no card on either side: both None (the
+        frontend scores an untracked word 0, as lessonMastery always has)."""
+        word = self._word("banka")
+        assert word.understand_progress is None
+        assert word.produce_progress is None
 
     def test_inflection_cloze_production_wins_and_understand_reads_base(self):
         """Case 4: an exact-surface inflection cloze's production IS the word's
