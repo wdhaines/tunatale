@@ -999,3 +999,113 @@ test("listen preview: the key phrase tag is dropped on a phone and kept above it
 	await expect(kpWide).toBeVisible();
 	await expect(kpWide).toHaveText(/key phrase/i);
 });
+
+test("listen preview: expanding well recognized group keeps modal and footer in viewport", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+
+	const liveRows = Array.from({ length: 8 }, (_, i) => ({
+		kind: "word" as const,
+		grade_class: "due" as const,
+		deferred_reason: null as null,
+		well_known: false,
+		will_create: true,
+		due_at: "2026-09-10T04:00:00+00:00",
+		text: `liveword${i}`,
+		item_id: i + 1,
+		rating: "good" as const,
+		translation: `translation${i}`,
+		progress: 0.5,
+		understand_band: "weeks" as string | null,
+		understand_stability: 10 as number | null,
+		produce_band: "new" as string | null,
+		produce_stability: null as number | null,
+	}));
+
+	const wellKnownRows = Array.from({ length: 40 }, (_, i) => ({
+		kind: "word" as const,
+		grade_class: "ahead" as const,
+		deferred_reason: "known" as const,
+		well_known: true,
+		will_create: true,
+		due_at: "2126-01-01T04:00:00+00:00",
+		text: `knownword${i}`,
+		item_id: 100 + i,
+		rating: "good" as const,
+		translation: `known translation${i}`,
+		progress: 0.9,
+		understand_band: "solid" as string | null,
+		understand_stability: 200 as number | null,
+		produce_band: "new" as string | null,
+		produce_stability: null as number | null,
+	}));
+
+	const fakePreview = { candidates: [...liveRows, ...wellKnownRows] };
+
+	const cid = await curriculumId(request);
+
+	const viewports = [
+		{ width: 1280, height: 800, label: "desktop 1280x800" },
+		{ ...PHONE, label: `phone ${PHONE.width}x${PHONE.height}` },
+	];
+
+	const failures: string[] = [];
+
+	for (const vp of viewports) {
+		await page.route("**/listen-preview", (route) =>
+			route.fulfill({ json: fakePreview }),
+		);
+		await page.setViewportSize({ width: vp.width, height: vp.height });
+
+		await page.goto(lessonURL(cid));
+		await page.getByRole("button", { name: "Mark as Listened" }).click();
+
+		const modal = page.locator(".overlay .modal");
+		await expect(modal).toBeVisible({ timeout: 10000 });
+		await expect(modal.locator(".candidate").first()).toBeVisible({ timeout: 10000 });
+
+		const summary = modal.locator(".well-known-group summary");
+		await expect(summary).toBeVisible();
+		await summary.click();
+
+		const footer = modal.locator(".footer");
+		await expect(footer).toBeVisible();
+
+		const [modalBox, footerBox, commitBox] = await Promise.all([
+			modal.boundingBox(),
+			footer.boundingBox(),
+			footer.locator("button:not(.cancel)").boundingBox(),
+		]);
+
+		if (!modalBox || !footerBox || !commitBox) {
+			failures.push(`${vp.label}: failed to measure boxes`);
+			await page.unroute("**/listen-preview");
+			continue;
+		}
+
+		const footerBottom = footerBox.y + footerBox.height;
+		const modalBottom = modalBox.y + modalBox.height;
+
+		if (footerBottom > modalBottom + 0.5) {
+			failures.push(
+				`${vp.label}: footer bottom ${footerBottom.toFixed(1)} > modal bottom ${modalBottom.toFixed(1)}`,
+			);
+		}
+		if (modalBottom > vp.height + 0.5) {
+			failures.push(
+				`${vp.label}: modal bottom ${modalBottom.toFixed(1)} > viewport ${vp.height}`,
+			);
+		}
+		if (commitBox.y < 0 || commitBox.y + commitBox.height > vp.height) {
+			failures.push(
+				`${vp.label}: commit button outside viewport (y=${commitBox.y.toFixed(1)}, h=${commitBox.height.toFixed(1)})`,
+			);
+		}
+
+		await page.unroute("**/listen-preview");
+	}
+
+	expect(failures, failures.join("\n")).toEqual([]);
+});

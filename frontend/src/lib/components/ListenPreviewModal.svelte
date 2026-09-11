@@ -501,6 +501,7 @@
 				<button onclick={skipAll} type="button">Skip All</button>
 			</div>
 
+			<div class="body">
 			{#if candidates.length === 0}
 				<p class="status">No new words to add.</p>
 			{:else}
@@ -724,6 +725,7 @@
 					</details>
 				{/if}
 			{/if}
+			</div>
 		{/if}
 
 		<div class="footer">
@@ -874,6 +876,17 @@
 		background: var(--color-surface-2);
 		color: var(--color-text);
 		cursor: pointer;
+	}
+	/* The one scroll region between the actions row and the footer. A <details>
+	   group is not a scroll container, so as a flex item it could not shrink:
+	   expanding "well recognized" pushed the footer out of the modal (35px on
+	   desktop, 18px on a phone, measured — tunatale-yh47.8). min-height: 0 is
+	   what lets this box shrink below its content; the footer stays pinned. */
+	.body {
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow-y: auto;
+		overflow-x: hidden;
 	}
 	.list {
 		list-style: none;
