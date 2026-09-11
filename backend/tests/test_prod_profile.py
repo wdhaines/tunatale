@@ -25,12 +25,15 @@ is the trap this docstring exists to flag.
 
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo, available_timezones
+
 import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import Settings, prod_profile_problems
+from app.config import Settings, clock_runtime_problems, prod_profile_problems
 
 # ── Settings surface ─────────────────────────────────────────────────────────
 
@@ -41,11 +44,49 @@ def _clean_settings(monkeypatch, tmp_path, **overrides) -> Settings:
     The dev ``.env`` sets TARGET_LANGUAGE/DATABASE_URLS and a real environ may
     carry LLM_MODE, so a naive ``Settings()`` here would go green or red
     depending on whose machine ran it.
+
+    ``TZ`` is in the list for a sharper reason than the others: CI's
+    ``backend-hostile-tz`` and ``backend-hostile-hour`` jobs EXPORT it, so
+    without this the tz assertions below would read the runner's zone and mean
+    something different in every job.
     """
-    for var in ("TT_ENV", "CORS_ORIGINS", "CORS_ALLOW_ORIGIN_REGEX", "AUTH_ENABLED", "SESSION_SECRET", "LLM_MODE"):
+    for var in (
+        "TT_ENV",
+        "CORS_ORIGINS",
+        "CORS_ALLOW_ORIGIN_REGEX",
+        "AUTH_ENABLED",
+        "SESSION_SECRET",
+        "LLM_MODE",
+        "TZ",
+    ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.chdir(tmp_path)
     return Settings(_env_file=None, **overrides)
+
+
+def _zone_agreeing_with_local(now: datetime | None = None) -> str:
+    """Any IANA zone whose offset right now equals this process's own.
+
+    Named rather than hardcoded because the zone differs per machine and per CI
+    job; the local zone itself is always in tzdata, so a match always exists.
+
+    ⚠️ **Call this in the same TZ environment the assertion runs in.** POSIX
+    ``localtime`` re-reads ``TZ`` on every call, so deleting ``TZ`` *after*
+    picking a zone changes the answer underneath you. That is not theoretical:
+    ``./test.sh`` pins ``TZ=UTC``, so calling this before ``_clean_settings``
+    yields a UTC-matching zone which then disagrees with the Mac's real zone —
+    a green-looking helper producing a red test for the wrong reason.
+    """
+    now = now or datetime.now()
+    local = now.astimezone().utcoffset()
+    return next(z for z in sorted(available_timezones()) if now.replace(tzinfo=ZoneInfo(z)).utcoffset() == local)
+
+
+def _zone_disagreeing_with_local(now: datetime | None = None) -> str:
+    """A zone this process is definitely NOT in. The pair is 14 hours apart."""
+    now = now or datetime.now()
+    local = now.astimezone().utcoffset()
+    return next(z for z in ("Etc/GMT+5", "Etc/GMT-9") if now.replace(tzinfo=ZoneInfo(z)).utcoffset() != local)
 
 
 def test_cors_origins_default_is_not_a_wildcard(monkeypatch, tmp_path):
@@ -85,6 +126,7 @@ def test_prod_profile_clean_when_fully_configured(monkeypatch, tmp_path):
         session_secret="a-real-secret",
         cors_origins=["https://tunatale.example.com"],
         trusted_proxy_header="X-Forwarded-For",
+        tz="America/New_York",
     )
     assert prod_profile_problems(s) == []
 
@@ -100,6 +142,8 @@ def test_prod_profile_clean_when_fully_configured(monkeypatch, tmp_path):
         ({"cors_allow_origin_regex": ".*"}, "cors_allow_origin_regex"),
         ({"cors_origins": []}, "cors_origins"),
         ({"trusted_proxy_header": ""}, "trusted_proxy_header"),
+        ({"tz": ""}, "tz"),
+        ({"tz": "Mars/Olympus_Mons"}, "tz"),
     ],
 )
 def test_prod_profile_flags_each_misconfiguration(monkeypatch, tmp_path, overrides, fragment):
@@ -111,6 +155,7 @@ def test_prod_profile_flags_each_misconfiguration(monkeypatch, tmp_path, overrid
         "session_secret": "a-real-secret",
         "cors_origins": ["https://tunatale.example.com"],
         "trusted_proxy_header": "X-Forwarded-For",
+        "tz": "America/New_York",
     }
     s = _clean_settings(monkeypatch, tmp_path, **{**base, **overrides})
     problems = prod_profile_problems(s)
@@ -122,7 +167,7 @@ def test_prod_profile_reports_every_problem_at_once(monkeypatch, tmp_path):
     """One boot, one list — not a whack-a-mole of restarts."""
     s = _clean_settings(monkeypatch, tmp_path, tt_env="prod")
     problems = prod_profile_problems(s)
-    assert len(problems) == 3, problems  # llm_mode, auth_enabled, session_secret
+    assert len(problems) == 4, problems  # llm_mode, auth_enabled, session_secret, tz
 
 
 def test_prod_profile_ignores_wildcard_regex_only_when_scoped(monkeypatch, tmp_path):
@@ -137,8 +182,44 @@ def test_prod_profile_ignores_wildcard_regex_only_when_scoped(monkeypatch, tmp_p
         cors_origins=[],
         cors_allow_origin_regex=r"^https://[a-z0-9-]+\.example\.com$",
         trusted_proxy_header="X-Forwarded-For",
+        tz="America/New_York",
     )
     assert prod_profile_problems(s) == []
+
+
+# ── The clock the PROCESS actually keeps ─────────────────────────────────────
+#
+# `prod_profile_problems` can only read the setting. Whether the process
+# resolves that name to the right offset is a fact about the running image:
+# `rollover.py::_local_now` calls bare `.astimezone()`, which asks libc, and
+# libc silently falls back to UTC when the zone data is missing. That failure
+# is invisible — TZ is set, the name is a real zone, and every clock is still
+# wrong — so it gets its own check against the live process.
+
+
+def test_clock_runtime_problems_silent_when_the_process_keeps_the_named_zone(monkeypatch, tmp_path):
+    # The zone is chosen AFTER _clean_settings has removed TZ, so it is picked
+    # in the same environment the assertion evaluates in. See the helper.
+    s = _clean_settings(monkeypatch, tmp_path)
+    s.tz = _zone_agreeing_with_local()
+    assert clock_runtime_problems(s) == []
+
+
+def test_clock_runtime_problems_catches_a_zone_the_process_is_not_keeping(monkeypatch, tmp_path):
+    """TZ names a zone, the process resolves a different offset: zone data missing."""
+    s = _clean_settings(monkeypatch, tmp_path)
+    zone = _zone_disagreeing_with_local()
+    s.tz = zone
+    problems = clock_runtime_problems(s)
+    assert problems, f"{zone} must disagree with this machine's own offset"
+    assert zone in problems[0], problems
+
+
+@pytest.mark.parametrize("tz", ["", "Mars/Olympus_Mons"])
+def test_clock_runtime_problems_defers_to_the_profile_check(monkeypatch, tmp_path, tz):
+    """Unset or unresolvable is `prod_profile_problems`' story, reported once."""
+    s = _clean_settings(monkeypatch, tmp_path, tz=tz)
+    assert clock_runtime_problems(s) == []
 
 
 # ── The startup guard in main ────────────────────────────────────────────────
@@ -178,11 +259,38 @@ async def test_lifespan_starts_when_the_prod_profile_is_satisfied(tmp_path, monk
     monkeypatch.setattr(settings, "session_secret", "a-real-secret")
     monkeypatch.setattr(settings, "cors_origins", ["https://tunatale.example.com"])
     monkeypatch.setattr(settings, "trusted_proxy_header", "X-Forwarded-For")
+    monkeypatch.setattr(settings, "tz", _zone_agreeing_with_local())
     monkeypatch.setattr(settings, "pipeline_autostart", False)
 
     test_app = FastAPI()
     async with lifespan(test_app):
         assert test_app.state.srs_db is not None
+
+
+async def test_lifespan_raises_when_the_process_is_not_keeping_the_configured_zone(tmp_path, monkeypatch):
+    """A prod profile that is perfect on paper, on an image with no zone data.
+
+    Everything else passes; only the live clock disagrees. Without this the
+    box runs with every SRS day boundary in the wrong place and looks healthy.
+    """
+    from app.config import settings
+    from app.main import lifespan
+
+    monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
+    monkeypatch.setattr(settings, "database_urls", {})
+    monkeypatch.setattr(settings, "tt_env", "prod")
+    monkeypatch.setattr(settings, "llm_mode", "live")
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    monkeypatch.setattr(settings, "session_secret", "a-real-secret")
+    monkeypatch.setattr(settings, "cors_origins", ["https://tunatale.example.com"])
+    monkeypatch.setattr(settings, "trusted_proxy_header", "X-Forwarded-For")
+    monkeypatch.setattr(settings, "tz", _zone_disagreeing_with_local())
+    monkeypatch.setattr(settings, "pipeline_autostart", False)
+
+    test_app = FastAPI()
+    with pytest.raises(RuntimeError, match="TZ"):
+        async with lifespan(test_app):
+            raise AssertionError("lifespan body must not run — the guard raises first")
 
 
 async def test_lifespan_starts_normally_when_tt_env_is_unset(tmp_path, monkeypatch):

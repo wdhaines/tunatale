@@ -19,7 +19,7 @@ from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
 from app.audio.renderer import LessonRenderer  # noqa: E402
 from app.audio.tts_factory import get_tts_service  # noqa: E402
 from app.auth.database import AuthDatabase  # noqa: E402
-from app.config import prod_profile_problems, settings  # noqa: E402
+from app.config import clock_runtime_problems, prod_profile_problems, settings  # noqa: E402
 from app.generation.pipeline import LessonPipeline  # noqa: E402
 from app.generation.planner import CurriculumPlanner  # noqa: E402
 from app.generation.story import StoryGenerator  # noqa: E402
@@ -111,7 +111,9 @@ def _assert_prod_profile() -> None:
     """
     if settings.tt_env != "prod":
         return
-    problems = prod_profile_problems(settings)
+    # The runtime clock check runs HERE and not in check_prod_env.py: it reads
+    # the live process's zone resolution, which only the box can answer.
+    problems = prod_profile_problems(settings) + clock_runtime_problems(settings)
     if problems:
         raise RuntimeError("Refusing to start with TT_ENV=prod:\n  - " + "\n  - ".join(problems))
 
