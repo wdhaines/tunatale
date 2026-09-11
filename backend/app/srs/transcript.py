@@ -78,6 +78,9 @@ class WordToken:
     # roll-up's per-side percent. None for untracked words and suspended sides.
     understand_progress: float | None = None
     produce_progress: float | None = None
+    # Days past due over the ACTIVE direction's stability (_overdue_ratio);
+    # None unless is_due. The reader's heavier-bold for overdue words.
+    overdue_ratio: float | None = None
     # Bands of the enclosing multi-word collocation span's OWN card, filled on
     # every span word; None off-span.
     collocation_understand_band: str | None = None
@@ -234,6 +237,20 @@ def _is_due(ds: DirectionState, today: date) -> bool:
     if not _is_reviewable(ds):
         return False
     return ds.due_at.date() <= today
+
+
+def _overdue_ratio(ds: DirectionState, today: date) -> float | None:
+    """How far past due a due direction is, in multiples of its stability.
+
+    The reader extends a due word's bold by this (bd tunatale-yh47.3: >= 1x its
+    stability reads heavier, >= 3x heaviest). Stability does not decay while a
+    deck sits unused, so a long-dormant word keeps its band; this ratio is what
+    says it has not been checked in time. None when not due or when there is no
+    measured memory to divide by. Days are the same day rule ``_is_due`` uses.
+    """
+    if not _is_due(ds, today) or ds.stability <= 0:
+        return None
+    return (today - ds.due_at.date()).days / ds.stability
 
 
 def _inflection_feature_for(
@@ -564,6 +581,7 @@ def extract_transcript(
                 produce_stability: float | None = None
                 understand_progress: float | None = None
                 produce_progress: float | None = None
+                overdue_ratio_val: float | None = None
 
                 # Step 3b: Check card-less ignore list (inside the Step-3 unknown branch only)
                 if resolved_item is None and lemma.lower() in ignored_lemmas:
@@ -581,6 +599,7 @@ def extract_transcript(
                     active_ds = item.directions[active_dir]
                     active_state_val = active_ds.state.value
                     is_due_flag = _is_due(active_ds, today)
+                    overdue_ratio_val = _overdue_ratio(active_ds, today)
                     # Twin rails (bd tunatale-yh47): per-direction mastery bands.
                     # A word resolved to an exact-surface inflection cloze reads
                     # its PRODUCTION from the cloze itself, but its UNDERSTAND
@@ -700,6 +719,7 @@ def extract_transcript(
                         produce_stability=produce_stability,
                         understand_progress=understand_progress,
                         produce_progress=produce_progress,
+                        overdue_ratio=overdue_ratio_val,
                     )
                 )
 

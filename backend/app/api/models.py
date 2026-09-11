@@ -841,6 +841,7 @@ class TranscriptWord(BaseModel):
     produce_stability: float | None
     understand_progress: float | None
     produce_progress: float | None
+    overdue_ratio: float | None
     collocation_understand_band: str | None
     collocation_produce_band: str | None
 

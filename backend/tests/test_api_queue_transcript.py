@@ -232,6 +232,7 @@ class TestTranscriptEndpoint:
             "produce_stability",
             "understand_progress",
             "produce_progress",
+            "overdue_ratio",
             "collocation_understand_band",
             "collocation_produce_band",
         }

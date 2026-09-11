@@ -3885,6 +3885,8 @@ export interface components {
       known_marked: boolean;
       /** Lemma */
       lemma: string;
+      /** Overdue Ratio */
+      overdue_ratio: number | null;
       /** Prefix Punct */
       prefix_punct: string;
       /** Produce Band */

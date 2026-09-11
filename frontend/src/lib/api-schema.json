@@ -4334,6 +4334,17 @@
             "title": "Lemma",
             "type": "string"
           },
+          "overdue_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overdue Ratio"
+          },
           "prefix_punct": {
             "title": "Prefix Punct",
             "type": "string"
@@ -4505,6 +4516,7 @@
           "produce_stability",
           "understand_progress",
           "produce_progress",
+          "overdue_ratio",
           "collocation_understand_band",
           "collocation_produce_band"
         ],

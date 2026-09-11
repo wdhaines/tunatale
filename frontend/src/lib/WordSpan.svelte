@@ -68,6 +68,12 @@
 				: ''
 	);
 
+	// Overdue extends the due bold (bd tunatale-yh47.3, the user's rule): past due
+	// by at least the memory's own stability reads heavier, by 3x heaviest.
+	// Relative to stability because a 2-day memory a week overdue is lost while a
+	// 6-month one is fine; the backend supplies the ratio (`_overdue_ratio`).
+	const overdueRatio = $derived(word.overdue_ratio ?? 0);
+
 	// Show the popover when: not inside a collocation, OR alt-hover mode is active.
 	// The Tooltip wrapper is ALWAYS rendered (suppressed otherwise) so the DOM
 	// structure stays stable — toggling Alt over a collocation must not reflow the
@@ -156,6 +162,8 @@
 			class:paint-untracked={word.active_state === 'unknown' && !hideRails}
 			class:word-selected={selected}
 			class:word-due={word.is_due}
+			class:word-overdue={overdueRatio >= 1 && overdueRatio < 3}
+			class:word-overdue-far={overdueRatio >= 3}
 			style={railProps ?? undefined}
 			role="button"
 			tabindex="0"
@@ -199,6 +207,12 @@
 	}
 	.word-due {
 		font-weight: bold;
+	}
+	.word-overdue {
+		font-weight: 800;
+	}
+	.word-overdue-far {
+		font-weight: 900;
 	}
 	.word-selected {
 		background-color: rgba(99, 102, 241, 0.2);
