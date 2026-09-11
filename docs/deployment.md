@@ -4,9 +4,307 @@ Operational runbook for running TunaTale somewhere other than the author's
 laptop. Built incrementally alongside the `Deploy` epic; sections appear as the
 corresponding work lands.
 
-Provisioning and cutover are not written yet. What follows is the part that
-already applies to the laptop today, plus account management, which landed with
-Phase 1 of the auth work.
+Provisioning the host is written and was executed end to end on 2026-09-11.
+Caddy/TLS, image delivery, data migration and cutover are not written yet.
+Account management and backups apply to the laptop today as well.
+
+## Provisioning the host — GCP e2-micro
+
+What this produces: one e2-micro VM in an Always Free region with a 30 GB
+standard disk, Docker, 2 GiB swap, unattended security upgrades with automatic
+reboots, and ports 80/443 open for Caddy. Admin access goes over Tailscale, with
+Google's IAP tunnel as the break-glass path. **Port 22 never faces the
+internet, not even during bootstrap.**
+
+Every command below was run on 2026-09-11 against a fresh project, and every
+timing is from that run. Everything after step 3 is plain Ubuntu 24.04 and
+applies unchanged to the Hetzner CX23 fallback.
+
+⚠️ **This repo is public.** This section carries procedure only. The project
+ID, the external IP, the tailnet name and the OS Login username are recorded in
+the private tasks repo (`tunatale-zp9`), not here.
+
+```bash
+PROJECT=<project id>
+REGION=us-east1        # us-west1 / us-central1 / us-east1 — NO other region is free
+ZONE=${REGION}-b
+```
+
+### What is free and what is not — read off the billing catalog
+
+The free-tier page and the VPC pricing page disagree with each other, so this
+table comes from the source billing actually applies: the Cloud Billing Catalog
+(`GET cloudbilling.googleapis.com/v1/services/6F81-5844-456A/skus`, read
+2026-09-11). Re-read it rather than trusting the table if a bill ever surprises
+you.
+
+| Resource | Free | Then | SKU |
+|---|---|---|---|
+| e2-micro, non-preemptible | every hour of the month, **only** in us-west1/us-central1/us-east1 | E2 core/RAM rates | free-tier program |
+| Standard PD (`pd-standard`) | 30 GiB-month | $0.04/GiB-mo | `D973-5D65-BAB2` |
+| Balanced PD (`pd-balanced`) — **the console default** | **none** | $0.10/GiB-mo | `6AE1-525F-8B80` |
+| External IPv4 in use on a VM, static or ephemeral | **720 h/month** per billing account | $0.005/h | `C054-7F72-A02E` |
+| Static IPv4 reserved but *unattached* | 1 h/month | $0.01/h | `66A2-68EA-56BE` |
+| Internet egress, **Standard** network tier | **200 GiB/month** | $0.085/GiB | `8312-AAA7-AE05` (us-east1) |
+| Internet egress, Premium tier — **the project default** | 1 GiB/month | $0.12/GiB | `F274-1692-F213` |
+| Disk snapshots, custom images | none | $0.05/GiB-mo | `817F-F5A3-514E`, `DAA2-253C-6680` |
+
+Three consequences, all applied below:
+
+1. **Use the Standard network tier.** It moves the egress allowance from 1 GiB
+   to 200 GiB a month. The design docs budgeted 1 GB/month against a measured
+   ~0.4 GB baseline. On Standard tier, egress stops being a cost question at all.
+2. **Name `pd-standard` explicitly.** The default disk type bills from the first
+   gigabyte, and nothing warns you.
+3. **The IP is free for 720 hours, and a 31-day month has 744.** The expected
+   bill is therefore **$0.12 in each 31-day month** (24 h × $0.005) and $0
+   otherwise. That is below the $1 budget's first alert ($0.50), so it shows on
+   the invoice and never in an email. The VPC pricing page says the IP free tier
+   is "one hour per month", which contradicts the catalog. The first 31-day
+   month (October 2026) settles which one billing applies.
+
+A static IP attached to the VM (running *or stopped*) costs nothing beyond that
+720-hour pool. It only bills at the higher rate once it is detached, or once
+the VM is deleted and the address is left reserved. A second VM, a second IP or
+a second disk draws from the same per-account pools, so none of them is free.
+
+⚠️ The project may be shared with unrelated tooling. Never disable an API,
+delete an OAuth client or edit the consent screen as part of this runbook. And
+do **not** `gcloud config set billing/quota_project`: it reroutes every call's
+quota and IAM calls then fail with `SERVICE_DISABLED`.
+
+### 1. Enable Compute Engine — ~70 s, first time only
+
+```bash
+gcloud services enable compute.googleapis.com --project=$PROJECT
+```
+
+This creates the auto-mode `default` VPC with four firewall rules, **two of
+which open SSH (22) and RDP (3389) to `0.0.0.0/0`**.
+
+**Verify:** `gcloud compute firewall-rules list --project=$PROJECT` shows
+`default-allow-{icmp,internal,rdp,ssh}`.
+
+### 2. Firewall — before the VM exists
+
+```bash
+gcloud compute firewall-rules delete default-allow-ssh default-allow-rdp --project=$PROJECT --quiet
+gcloud compute firewall-rules create tunatale-allow-iap-ssh --project=$PROJECT \
+  --network=default --direction=INGRESS --action=ALLOW --rules=tcp:22 \
+  --source-ranges=35.235.240.0/20 --target-tags=tunatale
+gcloud compute firewall-rules create tunatale-allow-web --project=$PROJECT \
+  --network=default --direction=INGRESS --action=ALLOW --rules=tcp:80,tcp:443 \
+  --source-ranges=0.0.0.0/0 --target-tags=tunatale
+gcloud compute firewall-rules create tunatale-allow-tailscale --project=$PROJECT \
+  --network=default --direction=INGRESS --action=ALLOW --rules=udp:41641 \
+  --source-ranges=0.0.0.0/0 --target-tags=tunatale
+```
+
+- `35.235.240.0/20` is Google's IAP TCP-forwarding range. It is the only source
+  allowed to reach port 22.
+- `udp:41641` lets Tailscale connect directly instead of relaying through a DERP
+  server. WireGuard drops unauthenticated packets, so this exposes nothing.
+- GCP's firewall filters only the VM's external interface. Traffic arriving
+  inside Tailscale's tunnel is not subject to it, which is why SSH over the
+  tailnet needs no rule.
+
+**Verify:** the list shows exactly five rules, and none pairs `tcp:22` with
+`0.0.0.0/0`.
+
+### 3. Reserve the IP and create the VM — ~15 s
+
+```bash
+gcloud compute addresses create tunatale-ip --project=$PROJECT \
+  --region=$REGION --network-tier=STANDARD
+gcloud compute instances create tunatale --project=$PROJECT --zone=$ZONE \
+  --machine-type=e2-micro \
+  --image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud \
+  --boot-disk-size=30GB --boot-disk-type=pd-standard \
+  --network-tier=STANDARD --address=tunatale-ip --tags=tunatale \
+  --no-service-account --no-scopes \
+  --deletion-protection \
+  --metadata=enable-oslogin=TRUE
+```
+
+- The image family is `ubuntu-2404-lts-amd64` from `ubuntu-os-cloud`, not an
+  `ubuntu-pro` image, which carries a license fee.
+- `--no-service-account --no-scopes`: the VM holds no Google credentials.
+  Nothing on it needs any, because the Azure/Groq/B2 keys arrive in the app's
+  env file.
+- `--deletion-protection`: the data lives on the boot disk, and the disk is
+  deleted with the VM.
+- Two warnings are expected and harmless: "disk size under 200GB" (performance)
+  and "larger than image size". The root filesystem grows itself to 29 G on
+  first boot.
+
+**Verify.** The value that matters is the one the API reports, not the flag
+you typed:
+
+```bash
+gcloud compute instances describe tunatale --project=$PROJECT --zone=$ZONE --format=json \
+  | jq '{mt: (.machineType|split("/")[-1]), tier: .networkInterfaces[0].accessConfigs[0].networkTier,
+         sa: .serviceAccounts, del: .deletionProtection, model: .scheduling.provisioningModel}'
+gcloud compute disks list --project=$PROJECT --format='table(name,type.basename(),sizeGb)'
+gcloud compute addresses list --project=$PROJECT --format='table(name,networkTier,status)'
+```
+
+Expected: `e2-micro`, `STANDARD`, `null`, `true`, `STANDARD`; disk
+`pd-standard 30`; address `STANDARD IN_USE`.
+
+### 4. First login through IAP — the break-glass path
+
+```bash
+gcloud compute ssh tunatale --project=$PROJECT --zone=$ZONE --tunnel-through-iap
+```
+
+The first run generates `~/.ssh/google_compute_engine`. OS Login maps your
+Google account to a POSIX user, and a project owner gets passwordless sudo. The
+IAP API did **not** need to be enabled for this to work. Keep this path
+working: it is how you get in if Tailscale breaks.
+
+**Verify:** `sudo -n true` succeeds on the box, and a direct connection from
+outside does not: `nc -v -z -G 5 <ip> 22` must report `Operation timed out`,
+not `Connection refused`. *Refused* means a packet reached the host. Without
+`-v`, `nc` prints nothing on failure and the two cases look identical.
+
+The image already ships `PasswordAuthentication no`, unattended-upgrades
+enabled and active, `ufw` inactive and `iptables -P INPUT ACCEPT`. Unlike
+Oracle's Ubuntu images, **there is no host firewall to open**: GCP's VPC
+firewall is the whole perimeter. Remember that for anything Docker publishes.
+
+### 5. Base hardening — swap, sshd, reboots, trim
+
+Save as `base.sh` and run it with
+`gcloud compute ssh tunatale --project=$PROJECT --zone=$ZONE --tunnel-through-iap --command='sudo bash -s' < base.sh`.
+It is idempotent.
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+# 2 GiB swap: 953 MB RAM, ~345 MB of it used at idle before anything is installed.
+if ! swapon --show=NAME --noheadings | grep -qx /swapfile; then
+  fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile
+fi
+grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+# The image ships PermitRootLogin without-password.
+cat > /etc/ssh/sshd_config.d/60-tunatale.conf <<'EOF'
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+EOF
+sshd -t && systemctl reload ssh
+
+# Let unattended-upgrades reboot for kernel updates. 08:00 UTC = 03:00-04:00 US Eastern.
+cat > /etc/apt/apt.conf.d/52tunatale-auto-reboot <<'EOF'
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "08:00";
+EOF
+
+# With no service account the OS Config agent cannot reach its API, and one PD
+# needs no multipath. google-guest-agent STAYS: OS Login depends on it.
+systemctl disable --now google-osconfig-agent.service 2>/dev/null || true
+systemctl disable --now multipathd.service multipathd.socket 2>/dev/null || true
+```
+
+The trim bought **27 MB** (343 → 316 MB used). That is less than the agents'
+combined RSS suggested, so do not expect more from removing further agents.
+
+**Verify:**
+`swapon --show` lists a 2G `/swapfile`;
+`sudo sshd -T | grep -E '^(permitrootlogin|passwordauthentication) '` prints `no` for both;
+`apt-config dump | grep Automatic-Reboot` prints `"true"` and `"08:00"`.
+
+### 6. Docker — ~2 min
+
+Use Docker's own apt repo: Ubuntu's `docker.io` package ships no Compose v2
+plugin. Save as `docker.sh` and run it the same way:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+. /etc/os-release
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+  > /etc/apt/sources.list.d/docker.list
+apt-get update -qq
+apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+# json-file never rotates; the data shares this 30 GB disk.
+cat > /etc/docker/daemon.json <<'EOF'
+{ "log-driver": "local", "log-opts": { "max-size": "10m", "max-file": "3" } }
+EOF
+systemctl enable --now docker containerd && systemctl restart docker
+```
+
+**Verify:** `sudo docker run --rm hello-world` prints `Hello from Docker!`, and
+`sudo docker info --format '{{.LoggingDriver}}'` prints `local` (`sudo` because
+the OS Login user is not in the `docker` group). On 2026-09-11 this
+installed Docker 29.8.0 and Compose v5.5.1.
+
+### 7. Tailscale — the day-to-day admin path
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sudo sh
+sudo tailscale up --hostname=tunatale     # prints a login URL; approve it in a browser
+```
+
+Then, in the Tailscale admin console, **disable key expiry for this machine**
+(Machines → the box → ⋯ → Disable key expiry). A new node's key expires after
+about 180 days, and a server that silently drops off the tailnet is the failure
+this whole path exists to prevent.
+
+This is plain OpenSSH over the tailnet, with the same OS Login key. Tailscale
+SSH (`--ssh`) is deliberately not enabled, so no tailnet ACL decides who gets a
+shell.
+
+**Verify, from the laptop:**
+
+```bash
+tailscale ping tunatale        # want "via <public-ip>:41641" (direct), not "via DERP"
+tailscale status --json | jq '.Peer[] | select(.HostName=="tunatale") | .KeyExpiry'   # want null
+OSLOGIN_USER=$(gcloud compute os-login describe-profile --format='value(posixAccounts[0].username)')
+ssh -i ~/.ssh/google_compute_engine $OSLOGIN_USER@tunatale 'sudo -n true && echo ok'
+```
+
+### 8. Reboot drill — does it come back without you?
+
+```bash
+ssh -i ~/.ssh/google_compute_engine $OSLOGIN_USER@tunatale 'uptime -s; sudo systemctl reboot'
+# then poll until `uptime -s` prints a NEW boot time
+```
+
+Measured 2026-09-11: reboot ordered at :53:48, journal stopped at :54:24 (a
+**36 s** shutdown), kernel up at :54:41, SSH over the tailnet answering by
+~:55:00. That is **~75 s from reboot to reachable**, with Docker, tailscaled
+and swap all back on their own.
+
+⚠️ **Poll on the boot time, not on SSH answering.** `systemctl reboot` returns
+before shutdown begins, and sshd kept answering for about 35 s afterwards. The
+first attempt at this drill "recovered in 6 s" because it never rebooted.
+`uptime` saying 19 minutes was what exposed it.
+
+### State after this section, and what it does not do
+
+After all of the above, the box idles at **~350 MB used / ~600 MB available**
+of 953 MB, with no app running. The findings doc budgets 160–250 MB for the
+app plus the Anki sync driver.
+
+Ports 80/443 answer `Connection refused`: the perimeter is open and nothing is
+listening yet. Everything that listens is later work:
+
+- Caddy, TLS and the domain — `tunatale-1oq` (P2.2)
+- image delivery and `deploy.sh` — `tunatale-pse` (P2.3)
+- data migration — `tunatale-lbf` (P2.4)
+
+**Rebuild time.** The machine steps of this section total about 5 minutes. The
+2026-09-11 run took 24 minutes of wall clock, including one browser approval and
+the investigation. A full RTO also needs the data restore onto a different
+machine (`tunatale-kbb.6`), which has not been performed yet. Until it has, the
+honest RTO is unmeasured.
 
 ## Accounts
 
