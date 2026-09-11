@@ -288,7 +288,15 @@ test("an untracked word paints two dashed rails in the app's link blue", async (
 	await expect(page.locator(".tt-wrap").first()).toBeVisible({ timeout: 15000 });
 
 	const r = await page.evaluate(() => {
-		const w = document.querySelector(".transcript-wrapper .word.word-unknown");
+		// A standalone untracked word. One inside a multi-word phrase span is
+		// deliberately rail-less (Transcript passes hideRails; the phrase's own
+		// rails cover it) yet still carries .word-unknown — and whether the FIRST
+		// untracked word sits in a span depends on which phrase cards other specs
+		// left in the shared e2e DB. Taking the first match went red once in a
+		// full gate (0 dashed layers) and green in isolation.
+		const w = [...document.querySelectorAll(".transcript-wrapper .word.word-unknown")].find(
+			(el) => !el.closest(".collocation-span"),
+		);
 		if (!w) return null;
 		const s = getComputedStyle(w);
 		// The link blue resolved the way the page resolves it: a probe coloured

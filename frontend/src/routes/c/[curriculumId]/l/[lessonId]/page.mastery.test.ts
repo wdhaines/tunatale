@@ -348,6 +348,10 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
                 known_marked: false,
                 recognition_state: "known",
                 recognition_is_due: false,
+                understand_progress: 1.0,
+                produce_progress: 1.0,
+                understand_band: "solid",
+                produce_band: "solid",
               },
               {
                 lemma: "kava",
@@ -370,6 +374,10 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
                 known_marked: false,
                 recognition_state: "learning",
                 recognition_is_due: true,
+                understand_progress: 0.3,
+                produce_progress: 0.3,
+                understand_band: "learning",
+                produce_band: "learning",
               },
               {
                 lemma: "prosim",
@@ -400,13 +408,17 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       mockGetTranscript.mockResolvedValue(transcriptWithWords);
       mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
-      const { getByText } = render(Page, {
+      const { getByText, container } = render(Page, {
         props: { data: { curriculum, lesson, audio: null, transcript: transcriptWithWords } },
       });
       fireEvent.click(getByText("Listen"));
 
-      // 1 known + 1 learning (0.3) + 1 unknown (0) = 1.3/3 ≈ 43%
-      expect(getByText(/43%/)).toBeTruthy();
+      // 1 known + 1 learning (0.3) + 1 unknown (0) = 1.3/3 ≈ 43%, split per
+      // side across the understand/produce bars.
+      const sidePcts = container.querySelectorAll(".side-pct");
+      expect(sidePcts.length).toBe(2);
+      expect(sidePcts[0].textContent).toBe("43%");
+      expect(sidePcts[1].textContent).toBe("43%");
       expect(getByText(/1 known/)).toBeTruthy();
     });
 
@@ -438,6 +450,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         known_marked: false,
         recognition_state,
         recognition_is_due,
+        understand_progress: progress,
+        produce_progress: progress,
       });
       const transcriptAllStates = {
         lesson_id: "l1",
@@ -463,8 +477,11 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
       fireEvent.click(getByText("Listen"));
 
-      // (0 + 0.3 + 0.8 + 1.0) / 4 = 0.525 → 53%
-      expect(getByText(/53%/)).toBeTruthy();
+      // (0 + 0.3 + 0.8 + 1.0) / 4 = 0.525 → 53% per side
+      const sidePcts = container.querySelectorAll(".side-pct");
+      expect(sidePcts.length).toBe(2);
+      expect(sidePcts[0].textContent).toBe("53%");
+      expect(sidePcts[1].textContent).toBe("53%");
       const masteryLine = container.querySelector(".mastery-line");
       expect(masteryLine?.textContent).toContain("1 new");
       expect(masteryLine?.textContent).toContain("1 learning");
@@ -532,6 +549,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
                 inflectable: false,
                 inflection_feature: null,
                 known_marked: false,
+                understand_progress: 0.15,
+                produce_progress: 0.15,
               },
             ],
           },
@@ -564,22 +583,87 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
       mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
-      const { getByText, findByText } = render(Page, {
+      const { getByText, findByText, container } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript: beforeTranscript } },
       });
       // Switch to listen mode — mastery indicator is only visible there.
       fireEvent.click(getByText("Listen"));
-      // Before listen: 0% mastery (unknown)
-      expect(getByText(/0%/)).toBeTruthy();
+      // Before listen: unknown → 0 on both sides
+      const beforePcts = container.querySelectorAll(".side-pct");
+      expect(beforePcts.length).toBe(2);
+      expect(beforePcts[0].textContent).toBe("0%");
+      expect(beforePcts[1].textContent).toBe("0%");
 
       await fireEvent.click(await findByText("Mark as Listened"));
 
       const markBtn = await findByText(/Mark \d+ as listened/);
       await fireEvent.click(markBtn);
 
-      // After listen + refetch: 15% mastery (learning, progress 0.15)
+      // After listen + refetch: 15% per side (learning, progress 0.15)
       await waitFor(() => {
-        expect(getByText(/15%/)).toBeTruthy();
+        const afterPcts = container.querySelectorAll(".side-pct");
+        expect(afterPcts.length).toBe(2);
+        expect(afterPcts[0].textContent).toBe("15%");
+        expect(afterPcts[1].textContent).toBe("15%");
+      });
+    });
+
+    it("segment widths match each band's share of the side total", async () => {
+      const bw = (lemma: string, band: string) => ({
+        lemma,
+        active_state: "review",
+        progress: 0.8,
+        surface: lemma,
+        srs_state: "review",
+        srs_item_id: 1,
+        translation: null,
+        collocation_span_id: null,
+        collocation_start: false,
+        collocation_srs_state: null,
+        collocation_lemma: null,
+        collocation_translation: null,
+        card_type: "vocab",
+        active_direction: null,
+        is_due: false,
+        inflectable: false,
+        inflection_feature: null,
+        known_marked: false,
+        recognition_state: "review",
+        recognition_is_due: false,
+        understand_progress: 0.8,
+        produce_progress: 0.8,
+        understand_band: band,
+        produce_band: band,
+      });
+      const sideSplitTx = {
+        lesson_id: "l1",
+        key_phrases: [],
+        dialogue_lines: [
+          {
+            role: "A",
+            sentence: "solid new",
+            words: [bw("solid", "solid"), bw("new", "new")],
+          },
+        ],
+      };
+      mockGetTranscript.mockResolvedValue(sideSplitTx);
+      mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
+
+      const { container } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: sideSplitTx } },
+      });
+
+      await waitFor(() => {
+        const bars = container.querySelectorAll<HTMLElement>(".side-bar");
+        expect(bars.length).toBe(2);
+        for (const bar of bars) {
+          const segs = bar.querySelectorAll<HTMLElement>(".seg");
+          expect(segs.length).toBe(2);
+          expect(segs[0].classList.contains("seg-solid")).toBe(true);
+          expect(segs[0].style.width).toBe("50%");
+          expect(segs[1].classList.contains("seg-new")).toBe(true);
+          expect(segs[1].style.width).toBe("50%");
+        }
       });
     });
   });
@@ -773,6 +857,10 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
               known_marked: false,
               recognition_state: "known",
               recognition_is_due: false,
+              understand_progress: 1.0,
+              produce_progress: 1.0,
+              understand_band: "solid",
+              produce_band: "solid",
             },
             {
               lemma: "kava",
@@ -795,6 +883,10 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
               known_marked: false,
               recognition_state: "learning",
               recognition_is_due: true,
+              understand_progress: 0.3,
+              produce_progress: 0.3,
+              understand_band: "learning",
+              produce_band: "learning",
             },
           ],
         },
@@ -805,7 +897,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       mockGetTranscript.mockResolvedValue(transcriptWithRecFields);
       mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
-      const { getByText } = render(Page, {
+      const { container } = render(Page, {
         props: {
           data: {
             curriculum,
@@ -816,9 +908,12 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         },
       });
 
-      // Desktop defaults to read mode
+      // Desktop defaults to read mode; (1.0 + 0.3) / 2 = 65% per side
       await waitFor(() => {
-        expect(getByText(/65%/)).toBeTruthy();
+        const sidePcts = container.querySelectorAll(".side-pct");
+        expect(sidePcts.length).toBe(2);
+        expect(sidePcts[0].textContent).toBe("65%");
+        expect(sidePcts[1].textContent).toBe("65%");
       });
     });
 
@@ -871,7 +966,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       mockGetTranscript.mockResolvedValue(transcriptWithRecFields);
       mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
 
-      const { getByText } = render(Page, {
+      const { getByText, container } = render(Page, {
         props: {
           data: {
             curriculum,
@@ -886,7 +981,10 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       fireEvent.click(getByText("Listen"));
 
       await waitFor(() => {
-        expect(getByText(/65%/)).toBeTruthy();
+        const sidePcts = container.querySelectorAll(".side-pct");
+        expect(sidePcts.length).toBe(2);
+        expect(sidePcts[0].textContent).toBe("65%");
+        expect(sidePcts[1].textContent).toBe("65%");
       });
     });
 

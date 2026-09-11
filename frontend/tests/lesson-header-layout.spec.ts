@@ -120,9 +120,10 @@ test("lesson card: stats span the card's full content width on a phone", async (
 	expect(stats!.width).toBeGreaterThanOrEqual(cardBox!.width - 2 * pad - 1);
 
 	// One line, not two: the wrap this test exists to prevent doubles the height.
-	// Reference is the percentage span inside it — one inline box on one line —
-	// since computed line-height here is `normal`, which parses to NaN.
-	const oneLine = await card.locator(".mastery-line .mastery-pct").boundingBox();
+	// Reference is a segment chip inside it — one inline box on one line — since
+	// computed line-height here is `normal`, which parses to NaN. (The percentage
+	// span used as the reference was removed in tunatale-yh47.7.)
+	const oneLine = await card.locator(".mastery-line .mastery-segment").first().boundingBox();
 	expect(oneLine).toBeTruthy();
 	expect(stats!.height).toBeLessThan(oneLine!.height * 1.5);
 });
