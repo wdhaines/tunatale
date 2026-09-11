@@ -216,8 +216,12 @@ async def generate_vocab_media(
     if audio_status is not None:
         stored["audio_status"] = audio_status
         # Only a real failure warns. "nobody recorded this word" is the common
-        # case and warning on it would bury the signal we actually want.
-        if audio_status not in ("found", "no_pronunciation"):
+        # case and warning on it would bury the signal we actually want — and
+        # "disabled" is a configuration the operator chose (production runs
+        # TTS-only because Forvo blocks datacenter IPs), so it is not news
+        # either. `blocked` still warns: that one means Forvo refused a call we
+        # expected to work.
+        if audio_status not in ("found", "no_pronunciation", "disabled"):
             logger.warning(
                 "Forvo unavailable for %r: status=%s — card got TTS audio instead",
                 word,

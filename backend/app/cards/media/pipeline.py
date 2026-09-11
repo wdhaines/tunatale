@@ -67,6 +67,7 @@ async def fetch_card_media(
     used_image_urls: set[str] | None = None,
     image_query: str | None = None,
     llm: Any = None,
+    forvo_enabled: bool | None = None,
     _forvo_fn: Callable[..., ForvoResult] | None = None,
     _tts_fn: Callable[..., Awaitable[bytes | None]] | None = None,
     _search_fn: Callable[..., Any] | None = None,
@@ -103,11 +104,25 @@ async def fetch_card_media(
     # Forvo / normalize are synchronous (httpx.Client, ffmpeg
     # subprocess) — offload to a worker thread so a slow fetch doesn't block
     # the event loop and stall every other in-flight request.
-    forvo = await anyio.to_thread.run_sync(
-        partial(forvo_fn, word, language_code=language_code, http_client=http_client)
-    )
-    result.audio_status = forvo.outcome.value
-    if forvo.outcome is ForvoOutcome.FOUND:
+    if forvo_enabled is None:
+        from app.config import settings
+
+        forvo_enabled = settings.forvo_enabled
+
+    if not forvo_enabled:
+        # Skip the request entirely rather than make a doomed one. Forvo blocks
+        # datacenter IPs (measured 2026-09-11: found from home, HTTP 403 + an
+        # anti-bot challenge from the production box), and production accepts
+        # TTS-only. "disabled" is its own status so it is never confused with
+        # `blocked`, which means Forvo refused a call we expected to work.
+        forvo = ForvoResult(ForvoOutcome.NO_PRONUNCIATION)
+        result.audio_status = "disabled"
+    else:
+        forvo = await anyio.to_thread.run_sync(
+            partial(forvo_fn, word, language_code=language_code, http_client=http_client)
+        )
+        result.audio_status = forvo.outcome.value
+    if forvo_enabled and forvo.outcome is ForvoOutcome.FOUND:
         result.audio_source = "forvo"
         result.audio_bytes = forvo.audio
     else:

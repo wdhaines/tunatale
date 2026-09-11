@@ -123,6 +123,49 @@ class TestAudioStatus:
             assert r.audio_status == outcome.value
 
 
+class TestForvoDisabled:
+    """`forvo_enabled=False` skips the fetch instead of making a doomed request.
+
+    Forvo blocks datacenter IPs (measured 2026-09-11: found from home, HTTP 403
+    + anti-bot challenge from the GCP box), and the user's decision is to accept
+    TTS-only in production rather than buy the API. Left enabled there, every
+    card-add would spend a round-trip to be refused and log a warning — and the
+    warning sink is where real problems are supposed to be visible.
+    """
+
+    async def _run(self, *, enabled):
+        _, tts_fn, search_fn, dl_fn, norm_fn = _make_fakes(tts_returns=b"tts_mp3")
+
+        def _must_not_be_called(*_a, **_k):
+            raise AssertionError("Forvo was called with forvo_enabled=False")
+
+        return await fetch_card_media(
+            "voda",
+            "water",
+            pixabay_key="key",
+            forvo_enabled=enabled,
+            _forvo_fn=_must_not_be_called
+            if not enabled
+            else (lambda *a, **k: ForvoResult(ForvoOutcome.FOUND, audio=b"forvo_mp3")),
+            _tts_fn=tts_fn,
+            _search_fn=search_fn,
+            _download_fn=dl_fn,
+            _normalize_fn=norm_fn,
+        )
+
+    async def test_disabled_never_calls_forvo_and_uses_tts(self):
+        r = await self._run(enabled=False)
+        assert r.audio_status == "disabled"
+        assert r.audio_source == "tts"
+        assert r.audio_bytes == b"tts_mp3_norm"  # _norm: the fake normalizer still runs
+
+    async def test_enabled_still_calls_forvo(self):
+        """The control. Without it, a flag stuck at False would pass the test above."""
+        r = await self._run(enabled=True)
+        assert r.audio_status == "found"
+        assert r.audio_source == "forvo"
+
+
 # ── TestLanguageThreading ──────────────────────────────────────────────────────
 
 

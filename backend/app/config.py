@@ -320,6 +320,15 @@ class Settings(BaseSettings):
     # would be worse than useless — set it to X-Forwarded-For there.  See
     # app.auth.throttle.client_ip.
     trusted_proxy_header: str = ""
+    # Human pronunciations from Forvo, tried before TTS on a card add. True on a
+    # laptop, where it works; production sets FORVO_ENABLED=false because Forvo
+    # blocks datacenter IPs — measured 2026-09-11, found from a residential IP
+    # and HTTP 403 + an anti-bot challenge from the GCP box, with a nonsense-word
+    # control blocked too (so it is the IP, not the content). Left on there,
+    # every card add would spend a round-trip being refused and log a warning,
+    # which is how a durable warning sink stops being readable. The user's call
+    # (tunatale-kbb.13): accept TTS-only rather than buy the $2/mo API.
+    forvo_enabled: bool = True
     # The zone the PROCESS keeps, read from the standard `TZ` rather than a
     # TT_-prefixed name because libc is the real consumer: `rollover.py`
     # resolves the study day with a bare `.astimezone()`. Empty is correct for

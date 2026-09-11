@@ -274,6 +274,30 @@ async def test_no_pronunciation_stores_status_without_warning(media_dir, caplog)
     assert not any("Forvo unavailable" in r.message for r in caplog.records)
 
 
+async def test_disabled_stores_status_without_warning(media_dir, caplog) -> None:
+    """Forvo turned OFF is a configuration, not a failure — it must stay quiet.
+
+    Production accepts TTS-only (Forvo blocks datacenter IPs). Warning on every
+    card-add for a state the operator chose would bury the `blocked` warning
+    above, which is the one that means something went wrong unexpectedly.
+    """
+    db = _FakeDB()
+
+    async def _query(*_a, **_k):
+        return "water"
+
+    async def _fetch(*_a, **_k):
+        return MediaResult(audio_bytes=b"TTS", audio_source="tts", audio_status="disabled")
+
+    with caplog.at_level("WARNING"):
+        out = await vocab_media.generate_vocab_media(
+            db, 1, "voda", "water", llm=object(), pixabay_key="k", _query_fn=_query, _fetch_fn=_fetch
+        )
+    assert out["audio_status"] == "disabled"
+    assert out["audio"]
+    assert not any("Forvo unavailable" in r.message for r in caplog.records)
+
+
 async def test_image_ok_sets_status(media_dir) -> None:
     """Happy path: image_status='ok' propagated to stored dict."""
     db = _FakeDB()
