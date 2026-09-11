@@ -558,7 +558,7 @@ describe("LessonPlayer", () => {
       // Move to an enunciated slow track first via the pill.
       fireEvent.click(container.querySelector<HTMLButtonElement>(".enunciation-btn")!);
       await tick();
-      expect(container.querySelector(".enunciation-btn")!.textContent).toContain("Enunciated");
+      expect(container.querySelector(".enunciation-btn")!.textContent).toContain("Enun");
 
       // An external switch to natural_speed (e.g. tapping a dialogue line ▶ from
       // another phase) must pull the enunciation pill back to Natural.
@@ -742,16 +742,22 @@ describe("LessonPlayer", () => {
     it("enunciation cycles through 4 states on click", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithAllSections } });
       const btn = container.querySelector<HTMLButtonElement>(".enunciation-btn")!;
-      // Natural → Enunciated → Enun 0.9× → Enun 0.8× → Natural
-      expect(btn.textContent).toContain("Natural");
+      // Natural → Enun → 0.9× → 0.8× → Natural. The value is kept short enough
+      // for a quarter-row chip on a phone; the full name rides on `title`.
+      const value = () => btn.querySelector(".chip-value")!.textContent;
+      expect(value()).toBe("Natural");
+      expect(btn.title).toBe("Natural speed");
       fireEvent.click(btn);
-      expect(btn.textContent).not.toContain("Natural");
+      expect(value()).toBe("Enun");
+      expect(btn.title).toBe("Enunciated");
       fireEvent.click(btn);
-      expect(btn.textContent).toContain("0.9");
+      expect(value()).toBe("0.9×");
+      expect(btn.title).toBe("Enunciated, 0.9× speed");
       fireEvent.click(btn);
-      expect(btn.textContent).toContain("0.8");
+      expect(value()).toBe("0.8×");
+      expect(btn.title).toBe("Enunciated, 0.8× speed");
       fireEvent.click(btn);
-      expect(btn.textContent).toContain("Natural");
+      expect(value()).toBe("Natural");
     });
 
     // Item G: disable in key_phrases phase
@@ -1215,7 +1221,7 @@ describe("LessonPlayer", () => {
       h.ctrl.selectTrack("slow_speed"); // as the hands-free advance does
       await tick();
 
-      expect(chip.textContent).toContain("Enunciated");
+      expect(chip.textContent).toContain("Enun");
       expect(chip.classList.contains("active")).toBe(true);
     });
 

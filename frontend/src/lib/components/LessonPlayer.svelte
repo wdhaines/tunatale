@@ -93,11 +93,15 @@
 	const PHASES = ['key_phrases', 'dialogue'] as const;
 	type Phase = (typeof PHASES)[number];
 
+	// `label` must fit a quarter of the settings row on a 375px phone (~55px of
+	// text — see .controls-row), which "Enunciated" (75px) and "Enun 0.9×" (68px)
+	// did not. The chip's "Speed" field label supplies the noun, so the slowed
+	// levels read "Speed 0.9×"; `title` keeps the full name on hover.
 	const ENUNCIATION_OPTIONS = [
-		{ level: 'natural', label: 'Natural', rate: 1.0 },
-		{ level: 'enunciated', label: 'Enunciated', rate: 1.0 },
-		{ level: 'enunciated_0.9', label: 'Enun 0.9×', rate: 0.9 },
-		{ level: 'enunciated_0.8', label: 'Enun 0.8×', rate: 0.8 },
+		{ level: 'natural', label: 'Natural', title: 'Natural speed', rate: 1.0 },
+		{ level: 'enunciated', label: 'Enun', title: 'Enunciated', rate: 1.0 },
+		{ level: 'enunciated_0.9', label: '0.9×', title: 'Enunciated, 0.9× speed', rate: 0.9 },
+		{ level: 'enunciated_0.8', label: '0.8×', title: 'Enunciated, 0.8× speed', rate: 0.8 },
 	] as const;
 
 	function resolveSectionType(phase: Phase, enunLevel: string, engMode: EnglishMode): string | null {
@@ -506,6 +510,7 @@
 					class:active={enunLevel !== 'natural'}
 					onclick={onEnunClick}
 					disabled={phase === 'key_phrases'}
+					title={ENUNCIATION_OPTIONS[enunIndex].title}
 				>
 					<span class="chip-label">Speed</span>
 					<span class="chip-value">{ENUNCIATION_OPTIONS[enunIndex].label}</span>
@@ -777,21 +782,37 @@
 	/* Independent setting chips — deliberately NOT the segmented-pill look of
 	   .phase-row (that's a pick-one). Each is its own outlined field:value tile
 	   so three unrelated settings don't read as one control. */
+	/* Every setting chip gets an equal share of the row, whatever its value
+	   says. Sized by content (the old `flex: 1` with the default min-width:auto),
+	   a chip widened when its value did: on a 375px phone "Enunciated" pushed
+	   Mic onto the second row, and "Enun 0.9×" wrapped inside its own chip —
+	   every tap on Speed reflowed the header. Values must therefore fit the
+	   share, not the other way round; the ellipsis is a backstop, not a layout. */
 	.controls-row {
+		--chip-cols: 4;
+		--chip-gap: 0.4rem;
 		display: flex;
 		justify-content: center;
 		flex-wrap: wrap;
-		gap: 0.5rem;
+		gap: 0.5rem var(--chip-gap);
+	}
+	/* Below ~360px four shares are too narrow for "Natural": stack 2×2 rather
+	   than cut a value off. */
+	@media (max-width: 359px) {
+		.controls-row {
+			--chip-cols: 2;
+		}
 	}
 	.setting-chip {
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
 		gap: 0.05rem;
-		flex: 1;
+		flex: 0 1 calc((100% - (var(--chip-cols) - 1) * var(--chip-gap)) / var(--chip-cols));
+		min-width: 0;
 		max-width: 9rem;
 		min-height: 44px;
-		padding: 0.3rem 0.7rem;
+		padding: 0.3rem 0.5rem;
 		background: transparent;
 		color: var(--color-text);
 		border: 1px solid var(--color-border, #ddd);
@@ -810,9 +831,21 @@
 		font-size: 0.85rem;
 		font-weight: 700;
 		line-height: 1.1;
+		max-width: 100%;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.setting-chip:hover:not(:disabled) {
 		border-color: var(--color-muted);
+	}
+	/* Same backstop for the field label: "CAPTIONS" is the widest thing in a
+	   quarter-row chip on a 360px phone. */
+	.setting-chip .chip-label {
+		max-width: 100%;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.setting-chip.active {
 		border-color: var(--color-primary);
@@ -830,6 +863,17 @@
 	@media (max-width: 430px) {
 		.transport-row {
 			gap: 0.35rem;
+		}
+		/* A quarter of a 360px phone's row leaves ~51px for text at desktop
+		   padding — less than "CAPTIONS" needs. Buy it back from the gutters. */
+		.controls-row {
+			--chip-gap: 0.3rem;
+		}
+		.setting-chip {
+			padding-inline: 0.4rem;
+		}
+		.setting-chip .chip-label {
+			letter-spacing: 0.02em;
 		}
 		.ctrl-btn {
 			padding: 0.5rem 0.6rem;
