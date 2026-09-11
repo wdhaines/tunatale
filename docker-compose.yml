@@ -1,5 +1,20 @@
+# ⚠️ ONE compose file for dev and the box, on purpose. A second prod-only copy
+# would drift from this one silently, and the drift would surface as a
+# production-only bug.
+#
+# `image:` is what the box pulls; `build:` is what a laptop uses. With both
+# present, `docker compose pull` fetches the pinned tag and `up -d` runs it
+# without building. TT_TAG is a full commit SHA, written into `.env` beside this
+# file by deploy.sh (compose interpolates that file automatically).
+#
+# TT_TAG has NO default, and `:?` makes compose refuse rather than invent one.
+# A `:-latest` fallback would mean a mistyped deploy silently ships whatever
+# "latest" happens to be — the exact "which code is actually running?" question
+# a tagged deploy exists to answer. On a laptop, `docker compose build` and
+# `up --build` still work: set TT_TAG=dev, or export it once.
 services:
   init:
+    image: ghcr.io/wdhaines/tunatale-api:${TT_TAG:?set TT_TAG to a commit SHA (deploy.sh writes it)}
     build:
       context: .
       target: api
@@ -16,6 +31,9 @@ services:
         chown -R appuser:appuser /data
 
   api:
+    # Same image as `init` by construction: init is this image with a different
+    # entrypoint, so they cannot diverge in what they pre-warm vs what runs.
+    image: ghcr.io/wdhaines/tunatale-api:${TT_TAG:?set TT_TAG to a commit SHA (deploy.sh writes it)}
     build:
       context: .
       target: api
@@ -49,6 +67,7 @@ services:
       start_period: 15s
 
   web:
+    image: ghcr.io/wdhaines/tunatale-web:${TT_TAG:?set TT_TAG to a commit SHA (deploy.sh writes it)}
     build:
       context: .
       target: web

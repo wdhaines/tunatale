@@ -47,6 +47,25 @@ def test_the_one_shot_init_job_does_not_restart(services):
     assert services["api"]["depends_on"]["init"]["condition"] == "service_completed_successfully"
 
 
+@pytest.mark.parametrize("name", ["init", "api", "web"])
+def test_every_service_pulls_a_pinned_tag(services, name):
+    """The box runs a tagged image, never `git pull` of main.
+
+    `:?` and not `:-latest`: a default would let a mistyped deploy ship
+    "whatever latest is", which is precisely the question a tagged deploy
+    exists to answer. Compose refuses instead.
+    """
+    image = services[name]["image"]
+    assert image.startswith("ghcr.io/"), image
+    assert "${TT_TAG:?" in image, f"{name} must fail closed when TT_TAG is unset, got {image}"
+    assert ":-" not in image, f"{name} has a default tag: {image}"
+
+
+def test_init_and_api_are_the_same_image(services):
+    """init IS the api image with another entrypoint — they cannot diverge."""
+    assert services["init"]["image"] == services["api"]["image"]
+
+
 def test_every_mutable_path_lands_on_the_one_volume(services):
     """HOME=/data is what relocates the ~/.tunatale paths; the rest are explicit."""
     env = services["api"]["environment"]
