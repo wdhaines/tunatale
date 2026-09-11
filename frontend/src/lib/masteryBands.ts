@@ -140,5 +140,40 @@ export function holdsLabel(stability: number | null): string | null {
   }
   if (stability < 365) return `holds ~${Math.round(stability / 30)} months`;
   const years = Math.round((stability / 365) * 10) / 10;
-  return `holds ~${years} years`;
+  return years === 1 ? `holds ~1 year` : `holds ~${years} years`;
+}
+
+/** One side's label: the band name plus a stability qualifier when available. */
+export function sideLabel(band: MasteryBand, stability: number | null): string {
+  const bl = bandLabel(band);
+  const hl = holdsLabel(stability);
+  return hl != null ? `${bl} · ${hl}` : bl;
+}
+
+const BAND_SET = new Set<string>([
+  "none",
+  "new",
+  "learning",
+  "days",
+  "weeks",
+  "months",
+  "solid",
+  "suspended",
+]);
+
+/** Two-line label for the word popover / preview tooltip. */
+export function masterySides(bands: {
+  understand_band?: string | null;
+  produce_band?: string | null;
+  understand_stability?: number | null;
+  produce_stability?: number | null;
+}): readonly [string, string] | null {
+  const ub = bands.understand_band;
+  if (ub == null) return null;
+  const pb = bands.produce_band ?? "none";
+  if (!BAND_SET.has(ub) || !BAND_SET.has(pb)) return null;
+  return [
+    `Understand: ${sideLabel(ub as MasteryBand, bands.understand_stability ?? null)}`,
+    `Produce: ${sideLabel(pb as MasteryBand, bands.produce_stability ?? null)}`,
+  ];
 }

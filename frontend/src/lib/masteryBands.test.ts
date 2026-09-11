@@ -7,6 +7,8 @@ import {
   railPropsFor,
   bandLabel,
   holdsLabel,
+  sideLabel,
+  masterySides,
   type MasteryBand,
 } from "./masteryBands";
 
@@ -137,6 +139,82 @@ describe("holdsLabel", () => {
     expect(holdsLabel(null)).toBeNull();
   });
 
+  describe("sideLabel", () => {
+    it.each([
+      ["days" as MasteryBand, 3, "Days · holds ~3 days"],
+      ["weeks" as MasteryBand, 10, "Weeks · holds ~1 week"],
+      ["months" as MasteryBand, 45, "Months · holds ~6 weeks"],
+      ["months" as MasteryBand, 90, "Months · holds ~3 months"],
+      ["solid" as MasteryBand, 200, "Half a year + · holds ~7 months"],
+      ["solid" as MasteryBand, 400, "Half a year + · holds ~1.1 years"],
+      ["solid" as MasteryBand, 36500, "Half a year + · marked known"],
+      ["solid" as MasteryBand, null, "Half a year +"],
+      ["learning" as MasteryBand, null, "Learning"],
+      ["new" as MasteryBand, null, "Not started"],
+      ["none" as MasteryBand, null, "No card"],
+      ["suspended" as MasteryBand, null, "Suspended"],
+    ] as const)("sideLabel(%s, %s) → %s", (band, stability, expected) => {
+      expect(sideLabel(band, stability)).toBe(expected);
+    });
+  });
+
+  describe("masterySides", () => {
+    it("two-line label with both bands", () => {
+      expect(
+        masterySides({
+          understand_band: "months",
+          understand_stability: 90,
+          produce_band: "none",
+          produce_stability: null,
+        }),
+      ).toEqual(["Understand: Months · holds ~3 months", "Produce: No card"]);
+    });
+
+    it("two-line label with new produce band", () => {
+      expect(
+        masterySides({
+          understand_band: "solid",
+          understand_stability: 200,
+          produce_band: "new",
+          produce_stability: null,
+        }),
+      ).toEqual(["Understand: Half a year + · holds ~7 months", "Produce: Not started"]);
+    });
+
+    it("two-line label with both directional stabilities", () => {
+      expect(
+        masterySides({
+          understand_band: "weeks",
+          understand_stability: 10,
+          produce_band: "days",
+          produce_stability: 3,
+        }),
+      ).toEqual(["Understand: Weeks · holds ~1 week", "Produce: Days · holds ~3 days"]);
+    });
+
+    it("null produce_band defaults to none", () => {
+      expect(
+        masterySides({
+          understand_band: "learning",
+          produce_band: undefined,
+        }),
+      ).toEqual(["Understand: Learning", "Produce: No card"]);
+    });
+
+    it("null understand_band returns null (untracked)", () => {
+      expect(
+        masterySides({
+          understand_band: null,
+          produce_band: "days",
+        }),
+      ).toBeNull();
+    });
+
+    it("prototype pollution returns null", () => {
+      expect(masterySides({ understand_band: "constructor", produce_band: "new" })).toBeNull();
+      expect(masterySides({ understand_band: "months", produce_band: "__proto__" })).toBeNull();
+    });
+  });
   it("rounds fractional day/week boundaries sensibly", () => {
     expect(holdsLabel(1.2)).toBe("holds ~1 day");
     expect(holdsLabel(5.7)).toBe("holds ~6 days");
@@ -145,7 +223,7 @@ describe("holdsLabel", () => {
     expect(holdsLabel(59)).toBe("holds ~8 weeks");
     expect(holdsLabel(60)).toBe("holds ~2 months");
     expect(holdsLabel(364)).toBe("holds ~12 months");
-    expect(holdsLabel(365)).toBe("holds ~1 years");
+    expect(holdsLabel(365)).toBe("holds ~1 year");
     expect(holdsLabel(9999)).toBe("holds ~27.4 years");
   });
 });

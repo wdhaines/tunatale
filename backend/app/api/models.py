@@ -76,6 +76,14 @@ class ListenPreviewCandidate(BaseModel):
     # fixture must carry it.
     will_create: bool = True
     due_at: str | None = None
+    # Both sides of the row's card, exactly as the reader's WordToken carries
+    # them (bd tunatale-yh47.6): `direction_band` over recognition and
+    # production, stability only on a real strength band. A create row has no
+    # card, so both of its sides are "none".
+    understand_band: str | None = None
+    produce_band: str | None = None
+    understand_stability: float | None = None
+    produce_stability: float | None = None
 
 
 class ListenPreviewResponse(BaseModel):

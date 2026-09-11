@@ -342,6 +342,37 @@ describe("Tooltip", () => {
     });
   });
 
+  // --- Mastery sides (twin-rail popover) ---
+
+  describe("masterySides", () => {
+    it("renders both lines in order", () => {
+      const sides: readonly [string, string] = [
+        "Understand: Months · holds ~3 months",
+        "Produce: No card",
+      ];
+      const { getByRole } = render(TooltipTest, {
+        props: { translation: "hello", childText: "zdravo", masterySides: sides },
+      });
+      const tooltip = getByRole("tooltip");
+      expect(tooltip.textContent).toContain("Understand: Months · holds ~3 months");
+      expect(tooltip.textContent).toContain("Produce: No card");
+      const ttSides = tooltip.querySelector(".tt-sides");
+      expect(ttSides).not.toBeNull();
+      const spans = ttSides!.querySelectorAll(".tt-side");
+      expect(spans.length).toBe(2);
+      expect(spans[0].textContent).toBe("Understand: Months · holds ~3 months");
+      expect(spans[1].textContent).toBe("Produce: No card");
+    });
+
+    it("renders nothing when null", () => {
+      const { getByRole } = render(TooltipTest, {
+        props: { translation: "hello", childText: "zdravo", masterySides: null },
+      });
+      const tooltip = getByRole("tooltip");
+      expect(tooltip.querySelector(".tt-sides")).toBeNull();
+    });
+  });
+
   // --- Grade button (all grading lives in the popover) ---
 
   describe("grade button", () => {

@@ -16,7 +16,7 @@ from app.srs.collocation_matcher import match_spans
 from app.srs.database import SRSDatabase
 from app.srs.function_words import is_a1_morphology_feature, is_clozes_only_verb, ud_feats_to_tt_feature
 from app.srs.lemmatizer import Lemmatizer, analyze_sentence_cached, lemmatize_surfaces_in_context, model_version_for
-from app.srs.mastery import compute_mastery_progress, direction_band, is_well_known
+from app.srs.mastery import band_stability, compute_mastery_progress, direction_band, is_well_known
 from app.srs.tokenizer import tokenize
 
 
@@ -383,17 +383,6 @@ def _resolve_base_card(
     return result
 
 
-def _strength_stability_for(band: str | None, ds: DirectionState | None) -> float | None:
-    """The stability a rail carries, or None when the band has no strength.
-
-    Only the days/weeks/months/solid bands represent a measured memory, and a
-    KNOWN card's stability is not one (bd tunatale-yh47).
-    """
-    if band in ("days", "weeks", "months", "solid") and ds is not None and ds.state != SRSState.KNOWN:
-        return ds.stability
-    return None
-
-
 def extract_transcript(
     lesson: Lesson,
     db: SRSDatabase,
@@ -614,8 +603,8 @@ def extract_transcript(
                         rail_prod = item.directions.get(Direction.PRODUCTION)
                     understand_band = direction_band(rail_rec)
                     produce_band = direction_band(rail_prod)
-                    understand_stability = _strength_stability_for(understand_band, rail_rec)
-                    produce_stability = _strength_stability_for(produce_band, rail_prod)
+                    understand_stability = band_stability(understand_band, rail_rec)
+                    produce_stability = band_stability(produce_band, rail_prod)
                     # Read-ahead keys off RECOGNITION specifically (not active_dir):
                     # reading always evidences recognition, even after the active
                     # direction has flipped to production on graduation.

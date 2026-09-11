@@ -57,6 +57,10 @@ class TestListenPreviewContract:
             "well_known",
             "will_create",
             "due_at",
+            "understand_band",
+            "produce_band",
+            "understand_stability",
+            "produce_stability",
         }
 
 

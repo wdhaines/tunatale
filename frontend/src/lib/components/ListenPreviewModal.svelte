@@ -4,7 +4,7 @@
 	import { api, type ListenPreviewCandidate, type ListenResponse, type WordRating } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import { listenCountdownPref } from '$lib/stores/listenCountdownPref.svelte';
-	import { masteryBackgroundColor, masteryColor } from '$lib/mastery';
+	import { railPropsFor, masterySides as masterySidesFn } from '$lib/masteryBands';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 
 	let {
@@ -91,11 +91,6 @@
 	// The four real grades, in DrillCard.svelte's order. "skip" is deliberately
 	// NOT in this list: it is the absence of a grade, and the UI sets it apart.
 	const GRADES = ['again', 'hard', 'good', 'easy'] as const satisfies readonly WordRating[];
-
-	// WordSpan.svelte renders an untracked word in this indigo. A `create` row
-	// IS an untracked word, so its dueness pill uses the same colour rather
-	// than a position on the mastery ramp it has not joined yet.
-	const UNKNOWN_COLOR = '#818cf8';
 
 	function candidateKey(c: ListenPreviewCandidate): string {
 		return `${c.kind}:${c.text}`;
@@ -313,45 +308,9 @@
 		return days !== null && days <= 0;
 	}
 
-	// The dialogue's own colour language, via mastery.ts's own functions —
-	// red→yellow→green by progress, so a word looks the same here as it does in
-	// the transcript. Dueness is weight, not hue (WordSpan's `.word-due`).
-	function dueStyle(c: ListenPreviewCandidate): string {
-		// NEW-state rows join create rows in the unknown colour. They carry
-		// `progress: null`, and the `?? 0` below would otherwise paint them the
-		// red of 0% mastery — which reads as "you keep failing this" rather than
-		// "you haven't started it".
-		if (c.kind === 'create' || c.grade_class === 'new') {
-			return `color: ${UNKNOWN_COLOR}; background: color-mix(in srgb, ${UNKNOWN_COLOR} 18%, transparent);`;
-		}
-		const p = c.progress ?? 0;
-		return `color: ${masteryColor(p)}; background: ${masteryBackgroundColor(p)};`;
-	}
-
-	// The hue above is the ONLY mastery channel on the row, and a continuous
-	// ramp is not readable to a number — 37% and 42% are the same colour to the
-	// eye. The hover names it (F-4). Vocabulary mirrors WordSpan's
-	// `masteryLabel` deliberately, including its well-known carve-out: the user
-	// asked for "the exact redness like I have on the hover on the transcript",
-	// so the two surfaces must not describe the same card with different words.
-	function masteryLabel(c: ListenPreviewCandidate): string {
-		if (c.kind === 'create') return 'not tracked';
-		// Scheduled past the listen horizon. WordSpan suppresses the percentage
-		// here because this flow has already stopped asking about the card;
-		// quoting a work-in-progress number would contradict the row's own
-		// "well recognized" grouping in the disclosure below. The wording is
-		// recognition-scoped on purpose: `deferred_reason === 'known'` is
-		// computed from the RECOGNITION direction alone, so it must not be
-		// stated as plain "known" — production is frequently still NEW.
-		if (c.deferred_reason === 'known') return 'well recognized';
-		// `progress: null` IS the server's "no mastery to report" signal — it
-		// stamps null on NEW-state rows and a real float on every other tracked
-		// row. Testing the null rather than `grade_class === 'new'` keeps this
-		// total over the payload's own type instead of leaving a fallback arm
-		// that the contract makes unreachable.
-		if (c.progress == null) return 'not started';
-		return `${Math.round(c.progress * 100)}%`;
-	}
+	// The row hover shows the same two-line "Understand: … / Produce: …" label
+	// that WordSpan's popover uses, so both surfaces describe the same card with
+	// the same words.
 
 	// ── Over-budget creation tail ──────────────────────────────────────────
 	// A skip no longer frees its slot for promotion (the server consumes the
@@ -542,6 +501,7 @@
 				<button onclick={skipAll} type="button">Skip All</button>
 			</div>
 
+			<div class="body">
 			{#if candidates.length === 0}
 				<p class="status">No new words to add.</p>
 			{:else}
@@ -557,8 +517,8 @@
 					     longer the grid item. `listen-preview-layout.spec.ts` measures
 					     this cell's left edge against the header's to the pixel. -->
 					<span class="day-cell">
-						<Tooltip masteryLabel={masteryLabel(c)}>
-							<span class="tag day" class:overdue={isOverdue(c)} style={dueStyle(c)}>
+						<Tooltip masteryLabel={c.kind === 'create' ? 'not tracked' : null} masterySides={c.kind === 'create' ? null : masterySidesFn(c)}>
+							<span class="tag day paint-rails" class:overdue={isOverdue(c)} class:is-new={dueLabel(c) === 'new'} style={railPropsFor(c) ?? undefined}>
 								{dueLabel(c)}
 							</span>
 						</Tooltip>
@@ -765,6 +725,7 @@
 					</details>
 				{/if}
 			{/if}
+			</div>
 		{/if}
 
 		<div class="footer">
@@ -915,6 +876,17 @@
 		background: var(--color-surface-2);
 		color: var(--color-text);
 		cursor: pointer;
+	}
+	/* The one scroll region between the actions row and the footer. A <details>
+	   group is not a scroll container, so as a flex item it could not shrink:
+	   expanding "well recognized" pushed the footer out of the modal (35px on
+	   desktop, 18px on a phone, measured — tunatale-yh47.8). min-height: 0 is
+	   what lets this box shrink below its content; the footer stays pinned. */
+	.body {
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow-y: auto;
+		overflow-x: hidden;
 	}
 	.list {
 		list-style: none;
@@ -1073,6 +1045,36 @@
 	   axis. */
 	.tag.overdue {
 		font-weight: 700;
+	}
+	/* Third copy of the rail paint rule (WordSpan's `.word.paint-rails`,
+	   Transcript's `.collocation-span`, this) — Svelte scoping forces a copy
+	   per component. The pill's own rail stack replaces the old mastery-colour
+	   ramp, so the row reads exactly like the reader's twin rails. */
+	.tag.day.paint-rails {
+		padding-bottom: 7px;
+		background-repeat: no-repeat;
+		background-image:
+			linear-gradient(var(--rail-u-fill, transparent), var(--rail-u-fill, transparent)),
+			var(--rail-u-track, var(--band-track, #e4e9e6)),
+			linear-gradient(var(--rail-p-fill, transparent), var(--rail-p-fill, transparent)),
+			var(--rail-p-track, var(--band-track, #e4e9e6));
+		background-size:
+			var(--rail-u-pct, 0%) 3px,
+			100% 3px,
+			var(--rail-p-pct, 0%) 3px,
+			100% 3px;
+		background-position:
+			left bottom 4px,
+			left bottom 4px,
+			left bottom 0,
+			left bottom 0;
+		border-radius: 0;
+	}
+	/* "new" (a create row, or a card never studied) reads in the reader's
+	   untracked-word blue — the colour an untracked word has in the transcript
+	   (user's call, 2026-09-10). */
+	.tag.day.is-new {
+		color: var(--word-untracked, var(--color-primary));
 	}
 	.tag.kp {
 		background: color-mix(in srgb, var(--color-warning) 18%, transparent);
