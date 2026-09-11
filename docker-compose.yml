@@ -64,7 +64,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      # 90s, measured, NOT the 15s this used to be. Failures inside
+      # start_period do not count toward `retries`; after it they do, and three
+      # at 10s apart flip the container to `unhealthy`.
+      #
+      # On the e2-micro (0.25 vCPU baseline) the app binds in ~18s from a warm
+      # deploy but took ~70s after a full VM REBOOT, when docker, containerd and
+      # every service start at once: measured 2026-09-11, three checks at
+      # exit=7 (connection refused) before the first success. So the box came
+      # back on its own and served HTTP 200 while reporting `unhealthy` — which
+      # is worse than a slow start, because that is the signal a deploy script
+      # or an uptime monitor acts on. It is also what made a working deploy
+      # report failure (tunatale-pse).
+      start_period: 90s
 
   web:
     image: ghcr.io/wdhaines/tunatale-web:${TT_TAG:?set TT_TAG to a commit SHA (deploy.sh writes it)}

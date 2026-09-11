@@ -61,6 +61,20 @@ def test_every_service_pulls_a_pinned_tag(services, name):
     assert ":-" not in image, f"{name} has a default tag: {image}"
 
 
+def test_the_health_start_period_covers_a_cold_reboot(services):
+    """A too-short window makes a working box report `unhealthy` after a reboot.
+
+    Measured on the e2-micro 2026-09-11: ~18s to bind from a warm deploy, ~70s
+    after a full VM reboot. Failures during `start_period` are free; after it,
+    three at `interval` apart flip the container. At 15s the box served HTTP 200
+    while reporting unhealthy — and that is the signal deploy.sh and any uptime
+    monitor act on.
+    """
+    health = services["api"]["healthcheck"]
+    assert health["start_period"].endswith("s")
+    assert int(health["start_period"].removesuffix("s")) >= 90, health["start_period"]
+
+
 def test_init_and_api_are_the_same_image(services):
     """init IS the api image with another entrypoint — they cannot diverge."""
     assert services["init"]["image"] == services["api"]["image"]

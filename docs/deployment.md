@@ -361,13 +361,59 @@ drifts silently. `image:` is what the box pulls; `build:` is what a laptop uses.
 `TT_TAG` has no default (`:?`, not `:-latest`), so a mistyped deploy fails
 closed instead of shipping "whatever latest is".
 
-### Not verified yet
+### Connecting
 
-The image build, the pull, the health gate and the rollback have **not been run
-end to end** at the time of writing — `workflow_dispatch` only becomes available
-once the workflow is on the default branch. Until this paragraph is replaced by
-a measurement, treat this section as intended procedure rather than tested
-procedure.
+`deploy.sh` reaches the box over Tailscale as `$TT_DEPLOY_USER`. **There is no
+sensible default**: the box uses OS Login, whose POSIX name is derived from the
+Google account (`someone@gmail.com` → `someone_gmail_com`) and does not match
+your local username, so plain `ssh` fails with `Permission denied (publickey)`.
+
+```bash
+TT_DEPLOY_USER=$(gcloud compute os-login describe-profile --format='value(posixAccounts[0].username)')
+export TT_DEPLOY_USER
+```
+
+The script preflights this and prints that command rather than letting ssh fail
+opaquely. `TT_DEPLOY_HOST`, `TT_DEPLOY_KEY`, `TT_DEPLOY_DIR` and
+`TT_IMAGE_OWNER` override the rest.
+
+**GHCR needs no credentials on the box.** Images built by a workflow in a public
+repo are public, so `docker pull` works anonymously — verified 2026-09-11 by
+pulling on the box, which has no registry login and no service account.
+
+### Verified end to end, 2026-09-11
+
+Run against the real box, not reasoned about:
+
+| step | result |
+|---|---|
+| build + push both images | `linux/amd64` asserted on the pushed manifests |
+| anonymous pull from the box | works; no registry credentials anywhere |
+| deploy | ~17s from command to healthy |
+| **rollback** | deployed A, then B, then **back to A** — each ~15-20s, `deploy-history.log` recording every transition |
+| serving through Caddy | `/api/health` 200, `/` (SPA) 200, `/api/<unknown>` **404 JSON from the API**, not the HTML shell |
+| reboot | stack returns unattended and serves 200, no human command |
+
+Three things only a real run found, all now fixed:
+
+1. **A working deploy reported failure.** `start_period: 15s` was shorter than
+   the app's cold start, so three health checks failed, docker flipped the
+   container to `unhealthy`, and the wait treated that as fatal. Now 90s, with
+   the measurement in the compose comment.
+2. **The wait was not diagnosable.** It printed only "did not become healthy",
+   which was false seconds later. It now prints every state transition, and
+   tolerates a transient `unhealthy` rather than failing on the first sight of
+   it.
+3. **The rollback hint named the wrong tag.** It read the tag from `.env` — the
+   last one *attempted* — so after a failed deploy it pointed back at the thing
+   that had just broken. It now reads the last tag that actually reached
+   healthy, from `deploy-history.log`.
+
+⚠️ **The prod image cannot run with `LLM_MODE=mock`.** `tests/cassettes/` is not
+shipped in it, so mock mode dies at startup with a `FileNotFoundError` from
+`cassette.py` rather than anything that names the cause. Production is
+`LLM_MODE=live` and the `TT_ENV=prod` guard already refuses anything else — but
+a non-prod boot of the prod image hits the ugly version.
 
 ## Accounts
 
