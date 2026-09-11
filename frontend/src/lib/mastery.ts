@@ -15,9 +15,18 @@ export interface MasteryBreakdown {
   known: number;
 }
 
+export interface SideResult {
+  pct: number | null;
+  bands: Record<string, number>;
+}
+
 export interface MasteryResult {
   pct: number | null;
   counts: MasteryBreakdown;
+  sides: {
+    understand: SideResult;
+    produce: SideResult;
+  };
   lemmas?: {
     new: string[];
     learning: string[];
@@ -41,6 +50,10 @@ export function lessonMastery(transcript: {
       recognition_state?: string | null;
       recognition_is_due?: boolean;
       well_known?: boolean;
+      understand_progress?: number | null;
+      produce_progress?: number | null;
+      understand_band?: string | null;
+      produce_band?: string | null;
     }>;
   }>;
 }): MasteryResult | null {
@@ -52,6 +65,10 @@ export function lessonMastery(transcript: {
     recognition_state: string | null | undefined;
     recognition_is_due: boolean | undefined;
     well_known: boolean | undefined;
+    understand_progress: number | null | undefined;
+    produce_progress: number | null | undefined;
+    understand_band: string | null | undefined;
+    produce_band: string | null | undefined;
   }> = [];
 
   for (const line of transcript.dialogue_lines) {
@@ -65,6 +82,10 @@ export function lessonMastery(transcript: {
         recognition_state: word.recognition_state,
         recognition_is_due: word.recognition_is_due,
         well_known: word.well_known,
+        understand_progress: word.understand_progress,
+        produce_progress: word.produce_progress,
+        understand_band: word.understand_band,
+        produce_band: word.produce_band,
       });
     }
   }
@@ -82,6 +103,12 @@ export function lessonMastery(transcript: {
     known: string[];
   } = { new: [], learning: [], due: [], review: [], known: [] };
 
+  const sideValues = { understand: [] as number[], produce: [] as number[] };
+  const sideBands = {
+    understand: {} as Record<string, number>,
+    produce: {} as Record<string, number>,
+  };
+
   for (const e of entries) {
     if (e.state === "ignored") continue;
 
@@ -98,12 +125,22 @@ export function lessonMastery(transcript: {
     sum += value;
     counted++;
 
+    // Side bands: every deduped non-ignored word contributes
+    const ub = e.understand_band ?? "none";
+    const pb = e.produce_band ?? "none";
+    sideBands.understand[ub] = (sideBands.understand[ub] ?? 0) + 1;
+    sideBands.produce[pb] = (sideBands.produce[pb] ?? 0) + 1;
+
+    // Side progress values
+    if (e.state === "unknown") {
+      sideValues.understand.push(0);
+      sideValues.produce.push(0);
+    } else {
+      if (e.understand_progress != null) sideValues.understand.push(e.understand_progress);
+      if (e.produce_progress != null) sideValues.produce.push(e.produce_progress);
+    }
+
     // Recognition-based bucketing (excludes tracked clozes with null recognition_state)
-    // well_known is checked before the review arms and folds into `known`: a
-    // card scheduled past the listen horizon is one the listen flow has already
-    // stopped asking about, so counting it as review overstated the work left.
-    // It also covers marked-known cards, which come back from a sync as REVIEW
-    // due ~2126 and would otherwise leave this bucket permanently at 0.
     if (e.state === "unknown" || e.recognition_state === "new") {
       counts.new++;
       lemmas.new.push(e.lemma);
@@ -123,12 +160,18 @@ export function lessonMastery(transcript: {
       counts.known++;
       lemmas.known.push(e.lemma);
     }
-    // Tracked word with recognition_state === null (cloze) → excluded from buckets
   }
+
+  const sidePct = (vals: number[]): number | null =>
+    vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
 
   return {
     pct: counted > 0 ? sum / counted : null,
     counts,
+    sides: {
+      understand: { pct: sidePct(sideValues.understand), bands: sideBands.understand },
+      produce: { pct: sidePct(sideValues.produce), bands: sideBands.produce },
+    },
     lemmas,
   };
 }

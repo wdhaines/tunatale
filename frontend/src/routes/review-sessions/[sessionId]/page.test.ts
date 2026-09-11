@@ -212,6 +212,8 @@ function transcriptWithWord(overrides: Record<string, unknown> = {}) {
             inflectable: false,
             inflection_feature: null,
             known_marked: false,
+            understand_progress: 0.5,
+            produce_progress: 0.5,
             ...overrides,
           },
         ],
@@ -388,11 +390,17 @@ describe("the reader", () => {
 
   it("shows how much of the session is known", async () => {
     // MasteryLine is pure arithmetic over the transcript — no curriculum, no
-    // day, no API call. It works here for exactly that reason.
+    // day, no API call. It works here for exactly that reason. The percent now
+    // rides each side bar's readout (one 50% Understand bar, one Produce).
     mockSessionTranscript.mockResolvedValue(transcriptWithWord() as never);
-    const { findByText } = render(Page, { props: { data: data() } });
+    const { container } = render(Page, { props: { data: data() } });
 
-    expect(await findByText(/\d+%/)).toBeTruthy();
+    await vi.waitFor(() => {
+      const pcts = container.querySelectorAll<HTMLElement>(".side-pct");
+      expect(pcts.length).toBe(2);
+      expect(pcts[0].textContent).toContain("%");
+      expect(pcts[1].textContent).toContain("%");
+    });
   });
 
   it("sends Check your work back to the SESSION, not to a curriculum", async () => {

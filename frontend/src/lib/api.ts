@@ -264,6 +264,9 @@ export interface WordToken {
   // unknown words — the dialogue draws no rails for them. Stability present only
   // when the band is a real strength band (days+); KNOWN has no meaningful
   // stability. Optional, same rationale as the siblings.
+  // each side's mastery 0–1; bd tunatale-yh47.7
+  understand_progress?: number | null;
+  produce_progress?: number | null;
   understand_band?: string | null;
   produce_band?: string | null;
   understand_stability?: number | null;

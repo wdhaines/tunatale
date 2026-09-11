@@ -16,7 +16,7 @@ from app.srs.collocation_matcher import match_spans
 from app.srs.database import SRSDatabase
 from app.srs.function_words import is_a1_morphology_feature, is_clozes_only_verb, ud_feats_to_tt_feature
 from app.srs.lemmatizer import Lemmatizer, analyze_sentence_cached, lemmatize_surfaces_in_context, model_version_for
-from app.srs.mastery import band_stability, compute_mastery_progress, direction_band, is_well_known
+from app.srs.mastery import band_stability, compute_mastery_progress, direction_band, is_well_known, side_progress
 from app.srs.tokenizer import tokenize
 
 
@@ -74,6 +74,10 @@ class WordToken:
     # meaningful stability; a NEW card's default 1.0 is not a measurement.
     understand_stability: float | None = None
     produce_stability: float | None = None
+    # Each side's mastery in [0, 1] (mastery.py::side_progress) — the lesson
+    # roll-up's per-side percent. None for untracked words and suspended sides.
+    understand_progress: float | None = None
+    produce_progress: float | None = None
     # Bands of the enclosing multi-word collocation span's OWN card, filled on
     # every span word; None off-span.
     collocation_understand_band: str | None = None
@@ -558,6 +562,8 @@ def extract_transcript(
                 produce_band: str | None = None
                 understand_stability: float | None = None
                 produce_stability: float | None = None
+                understand_progress: float | None = None
+                produce_progress: float | None = None
 
                 # Step 3b: Check card-less ignore list (inside the Step-3 unknown branch only)
                 if resolved_item is None and lemma.lower() in ignored_lemmas:
@@ -605,6 +611,8 @@ def extract_transcript(
                     produce_band = direction_band(rail_prod)
                     understand_stability = band_stability(understand_band, rail_rec)
                     produce_stability = band_stability(produce_band, rail_prod)
+                    understand_progress = side_progress(rail_rec)
+                    produce_progress = side_progress(rail_prod)
                     # Read-ahead keys off RECOGNITION specifically (not active_dir):
                     # reading always evidences recognition, even after the active
                     # direction has flipped to production on graduation.
@@ -690,6 +698,8 @@ def extract_transcript(
                         produce_band=produce_band,
                         understand_stability=understand_stability,
                         produce_stability=produce_stability,
+                        understand_progress=understand_progress,
+                        produce_progress=produce_progress,
                     )
                 )
 

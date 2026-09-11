@@ -500,4 +500,113 @@ describe("lessonMastery", () => {
       expect(result.counts.known).toBe(0);
     });
   });
+
+  describe("sides (understand / produce)", () => {
+    it("computes per-side pct and bands from the oracle fixture", () => {
+      const t = makeTranscript([
+        {
+          lemma: "a",
+          active_state: "review",
+          progress: 0.8,
+          understand_progress: 0.8,
+          produce_progress: 0.0,
+          understand_band: "months",
+          produce_band: "none",
+        },
+        {
+          lemma: "b",
+          active_state: "review",
+          progress: 0.4,
+          understand_progress: 0.4,
+          produce_progress: 0.2,
+          understand_band: "weeks",
+          produce_band: "days",
+        },
+        {
+          lemma: "c",
+          active_state: "unknown",
+          progress: null,
+          understand_progress: null,
+          produce_progress: null,
+          understand_band: null,
+          produce_band: null,
+        },
+        {
+          lemma: "d",
+          active_state: "ignored",
+          progress: 0.9,
+          understand_progress: 0.9,
+          produce_progress: 0.9,
+          understand_band: "solid",
+          produce_band: "solid",
+        },
+        {
+          lemma: "a",
+          active_state: "review",
+          progress: 0.1,
+          understand_progress: 0.1,
+          produce_progress: 0.9,
+          understand_band: "days",
+          produce_band: "days",
+        },
+        {
+          lemma: "e",
+          active_state: "suspended",
+          progress: null,
+          understand_progress: null,
+          produce_progress: 0.6,
+          understand_band: "suspended",
+          produce_band: "months",
+        },
+      ]);
+      const result = lessonMastery(t)!;
+
+      // understand: a=.8, b=.4, c=0 (unknown→0); e left out (null) → .4
+      expect(result.sides.understand.pct).toBeCloseTo(0.4, 6);
+      // produce: a=0, b=.2, c=0, e=.6 → .8/4 = .2
+      expect(result.sides.produce.pct).toBeCloseTo(0.2, 6);
+
+      expect(result.sides.understand.bands).toMatchObject({
+        months: 1,
+        weeks: 1,
+        none: 1,
+        suspended: 1,
+      });
+      expect(result.sides.produce.bands).toMatchObject({
+        none: 2,
+        days: 1,
+        months: 1,
+      });
+    });
+
+    it("existing pct/counts unchanged by sides computation", () => {
+      const t = makeTranscript([
+        {
+          lemma: "a",
+          active_state: "learning",
+          progress: 0.3,
+          recognition_state: "learning",
+          recognition_is_due: true,
+        },
+        {
+          lemma: "b",
+          active_state: "review",
+          progress: 0.8,
+          recognition_state: "review",
+          recognition_is_due: false,
+        },
+        {
+          lemma: "c",
+          active_state: "relearning",
+          progress: 0.15,
+          recognition_state: "relearning",
+          recognition_is_due: true,
+        },
+      ]);
+      const result = lessonMastery(t)!;
+      // (0.3 + 0.8 + 0.15) / 3 ≈ 0.417
+      expect(result.pct).toBeCloseTo(0.417, 2);
+      expect(result.counts).toEqual({ new: 0, learning: 2, due: 0, review: 1, known: 0 });
+    });
+  });
 });

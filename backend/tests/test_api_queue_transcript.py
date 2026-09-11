@@ -230,6 +230,8 @@ class TestTranscriptEndpoint:
             "produce_band",
             "understand_stability",
             "produce_stability",
+            "understand_progress",
+            "produce_progress",
             "collocation_understand_band",
             "collocation_produce_band",
         }
