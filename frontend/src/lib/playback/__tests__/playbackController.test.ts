@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createPlaybackController } from "../playbackController.svelte";
 import type { Cue, LessonAudio } from "$lib/api";
+import { readMediaTrace, setMediaTraceEnabled, clearMediaTrace } from "$lib/mediaTrace";
 
 function makeCue(overrides: Partial<Cue> & { index: number }): Cue {
   return {
@@ -665,27 +666,40 @@ describe("playbackController", () => {
   });
 
   describe("MediaSession", () => {
+    // NOTE: `{ ...navigator }` never copies userAgent — it lives on the
+    // Navigator prototype, so a stub built from spread leaks a userAgent-less
+    // navigator to every LATER test in this file. The `mediasession-ready`
+    // trace line reads navigator.userAgent, so the restore must put the real
+    // value back (vi.unstubAllGlobals pops the pre-stub global verbatim).
+    function withMediaSessionNavigator(
+      stamp: { mediaSession?: unknown } | undefined,
+      fn: () => void,
+    ) {
+      vi.stubGlobal("navigator", {
+        ...navigator,
+        userAgent: navigator.userAgent,
+        mediaSession: stamp?.mediaSession,
+      });
+      try {
+        fn();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    }
+
     it("defaults to navigator.mediaSession when no dep provided", () => {
       const fakeMs = makeFakeMediaSession();
-      const orig = (navigator as any).mediaSession;
-      vi.stubGlobal("navigator", { ...navigator, mediaSession: fakeMs });
-      try {
+      withMediaSessionNavigator({ mediaSession: fakeMs }, () => {
         createController({ mediaSession: undefined });
         expect(fakeMs.setActionHandler).toHaveBeenCalledWith("play", expect.any(Function));
         expect(fakeMs.setActionHandler).toHaveBeenCalledWith("pause", expect.any(Function));
-      } finally {
-        vi.stubGlobal("navigator", { ...navigator, mediaSession: orig });
-      }
+      });
     });
 
     it("does not crash when both mediaSession dep and navigator.mediaSession are absent", () => {
-      const orig = (navigator as any).mediaSession;
-      vi.stubGlobal("navigator", { ...navigator, mediaSession: undefined });
-      try {
+      withMediaSessionNavigator({ mediaSession: undefined }, () => {
         expect(() => createController({ mediaSession: undefined })).not.toThrow();
-      } finally {
-        vi.stubGlobal("navigator", { ...navigator, mediaSession: orig });
-      }
+      });
     });
 
     it("wires action handlers when mediaSession is provided", () => {
@@ -2216,6 +2230,133 @@ describe("playbackController", () => {
         expect(audioEl.src).toBe(srcBefore); // never switches to a cue-less section track
         expect(audioEl.currentTime).toBeCloseTo(0.8, 3);
       });
+    });
+  });
+
+  // ── On-device Media Session trace (mediaTrace.ts) ──────────────────────
+  //
+  // The whole point of the log: which actions a headset / car really sends,
+  // and which ones the browser refuses to register. The trace is OFF unless
+  // `mediaTrace` is "on" in localStorage — the control at the end proves no
+  // trace line is recorded without the flag.
+  describe("media trace", () => {
+    const ACTIONS = [
+      "play",
+      "pause",
+      "seekbackward",
+      "seekforward",
+      "previoustrack",
+      "nexttrack",
+      "seekto",
+    ] as const;
+
+    function getHandler(
+      mediaSession: ReturnType<typeof makeFakeMediaSession>,
+      action: string,
+    ): (details?: { seekTime?: number }) => void {
+      const call = vi.mocked(mediaSession.setActionHandler).mock.calls.find((c) => c[0] === action);
+      expect(call).toBeTruthy();
+      return call![1] as (details?: { seekTime?: number }) => void;
+    }
+
+    beforeEach(() => {
+      clearMediaTrace();
+      setMediaTraceEnabled(true);
+    });
+
+    it.each(ACTIONS)("logs an action:%s line when invoked", (action) => {
+      const mediaSession = makeFakeMediaSession();
+      createController({ mediaSession: mediaSession as unknown as MediaSession });
+      getHandler(mediaSession, action)({});
+      expect(readMediaTrace().some((l) => l.includes(`action:${action}`))).toBe(true);
+    });
+
+    it("seekto logs its seekTime", () => {
+      const mediaSession = makeFakeMediaSession();
+      createController({ mediaSession: mediaSession as unknown as MediaSession });
+      getHandler(mediaSession, "seekto")({ seekTime: 42 });
+      expect(
+        readMediaTrace().some((l) => l.includes("action:seekto") && l.includes("seekTime=42")),
+      ).toBe(true);
+    });
+
+    it("call: play/pause/togglePlay all record their lines", () => {
+      const ctrl = createController();
+      ctrl.play();
+      ctrl.pause();
+      ctrl.togglePlay();
+      const lines = readMediaTrace();
+      expect(lines.some((l) => l.includes("call:play"))).toBe(true);
+      expect(lines.some((l) => l.includes("call:pause"))).toBe(true);
+      expect(lines.some((l) => l.includes("call:togglePlay"))).toBe(true);
+    });
+
+    it("audio element events record el: lines, and el:pause carries swapping=", () => {
+      createController();
+      audioEl.dispatchEvent(new Event("play"));
+      audioEl.dispatchEvent(new Event("pause"));
+      audioEl.dispatchEvent(new Event("ended"));
+      const lines = readMediaTrace();
+      expect(lines.some((l) => l.includes("el:play"))).toBe(true);
+      expect(lines.some((l) => l.includes("el:pause") && l.includes("swapping=0"))).toBe(true);
+      expect(lines.some((l) => l.includes("el:ended"))).toBe(true);
+    });
+
+    it("records the mediasession-ready line with the user agent", () => {
+      const mediaSession = makeFakeMediaSession();
+      createController({ mediaSession: mediaSession as unknown as MediaSession });
+      const ready = readMediaTrace().find((l) => l.includes("mediasession-ready ua="));
+      expect(ready).toBeTruthy();
+    });
+
+    it("a refused registration is caught independently and the rest still register", () => {
+      const mediaSession = makeFakeMediaSession();
+      const attempted: string[] = [];
+      mediaSession.setActionHandler = vi.fn((action: string, _handler: unknown) => {
+        attempted.push(action);
+        if (action === "seekbackward") throw new Error("unsupported action");
+        return undefined;
+      });
+      createController({ mediaSession: mediaSession as unknown as MediaSession });
+      const lines = readMediaTrace();
+      expect(lines.some((l) => l.includes("refused:seekbackward"))).toBe(true);
+      // Every action was attempted despite the one failure, and the trace
+      // buffer lines above it are untouched (each registration is wrapped on
+      // its own).
+      expect(attempted).toEqual([...ACTIONS]);
+    });
+
+    it("records refused: for every registration when the platform supports none", () => {
+      const mediaSession = makeFakeMediaSession();
+      mediaSession.setActionHandler = vi.fn((action: string, _handler: unknown) => {
+        void action;
+        throw new Error("unsupported action");
+      });
+      createController({ mediaSession: mediaSession as unknown as MediaSession });
+      const lines = readMediaTrace();
+      for (const action of ACTIONS) {
+        expect(lines.some((l) => l.includes(`refused:${action}`))).toBe(true);
+      }
+    });
+
+    it("destroy does not throw when nulling one unsupported handler throws", () => {
+      const mediaSession = makeFakeMediaSession();
+      mediaSession.setActionHandler = vi.fn((action: string, handler: unknown) => {
+        if (handler === null && action === "pause") throw new Error("unsupported action");
+        return undefined;
+      });
+      const ctrl = createController({ mediaSession: mediaSession as unknown as MediaSession });
+      expect(() => ctrl.destroy()).not.toThrow();
+    });
+
+    it("logs nothing at all when the trace is off (control)", () => {
+      setMediaTraceEnabled(false);
+      const mediaSession = makeFakeMediaSession();
+      const ctrl = createController({ mediaSession: mediaSession as unknown as MediaSession });
+      getHandler(mediaSession, "play")({});
+      ctrl.play();
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(readMediaTrace()).toEqual([]);
     });
   });
 });

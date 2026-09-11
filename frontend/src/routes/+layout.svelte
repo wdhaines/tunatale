@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { setClientLogEnabled, flushClientLog } from '$lib/clientLog';
+	import { setMediaTraceEnabled } from '$lib/mediaTrace';
 	import { startTouchTrace } from '$lib/touchTrace';
 	import favicon from '$lib/assets/favicon.png';
 	import logo from '$lib/assets/logo.png';
@@ -50,6 +51,12 @@
 		const flag = new URLSearchParams(window.location.search).get('clientlog');
 		if (flag === 'on' || flag === 'off') setClientLogEnabled(flag === 'on');
 		stopTouchTrace = startTouchTrace();
+
+		// On-device Media Session button log, same shape as the clientlog switch
+		// above: `?mediatrace=on` must be settable from a phone's address bar,
+		// and it persists so the flag survives the navigations the drive needs.
+		const mtFlag = new URLSearchParams(window.location.search).get('mediatrace');
+		if (mtFlag === 'on' || mtFlag === 'off') setMediaTraceEnabled(mtFlag === 'on');
 
 		// Every data request in the app funnels through api.ts, so one handler
 		// covers a session that dies mid-visit — including on pages whose only

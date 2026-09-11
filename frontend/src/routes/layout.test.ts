@@ -390,3 +390,31 @@ describe("root +layout.svelte — the session guard", () => {
     expect(container.querySelector('[data-testid="slot"]')).not.toBeNull();
   });
 });
+
+describe("mediatrace URL switch", () => {
+  it("?mediatrace=on enables the on-device media trace", async () => {
+    window.history.replaceState(null, "", "/?mediatrace=on");
+    const { unmount } = renderLayout();
+    await waitFor(() => expect(localStorage.getItem("mediaTrace")).toBe("on"));
+    unmount();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("?mediatrace=off disables it", async () => {
+    window.history.replaceState(null, "", "/?mediatrace=off");
+    const { unmount } = renderLayout();
+    await waitFor(() => expect(localStorage.getItem("mediaTrace")).toBe("off"));
+    unmount();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("an absent ?mediatrace leaves the key untouched", async () => {
+    localStorage.setItem("mediaTrace", "on");
+    window.history.replaceState(null, "", "/");
+    const { unmount } = renderLayout();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(localStorage.getItem("mediaTrace")).toBe("on");
+    unmount();
+    window.history.replaceState(null, "", "/");
+  });
+});

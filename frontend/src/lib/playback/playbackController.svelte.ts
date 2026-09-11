@@ -1,5 +1,6 @@
 import { untrack } from "svelte";
 import type { Cue, CueRef, LessonAudio } from "$lib/api";
+import { mediaTrace } from "$lib/mediaTrace";
 
 // The hands-free pass sequence, in order of playback. One const so a later
 // change is a single edit. Matches LessonPlayer.svelte's pill model
@@ -268,6 +269,15 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   }
   let lastSavedPosition = pendingResume ?? 0;
 
+  // On-device Media Session trace (mediaTrace.ts). Every interesting event in
+  // this controller funnels through here, so the recorded line always carries
+  // the same context: hands-free mode, active section, and playhead.
+  function trace(event: string, extra = ""): void {
+    mediaTrace(
+      `${event} hf=${handsFree ? 1 : 0} section=${activeSectionType ?? "-"} t=${audioEl.currentTime.toFixed(1)}${extra ? " " + extra : ""}`,
+    );
+  }
+
   // Audio event listeners
   audioEl.addEventListener("timeupdate", () => {
     // The loop check runs BEFORE the playhead is copied into the reactive
@@ -304,10 +314,12 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     updatePositionState();
   });
   audioEl.addEventListener("play", () => {
+    trace("el:play");
     playing = true;
     if (mediaSession) mediaSession.playbackState = "playing";
   });
   audioEl.addEventListener("pause", () => {
+    trace("el:pause", `swapping=${swapping ? 1 : 0}`);
     if (destroyed || swapping) return;
     playing = false;
     saveResume();
@@ -319,6 +331,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     updatePositionState();
   });
   audioEl.addEventListener("ended", () => {
+    trace("el:ended");
     // A latched loop over the LAST sentence of a track never sees a timeupdate
     // past the end, so "ended" is its only signal — and seeking alone would
     // leave the element paused at the cue start. The latch would go silent
@@ -400,39 +413,82 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       }
     });
 
-    ms.setActionHandler("play", () => {
-      audioEl.play();
-    });
-    ms.setActionHandler("pause", () => {
-      audioEl.pause();
-    });
-    ms.setActionHandler("seekbackward", () => {
-      doSeek(audioEl.currentTime - 10);
-    });
-    ms.setActionHandler("seekforward", () => {
-      doSeek(audioEl.currentTime + 10);
-    });
-    ms.setActionHandler("previoustrack", () => {
-      if (handsFree) {
-        prevCueAction();
-      } else {
-        prevSection();
-      }
-    });
-    ms.setActionHandler("nexttrack", () => {
-      if (handsFree) {
-        nextCueAction();
-      } else {
-        nextSection();
-      }
-    });
-    ms.setActionHandler("seekto", (details) => {
-      if (details.seekTime != null) {
-        doSeek(details.seekTime);
-      }
-    });
+    // Each registration is its own try/catch: browsers throw for actions they
+    // do not support, and one unsupported action must not abort the ones after
+    // it. A refusal is worth a trace line — that fact is exactly the data this
+    // log exists to capture.
+    try {
+      ms.setActionHandler("play", () => {
+        trace("action:play");
+        audioEl.play();
+      });
+    } catch {
+      trace("refused:play");
+    }
+    try {
+      ms.setActionHandler("pause", () => {
+        trace("action:pause");
+        audioEl.pause();
+      });
+    } catch {
+      trace("refused:pause");
+    }
+    try {
+      ms.setActionHandler("seekbackward", () => {
+        trace("action:seekbackward");
+        doSeek(audioEl.currentTime - 10);
+      });
+    } catch {
+      trace("refused:seekbackward");
+    }
+    try {
+      ms.setActionHandler("seekforward", () => {
+        trace("action:seekforward");
+        doSeek(audioEl.currentTime + 10);
+      });
+    } catch {
+      trace("refused:seekforward");
+    }
+    try {
+      ms.setActionHandler("previoustrack", () => {
+        trace("action:previoustrack");
+        if (handsFree) {
+          prevCueAction();
+        } else {
+          prevSection();
+        }
+      });
+    } catch {
+      trace("refused:previoustrack");
+    }
+    try {
+      ms.setActionHandler("nexttrack", () => {
+        trace("action:nexttrack");
+        if (handsFree) {
+          nextCueAction();
+        } else {
+          nextSection();
+        }
+      });
+    } catch {
+      trace("refused:nexttrack");
+    }
+    try {
+      ms.setActionHandler("seekto", (details) => {
+        trace("action:seekto", `seekTime=${details.seekTime}`);
+        if (details.seekTime != null) {
+          doSeek(details.seekTime);
+        }
+      });
+    } catch {
+      trace("refused:seekto");
+    }
 
     updatePositionState();
+    // String(), not a bare .slice: this line runs on EVERY mount, trace on or
+    // off, so a navigator without userAgent (a test stub built by spread — see
+    // withMediaSessionNavigator) must not be able to throw out of player setup.
+    trace(`mediasession-ready ua=${String(navigator.userAgent).slice(0, 120)}`);
   }
 
   const RESUME_KEY = `tt-resume-${lessonId}`;
@@ -748,6 +804,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     },
 
     play() {
+      trace("call:play");
       // The hand-off between lessons calls this without a user gesture directly
       // behind it, and a browser that blocks autoplay REJECTS rather than
       // throwing. Unhandled, that surfaces as a console error on a path the
@@ -758,9 +815,11 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       if (started && typeof started.catch === "function") started.catch(() => {});
     },
     pause() {
+      trace("call:pause");
       audioEl.pause();
     },
     togglePlay() {
+      trace("call:togglePlay");
       // Branch on the element's real state, not the `playing` flag: if the two
       // ever desync (e.g. a swallowed pause event during a track swap), acting
       // on `playing` could call pause() on an already-paused element — no event
@@ -820,13 +879,24 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       saveResume();
       audioEl.src = "";
       if (mediaSession) {
-        mediaSession.setActionHandler("play", null);
-        mediaSession.setActionHandler("pause", null);
-        mediaSession.setActionHandler("seekbackward", null);
-        mediaSession.setActionHandler("seekforward", null);
-        mediaSession.setActionHandler("previoustrack", null);
-        mediaSession.setActionHandler("nexttrack", null);
-        mediaSession.setActionHandler("seekto", null);
+        // The same unsupported-action throw applies at teardown, and nulling a
+        // handler that was never registered throws too. Each is wrapped
+        // silently — the controller is being destroyed, there is no one left to
+        // read a trace line.
+        const clearHandler = (name: MediaSessionAction) => {
+          try {
+            mediaSession.setActionHandler(name, null);
+          } catch {
+            /* teardown continues past an unsupported action */
+          }
+        };
+        clearHandler("play");
+        clearHandler("pause");
+        clearHandler("seekbackward");
+        clearHandler("seekforward");
+        clearHandler("previoustrack");
+        clearHandler("nexttrack");
+        clearHandler("seekto");
         mediaSession.metadata = null;
       }
     },

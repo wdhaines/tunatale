@@ -142,4 +142,78 @@ describe("/settings", () => {
     await waitFor(() => expect(api.logout).toHaveBeenCalled());
     expect(mockGoto).toHaveBeenCalledWith("/login");
   });
+
+  describe("Media button log", () => {
+    function seedLog(): void {
+      localStorage.setItem("mediaTrace", "on");
+      localStorage.setItem("mediaTraceLog", JSON.stringify(["first", "second"]));
+    }
+
+    it("is hidden when the trace is off", () => {
+      const { queryByRole } = render(Settings);
+      expect(queryByRole("heading", { name: "Media button log" })).toBeNull();
+    });
+
+    it("shows the count and the entries newest first when on", () => {
+      seedLog();
+      const { getByRole, container } = render(Settings);
+      const heading = getByRole("heading", { name: "Media button log" });
+      expect(heading).toBeTruthy();
+      const section = heading.closest("section")!;
+      expect(section.textContent).toContain("2 entries");
+      expect(container.querySelector(".media-trace")?.textContent).toBe("second\nfirst");
+    });
+
+    it("Clear empties the list, the count and the buffer", async () => {
+      seedLog();
+      const { getByRole, container } = render(Settings);
+      await fireEvent.click(getByRole("button", { name: "Clear" }));
+      expect(container.querySelector(".media-trace")?.textContent).toBe("");
+      expect(localStorage.getItem("mediaTraceLog")).toBeNull();
+      const section = getByRole("heading", { name: "Media button log" }).closest("section")!;
+      expect(section.textContent).toContain("0 entries");
+    });
+
+    it("Copy writes the oldest-first joined entries to the clipboard", async () => {
+      seedLog();
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText },
+        configurable: true,
+      });
+      const { getByRole } = render(Settings);
+      await fireEvent.click(getByRole("button", { name: "Copy" }));
+      expect(writeText).toHaveBeenCalledWith("first\nsecond");
+    });
+
+    it("Copy with the clipboard missing does not throw", async () => {
+      seedLog();
+      Object.defineProperty(navigator, "clipboard", {
+        value: undefined,
+        configurable: true,
+      });
+      const { getByRole } = render(Settings);
+      const copyButton = getByRole("button", { name: "Copy" });
+      await fireEvent.click(copyButton);
+    });
+
+    it("Copy swallows a rejected clipboard write", async () => {
+      seedLog();
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+        configurable: true,
+      });
+      const { getByRole } = render(Settings);
+      const copyButton = getByRole("button", { name: "Copy" });
+      await fireEvent.click(copyButton);
+    });
+
+    it("Turn off hides the section and writes the off key", async () => {
+      seedLog();
+      const { getByRole, queryByRole } = render(Settings);
+      await fireEvent.click(getByRole("button", { name: "Turn off" }));
+      expect(queryByRole("heading", { name: "Media button log" })).toBeNull();
+      expect(localStorage.getItem("mediaTrace")).toBe("off");
+    });
+  });
 });

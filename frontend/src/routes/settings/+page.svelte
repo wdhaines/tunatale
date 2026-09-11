@@ -5,6 +5,12 @@
 	import { listenCountdownPref, type CountdownValue } from '$lib/stores/listenCountdownPref.svelte';
 	import { languageStore } from '$lib/stores/language.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
+	import {
+		mediaTraceEnabled,
+		readMediaTrace,
+		clearMediaTrace,
+		setMediaTraceEnabled
+	} from '$lib/mediaTrace';
 
 	// The header used to carry these controls inline; they're set-and-forget
 	// preferences, so they live here and only critical CTAs stay in the nav.
@@ -20,6 +26,29 @@
 		{ value: '30', label: '30s' },
 		{ value: '60', label: '60s' },
 	];
+
+	// Media button log — the on-device trace is read HERE, on the phone, after
+	// the drive. Hidden unless it was switched on (`?mediatrace=on`), and a
+	// snapshot of the buffer is taken at mount.
+	let mediaTraceOn = $state(mediaTraceEnabled());
+	let mediaTraceEntries: string[] = $state(mediaTraceEnabled() ? readMediaTrace() : []);
+
+	function copyMediaTrace() {
+		const text = mediaTraceEntries.join('\n');
+		const clipboard = navigator.clipboard;
+		if (!clipboard) return;
+		clipboard.writeText(text).catch(() => {});
+	}
+
+	function clearMediaTraceView() {
+		clearMediaTrace();
+		mediaTraceEntries = [];
+	}
+
+	function turnOffMediaTrace() {
+		setMediaTraceEnabled(false);
+		mediaTraceOn = false;
+	}
 </script>
 
 <svelte:head>
@@ -105,6 +134,26 @@
 				<p>Signed in as {authStore.email}.</p>
 			</div>
 			<button class="signout" onclick={() => authStore.logout()}>Sign out</button>
+		</section>
+	{/if}
+
+	{#if mediaTraceOn}
+		<section class="card setting">
+			<div class="setting-head">
+				<h2>Media button log</h2>
+				<p>
+					{mediaTraceEntries.length} {mediaTraceEntries.length === 1 ? 'entry' : 'entries'}
+					recorded.
+				</p>
+			</div>
+			<div class="media-trace-body">
+				<pre class="media-trace">{mediaTraceEntries.slice().reverse().join('\n')}</pre>
+				<div class="media-trace-actions">
+					<button type="button" class="media-trace-button" onclick={copyMediaTrace}>Copy</button>
+					<button type="button" class="media-trace-button" onclick={clearMediaTraceView}>Clear</button>
+					<button type="button" class="media-trace-button" onclick={turnOffMediaTrace}>Turn off</button>
+				</div>
+			</div>
 		</section>
 	{/if}
 </main>
@@ -207,6 +256,43 @@
 		transform: translateX(16px);
 	}
 	.signout {
+		padding: 0.4rem 0.75rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-pill);
+		background: var(--color-surface);
+		color: var(--color-text);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.media-trace-body {
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.6rem;
+	}
+	.media-trace {
+		width: 100%;
+		box-sizing: border-box;
+		margin: 0;
+		padding: 0.6rem 0.75rem;
+		max-height: 20rem;
+		overflow: auto;
+		background: var(--color-surface-2);
+		border-radius: var(--radius-sm);
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 0.75rem;
+		line-height: 1.45;
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+	.media-trace-actions {
+		display: inline-flex;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+	.media-trace-button {
 		padding: 0.4rem 0.75rem;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-pill);
