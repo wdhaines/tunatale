@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { SRSItemDetail } from '$lib/api';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	type Rating = 'again' | 'hard' | 'good' | 'easy';
 
@@ -169,7 +170,7 @@
 			{/if}
 			{#if detailExtras.length > 0 || deepExtras.length > 0}
 				<details class="extras-details">
-					<summary><span class="disc-label">Details</span></summary>
+					<summary><span class="disc-label">{t('drillCard.details')}</span></summary>
 					<div class="extras-body">
 						{#each detailExtras as e (e.label)}
 							{@render extraField(e)}
@@ -192,7 +193,7 @@
 		{#if direction === 'recognition'}
 			{#if item.audio_url}
 				<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>
-				<button class="play-btn" onclick={playAudio} aria-label="Play audio">▶</button>
+				<button class="play-btn" onclick={playAudio} aria-label={t('drillCard.playAudio')}>▶</button>
 			{/if}
 			<p class="main-text slovene">{headword}{posLabel}</p>
 		{:else if direction === 'production'}
@@ -225,12 +226,12 @@
 				{#if item.card_type === 'cloze' && item.source_sentence}
 					{#if item.audio_url}
 						<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>
-						<button class="play-btn" onclick={playAudio} aria-label="Play audio">▶</button>
+						<button class="play-btn" onclick={playAudio} aria-label={t('drillCard.playAudio')}>▶</button>
 					{/if}
 					<p class="main-text">{@html clozeAnswerHtml()}</p>
 					{#if item.word_audio_url}
 						<audio bind:this={wordAudioEl} src={item.word_audio_url} preload="auto"></audio>
-						<button class="word-audio-btn" onclick={playWordAudio} aria-label="Play word audio">🔊 {item.text}</button>
+						<button class="word-audio-btn" onclick={playWordAudio} aria-label={t('drillCard.playWordAudio')}>🔊 {item.text}</button>
 					{/if}
 					{#if item.source_sentence_translation}
 						<p class="answer-text english">{item.source_sentence_translation}</p>
@@ -238,7 +239,7 @@
 				{:else}
 					{#if item.audio_url}
 						<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>
-						<button class="play-btn" onclick={playAudio} aria-label="Play audio">▶</button>
+						<button class="play-btn" onclick={playAudio} aria-label={t('drillCard.playAudio')}>▶</button>
 					{/if}
 					<p class="answer-text slovene">{headword}{posLabel}</p>
 				{/if}
@@ -253,17 +254,17 @@
 			{/if}
 		</div>
 		<div class="ratings">
-			<button class="btn-again" class:suggested={pendingRating === 'again'} onclick={() => rate('again')}>Again</button>
-			<button class="btn-hard" class:suggested={pendingRating === 'hard'} onclick={() => rate('hard')}>Hard</button>
-			<button class="btn-good" class:suggested={pendingRating === 'good'} onclick={() => rate('good')}>Good</button>
-			<button class="btn-easy" class:suggested={pendingRating === 'easy'} onclick={() => rate('easy')}>Easy</button>
+			<button class="btn-again" class:suggested={pendingRating === 'again'} onclick={() => rate('again')}>{t('drillCard.again')}</button>
+			<button class="btn-hard" class:suggested={pendingRating === 'hard'} onclick={() => rate('hard')}>{t('drillCard.hard')}</button>
+			<button class="btn-good" class:suggested={pendingRating === 'good'} onclick={() => rate('good')}>{t('drillCard.good')}</button>
+			<button class="btn-easy" class:suggested={pendingRating === 'easy'} onclick={() => rate('easy')}>{t('drillCard.easy')}</button>
 		</div>
 	{:else}
 		<div class="actions">
-			<button onclick={show}>Show</button>
+			<button onclick={show}>{t('drillCard.show')}</button>
 		</div>
 	{/if}
-	<p class="key-hint">Space to flip · 1–4 to grade</p>
+	<p class="key-hint">{t('drillCard.keyHint')}</p>
 </div>
 
 <style>

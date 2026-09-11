@@ -1,0 +1,301 @@
+import type { Message } from "./i18n.svelte";
+
+// English catalog. One flat object; keys are `<fileStem>.<purpose>` where
+// fileStem is the source file in lowerCamelCase. Groups follow sweep order.
+export const en = {
+  // LessonPlayer.svelte
+  "lessonPlayer.keyPhrases": "Key Phrases",
+  "lessonPlayer.dialogue": "Dialogue",
+  "lessonPlayer.play": "Play",
+  "lessonPlayer.pause": "Pause",
+  "lessonPlayer.seek": "Seek",
+  "lessonPlayer.rewind10s": "Rewind 10s",
+  "lessonPlayer.forward10s": "Forward 10s",
+  "lessonPlayer.restartSection": "Restart section",
+  "lessonPlayer.section": "Section",
+  "lessonPlayer.previousSentence": "Previous sentence",
+  "lessonPlayer.sentence": "Sentence",
+  "lessonPlayer.repeatCurrent": "Repeat current",
+  "lessonPlayer.repeat": "Repeat",
+  "lessonPlayer.nextSentence": "Next sentence",
+  "lessonPlayer.speed.label": "Speed",
+  "lessonPlayer.speed.natural": "Natural",
+  "lessonPlayer.speed.short": "Enun",
+  "lessonPlayer.speed.naturalTitle": "Natural speed",
+  "lessonPlayer.speed.enunciatedTitle": "Enunciated",
+  "lessonPlayer.speed.x09Title": "Enunciated, 0.9× speed",
+  "lessonPlayer.speed.x08Title": "Enunciated, 0.8× speed",
+  "lessonPlayer.english.label": "English",
+  "lessonPlayer.english.after": "After",
+  "lessonPlayer.english.before": "Before",
+  "lessonPlayer.captions.label": "Captions",
+  "lessonPlayer.captions.blurred": "Blurred",
+  "lessonPlayer.captions.visible": "Visible",
+  "lessonPlayer.mic.label": "Mic",
+  "lessonPlayer.on": "On",
+  "lessonPlayer.off": "Off",
+  "lessonPlayer.handsFree.label": "Hands-free",
+  "lessonPlayer.handsFree.title":
+    "Plays each pass in order without input — natural, enunciated, then English after. The ⏮ ⏭ headphone / car buttons step by sentence.",
+
+  // Transcript.svelte
+  "transcript.cancel": "Cancel",
+  "transcript.keyPhrases": "Key Phrases",
+  "transcript.dialogue": "Dialogue",
+  "transcript.howToUse": "How to use the transcript",
+  "transcript.selectionHint": "Tap first word, then last word to set phrase range.",
+  "transcript.showVariations": "Show variations",
+  "transcript.gloss": "Gloss",
+  "transcript.interlinear": "Interlinear",
+  "transcript.helpInstructions":
+    "Tap or hover a word/phrase to open its popover — grading and all other actions live there. Alt+hover a phrase for its individual words. Drag to create a phrase, or tap '+ New phrase' on mobile.",
+  "transcript.legend.new": "New",
+  "transcript.legend.learning": "Learning",
+  "transcript.legend.known": "Known",
+  "transcript.legend.unknown": "Unknown",
+  "transcript.newPhrase": "+ New phrase",
+  "transcript.translationFailed": "Translation failed. Check connection and try again.",
+  "transcript.gradeUndo": "Undo ↩",
+  "transcript.gradeGotIt": "Got it ✓",
+  "transcript.translationOptional": "translation (optional)",
+  "transcript.translateWithAi": "Translate with AI",
+  "transcript.create": "Create",
+  "transcript.addPhrase": "Add phrase…",
+  "transcript.phraseText": "phrase text",
+  "transcript.translationPlaceholder": "translation",
+
+  // Tooltip.svelte
+  "tooltip.due": "Due",
+  "tooltip.notDue": "Not Due",
+  "tooltip.words": "Words…",
+  "tooltip.createInflectionCard": "Create inflection card",
+  "tooltip.unignore": "Un-ignore",
+  "tooltip.ignore": "Ignore",
+  "tooltip.known": "Known",
+  "tooltip.unmarkKnown": "Un-mark known",
+  "tooltip.reset": "Reset",
+
+  // DrillCard.svelte
+  "drillCard.playAudio": "Play audio",
+  "drillCard.playWordAudio": "Play word audio",
+  "drillCard.details": "Details",
+  "drillCard.again": "Again",
+  "drillCard.hard": "Hard",
+  "drillCard.good": "Good",
+  "drillCard.easy": "Easy",
+  "drillCard.show": "Show",
+  "drillCard.keyHint": "Space to flip · 1–4 to grade",
+
+  // ImageEditModal.svelte
+  "imageEditModal.ariaEditImage": "Edit image",
+  "imageEditModal.title": "Edit Image",
+  "imageEditModal.close": "Close",
+  "imageEditModal.working": "Working…",
+  "imageEditModal.currentImage": "Current image",
+  "imageEditModal.remove": "Remove",
+  "imageEditModal.noImage": "No image",
+  "imageEditModal.pixabayCandidates": "Pixabay candidates",
+  "imageEditModal.searchQuery": "Search query",
+  "imageEditModal.searching": "Searching…",
+  "imageEditModal.search": "Search",
+  "imageEditModal.noResults": "No results",
+  "imageEditModal.pasteUrl": "Paste URL",
+  "imageEditModal.set": "Set",
+  "imageEditModal.uploadFile": "Upload file",
+  "imageEditModal.rateLimited": "Rate limited — try again shortly",
+  "imageEditModal.pixabayUnavailable": "Pixabay unavailable — try again shortly",
+  "imageEditModal.fetchFailed": "Failed to fetch candidates",
+
+  // ListenPreviewModal.svelte
+  "listenPreview.ariaListenPreview": "Listen preview",
+  "listenPreview.title": "Words in this lesson",
+  "listenPreview.loading": "Loading...",
+  "listenPreview.autoGrading": "Grade All — auto-grading in {countdown} seconds",
+  "listenPreview.gradeAll": "Grade All",
+  "listenPreview.skipAll": "Skip All",
+  "listenPreview.noNewWords": "No new words to add.",
+  "listenPreview.notTracked": "not tracked",
+  "listenPreview.new": "new",
+  "listenPreview.learning": "learning",
+  "listenPreview.today": "today",
+  "listenPreview.now": "now",
+  "listenPreview.later": "later",
+  "listenPreview.wellRecognized": "well recognized",
+  "listenPreview.proposedGradeFor": "Proposed grade for {text}",
+  "listenPreview.skip": "Skip",
+  "listenPreview.forText": "{label} for {text}",
+  "listenPreview.forTextAutoGraded": "{label} for {text} — auto-graded, tap to confirm",
+  "listenPreview.keyPhrase": "key phrase",
+  "listenPreview.revealGlossFor": "Reveal gloss for {text}",
+  "listenPreview.noGloss": "No gloss available",
+  "listenPreview.pastLimit": "+{count} past today's limit",
+  "listenPreview.colWord": "Word",
+  "listenPreview.colDue": "Due",
+  "listenPreview.colProposedGrade": "Proposed grade",
+  "listenPreview.wordsForSubsequent": { other: "{count} words for subsequent listens" },
+  "listenPreview.learningWord": {
+    one: "{count} learning word",
+    other: "{count} learning words",
+  },
+  "listenPreview.wellRecognizedWord": {
+    one: "{count} well recognized word",
+    other: "{count} well recognized words",
+  },
+  "listenPreview.cancel": "Cancel",
+  "listenPreview.syncing": "Syncing...",
+  "listenPreview.markListened": "Mark as listened",
+  "listenPreview.markNListened": "Mark {count} as listened",
+
+  // ClozeSentenceModal.svelte
+  "clozeModal.ariaDialog": "Cloze sentence",
+  "clozeModal.title": "Cloze sentence — {text}",
+  "clozeModal.close": "Close",
+  "clozeModal.current": "Current",
+  "clozeModal.proposed": "Proposed",
+  "clozeModal.recommended": "recommended",
+  "clozeModal.noCandidate":
+    "No new sentence came back — try again, or edit the sentence below by hand.",
+  "clozeModal.sentenceToStore": "Sentence to store",
+  "clozeModal.hint":
+    "Must contain “{text}”. The English and the sentence audio are regenerated for whatever you store; Anki is updated on the next sync.",
+  "clozeModal.asking": "Asking…",
+  "clozeModal.suggestAnother": "Suggest another",
+  "clozeModal.suggestSentence": "Suggest a sentence",
+  "clozeModal.cancel": "Cancel",
+  "clozeModal.saving": "Saving…",
+  "clozeModal.useThisSentence": "Use this sentence",
+  "clozeModal.onlyFits": "Only “{text}” fits this blank.",
+  "clozeModal.noVerdict": "The model gave no usable verdict on this blank.",
+  "clozeModal.moreThanOne": "More than one word fits this blank.",
+  "clozeModal.othersFit": {
+    one: "{count} other word also fit: {list}",
+    other: "{count} other words also fit: {list}",
+  },
+
+  // ManualStoryPanel.svelte
+  "manualStory.copied": "Copied ✓",
+  "manualStory.copyPrompt": "Copy story prompt",
+  "manualStory.pasteStoryJson": "Paste story JSON here…",
+  "manualStory.continueImported": "Continue to imported lesson →",
+  "manualStory.importing": "Importing…",
+  "manualStory.importBtn": "Import",
+  "manualStory.confirmDelete": "Confirm delete",
+  "manualStory.deleteDay": "Delete this day",
+
+  // ReadListenToggle.svelte
+  "readListenToggle.read": "Read",
+  "readListenToggle.listen": "Listen",
+  "readListenToggle.showPlayerControls": "Show player controls",
+  "readListenToggle.hidePlayerControls": "Hide player controls",
+  "readListenToggle.showControls": "Show controls",
+  "readListenToggle.hideControls": "Hide controls",
+
+  // LlmActivityLog.svelte
+  "llmActivity.heading": "LLM Activity",
+  "llmActivity.mockMode": "Mock mode — LLM activity unavailable",
+  "llmActivity.noActivity": "No LLM activity yet",
+  "llmActivity.eventSummary": {
+    one: "{count} event",
+    other: "{count} events",
+  },
+
+  // ProposedBatch.svelte
+  "proposedBatch.proposedDay": "Proposed: Day {start}",
+  "proposedBatch.proposedDays": "Proposed: Days {start}–{end}",
+  "proposedBatch.dayLabel": "Day {position}",
+  "proposedBatch.commitBatch": "Commit batch",
+  "proposedBatch.revise": "Revise",
+
+  // PipelineCard.svelte
+  "pipelineCard.pipeline": "Pipeline",
+  "pipelineCard.day": "Day {position}",
+  "pipelineCard.listen": "Listen →",
+  "pipelineCard.retry": "Retry",
+
+  // LessonSourcePanel.svelte
+  "lessonSourcePanel.editSource": "Edit Source",
+  "lessonSourcePanel.loadingSource": "Loading source…",
+  "lessonSourcePanel.copyJson": "Copy JSON",
+  "lessonSourcePanel.copyPromptForClaude": "Copy prompt for Claude",
+  "lessonSourcePanel.copied": "Copied ✓",
+  "lessonSourcePanel.pasteEditedJson": "Paste edited JSON here…",
+  "lessonSourcePanel.invalidJson": "Invalid JSON — check the syntax and try again.",
+  "lessonSourcePanel.continueImported": "Continue to imported lesson →",
+  "lessonSourcePanel.importing": "Importing…",
+  "lessonSourcePanel.import": "Import",
+
+  // ConfirmDialog.svelte
+  "confirmDialog.areYouSure": "Are you sure?",
+  "confirmDialog.cancel": "Cancel",
+  "confirmDialog.confirm": "Confirm",
+
+  // TranscriptPlaceholder.svelte
+  "transcriptPlaceholder.preparing": "Preparing word states… showing the dialogue meanwhile.",
+  "transcriptPlaceholder.keyPhrases": "Key Phrases",
+  "transcriptPlaceholder.dialogue": "Dialogue",
+
+  // SyncButton.svelte
+  "syncButton.title": "Sync TunaTale with AnkiWeb (Anki can stay open; changes reach AnkiDroid).",
+  "syncButton.syncing": "Syncing…",
+  "syncButton.syncWithAnkiWeb": "Sync with AnkiWeb",
+  "syncButton.synced": "Synced with AnkiWeb",
+
+  // RateLimitWidget.svelte
+  "rateLimitWidget.noCallYet": "No LLM call yet this session — click to check",
+  "rateLimitWidget.probing": "LLM …",
+  "rateLimitWidget.error": "LLM !",
+  "rateLimitWidget.idle": "LLM —",
+  "rateLimitWidget.mockMode": "Mock mode — quota display unavailable",
+  "rateLimitWidget.mock": "LLM mock",
+  "rateLimitWidget.rateLimited": "Rate limited · {retryIn}s",
+  "rateLimitWidget.usage": "LLM {tokensRem}/{tokensLim} · ↻{reset}s",
+  "rateLimitWidget.unknown": "LLM —/—",
+  "rateLimitWidget.refreshQuota": "Refresh quota",
+  "rateLimitWidget.tokensPerMin": "Tokens/min: {remaining} of {limit}",
+  "rateLimitWidget.resetsInSeconds": " (resets in {seconds}s)",
+  "rateLimitWidget.requestsPerDay": "Requests/day: {remaining} of {limit}",
+  "rateLimitWidget.resetsInMinutes": " (resets in {minutes}m)",
+  "rateLimitWidget.tokensToday": "~{used} of {limit} tokens today",
+  "rateLimitWidget.requestsToday": "~{used} of {limit} requests today",
+  "rateLimitWidget.model": "Model: {model}",
+  "rateLimitWidget.asOfAgo": "As of {seconds}s ago",
+  "rateLimitWidget.orgWide": "Limits are org-wide and per-model",
+
+  // LanguageSelector.svelte
+  "languageSelector.activeLanguage": "Active language",
+
+  // PlannerChat.svelte
+  "plannerChat.emptyHint":
+    "Describe what you want to learn — a trip, a theme, a situation — and the planner will propose your next days.",
+  "plannerChat.placeholder": "Message the planner…",
+  "plannerChat.daysPerBatch": "Days per batch",
+  "plannerChat.quickPlanButton": "Plan the next {batchSize} days",
+  "plannerChat.quickPlanMessage": "Plan the next {batchSize} days.",
+  "plannerChat.thinking": "Thinking…",
+  "plannerChat.send": "Send",
+
+  // LessonReader.svelte
+  "lessonReader.noTranscript": "No transcript available.",
+
+  // masteryBands.ts
+  "masteryBands.bandNone": "No card",
+  "masteryBands.bandNew": "Not started",
+  "masteryBands.bandLearning": "Learning",
+  "masteryBands.bandDays": "Days",
+  "masteryBands.bandWeeks": "Weeks",
+  "masteryBands.bandMonths": "Months",
+  "masteryBands.bandSolid": "Half a year +",
+  "masteryBands.bandSuspended": "Suspended",
+  "masteryBands.markedKnown": "marked known",
+  "masteryBands.holdsLessThanDay": "holds < 1 day",
+  "masteryBands.holdsDays": { one: "holds ~1 day", other: "holds ~{count} days" },
+  "masteryBands.holdsWeeks": { one: "holds ~1 week", other: "holds ~{count} weeks" },
+  "masteryBands.holdsMonths": { other: "holds ~{count} months" },
+  "masteryBands.holdsYears": { one: "holds ~1 year", other: "holds ~{count} years" },
+  "masteryBands.understand": "Understand: {label}",
+  "masteryBands.produce": "Produce: {label}",
+
+  // readingActions.svelte.ts
+  "readingActions.confirmResetWord":
+    "Reset this word? It will be forgotten in Anki too and re-learned from scratch.",
+} satisfies Record<string, Message>;

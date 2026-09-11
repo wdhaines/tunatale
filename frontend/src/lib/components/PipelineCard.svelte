@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api } from '$lib/api';
 	import type { PipelineStatus } from '$lib/api';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	interface Props {
 		status: PipelineStatus;
@@ -27,15 +28,15 @@
 
 {#if status.days.length > 0}
 	<div class="pipeline-card card">
-		<h3 class="pipeline-heading">Pipeline</h3>
+		<h3 class="pipeline-heading">{t('pipelineCard.pipeline')}</h3>
 		{#each status.days as d (d.day)}
 			<div class="pipeline-row">
-				<span class="day-label">Day {d.position}</span>
+				<span class="day-label">{t('pipelineCard.day', { position: d.position })}</span>
 				<span class="state-badge state-{d.state}">{d.state}</span>
 				<span class="detail-line">{d.detail ?? ''}</span>
 				<span class="actions">
 					{#if d.state === 'ready' && d.lesson_id}
-						<a href="/c/{curriculumId}/l/{d.lesson_id}" class="listen-link">Listen →</a>
+						<a href="/c/{curriculumId}/l/{d.lesson_id}" class="listen-link">{t('pipelineCard.listen')}</a>
 					{/if}
 					{#if d.state === 'failed' && d.retryable}
 						<button
@@ -43,7 +44,7 @@
 							disabled={retrying === d.day}
 							onclick={() => handleRetry(d.day)}
 						>
-							{retrying === d.day ? '…' : 'Retry'}
+							{retrying === d.day ? '…' : t('pipelineCard.retry')}
 						</button>
 					{/if}
 				</span>

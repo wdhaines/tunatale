@@ -2,6 +2,7 @@
 	import { api } from '$lib/api';
 	import type { PeerSyncResult } from '$lib/api';
 	import { syncStore } from '$lib/stores/sync.svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	// Peer-sync with AnkiWeb (or a self-host server): TunaTale syncs its OWN
 	// collection, so Anki can stay open and changes reach AnkiDroid. (This replaced
@@ -50,15 +51,15 @@
 		<button
 			onclick={handleSync}
 			disabled={syncLoading}
-			title="Sync TunaTale with AnkiWeb (Anki can stay open; changes reach AnkiDroid)."
+			title={t('syncButton.title')}
 		>
-			{syncLoading ? 'Syncing…' : 'Sync with AnkiWeb'}
+			{syncLoading ? t('syncButton.syncing') : t('syncButton.syncWithAnkiWeb')}
 		</button>
 
 		{#if error}
 			<span class="sync-toast error" role="alert">{error}</span>
 		{:else if syncResult && !onSyncResult}
-			<span class="sync-toast success" role="status">Synced with AnkiWeb</span>
+			<span class="sync-toast success" role="status">{t('syncButton.synced')}</span>
 		{/if}
 	</div>
 {/if}

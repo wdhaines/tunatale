@@ -6,6 +6,7 @@
 	import { listenCountdownPref } from '$lib/stores/listenCountdownPref.svelte';
 	import { railPropsFor, masterySides as masterySidesFn } from '$lib/masteryBands';
 	import Tooltip from '$lib/components/Tooltip.svelte';
+	import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
 
 	let {
 		lessonId,
@@ -91,6 +92,13 @@
 	// The four real grades, in DrillCard.svelte's order. "skip" is deliberately
 	// NOT in this list: it is the absence of a grade, and the UI sets it apart.
 	const GRADES = ['again', 'hard', 'good', 'easy'] as const satisfies readonly WordRating[];
+
+	const GRADE_LABEL_KEYS: Record<string, MessageKey> = {
+		again: 'drillCard.again',
+		hard: 'drillCard.hard',
+		good: 'drillCard.good',
+		easy: 'drillCard.easy',
+	};
 
 	function candidateKey(c: ListenPreviewCandidate): string {
 		return `${c.kind}:${c.text}`;
@@ -283,7 +291,7 @@
 	function formatDueAt(due_at: string | null): string | null {
 		const days = dueDays(due_at);
 		if (days === null) return null;
-		return days === 0 ? 'today' : `${days}d`;
+		return days === 0 ? t('listenPreview.today') : `${days}d`;
 	}
 
 	// One cell for the whole dueness story. "due"/"ahead" used to be rendered
@@ -296,9 +304,9 @@
 		// the learner needs to see. Stated explicitly rather than leaning on the
 		// `?? c.grade_class` fallback below, which would also produce "new" for
 		// a null due_at but only by coincidence.
-		if (c.kind === 'create' || c.grade_class === 'new') return 'new';
+		if (c.kind === 'create' || c.grade_class === 'new') return t('listenPreview.new');
 		// "learning", not "learn" — matches the lesson stats line's bucket names.
-		if (c.grade_class === 'learning') return 'learning';
+		if (c.grade_class === 'learning') return t('listenPreview.learning');
 		return formatDueAt(c.due_at ?? null) ?? c.grade_class ?? '';
 	}
 
@@ -461,17 +469,17 @@
 	}
 </script>
 
-<div class="overlay" role="dialog" aria-modal="true" aria-label="Listen preview" tabindex="-1"
+<div class="overlay" role="dialog" aria-modal="true" aria-label={t('listenPreview.ariaListenPreview')} tabindex="-1"
 	bind:this={overlayEl}
 	onpointerdown={handleInteraction}
 	onfocusin={handleFocusIn}
 	onkeydown={(e) => { handleInteraction(); cancelOnKeydown(e); }}
 >
 	<div class="modal">
-		<h2>Words in this lesson</h2>
+		<h2>{t('listenPreview.title')}</h2>
 
 		{#if loading}
-			<p class="status">Loading...</p>
+			<p class="status">{t('listenPreview.loading')}</p>
 		{:else if error}
 			<p class="error">{error}</p>
 		{:else}
@@ -491,19 +499,19 @@
 					class:armed={countdownRunning}
 					data-countdown={countdownRunning ? 'running' : 'idle'}
 					data-countdown-pref={listenCountdownPref.value}
-					aria-label={countdownRunning ? `Grade All — auto-grading in ${countdown} seconds` : undefined}
+					aria-label={countdownRunning ? t('listenPreview.autoGrading', { countdown }) : undefined}
 					onclick={gradeAll}
 					type="button"
 				>
 					<span class="fill" style:width={`${pctElapsed}%`} aria-hidden="true"></span>
-					<span class="label">Grade All <span class="tick">{tickText}</span></span>
+					<span class="label">{t('listenPreview.gradeAll')} <span class="tick">{tickText}</span></span>
 				</button>
-				<button onclick={skipAll} type="button">Skip All</button>
+				<button onclick={skipAll} type="button">{t('listenPreview.skipAll')}</button>
 			</div>
 
 			<div class="body">
 			{#if candidates.length === 0}
-				<p class="status">No new words to add.</p>
+				<p class="status">{t('listenPreview.noNewWords')}</p>
 			{:else}
 
 				<!-- One tag, both row kinds. It used to be written out twice, and the
@@ -517,7 +525,7 @@
 					     longer the grid item. `listen-preview-layout.spec.ts` measures
 					     this cell's left edge against the header's to the pixel. -->
 					<span class="day-cell">
-						<Tooltip masteryLabel={c.kind === 'create' ? 'not tracked' : null} masterySides={c.kind === 'create' ? null : masterySidesFn(c)}>
+						<Tooltip masteryLabel={c.kind === 'create' ? t('listenPreview.notTracked') : null} masterySides={c.kind === 'create' ? null : masterySidesFn(c)}>
 							<span class="tag day paint-rails" class:overdue={isOverdue(c)} class:is-new={dueLabel(c) === 'new'} style={railPropsFor(c) ?? undefined}>
 								{dueLabel(c)}
 							</span>
@@ -527,7 +535,7 @@
 
 				{#snippet gradeControl(c: ListenPreviewCandidate)}
 					{@const key = candidateKey(c)}
-					<div class="grade" role="group" aria-label={`Proposed grade for ${c.text}`}>
+					<div class="grade" role="group" aria-label={t('listenPreview.proposedGradeFor', { text: c.text })}>
 						<!-- Skip is the opposite of grading, not a fifth grade, so it
 						     sits outside the welded segmented control. -->
 						<button
@@ -538,10 +546,10 @@
 							aria-pressed={ratings[key] === 'skip'}
 							onclick={() => setRating(key, 'skip')}
 							type="button"
-						>Skip</button>
+						>{t('listenPreview.skip')}</button>
 						<div class="grades">
 							{#each GRADES as g (g)}
-								{@const label = g[0].toUpperCase() + g.slice(1)}
+								{@const label = t(GRADE_LABEL_KEYS[g])}
 								{@const auto = ratings[key] === g && isAuto(key)}
 								<button
 									class={g}
@@ -551,8 +559,8 @@
 									data-grade={g}
 									aria-pressed={ratings[key] === g}
 									aria-label={auto
-										? `${label} for ${c.text} — auto-graded, tap to confirm`
-										: `${label} for ${c.text}`}
+										? t('listenPreview.forTextAutoGraded', { label, text: c.text })
+										: t('listenPreview.forText', { label, text: c.text })}
 									onclick={() => setRating(key, g)}
 									type="button"
 								>{label}</button>
@@ -571,18 +579,18 @@
 
 						<div class="sub" class:revealed={revealed.has(key)}>
 							{#if c.kind === 'kp'}
-								<span class="tag kp">key phrase</span>
+								<span class="tag kp">{t('listenPreview.keyPhrase')}</span>
 							{/if}
 							{#if c.translation}
 								<button
 									type="button"
 									class="gloss"
 									class:blurred={!revealed.has(key)}
-									aria-label={revealed.has(key) ? c.translation : `Reveal gloss for ${c.text}`}
+									aria-label={revealed.has(key) ? c.translation : t('listenPreview.revealGlossFor', { text: c.text })}
 									onclick={() => revealGloss(key)}
 								>{c.translation}</button>
 							{:else}
-								<span class="gloss empty" aria-label="No gloss available">&mdash;</span>
+								<span class="gloss empty" aria-label={t('listenPreview.noGloss')}>&mdash;</span>
 							{/if}
 						</div>
 
@@ -608,18 +616,18 @@
 
 						<div class="sub" class:revealed={revealed.has(key)}>
 							{#if c.kind === 'kp'}
-								<span class="tag kp">key phrase</span>
+								<span class="tag kp">{t('listenPreview.keyPhrase')}</span>
 							{/if}
 							{#if c.translation}
 								<button
 									type="button"
 									class="gloss"
 									class:blurred={!revealed.has(key)}
-									aria-label={revealed.has(key) ? c.translation : `Reveal gloss for ${c.text}`}
+									aria-label={revealed.has(key) ? c.translation : t('listenPreview.revealGlossFor', { text: c.text })}
 									onclick={() => revealGloss(key)}
 								>{c.translation}</button>
 							{:else}
-								<span class="gloss empty" aria-label="No gloss available">&mdash;</span>
+								<span class="gloss empty" aria-label={t('listenPreview.noGloss')}>&mdash;</span>
 							{/if}
 						</div>
 
@@ -642,28 +650,28 @@
 				     total), unlike the original narrower "introduction budget only"
 				     definition this replaced. -->
 				<div class="partition">
-					<span class="seg now"><span class="n">{liveCandidates.length + optedTailCount}</span><span class="l">now</span></span>
-					<span class="seg"><span class="n">{tailCandidates.length - optedTailCount}</span><span class="l">later</span></span>
+					<span class="seg now"><span class="n">{liveCandidates.length + optedTailCount}</span><span class="l">{t('listenPreview.now')}</span></span>
+					<span class="seg"><span class="n">{tailCandidates.length - optedTailCount}</span><span class="l">{t('listenPreview.later')}</span></span>
 					<!-- Renders only when it has content, so a deck with nothing
 					     mid-acquisition keeps the three-count line F-20 shipped.
 					     Without it the counts would stop summing to the row count
 					     the moment a learning card appeared — the partition's whole
 					     claim is that every row is in exactly one of these buckets. -->
 					{#if learningCandidates.length > 0}
-						<span class="seg"><span class="n">{learningCandidates.length}</span><span class="l">learning</span></span>
+						<span class="seg"><span class="n">{learningCandidates.length}</span><span class="l">{t('listenPreview.learning')}</span></span>
 					{/if}
-					<span class="seg"><span class="n">{wellKnownCandidates.length}</span><span class="l">well recognized</span></span>
+					<span class="seg"><span class="n">{wellKnownCandidates.length}</span><span class="l">{t('listenPreview.wellRecognized')}</span></span>
 				</div>
 				{#if optedTailCount > 0}
 					<!-- The over-cap opt-in keeps its voice: opted rows ARE being
 					     introduced now, so the counts above moved with them, and the
 					     caption says the overage out loud rather than quietly moving
 					     the denominator. Renders ONLY when something was opted in. -->
-					<p class="over-cap-caption">+{optedTailCount} past today's limit</p>
+					<p class="over-cap-caption">{t('listenPreview.pastLimit', { count: optedTailCount })}</p>
 				{/if}
 
 				<div class="list-head" aria-hidden="true">
-					<span>Word</span><span>Due</span><span>Proposed grade</span>
+					<span>{t('listenPreview.colWord')}</span><span>{t('listenPreview.colDue')}</span><span>{t('listenPreview.colProposedGrade')}</span>
 				</div>
 
 				<ul class="list">
@@ -681,7 +689,7 @@
 					     count would under-report it. Tail rows stay gradeable inside
 					     the group (the over-cap opt-in is per row and unchanged). -->
 					<details class="tail-group disclosure-group">
-						<summary>{tailCandidates.length} words for subsequent listens</summary>
+						<summary>{t('listenPreview.wordsForSubsequent', { count: tailCandidates.length })}</summary>
 						<ul class="list">
 							{#each tailCandidates as c (candidateKey(c))}
 								{@render tailRow(c)}
@@ -698,7 +706,7 @@
 					     and a listen is not that test. Visible, skipped by default,
 					     opt-in per row. -->
 					<details class="learning-group disclosure-group">
-						<summary>{learningCandidates.length} learning word{learningCandidates.length !== 1 ? 's' : ''}</summary>
+						<summary>{t('listenPreview.learningWord', { count: learningCandidates.length })}</summary>
 						<ul class="list">
 							{#each learningCandidates as c (candidateKey(c))}
 								{@render candidateRow(c)}
@@ -716,7 +724,7 @@
 					     "known" because its bucket merges this population with
 					     explicitly marked-known cards. The API fields are unchanged
 					     (`well_known`, `deferred_reason: 'known'`); only the label moved. -->
-					<summary>{wellKnownCandidates.length} well recognized word{wellKnownCandidates.length !== 1 ? 's' : ''}</summary>
+					<summary>{t('listenPreview.wellRecognizedWord', { count: wellKnownCandidates.length })}</summary>
 						<ul class="list">
 							{#each wellKnownCandidates as c (candidateKey(c))}
 								{@render candidateRow(c)}
@@ -729,9 +737,13 @@
 		{/if}
 
 		<div class="footer">
-			<button onclick={cancel} type="button" class="cancel">Cancel</button>
+			<button onclick={cancel} type="button" class="cancel">{t('listenPreview.cancel')}</button>
 			<button onclick={() => { handleInteraction(); doCommit(); }} disabled={loading || committing || !!error}>
-				{committing ? 'Syncing...' : selectedCount > 0 ? `Mark ${selectedCount} as listened` : 'Mark as listened'}
+				{committing
+					? t('listenPreview.syncing')
+					: selectedCount > 0
+						? t('listenPreview.markNListened', { count: selectedCount })
+						: t('listenPreview.markListened')}
 			</button>
 		</div>
 	</div>

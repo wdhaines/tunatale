@@ -4,6 +4,7 @@
  * The band vocabulary is defined backend-side (`mastery.py::direction_band`);
  * this module only turns a band name into fill geometry and labels.
  */
+import { t } from "./i18n/i18n.svelte";
 
 export type MasteryBand =
   | "none"
@@ -103,21 +104,21 @@ export function railPropsFor(bands: {
 export function bandLabel(band: MasteryBand): string {
   switch (band) {
     case "none":
-      return "No card";
+      return t("masteryBands.bandNone");
     case "new":
-      return "Not started";
+      return t("masteryBands.bandNew");
     case "learning":
-      return "Learning";
+      return t("masteryBands.bandLearning");
     case "days":
-      return "Days";
+      return t("masteryBands.bandDays");
     case "weeks":
-      return "Weeks";
+      return t("masteryBands.bandWeeks");
     case "months":
-      return "Months";
+      return t("masteryBands.bandMonths");
     case "solid":
-      return "Half a year +";
+      return t("masteryBands.bandSolid");
     case "suspended":
-      return "Suspended";
+      return t("masteryBands.bandSuspended");
   }
 }
 
@@ -128,19 +129,19 @@ export function bandLabel(band: MasteryBand): string {
  */
 export function holdsLabel(stability: number | null): string | null {
   if (stability == null) return null;
-  if (stability >= 10000) return "marked known";
-  if (stability < 1) return "holds < 1 day";
+  if (stability >= 10000) return t("masteryBands.markedKnown");
+  if (stability < 1) return t("masteryBands.holdsLessThanDay");
   if (stability < 7) {
     const days = Math.round(stability);
-    return days === 1 ? "holds ~1 day" : `holds ~${days} days`;
+    return t("masteryBands.holdsDays", { count: days });
   }
   if (stability < 60) {
     const weeks = Math.max(1, Math.round(stability / 7));
-    return weeks === 1 ? "holds ~1 week" : `holds ~${weeks} weeks`;
+    return t("masteryBands.holdsWeeks", { count: weeks });
   }
-  if (stability < 365) return `holds ~${Math.round(stability / 30)} months`;
+  if (stability < 365) return t("masteryBands.holdsMonths", { count: Math.round(stability / 30) });
   const years = Math.round((stability / 365) * 10) / 10;
-  return years === 1 ? `holds ~1 year` : `holds ~${years} years`;
+  return t("masteryBands.holdsYears", { count: years });
 }
 
 /** One side's label: the band name plus a stability qualifier when available. */
@@ -173,7 +174,11 @@ export function masterySides(bands: {
   const pb = bands.produce_band ?? "none";
   if (!BAND_SET.has(ub) || !BAND_SET.has(pb)) return null;
   return [
-    `Understand: ${sideLabel(ub as MasteryBand, bands.understand_stability ?? null)}`,
-    `Produce: ${sideLabel(pb as MasteryBand, bands.produce_stability ?? null)}`,
+    t("masteryBands.understand", {
+      label: sideLabel(ub as MasteryBand, bands.understand_stability ?? null),
+    }),
+    t("masteryBands.produce", {
+      label: sideLabel(pb as MasteryBand, bands.produce_stability ?? null),
+    }),
   ];
 }

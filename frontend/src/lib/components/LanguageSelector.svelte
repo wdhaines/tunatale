@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { languageStore } from '$lib/stores/language.svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	// Changing the active language re-points every API request (X-TT-Language) at
 	// the other language's connection. A full reload is the simplest correct way to
@@ -15,8 +16,8 @@
 {#if languageStore.options.length > 1}
 	<select
 		class="language-selector"
-		aria-label="Active language"
-		title="Active language"
+		aria-label={t('languageSelector.activeLanguage')}
+		title={t('languageSelector.activeLanguage')}
 		value={languageStore.code}
 		onchange={onChange}
 	>

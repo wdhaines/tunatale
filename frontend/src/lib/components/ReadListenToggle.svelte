@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { lessonModePref } from '$lib/stores/lessonModePref.svelte';
 	import { playerCollapsedPref } from '$lib/stores/playerCollapsedPref.svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	// The Read/Listen switch, shared by the lesson page and the review-session
 	// reader (bd tunatale-9p9d). The mode is a PERSISTED, viewport-defaulted
@@ -29,17 +30,17 @@
 
 <div class="mode-row">
 	<div class="toggle-pill">
-		<button class:active={mode === 'read'} onclick={() => lessonModePref.set('read')}>Read</button>
+		<button class:active={mode === 'read'} onclick={() => lessonModePref.set('read')}>{t('readListenToggle.read')}</button>
 		<button class:active={mode === 'listen'} onclick={() => lessonModePref.set('listen')}>
-			Listen
+			{t('readListenToggle.listen')}
 		</button>
 	</div>
 	{#if showCollapse}
 		<button
 			class="collapse-toggle"
 			aria-expanded={!playerCollapsedPref.collapsed}
-			aria-label={playerCollapsedPref.collapsed ? 'Show player controls' : 'Hide player controls'}
-			title={playerCollapsedPref.collapsed ? 'Show controls' : 'Hide controls'}
+			aria-label={playerCollapsedPref.collapsed ? t('readListenToggle.showPlayerControls') : t('readListenToggle.hidePlayerControls')}
+			title={playerCollapsedPref.collapsed ? t('readListenToggle.showControls') : t('readListenToggle.hideControls')}
 			onclick={() => playerCollapsedPref.set(!playerCollapsedPref.collapsed)}
 		>
 			<svg viewBox="0 0 16 16" width="0.85em" height="0.85em" aria-hidden="true"

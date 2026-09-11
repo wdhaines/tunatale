@@ -4,6 +4,7 @@
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import type { createReadingActions } from '$lib/reading/readingActions.svelte';
 	import { lessonModePref } from '$lib/stores/lessonModePref.svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
 	import LessonPlayer from './LessonPlayer.svelte';
 	import ReadListenToggle from './ReadListenToggle.svelte';
 	import Transcript from './Transcript.svelte';
@@ -125,7 +126,7 @@
 		{:else if transcriptLoading}
 			<TranscriptPlaceholder lesson={content} />
 		{:else}
-			<p class="muted">No transcript available.</p>
+			<p class="muted">{t('lessonReader.noTranscript')}</p>
 		{/if}
 	</section>
 {/if}

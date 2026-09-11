@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { t } from '$lib/i18n/i18n.svelte';
+
 	interface Props {
 		copyPrompt: () => Promise<string>;
 		importRaw: (raw: string) => Promise<{ id: string; warnings: string[] }>;
@@ -24,7 +26,7 @@
 		try {
 			const result = await copyPrompt();
 			await navigator.clipboard.writeText(result);
-			copyLabel = 'Copied ✓';
+			copyLabel = t('manualStory.copied');
 		} catch (e) {
 			copyError = e instanceof Error ? e.message : String(e);
 		}
@@ -86,7 +88,7 @@
 
 <div class="manual-story-panel">
 	<button data-testid="copy-btn" onclick={handleCopy}>
-		Copy story prompt
+		{t('manualStory.copyPrompt')}
 	</button>
 	{#if copyLabel}
 		<span class="copied-label">{copyLabel}</span>
@@ -97,7 +99,7 @@
 
 	<div class="import-area">
 		<textarea
-			placeholder="Paste story JSON here…"
+			placeholder={t('manualStory.pasteStoryJson')}
 			value={pasteText}
 			oninput={handlePasteInput}
 			rows={8}
@@ -120,7 +122,7 @@
 				data-testid="continue-btn"
 				onclick={() => onImported(importedLessonId!)}
 			>
-				Continue to imported lesson →
+				{t('manualStory.continueImported')}
 			</button>
 		{:else}
 			<button
@@ -128,7 +130,7 @@
 				onclick={handleImport}
 				disabled={importLoading || !pasteText.trim()}
 			>
-				{importLoading ? 'Importing…' : 'Import'}
+				{importLoading ? t('manualStory.importing') : t('manualStory.importBtn')}
 			</button>
 		{/if}
 	</div>
@@ -146,7 +148,7 @@
 				onblur={handleDeleteBlur}
 				disabled={deleting}
 			>
-				{confirmingDelete ? 'Confirm delete' : 'Delete this day'}
+				{confirmingDelete ? t('manualStory.confirmDelete') : t('manualStory.deleteDay')}
 			</button>
 		</div>
 	{/if}

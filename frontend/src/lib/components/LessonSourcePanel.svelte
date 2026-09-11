@@ -2,6 +2,7 @@
 	import { api } from '$lib/api';
 	import type { StorySourceResponse } from '$lib/api';
 	import { formatSource, buildClaudePrompt } from '$lib/lessonSource';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	interface Props {
 		lessonId: string;
@@ -46,12 +47,12 @@
 
 	async function copyJson() {
 		await navigator.clipboard.writeText(formatSource(source!.story));
-		copyLabel = 'Copied ✓';
+		copyLabel = t('lessonSourcePanel.copied');
 	}
 
 	async function copyPrompt() {
 		await navigator.clipboard.writeText(buildClaudePrompt(source!.story));
-		copyLabel = 'Copied ✓';
+		copyLabel = t('lessonSourcePanel.copied');
 	}
 
 	function handlePasteInput(e: Event) {
@@ -73,7 +74,7 @@
 		try {
 			parsed = JSON.parse(pasteText);
 		} catch {
-			validationError = 'Invalid JSON — check the syntax and try again.';
+			validationError = t('lessonSourcePanel.invalidJson');
 			return;
 		}
 
@@ -99,19 +100,19 @@
 </script>
 
 <details class="lesson-source-panel" bind:open={_open}>
-	<summary>Edit Source</summary>
+	<summary>{t('lessonSourcePanel.editSource')}</summary>
 
 	{#if sourceLoading}
-		<p class="muted">Loading source…</p>
+		<p class="muted">{t('lessonSourcePanel.loadingSource')}</p>
 	{:else if sourceError}
 		<p class="error">{sourceError}</p>
 	{:else if source}
 		<div class="source-actions">
 			<button data-testid="copy-json" onclick={copyJson}>
-				Copy JSON
+				{t('lessonSourcePanel.copyJson')}
 			</button>
 			<button data-testid="copy-prompt" onclick={copyPrompt}>
-				Copy prompt for Claude
+				{t('lessonSourcePanel.copyPromptForClaude')}
 			</button>
 			{#if copyLabel}
 				<span class="copied-label">{copyLabel}</span>
@@ -122,7 +123,7 @@
 
 		<div class="import-area">
 			<textarea
-				placeholder="Paste edited JSON here…"
+				placeholder={t('lessonSourcePanel.pasteEditedJson')}
 				value={pasteText}
 				oninput={handlePasteInput}
 				rows={8}
@@ -149,7 +150,7 @@
 					data-testid="continue-btn"
 					onclick={() => onImported(importedLessonId!)}
 				>
-					Continue to imported lesson →
+					{t('lessonSourcePanel.continueImported')}
 				</button>
 			{:else}
 				<button
@@ -157,7 +158,7 @@
 					onclick={handleImport}
 					disabled={importLoading || !pasteText.trim()}
 				>
-					{importLoading ? 'Importing…' : 'Import'}
+					{importLoading ? t('lessonSourcePanel.importing') : t('lessonSourcePanel.import')}
 				</button>
 			{/if}
 		</div>

@@ -57,6 +57,14 @@ type FileCoverage = {
  *   bare JS literal (`?? ''`, `|| 0`, `?? false`) used as a defensive fallback.
  *   Real JS object literals start with `{` (not `}`) and end with `}` (not `{`),
  *   so those stay flagged as real. Identifier/property-access RHS stays real.
+ *   (c) the operand's source range is IDENTICAL to another operand's in the
+ *   same branch (`duplicateRange`). Svelte 5 compiles a `{expr}` that shares a
+ *   text run with a sibling into a template string with `expr ?? ""`, and v8
+ *   maps both operands of that `??` onto the source expression — so the text
+ *   is an identifier or call (`t(`, `showAddPhrase`) and rule (b) cannot see
+ *   it. A `a ?? b` written in source always has two distinct operand ranges,
+ *   so an identical pair can only be compiler-made. Measured 2026-09-11 when
+ *   the i18n sweep turned static text into `{t(...)}`.
  * - if (template {#if} or JS if): phantom only when text is empty. Non-empty
  *   bodies are real branches that need a test.
  * - Unknown types: keep as real (conservative).
@@ -65,6 +73,7 @@ export function isPhantom(
   branchType: string,
   text: string,
   synthetic: boolean,
+  duplicateRange = false,
 ): boolean {
   if (synthetic || text === "") return true;
   const trimmed = text.trim();
@@ -74,6 +83,7 @@ export function isPhantom(
     );
   }
   if (branchType === "binary-expr") {
+    if (duplicateRange) return true;
     if (trimmed.startsWith("}") || trimmed.endsWith("{")) return true;
     return /^(null|undefined|true|false|-?\d+(\.\d+)?|['"`].*['"`])$/.test(
       trimmed,
@@ -83,6 +93,15 @@ export function isPhantom(
     return false; // empty was handled above; non-empty is real
   }
   return false;
+}
+
+function sameRange(a: Location | undefined, b: Location): boolean {
+  return (
+    a?.start?.line === b.start?.line &&
+    a?.start?.column === b.start?.column &&
+    a?.end?.line === b.end?.line &&
+    a?.end?.column === b.end?.column
+  );
 }
 
 function readRange(
@@ -168,7 +187,10 @@ export function runGate(final: Record<string, FileCoverage>): GateResult {
         }
         const loc = branch.locations?.[i];
         const { text, synthetic } = readRange(file, loc, srcCache);
-        if (isPhantom(branch.type, text, synthetic)) {
+        const duplicateRange =
+          loc !== undefined &&
+          (branch.locations ?? []).some((other, j) => j !== i && sameRange(other, loc));
+        if (isPhantom(branch.type, text, synthetic, duplicateRange)) {
           droppedInFile++;
           dropped.push({
             file: relative(file),

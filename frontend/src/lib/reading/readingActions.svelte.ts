@@ -28,6 +28,7 @@ import { api } from "$lib/api";
 import type { TranscriptData, WordToken } from "$lib/api";
 import { confirmDialog } from "$lib/components/ConfirmDialog.svelte";
 import { queueStatsStore } from "$lib/stores/queueStats.svelte";
+import { t } from "$lib/i18n/i18n.svelte";
 
 export interface ReadingActionsOptions {
   contentId: string;
@@ -163,10 +164,7 @@ export function createReadingActions(opts: ReadingActionsOptions) {
       // confirm before discarding the schedule. Other states are label-only.
       if (
         state === "new" &&
-        !(await confirmDialog(
-          "Reset this word? It will be forgotten in Anki too and re-learned from scratch.",
-          { destructive: true },
-        ))
+        !(await confirmDialog(t("readingActions.confirmResetWord"), { destructive: true }))
       ) {
         return;
       }

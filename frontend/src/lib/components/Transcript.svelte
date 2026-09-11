@@ -8,6 +8,7 @@
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { masteryColor } from '$lib/mastery';
 	import { railPropsFor } from '$lib/masteryBands';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	interface CreatePhraseArgs {
 		text: string;
@@ -261,7 +262,7 @@
 			const { translation } = await api.translateTerm(text, lesson.language_code);
 			pendingTranslation = translation;
 		} catch {
-			translateError = 'Translation failed. Check connection and try again.';
+			translateError = t('transcript.translationFailed');
 		} finally {
 			translateLoading = false;
 		}
@@ -432,7 +433,7 @@
 <div class="transcript-wrapper">
 	{#if transcript.key_phrases.length > 0}
 		<div class="transcript-section">
-			<h3>Key Phrases</h3>
+			<h3>{t('transcript.keyPhrases')}</h3>
 			<ul class="key-phrases-list">
 				{#each transcript.key_phrases as kp, kpIdx (kp.phrase)}
 					{@const seekCue = controller?.findPlayableCue({ kind: 'key_phrase', target_index: kpIdx }) ?? null}
@@ -454,69 +455,67 @@
 		<div class="transcript-section">
 			<div class="dialogue-head">
 				<h3>
-					Dialogue
+					{t('transcript.dialogue')}
 					<button
 						type="button"
 						class="help-toggle"
-						aria-label="How to use the transcript"
+						aria-label={t('transcript.howToUse')}
 						aria-expanded={showHelp}
 						onclick={() => (showHelp = !showHelp)}
 					>?</button>
 					{#if selectionMode}
-						<span class="transcript-hint">Tap first word, then last word to set phrase range.</span>
+						<span class="transcript-hint">{t('transcript.selectionHint')}</span>
 					{/if}
 				</h3>
 
-				<div class="disclosure-toggles" role="group" aria-label="Show variations">
+				<div class="disclosure-toggles" role="group" aria-label={t('transcript.showVariations')}>
 					<button
 						type="button"
 						class="toggle-pill"
 						class:active={showGloss}
 						aria-pressed={showGloss}
 						onclick={() => (showGloss = !showGloss)}
-					>Gloss</button>
+					>{t('transcript.gloss')}</button>
 					<button
 						type="button"
 						class="toggle-pill"
 						class:active={showInterlinear}
 						aria-pressed={showInterlinear}
 						onclick={() => (showInterlinear = !showInterlinear)}
-					>Interlinear</button>
+					>{t('transcript.interlinear')}</button>
 				</div>
 			</div>
 
 			{#if showHelp}
 				<div class="help-panel">
 					<p class="help-instructions">
-						Tap or hover a word/phrase to open its popover — grading and all other actions
-						live there. Alt+hover a phrase for its individual words. Drag to create a
-						phrase, or tap '+ New phrase' on mobile.
+						{t('transcript.helpInstructions')}
 					</p>
 					<div class="help-legend">
 						<span class="legend-row">
 							<span class="legend-swatch" style={`background-color: ${masteryColor(0)};`}></span>
-							New
+							{t('transcript.legend.new')}
 						</span>
 						<span class="legend-arrow">→</span>
 						<span class="legend-row">
 							<span class="legend-swatch" style={`background-color: ${masteryColor(0.5)};`}></span>
-							Learning
+							{t('transcript.legend.learning')}
 						</span>
 						<span class="legend-arrow">→</span>
 						<span class="legend-row">
 							<span class="legend-swatch" style={`background-color: ${masteryColor(1)};`}></span>
-							Known
+							{t('transcript.legend.known')}
 						</span>
 						<span class="legend-row">
 							<span class="legend-swatch word-unknown"></span>
-							Unknown
+							{t('transcript.legend.unknown')}
 						</span>
 					</div>
 				</div>
 			{/if}
 
 			<button class="new-phrase-btn" onclick={toggleSelectionMode}>
-				{selectionMode ? 'Cancel' : '+ New phrase'}
+				{selectionMode ? t('transcript.cancel') : t('transcript.newPhrase')}
 			</button>
 
 			{#each scenes as scene, sceneIdx (sceneIdx)}
@@ -561,10 +560,10 @@
 											suppressed={drilledIn}
 											word={segment.words[0]}
 											gradeLabel={collUndoable
-												? 'Undo ↩'
-												: segment.words[0].collocation_is_due
-													? 'Got it ✓'
-													: null}
+									? t('transcript.gradeUndo')
+									: segment.words[0].collocation_is_due
+										? t('transcript.gradeGotIt')
+										: null}
 											onGrade={collUndoable
 												? () => void onCollocationUndo!(segment.span_id)
 												: onCollocationStateChange
@@ -640,17 +639,17 @@
 							<input
 								class="phrase-translation-input"
 								type="text"
-								placeholder="translation (optional)"
+								placeholder={t('transcript.translationOptional')}
 								bind:value={pendingTranslation}
 							/>
 							<button
 								class="phrase-translate-btn"
 								onclick={() => fetchTranslation(lineIndex)}
 								disabled={translateLoading}
-								title="Translate with AI"
+								title={t('transcript.translateWithAi')}
 							>{translateLoading ? '…' : '✨'}</button>
-							<button class="confirm-create" onclick={() => confirmPhrase(lineIndex, line.words)}>Create</button>
-							<button class="confirm-cancel" onclick={cancelPhrase}>Cancel</button>
+							<button class="confirm-create" onclick={() => confirmPhrase(lineIndex, line.words)}>{t('transcript.create')}</button>
+							<button class="confirm-cancel" onclick={cancelPhrase}>{t('transcript.cancel')}</button>
 							{#if translateError}
 								<span class="phrase-error">{translateError}</span>
 							{/if}
@@ -663,19 +662,19 @@
 
 	<div class="add-phrase-section">
 		<button class="add-phrase-toggle" onclick={() => (showAddPhrase = !showAddPhrase)}>
-			Add phrase… {showAddPhrase ? '▴' : '▾'}
+			{t('transcript.addPhrase')} {showAddPhrase ? '▴' : '▾'}
 		</button>
 		{#if showAddPhrase}
 			<div class="add-phrase-form">
-				<input class="add-phrase-text" type="text" placeholder="phrase text" bind:value={addPhraseText} />
-				<input class="add-phrase-translation" type="text" placeholder="translation" bind:value={addPhraseTranslation} />
+				<input class="add-phrase-text" type="text" placeholder={t('transcript.phraseText')} bind:value={addPhraseText} />
+				<input class="add-phrase-translation" type="text" placeholder={t('transcript.translationPlaceholder')} bind:value={addPhraseTranslation} />
 				<button
 					class="add-phrase-translate-btn"
 					onclick={fetchAddPhraseTranslation}
 					disabled={addPhraseLoading || !addPhraseText.trim()}
-					title="Translate with AI"
+					title={t('transcript.translateWithAi')}
 				>{addPhraseLoading ? '…' : '✨'}</button>
-				<button class="add-phrase-create" onclick={submitAddPhrase} disabled={!addPhraseText.trim()}>Create</button>
+				<button class="add-phrase-create" onclick={submitAddPhrase} disabled={!addPhraseText.trim()}>{t('transcript.create')}</button>
 				{#if addPhraseError}
 					<span class="phrase-error">{addPhraseError}</span>
 				{/if}

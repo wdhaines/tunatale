@@ -16,6 +16,8 @@
 	import { voicePref } from '$lib/stores/voicePref.svelte';
 	import { splitCaption, activeChunkIndex } from '$lib/captionChunks';
 	import { createWakeLock } from '$lib/voice/wakeLock';
+	import { t } from '$lib/i18n/i18n.svelte';
+	import type { MessageKey } from '$lib/i18n/i18n.svelte';
 
 	interface Props {
 		audio: LessonAudio;
@@ -93,16 +95,44 @@
 	const PHASES = ['key_phrases', 'dialogue'] as const;
 	type Phase = (typeof PHASES)[number];
 
+	interface EnunciationOption {
+		level: string;
+		label?: string;
+		labelKey?: MessageKey;
+		titleKey: MessageKey;
+		rate: number;
+	}
+
 	// `label` must fit a quarter of the settings row on a 375px phone (~55px of
 	// text — see .controls-row), which "Enunciated" (75px) and "Enun 0.9×" (68px)
 	// did not. The chip's "Speed" field label supplies the noun, so the slowed
 	// levels read "Speed 0.9×"; `title` keeps the full name on hover.
 	const ENUNCIATION_OPTIONS = [
-		{ level: 'natural', label: 'Natural', title: 'Natural speed', rate: 1.0 },
-		{ level: 'enunciated', label: 'Enun', title: 'Enunciated', rate: 1.0 },
-		{ level: 'enunciated_0.9', label: '0.9×', title: 'Enunciated, 0.9× speed', rate: 0.9 },
-		{ level: 'enunciated_0.8', label: '0.8×', title: 'Enunciated, 0.8× speed', rate: 0.8 },
-	] as const;
+		{
+			level: 'natural',
+			labelKey: 'lessonPlayer.speed.natural',
+			titleKey: 'lessonPlayer.speed.naturalTitle',
+			rate: 1.0
+		},
+		{
+			level: 'enunciated',
+			labelKey: 'lessonPlayer.speed.short',
+			titleKey: 'lessonPlayer.speed.enunciatedTitle',
+			rate: 1.0
+		},
+		{
+			level: 'enunciated_0.9',
+			label: '0.9×',
+			titleKey: 'lessonPlayer.speed.x09Title',
+			rate: 0.9
+		},
+		{
+			level: 'enunciated_0.8',
+			label: '0.8×',
+			titleKey: 'lessonPlayer.speed.x08Title',
+			rate: 0.8
+		}
+	] satisfies readonly EnunciationOption[];
 
 	function resolveSectionType(phase: Phase, enunLevel: string, engMode: EnglishMode): string | null {
 		if (phase === 'key_phrases') return 'key_phrases';
@@ -114,10 +144,10 @@
 
 	// Value shown in the English setting chip; the chip's "English" field label
 	// supplies the noun, so these are just the mode.
-	const ENGLISH_LABELS: Record<EnglishMode, string> = {
-		off: 'Off',
-		l2_first: 'After',
-		en_first: 'Before'
+	const ENGLISH_LABELS: Record<EnglishMode, MessageKey> = {
+		off: 'lessonPlayer.off',
+		l2_first: 'lessonPlayer.english.after',
+		en_first: 'lessonPlayer.english.before'
 	};
 
 	function resolveRate(enunLevel: string): number {
@@ -173,6 +203,10 @@
 
 	let selectedSectionType = $derived(resolveSectionType(phase, enunLevel, englishMode));
 	let enunIndex = $derived(ENUNCIATION_OPTIONS.findIndex((o) => o.level === enunLevel));
+	const enunValue = $derived.by(() => {
+		const opt = ENUNCIATION_OPTIONS[enunIndex];
+		return opt.labelKey ? t(opt.labelKey) : (opt.label ?? '');
+	});
 
 	function cycleEnunciation() {
 		const nextIdx = (enunIndex + 1) % ENUNCIATION_OPTIONS.length;
@@ -414,12 +448,12 @@
 				class="phase-btn"
 				class:active={phase === 'key_phrases'}
 				onclick={() => onPhaseClick('key_phrases')}
-			>Key Phrases</button>
+			>{t('lessonPlayer.keyPhrases')}</button>
 			<button
 				class="phase-btn"
 				class:active={phase === 'dialogue'}
 				onclick={() => onPhaseClick('dialogue')}
-			>Dialogue</button>
+			>{t('lessonPlayer.dialogue')}</button>
 		</div>
 	{/if}
 
@@ -430,7 +464,7 @@
 		     row that does the fine navigation is hidden here anyway. Play/pause
 		     and seeking both stay reachable, which is the contract. -->
 		<div class="compact-bar">
-			<button class="ctrl-btn play-btn compact-play" onclick={() => ctrl.togglePlay()} title={ctrl.playing ? 'Pause' : 'Play'}>
+			<button class="ctrl-btn play-btn compact-play" onclick={() => ctrl.togglePlay()} title={ctrl.playing ? t('lessonPlayer.pause') : t('lessonPlayer.play')}>
 				{#if ctrl.playing}
 					<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><rect x="3" y="2" width="4" height="12" rx="1" fill="currentColor"/><rect x="9" y="2" width="4" height="12" rx="1" fill="currentColor"/></svg>
 				{:else}
@@ -445,49 +479,49 @@
 				value={ctrl.currentTime}
 				oninput={(e) => ctrl.seekTo(parseFloat((e.target as HTMLInputElement).value))}
 				class="scrubber"
-				aria-label="Seek"
+				aria-label={t('lessonPlayer.seek')}
 			/>
 			<span class="compact-time">{formatTime(ctrl.currentTime)} / {formatTime(ctrl.duration)}</span>
 		</div>
 	{:else}
 	<div class="transport-row">
-		<button class="ctrl-btn" onclick={() => ctrl.seekBy(-10)} title="Rewind 10s">
+		<button class="ctrl-btn" onclick={() => ctrl.seekBy(-10)} title={t('lessonPlayer.rewind10s')}>
 			<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="12,2 4,8 12,14" fill="currentColor"/></svg>10s
 		</button>
-		<button class="ctrl-btn play-btn" onclick={() => ctrl.togglePlay()} title={ctrl.playing ? 'Pause' : 'Play'}>
+		<button class="ctrl-btn play-btn" onclick={() => ctrl.togglePlay()} title={ctrl.playing ? t('lessonPlayer.pause') : t('lessonPlayer.play')}>
 			{#if ctrl.playing}
 				<svg viewBox="0 0 16 16" width="1.1em" height="1.1em" style="vertical-align:middle"><rect x="3" y="2" width="4" height="12" rx="1" fill="currentColor"/><rect x="9" y="2" width="4" height="12" rx="1" fill="currentColor"/></svg>
 			{:else}
 				<svg viewBox="0 0 16 16" width="1.1em" height="1.1em" style="vertical-align:middle"><polygon points="4,2 14,8 4,14" fill="currentColor"/></svg>
 			{/if}
 		</button>
-		<button class="ctrl-btn" onclick={() => ctrl.seekBy(10)} title="Forward 10s">
+		<button class="ctrl-btn" onclick={() => ctrl.seekBy(10)} title={t('lessonPlayer.forward10s')}>
 			10s<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="4,2 12,8 4,14" fill="currentColor"/></svg>
 		</button>
 	</div>
 
 	{#if hasCues && !collapsed}
 		<div class="sentence-row">
-			<button class="ctrl-btn small" onclick={() => ctrl.restartSection()} title="Restart section">
+			<button class="ctrl-btn small" onclick={() => ctrl.restartSection()} title={t('lessonPlayer.restartSection')}>
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><rect x="2" y="2" width="2" height="12" rx="1" fill="currentColor"/><polygon points="14,2 6,8 14,14" fill="currentColor"/></svg>
-				Section
+				{t('lessonPlayer.section')}
 			</button>
-			<button class="ctrl-btn small" onclick={() => ctrl.prevCue()} title="Previous sentence">
+			<button class="ctrl-btn small" onclick={() => ctrl.prevCue()} title={t('lessonPlayer.previousSentence')}>
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="12,2 4,8 12,14" fill="currentColor"/></svg>
-				Sentence
+				{t('lessonPlayer.sentence')}
 			</button>
 			<button
 				class="ctrl-btn small"
 				class:active={ctrl.repeatLatched}
 				aria-pressed={ctrl.repeatLatched}
 				onclick={() => ctrl.toggleRepeatLatch()}
-				title="Repeat current"
+				title={t('lessonPlayer.repeatCurrent')}
 			>
-				Repeat
+				{t('lessonPlayer.repeat')}
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><path d="M4 8a4 4 0 0 1 7.5-2L10 8h3V4l-1 1a5 5 0 0 0-9 3h1zm8 0a4 4 0 0 1-7.5 2L6 8H3v4l1-1a5 5 0 0 0 9-3h-1z" fill="currentColor"/></svg>
 			</button>
-			<button class="ctrl-btn small" onclick={() => ctrl.nextCue()} title="Next sentence">
-				Sentence
+			<button class="ctrl-btn small" onclick={() => ctrl.nextCue()} title={t('lessonPlayer.nextSentence')}>
+				{t('lessonPlayer.sentence')}
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="4,2 12,8 4,14" fill="currentColor"/></svg>
 			</button>
 		</div>
@@ -521,10 +555,10 @@
 					class:active={enunLevel !== 'natural'}
 					onclick={onEnunClick}
 					disabled={phase === 'key_phrases'}
-					title={ENUNCIATION_OPTIONS[enunIndex].title}
+					title={t(ENUNCIATION_OPTIONS[enunIndex].titleKey)}
 				>
-					<span class="chip-label">Speed</span>
-					<span class="chip-value">{ENUNCIATION_OPTIONS[enunIndex].label}</span>
+					<span class="chip-label">{t('lessonPlayer.speed.label')}</span>
+					<span class="chip-value">{enunValue}</span>
 				</button>
 				<button
 					class="setting-chip english-btn"
@@ -532,8 +566,8 @@
 					onclick={onEnglishClick}
 					disabled={phase === 'key_phrases'}
 				>
-					<span class="chip-label">English</span>
-					<span class="chip-value">{ENGLISH_LABELS[englishMode]}</span>
+					<span class="chip-label">{t('lessonPlayer.english.label')}</span>
+					<span class="chip-value">{t(ENGLISH_LABELS[englishMode])}</span>
 				</button>
 			{/if}
 			{#if !compact}
@@ -543,8 +577,8 @@
 					aria-pressed={captionBlurPref.enabled}
 					onclick={() => captionBlurPref.set(!captionBlurPref.enabled)}
 				>
-					<span class="chip-label">Captions</span>
-					<span class="chip-value">{captionBlurPref.enabled ? 'Blurred' : 'Visible'}</span>
+					<span class="chip-label">{t('lessonPlayer.captions.label')}</span>
+					<span class="chip-value">{captionBlurPref.enabled ? t('lessonPlayer.captions.blurred') : t('lessonPlayer.captions.visible')}</span>
 				</button>
 				<button
 					class="setting-chip voice-btn"
@@ -552,8 +586,8 @@
 					aria-pressed={voicePref.enabled}
 					onclick={() => voicePref.set(!voicePref.enabled)}
 				>
-					<span class="chip-label">Mic</span>
-					<span class="chip-value">{voicePref.enabled ? 'On' : 'Off'}</span>
+					<span class="chip-label">{t('lessonPlayer.mic.label')}</span>
+					<span class="chip-value">{voicePref.enabled ? t('lessonPlayer.on') : t('lessonPlayer.off')}</span>
 				</button>
 				<!-- Governs what the physical ⏮⏭ (headphone / car) keys skip — a
 				     different axis from the on-screen transport pills, hence the
@@ -561,14 +595,14 @@
 				<button
 					class="hands-free-toggle"
 					aria-pressed={ctrl.handsFree}
-					title="Plays each pass in order without input — natural, enunciated, then English after. The ⏮ ⏭ headphone / car buttons step by sentence."
+					title={t('lessonPlayer.handsFree.title')}
 					onclick={onHandsFreeClick}
 				>
 					<span class="chip-label">
 						<svg viewBox="0 0 16 16" width="0.85em" height="0.85em" style="vertical-align:-1px"><path d="M8 1.5a5.5 5.5 0 0 0-5.5 5.5v3.5a1.5 1.5 0 0 0 1.5 1.5h1v-4h-2V7a5 5 0 0 1 10 0v2h-2v4h1a1.5 1.5 0 0 0 1.5-1.5V7A5.5 5.5 0 0 0 8 1.5z" fill="currentColor"/></svg>
-						Hands-free
+						{t('lessonPlayer.handsFree.label')}
 					</span>
-					<span class="chip-value">{ctrl.handsFree ? 'On' : 'Off'}</span>
+					<span class="chip-value">{ctrl.handsFree ? t('lessonPlayer.on') : t('lessonPlayer.off')}</span>
 				</button>
 			{/if}
 		</div>

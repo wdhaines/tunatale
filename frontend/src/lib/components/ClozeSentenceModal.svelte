@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { SRSItemDetail, ClozeSentenceVerdict } from '$lib/api';
 	import { api } from '$lib/api';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	let { item, onclose, onupdated }: {
 		item: SRSItemDetail;
@@ -45,10 +46,13 @@
 	 * bare status: "underdetermined" is a normal verdict for the closed-class
 	 * words this feature exists for, and a reader judges by how many. */
 	function verdictLine(v: ClozeSentenceVerdict): string {
-		if (v.status === 'determined') return `Only “${item.text}” fits this blank.`;
-		if (v.status === 'unknown') return 'The model gave no usable verdict on this blank.';
-		if (v.competitors.length === 0) return 'More than one word fits this blank.';
-		return `${v.competitors.length} other word${v.competitors.length === 1 ? '' : 's'} also fit: ${v.competitors.join(', ')}`;
+		if (v.status === 'determined') return t('clozeModal.onlyFits', { text: item.text });
+		if (v.status === 'unknown') return t('clozeModal.noVerdict');
+		if (v.competitors.length === 0) return t('clozeModal.moreThanOne');
+		return t('clozeModal.othersFit', {
+			count: v.competitors.length,
+			list: v.competitors.join(', '),
+		});
 	}
 
 	async function propose() {
@@ -89,12 +93,12 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="backdrop" role="dialog" tabindex="-1" aria-label="Cloze sentence" onclick={handleBackdropClick} onkeydown={handleKeydown}>
+<div class="backdrop" role="dialog" tabindex="-1" aria-label={t('clozeModal.ariaDialog')} onclick={handleBackdropClick} onkeydown={handleKeydown}>
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} tabindex="-1">
 		<div class="modal-header">
-			<h2>Cloze sentence — {item.text}</h2>
-			<button class="close-btn" onclick={onclose} aria-label="Close">&times;</button>
+			<h2>{t('clozeModal.title', { text: item.text })}</h2>
+			<button class="close-btn" onclick={onclose} aria-label={t('clozeModal.close')}>&times;</button>
 		</div>
 
 		{#if error}
@@ -102,7 +106,7 @@
 		{/if}
 
 		<section>
-			<h3>Current</h3>
+			<h3>{t('clozeModal.current')}</h3>
 			<p class="sentence">{asBlank(item.source_sentence ?? '')}</p>
 			{#if item.source_sentence_translation}
 				<p class="english">{item.source_sentence_translation}</p>
@@ -114,7 +118,7 @@
 
 		{#if candidate}
 			<section class="proposed">
-				<h3>Proposed {#if recommended}<span class="pill">recommended</span>{/if}</h3>
+				<h3>{t('clozeModal.proposed')} {#if recommended}<span class="pill">{t('clozeModal.recommended')}</span>{/if}</h3>
 				<p class="sentence">{asBlank(candidate.sentence)}</p>
 				{#if candidate.translation}
 					<p class="english">{candidate.translation}</p>
@@ -122,28 +126,27 @@
 				<p class="verdict" class:bad={candidate.status !== 'determined'}>{verdictLine(candidate)}</p>
 			</section>
 		{:else if noCandidate}
-			<p class="muted">No new sentence came back — try again, or edit the sentence below by hand.</p>
+			<p class="muted">{t('clozeModal.noCandidate')}</p>
 		{/if}
 
 		<section>
-			<h3><label for="cloze-draft">Sentence to store</label></h3>
+			<h3><label for="cloze-draft">{t('clozeModal.sentenceToStore')}</label></h3>
 			<!-- The word may be typed plainly; the server wraps it in {{c1::…}}.
 			     This is why a near-miss suggestion is fixable without re-rolling. -->
 			<textarea id="cloze-draft" bind:value={draft} rows="3" disabled={saving}></textarea>
 			<p class="hint">
-				Must contain “{item.text}”. The English and the sentence audio are
-				regenerated for whatever you store; Anki is updated on the next sync.
+				{t('clozeModal.hint', { text: item.text })}
 			</p>
 		</section>
 
 		<div class="actions">
 			<button onclick={propose} disabled={proposing || saving}>
-				{proposing ? 'Asking…' : candidate ? 'Suggest another' : 'Suggest a sentence'}
+				{proposing ? t('clozeModal.asking') : candidate ? t('clozeModal.suggestAnother') : t('clozeModal.suggestSentence')}
 			</button>
 			<span class="spacer"></span>
-			<button onclick={onclose} disabled={saving}>Cancel</button>
+			<button onclick={onclose} disabled={saving}>{t('clozeModal.cancel')}</button>
 			<button class="primary" onclick={save} disabled={saving || !dirty}>
-				{saving ? 'Saving…' : 'Use this sentence'}
+				{saving ? t('clozeModal.saving') : t('clozeModal.useThisSentence')}
 			</button>
 		</div>
 	</div>

@@ -11,11 +11,11 @@ Frontend runs 100% lines/branches/functions/statements per file via `frontend/sc
 
 ## What counts as a phantom
 
-`isPhantom(branchType, text, synthetic)` in `coverage-gate.ts` classifies each uncovered sub-location:
+`isPhantom(branchType, text, synthetic, duplicateRange)` in `coverage-gate.ts` classifies each uncovered sub-location:
 
 - **Synthetic or empty source range** → phantom (compiler emitted a branch at a position the user source never reached).
 - **cond-expr** (`?:`): phantom if the sub-location text is a JS literal (`null`, `undefined`, booleans, numbers, quoted strings). Svelte 5 folds these. Identifier/property-access stays real.
-- **binary-expr** (`||`, `&&`, `??`): phantom if (a) text starts with `}` or ends with `{` (Svelte template-interpolation boundary) OR (b) text is a bare JS literal (defensive fallback like `?? ''`). Object literals starting with `{` and ending with `}` stay real.
+- **binary-expr** (`||`, `&&`, `??`): phantom if (a) text starts with `}` or ends with `{` (Svelte template-interpolation boundary) OR (b) text is a bare JS literal (defensive fallback like `?? ''`). Object literals starting with `{` and ending with `}` stay real. OR (c) the uncovered operand's source range is **identical** to another operand's in the same branch — Svelte 5 compiles a `{expr}` that shares a text run with a sibling into `expr ?? ""` and v8 maps both operands onto the source expression, so the text is an identifier or call (`t(`, `showAddPhrase`) that (b) cannot see. Source `a ?? b` always has two distinct operand ranges. Added 2026-09-11 when the i18n sweep turned static text into `{t(...)}`; before it, the sweep's executor had restructured markup to dodge the gate, which is the anti-pattern in step 4 below.
 - **if**: phantom only when text is empty. Non-empty if-bodies are real.
 - Unknown types stay real (conservative).
 
@@ -27,7 +27,7 @@ The gate's heuristic depends on the shape of Svelte 5's compiled output. Compile
 
 After any `svelte` / `@sveltejs/kit` / `@sveltejs/vite-plugin-svelte` / `@vitest/coverage-v8` version bump:
 
-1. **Eyeball the drop count.** Run `cd frontend && bun run test:coverage` and read the gate's final line: `Coverage gate: dropped N phantom branch(es)`. The baseline as of 2026-07-25 is **183 drops on 53 files** (grown from 131/47 on 2026-07-10 and 46/21 on 2026-05-21 purely by feature-code growth, not compiler drift — the per-file phantom density is roughly constant).
+1. **Eyeball the drop count.** Run `cd frontend && bun run test:coverage` and read the gate's final line: `Coverage gate: dropped N phantom branch(es)`. The baseline as of 2026-09-11 is **205 drops on 40 files** (distinct files in `coverage/dropped-branches.json`; the duplicate-range rule accounts for exactly +2 — measured 203 → 205 on the same tree. Why the file count is below July's 53 was not investigated; do not read a cause into it). Earlier: **183 drops on 53 files** on 2026-07-25 (grown from 131/47 on 2026-07-10 and 46/21 on 2026-05-21 purely by feature-code growth, not compiler drift — the per-file phantom density is roughly constant).
 2. **A >20% delta in either direction is a signal** — either the compiler emits new phantom shapes the filter doesn't catch (fewer drops, gate may fail on real-looking phantoms) or new shapes the filter wrongly classifies as phantom (more drops, real bugs hidden).
 3. **Read the diff.** `git diff coverage/dropped-branches.json` (note: this file is gitignored on purpose, so the diff comes from a manual snapshot — copy it to `/tmp/dropped-before.json` before the upgrade, then diff against post-upgrade). Look for new branch shapes in the drop list that don't match the existing patterns documented in `coverage-gate.ts`.
 4. **Refine the heuristic, not the threshold.** If you find a new phantom shape, extend `isPhantom` to recognize it AND add a self-test case to `coverage-gate.test.ts` that pins the classification. Never lower the per-file 100% target to absorb drift — that's how phantom-detection turns into bug-hiding.

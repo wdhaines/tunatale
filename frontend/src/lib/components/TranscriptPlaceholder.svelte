@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { ReadableLesson } from '$lib/api';
 	import { buildScenes } from '$lib/transcriptScenes';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	interface Props {
 		lesson: ReadableLesson;
@@ -16,12 +17,12 @@
 <div class="placeholder" aria-busy="true">
 	<p class="placeholder-hint">
 		<span class="spinner" aria-hidden="true"></span>
-		Preparing word states… showing the dialogue meanwhile.
+		{t('transcriptPlaceholder.preparing')}
 	</p>
 
 	{#if lesson.key_phrases.length > 0}
 		<div class="placeholder-section">
-			<h3>Key Phrases</h3>
+			<h3>{t('transcriptPlaceholder.keyPhrases')}</h3>
 			<ul class="key-phrases-list">
 				{#each lesson.key_phrases as kp (kp.phrase)}
 					<li>
@@ -35,7 +36,7 @@
 
 	{#if scenes.length > 0}
 		<div class="placeholder-section">
-			<h3>Dialogue</h3>
+			<h3>{t('transcriptPlaceholder.dialogue')}</h3>
 			{#each scenes as scene, sceneIdx (sceneIdx)}
 				{#if scene.title}
 					<h4 class="scene-header">{scene.title}</h4>

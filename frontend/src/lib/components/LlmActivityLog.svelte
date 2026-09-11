@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ActivityEvent, RateLimitStatus } from '$lib/api';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	interface Props {
 		events: ActivityEvent[];
@@ -20,15 +21,15 @@
 </script>
 
 <div class="activity-card card">
-	<h3 class="activity-heading">LLM Activity</h3>
+	<h3 class="activity-heading">{t('llmActivity.heading')}</h3>
 	{#if events.length === 0}
 		<p class="empty-state">
-			{isMock ? 'Mock mode — LLM activity unavailable' : 'No LLM activity yet'}
+			{isMock ? t('llmActivity.mockMode') : t('llmActivity.noActivity')}
 		</p>
 	{:else}
 		<p class="current-line">{currentLine}</p>
 		<details class="event-log">
-			<summary class="event-summary">{events.length} event{events.length === 1 ? '' : 's'}</summary>
+			<summary class="event-summary">{t('llmActivity.eventSummary', { count: events.length })}</summary>
 			<ul class="event-list">
 				{#each [...events].reverse() as e (e.seq)}
 					<li class="event-item event-{e.kind}">{eventLine(e)}</li>

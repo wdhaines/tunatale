@@ -30,6 +30,7 @@
 
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	let {
 		message,
@@ -99,14 +100,14 @@
 	}}
 >
 	<div class="modal">
-		<h2 id={headingId}>Are you sure?</h2>
+		<h2 id={headingId}>{t('confirmDialog.areYouSure')}</h2>
 		<p id={bodyId} class="body">{message}</p>
 		<div class="actions">
 			<button class="cancel" type="button" bind:this={cancelEl} onclick={() => dismiss(false)}
-				>Cancel</button
+				>{t('confirmDialog.cancel')}</button
 			>
 			<button class:destructive={destructive} type="button" onclick={() => dismiss(true)}
-				>Confirm</button
+				>{t('confirmDialog.confirm')}</button
 			>
 		</div>
 	</div>

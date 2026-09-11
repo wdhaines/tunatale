@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { ChatMessage } from '$lib/planner';
 	import { clampBatchSize } from '$lib/planner';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	interface Props {
 		messages: ChatMessage[];
@@ -48,8 +49,7 @@
 	<div class="messages">
 		{#if messages.length === 0}
 			<p class="empty-hint">
-				Describe what you want to learn — a trip, a theme, a situation — and the planner will
-				propose your next days.
+				{t('plannerChat.emptyHint')}
 			</p>
 		{/if}
 		{#each messages as msg, i (i)}
@@ -65,13 +65,13 @@
 		<textarea
 			bind:this={textareaEl}
 			bind:value={draft}
-			placeholder="Message the planner…"
+			placeholder={t('plannerChat.placeholder')}
 			rows="2"
 			onkeydown={handleKeydown}
 		></textarea>
 		<div class="controls">
 			<label class="batch-size">
-				Days per batch
+				{t('plannerChat.daysPerBatch')}
 				<input
 					type="number"
 					min="1"
@@ -80,11 +80,11 @@
 					onchange={handleBatchSizeChange}
 				/>
 			</label>
-			<button class="quick" onclick={() => onSend(`Plan the next ${batchSize} days.`)} disabled={pending}>
-				Plan the next {batchSize} days
+			<button class="quick" onclick={() => onSend(t('plannerChat.quickPlanMessage', { batchSize }))} disabled={pending}>
+				{t('plannerChat.quickPlanButton', { batchSize })}
 			</button>
 			<button class="send" onclick={send} disabled={!canSend}>
-				{pending ? 'Thinking…' : 'Send'}
+				{pending ? t('plannerChat.thinking') : t('plannerChat.send')}
 			</button>
 		</div>
 	</div>

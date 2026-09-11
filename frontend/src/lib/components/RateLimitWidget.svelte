@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
 	import { formatCompactNumber } from '$lib/formatCompactNumber';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	let probing = $state(false);
 	let now = $state(Date.now());
@@ -51,14 +52,14 @@
 	);
 
 	const chipLabel = $derived.by(() => {
-		if (is429Active) return `Rate limited · ${retryIn}s`;
+		if (is429Active) return t('rateLimitWidget.rateLimited', { retryIn: retryIn ?? 0 });
 		if (snapshot) {
 			const tokensRem = formatCompactNumber(snapshot.tokens_remaining ?? 0);
 			const tokensLim = formatCompactNumber(snapshot.tokens_limit ?? 0);
 			const reset = tokensResetIn != null ? String(tokensResetIn) : '?';
-			return `LLM ${tokensRem}/${tokensLim} · ↻${reset}s`;
+			return t('rateLimitWidget.usage', { tokensRem, tokensLim, reset });
 		}
-		return 'LLM —/—';
+		return t('rateLimitWidget.unknown');
 	});
 
 	const tokensPct = $derived(
@@ -95,27 +96,40 @@
 		const parts: string[] = [];
 		if (snapshot) {
 			parts.push(
-				`Tokens/min: ${snapshot.tokens_remaining ?? '?'} of ${snapshot.tokens_limit ?? '?'}` +
-					(tokensResetIn != null ? ` (resets in ${tokensResetIn}s)` : ''),
+				t('rateLimitWidget.tokensPerMin', {
+					remaining: snapshot.tokens_remaining ?? '?',
+					limit: snapshot.tokens_limit ?? '?',
+				}) + (tokensResetIn != null ? t('rateLimitWidget.resetsInSeconds', { seconds: tokensResetIn }) : ''),
 			);
 			parts.push(
-				`Requests/day: ${snapshot.requests_remaining ?? '?'} of ${snapshot.requests_limit ?? '?'}` +
-					(requestsResetIn != null ? ` (resets in ${Math.round(requestsResetIn / 60)}m)` : ''),
+				t('rateLimitWidget.requestsPerDay', {
+					remaining: snapshot.requests_remaining ?? '?',
+					limit: snapshot.requests_limit ?? '?',
+				}) +
+					(requestsResetIn != null
+						? t('rateLimitWidget.resetsInMinutes', { minutes: Math.round(requestsResetIn / 60) })
+						: ''),
 			);
 		}
 		if (s.tokens_used_day != null && s.tokens_per_day_limit != null) {
 			parts.push(
-				`~${formatCompactNumber(s.tokens_used_day)} of ${formatCompactNumber(s.tokens_per_day_limit)} tokens today`,
+				t('rateLimitWidget.tokensToday', {
+					used: formatCompactNumber(s.tokens_used_day),
+					limit: formatCompactNumber(s.tokens_per_day_limit),
+				}),
 			);
 		}
 		if (s.requests_used_day != null && s.requests_per_day_limit != null) {
 			parts.push(
-				`~${formatCompactNumber(s.requests_used_day)} of ${formatCompactNumber(s.requests_per_day_limit)} requests today`,
+				t('rateLimitWidget.requestsToday', {
+					used: formatCompactNumber(s.requests_used_day),
+					limit: formatCompactNumber(s.requests_per_day_limit),
+				}),
 			);
 		}
-		if (s.model) parts.push(`Model: ${s.model}`);
-		if (ageElapsed != null) parts.push(`As of ${ageElapsed}s ago`);
-		parts.push('Limits are org-wide and per-model');
+		if (s.model) parts.push(t('rateLimitWidget.model', { model: s.model }));
+		if (ageElapsed != null) parts.push(t('rateLimitWidget.asOfAgo', { seconds: ageElapsed }));
+		parts.push(t('rateLimitWidget.orgWide'));
 		return parts.join(' · ');
 	});
 
@@ -132,14 +146,14 @@
 		class:busy={probing}
 		role="button"
 		tabindex="0"
-		title={probeError ? probeError : 'No LLM call yet this session — click to check'}
+		title={probeError ? probeError : t('rateLimitWidget.noCallYet')}
 		onclick={handleProbe}
 		onkeydown={(e) => e.key === 'Enter' && handleProbe()}
 	>
-		{probing ? 'LLM …' : probeError ? 'LLM !' : 'LLM —'}
+		{probing ? t('rateLimitWidget.probing') : probeError ? t('rateLimitWidget.error') : t('rateLimitWidget.idle')}
 	</span>
 {:else if isMock}
-	<span class="llm-chip muted" title="Mock mode — quota display unavailable">LLM mock</span>
+	<span class="llm-chip muted" title={t('rateLimitWidget.mockMode')}>{t('rateLimitWidget.mock')}</span>
 {:else}
 	<span
 		class="llm-chip"
@@ -148,7 +162,7 @@
 		title={detailTitle}
 	>
 		{chipLabel}
-		<button class="probe-btn" title="Refresh quota" onclick={handleProbe}>↻</button>
+		<button class="probe-btn" title={t('rateLimitWidget.refreshQuota')} onclick={handleProbe}>↻</button>
 	</span>
 {/if}
 

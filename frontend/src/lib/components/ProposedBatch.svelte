@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { ProposedBatch } from '$lib/api';
 	import { batchRange } from '$lib/planner';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	interface Props {
 		proposed: ProposedBatch;
@@ -14,8 +15,8 @@
 	const range = $derived(batchRange(proposed));
 	const header = $derived(
 		range.start === range.end
-			? `Proposed: Day ${range.start}`
-			: `Proposed: Days ${range.start}–${range.end}`
+			? t('proposedBatch.proposedDay', { start: range.start })
+			: t('proposedBatch.proposedDays', { start: range.start, end: range.end })
 	);
 </script>
 
@@ -25,7 +26,7 @@
 		{#each proposed.days as d (d.day)}
 			<article class="day-card">
 				<header>
-					<span class="day-num">Day {d.position}</span>
+					<span class="day-num">{t('proposedBatch.dayLabel', { position: d.position })}</span>
 					<span class="title">{d.title}</span>
 				</header>
 				<p class="focus">{d.focus}</p>
@@ -42,8 +43,8 @@
 		{/each}
 	</div>
 	<div class="actions">
-		<button class="commit" onclick={onCommit} disabled={pending}>Commit batch</button>
-		<button class="revise" onclick={onRevise} disabled={pending}>Revise</button>
+		<button class="commit" onclick={onCommit} disabled={pending}>{t('proposedBatch.commitBatch')}</button>
+		<button class="revise" onclick={onRevise} disabled={pending}>{t('proposedBatch.revise')}</button>
 	</div>
 </section>
 

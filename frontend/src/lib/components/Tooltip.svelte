@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { WordToken } from '$lib/api';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	export interface TooltipActions {
 		onCreateInflection?: (word: WordToken, sentence: string) => Promise<void>;
@@ -226,7 +227,7 @@
 		}
 	});
 
-	const dueLabel = $derived(word != null ? (word.is_due ? 'Due' : 'Not Due') : null);
+	const dueLabel = $derived(word != null ? (word.is_due ? t('tooltip.due') : t('tooltip.notDue')) : null);
 
 	const showCreateInflection = $derived(Boolean(word?.inflectable && actions?.onCreateInflection));
 
@@ -348,63 +349,63 @@
 							type="button"
 							class="tt-btn"
 							onclick={() => onDrillIn!()}
-						>Words…</button>
+						>{t('tooltip.words')}</button>
 					{/if}
 					{#if showCreateInflection}
 						<button
 							type="button"
 							class="tt-btn"
 							onclick={() => actions!.onCreateInflection!(word!, sentence ?? '')}
-						>Create inflection card</button>
+						>{t('tooltip.createInflectionCard')}</button>
 					{/if}
 					{#if showUnignore}
 						<button
 							type="button"
 							class="tt-btn"
 							onclick={() => actions!.onUnignore!(word!.srs_item_id!)}
-						>Un-ignore</button>
+						>{t('tooltip.unignore')}</button>
 					{/if}
 					{#if showUnignoreCardless}
 						<button
 							type="button"
 							class="tt-btn"
 							onclick={() => actions!.onUnignoreLemma!(word!.lemma)}
-						>Un-ignore</button>
+						>{t('tooltip.unignore')}</button>
 					{/if}
 					{#if showIgnore}
 						<button
 							type="button"
 							class="tt-btn"
 							onclick={() => actions!.onUntrack!(word!.srs_item_id!)}
-						>Ignore</button>
+						>{t('tooltip.ignore')}</button>
 					{/if}
 					{#if showIgnoreCardless}
 						<button
 							type="button"
 							class="tt-btn"
 							onclick={() => actions!.onIgnoreLemma!(word!.lemma)}
-						>Ignore</button>
+						>{t('tooltip.ignore')}</button>
 					{/if}
 					{#if showMarkKnown}
 						<button
 							type="button"
 							class="tt-btn"
 							onclick={() => actions!.onSetState!(word!.srs_item_id!, 'known')}
-						>Known</button>
+						>{t('tooltip.known')}</button>
 					{/if}
 					{#if showUnmarkKnown}
 						<button
 							type="button"
 							class="tt-btn"
 							onclick={() => actions!.onRestoreKnown!(word!.srs_item_id!)}
-						>Un-mark known</button>
+						>{t('tooltip.unmarkKnown')}</button>
 					{/if}
 					{#if showResetNew}
 						<button
 							type="button"
 							class="tt-btn"
 							onclick={() => actions!.onSetState!(word!.srs_item_id!, 'new')}
-						>Reset</button>
+						>{t('tooltip.reset')}</button>
 					{/if}
 				</span>
 			{/if}

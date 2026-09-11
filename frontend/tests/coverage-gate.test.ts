@@ -7,7 +7,10 @@
  * heuristic, update these and re-validate against current coverage output
  * (see comment block at top of scripts/coverage-gate.ts).
  */
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
 import { isPhantom, runGate } from "../scripts/coverage-gate";
 
 describe("isPhantom", () => {
@@ -104,6 +107,29 @@ describe("isPhantom", () => {
       expect(isPhantom("binary-expr", "?? []", false)).toBe(false);
       expect(isPhantom("binary-expr", "?? ''", false)).toBe(false);
     });
+
+    it("drops an operand whose range DUPLICATES another operand's (compiler-made `?? ''`)", () => {
+      // empirical 2026-09-11 (i18n sweep): `{t('x')} {cond ? 'a' : 'b'}` and a
+      // `{t('x')}` sharing a text run with a sibling compile to a template
+      // string with `t(...) ?? ""`; v8 maps BOTH operands to the source
+      // expression (Transcript L665 cols 32-45 twice, TranscriptPlaceholder
+      // L20 cols 3-5 twice), so the text is an identifier / call and the
+      // literal rule above cannot see it. Source `a ?? b` always has two
+      // distinct operand ranges, so an identical pair is compiler-made.
+      expect(isPhantom("binary-expr", "t(", false, true)).toBe(true);
+      expect(isPhantom("binary-expr", "showAddPhrase", false, true)).toBe(true);
+    });
+
+    it("keeps the same texts as real when the operand ranges are distinct (control)", () => {
+      expect(isPhantom("binary-expr", "t(", false, false)).toBe(false);
+      expect(isPhantom("binary-expr", "showAddPhrase", false)).toBe(false);
+    });
+
+    it("scopes the duplicate-range rule to binary-expr", () => {
+      // Only measured for `??` fallbacks; a ternary keeps its literal-only rule.
+      expect(isPhantom("cond-expr", "e.message", false, true)).toBe(false);
+      expect(isPhantom("if", "return x;", false, true)).toBe(false);
+    });
   });
 
   describe("if (template {#if} or JS if)", () => {
@@ -177,5 +203,47 @@ describe("runGate", () => {
     // exercises the "dropped" path but not failure. Verify drops.
     expect(result.dropped.length).toBe(2);
     expect(result.failures).toEqual([]);
+  });
+
+  describe("duplicate operand ranges (real source file)", () => {
+    // readRange needs a file that exists, or every location is synthetic and
+    // dropped for the wrong reason — so these write a real one.
+    const dir = mkdtempSync(join(tmpdir(), "coverage-gate-"));
+    const file = join(dir, "Fixture.svelte");
+    writeFileSync(file, "\t\t\t{t('transcript.addPhrase')} {showAddPhrase ? 'a' : 'b'}\n");
+    afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+    const call = { start: { line: 1, column: 4 }, end: { line: 1, column: 6 } }; // "t("
+    const ident = { start: { line: 1, column: 32 }, end: { line: 1, column: 45 } }; // "showAddPhrase"
+
+    function fixture(locations: (typeof call)[]) {
+      return {
+        [file]: {
+          path: file,
+          statementMap: {},
+          fnMap: {},
+          branchMap: {
+            "0": { type: "binary-expr", line: 1, loc: locations[0], locations },
+          },
+          s: {},
+          f: {},
+          b: { "0": [7, 0] },
+        },
+      };
+    }
+
+    it("drops the uncovered operand when both operands share one range", () => {
+      const result = runGate(fixture([call, call]));
+      expect(result.failures).toEqual([]);
+      expect(result.dropped).toHaveLength(1);
+      expect(result.dropped[0].locIdx).toBe(1);
+    });
+
+    it("still FAILS when the operands are distinct and the uncovered one is an identifier (control)", () => {
+      const result = runGate(fixture([call, ident]));
+      expect(result.dropped).toEqual([]);
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0].uncoveredSamples[0]).toContain("showAddPhrase");
+    });
   });
 });

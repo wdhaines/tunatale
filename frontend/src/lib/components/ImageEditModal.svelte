@@ -2,6 +2,7 @@
 	import { untrack } from 'svelte';
 	import type { SRSItemDetail, ImageCandidate, ImageCandidatesResponse } from '$lib/api';
 	import { api } from '$lib/api';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	let { item, onclose, onupdated }: {
 		item: SRSItemDetail;
@@ -37,11 +38,11 @@
 		try {
 			const resp = await api.fetchImageCandidates(item.id, candidateQuery || undefined);
 			if (resp.status === 'rate_limited') {
-				candidateError = 'Rate limited — try again shortly';
+				candidateError = t('imageEditModal.rateLimited');
 				return;
 			}
 			if (resp.status === 'api_error') {
-				candidateError = 'Pixabay unavailable — try again shortly';
+				candidateError = t('imageEditModal.pixabayUnavailable');
 				return;
 			}
 			candidates = resp.candidates;
@@ -50,7 +51,7 @@
 			if (msg.includes('409')) {
 				noApiKey = true;
 			} else {
-				candidateError = msg || 'Failed to fetch candidates';
+				candidateError = msg || t('imageEditModal.fetchFailed');
 			}
 		} finally {
 			candidateLoading = false;
@@ -125,12 +126,12 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="backdrop" role="dialog" tabindex="-1" aria-label="Edit image" onclick={handleBackdropClick} onkeydown={handleKeydown}>
+<div class="backdrop" role="dialog" tabindex="-1" aria-label={t('imageEditModal.ariaEditImage')} onclick={handleBackdropClick} onkeydown={handleKeydown}>
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} tabindex="-1">
 		<div class="modal-header">
-			<h2>Edit Image</h2>
-			<button class="close-btn" onclick={onclose} aria-label="Close">&times;</button>
+			<h2>{t('imageEditModal.title')}</h2>
+			<button class="close-btn" onclick={onclose} aria-label={t('imageEditModal.close')}>&times;</button>
 		</div>
 
 		{#if error}
@@ -138,33 +139,33 @@
 		{/if}
 
 		{#if busy}
-			<p class="muted">Working…</p>
+			<p class="muted">{t('imageEditModal.working')}</p>
 		{/if}
 
 		<section class="current-image">
-			<h3>Current image</h3>
+			<h3>{t('imageEditModal.currentImage')}</h3>
 			{#if item.image_url}
 				<div class="current-img-wrap">
 					<img src={item.image_url} alt={item.text} class="current-img" />
-					<button class="danger" onclick={removeImage} disabled={busy}>Remove</button>
+					<button class="danger" onclick={removeImage} disabled={busy}>{t('imageEditModal.remove')}</button>
 				</div>
 			{:else}
-				<p class="muted">No image</p>
+				<p class="muted">{t('imageEditModal.noImage')}</p>
 			{/if}
 		</section>
 
 		{#if !noApiKey}
 		<section class="candidates-section">
-			<h3>Pixabay candidates</h3>
+			<h3>{t('imageEditModal.pixabayCandidates')}</h3>
 			<div class="candidate-controls">
 				<input
 					type="text"
-					placeholder="Search query"
+					placeholder={t('imageEditModal.searchQuery')}
 					bind:value={candidateQuery}
 					onkeydown={(e) => { if (e.key === 'Enter') loadCandidates(); }}
 				/>
 				<button onclick={loadCandidates} disabled={candidateLoading}>
-					{candidateLoading ? 'Searching…' : 'Search'}
+					{candidateLoading ? t('imageEditModal.searching') : t('imageEditModal.search')}
 				</button>
 			</div>
 			{#if candidateError}
@@ -178,13 +179,13 @@
 					{/each}
 				</div>
 			{:else if !candidateLoading}
-				<p class="muted">No results</p>
+				<p class="muted">{t('imageEditModal.noResults')}</p>
 			{/if}
 		</section>
 		{/if}
 
 		<section class="paste-section">
-			<h3>Paste URL</h3>
+			<h3>{t('imageEditModal.pasteUrl')}</h3>
 			<div class="paste-controls">
 				<input
 					type="url"
@@ -193,13 +194,13 @@
 					onkeydown={(e) => { if (e.key === 'Enter') setFromPaste(); }}
 				/>
 				<button onclick={setFromPaste} disabled={pasteLoading || !pasteUrl.trim()}>
-					Set
+					{t('imageEditModal.set')}
 				</button>
 			</div>
 		</section>
 
 		<section class="upload-section">
-			<h3>Upload file</h3>
+			<h3>{t('imageEditModal.uploadFile')}</h3>
 			<input type="file" accept="image/*" onchange={handleFileUpload} disabled={busy} />
 		</section>
 	</div>
