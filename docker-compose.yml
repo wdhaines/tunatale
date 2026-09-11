@@ -20,6 +20,13 @@ services:
       context: .
       target: api
     platform: linux/amd64
+    # The box installs security updates unattended and REBOOTS for kernel ones
+    # (docs/deployment.md § Provisioning, step 5). Without a restart policy
+    # every such reboot ends with docker up and TunaTale down until someone
+    # notices — which fails the one uptime requirement the design states,
+    # "recovers without me". Deliberately NOT on `init`: it is a run-once job
+    # gated by service_completed_successfully, and restarting it would loop.
+    restart: unless-stopped
     env_file: backend/.env
     environment:
       HOME: /data
@@ -55,6 +62,7 @@ services:
     # build command (`docker build --platform linux/amd64`) and to tunatale-pse,
     # not to this file. Do not "fix" this by adding a platform key — verify the
     # reasoning in tunatale-014's notes first.
+    restart: unless-stopped
     ports:
       - "80:80"
     depends_on:

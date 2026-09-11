@@ -29,6 +29,7 @@ AUTH_ENABLED=true
 SESSION_SECRET=not-a-real-secret
 TRUSTED_PROXY_HEADER=X-Forwarded-For
 CORS_ORIGINS=["https://tunatale.example.com"]
+TZ=America/New_York
 """
 
 
@@ -48,6 +49,13 @@ def test_a_file_that_forgets_live_mode_fails(tmp_path):
     exit_code, messages = check_env_file(_write(tmp_path, GOOD.replace("LLM_MODE=live", "")))
     assert exit_code == 1
     assert any("llm_mode" in m for m in messages), messages
+
+
+def test_a_file_that_forgets_the_timezone_fails(tmp_path):
+    """The other silent one: no TZ means UTC, and the 4 AM rollover moves."""
+    exit_code, messages = check_env_file(_write(tmp_path, GOOD.replace("TZ=America/New_York", "")))
+    assert exit_code == 1
+    assert any("tz" in m for m in messages), messages
 
 
 def test_a_file_that_is_not_a_prod_profile_fails_loudly(tmp_path):

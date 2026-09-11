@@ -1,6 +1,8 @@
 """Application configuration via Pydantic Settings."""
 
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -318,6 +320,13 @@ class Settings(BaseSettings):
     # would be worse than useless — set it to X-Forwarded-For there.  See
     # app.auth.throttle.client_ip.
     trusted_proxy_header: str = ""
+    # The zone the PROCESS keeps, read from the standard `TZ` rather than a
+    # TT_-prefixed name because libc is the real consumer: `rollover.py`
+    # resolves the study day with a bare `.astimezone()`. Empty is correct for
+    # dev (the laptop's own zone is already right) and is refused under
+    # TT_ENV=prod, where the container inherits nothing from its host and the
+    # fallback — UTC — moves ANKI_ROLLOVER_HOUR away from the user's 4 AM.
+    tz: str = ""
 
 
 def prod_profile_problems(s: Settings) -> list[str]:
@@ -355,7 +364,77 @@ def prod_profile_problems(s: Settings) -> list[str]:
             " appears to come from the proxy, so login throttling would treat all"
             " callers as one client (set TRUSTED_PROXY_HEADER=X-Forwarded-For)"
         )
+    problems += _zone_problems(s)
     return problems
+
+
+def _zone_problems(s: Settings) -> list[str]:
+    """Whether ``tz`` NAMES a usable zone. Not whether the process keeps it."""
+    if not s.tz:
+        return [
+            "tz is unset — a container inherits no zone from its host, so the"
+            " process would resolve local time as UTC and ANKI_ROLLOVER_HOUR"
+            " (4 AM local) would fire at 04:00 UTC, putting the study-day"
+            " boundary hours away from where Anki puts it on the user's own"
+            " devices (set TZ to an IANA zone, e.g. TZ=America/New_York)"
+        ]
+    try:
+        ZoneInfo(s.tz)
+    except ZoneInfoNotFoundError, ValueError:
+        return [
+            f"tz is {s.tz!r}, which this process cannot resolve to a zone —"
+            " either it is not an IANA name (use 'America/New_York', not 'EST')"
+            " or the image has no zone data installed"
+        ]
+    return []
+
+
+def clock_runtime_problems(s: Settings, now: datetime | None = None) -> list[str]:
+    """Whether the RUNNING PROCESS actually keeps the zone ``tz`` names.
+
+    Separate from ``prod_profile_problems`` because it is not a property of the
+    settings: it reads the live clock, so only the box can answer it and
+    ``scripts/check_prod_env.py`` deliberately cannot.
+
+    The failure it catches is silent by construction.
+    ``app.srs.anki_mirror.rollover._local_now`` resolves the local day with a
+    bare ``.astimezone()``, which asks **libc** — and libc, handed a ``TZ`` it
+    has no zone data for, does not raise. It falls back to UTC. So ``TZ`` is
+    set, the name is a real zone, ``zoneinfo`` resolves it happily from the
+    bundled ``tzdata`` wheel, and every study-day boundary is still in the
+    wrong place. Comparing the two resolutions is what separates them.
+
+    Says nothing when ``tz`` is unset or unresolvable: those are
+    ``_zone_problems``' to report, and one boot should not print the same
+    misconfiguration twice.
+    """
+    if not s.tz:
+        return []
+    try:
+        zone = ZoneInfo(s.tz)
+    except ZoneInfoNotFoundError, ValueError:
+        return []
+
+    now = now or datetime.now()
+    process_offset = now.astimezone().utcoffset()
+    named_offset = now.replace(tzinfo=zone).utcoffset()
+    if process_offset != named_offset:
+        return [
+            f"TZ={s.tz} names a zone at UTC{_offset_text(named_offset)}, but this"
+            f" process resolves local time as UTC{_offset_text(process_offset)}."
+            " libc is not reading that zone — the image is probably missing"
+            " /usr/share/zoneinfo (install tzdata). Every SRS day boundary would"
+            " be silently wrong."
+        ]
+    return []
+
+
+def _offset_text(offset: timedelta | None) -> str:
+    """``+02:00`` / ``-05:00`` — for a message a human has to act on at 3 AM."""
+    total = int((offset or timedelta()).total_seconds())
+    sign = "-" if total < 0 else "+"
+    hours, remainder = divmod(abs(total), 3600)
+    return f"{sign}{hours:02d}:{remainder // 60:02d}"
 
 
 settings = Settings()
