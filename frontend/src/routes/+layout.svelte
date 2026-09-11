@@ -344,6 +344,9 @@
 		--band-months: #5f602a;
 		--band-solid: #2c4f28;
 		--band-track: #e4e9e6;
+		/* An untracked word (not in the deck): the app's own link blue, 7.0:1 on
+		   white. Replaced the old indigo #818cf8, which was 2.98:1 in light. */
+		--word-untracked: var(--color-primary);
 	}
 
 	/* Dark theme is opt-in via [data-theme='dark'] (set by the boot script /
@@ -378,7 +381,12 @@
 		--band-weeks: #bd8c1d;
 		--band-months: #abb77c;
 		--band-solid: #acd9a2;
-		--band-track: #2b302e;
+		/* Translucent, so the empty track shows on any dark surface. The first
+		   value (#2b302e) was 1.04:1 on the #182f3c card: invisible. */
+		--band-track: rgba(255, 255, 255, 0.18);
+		/* The dark primary is 3.38:1 on the card, too faint for body text; the
+		   info blue from the same family is 4.68:1. */
+		--word-untracked: var(--color-info);
 	}
 
 	/* ─────────────────────────  Global base  ───────────────────────── */

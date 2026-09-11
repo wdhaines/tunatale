@@ -279,6 +279,84 @@ test("a no-card rail paints differently from an empty not-started track", async 
 	);
 });
 
+test("an untracked word paints two dashed rails in the app's link blue", async ({ page, request }) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+	const { curriculumId, lessonId } = await seed(request);
+
+	await page.addInitScript(() => localStorage.setItem("lessonMode", "read"));
+	await page.goto(`/c/${curriculumId}/l/${lessonId}`);
+	await expect(page.locator(".tt-wrap").first()).toBeVisible({ timeout: 15000 });
+
+	const r = await page.evaluate(() => {
+		const w = document.querySelector(".transcript-wrapper .word.word-unknown");
+		if (!w) return null;
+		const s = getComputedStyle(w);
+		// The link blue resolved the way the page resolves it: a probe coloured
+		// with the same token, so this does not hard-code a hex.
+		const probe = document.createElement("span");
+		probe.style.color = "var(--color-primary)";
+		document.body.append(probe);
+		const primary = getComputedStyle(probe).color;
+		probe.remove();
+		return {
+			dashedLayers: (s.backgroundImage.match(/repeating-linear-gradient/g) ?? []).length,
+			paddingBottom: s.paddingBottom,
+			textDecoration: s.textDecorationLine,
+			color: s.color,
+			primary,
+		};
+	});
+	expect(r, "the fixture has no untracked word to measure").not.toBeNull();
+	expect(r!.dashedLayers).toBe(2);
+	expect(r!.paddingBottom).toBe("7px");
+	expect(r!.textDecoration).toBe("none");
+	expect(r!.color).toBe(r!.primary);
+});
+
+test("in dark mode the empty rail track is visible against the card", async ({ page, request }) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+	const { curriculumId, lessonId } = await seed(request);
+
+	await page.addInitScript(() => {
+		localStorage.setItem("lessonMode", "read");
+		localStorage.setItem("theme", "dark");
+	});
+	await page.goto(`/c/${curriculumId}/l/${lessonId}`);
+	await expect(page.locator(".tt-wrap").first()).toBeVisible({ timeout: 15000 });
+
+	// The first dark track was #2b302e on the #182f3c card: ~1.1:1, invisible.
+	// Composite the track the engine resolves over the card it sits on and
+	// require a contrast a reader can actually see.
+	const ratio = await page.evaluate(() => {
+		const parse = (c: string) => {
+			const m = c.match(/[\d.]+/g)!.map(Number);
+			return { r: m[0], g: m[1], b: m[2], a: m.length > 3 ? m[3] : 1 };
+		};
+		const resolve = (prop: string, value: string) => {
+			const el = document.createElement("span");
+			el.style.setProperty(prop, value);
+			document.querySelector(".transcript-wrapper")!.append(el);
+			const out = getComputedStyle(el).getPropertyValue(prop);
+			el.remove();
+			return out;
+		};
+		const track = parse(resolve("background-color", "var(--band-track)"));
+		const card = parse(resolve("background-color", "var(--color-surface)"));
+		const mix = (k: "r" | "g" | "b") => track[k] * track.a + card[k] * (1 - track.a);
+		const lum = (c: { r: number; g: number; b: number }) => {
+			const f = (v: number) => {
+				v /= 255;
+				return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+			};
+			return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+		};
+		const a = lum({ r: mix("r"), g: mix("g"), b: mix("b") });
+		const b = lum(card);
+		return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+	});
+	expect(ratio, `dark track contrast ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(1.4);
+});
+
 test("at 320px the transcript never overflows horizontally", async ({ page, request }) => {
 	test.skip(!(await backendAvailable(request)), "Backend not available");
 	const { curriculumId, lessonId } = await seed(request);

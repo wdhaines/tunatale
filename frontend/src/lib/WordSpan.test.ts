@@ -425,6 +425,49 @@ describe("WordSpan", () => {
       expect(word.getAttribute("style")).toBeNull();
     });
 
+    // An untracked word has no card on EITHER side, so it paints the reader's
+    // existing "no card" symbol — a dashed rail — twice (user's pick, option B,
+    // 2026-09-10). Its text colour moved off the old indigo to the app's own
+    // link blue; that part is CSS and is measured in transcript-rails.spec.ts.
+    it("paints the dashed no-card rails under an untracked word", () => {
+      const { container } = render(WordSpan, {
+        props: {
+          word: makeWordToken({
+            active_state: "unknown",
+            understand_band: null,
+            produce_band: null,
+          }),
+        },
+      });
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.className).toContain("paint-untracked");
+      expect(word.className).not.toContain("paint-rails");
+    });
+
+    it("does not paint untracked rails inside a phrase (the phrase carries the rails)", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ active_state: "unknown" }), hideRails: true },
+      });
+      expect(container.querySelector(".word")!.className).not.toContain("paint-untracked");
+    });
+
+    it("never paints untracked rails on a tracked or an ignored word", () => {
+      for (const active_state of ["review", "new", "ignored", "suspended"]) {
+        const { container, unmount } = render(WordSpan, {
+          props: {
+            word: makeWordToken({
+              active_state,
+              understand_band: active_state === "review" ? "weeks" : null,
+            }),
+          },
+        });
+        expect(container.querySelector(".word")!.className, active_state).not.toContain(
+          "paint-untracked",
+        );
+        unmount();
+      }
+    });
+
     it("paints an understand rail filled to the band width and colour", () => {
       const { container } = render(WordSpan, {
         props: { word: makeWordToken({ understand_band: "weeks" }) },

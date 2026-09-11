@@ -162,6 +162,7 @@
 		<span
 			class="word {colorClass}"
 			class:paint-rails={paintsRails}
+			class:paint-untracked={word.active_state === 'unknown' && !hideRails}
 			class:word-selected={selected}
 			class:word-due={word.is_due}
 			style={railProps ?? undefined}
@@ -199,9 +200,7 @@
 		opacity: 0.8;
 	}
 	.word-unknown {
-		color: #818cf8;
-		text-decoration: underline dotted;
-		text-underline-offset: 2px;
+		color: var(--word-untracked, #1e5e86);
 	}
 	.word-ignored {
 		color: #9ca3af;
@@ -251,6 +250,22 @@
 	   The four layer rules live here; the per-word colour/width/track arrive as
 	   `--rail-*` custom properties set inline by the component. `background-
 	   color` (the selected tint) sits UNDER these image layers untouched. */
+	/* An untracked word has no card on either side, so it paints the reader's
+	   "no card" symbol — a dashed rail — in BOTH rail slots (user's pick,
+	   2026-09-10), in the same padding the tracked words' rails use. */
+	.word.paint-untracked {
+		padding-bottom: 7px;
+		background-repeat: no-repeat;
+		background-image:
+			repeating-linear-gradient(90deg, var(--color-muted, #6b7280) 0 3px, transparent 3px 6px),
+			repeating-linear-gradient(90deg, var(--color-muted, #6b7280) 0 3px, transparent 3px 6px);
+		background-size:
+			100% 3px,
+			100% 3px;
+		background-position:
+			left bottom 4px,
+			left bottom 0;
+	}
 	.word.paint-rails {
 		padding-bottom: 7px;
 		background-repeat: no-repeat;
