@@ -2925,6 +2925,10 @@ export interface components {
        * @enum {string}
        */
       kind: "create" | "word" | "kp";
+      /** Produce Band */
+      produce_band?: string | null;
+      /** Produce Stability */
+      produce_stability?: number | null;
       /** Progress */
       progress: number | null;
       /**
@@ -2936,6 +2940,10 @@ export interface components {
       text: string;
       /** Translation */
       translation: string;
+      /** Understand Band */
+      understand_band?: string | null;
+      /** Understand Stability */
+      understand_stability?: number | null;
       /**
        * Well Known
        * @default false

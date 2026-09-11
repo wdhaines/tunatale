@@ -1907,7 +1907,19 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
     # phrase owns its card and the word pass below stands down for it.
     kp_claimed_ids = _kp_claimed_collocation_ids(db, lesson, ignored, today_start, today_end, end_of_day_utc)
 
-    from app.srs.mastery import compute_mastery_progress
+    from app.srs.mastery import band_stability, compute_mastery_progress, direction_band
+
+    def _sides(directions: dict) -> dict:
+        """The row's two sides, read the way the reader reads a word's rails."""
+        rec = directions.get(Direction.RECOGNITION)
+        prod = directions.get(Direction.PRODUCTION)
+        understand, produce = direction_band(rec), direction_band(prod)
+        return {
+            "understand_band": understand,
+            "produce_band": produce,
+            "understand_stability": band_stability(understand, rec),
+            "produce_stability": band_stability(produce, prod),
+        }
 
     # NEW-state rows are introductions, so they sort with the creations that
     # share their budget — ahead of "learning" (0). -1 is the create rank.
@@ -1999,6 +2011,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
                 "deferred_reason": deferred,
                 "well_known": deferred == "known",
                 "due_at": None if grade_cls == "new" else due_at_str,
+                **_sides(existing.directions),
                 "_group_rank": _GROUP_RANK.get(grade_cls, 3),
             }
             if grade_cls == "new":
@@ -2047,6 +2060,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             "deferred_reason": deferred,
             "well_known": deferred == "known",
             "due_at": None if grade_cls == "new" else due_at_str,
+            **_sides(item.directions),
             "_group_rank": _GROUP_RANK.get(grade_cls, 3),
         }
         # A NEW-state key phrase is an introduction too — it draws on the same
@@ -2118,6 +2132,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             "well_known": False,
             "will_create": lemma in live_create_set,
             "due_at": None,
+            **_sides({}),
             "_group_rank": -1,
         }
         for lemma in ranked

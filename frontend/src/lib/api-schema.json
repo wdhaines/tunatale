@@ -2073,6 +2073,28 @@
             "title": "Kind",
             "type": "string"
           },
+          "produce_band": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produce Band"
+          },
+          "produce_stability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produce Stability"
+          },
           "progress": {
             "anyOf": [
               {
@@ -2102,6 +2124,28 @@
           "translation": {
             "title": "Translation",
             "type": "string"
+          },
+          "understand_band": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Understand Band"
+          },
+          "understand_stability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Understand Stability"
           },
           "well_known": {
             "default": false,

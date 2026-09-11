@@ -76,6 +76,18 @@ def direction_band(ds: DirectionState | None) -> MasteryBand:
     return "solid"
 
 
+def band_stability(band: str | None, ds: DirectionState | None) -> float | None:
+    """The stability a band carries, or None when the band has no strength.
+
+    Only the days/weeks/months/solid bands represent a measured memory, and a
+    KNOWN card's stability is not one (bd tunatale-yh47). The reader and the
+    listen preview both read this, so the two cannot quote different numbers.
+    """
+    if band in ("days", "weeks", "months", "solid") and ds is not None and ds.state != SRSState.KNOWN:
+        return ds.stability
+    return None
+
+
 def component_mastery(ds: DirectionState) -> float:
     """Mastery of one component (a direction/card) ∈ [0,1].
 
