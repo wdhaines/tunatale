@@ -40,9 +40,11 @@
 		// "Words…" — the touch path into a phrase's individual words (what
 		// Alt+hover does on desktop). Only collocation popovers pass this.
 		onDrillIn?: (() => void) | null;
-		// Mastery line shown below translation (e.g. "not tracked", "known", "50%").
+		// Single-word mastery state shown beside the translation ("not tracked", "known", "ignored").
 		// Caller computes the label; null hides the line.
 		masteryLabel?: string | null;
+		// Two-line "Understand: … / Produce: …" label for twin-rail popover.
+		masterySides?: readonly [string, string] | null;
 	}
 
 	let {
@@ -56,7 +58,8 @@
 		gradeVariant = 'primary',
 		onGrade = null,
 		onDrillIn = null,
-		masteryLabel = null
+		masteryLabel = null,
+		masterySides = null
 	}: Props = $props();
 
 	let open = $state(false);
@@ -299,7 +302,7 @@
 
 	const hasActions = $derived(actionCount > 0);
 
-	const hasContent = $derived(!suppressed && Boolean(translation || masteryLabel || dueLabel || hasActions));
+	const hasContent = $derived(!suppressed && Boolean(translation || masteryLabel || masterySides || dueLabel || hasActions));
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -329,6 +332,7 @@
 			{#if translation}<span class="tt-translation">{translation}</span>{/if}
 			{#if masteryLabel}<span class="tt-mastery">{masteryLabel}</span>{/if}
 			{#if dueLabel}<span class="tt-state tt-state-{word?.is_due ? 'due' : 'not-due'}">{dueLabel}</span>{/if}
+			{#if masterySides}<span class="tt-sides">{#each masterySides as line (line)}<span class="tt-side">{line}</span>{/each}</span>{/if}
 			{#if hasActions}
 				<span class="tt-actions" class:tt-actions-grid={actionCount > 3}>
 					{#if showGrade}
@@ -489,6 +493,15 @@
 		margin-left: 6px;
 		opacity: 0.8;
 		font-size: 11px;
+	}
+	.tt-sides {
+		display: block;
+		margin-top: 2px;
+	}
+	.tt-side {
+		display: block;
+		font-size: 11px;
+		opacity: 0.8;
 	}
 	.tt-actions {
 		display: flex;

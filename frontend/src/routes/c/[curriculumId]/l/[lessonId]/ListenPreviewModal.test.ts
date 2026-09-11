@@ -22,7 +22,6 @@ import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import ListenPreviewModal from "$lib/components/ListenPreviewModal.svelte";
 import { api } from "$lib/api";
 import { listenCountdownPref } from "$lib/stores/listenCountdownPref.svelte";
-import { masteryBackgroundColor, masteryColor } from "$lib/mastery";
 
 vi.mock("$lib/api", () => ({
   api: {
@@ -75,6 +74,10 @@ const createCandidate = (text: string) => ({
   well_known: false,
   due_at: null,
   will_create: true,
+  understand_band: "none",
+  understand_stability: null,
+  produce_band: "none",
+  produce_stability: null,
 });
 
 /** An ordinary gradeable row — what most tests in this file mean by "a row".
@@ -96,6 +99,10 @@ const wordCandidate = (
     well_known?: boolean;
     due_at?: string | null;
     will_create?: boolean;
+    understand_band?: string | null;
+    understand_stability?: number | null;
+    produce_band?: string | null;
+    produce_stability?: number | null;
   },
 ) => ({
   kind: "word" as const,
@@ -109,6 +116,10 @@ const wordCandidate = (
   well_known: opts?.well_known ?? false,
   due_at: opts?.due_at ?? null,
   will_create: opts?.will_create ?? true,
+  understand_band: opts?.understand_band ?? null,
+  understand_stability: opts?.understand_stability ?? null,
+  produce_band: opts?.produce_band ?? null,
+  produce_stability: opts?.produce_stability ?? null,
 });
 
 /** A carded-but-never-introduced word: the row this 2026-08 change surfaces. */
@@ -118,6 +129,8 @@ const newStateCandidate = (text: string, opts?: { will_create?: boolean }) =>
     progress: null,
     due_at: null,
     will_create: opts?.will_create ?? true,
+    understand_band: "new",
+    produce_band: "new",
   });
 
 const kpCandidate = (text: string, opts?: { translation?: string; progress?: number }) => ({
@@ -153,21 +166,6 @@ const segments = (container: HTMLElement): [string, string][] => {
     const l = seg.querySelector(".l")?.textContent?.trim() ?? "";
     return [n, l];
   });
-};
-
-// jsdom rewrites inline colours into rgb()/rgba() form, so a raw hsl() or hex
-// string never appears in the serialized style attribute. Normalize the
-// expected value the same way rather than hardcoding the converted output —
-// that keeps the assertion tied to mastery.ts, not to a colour literal.
-const asInlineColor = (css: string) => {
-  const el = document.createElement("span");
-  el.style.color = css;
-  return el.style.color;
-};
-const asInlineBackground = (css: string) => {
-  const el = document.createElement("span");
-  el.style.background = css;
-  return el.style.background;
 };
 
 // ── Tests ─────────────────────────────────────────────────────────────
@@ -1533,7 +1531,7 @@ describe("ListenPreviewModal", () => {
     expect(dueCellText(container)).toBe("new");
   });
 
-  it("renders a NEW-state row in the unknown colour, not red-for-0%", async () => {
+  it("paints a NEW-state row's pill with empty rails, not a fill or a create's dashes", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [newStateCandidate("hansen"), createCandidate("kava")],
     });
@@ -1546,8 +1544,13 @@ describe("ListenPreviewModal", () => {
     const cells = [...container.querySelectorAll(".tag.day")] as HTMLElement[];
     expect(cells).toHaveLength(2);
     // A NEW-state card has no schedule yet — progress is null, so it must not
-    // be coloured as if it were 0% mastered.
-    expect(cells[0].getAttribute("style")).toBe(cells[1].getAttribute("style"));
+    // paint a fill as if it were part-way mastered, and (unlike a create row)
+    // no dashed "no card" rails: the card exists, it just has not started.
+    const newStyle = cells[0].getAttribute("style") ?? "";
+    expect(newStyle).toContain("--rail-u-fill: transparent");
+    expect(newStyle).not.toContain("repeating-linear-gradient");
+    const createStyle = cells[1].getAttribute("style") ?? "";
+    expect(createStyle).toContain("repeating-linear-gradient");
   });
 
   it("falls back to the grade_class word when due_at is an invalid date string", async () => {
@@ -1769,8 +1772,8 @@ describe("ListenPreviewModal", () => {
     });
   });
 
-  describe("dueness colour follows the dialogue", () => {
-    it("an untracked create row uses WordSpan's unknown indigo", async () => {
+  describe("dueness pill paints the twin rails", () => {
+    it("a create row paints the dashed no-card rails", async () => {
       mockGetListenPreview.mockResolvedValue({ candidates: [createCandidate("kava")] });
 
       const { container, getByText } = render(ListenPreviewModal, {
@@ -1779,12 +1782,12 @@ describe("ListenPreviewModal", () => {
 
       await waitFor(() => getByText("kava"));
       const style = (container.querySelector(".tag.day") as HTMLElement).getAttribute("style")!;
-      expect(style).toContain(asInlineColor("#818cf8"));
+      expect(style).toContain("repeating-linear-gradient");
     });
 
-    it("a tracked row uses mastery.ts's ramp for its own progress", async () => {
+    it("a tracked row paints its understand rail to the band width and colour", async () => {
       mockGetListenPreview.mockResolvedValue({
-        candidates: [wordCandidate("prosim", { grade_class: "due", progress: 0.5 })],
+        candidates: [wordCandidate("prosim", { grade_class: "due", understand_band: "months" })],
       });
 
       const { container, getByText } = render(ListenPreviewModal, {
@@ -1793,10 +1796,7 @@ describe("ListenPreviewModal", () => {
 
       await waitFor(() => getByText("prosim"));
       const style = (container.querySelector(".tag.day") as HTMLElement).getAttribute("style")!;
-      // Compared against the shared helper, not a hardcoded hsl() string — if
-      // the ramp is retuned, this test follows it instead of going red.
-      expect(style).toContain(asInlineColor(masteryColor(0.5)));
-      expect(style).toContain(asInlineBackground(masteryBackgroundColor(0.5)));
+      expect(style).toContain("--rail-u-fill: var(--band-months)");
     });
 
     it("dueness is weight, not hue: overdue and due-today are bold, future is not", async () => {

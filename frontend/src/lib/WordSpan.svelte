@@ -2,7 +2,7 @@
 	import type { WordToken } from './api';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import type { TooltipActions } from '$lib/components/Tooltip.svelte';
-	import { railPropsFor } from '$lib/masteryBands';
+	import { railPropsFor, masterySides as masterySidesFn } from '$lib/masteryBands';
 
 	interface Props {
 		word: WordToken;
@@ -79,21 +79,11 @@
 		if (word.active_state === 'unknown') return 'not tracked';
 		if (word.active_state === 'known') return 'known';
 		if (word.active_state === 'ignored') return 'ignored';
-		// Scheduled past the listen horizon — the listen preview has already
-		// stopped asking about it, so reporting a work-in-progress percentage
-		// here would contradict that. Deliberately NOT the word used for an
-		// explicitly known card above: `well_known` is derived from the
-		// RECOGNITION direction alone (`mastery.py::is_well_known`), so it
-		// cannot claim the word is known in production — which is often still
-		// NEW with reps=0. `active_state === 'known'` DOES cover both
-		// directions, so it keeps the stronger word. Must stay identical to
-		// ListenPreviewModal's `masteryLabel`; the two surfaces are not allowed
-		// to describe the same card differently.
-		if (word.well_known) return 'well recognized';
-		if (word.progress != null) return `${Math.round(word.progress * 100)}%`;
-		// suspended, etc. — no mastery line
 		return null;
 	});
+
+	// Twin-rail "Understand: … / Produce: …" label for tracked words.
+	const masterySides = $derived(masteryLabel != null ? null : masterySidesFn(word));
 
 	// Undo cycle: when the page says THIS word holds the last (still-local)
 	// grade, the grade button flips to "Undo ↩" — even though the word is no
@@ -154,6 +144,7 @@
 	{gradeVariant}
 	{onGrade}
 	{masteryLabel}
+	{masterySides}
 >
 	<span
 		class="word-wrapper"
