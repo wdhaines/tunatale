@@ -2,7 +2,7 @@
 	import type { WordToken } from './api';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import type { TooltipActions } from '$lib/components/Tooltip.svelte';
-	import { masteryColor } from '$lib/mastery';
+	import { railPropsFor } from '$lib/masteryBands';
 
 	interface Props {
 		word: WordToken;
@@ -15,6 +15,7 @@
 		sentence?: string;
 		tooltipActions?: TooltipActions;
 		showGloss?: boolean;
+		hideRails?: boolean;
 	}
 
 	let {
@@ -27,7 +28,8 @@
 		selected = false,
 		sentence,
 		tooltipActions,
-		showGloss = false
+		showGloss = false,
+		hideRails = false
 	}: Props = $props();
 
 	function fire() {
@@ -47,12 +49,14 @@
 		fire();
 	}
 
-	// KNOWN renders on the green end of the mastery ramp (its progress is ~1.0),
-	// NOT as a static gray — only unknown/suspended/ignored stay off the ramp.
-	const dynamicStyle = $derived(
-		word.active_state !== 'unknown' && word.active_state !== 'suspended' && word.active_state !== 'ignored'
-			? `color: ${masteryColor(word.progress ?? 0)};`
-			: ''
+	// Twin rails (bd tunatale-yh47, density): a tracked word's rails are painted
+	// as background-image layers in the word's own padding-bottom — no child
+	// elements, so an inline word's padding cannot change the line box and a
+	// wrapped row stays exactly one line-height tall. `paintsRails` gates the
+	// paint, `railProps` carries the per-word colour/width/track custom props.
+	const paintsRails = $derived(!hideRails && word.understand_band != null);
+	const railProps = $derived.by(
+		() => (paintsRails ? railPropsFor(word) : null),
 	);
 
 	const colorClass = $derived(
@@ -157,9 +161,11 @@
 	>
 		<span
 			class="word {colorClass}"
+			class:paint-rails={paintsRails}
+			class:paint-untracked={word.active_state === 'unknown' && !hideRails}
 			class:word-selected={selected}
 			class:word-due={word.is_due}
-			style={dynamicStyle}
+			style={railProps ?? undefined}
 			role="button"
 			tabindex="0"
 			data-line-index={lineIndex}
@@ -184,14 +190,17 @@
 		padding: 0 1px;
 		margin: 0 -1px;
 		transition: background-color 0.1s;
+		/* Column flex: `align-self: flex-start` keeps the word at its own
+		   content width rather than stretching to the wrapper; the rails below
+		   stretch instead. Without it the word's box would be the wrapper
+		   width and its content crushed between the 1px paddings. */
+		align-self: flex-start;
 	}
 	.word:hover {
 		opacity: 0.8;
 	}
 	.word-unknown {
-		color: #818cf8;
-		text-decoration: underline dotted;
-		text-underline-offset: 2px;
+		color: var(--word-untracked, #1e5e86);
 	}
 	.word-ignored {
 		color: #9ca3af;
@@ -204,24 +213,76 @@
 		background-color: rgba(99, 102, 241, 0.2);
 	}
 	.word-wrapper {
-		display: inline-flex;
-		flex-direction: column;
-		align-items: center;
-		vertical-align: top;
-	}
-	.word-wrapper-gloss {
-		margin-bottom: 1.1rem;
+		/* Inline, not the inline-flex of the element-rails era (bd tunatale-yh47
+		   density): the rails are background layers painted in the word's own
+		   padding-bottom, so nothing outside the word needs a slot, and a
+		   wrapped row is exactly one line-height tall. */
+		display: inline;
 	}
 	.word-gloss {
+		align-self: center;
 		font-size: 0.7rem;
 		color: var(--color-muted, #6b7280);
 		line-height: 1.1;
 		white-space: nowrap;
 	}
+	.word-wrapper-gloss {
+		/* Gloss mode keeps its column stack (word over gloss) — only the
+		   non-gloss wrapper went inline. */
+		display: inline-flex;
+		flex-direction: column;
+		align-items: stretch;
+		vertical-align: top;
+		margin-bottom: 1.1rem;
+	}
 	.punct {
-		/* Neutral foreground so punctuation stays uncolored even when the word
-		   carries a mastery-ramp color — and legible in dark mode (was #000). */
+		/* Neutral foreground so punctuation stays uncolored — even when the
+		   word would have carried a mastery-ramp color — and legible in dark
+		   mode (was #000). */
 		color: var(--color-text);
 		font-weight: normal;
+	}
+	/* Twin rails (bd tunatale-yh47, density) — painted, not laid out. A tracked
+	   word paints 3px rails in the bottom 7px of its own padding: understand on
+	   top (layers at bottom 4px), produce below (bottom 0), each a 3px fill over
+	   a 3px track. Inline padding never changes the line box, so the rows stay
+	   exactly one `line-height` apart and the rails cannot push the next row.
+	   The four layer rules live here; the per-word colour/width/track arrive as
+	   `--rail-*` custom properties set inline by the component. `background-
+	   color` (the selected tint) sits UNDER these image layers untouched. */
+	/* An untracked word has no card on either side, so it paints the reader's
+	   "no card" symbol — a dashed rail — in BOTH rail slots (user's pick,
+	   2026-09-10), in the same padding the tracked words' rails use. */
+	.word.paint-untracked {
+		padding-bottom: 7px;
+		background-repeat: no-repeat;
+		background-image:
+			repeating-linear-gradient(90deg, var(--color-muted, #6b7280) 0 3px, transparent 3px 6px),
+			repeating-linear-gradient(90deg, var(--color-muted, #6b7280) 0 3px, transparent 3px 6px);
+		background-size:
+			100% 3px,
+			100% 3px;
+		background-position:
+			left bottom 4px,
+			left bottom 0;
+	}
+	.word.paint-rails {
+		padding-bottom: 7px;
+		background-repeat: no-repeat;
+		background-image:
+			linear-gradient(var(--rail-u-fill, transparent), var(--rail-u-fill, transparent)),
+			var(--rail-u-track, var(--band-track, #e4e9e6)),
+			linear-gradient(var(--rail-p-fill, transparent), var(--rail-p-fill, transparent)),
+			var(--rail-p-track, var(--band-track, #e4e9e6));
+		background-size:
+			var(--rail-u-pct, 0%) 3px,
+			100% 3px,
+			var(--rail-p-pct, 0%) 3px,
+			100% 3px;
+		background-position:
+			left bottom 4px,
+			left bottom 4px,
+			left bottom 0,
+			left bottom 0;
 	}
 </style>

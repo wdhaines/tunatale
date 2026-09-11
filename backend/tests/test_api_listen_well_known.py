@@ -7,7 +7,7 @@ client sends an explicit rating.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from httpx import ASGITransport, AsyncClient
 
@@ -78,25 +78,27 @@ async def _post_listen(payload: dict) -> dict:
     return resp.json()
 
 
-class TestWellKnownDueDistance:
-    """Seed one REVIEW card due 300 days out and one due tomorrow.
-    The first has well_known=true, the second false."""
+class TestWellKnownIsStability:
+    """Well known = the memory holds 180+ days (stability), not a far due date.
 
-    async def test_far_future_is_well_known(self):
+    Changed from a 365-day due-date horizon on 2026-09-10 (bd tunatale-yh47).
+    Both cards below are "ahead" (not due), so only the rule separates them.
+    """
+
+    async def test_strong_memory_due_soon_is_well_known_and_weak_one_due_far_is_not(self):
         db = _setup(["anna boris"])
-        _seed_review(db, "anna", days_until_due=400)
-        _seed_review(db, "boris", days_until_due=1)
+        _seed_review(db, "anna", stability=200, days_until_due=30)
+        _seed_review(db, "boris", stability=100, days_until_due=400)
 
         preview = await _get_preview()
         by_text = {c["text"]: c for c in preview["candidates"]}
         assert by_text["anna"]["well_known"] is True
         assert by_text["boris"]["well_known"] is False
 
-    async def test_boundary_at_horizon(self):
-        """A card due exactly at the horizon is NOT well-known; horizon+1 is."""
+    async def test_boundary_is_180_days_inclusive(self):
         db = _setup(["anna boris"])
-        _seed_review(db, "anna", days_until_due=365)
-        _seed_review(db, "boris", days_until_due=366)
+        _seed_review(db, "anna", stability=179.9, days_until_due=30)
+        _seed_review(db, "boris", stability=180.0, days_until_due=30)
 
         preview = await _get_preview()
         by_text = {c["text"]: c for c in preview["candidates"]}
@@ -148,18 +150,18 @@ class TestWellKnownCommitParity:
 
     async def test_well_known_skipped_by_default(self):
         db = _setup(["anna boris"])
-        _seed_review(db, "anna", days_until_due=400)
-        _seed_review(db, "boris", days_until_due=1)
+        _seed_review(db, "anna", stability=300, days_until_due=30)
+        _seed_review(db, "boris", stability=10, days_until_due=1)
 
         result = await _post_listen({"content_id": "lesson-1", "word_ratings": {}})
-        # boris is "ahead" (due tomorrow) but inside the horizon → staged;
-        # anna is "ahead" beyond the horizon → well-known → not staged.
+        # Both are "ahead". boris (10 d) is staged; anna (300 d) is well known
+        # and absent from word_ratings, so it is skipped.
         assert result["staged"] == 1
 
     async def test_well_known_staged_with_explicit_rating(self):
         db = _setup(["anna boris"])
-        _seed_review(db, "anna", days_until_due=400)
-        _seed_review(db, "boris", days_until_due=1)
+        _seed_review(db, "anna", stability=300, days_until_due=30)
+        _seed_review(db, "boris", stability=10, days_until_due=1)
 
         result = await _post_listen(
             {
@@ -169,28 +171,6 @@ class TestWellKnownCommitParity:
         )
         # Both should be staged now
         assert result["staged"] == 2
-
-
-class TestIsDueBeyondHorizonEdgeCases:
-    """Direct unit tests for _is_due_beyond_horizon's string-due_at branch.
-
-    ``due_at`` is datetime-or-string depending on load path (the same idiom
-    ``_listen_grade_class`` uses), so the string parse is real. ``today`` is
-    always ``anki_today()`` — a ``date`` — so there is no ordinal branch to
-    test here; don't add one back.
-    """
-
-    def test_string_due_at(self):
-        from app.api.srs import _is_due_beyond_horizon
-
-        # String due_at parsed via fromisoformat
-        assert _is_due_beyond_horizon("2028-01-01T00:00:00", date(2026, 1, 1), 365) is True
-        assert _is_due_beyond_horizon("2026-06-01T00:00:00", date(2026, 1, 1), 365) is False
-
-    def test_invalid_string_due_at_returns_false(self):
-        from app.api.srs import _is_due_beyond_horizon
-
-        assert _is_due_beyond_horizon("not-a-date", date(2026, 1, 1), 365) is False
 
 
 class TestKPIgnoredInPreviewAndCommit:
@@ -213,21 +193,28 @@ class TestKPIgnoredInPreviewAndCommit:
         result = await _post_listen({"content_id": "lesson-1", "word_ratings": {}})
         assert result["created"] == 1
 
-    async def test_well_known_kp_skipped_in_commit(self):
+    @staticmethod
+    def _seed_known_kp(stability: float) -> None:
         _setup(["anna"], key_phrases=["zdravo"])
         db = app.state.srs_db
-        # Seed "zdravo" as well-known ahead
         unit = SyntacticUnit(text="zdravo", translation="t-zdravo", word_count=1, difficulty=1, source="test")
         db.add_collocation(unit, language_code="sl")
         item = db.get_collocation("zdravo")
         rec = item.directions[Direction.RECOGNITION]
         rec.state = SRSState.REVIEW
-        rec.due_at = due_at_rollover_utc(anki_today() + timedelta(days=400))
+        rec.stability = stability
+        rec.due_at = due_at_rollover_utc(anki_today() + timedelta(days=30))
         rec.last_review = datetime.now(UTC) - timedelta(days=5)
         rec.reps = 5
         db.update_collocation(item)
 
-        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {}})
-        # zdravo is well-known and not in word_ratings → skipped
-        # Only anna is created
-        assert result["created"] == 1
+    async def test_well_known_kp_skipped_in_commit(self):
+        # zdravo (300 d) is well known and absent from kp_ratings -> not staged.
+        # The control below differs ONLY in stability, so a pass here means the
+        # rule skipped it, not that key phrases are never staged.
+        self._seed_known_kp(300.0)
+        skipped = await _post_listen({"content_id": "lesson-1", "word_ratings": {}})
+        self._seed_known_kp(10.0)
+        staged = await _post_listen({"content_id": "lesson-1", "word_ratings": {}})
+        assert skipped["created"] == staged["created"] == 1  # anna, both times
+        assert staged["staged"] == skipped["staged"] + 1

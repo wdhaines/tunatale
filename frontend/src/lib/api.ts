@@ -252,10 +252,26 @@ export interface WordToken {
   // None when the word has no recognition direction (untracked, production-only cloze).
   recognition_state?: string | null;
   recognition_is_due?: boolean;
-  // Recognition scheduled past the listen horizon — the cutoff that already
-  // stops the listen preview asking about this word. Rendered as "known" and
-  // counted in the known bucket. Optional, same rationale as the siblings.
+  // True when the recognition memory holds 180+ days (stability) and the card
+  // is not due. Rendered as "known" and counted in the known bucket. Optional,
+  // same rationale as the siblings.
   well_known?: boolean;
+  // Twin rails (bd tunatale-yh47): per-direction mastery bands ("none" |
+  // "new" | "learning" | "days" | "weeks" | "months" | "solid" |
+  // "suspended") for the reader. understand_* read the recognition direction,
+  // produce_* the production direction of the word's OWN card (the exact-surface
+  // cloze when one is resolved, else the base). All null for untracked/ignored/
+  // unknown words — the dialogue draws no rails for them. Stability present only
+  // when the band is a real strength band (days+); KNOWN has no meaningful
+  // stability. Optional, same rationale as the siblings.
+  understand_band?: string | null;
+  produce_band?: string | null;
+  understand_stability?: number | null;
+  produce_stability?: number | null;
+  // Bands of the enclosing multi-word collocation span's OWN card, present on
+  // every span word; null off-span.
+  collocation_understand_band?: string | null;
+  collocation_produce_band?: string | null;
 }
 
 export interface CreateSRSItemRequest {

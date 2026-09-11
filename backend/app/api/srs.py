@@ -89,7 +89,7 @@ from app.srs.gloss_definiteness import align_gloss_definiteness
 from app.srs.gloss_verb_form import align_gloss_verb_form
 from app.srs.grade_undo import UndoNotAvailable, record_grade_snapshot, undo_last_grade
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, lemmatize_surfaces_in_context, model_version_for
-from app.srs.mastery import is_due_beyond_horizon, is_well_known
+from app.srs.mastery import is_well_known
 from app.srs.multiword import is_trapped_occurrence
 from app.srs.queue_engine import _compute_live_main as _compute_live_main
 from app.srs.queue_engine import _fnv1a_64_i64 as _fnv1a_64_i64
@@ -640,13 +640,6 @@ def _resolve_gloss_translation(
     return ""
 
 
-# Definition lives in app.srs.mastery so the transcript (which renders a
-# past-the-horizon word as "known") and the listen preview (which stops asking
-# about it) cannot drift apart. Re-exported under the old private name because
-# the listen call sites and their tests reference it.
-_is_due_beyond_horizon = is_due_beyond_horizon
-
-
 def _listen_day_window() -> tuple[datetime.datetime, datetime.datetime, str]:
     """The (today_start, today_end, end_of_day_utc) triple ``_listen_grade_class`` needs.
 
@@ -707,8 +700,6 @@ def _listen_grade_class(
 def _listen_deferred_reason(
     rec: DirectionState,
     grade_cls: str,
-    today: datetime.date,
-    horizon: int,
 ) -> Literal["known", "learning"] | None:
     """Why a listen defers this row instead of staging it by default.
 
@@ -724,11 +715,13 @@ def _listen_deferred_reason(
     commit loops (which skip on it). The preview and the commit disagreeing
     about which rows a listen acts on is the ``6a5c718`` bug class; sharing the
     predicate makes them agree by construction instead of by review. The
-    learning arm needs no horizon or due-date clause — state alone decides.
+    learning arm needs no stability clause — state alone decides. The ``"known"``
+    arm is stability-based (``is_well_known``) and applies only while the card is
+    not yet due: a due card is always offered, however well it is known.
     """
     if grade_cls == "learning":
         return "learning"
-    if grade_cls == "ahead" and is_well_known(rec, today, horizon):
+    if grade_cls == "ahead" and is_well_known(rec):
         return "known"
     return None
 
@@ -1340,10 +1333,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
             # Deferred opt-in: a known or learning row is never staged silently.
             # Membership in word_ratings is the opt-in — an explicit "skip" is
             # still a skip, handled by the shared rating check below.
-            if (
-                _listen_deferred_reason(rec, grade_cls, today, settings.listen_due_horizon_days) is not None
-                and lemma not in body.word_ratings
-            ):
+            if _listen_deferred_reason(rec, grade_cls) is not None and lemma not in body.word_ratings:
                 continue
             rating_str = body.word_ratings.get(lemma, "good")
             listen_coll_id = db.get_collocation_id_by_guid(existing.guid)
@@ -1395,10 +1385,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
         # Deferred opt-in — the SAME predicate as the word loop above. This
         # loop having its own hand-rolled copy is what 9af858e recorded going
         # wrong; sharing the function is what stops it recurring.
-        if (
-            _listen_deferred_reason(rec, grade_cls, today, settings.listen_due_horizon_days) is not None
-            and kp.phrase not in body.kp_ratings
-        ):
+        if _listen_deferred_reason(rec, grade_cls) is not None and kp.phrase not in body.kp_ratings:
             continue
         rating_str = body.kp_ratings.get(kp.phrase, "good")
         kp_coll_id = db.get_collocation_id_by_guid(existing.guid)
@@ -1925,7 +1912,6 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
     # NEW-state rows are introductions, so they sort with the creations that
     # share their budget — ahead of "learning" (0). -1 is the create rank.
     _GROUP_RANK = {"new": -1, "learning": 0, "due": 1, "ahead": 2}
-    horizon = settings.listen_due_horizon_days
 
     candidates: list[dict] = []
     lemma_candidates: list[str] = []
@@ -1998,7 +1984,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             # Why (if at all) a listen defers this row — the SAME predicate
             # mark_lesson_listened skips on, so preview and commit cannot
             # disagree about it. `well_known` is derived, never computed twice.
-            deferred = _listen_deferred_reason(rec, grade_cls, today, horizon)
+            deferred = _listen_deferred_reason(rec, grade_cls)
             row = {
                 "kind": "word",
                 "text": card_key,
@@ -2049,7 +2035,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             if rec.due_at is not None
             else None
         )
-        deferred = _listen_deferred_reason(rec, grade_cls, today, horizon)
+        deferred = _listen_deferred_reason(rec, grade_cls)
         kp_row = {
             "kind": "kp",
             "text": kp.phrase,
@@ -2212,6 +2198,12 @@ async def build_transcript_payload(content_id: str, lesson, request: Request) ->
                         "recognition_state": w.recognition_state,
                         "recognition_is_due": w.recognition_is_due,
                         "well_known": w.well_known,
+                        "understand_band": w.understand_band,
+                        "produce_band": w.produce_band,
+                        "understand_stability": w.understand_stability,
+                        "produce_stability": w.produce_stability,
+                        "collocation_understand_band": w.collocation_understand_band,
+                        "collocation_produce_band": w.collocation_produce_band,
                     }
                     for w in line.words
                 ],

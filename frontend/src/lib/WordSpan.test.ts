@@ -272,13 +272,12 @@ describe("WordSpan", () => {
       expect(getByRole("button").className).toContain("word-unknown");
     });
 
-    it("applies inline masteryColor style for known active_state (green, on the ramp)", () => {
+    it("does not apply any inline style to the word (mastery text color removed)", () => {
       const { getByRole } = render(WordSpan, {
         props: { word: makeWordToken({ active_state: "known", progress: 1 }) },
       });
       const el = getByRole("button");
-      // KNOWN is rendered on the green end of the mastery ramp, not the old static gray.
-      expect(el.getAttribute("style")).toContain("color:");
+      expect(el.getAttribute("style")).toBeNull();
       expect(el.className).not.toContain("word-known");
     });
 
@@ -316,47 +315,6 @@ describe("WordSpan", () => {
         props: { word: makeWordToken({ active_state: "ignored", srs_item_id: null }) },
       });
       expect(getByRole("button").className).toContain("word-ignored");
-    });
-
-    it("does not apply masteryColor for ignored active_state", () => {
-      const { getByRole } = render(WordSpan, {
-        props: {
-          word: makeWordToken({ active_state: "ignored", progress: 0.5, srs_item_id: null }),
-        },
-      });
-      expect(getByRole("button").getAttribute("style")).toBe("");
-    });
-
-    it("applies inline masteryColor style for new active_state (dynamic)", () => {
-      const { getByRole } = render(WordSpan, {
-        props: { word: makeWordToken({ active_state: "new", progress: 0.5 }) },
-      });
-      const el = getByRole("button");
-      expect(el.getAttribute("style")).toContain("color:");
-    });
-
-    it("applies inline masteryColor style for learning active_state (dynamic)", () => {
-      const { getByRole } = render(WordSpan, {
-        props: { word: makeWordToken({ active_state: "learning", progress: 0.3 }) },
-      });
-      const el = getByRole("button");
-      expect(el.getAttribute("style")).toContain("color:");
-    });
-
-    it("applies inline masteryColor style for review active_state (dynamic)", () => {
-      const { getByRole } = render(WordSpan, {
-        props: { word: makeWordToken({ active_state: "review", progress: 0.8 }) },
-      });
-      const el = getByRole("button");
-      expect(el.getAttribute("style")).toContain("color:");
-    });
-
-    it("applies inline masteryColor style for relearning active_state (dynamic)", () => {
-      const { getByRole } = render(WordSpan, {
-        props: { word: makeWordToken({ active_state: "relearning", progress: 0.1 }) },
-      });
-      const el = getByRole("button");
-      expect(el.getAttribute("style")).toContain("color:");
     });
   });
 
@@ -448,19 +406,171 @@ describe("WordSpan", () => {
     expect(container.querySelector('[role="tooltip"]')).not.toBeNull();
   });
 
-  it("updates color reactively when active_state changes", async () => {
-    const { getByRole, rerender } = render(WordSpan, {
-      props: { word: makeWordToken({ active_state: "new", progress: 0 }) },
+  describe("twin rails (painted in the word's padding)", () => {
+    it("renders no rails for a word with no band fields", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken() },
+      });
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.className).not.toContain("paint-rails");
+      expect(word.getAttribute("style")).toBeNull();
     });
 
-    expect(getByRole("button").getAttribute("style")).toContain("color:");
+    it("renders no rails when bands are explicitly null (untracked word)", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ understand_band: null, produce_band: null }) },
+      });
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.className).not.toContain("paint-rails");
+      expect(word.getAttribute("style")).toBeNull();
+    });
+
+    // An untracked word has no card on EITHER side, so it paints the reader's
+    // existing "no card" symbol — a dashed rail — twice (user's pick, option B,
+    // 2026-09-10). Its text colour moved off the old indigo to the app's own
+    // link blue; that part is CSS and is measured in transcript-rails.spec.ts.
+    it("paints the dashed no-card rails under an untracked word", () => {
+      const { container } = render(WordSpan, {
+        props: {
+          word: makeWordToken({
+            active_state: "unknown",
+            understand_band: null,
+            produce_band: null,
+          }),
+        },
+      });
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.className).toContain("paint-untracked");
+      expect(word.className).not.toContain("paint-rails");
+    });
+
+    it("does not paint untracked rails inside a phrase (the phrase carries the rails)", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ active_state: "unknown" }), hideRails: true },
+      });
+      expect(container.querySelector(".word")!.className).not.toContain("paint-untracked");
+    });
+
+    it("never paints untracked rails on a tracked or an ignored word", () => {
+      for (const active_state of ["review", "new", "ignored", "suspended"]) {
+        const { container, unmount } = render(WordSpan, {
+          props: {
+            word: makeWordToken({
+              active_state,
+              understand_band: active_state === "review" ? "weeks" : null,
+            }),
+          },
+        });
+        expect(container.querySelector(".word")!.className, active_state).not.toContain(
+          "paint-untracked",
+        );
+        unmount();
+      }
+    });
+
+    it("paints an understand rail filled to the band width and colour", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ understand_band: "weeks" }) },
+      });
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.className).toContain("paint-rails");
+      expect(word.style.getPropertyValue("--rail-u-fill")).toBe("var(--band-weeks)");
+      expect(word.style.getPropertyValue("--rail-u-pct")).toBe("60%");
+      expect(word.style.getPropertyValue("--rail-u-track")).toBe(
+        "linear-gradient(var(--band-track, #e4e9e6), var(--band-track, #e4e9e6))",
+      );
+    });
+
+    it("paints each direction from its own band", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ understand_band: "days", produce_band: "solid" }) },
+      });
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.style.getPropertyValue("--rail-u-fill")).toBe("var(--band-days)");
+      expect(word.style.getPropertyValue("--rail-u-pct")).toBe("40%");
+      expect(word.style.getPropertyValue("--rail-p-fill")).toBe("var(--band-solid)");
+      expect(word.style.getPropertyValue("--rail-p-pct")).toBe("100%");
+    });
+
+    it("paints no produce layers when only the understand band is set", () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ understand_band: "new" }) },
+      });
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.style.getPropertyValue("--rail-p-fill")).toBe("transparent");
+      expect(word.style.getPropertyValue("--rail-p-pct")).toBe("0%");
+      expect(word.style.getPropertyValue("--rail-p-track")).toBe(
+        "linear-gradient(transparent, transparent)",
+      );
+    });
+
+    it("draws an empty unfilled track for a produce band like suspended", () => {
+      const { container } = render(WordSpan, {
+        props: {
+          word: makeWordToken({ understand_band: "learning", produce_band: "suspended" }),
+        },
+      });
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.style.getPropertyValue("--rail-u-fill")).toBe("var(--band-learning)");
+      expect(word.style.getPropertyValue("--rail-u-pct")).toBe("20%");
+      expect(word.style.getPropertyValue("--rail-p-fill")).toBe("transparent");
+      expect(word.style.getPropertyValue("--rail-p-pct")).toBe("0%");
+      expect(word.style.getPropertyValue("--rail-p-track")).not.toContain(
+        "repeating-linear-gradient",
+      );
+    });
+
+    it('draws a solid empty track for a "new" band', () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ understand_band: "new", produce_band: "new" }) },
+      });
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.style.getPropertyValue("--rail-u-fill")).toBe("transparent");
+      expect(word.style.getPropertyValue("--rail-p-fill")).toBe("transparent");
+      expect(word.style.getPropertyValue("--rail-u-track")).not.toContain(
+        "repeating-linear-gradient",
+      );
+      expect(word.style.getPropertyValue("--rail-p-track")).not.toContain(
+        "repeating-linear-gradient",
+      );
+    });
+
+    it('draws a dashed track for the "none" (no card) band', () => {
+      const { container } = render(WordSpan, {
+        props: { word: makeWordToken({ understand_band: "none" }) },
+      });
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.style.getPropertyValue("--rail-u-fill")).toBe("transparent");
+      expect(word.style.getPropertyValue("--rail-u-pct")).toBe("0%");
+      expect(word.style.getPropertyValue("--rail-u-track")).toContain("repeating-linear-gradient");
+    });
+
+    it("skips rails when hideRails is true even with bands present", () => {
+      const { container } = render(WordSpan, {
+        props: {
+          word: makeWordToken({ understand_band: "days", produce_band: "days" }),
+          hideRails: true,
+        },
+      });
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.className).not.toContain("paint-rails");
+      expect(word.getAttribute("style")).toBeNull();
+    });
+  });
+
+  it("renders rails reactively when bands change", async () => {
+    const { container, rerender } = render(WordSpan, {
+      props: { word: makeWordToken({ understand_band: "weeks" }) },
+    });
+
+    expect(container.querySelector(".word")!.className).toContain("paint-rails");
 
     await rerender({ word: makeWordToken({ active_state: "ignored", srs_item_id: null }) });
 
     await waitFor(() => {
-      // flips off the ramp: inline color cleared, static class applied
-      expect(getByRole("button").className).toContain("word-ignored");
-      expect(getByRole("button").getAttribute("style")).toBe("");
+      // bands gone → no paint class, ignored class applied
+      expect(container.querySelector(".word")!.className).not.toContain("paint-rails");
+      expect(container.querySelector(".word")!.className).toContain("word-ignored");
     });
   });
 

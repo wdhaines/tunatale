@@ -4154,7 +4154,7 @@
         "type": "object"
       },
       "TranscriptWord": {
-        "description": "One element of TranscriptDialogueLine.words.\n\nThe 25 fields the handler projects out of ``transcript.WordToken``. Note\nthat ``WordToken.collocation_is_due`` is deliberately NOT among them \u2014 it is\ncomputed but never serialized, and adding it here would not surface it (the\nmodel can only filter, never invent).",
+        "description": "One element of TranscriptDialogueLine.words.\n\nThe 31 fields the handler projects out of ``transcript.WordToken``. Note\nthat ``WordToken.collocation_is_due`` is deliberately NOT among them \u2014 it is\ncomputed but never serialized, and adding it here would not surface it (the\nmodel can only filter, never invent).",
         "properties": {
           "active_direction": {
             "anyOf": [
@@ -4192,6 +4192,17 @@
               }
             ],
             "title": "Collocation Lemma"
+          },
+          "collocation_produce_band": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collocation Produce Band"
           },
           "collocation_progress": {
             "anyOf": [
@@ -4241,6 +4252,17 @@
             ],
             "title": "Collocation Translation"
           },
+          "collocation_understand_band": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collocation Understand Band"
+          },
           "inflectable": {
             "title": "Inflectable",
             "type": "boolean"
@@ -4271,6 +4293,28 @@
           "prefix_punct": {
             "title": "Prefix Punct",
             "type": "string"
+          },
+          "produce_band": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produce Band"
+          },
+          "produce_stability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produce Stability"
           },
           "progress": {
             "anyOf": [
@@ -4336,6 +4380,28 @@
             ],
             "title": "Translation"
           },
+          "understand_band": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Understand Band"
+          },
+          "understand_stability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Understand Stability"
+          },
           "well_known": {
             "title": "Well Known",
             "type": "boolean"
@@ -4366,7 +4432,13 @@
           "recognition_reviewable",
           "recognition_state",
           "recognition_is_due",
-          "well_known"
+          "well_known",
+          "understand_band",
+          "produce_band",
+          "understand_stability",
+          "produce_stability",
+          "collocation_understand_band",
+          "collocation_produce_band"
         ],
         "title": "TranscriptWord",
         "type": "object"

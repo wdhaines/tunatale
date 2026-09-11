@@ -7,7 +7,6 @@ from datetime import date
 
 from app.cards.cloze_source import parse_inflection_forms
 from app.cards.field_map import inflection_labels
-from app.config import settings
 from app.languages import card_surface_variants, get_variant_separator
 from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
@@ -17,7 +16,7 @@ from app.srs.collocation_matcher import match_spans
 from app.srs.database import SRSDatabase
 from app.srs.function_words import is_a1_morphology_feature, is_clozes_only_verb, ud_feats_to_tt_feature
 from app.srs.lemmatizer import Lemmatizer, analyze_sentence_cached, lemmatize_surfaces_in_context, model_version_for
-from app.srs.mastery import compute_mastery_progress, is_well_known
+from app.srs.mastery import compute_mastery_progress, direction_band, is_well_known
 from app.srs.tokenizer import tokenize
 
 
@@ -63,6 +62,22 @@ class WordToken:
     # dialogue and counted in the known bucket of the mastery line, which is
     # where a card that came back from a sync as REVIEW-due-2126 belongs.
     well_known: bool = False
+    # Twin rails (bd tunatale-yh47): per-direction mastery bands for the reader.
+    # understand_* read the recognition direction, produce_* the production
+    # direction of the word's OWN card (the exact-surface cloze when one is
+    # resolved, else the base). All None for untracked/ignored/unknown words —
+    # the frontend draws no rails for them.
+    understand_band: str | None = None
+    produce_band: str | None = None
+    # The direction's stability, only when its band is a real strength band
+    # (days/week/month/solid) AND its state is not KNOWN. KNOWN has no
+    # meaningful stability; a NEW card's default 1.0 is not a measurement.
+    understand_stability: float | None = None
+    produce_stability: float | None = None
+    # Bands of the enclosing multi-word collocation span's OWN card, filled on
+    # every span word; None off-span.
+    collocation_understand_band: str | None = None
+    collocation_produce_band: str | None = None
 
 
 @dataclass
@@ -325,6 +340,60 @@ def resolve_via_inflection_index(
     return None
 
 
+def _resolve_base_card(
+    db: SRSDatabase,
+    surface: str,
+    lemma: str,
+    base_cache: dict[str, tuple | None],
+    surface_base_cache: dict[str, tuple | None],
+    variant_index: dict[str, tuple[int, SRSItem]],
+    inflection_index: dict[str, int],
+    language_code: str,
+) -> tuple[int, SRSItem] | None:
+    """Step 2 of the per-token resolution order: the base card for a lemma.
+
+    Order: lemma lookup (cached), surface fallback (its own cache), the
+    spelling-variant card, then the deck's own Inflections table. Extracted so
+    the exact-surface-cloze branch can read the BASE card's recognition band
+    with the identical lookup the base branch uses — ``understand_band`` must
+    never resolve by a second path. (bd tunatale-yh47)
+    """
+    # Clozes-only verbs (e.g. biti) have no base card by LEMMA — but steps 2b
+    # and 2c below still run for them, exactly as they did before this helper
+    # was extracted, so do not return early here.
+    result: tuple | None
+    if is_clozes_only_verb(lemma, language_code):
+        result = None
+    elif lemma in base_cache:
+        result = base_cache[lemma]
+    else:
+        result = db.get_collocation_by_lemma_with_id(lemma)
+        if result is None and surface.lower() != lemma:
+            surface_key = surface.lower()
+            if surface_key in surface_base_cache:
+                result = surface_base_cache[surface_key]
+            else:
+                result = db.get_collocation_by_lemma_with_id(surface_key)
+                surface_base_cache[surface_key] = result
+        base_cache[lemma] = result
+    if result is None:
+        result = variant_index.get(surface.casefold())
+    if result is None:
+        result = resolve_via_inflection_index(db, inflection_index, surface, lemma)
+    return result
+
+
+def _strength_stability_for(band: str | None, ds: DirectionState | None) -> float | None:
+    """The stability a rail carries, or None when the band has no strength.
+
+    Only the days/weeks/months/solid bands represent a measured memory, and a
+    KNOWN card's stability is not one (bd tunatale-yh47).
+    """
+    if band in ("days", "weeks", "months", "solid") and ds is not None and ds.state != SRSState.KNOWN:
+        return ds.stability
+    return None
+
+
 def extract_transcript(
     lesson: Lesson,
     db: SRSDatabase,
@@ -344,11 +413,6 @@ def extract_transcript(
         # day early in the [midnight, 4 AM) local window (the documented
         # is_due bolding divergence).
         today = anki_today()
-
-    # Read live, not passed in: the transcript's "known" rendering and the
-    # listen preview's suppression must key off the SAME configured cutoff, and
-    # a parameter would let a caller (or a stale default) set a second one.
-    horizon_days = settings.listen_due_horizon_days
 
     natural_speed = next(
         (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
@@ -441,32 +505,22 @@ def extract_transcript(
                     # Components for progress = just the production direction
                     components = [item.directions.get(Direction.PRODUCTION)]
                 else:
-                    # Step 2: Try base via get_collocation_by_lemma_with_id (cached).
-                    # Clozes-only verbs (e.g. biti) have no base card — skip.
-                    if is_clozes_only_verb(lemma, lesson.language_code):
-                        result = None
-                    elif lemma in base_cache:
-                        result = base_cache[lemma]
-                    else:
-                        result = db.get_collocation_by_lemma_with_id(lemma)
-                        if result is None and surface.lower() != lemma:
-                            surface_key = surface.lower()
-                            if surface_key in surface_base_cache:
-                                result = surface_base_cache[surface_key]
-                            else:
-                                result = db.get_collocation_by_lemma_with_id(surface_key)
-                                surface_base_cache[surface_key] = result
-                        base_cache[lemma] = result
-                    # Step 2b: spelling-variant card ('mot, imot') keyed by surface.
-                    # The lemma lookup misses these (their lemma column is unset), so
-                    # fall back to the per-surface variant index before giving up.
-                    if result is None:
-                        result = variant_index.get(surface.casefold())
-                    # Step 2c: the deck's own Inflections table ('ferskt' under
-                    # 'fersk'). LAST, so a form that is another card's headword
-                    # still resolves to that card at step 2.
-                    if result is None:
-                        result = resolve_via_inflection_index(db, inflection_index, surface, lemma)
+                    # Step 2: resolve the base card — lemma lookup (cached),
+                    # surface fallback (its own cache), the spelling-variant
+                    # card ('mot, imot'), then the deck's own Inflections table
+                    # ('ferskt' under 'fersk', consulted LAST so a form that is
+                    # another card's headword still resolves to that card).
+                    # Clozes-only verbs (e.g. biti) have no base card — None.
+                    result = _resolve_base_card(
+                        db,
+                        surface,
+                        lemma,
+                        base_cache,
+                        surface_base_cache,
+                        variant_index,
+                        inflection_index,
+                        lesson.language_code,
+                    )
                     if result is not None:
                         item_id, item = result
                         resolved_item = item
@@ -511,6 +565,10 @@ def extract_transcript(
                 recognition_state_val: str | None = None
                 recognition_is_due_flag: bool = False
                 well_known_flag: bool = False
+                understand_band: str | None = None
+                produce_band: str | None = None
+                understand_stability: float | None = None
+                produce_stability: float | None = None
 
                 # Step 3b: Check card-less ignore list (inside the Step-3 unknown branch only)
                 if resolved_item is None and lemma.lower() in ignored_lemmas:
@@ -528,6 +586,36 @@ def extract_transcript(
                     active_ds = item.directions[active_dir]
                     active_state_val = active_ds.state.value
                     is_due_flag = _is_due(active_ds, today)
+                    # Twin rails (bd tunatale-yh47): per-direction mastery bands.
+                    # A word resolved to an exact-surface inflection cloze reads
+                    # its PRODUCTION from the cloze itself, but its UNDERSTAND
+                    # from the base card step 2 of the resolution order would
+                    # have found for this lemma ("none" when there is no base) —
+                    # never a second lookup path. Any other resolved card is its
+                    # own rails. Ignored/unknown/untracked words keep the None
+                    # defaults above.
+                    if inflection_match is not None:
+                        base_result = _resolve_base_card(
+                            db,
+                            surface,
+                            lemma,
+                            base_cache,
+                            surface_base_cache,
+                            variant_index,
+                            inflection_index,
+                            lesson.language_code,
+                        )
+                        rail_rec = (
+                            base_result[1].directions.get(Direction.RECOGNITION) if base_result is not None else None
+                        )
+                        rail_prod = item.directions.get(Direction.PRODUCTION)
+                    else:
+                        rail_rec = item.directions.get(Direction.RECOGNITION)
+                        rail_prod = item.directions.get(Direction.PRODUCTION)
+                    understand_band = direction_band(rail_rec)
+                    produce_band = direction_band(rail_prod)
+                    understand_stability = _strength_stability_for(understand_band, rail_rec)
+                    produce_stability = _strength_stability_for(produce_band, rail_prod)
                     # Read-ahead keys off RECOGNITION specifically (not active_dir):
                     # reading always evidences recognition, even after the active
                     # direction has flipped to production on graduation.
@@ -535,7 +623,11 @@ def extract_transcript(
                     recognition_reviewable_flag = rec_ds is not None and _is_read_reviewable(rec_ds)
                     recognition_state_val = rec_ds.state.value if rec_ds is not None else None
                     recognition_is_due_flag = _is_due(rec_ds, today) if rec_ds is not None else False
-                    well_known_flag = is_well_known(rec_ds, today, horizon_days)
+                    # A due card is never "known", however strong: the preview
+                    # applies the same guard (it defers only "ahead" cards), and
+                    # the mastery line's due bucket relies on the two being
+                    # exclusive, which the old due-date rule guaranteed for free.
+                    well_known_flag = is_well_known(rec_ds) and not recognition_is_due_flag
                     valid_components = [c for c in components if c is not None]
                     progress_val = compute_mastery_progress(valid_components)
 
@@ -605,12 +697,16 @@ def extract_transcript(
                         recognition_state=recognition_state_val,
                         recognition_is_due=recognition_is_due_flag,
                         well_known=well_known_flag,
+                        understand_band=understand_band,
+                        produce_band=produce_band,
+                        understand_stability=understand_stability,
+                        produce_stability=produce_stability,
                     )
                 )
 
             # Annotate collocation spans
             span_annotations = match_spans(lemmas, collocation_index)
-            span_cache: dict[int, tuple[str, str, str | None, float | None, bool]] = {}
+            span_cache: dict[int, tuple[str, str, str | None, float | None, bool, str, str]] = {}
             for word, (span_id, is_start) in zip(words, span_annotations, strict=True):
                 word.collocation_span_id = span_id
                 word.collocation_start = is_start
@@ -626,6 +722,8 @@ def extract_transcript(
                         coll_item.syntactic_unit.translation or None,
                         compute_mastery_progress(coll_item.directions.values()),
                         coll_active_ds is not None and _is_due(coll_active_ds, today),
+                        direction_band(coll_item.directions.get(Direction.RECOGNITION)),
+                        direction_band(coll_item.directions.get(Direction.PRODUCTION)),
                     )
                     span_cache[span_id] = cached
                 (
@@ -634,6 +732,8 @@ def extract_transcript(
                     word.collocation_translation,
                     word.collocation_progress,
                     word.collocation_is_due,
+                    word.collocation_understand_band,
+                    word.collocation_produce_band,
                 ) = cached
 
             # Reconstruct with each token's surrounding punctuation, not the bare

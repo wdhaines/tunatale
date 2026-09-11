@@ -21,8 +21,9 @@
  * `word_ratings`, so presence there is the opt-in.
  *
  * So one press of Grade All stages EVERY known word, which defeats the whole
- * `listen_due_horizon_days` suppression feature — the feature exists precisely
- * so a listen stops asking about words scheduled beyond the horizon. And
+ * well-known suppression feature — the feature exists precisely so a listen
+ * stops asking about words it already knows well (stability of 180+ days since
+ * 2026-09-10; a 365-day due-date horizon before that). And
  * `skipAll` iterates `liveCandidates`, which is filtered by `!c.well_known`, so
  * there is no bulk undo: the only escape is to cancel and reopen the modal.
  *
