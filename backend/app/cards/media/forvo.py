@@ -20,6 +20,25 @@ On 2026-08-15 a probe from a non-home network got HTTP 403 + a Cloudflare
 that block follows the network or the scraper is still open — see
 ``scripts/local/forvo_block_probe.py``. Under the old code that question would
 have been unanswerable after the fact, because nothing was recorded.
+
+⚠️ ANSWERED 2026-09-11: THE BLOCK FOLLOWS THE IP, AND THE PRODUCTION BOX IS ON
+THE WRONG SIDE OF IT. This module was run twice within minutes, same words, same
+code, from two hosts:
+
+    home (residential)              GCP e2-micro us-east1 (the deploy target)
+    takk  -> found, 43446 bytes     takk  -> blocked, HTTP 403 + challenge
+    hvala -> found, 59855 bytes     hvala -> blocked, HTTP 403 + challenge
+
+So the scraper is NOT broken and Forvo has NOT changed its markup — but Forvo
+audio will silently stop AT CUTOVER, falling back to TTS exactly as designed.
+That fallback is why this could only ever be noticed deliberately, which is what
+the outcome classification below exists for. What to do about it (accept TTS in
+prod, buy the $2/mo API, keep card creation on the laptop) is `tunatale-kbb.13`;
+do not "fix" anything here until that is decided.
+
+The control is what makes it a finding: the NONSENSE word was blocked too. When
+every word fails identically, including one that should legitimately have no
+recording, the measurement is about the network and not about the content.
 """
 
 from __future__ import annotations
