@@ -89,7 +89,34 @@ above true rather than aspirational, and it is maintained by hand:
 
 **Local-only: nothing.** Keep it that way.
 
-### There is no dependency-group split — the flags that implied one were fake
+### ⚠️ The dependency-group split is REAL as of 2026-08-31 — this section describes the world before that
+
+**CI installs FEWER packages than your laptop, deliberately.** Every backend job
+runs `uv sync --no-default-groups --group dev` with **`UV_NO_SYNC: "1"` set at
+job level** (`0344f42`, `tunatale-ouk.6`/`.9`), so classla, stanza, torch and
+transformers are absent there. `UV_NO_SYNC` is what makes it stick: a bare
+`uv run` inside the suite would otherwise re-sync the env back to
+`[tool.uv] default-groups` mid-run and re-fatten it.
+
+**What this costs you in practice:** a test may import only what the **dev
+group** declares. Anything arriving transitively through `slovene`/`norwegian`/
+`alignment` — `yaml` via transformers is the worked example — is present locally
+and missing in CI, so the suite goes green on your machine and dies at collection
+in all four backend jobs with `ModuleNotFoundError`. That happened on 2026-09-11
+(`test_compose_profile.py`), and the fix is to declare the package in `dev`, not
+to widen CI's groups.
+
+To reproduce CI's environment before pushing:
+
+```bash
+UV_PROJECT_ENVIRONMENT=/tmp/ci-venv uv sync --no-default-groups --group dev
+UV_PROJECT_ENVIRONMENT=/tmp/ci-venv UV_NO_SYNC=1 uv run pytest …
+```
+
+The rest of this section is **history**, kept because its lesson about install
+flags still holds and because the measurement was correct when it was made.
+
+#### (superseded 2026-08-31) There is no dependency-group split — the flags that implied one were fake
 
 **Both gates install the same packages.** This was believed to be a real
 divergence (and `tunatale-as5` was filed saying so): CI's install steps read

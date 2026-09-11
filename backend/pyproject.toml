@@ -47,6 +47,13 @@ dev = [
     "respx>=0.23.1",
     "ruff>=0.16.5",
     "anyio>=4.14.2",
+    # Reads docker-compose.yml in tests/test_compose_profile.py. Declared even
+    # though it arrives transitively via transformers in the `slovene`/
+    # `norwegian` groups: CI installs `--no-default-groups --group dev` with
+    # UV_NO_SYNC=1, so a transitive from a group CI does not install is simply
+    # absent there. That is exactly how it was discovered — green locally, four
+    # red backend jobs with ModuleNotFoundError.
+    "pyyaml>=6.0.3",
     # Dev-server reload backend. We depend on plain `uvicorn` (not
     # `uvicorn[standard]`, which would also drag in httptools/uvloop/websockets we
     # don't want), and without watchfiles uvicorn silently falls back to StatReload
