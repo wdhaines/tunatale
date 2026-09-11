@@ -84,18 +84,37 @@ jobs:
 
       # An image whose arch is wrong still pushes, still pulls, and fails only
       # when the box tries to run it. Assert it here, where it is cheap.
+      # Reads the IMAGE CONFIG, which is where os/architecture actually live.
+      # An earlier version of this step looked at `.Manifest.Manifests` and then
+      # at `--raw | .architecture`, and reported "unknown" for a perfectly good
+      # image: with one platform and provenance off, GHCR stores a plain
+      # manifest rather than an index, so there is no Manifests list, and a
+      # manifest does not carry `.architecture` either — that is in the config
+      # blob it references. `.Image` is that config.
+      #
+      # Two shapes, because `.Image` is the config object for a single-platform
+      # image and a {platform: config} MAP for a multi-platform one. Handling
+      # both means adding a platform later cannot silently turn this check into
+      # a no-op.
       - name: The pushed images must be linux/amd64
         run: |
           set -euo pipefail
           for image in api web; do
             ref="ghcr.io/${{ github.repository_owner }}/tunatale-$image:${{ steps.rev.outputs.sha }}"
-            arch=$(docker buildx imagetools inspect "$ref" --format '{{ (index .Manifest.Manifests 0).Platform.OS }}/{{ (index .Manifest.Manifests 0).Platform.Architecture }}' 2>/dev/null \
-              || docker buildx imagetools inspect "$ref" --raw | jq -r '.architecture // "unknown"')
-            echo "$ref -> $arch"
-            case "$arch" in
-              linux/amd64|amd64) ;;
-              *) echo "::error::$ref is $arch, not linux/amd64"; exit 1 ;;
-            esac
+            config=$(docker buildx imagetools inspect "$ref" --format '{{json .Image}}')
+            platforms=$(jq -r '
+              if has("architecture")
+              then "\(.os)/\(.architecture)"
+              else (to_entries | map(.key) | join(" "))
+              end' <<<"$config")
+            echo "$ref -> $platforms"
+            [ -n "$platforms" ] || { echo "::error::could not read a platform for $ref"; exit 1; }
+            for platform in $platforms; do
+              case "$platform" in
+                linux/amd64) ;;
+                *) echo "::error::$ref contains $platform, not linux/amd64"; exit 1 ;;
+              esac
+            done
           done
 
       - name: Summary
