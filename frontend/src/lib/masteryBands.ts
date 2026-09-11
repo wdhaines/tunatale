@@ -24,18 +24,32 @@ export const RAIL_FILL_PCT: Record<"learning" | "days" | "weeks" | "months" | "s
   solid: 100,
 };
 
+/** Solid track: the empty rail behind any fill, in the neutral track ink. */
+export const RAIL_TRACK_SOLID =
+  "linear-gradient(var(--band-track, #e4e9e6), var(--band-track, #e4e9e6))";
+
+/** Dashed track: the "no card" rail, drawn as thin dashes in the muted ink. */
+export const RAIL_TRACK_DASHED =
+  "repeating-linear-gradient(90deg, var(--color-muted, #6b7280) 0 3px, transparent 3px 6px)";
+
+/** Invisible track: a band that is absent (null) paints no rail at all. */
+const RAIL_TRACK_NONE = "linear-gradient(transparent, transparent)";
+
 export interface RailStyle {
-  /** Inline CSS for the fill element; null when the rail is an empty track. */
-  fillStyle: string | null;
-  /** Whether the whole rail renders dashed (the "no card" band). */
+  /** Fill colour, as a `var(--band-<band>)` reference; null when no fill. */
+  fill: string | null;
+  /** Fill width as a percentage string (e.g. `"60%"`); null when no fill. */
+  pct: string | null;
+  /** Whether the rail is "no card": its track paints dashed in muted ink. */
   dashed: boolean;
 }
 
 /**
- * Decode a band into rail geometry. The strength bands fill `var(--band-<band>)`
- * across their share of the rail; `new`/`suspended` draw an empty track (no
- * fill); `none` draws an empty DASHED track; null/undefined/unknown draw
- * nothing (the consumer then renders no rail element at all).
+ * Decode a band into the per-rail values the paint rules need. The strength
+ * bands fill `var(--band-<band>)` across their share of the rail;
+ * `new`/`suspended` draw an empty track (no fill); `none` draws an empty
+ * DASHED track; null/undefined/unknown draw nothing (the consumer then paints
+ * no rail layer at all).
  */
 export function railStyle(band: string | null | undefined): RailStyle {
   switch (band) {
@@ -45,17 +59,44 @@ export function railStyle(band: string | null | undefined): RailStyle {
     case "months":
     case "solid":
       return {
-        fillStyle: `width: ${RAIL_FILL_PCT[band]}%; background-color: var(--band-${band});`,
+        fill: `var(--band-${band})`,
+        pct: `${RAIL_FILL_PCT[band]}%`,
         dashed: false,
       };
     case "new":
     case "suspended":
-      return { fillStyle: null, dashed: false };
+      return { fill: null, pct: null, dashed: false };
     case "none":
-      return { fillStyle: null, dashed: true };
+      return { fill: null, pct: null, dashed: true };
     default:
-      return { fillStyle: null, dashed: false };
+      return { fill: null, pct: null, dashed: false };
   }
+}
+
+/**
+ * The two bands a word (or a collocation span) carries, turned into the inline
+ * CSS custom properties the component `<style>` paint rule reads. `null` when
+ * the word is untracked (no understood rail) — the caller then paints nothing.
+ * A missing produce band paints an invisible track, going all the way down to
+ * no produce rail.
+ */
+export function railPropsFor(bands: {
+  understand_band?: string | null;
+  produce_band?: string | null;
+}): string | null {
+  if (bands.understand_band == null) return null;
+  const u = railStyle(bands.understand_band);
+  const p = railStyle(bands.produce_band ?? null);
+  const produceTrack =
+    bands.produce_band == null ? RAIL_TRACK_NONE : p.dashed ? RAIL_TRACK_DASHED : RAIL_TRACK_SOLID;
+  return (
+    `--rail-u-fill: ${u.fill ?? "transparent"}; ` +
+    `--rail-u-pct: ${u.pct ?? "0%"}; ` +
+    `--rail-u-track: ${u.dashed ? RAIL_TRACK_DASHED : RAIL_TRACK_SOLID}; ` +
+    `--rail-p-fill: ${p.fill ?? "transparent"}; ` +
+    `--rail-p-pct: ${p.pct ?? "0%"}; ` +
+    `--rail-p-track: ${produceTrack};`
+  );
 }
 
 /** Human-readable label for a band, for the readaloud/help surfaces. */

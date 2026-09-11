@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { RAIL_FILL_PCT, railStyle, bandLabel, holdsLabel, type MasteryBand } from "./masteryBands";
+import {
+  RAIL_FILL_PCT,
+  RAIL_TRACK_DASHED,
+  RAIL_TRACK_SOLID,
+  railStyle,
+  railPropsFor,
+  bandLabel,
+  holdsLabel,
+  type MasteryBand,
+} from "./masteryBands";
 
 describe("RAIL_FILL_PCT", () => {
   it("pins the fill length per strength band", () => {
@@ -15,34 +24,83 @@ describe("RAIL_FILL_PCT", () => {
 
 describe("railStyle", () => {
   it.each([
-    ["learning", "20%", "var(--band-learning)"],
-    ["days", "40%", "var(--band-days)"],
-    ["weeks", "60%", "var(--band-weeks)"],
-    ["months", "80%", "var(--band-months)"],
-    ["solid", "100%", "var(--band-solid)"],
-  ] as const)("fills %s to %s in %s", (band: MasteryBand, width: string, color: string) => {
-    const r = railStyle(band);
-    expect(r.fillStyle).toContain(`width: ${width};`);
-    expect(r.fillStyle).toContain(`background-color: ${color};`);
-    expect(r.dashed).toBe(false);
+    ["learning", "var(--band-learning)", "20%"],
+    ["days", "var(--band-days)", "40%"],
+    ["weeks", "var(--band-weeks)", "60%"],
+    ["months", "var(--band-months)", "80%"],
+    ["solid", "var(--band-solid)", "100%"],
+  ] as const)("fills %s to %s at %s", (band: MasteryBand, colour: string, pct: string) => {
+    expect(railStyle(band)).toEqual({ fill: colour, pct, dashed: false });
   });
 
   it("draws an empty, un-dashed track for new", () => {
-    expect(railStyle("new")).toEqual({ fillStyle: null, dashed: false });
+    expect(railStyle("new")).toEqual({ fill: null, pct: null, dashed: false });
   });
 
   it("draws an empty, un-dashed track for suspended", () => {
-    expect(railStyle("suspended")).toEqual({ fillStyle: null, dashed: false });
+    expect(railStyle("suspended")).toEqual({ fill: null, pct: null, dashed: false });
   });
 
   it("draws a dashed empty track for none (no card)", () => {
-    expect(railStyle("none")).toEqual({ fillStyle: null, dashed: true });
+    expect(railStyle("none")).toEqual({ fill: null, pct: null, dashed: true });
   });
 
   it("draws nothing for null/undefined/unknown bands", () => {
-    expect(railStyle(null)).toEqual({ fillStyle: null, dashed: false });
-    expect(railStyle(undefined)).toEqual({ fillStyle: null, dashed: false });
-    expect(railStyle("bogus")).toEqual({ fillStyle: null, dashed: false });
+    expect(railStyle(null)).toEqual({ fill: null, pct: null, dashed: false });
+    expect(railStyle(undefined)).toEqual({ fill: null, pct: null, dashed: false });
+    expect(railStyle("bogus")).toEqual({ fill: null, pct: null, dashed: false });
+  });
+});
+
+describe("railPropsFor", () => {
+  it.each([
+    ["learning", "var(--band-learning)", "20%"],
+    ["days", "var(--band-days)", "40%"],
+    ["weeks", "var(--band-weeks)", "60%"],
+    ["months", "var(--band-months)", "80%"],
+    ["solid", "var(--band-solid)", "100%"],
+  ] as const)("encodes a painted %s rail as fill + pct custom props", (band, colour, pct) => {
+    const props = railPropsFor({ understand_band: band });
+    expect(props).toContain(`--rail-u-fill: ${colour};`);
+    expect(props).toContain(`--rail-u-pct: ${pct};`);
+    expect(props).toContain(`--rail-u-track: ${RAIL_TRACK_SOLID};`);
+  });
+
+  it("returns null when the understand band is missing (untracked word)", () => {
+    expect(railPropsFor({})).toBeNull();
+    expect(railPropsFor({ understand_band: null, produce_band: null })).toBeNull();
+  });
+
+  it("paints an invisible produce rail when the produce band is absent", () => {
+    const props = railPropsFor({ understand_band: "days" });
+    expect(props).toContain("--rail-p-fill: transparent;");
+    expect(props).toContain("--rail-p-pct: 0%;");
+    expect(props).toContain("--rail-p-track: linear-gradient(transparent, transparent);");
+  });
+
+  it("encodes a dashed track for a no-card (none) band", () => {
+    const props = railPropsFor({ understand_band: "none", produce_band: "none" });
+    expect(props).toContain(`--rail-u-track: ${RAIL_TRACK_DASHED};`);
+    expect(props).toContain(`--rail-p-track: ${RAIL_TRACK_DASHED};`);
+    expect(props).toContain("--rail-u-fill: transparent;");
+    expect(props).toContain("--rail-p-fill: transparent;");
+  });
+
+  it("encodes solid empty tracks for new/suspended (fill 0%)", () => {
+    const props = railPropsFor({ understand_band: "new", produce_band: "suspended" });
+    expect(props).not.toContain(RAIL_TRACK_DASHED);
+    expect(props).toContain(`--rail-u-track: ${RAIL_TRACK_SOLID};`);
+    expect(props).toContain(`--rail-p-track: ${RAIL_TRACK_SOLID};`);
+    expect(props).toContain("--rail-u-fill: transparent;");
+    expect(props).toContain("--rail-p-fill: transparent;");
+  });
+
+  it("paints each direction from its own band", () => {
+    const props = railPropsFor({ understand_band: "weeks", produce_band: "solid" });
+    expect(props).toContain("--rail-u-fill: var(--band-weeks);");
+    expect(props).toContain("--rail-u-pct: 60%;");
+    expect(props).toContain("--rail-p-fill: var(--band-solid);");
+    expect(props).toContain("--rail-p-pct: 100%;");
   });
 });
 

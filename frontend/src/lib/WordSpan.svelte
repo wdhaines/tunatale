@@ -2,7 +2,7 @@
 	import type { WordToken } from './api';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import type { TooltipActions } from '$lib/components/Tooltip.svelte';
-	import { railStyle } from '$lib/masteryBands';
+	import { railPropsFor } from '$lib/masteryBands';
 
 	interface Props {
 		word: WordToken;
@@ -49,10 +49,15 @@
 		fire();
 	}
 
-	// Twin rails (bd tunatale-yh47): per-direction bands decode into fill
-	// geometry (or null — no rail rendered — for untracked words).
-	const railUnderstand = $derived(railStyle(word.understand_band ?? null));
-	const railProduce = $derived(railStyle(word.produce_band ?? null));
+	// Twin rails (bd tunatale-yh47, density): a tracked word's rails are painted
+	// as background-image layers in the word's own padding-bottom — no child
+	// elements, so an inline word's padding cannot change the line box and a
+	// wrapped row stays exactly one line-height tall. `paintsRails` gates the
+	// paint, `railProps` carries the per-word colour/width/track custom props.
+	const paintsRails = $derived(!hideRails && word.understand_band != null);
+	const railProps = $derived.by(
+		() => (paintsRails ? railPropsFor(word) : null),
+	);
 
 	const colorClass = $derived(
 		word.active_state === 'unknown'
@@ -156,30 +161,16 @@
 	>
 		<span
 			class="word {colorClass}"
+			class:paint-rails={paintsRails}
 			class:word-selected={selected}
 			class:word-due={word.is_due}
+			style={railProps ?? undefined}
 			role="button"
 			tabindex="0"
 			data-line-index={lineIndex}
 			data-word-index={wordIndex}
 			onkeydown={handleKeydown}
 		><span class="punct">{word.prefix_punct ?? ''}</span>{word.surface}<span class="punct">{word.suffix_punct ?? ''}</span></span>
-		{#if !hideRails && word.understand_band != null}
-			<span class="word-rails" aria-hidden="true">
-				<span class="rail {railUnderstand.dashed ? 'rail-dashed' : ''}">
-					{#if railUnderstand.fillStyle}
-						<span class="rail-fill" style={railUnderstand.fillStyle}></span>
-					{/if}
-				</span>
-				{#if word.produce_band != null}
-					<span class="rail {railProduce.dashed ? 'rail-dashed' : ''}">
-						{#if railProduce.fillStyle}
-							<span class="rail-fill" style={railProduce.fillStyle}></span>
-						{/if}
-					</span>
-				{/if}
-			</span>
-		{/if}
 		{#if showGloss && word.translation}
 			<span class="word-gloss">{word.translation}</span>
 		{/if}
@@ -223,19 +214,11 @@
 		background-color: rgba(99, 102, 241, 0.2);
 	}
 	.word-wrapper {
-		/* Column flex, but `align-items: center` (the old default here) was
-		   exactly what killed the rails in the first pass (bd tunatale-yh47):
-		   a centered flex item sizes to its own content, and `.word-rails` has
-		   none — measured 0px-wide rails in transcript-rails.spec.ts. Stretch
-		   lets the rails fill the wrapper (which shrink-to-fits to the word's
-		   outer width, the widest child). The word itself opts out with
-		   align-self: flex-start so it keeps its own width; the negative-margin
-		   hover box and one-space glyph rhythm are untouched — only the rails
-		   below change. */
-		display: inline-flex;
-		flex-direction: column;
-		align-items: stretch;
-		vertical-align: top;
+		/* Inline, not the inline-flex of the element-rails era (bd tunatale-yh47
+		   density): the rails are background layers painted in the word's own
+		   padding-bottom, so nothing outside the word needs a slot, and a
+		   wrapped row is exactly one line-height tall. */
+		display: inline;
 	}
 	.word-gloss {
 		align-self: center;
@@ -245,6 +228,12 @@
 		white-space: nowrap;
 	}
 	.word-wrapper-gloss {
+		/* Gloss mode keeps its column stack (word over gloss) — only the
+		   non-gloss wrapper went inline. */
+		display: inline-flex;
+		flex-direction: column;
+		align-items: stretch;
+		vertical-align: top;
 		margin-bottom: 1.1rem;
 	}
 	.punct {
@@ -254,46 +243,31 @@
 		color: var(--color-text);
 		font-weight: normal;
 	}
-	/* Twin rails (bd tunatale-yh47). `.word-rails` stretches to the word's
-	   own width (stretched by the wrapper, whose width IS the word's box — the
-	   only other child, the optional gloss, is center-aligned on top of it).
-	   The bottom margin is the clearance that keeps a rail off the NEXT wrapped
-	   row's text: without it the rail's bottom edge lands exactly on the next
-	   row's word top (measured gap 0.0px across every rail, transcript-rails
-	   e2e). Flex grows the word box with line-height, so `.dialogue-words`
-	   line-height alone can never buy this space — the rail owns it. */
-	.word-rails {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		margin-top: 2px;
-		margin-bottom: 6px;
-	}
-	.rail {
-		display: block;
-		width: 100%;
-		height: 4px;
-		border-radius: 1px;
-		background-color: var(--band-track, #e4e9e6);
-		overflow: hidden;
-	}
-	.rail-fill {
-		display: block;
-		height: 100%;
-	}
-	.rail-dashed {
-		/* "No card" must read differently from "not started" (an empty track):
-		   clear the track colour, and draw thinner dashes in the muted ink.
-		   Dashes in the track colour over a track-coloured background painted a
-		   solid track — the two states were indistinguishable. */
-		height: 2px;
-		margin-block: 1px;
-		background-color: transparent;
-		background-image: repeating-linear-gradient(
-			90deg,
-			var(--color-muted, #6b7280) 0 3px,
-			transparent 3px 6px
-		);
-		opacity: 0.7;
+	/* Twin rails (bd tunatale-yh47, density) — painted, not laid out. A tracked
+	   word paints 3px rails in the bottom 7px of its own padding: understand on
+	   top (layers at bottom 4px), produce below (bottom 0), each a 3px fill over
+	   a 3px track. Inline padding never changes the line box, so the rows stay
+	   exactly one `line-height` apart and the rails cannot push the next row.
+	   The four layer rules live here; the per-word colour/width/track arrive as
+	   `--rail-*` custom properties set inline by the component. `background-
+	   color` (the selected tint) sits UNDER these image layers untouched. */
+	.word.paint-rails {
+		padding-bottom: 7px;
+		background-repeat: no-repeat;
+		background-image:
+			linear-gradient(var(--rail-u-fill, transparent), var(--rail-u-fill, transparent)),
+			var(--rail-u-track, var(--band-track, #e4e9e6)),
+			linear-gradient(var(--rail-p-fill, transparent), var(--rail-p-fill, transparent)),
+			var(--rail-p-track, var(--band-track, #e4e9e6));
+		background-size:
+			var(--rail-u-pct, 0%) 3px,
+			100% 3px,
+			var(--rail-p-pct, 0%) 3px,
+			100% 3px;
+		background-position:
+			left bottom 4px,
+			left bottom 4px,
+			left bottom 0,
+			left bottom 0;
 	}
 </style>

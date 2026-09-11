@@ -2,19 +2,20 @@ import { test, expect } from "./fixtures";
 import { backendAvailable, BACKEND } from "./helpers";
 
 /**
- * Twin-rail geometry (bd tunatale-yh47) in a REAL browser: the per-word
- * understand/produce rails render under their word and under the line, never
- * crossing into the next wrapped row or the next dialogue line's text.
+ * Twin-rail density (bd tunatale-yh47, stage 3) in a REAL browser: the rails
+ * are no longer elements — each tracked word PAINTS its understand/produce
+ * rails as background-image layers in its own 7px padding-bottom, so an inline
+ * span's padding cannot change the line box and wrapped rows stay exactly one
+ * line-height apart. None of that is measurable in the unit suite: jsdom does
+ * no layout and no paint, so the DOM is identical whether rows are 26px or 46px
+ * apart.
  *
- * jsdom performs no layout, so none of this is measurable in the unit suite —
- * the DOM is identical whether a rail touches the next line's text or not.
- * Same rationale as transcript-layout.spec.ts, which this models on (seeding,
- * navigation) and transcript-overflow.spec.ts (whose listen-tracking is what
- * makes words carry non-null bands, so rails actually render).
- *
- * Model setup is imported, not generated, for the reason
- * transcript-layout.spec.ts gives: the shared cassettes have a fixed number of
- * recorded plays and another consumer would exhaust them.
+ * Every assertion is engine-computed geometry: row pitch and rail clearance are
+ * read off layout rects, "painted" is read off the resolved padding, and the
+ * no-card-vs-not-started distinction is read off the resolved background-image.
+ * Same seeded/imported setup rationale as transcript-layout.spec.ts: the shared
+ * cassettes have a fixed number of recorded plays, so the story is imported,
+ * not generated.
  */
 
 const TOPIC = "transcript-rails-e2e";
@@ -121,7 +122,7 @@ async function seed(request: import("@playwright/test").APIRequestContext) {
 	const lesson = await impRes.json();
 
 	// Track every word (empty ratings) the way transcript-overflow.spec.ts does:
-	// untracked words carry null bands and render NO rails, and a rail-less page
+	// untracked words carry null bands and paint NO rails, and a rail-less page
 	// would satisfy every geometry assertion vacuously.
 	const listenRes = await request.post(`${BACKEND}/api/srs/listen`, {
 		data: { content_id: lesson.id ?? lesson.lesson_id, word_ratings: {}, kp_ratings: {} },
@@ -135,7 +136,7 @@ async function seed(request: import("@playwright/test").APIRequestContext) {
 
 test.describe.configure({ mode: "serial" });
 
-test("rails sit under their word and clear the next row and next dialogue line", async ({
+test("rails are painted: dense wrapped rows, clear of the next row, and non-vacuous", async ({
 	page,
 	request,
 }) => {
@@ -147,117 +148,87 @@ test("rails sit under their word and clear the next row and next dialogue line",
 	await page.goto(`/c/${curriculumId}/l/${lessonId}`);
 	await expect(page.locator(".tt-wrap").first()).toBeVisible({ timeout: 15000 });
 
-	// Non-vacuous guard: tracked words render rails. Without this a seed that
-	// stopped tracking (or bands that never arrived) would measure nothing.
-	const railCount = await page.locator(".transcript-wrapper .word-rails").count();
-	expect(railCount).toBeGreaterThan(5);
-	const wordCount = await page.locator(".transcript-wrapper .word").count();
-	expect(wordCount).toBeGreaterThan(5);
-
 	const m = await page.evaluate(() => {
-		// Per word-wrapper: pair each rail with ITS OWN word box. Wrappers can
-		// hold a word without rails (untracked, or inside a collocation phrase
-		// where hideRails suppresses them), so parallel arrays would misalign —
-		// pairing on the same wrapper keeps every comparison honest.
-		const wrappers = [...document.querySelectorAll(".transcript-wrapper .word-wrapper")];
-		const wordBoxes: Array<{ left: number; right: number; top: number; bottom: number }> = [];
-		const railBoxes: Array<{ rail: { left: number; right: number; top: number; bottom: number }; word: { left: number; right: number; top: number; bottom: number } }> = [];
-		for (const wrap of wrappers) {
-			const w = wrap.querySelector(":scope > .word");
-			const r = wrap.querySelector(":scope > .word-rails");
-			if (!w) continue;
-			const wr = w.getBoundingClientRect();
-			const word = { left: wr.left, right: wr.right, top: wr.top, bottom: wr.bottom };
-			wordBoxes.push(word);
-			if (r) {
-				const rr = r.getBoundingClientRect();
-				railBoxes.push({ rail: { left: rr.left, right: rr.right, top: rr.top, bottom: rr.bottom }, word });
+		// (3) Non-vacuous: painted words resolve a full 7px rail padding — the
+		// padding is the painted box. Without it a seed that never tracked (or
+		// bands that never arrived) would satisfy the geometry assertions by
+		// painting nothing at all.
+		const paintedWords = [...document.querySelectorAll(".transcript-wrapper .word")].filter(
+			(el) => getComputedStyle(el).paddingBottom === "7px",
+		);
+
+		// Group a block's word LINE-FRAGMENTS into rows by their top: a phrase's
+		// words may sit 1-3px off their row, so tops within 6px are one row. An
+		// inline word at a wrap boundary splits into MULTIPLE line fragments
+		// (Chromium leaves a 1px sliver on the row it wraps from), so geometry
+		// is measured per fragment — a union rect would span two rows and read
+		// as a bottom far past the next row's top.
+		const groupRows = (
+			rects: Array<{ painted: boolean; top: number; bottom: number; text: string }>,
+		): Array<Array<{ painted: boolean; top: number; bottom: number; text: string }>> => {
+			const sorted = [...rects].sort((a, b) => a.top - b.top);
+			const rows: Array<Array<{ painted: boolean; top: number; bottom: number; text: string }>> = [];
+			for (const r of sorted) {
+				const last = rows[rows.length - 1];
+				if (last && r.top - last[0].top <= 6) last.push(r);
+				else rows.push([r]);
 			}
-		}
-
-		// Per dialogue line: every rail bottom (any kind) and word top (any kind).
-		const lines = [...document.querySelectorAll(".transcript-wrapper .dialogue-line")];
-		const lineRailBottoms: number[][] = [];
-		const lineWordTops: number[][] = [];
-		for (const line of lines) {
-			lineRailBottoms.push(
-				[...line.querySelectorAll(".word-rails")].map((el) => el.getBoundingClientRect().bottom),
-			);
-			lineWordTops.push([...line.querySelectorAll(".word")].map((el) => el.getBoundingClientRect().top));
-		}
-
-		// Within a single dialogue-words block (a line's wrapped rows): a rail
-		// belongs to its own row's line box, so the FIRST word strictly BELOW the
-		// rail must clear the rail's bottom — this is the moment that decided the
-		// `.dialogue-words` line-height bump.
-		const blocks = [...document.querySelectorAll(".transcript-wrapper .dialogue-words")];
-		const rowGaps: number[] = [];
-		for (const block of blocks) {
-			const rails = [...block.querySelectorAll(".word-rails")].map(
-				(el) => el.getBoundingClientRect(),
-			);
-			const words = [...block.querySelectorAll(".word")].map(
-				(el) => el.getBoundingClientRect(),
-			);
-			for (const rail of rails) {
-				const below = words
-					.filter((w) => w.top > rail.top + 0.5)
-					.map((w) => w.top - rail.bottom);
-				if (below.length > 0) rowGaps.push(Math.min(...below));
-			}
-		}
-
-		return {
-			wordBoxes,
-			railBoxes,
-			lineRailBottoms,
-			lineWordTops,
-			rowGaps,
+			return rows;
 		};
+
+		const blocks = [...document.querySelectorAll(".transcript-wrapper .dialogue-words")];
+		const rowPitches: number[] = [];
+		const clearances: Array<{ text: string; bottom: number; nextRowTop: number }> = [];
+		let wrappedLines = 0;
+		let paintedFragments = 0;
+		for (const block of blocks) {
+			const fragments: Array<{ painted: boolean; top: number; bottom: number; text: string }> = [];
+			for (const el of block.querySelectorAll(".word")) {
+				const painted = getComputedStyle(el).paddingBottom === "7px";
+				for (const f of el.getClientRects()) {
+					fragments.push({ painted, top: f.top, bottom: f.bottom, text: (el as HTMLElement).innerText });
+					if (painted) paintedFragments += 1;
+				}
+			}
+			if (fragments.length < 2) continue;
+			const rows = groupRows(fragments);
+			if (rows.length < 2) continue;
+			wrappedLines += 1;
+			// (1) Density: consecutive wrapped-row tops are at most 27px apart.
+			for (let i = 1; i < rows.length; i++) rowPitches.push(rows[i][0].top - rows[i - 1][0].top);
+			// (2) No overlap: a painted fragment's box bottom (ends in the 7px
+			// rail padding) clears every word-box top in the NEXT row.
+			for (let i = 0; i < rows.length - 1; i++) {
+				const nextRowTop = Math.min(...rows[i + 1].map((r) => r.top));
+				for (const r of rows[i]) {
+					if (!r.painted) continue;
+					clearances.push({ text: r.text, bottom: r.bottom, nextRowTop });
+				}
+			}
+		}
+
+		return { paintedCount: paintedWords.length, rowPitches, clearances, wrappedLines, paintedFragments };
 	});
 
-	// (1) Each word's rails lie within that word's own box on the horizontal
-	// axis (±1px). The rail is `width: 100%` of the wrapper, whose width IS the
-	// word's padded box — so any left/right excursion here is a layout bug, not a
-	// rounding artifact. Pairing on the same wrapper (above) keeps this honest:
-	// word and rail come from the same HTML element.
-	const contain = m.railBoxes.filter(
-		({ rail, word }) => rail.left < word.left - 1 || rail.right > word.right + 1,
+	expect(m.paintedCount, "fewer than 6 words painted rails").toBeGreaterThan(5);
+	expect(m.wrappedLines, "no dialogue line wrapped — nothing measured").toBeGreaterThan(0);
+	expect(m.rowPitches.length).toBeGreaterThan(0);
+	const maxPitch = Math.max(...m.rowPitches);
+	expect(maxPitch, `rows ${maxPitch}px apart — the rails are adding height`).toBeLessThanOrEqual(
+		27,
 	);
-	expect(contain, "rail escaped its word's box").toEqual([]);
-
-	// Rails sit BELOW the word (the intended rail slot), not beside/over it.
-	const below = m.railBoxes.filter(({ rail, word }) => rail.top < word.bottom - 1);
-	expect(below, "rail is not below its word").toEqual([]);
-
-	// (2) Two consecutive `.dialogue-line`s: every rail in line N clears every
-	// word top in line N+1. `.dialogue-line` blocks are separated by 0.3rem
-	// padding + border, so this is structural — but assert it, not assume it.
-	const crossGaps: number[] = [];
-	const crossFailures: string[] = [];
-	for (let n = 0; n < m.lineRailBottoms.length - 1; n++) {
-		const railMax = Math.max(...m.lineRailBottoms[n], -Infinity);
-		const wordMin = Math.min(...m.lineWordTops[n + 1], Infinity);
-		if (m.lineRailBottoms[n].length === 0) continue;
-		if (m.lineWordTops[n + 1].length === 0) continue;
-		const gap = Math.round(wordMin * 100) / 100 - Math.round(railMax * 100) / 100;
-		crossGaps.push(gap);
-		if (gap <= 0) crossFailures.push(`line ${n}: rail bottom ${railMax} vs next word top ${wordMin}`);
-	}
-	expect(crossFailures, crossFailures.join("\n")).toEqual([]);
-
-	// (3) Within a wrapped row: rails never touch the next row's words.
-	const rowFailures = m.rowGaps.filter((g) => g <= 0);
-	expect(rowFailures, "at least one rail touches the words in the next wrapped row").toEqual([]);
-
-	// Measured gaps for the report: the within-line wrapped-row gap is the figure
-	// that decides `.dialogue-words` line-height; the cross-line gap is structural.
-	const crossGap = Math.min(...crossGaps);
-	const rowGap = Math.min(...m.rowGaps);
+	const worst = m.clearances.sort((a, b) => a.nextRowTop - a.bottom - (b.nextRowTop - b.bottom))[0];
 	console.log(
-		`[transcript-rails] measured gaps — within-row (rail→next word): ${rowGap.toFixed(2)}px; ` +
-			`across dialogue lines (rail→next line word): ${crossGap.toFixed(2)}px; ` +
-			`rails rendered: ${m.railBoxes.length}/${m.wordBoxes.length} words`,
+		`[transcript-rails] painted words: ${m.paintedCount} (${m.paintedFragments} fragments); ` +
+			`row pitch max ${maxPitch.toFixed(2)}px within ${m.rowPitches.length} wrapped-line gaps ` +
+			`across ${m.wrappedLines} wrapped lines; worst clearance word "${worst?.text}" ` +
+			`(next row ${worst?.nextRowTop.toFixed(2)} vs bottom ${worst?.bottom.toFixed(2)})`,
+	);
+	// Clearance = next row's first word-box top MINUS this fragment's box
+	// bottom (which ends in the 7px rail padding). At or above → clearance >= 0.
+	const minGap = Math.round(Math.min(...m.clearances.map((c) => c.nextRowTop - c.bottom)) * 100) / 100;
+	expect(minGap, `a rail touches the next row's text (gap ${minGap}px, worst "${worst?.text}")`).toBeGreaterThanOrEqual(
+		-0.5,
 	);
 });
 
@@ -269,32 +240,43 @@ test("a no-card rail paints differently from an empty not-started track", async 
 	await page.goto(`/c/${curriculumId}/l/${lessonId}`);
 	await expect(page.locator(".tt-wrap").first()).toBeVisible({ timeout: 15000 });
 
-	// Clone a real rail (so it carries the component's scoped class) and flip it
-	// to the dashed variant, then compare what the ENGINE paints for each. A
-	// class check cannot catch this: the first cut drew track-coloured dashes
-	// over a track-coloured background, so "no card" rendered as a solid empty
-	// track — identical to "not started".
+	// Rails are painted background layers now, so the distinction between "no
+	// card" (dashed track) and "not started" (solid empty track) lives in the
+	// resolved background-image, not in a class. Clone a real painted word and
+	// flip its produce track between the two values, then compare what the
+	// ENGINE resolves for each. A class or attribute check cannot catch this:
+	// both states carry the identical `--rail-*` mark-up, differing only in the
+	// track gradient.
 	const styles = await page.evaluate(() => {
-		const rail = document.querySelector(".transcript-wrapper .word-rails .rail");
-		if (!rail) return null;
-		const plain = rail.cloneNode(false) as HTMLElement;
-		const dashed = rail.cloneNode(false) as HTMLElement;
-		dashed.classList.add("rail-dashed");
-		rail.parentElement!.append(plain, dashed);
-		const cs = (el: Element) => {
-			const s = getComputedStyle(el);
-			return { bg: s.backgroundColor, img: s.backgroundImage };
+		const word = document.querySelector(".transcript-wrapper .word.paint-rails");
+		if (!word) return null;
+		const solidTrack = "linear-gradient(var(--band-track, #e4e9e6), var(--band-track, #e4e9e6))";
+		const dashedTrack =
+			"repeating-linear-gradient(90deg, var(--color-muted, #6b7280) 0 3px, transparent 3px 6px)";
+		const mk = (produceTrack: string) => {
+			const c = word.cloneNode(false) as HTMLElement;
+			c.style.setProperty("--rail-u-fill", "transparent");
+			c.style.setProperty("--rail-u-pct", "0%");
+			c.style.setProperty("--rail-u-track", solidTrack);
+			c.style.setProperty("--rail-p-fill", "transparent");
+			c.style.setProperty("--rail-p-pct", "0%");
+			c.style.setProperty("--rail-p-track", produceTrack);
+			return c;
 		};
-		const out = { plain: cs(plain), dashed: cs(dashed) };
-		plain.remove();
-		dashed.remove();
+		const noneClone = mk(dashedTrack);
+		const newClone = mk(solidTrack);
+		word.parentElement!.append(noneClone, newClone);
+		const img = (el: HTMLElement) => getComputedStyle(el).backgroundImage;
+		const out = { none: img(noneClone), fresh: img(newClone) };
+		noneClone.remove();
+		newClone.remove();
 		return out;
 	});
-	expect(styles, "no rail found to clone").not.toBeNull();
-	expect(styles!.plain.img).toBe("none");
-	expect(styles!.plain.bg).not.toBe("rgba(0, 0, 0, 0)");
-	expect(styles!.dashed.bg).toBe("rgba(0, 0, 0, 0)");
-	expect(styles!.dashed.img).toContain("repeating-linear-gradient");
+	expect(styles, "no painted word found to clone").not.toBeNull();
+	expect(styles!.none, '"no card" rail did not paint dashes').toContain("repeating-linear-gradient");
+	expect(styles!.fresh, '"not started" rail painted dashes like a no-card rail').not.toContain(
+		"repeating-linear-gradient",
+	);
 });
 
 test("at 320px the transcript never overflows horizontally", async ({ page, request }) => {

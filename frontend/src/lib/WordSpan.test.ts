@@ -406,82 +406,100 @@ describe("WordSpan", () => {
     expect(container.querySelector('[role="tooltip"]')).not.toBeNull();
   });
 
-  describe("twin rails", () => {
+  describe("twin rails (painted in the word's padding)", () => {
     it("renders no rails for a word with no band fields", () => {
       const { container } = render(WordSpan, {
         props: { word: makeWordToken() },
       });
-      expect(container.querySelector(".word-rails")).toBeNull();
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.className).not.toContain("paint-rails");
+      expect(word.getAttribute("style")).toBeNull();
     });
 
     it("renders no rails when bands are explicitly null (untracked word)", () => {
       const { container } = render(WordSpan, {
         props: { word: makeWordToken({ understand_band: null, produce_band: null }) },
       });
-      expect(container.querySelector(".word-rails")).toBeNull();
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.className).not.toContain("paint-rails");
+      expect(word.getAttribute("style")).toBeNull();
     });
 
-    it("renders an understand rail filled to the band width", () => {
+    it("paints an understand rail filled to the band width and colour", () => {
       const { container } = render(WordSpan, {
         props: { word: makeWordToken({ understand_band: "weeks" }) },
       });
-      const rails = container.querySelector(".word-rails");
-      expect(rails).not.toBeNull();
-      const fills = rails!.querySelectorAll(".rail-fill");
-      expect(fills.length).toBe(1);
-      expect(fills[0].getAttribute("style")).toContain("width: 60%;");
-      expect(fills[0].getAttribute("style")).toContain("var(--band-weeks)");
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.className).toContain("paint-rails");
+      expect(word.style.getPropertyValue("--rail-u-fill")).toBe("var(--band-weeks)");
+      expect(word.style.getPropertyValue("--rail-u-pct")).toBe("60%");
+      expect(word.style.getPropertyValue("--rail-u-track")).toBe(
+        "linear-gradient(var(--band-track, #e4e9e6), var(--band-track, #e4e9e6))",
+      );
     });
 
-    it("renders one rail per non-null direction band", () => {
+    it("paints each direction from its own band", () => {
       const { container } = render(WordSpan, {
-        props: {
-          word: makeWordToken({ understand_band: "days", produce_band: "solid" }),
-        },
+        props: { word: makeWordToken({ understand_band: "days", produce_band: "solid" }) },
       });
-      const rails = container.querySelector(".word-rails");
-      expect(rails!.querySelectorAll(".rail").length).toBe(2);
-      const fills = rails!.querySelectorAll(".rail-fill");
-      expect(fills.length).toBe(2);
-      expect(fills[1].getAttribute("style")).toContain("width: 100%;");
-      expect(fills[1].getAttribute("style")).toContain("var(--band-solid)");
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.style.getPropertyValue("--rail-u-fill")).toBe("var(--band-days)");
+      expect(word.style.getPropertyValue("--rail-u-pct")).toBe("40%");
+      expect(word.style.getPropertyValue("--rail-p-fill")).toBe("var(--band-solid)");
+      expect(word.style.getPropertyValue("--rail-p-pct")).toBe("100%");
     });
 
-    it("omits the bottom rail when only the understand band is set", () => {
+    it("paints no produce layers when only the understand band is set", () => {
       const { container } = render(WordSpan, {
         props: { word: makeWordToken({ understand_band: "new" }) },
       });
-      const rails = container.querySelector(".word-rails");
-      expect(rails!.querySelectorAll(".rail").length).toBe(1);
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.style.getPropertyValue("--rail-p-fill")).toBe("transparent");
+      expect(word.style.getPropertyValue("--rail-p-pct")).toBe("0%");
+      expect(word.style.getPropertyValue("--rail-p-track")).toBe(
+        "linear-gradient(transparent, transparent)",
+      );
     });
 
-    it("draws an empty (unfilled) track for a produce band like suspended", () => {
+    it("draws an empty unfilled track for a produce band like suspended", () => {
       const { container } = render(WordSpan, {
         props: {
           word: makeWordToken({ understand_band: "learning", produce_band: "suspended" }),
         },
       });
-      const rails = container.querySelector(".word-rails");
-      expect(rails!.querySelectorAll(".rail").length).toBe(2);
-      expect(rails!.querySelectorAll(".rail-fill").length).toBe(1);
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.style.getPropertyValue("--rail-u-fill")).toBe("var(--band-learning)");
+      expect(word.style.getPropertyValue("--rail-u-pct")).toBe("20%");
+      expect(word.style.getPropertyValue("--rail-p-fill")).toBe("transparent");
+      expect(word.style.getPropertyValue("--rail-p-pct")).toBe("0%");
+      expect(word.style.getPropertyValue("--rail-p-track")).not.toContain(
+        "repeating-linear-gradient",
+      );
     });
 
-    it('draws an empty solid track for a "new" band', () => {
+    it('draws a solid empty track for a "new" band', () => {
       const { container } = render(WordSpan, {
         props: { word: makeWordToken({ understand_band: "new", produce_band: "new" }) },
       });
-      const rails = container.querySelector(".word-rails");
-      expect(rails!.querySelectorAll(".rail-fill").length).toBe(0);
-      expect(rails!.querySelector(".rail")!.className).not.toContain("rail-dashed");
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.style.getPropertyValue("--rail-u-fill")).toBe("transparent");
+      expect(word.style.getPropertyValue("--rail-p-fill")).toBe("transparent");
+      expect(word.style.getPropertyValue("--rail-u-track")).not.toContain(
+        "repeating-linear-gradient",
+      );
+      expect(word.style.getPropertyValue("--rail-p-track")).not.toContain(
+        "repeating-linear-gradient",
+      );
     });
 
-    it('draws a dashed empty track for the "none" (no card) band', () => {
+    it('draws a dashed track for the "none" (no card) band', () => {
       const { container } = render(WordSpan, {
         props: { word: makeWordToken({ understand_band: "none" }) },
       });
-      const rails = container.querySelector(".word-rails");
-      expect(rails!.querySelectorAll(".rail-fill").length).toBe(0);
-      expect(rails!.querySelector(".rail")!.className).toContain("rail-dashed");
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.style.getPropertyValue("--rail-u-fill")).toBe("transparent");
+      expect(word.style.getPropertyValue("--rail-u-pct")).toBe("0%");
+      expect(word.style.getPropertyValue("--rail-u-track")).toContain("repeating-linear-gradient");
     });
 
     it("skips rails when hideRails is true even with bands present", () => {
@@ -491,14 +509,9 @@ describe("WordSpan", () => {
           hideRails: true,
         },
       });
-      expect(container.querySelector(".word-rails")).toBeNull();
-    });
-
-    it("marks the rails container aria-hidden", () => {
-      const { container } = render(WordSpan, {
-        props: { word: makeWordToken({ understand_band: "learning" }) },
-      });
-      expect(container.querySelector(".word-rails")!.getAttribute("aria-hidden")).toBe("true");
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.className).not.toContain("paint-rails");
+      expect(word.getAttribute("style")).toBeNull();
     });
   });
 
@@ -507,13 +520,13 @@ describe("WordSpan", () => {
       props: { word: makeWordToken({ understand_band: "weeks" }) },
     });
 
-    expect(container.querySelector(".word-rails")).not.toBeNull();
+    expect(container.querySelector(".word")!.className).toContain("paint-rails");
 
     await rerender({ word: makeWordToken({ active_state: "ignored", srs_item_id: null }) });
 
     await waitFor(() => {
-      // bands gone → rails gone, static class applied
-      expect(container.querySelector(".word-rails")).toBeNull();
+      // bands gone → no paint class, ignored class applied
+      expect(container.querySelector(".word")!.className).not.toContain("paint-rails");
       expect(container.querySelector(".word")!.className).toContain("word-ignored");
     });
   });

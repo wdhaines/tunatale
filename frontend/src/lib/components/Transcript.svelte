@@ -7,7 +7,7 @@
 	import { buildScenes, fallbackScenes, cueHighlight } from '$lib/transcriptScenes';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { masteryColor } from '$lib/mastery';
-	import { railStyle } from '$lib/masteryBands';
+	import { railPropsFor } from '$lib/masteryBands';
 
 	interface CreatePhraseArgs {
 		text: string;
@@ -552,6 +552,10 @@
 										{@const collOffRamp = collocationOffRamp(segment.words[0].collocation_srs_state)}
 										{@const drilledIn = altHeld || expandedSpanId === segment.span_id}
 										{@const collUndoable = undoableItemId === segment.span_id && onCollocationUndo != null}
+										{@const collRailProps = railPropsFor({
+												understand_band: segment.words[0].collocation_understand_band,
+												produce_band: segment.words[0].collocation_produce_band,
+											})}
 										<Tooltip
 											translation={segment.words[0].collocation_translation}
 											suppressed={drilledIn}
@@ -570,7 +574,9 @@
 										>
 											<span
 												class="collocation-span"
+												class:paint-rails={collRailProps != null}
 												class:coll-bg-ignored={collOffRamp}
+												style={collRailProps ?? undefined}
 												role="button"
 												tabindex="0"
 												data-span-id={segment.span_id}
@@ -594,24 +600,6 @@
 														/>
 													{/each}
 												</span>
-												{#if segment.words[0].collocation_understand_band != null}
-													{@const collRailU = railStyle(segment.words[0].collocation_understand_band ?? null)}
-													{@const collRailP = railStyle(segment.words[0].collocation_produce_band ?? null)}
-													<span class="word-rails" aria-hidden="true">
-														<span class="rail {collRailU.dashed ? 'rail-dashed' : ''}">
-															{#if collRailU.fillStyle}
-																<span class="rail-fill" style={collRailU.fillStyle}></span>
-															{/if}
-														</span>
-														{#if segment.words[0].collocation_produce_band != null}
-															<span class="rail {collRailP.dashed ? 'rail-dashed' : ''}">
-																{#if collRailP.fillStyle}
-																	<span class="rail-fill" style={collRailP.fillStyle}></span>
-																{/if}
-															</span>
-														{/if}
-													</span>
-												{/if}
 											</span>
 										</Tooltip>
 									{:else}
@@ -993,13 +981,13 @@
 	}
 	.dialogue-words {
 		display: block;
-		/* Raised from 1.6 when the twin rails arrived (bd tunatale-yh47): the
-		   extra leading gives a rail a cleaner visual slot under its word.
-		   NOTE it does NOT keep a rail off the next wrapped row's text — flex
-		   grows the word box with the line-height, so the leading is consumed
-		   by the word itself; that clearance comes from `.word-rails`' bottom
-		   margin (see component sibling rules), which the rails spec measures. */
-		line-height: 1.8;
+		/* 1.7, the density value (bd tunatale-yh47): the rails no longer occupy
+		   the slot in the flex box — they are painted in each word's own
+		   padding-bottom — so this leading is the ONLY space between a line of
+		   text and the next. It must leave room for the 7px of padding the
+		   painted word carries without letting a rail touch the next row's
+		   text; the rails spec measures that clearance. */
+		line-height: 1.7;
 		user-select: text;
 	}
 	/* Interlinear L1 reads as a deliberate pair under the L2 line: indented and
@@ -1012,18 +1000,17 @@
 		font-size: 0.9rem;
 	}
 	.collocation-span {
-		/* Column flex so the word run and its rail pair stack, with the words on
-		   top; inline-flex keeps the phrase inline-level (shrink-to-fit width),
-		   `vertical-align: top` matches the per-word wrappers' alignment. */
-		display: inline-flex;
-		flex-direction: column;
-		vertical-align: top;
+		/* Inline again (bd tunatale-yh47 density), so a phrase wraps like text:
+		   the column-flex + child-rails stack of the element era is gone. The
+		   rails live under the span as painted background layers — see
+		   `.paint-rails` below — instead of as a second child row. */
+		display: inline;
 		cursor: pointer;
 		border-radius: 2px;
 		transition: background-color 0.1s;
 	}
-	/* The inner words flow inline (blockified by the flex layout) and wrap like
-	   normal text; the rail pair below stretches to the phrase's width. */
+	/* The inner words flow inline and wrap like normal text inside the inline
+	   span (which carries the phrase's painted rails). */
 	.collocation-words {
 		display: inline;
 	}
@@ -1038,44 +1025,32 @@
 		background-color: rgba(156, 163, 175, 0.15);
 		text-decoration: line-through;
 	}
-	/* Twin rails — same classes WordSpan uses, re-declared because Svelte scoping
-	   gives each component its own hashed selectors. WordSpan's `.word-rails` is
-	   per-word; here it is the single pair under a collocation phrase. The bottom
-	   margin clears the row below the phrase exactly as the per-word rails do
-	   (flex grows the word box with line-height, so only this margin buys space). */
-	.word-rails {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		margin-top: 2px;
-		margin-bottom: 6px;
-	}
-	.rail {
-		display: block;
-		width: 100%;
-		height: 4px;
-		border-radius: 1px;
-		background-color: var(--band-track, #e4e9e6);
-		overflow: hidden;
-	}
-	.rail-fill {
-		display: block;
-		height: 100%;
-	}
-	.rail-dashed {
-		/* "No card" must read differently from "not started" (an empty track):
-		   clear the track colour, and draw thinner dashes in the muted ink.
-		   Dashes in the track colour over a track-coloured background painted a
-		   solid track — the two states were indistinguishable. */
-		height: 2px;
-		margin-block: 1px;
-		background-color: transparent;
-		background-image: repeating-linear-gradient(
-			90deg,
-			var(--color-muted, #6b7280) 0 3px,
-			transparent 3px 6px
-		);
-		opacity: 0.7;
+	/* Twin rails — painted exactly like WordSpan's `.word` (same four layers,
+	   same custom props), re-declared because Svelte scoping gives each
+	   component its own hashed selectors. `box-decoration-break: clone` makes
+	   a phrase that wraps across rows paint full rails at the end of one row
+	   AND the start of the next. The neutral grey of a suspended/ignored span
+	   is background-color, so it sits under these image layers and still shows. */
+	.collocation-span.paint-rails {
+		padding-bottom: 7px;
+		-webkit-box-decoration-break: clone;
+		box-decoration-break: clone;
+		background-repeat: no-repeat;
+		background-image:
+			linear-gradient(var(--rail-u-fill, transparent), var(--rail-u-fill, transparent)),
+			var(--rail-u-track, var(--band-track, #e4e9e6)),
+			linear-gradient(var(--rail-p-fill, transparent), var(--rail-p-fill, transparent)),
+			var(--rail-p-track, var(--band-track, #e4e9e6));
+		background-size:
+			var(--rail-u-pct, 0%) 3px,
+			100% 3px,
+			var(--rail-p-pct, 0%) 3px,
+			100% 3px;
+		background-position:
+			left bottom 4px,
+			left bottom 4px,
+			left bottom 0,
+			left bottom 0;
 	}
 	.phrase-confirm-bar {
 		display: flex;
