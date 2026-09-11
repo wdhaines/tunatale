@@ -306,6 +306,69 @@ the investigation. A full RTO also needs the data restore onto a different
 machine (`tunatale-kbb.6`), which has not been performed yet. Until it has, the
 honest RTO is unmeasured.
 
+## Shipping an image
+
+Production runs a **tagged image that a human chose**, never `git pull` of
+main. The commit gate is local and nothing on the box re-runs `./test.sh`, so
+the image is not evidence the code is good — **CI is**. Build a SHA that CI has
+already gone green on.
+
+### Build
+
+`.github/workflows/deploy.yml`, dispatched by hand (or by pushing a `v*` tag):
+
+```bash
+gh workflow run deploy-images                # this branch's head
+gh workflow run deploy-images -f ref=<sha>   # a specific commit
+```
+
+It pushes two images to GHCR, both tagged with the **full commit SHA**:
+`tunatale-api` (uvicorn; `init` reuses it with another entrypoint) and
+`tunatale-web` (Caddy + the built SPA). The build states `platforms:
+linux/amd64` explicitly rather than inheriting the runner's architecture, and
+then asserts it on the pushed manifest — an image with the wrong arch pushes and
+pulls happily and fails only when the box tries to execute it.
+
+### Deploy, and roll back
+
+```bash
+./deploy.sh <full-sha>     # deploy
+./deploy.sh --current      # what is running
+./deploy.sh --history      # what has run here, newest first
+```
+
+**A rollback is not a separate mode — it is `./deploy.sh <older-sha>`.** A
+recovery path that only runs during a recovery is a path nobody has tested;
+this way every deploy exercises it.
+
+What the script does, and what it refuses:
+
+- Copies `docker-compose.yml` to the box and writes `TT_TAG=<sha>` into `.env`
+  beside it. Compose interpolates that file, so the tag is recorded on the box
+  rather than living in shell history.
+- **Never ships `backend/.env`.** That file holds secrets and exists only on
+  the box; the script fails early if it is missing rather than letting compose
+  get halfway.
+- Refuses anything but a full 40-character SHA. A branch name or short SHA makes
+  "what is running?" unanswerable later.
+- Waits for the `api` container to report **healthy**, and on failure prints the
+  last 40 log lines and the exact rollback command.
+- Appends to `deploy-history.log` **only after health passes**, so the log
+  records what actually ran.
+
+The compose file is one file for dev and prod on purpose — a prod-only copy
+drifts silently. `image:` is what the box pulls; `build:` is what a laptop uses.
+`TT_TAG` has no default (`:?`, not `:-latest`), so a mistyped deploy fails
+closed instead of shipping "whatever latest is".
+
+### Not verified yet
+
+The image build, the pull, the health gate and the rollback have **not been run
+end to end** at the time of writing — `workflow_dispatch` only becomes available
+once the workflow is on the default branch. Until this paragraph is replaced by
+a measurement, treat this section as intended procedure rather than tested
+procedure.
+
 ## Accounts
 
 There is **no self-serve signup**, by design, at any point in Phases 1–3. Every

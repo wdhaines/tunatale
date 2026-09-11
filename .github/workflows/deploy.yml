@@ -1,0 +1,109 @@
+# Builds the two production images and pushes them to GHCR.
+#
+# ⚠️ NOT triggered by a push to main, deliberately. The commit gate is local and
+# nothing on the box re-runs ./test.sh, so production runs a TAGGED IMAGE that a
+# human chose — never whatever main happens to be. Shipping is a decision, and
+# this workflow is where that decision is recorded.
+#
+# The image is not proof the code is good: CI is what says that. Build a SHA
+# that CI has already gone green on.
+name: deploy-images
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit SHA, branch or tag to build (default: this branch's head)"
+        required: false
+        type: string
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  # One build per ref. A second dispatch of the same SHA is a re-push of bytes
+  # that already exist; cancelling it loses nothing.
+  group: deploy-images-${{ github.event.inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.ref || github.sha }}
+
+      # The SHA of what was CHECKED OUT, which is not github.sha when the
+      # dispatch names a ref. This is the tag the box pulls and the thing a
+      # rollback names, so it must be the real commit and never a branch name.
+      - name: Resolve the commit being shipped
+        id: rev
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `platforms:` is stated EXPLICITLY rather than inherited from the runner.
+      # ubuntu-latest is amd64 today; if that ever changes, or if this is
+      # re-dispatched from an arm runner, an inherited arch would silently ship
+      # an image the e2-micro cannot execute. The host is amd64 (tunatale-kbb.4).
+      - name: Build and push the API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: api
+          platforms: linux/amd64
+          provenance: false
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/tunatale-api:${{ steps.rev.outputs.sha }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      - name: Build and push the web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: web
+          platforms: linux/amd64
+          provenance: false
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/tunatale-web:${{ steps.rev.outputs.sha }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+      # An image whose arch is wrong still pushes, still pulls, and fails only
+      # when the box tries to run it. Assert it here, where it is cheap.
+      - name: The pushed images must be linux/amd64
+        run: |
+          set -euo pipefail
+          for image in api web; do
+            ref="ghcr.io/${{ github.repository_owner }}/tunatale-$image:${{ steps.rev.outputs.sha }}"
+            arch=$(docker buildx imagetools inspect "$ref" --format '{{ (index .Manifest.Manifests 0).Platform.OS }}/{{ (index .Manifest.Manifests 0).Platform.Architecture }}' 2>/dev/null \
+              || docker buildx imagetools inspect "$ref" --raw | jq -r '.architecture // "unknown"')
+            echo "$ref -> $arch"
+            case "$arch" in
+              linux/amd64|amd64) ;;
+              *) echo "::error::$ref is $arch, not linux/amd64"; exit 1 ;;
+            esac
+          done
+
+      - name: Summary
+        run: |
+          {
+            echo "### Shipped \`${{ steps.rev.outputs.sha }}\`"
+            echo
+            echo '```bash'
+            echo "./deploy.sh ${{ steps.rev.outputs.sha }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
