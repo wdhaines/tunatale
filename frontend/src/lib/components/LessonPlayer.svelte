@@ -357,6 +357,17 @@
 					phase = 'key_phrases';
 					applyTrack();
 					ctrl.play();
+				} else if (ctrl.resumeSection !== null && ctrl.resumeSection !== ctrl.activeSectionType) {
+					// A restart mid-run: resume the pass it was on. Hands-free never
+					// persists the track it advances to, so the saved selection applied
+					// above is the ENTRY track, and the resume's section disagrees with
+					// it on every hands-free restart — which the controller reads as a
+					// stale offset and discards, landing on Natural at 0 (tunatale-muff).
+					// Selecting it AFTER setHandsFree keeps the entry track as the
+					// restore point for "hands-free off"; the mirror will not persist it
+					// because hands-free is on. selectTrack no-ops on a section this
+					// lesson lacks, and the controller then discards the offset itself.
+					ctrl.selectTrack(ctrl.resumeSection, null, true);
 				}
 			}
 		}

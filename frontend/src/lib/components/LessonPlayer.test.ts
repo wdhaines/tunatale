@@ -1181,6 +1181,116 @@ describe("LessonPlayer", () => {
       expect(h.ctrl.playing).toBe(false);
     });
 
+    // ── muff: a hands-free restart resumes the pass it was on ──────────────
+    // USER 2026-09-11: "restarts aren't saving the position ... it always goes
+    // back to natural speed." Resume saves {section, position}, but hands-free
+    // deliberately never persists the track it advanced to (see "does NOT
+    // rewrite the saved English setting" above). So on remount the SAVED
+    // selection loaded, the resume's section no longer matched, and the
+    // controller discarded the offset — exactly as designed for the non-hands-
+    // free case, and wrong for this one, where the two ALWAYS disagree.
+    const RESUME_KEY = "tt-resume-l1";
+
+    /** Mounts, then delivers the active track's metadata so a pending resume
+     *  lands. The controller's element comes from `new Audio()` and is never in
+     *  the document, so it is recorded at construction (see the onSequenceEnd
+     *  test below). */
+    async function mountAndLoad() {
+      const created: HTMLAudioElement[] = [];
+      const OrigAudio = globalThis.Audio;
+      class RecordingAudio extends OrigAudio {
+        constructor(src?: string) {
+          super(src);
+          created.push(this);
+        }
+      }
+      globalThis.Audio = RecordingAudio as unknown as typeof Audio;
+      try {
+        const h = mount();
+        await tick();
+        const el = created[0];
+        Object.defineProperty(el, "duration", { value: 120, configurable: true });
+        el.dispatchEvent(new Event("loadedmetadata"));
+        await tick();
+        return h;
+      } finally {
+        globalThis.Audio = OrigAudio;
+      }
+    }
+
+    function seed(resume: { section: string; position: number }, handsFree: boolean) {
+      if (handsFree) localStorage.setItem(HF_KEY, "on");
+      localStorage.setItem(
+        SEL_KEY,
+        JSON.stringify({ phase: "dialogue", enunciation: "natural", english: "off" }),
+      );
+      localStorage.setItem(RESUME_KEY, JSON.stringify(resume));
+    }
+
+    it("a hands-free restart mid-pass resumes THAT pass at its offset, not Natural at 0", async () => {
+      seed({ section: "slow_speed", position: 42 }, true);
+      const h = await mountAndLoad();
+      expect(h.ctrl.activeSectionType).toBe("slow_speed");
+      expect(h.ctrl.currentTime).toBe(42);
+      // A restart is not a play: resuming the place must not start the audio.
+      expect(h.ctrl.playing).toBe(false);
+    });
+
+    it("resuming a pass does not persist it as the user's chosen selection", async () => {
+      seed({ section: "slow_speed", position: 42 }, true);
+      await mountAndLoad();
+      expect(JSON.parse(localStorage.getItem(SEL_KEY)!).enunciation).toBe("natural");
+    });
+
+    it("after a resumed restart, turning hands-free off still returns to the saved track", async () => {
+      seed({ section: "slow_speed", position: 42 }, true);
+      const h = await mountAndLoad();
+      fireEvent.click(h.container.querySelector<HTMLButtonElement>(".hands-free-toggle")!);
+      await tick();
+      expect(h.ctrl.activeSectionType).toBe("natural_speed");
+    });
+
+    it("a restart during the key phrases a hand-off started on resumes the key phrases", async () => {
+      // The same bug from the other side: the hand-off opens at Key Phrases
+      // without persisting it, so a refresh there fell back to Natural too.
+      seed({ section: "key_phrases", position: 7 }, true);
+      const h = await mountAndLoad();
+      expect(h.ctrl.activeSectionType).toBe("key_phrases");
+      expect(h.ctrl.currentTime).toBe(7);
+    });
+
+    it("with hands-free OFF a mismatched saved section is still discarded (9idn's guard)", async () => {
+      // The control: the fix must be scoped to hands-free. Off, the saved
+      // selection is what the user chose, and a stale offset from another
+      // section would land at the right seconds in the WRONG section.
+      seed({ section: "slow_speed", position: 42 }, false);
+      const h = await mountAndLoad();
+      expect(h.ctrl.activeSectionType).toBe("natural_speed");
+      expect(h.ctrl.currentTime).toBe(0);
+    });
+
+    it("a resume already on the saved track lands without a swap", async () => {
+      seed({ section: "natural_speed", position: 42 }, true);
+      const h = await mountAndLoad();
+      expect(h.ctrl.activeSectionType).toBe("natural_speed");
+      expect(h.ctrl.currentTime).toBe(42);
+    });
+
+    it("a saved section this lesson no longer has leaves the saved selection in place", async () => {
+      seed({ section: "no_such_section", position: 42 }, true);
+      const h = await mountAndLoad();
+      expect(h.ctrl.activeSectionType).toBe("natural_speed");
+      expect(h.ctrl.currentTime).toBe(0);
+    });
+
+    it("the hand-off still opens at Key Phrases from the top, ignoring an old resume", async () => {
+      seed({ section: "slow_speed", position: 42 }, true);
+      sessionStorage.setItem(BATON, "1");
+      const h = mount();
+      await tick();
+      expect(h.ctrl.activeSectionType).toBe("key_phrases");
+    });
+
     it("a baton with hands-free OFF is ignored and cleared", async () => {
       sessionStorage.setItem(BATON, "1");
       const h = mount();

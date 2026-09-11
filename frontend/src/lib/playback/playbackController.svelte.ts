@@ -30,6 +30,11 @@ export interface PlaybackController {
   readonly repeatLatched: boolean;
   readonly activeSectionType: string | null;
   readonly activeCues: Cue[] | null;
+  // The section a saved resume offset belongs to, while that offset is still
+  // waiting for loadedmetadata; null once applied or discarded, or when there
+  // is no offset or the saved value predates per-section resume. Not reactive —
+  // it is read once, at mount.
+  readonly resumeSection: string | null;
 
   play(): void;
   pause(): void;
@@ -737,6 +742,9 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     },
     get activeCues() {
       return activeCues;
+    },
+    get resumeSection() {
+      return pendingResume !== null ? pendingResumeSection : null;
     },
 
     play() {

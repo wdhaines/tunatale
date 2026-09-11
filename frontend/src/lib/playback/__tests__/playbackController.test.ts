@@ -1133,6 +1133,33 @@ describe("playbackController", () => {
       expect(ctrl.duration).toBe(100);
     });
 
+    it("exposes the pending resume's section until loadedmetadata spends it", () => {
+      // LessonPlayer reads this at mount to put a hands-free restart back on
+      // the pass it was playing (tunatale-muff).
+      fakeLocalStorage.setItem(
+        "tt-resume-l1",
+        JSON.stringify({ section: "slow_speed", position: 9 }),
+      );
+      const ctrl = createController({ storage: fakeLocalStorage, lessonId: "l1" });
+      expect(ctrl.resumeSection).toBe("slow_speed");
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(ctrl.resumeSection).toBeNull();
+    });
+
+    it("has no resume section without an offset to apply, or for a legacy bare number", () => {
+      fakeLocalStorage.setItem(
+        "tt-resume-l1",
+        JSON.stringify({ section: "slow_speed", position: 0 }),
+      );
+      expect(
+        createController({ storage: fakeLocalStorage, lessonId: "l1" }).resumeSection,
+      ).toBeNull();
+      fakeLocalStorage.setItem("tt-resume-l1", "8.3");
+      expect(
+        createController({ storage: fakeLocalStorage, lessonId: "l1" }).resumeSection,
+      ).toBeNull();
+    });
+
     it("discards a saved position past the end of the audio", () => {
       fakeLocalStorage.setItem("tt-resume-l1", "150");
       const ctrl = createController({ storage: fakeLocalStorage, lessonId: "l1" });
