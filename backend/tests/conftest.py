@@ -1024,3 +1024,21 @@ def fake_driver(monkeypatch):
 
     monkeypatch.setattr(so, "_run_driver", _fake)
     return op_log
+
+
+@pytest.fixture(autouse=True)
+def _clear_pixabay_search_cache():
+    """Isolate the 24h Pixabay search cache (tunatale-kbb.12) between tests.
+
+    ``pixabay._search_cache`` is module-level and process-lived. Without this,
+    one test's cached result set is visible to every later test that searches
+    the same ``(query, per_page)`` — including tests that substitute a fake
+    transport, which would then assert against another test's hits while making
+    no request of their own. That is a silent wrong-reason pass, not a failure,
+    so it is worth an autouse fixture rather than per-file discipline.
+    """
+    from app.cards.media import pixabay
+
+    pixabay._search_cache.clear()
+    yield
+    pixabay._search_cache.clear()

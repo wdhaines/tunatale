@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import re
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -57,6 +58,24 @@ class PixabaySearch:
     status: str  # exactly one of: "ok" | "no_results" | "rate_limited" | "api_error"
 
 
+# 24h TTL cache of successful search results, in FRONT of the API layer.
+# Pixabay's terms require search RESULTS be cached 24h rather than re-requested.
+# Both the card-creation path (``fetch_pixabay_image``) and the image picker
+# (``app.api.srs_images.get_image_candidates``) funnel through
+# ``search_pixabay``, so one module-level cache serves them both. In-process
+# only: sufficient for a single box, and it does not need to survive a restart.
+_SEARCH_CACHE_TTL_SECONDS = 24 * 60 * 60
+# Only a successful classification is cached: a transient failure or an empty
+# result set must not suppress a real search for 24 hours.
+_CACHEABLE_STATUSES = frozenset({"ok"})
+_search_cache: dict[tuple[str, int], tuple[float, PixabaySearch]] = {}
+
+
+def _search_cache_now() -> float:
+    """Monotonic 'now' for the cache TTL, extracted so tests can control it."""
+    return time.monotonic()
+
+
 def search_pixabay(
     query: str,
     *,
@@ -65,6 +84,41 @@ def search_pixabay(
     per_page: int = 50,
 ) -> PixabaySearch:
     """Search Pixabay for images matching *query*. Returns classified status.
+
+    Successful results are cached for 24h keyed by ``(query, per_page)`` — the
+    query string alone is not enough, because ``per_page`` changes the result
+    set. ``api_key`` is deliberately not in the key: the same query is the same
+    search regardless of which key authenticated it.
+
+    An explicit ``http_client`` does NOT bypass the cache in either direction.
+    It is tempting to let such a caller read but not populate, on the grounds
+    that it brought its own transport — but ``fetch_pixabay_image`` (the
+    add-card path) passes its own client, so that rule would mean the whole
+    card-creation path re-requests every time and Pixabay's 24h caching term
+    goes unmet exactly where the traffic is. Tests that substitute a transport
+    are isolated by the autouse ``_clear_pixabay_search_cache`` fixture in
+    ``conftest.py``, not by a carve-out here.
+    """
+    key = (query, per_page)
+    now = _search_cache_now()
+    cached = _search_cache.get(key)
+    if cached is not None and now - cached[0] < _SEARCH_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    result = _search_pixabay(query, api_key=api_key, http_client=http_client, per_page=per_page)
+    if result.status in _CACHEABLE_STATUSES:
+        _search_cache[key] = (now, result)
+    return result
+
+
+def _search_pixabay(
+    query: str,
+    *,
+    api_key: str,
+    http_client: httpx.Client | None = None,
+    per_page: int = 50,
+) -> PixabaySearch:
+    """The network call itself, wrapped by :func:`search_pixabay`'s result cache.
 
     Only HTTP calls get try/except — a programming error must raise, not be
     swallowed.

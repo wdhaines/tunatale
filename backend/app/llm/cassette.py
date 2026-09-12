@@ -63,6 +63,14 @@ class CassetteLLMClient:
         self._playback_used: dict[str, int] = {}
 
         if mode in ("mock", "patch"):
+            if not cassette_path.exists():
+                raise FileNotFoundError(
+                    f"Cassette-backed mode {mode!r} requires a cassette file at {cassette_path}, "
+                    "but no such file exists. The production image ships no tests/cassettes, so "
+                    f"booting it with llm_mode={mode!r} cannot replay anything. "
+                    "Set llm_mode=live for a real backend, or mount a cassette that recorded "
+                    "real LLM responses at that path."
+                )
             data = json.loads(cassette_path.read_text())
             version = data.get("version")
             if version != CASSETTE_VERSION:
