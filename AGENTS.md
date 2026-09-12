@@ -65,7 +65,7 @@ All commands use `uv run` (no manual venv activation). Never commit `.env`. Groq
 - **Anki tests**: use the `fake_anki_db*` fixtures from `conftest.py` — never a real `collection.anki2`
 - **Mock-boundary check**: `./test.sh` + CI fail any `patch("app.…")` not in `backend/tests/mock_allowlist.txt`. **Zero tolerance** — the grandfather ledger was drained to empty and deleted (2026-07-30); the allowlist is the only escape hatch and additions need sign-off. See `.claude/rules/testing.md`
 - **Peer-sync tests** (`--run-peer-sync`): auto-start a throwaway `anki.syncserver`. Tier 1 as of 2026-08-14 — a third parallel group in `./test.sh`, not a manual step.
-- **CI is authoritative; `./test.sh` is a strict SUBSET of it** (`tunatale-as5`, 2026-08-14). Green locally is necessary but not sufficient. **Adding a check to `test.sh` obliges you to add it to `ci.yml` in the same commit**; the reverse is not required. Six parallel job instances in `.github/workflows/ci.yml` — backend (ruff → checkers → pytest), `backend-hostile-tz` (×1, `Etc/GMT-3`), `backend-hostile-hour`, frontend, `e2e` (Playwright), and `anki-gates` (oracle-parity + peer-sync, merged 2026-09-01 as `tunatale-ej8.2` — they were byte-identical apart from their final step, and job COUNT is what drives the tail). **It was eight until 2026-08-31**: `backend-hostile-tz` ran a two-zone matrix at the extremes (UTC+14 / UTC-12), and both instances were measured blind to the only offset bug this repo has ever found, which reproduces at UTC+2..+4 — so the pair was replaced by one instance inside that band (`tunatale-vnf.9`). Job COUNT, not job speed, drives the CI tail. The measurement and the redundancy argument are in the comment above the job. **THREE jobs now override the workflow's `TZ: UTC`, not two** — `backend-hostile-tz` (offset), `backend-hostile-hour` (clock), and, since 2026-09-03, `anki-gates`, which runs BOTH Anki gates at the 04:00 rollover via `.github/actions/hostile-hour-tz`. It was moved there because the two clock defences were orthogonal in the wrong direction: `backend-hostile-hour` sat in the rollover band on every run but passes no `--run-oracle`, so it had never run a parity test, while `anki-gates` ran them all at `TZ: UTC` and reached the band in **1 run out of 598** — which went red the first time it did. Neither job was misconfigured; the hole was at their intersection. ⚠️ If `anki-gates` goes red at the boundary while `backend` is green, suspect PRODUCT code first — the opposite of the guidance for `backend-hostile-tz`, because only `anki-gates` has an oracle to tell "TT and Anki disagree about the day" from "a fixture encodes a wall-clock assumption". The clock/offset jobs are the only CI-only checks; there are no local-only ones. ⚠️ **CI RUNS LEAN, and that split is real** (`0344f42`, 2026-08-31, `tunatale-ouk.6`/`.9`): every backend job installs `uv sync --no-default-groups --group dev` with `UV_NO_SYNC: "1"` at job level, so classla/stanza/torch/transformers are absent there. **A test may import only what the `dev` group declares** — anything transitive through the language groups (e.g. `yaml` via transformers) is green locally and `ModuleNotFoundError` in all four backend jobs. Declare it in `dev`; never widen CI's groups. This *replaces* the older "the `--no-group` flags were cosmetic" note, which was true of the flags it described and stopped being true when `UV_NO_SYNC` landed. Full rationale: `.claude/rules/testing.md` § "What a green gate means".
+- **CI is authoritative; `./test.sh` is a strict SUBSET of it** (`tunatale-as5`, 2026-08-14). Green locally is necessary but not sufficient. **Adding a check to `test.sh` obliges you to add it to `ci.yml` in the same commit**; the reverse is not required. Six parallel job instances in `.github/workflows/ci.yml` — backend (ruff → checkers → pytest), `backend-hostile-tz` (×1, `Etc/GMT-3`), `backend-hostile-hour`, frontend, `e2e` (Playwright), and `anki-gates` (oracle-parity + peer-sync in one job, because job COUNT is what drives the tail). `backend-hostile-tz` runs ONE instance inside UTC+2..+4, not a matrix at the extremes, because that band is where the only offset bug this repo has ever found reproduces — an extremes matrix is measured blind to it. Job COUNT, not job speed, drives the CI tail. The measurement and the redundancy argument are in the comment above the job. **THREE jobs override the workflow's `TZ: UTC`** — `backend-hostile-tz` (offset), `backend-hostile-hour` (clock), and `anki-gates`, which runs BOTH Anki gates at the 04:00 rollover via `.github/actions/hostile-hour-tz`. The Anki gates must run at the rollover specifically: `backend-hostile-hour` sits in the band on every run but passes no `--run-oracle`, so it can never catch a parity bug there, and a parity job left at `TZ: UTC` reaches the band about once in 600 runs — which is not a defence. Neither job is misconfigured on its own; the hole is at their intersection. ⚠️ If `anki-gates` goes red at the boundary while `backend` is green, suspect PRODUCT code first — the opposite of the guidance for `backend-hostile-tz`, because only `anki-gates` has an oracle to tell "TT and Anki disagree about the day" from "a fixture encodes a wall-clock assumption". The clock/offset jobs are the only CI-only checks; there are no local-only ones. ⚠️ **CI RUNS LEAN, and that split is real** (`0344f42`, 2026-08-31, `tunatale-ouk.6`/`.9`): every backend job installs `uv sync --no-default-groups --group dev` with `UV_NO_SYNC: "1"` at job level, so classla/stanza/torch/transformers are absent there. **A test may import only what the `dev` group declares** — anything transitive through the language groups (e.g. `yaml` via transformers) is green locally and `ModuleNotFoundError` in all four backend jobs. Declare it in `dev`; never widen CI's groups. Full rationale: `.claude/rules/testing.md` § "What a green gate means".
 
 ## Key Conventions
 
@@ -102,8 +102,10 @@ Most `.claude/rules/*.md` carry `paths:` frontmatter — Claude Code auto-loads 
   ```
   Then read `/tmp/gate.txt`: require `=== All checks passed ===` (the failure form
   is `=== FAILED (backend=N frontend=N peer_sync=N) ===`), 100.00% backend
-  coverage, and a sane ruff count (~446 and growing; a tiny N means discovery
-  broke).
+  coverage, and a sane ruff count — it only ever grows, so compare it against the
+  previous run rather than any number written here (which rots):
+  `awk -F'\t' '$3=="Ruff format check"' .git/tt-test-history.log`. A DROP, or a
+  two-digit N, means discovery broke.
   **Two fictional greens on 2026-07-29, same root class:**
   1. `./test.sh > log 2>&1; echo "EXIT=$?"` printed `EXIT=0` while the log said
      `no such file or directory: ./test.sh` — an earlier `cd` had persisted across
@@ -277,19 +279,18 @@ briefs and stops committing. ⚠️ **That drift is a prediction and has never b
 measured.** The ban stands on asymmetry — running it by hand costs nothing, and
 the failure it guards against would be silent.
 
-⚠️ **Audited against the real output 2026-08-18. This used to claim four
-contradictions; only two are real, and on one of them beads is right.**
+⚠️ **Two of bd's own "Core Rules" conflict with this repo's** (audited against
+the real output; re-audit if bd's rules change):
 - **"Create beads issue BEFORE writing code"** — a real conflict, and ours is
   the sloppier side: most commits here have no bead.
 - **"Do NOT use MEMORY.md"** — a real conflict where we are right for this
   situation. Its stated reason is that they "fragment across accounts"; this is
   one user on one machine, and MEMORY.md is the harness's own system, not a
   choice bd can override.
-- "No markdown files for task tracking" — **not a conflict.** Tracking lives in
-  bd; `.beads-tasks/briefs/` holds documents, not a task list.
-- "Git workflow: stealth mode (no git ops)" — **not a conflict, and reading it
-  as one was backwards.** That line is bd echoing OUR OWN config (`no-git-ops`),
-  which is a privacy guard — see the stealth-mode note below.
+
+Its other rules look like conflicts and are not: tracking does live in bd
+(`.beads-tasks/briefs/` holds documents, not a task list), and "stealth mode (no
+git ops)" is bd echoing OUR OWN config — a privacy guard, see below.
 
 ⚠️ **bd's JSON is not one shape, and a wrong field name returns a clean negative
 rather than an error.** Verify any field against a record whose answer you
