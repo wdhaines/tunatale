@@ -6,6 +6,7 @@
 	import ImageEditModal from '$lib/components/ImageEditModal.svelte';
 	import ClozeSentenceModal from '$lib/components/ClozeSentenceModal.svelte';
 	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	const PAGE_SIZE = 50;
 
@@ -37,7 +38,7 @@
 	let focusId = $state<number | null>(null);
 
 	function handleSyncResult() {
-		syncStatus = 'Synced with AnkiWeb';
+		syncStatus = t('cards.synced');
 		loadItems();
 	}
 
@@ -171,7 +172,7 @@
 	}
 
 	async function deleteItem(id: number) {
-		if (!(await confirmDialog('Delete this item?', { destructive: true }))) return;
+		if (!(await confirmDialog(t('cards.confirmDeleteItem'), { destructive: true }))) return;
 		try {
 			await api.deleteSRSItem(id);
 			await loadItems();
@@ -181,7 +182,7 @@
 	}
 
 	async function resetItem(id: number) {
-		if (!(await confirmDialog('Reset this item? It will be forgotten in Anki too and re-learned from scratch.', { destructive: true }))) return;
+		if (!(await confirmDialog(t('cards.confirmResetItem'), { destructive: true }))) return;
 		try {
 			await api.resetSRSItem(id);
 			await loadItems();
@@ -201,7 +202,7 @@
 	}
 
 	async function bulkDelete() {
-		if (!(await confirmDialog(`Delete ${selected.size} selected items?`, { destructive: true }))) return;
+		if (!(await confirmDialog(t('cards.confirmBulkDelete', { count: selected.size }), { destructive: true }))) return;
 		try {
 			await api.bulkDeleteSRSItems([...selected]);
 			selected = new Set();
@@ -259,26 +260,26 @@
 
 <main>
 	<div class="toolbar">
-		<h1>Cards <span class="muted">· {total} total{#if queueStats} · {queueStats.new} new · {queueStats.learning} learning · {queueStats.review} review{/if}</span></h1>
+		<h1>{t('cards.pageTitle')} <span class="muted">· {total} {t('cards.statTotal')}{#if queueStats} · {queueStats.new} {t('cards.statNew')} · {queueStats.learning} {t('cards.statLearning')} · {queueStats.review} {t('cards.statReview')}{/if}</span></h1>
 		<div class="controls">
 			<input
 				type="search"
-				placeholder="Search cards"
+				placeholder={t('cards.searchPlaceholder')}
 				bind:value={search}
 				oninput={onSearchInput}
 			/>
 			<select bind:value={stateFilter} onchange={() => { page = 0; }}>
-				<option value="">All states</option>
-				<option value="new">new</option>
-				<option value="learning">learning</option>
-				<option value="review">review</option>
-				<option value="relearning">relearning</option>
-				<option value="suspended">suspended</option>
+				<option value="">{t('cards.allStates')}</option>
+				<option value="new">{t('cards.stateNew')}</option>
+				<option value="learning">{t('cards.stateLearning')}</option>
+				<option value="review">{t('cards.stateReview')}</option>
+				<option value="relearning">{t('cards.stateRelearning')}</option>
+				<option value="suspended">{t('cards.stateSuspended')}</option>
 			</select>
 			{#if selected.size > 0}
-				<button class="danger" onclick={bulkDelete}>Delete selected ({selected.size})</button>
+				<button class="danger" onclick={bulkDelete}>{t('cards.deleteSelected', { count: selected.size })}</button>
 			{/if}
-			<button onclick={loadItems} title="Refresh">⟳</button>
+			<button onclick={loadItems} title={t('cards.refresh')}>⟳</button>
 		</div>
 	</div>
 
@@ -296,18 +297,18 @@
 				<input type="checkbox" checked={selected.size === items.length && items.length > 0} onchange={toggleSelectAll} />
 			</span>
 			<span class="col-img"></span>
-			<span class="col-text"><button class="sort-btn" onclick={() => setSort('text')}>text{sortIndicator('text')}</button></span>
-			<span class="col-trans"><button class="sort-btn" onclick={() => setSort('translation')}>translation{sortIndicator('translation')}</button></span>
-			<span class="col-state"><button class="sort-btn" onclick={() => setSort('state')}>state{sortIndicator('state')}</button></span>
-			<span class="col-due"><button class="sort-btn" onclick={() => setSort('due_at')}>due{sortIndicator('due_at')}</button></span>
-			<span class="col-reps"><button class="sort-btn" onclick={() => setSort('reps')}>reps{sortIndicator('reps')}</button></span>
-			<span class="col-actions">actions</span>
+			<span class="col-text"><button class="sort-btn" onclick={() => setSort('text')}>{t('cards.colText')}{sortIndicator('text')}</button></span>
+			<span class="col-trans"><button class="sort-btn" onclick={() => setSort('translation')}>{t('cards.colTranslation')}{sortIndicator('translation')}</button></span>
+			<span class="col-state"><button class="sort-btn" onclick={() => setSort('state')}>{t('cards.colState')}{sortIndicator('state')}</button></span>
+			<span class="col-due"><button class="sort-btn" onclick={() => setSort('due_at')}>{t('cards.colDue')}{sortIndicator('due_at')}</button></span>
+			<span class="col-reps"><button class="sort-btn" onclick={() => setSort('reps')}>{t('cards.colReps')}{sortIndicator('reps')}</button></span>
+			<span class="col-actions">{t('cards.colActions')}</span>
 		</div>
 
 		{#if loading}
-			<p class="muted pulse">Loading…</p>
+			<p class="muted pulse">{t('cards.loading')}</p>
 		{:else if items.length === 0}
-			<p class="muted">No items found.</p>
+			<p class="muted">{t('cards.noItemsFound')}</p>
 		{:else}
 			{#each items as item (item.id)}
 				{#if editingId === item.id}
@@ -320,8 +321,8 @@
 						<span class="col-due">{formatDue(item.due_at)}</span>
 						<span class="col-reps">{item.reps}</span>
 						<span class="col-actions">
-							<button onclick={() => saveEdit(item.id)}>Save</button>
-							<button onclick={cancelEdit}>Cancel</button>
+							<button onclick={() => saveEdit(item.id)}>{t('cards.save')}</button>
+							<button onclick={cancelEdit}>{t('cards.cancel')}</button>
 						</span>
 					</div>
 				{:else}
@@ -331,11 +332,11 @@
 						</span>
 						<span class="col-img">
 							{#if item.image_url}
-								<button class="thumb-btn" onclick={() => { closeMenu(); imageEditItem = item; }} title="Change image">
+								<button class="thumb-btn" onclick={() => { closeMenu(); imageEditItem = item; }} title={t('cards.changeImageTitle')}>
 									<img src={item.image_url} alt="" />
 								</button>
 							{:else}
-								<button class="thumb-btn thumb-empty" onclick={() => { closeMenu(); imageEditItem = item; }} title="Add image">+</button>
+								<button class="thumb-btn thumb-empty" onclick={() => { closeMenu(); imageEditItem = item; }} title={t('cards.addImage')}>+</button>
 							{/if}
 						</span>
 						<span class="col-text">{stripSoundTags(item.text)}</span>
@@ -346,7 +347,7 @@
 						<span class="col-actions actions-menu">
 							<button
 								class="actions-trigger"
-								aria-label="Actions for {stripSoundTags(item.text)}"
+								aria-label={t('cards.actionsFor', { text: stripSoundTags(item.text) })}
 								aria-haspopup="menu"
 								aria-expanded={openMenuId === item.id}
 								onclick={() => toggleMenu(item.id)}
@@ -355,17 +356,17 @@
 							</button>
 							{#if openMenuId === item.id}
 								<div class="menu" role="menu">
-									<button role="menuitem" onclick={() => { closeMenu(); imageEditItem = item; }}>Change image…</button>
+									<button role="menuitem" onclick={() => { closeMenu(); imageEditItem = item; }}>{t('cards.changeImage')}</button>
 									{#if item.card_type === 'cloze'}
-										<button role="menuitem" onclick={() => { closeMenu(); clozeEditItem = item; }}>Cloze sentence…</button>
+										<button role="menuitem" onclick={() => { closeMenu(); clozeEditItem = item; }}>{t('cards.clozeSentence')}</button>
 									{/if}
-									<button role="menuitem" onclick={() => startEdit(item)}>Edit</button>
-									<button role="menuitem" onclick={() => { closeMenu(); resetItem(item.id); }}>Reset</button>
+									<button role="menuitem" onclick={() => startEdit(item)}>{t('cards.edit')}</button>
+									<button role="menuitem" onclick={() => { closeMenu(); resetItem(item.id); }}>{t('cards.reset')}</button>
 									<button role="menuitem" onclick={() => { closeMenu(); toggleSuspend(item); }}>
-										{item.state === 'suspended' ? 'Unsuspend' : 'Suspend'}
+										{item.state === 'suspended' ? t('cards.unsuspend') : t('cards.suspend')}
 									</button>
 									<div class="menu-divider"></div>
-									<button role="menuitem" class="danger" onclick={() => { closeMenu(); deleteItem(item.id); }}>Delete</button>
+									<button role="menuitem" class="danger" onclick={() => { closeMenu(); deleteItem(item.id); }}>{t('cards.delete')}</button>
 								</div>
 							{/if}
 						</span>
@@ -376,9 +377,9 @@
 	</div>
 
 	<div class="pagination">
-		<button disabled={page === 0} onclick={() => { page -= 1; }}>◀ prev</button>
-		<span>page {page + 1} / {totalPages}</span>
-		<button disabled={page >= totalPages - 1} onclick={() => { page += 1; }}>next ▶</button>
+		<button disabled={page === 0} onclick={() => { page -= 1; }}>◀ {t('cards.prev')}</button>
+		<span>{t('cards.pageLabel')} {page + 1} / {totalPages}</span>
+		<button disabled={page >= totalPages - 1} onclick={() => { page += 1; }}>{t('cards.next')} ▶</button>
 	</div>
 </main>
 

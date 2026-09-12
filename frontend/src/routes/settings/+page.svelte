@@ -11,20 +11,21 @@
 		clearMediaTrace,
 		setMediaTraceEnabled
 	} from '$lib/mediaTrace';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	// The header used to carry these controls inline; they're set-and-forget
 	// preferences, so they live here and only critical CTAs stay in the nav.
 	const THEME_OPTIONS: { value: ThemePref; label: string; icon: string }[] = [
-		{ value: 'system', label: 'System', icon: '🖥️' },
-		{ value: 'light', label: 'Light', icon: '☀️' },
-		{ value: 'dark', label: 'Dark', icon: '🌙' }
+		{ value: 'system', label: t('settings.themeSystem'), icon: '🖥️' },
+		{ value: 'light', label: t('settings.themeLight'), icon: '☀️' },
+		{ value: 'dark', label: t('settings.themeDark'), icon: '🌙' }
 	];
 
 	const COUNTDOWN_OPTIONS: { value: CountdownValue; label: string }[] = [
-		{ value: 'off', label: 'Off' },
-		{ value: '10', label: '10s' },
-		{ value: '30', label: '30s' },
-		{ value: '60', label: '60s' },
+		{ value: 'off', label: t('settings.countdownOff') },
+		{ value: '10', label: t('settings.countdown10s') },
+		{ value: '30', label: t('settings.countdown30s') },
+		{ value: '60', label: t('settings.countdown60s') },
 	];
 
 	// Media button log — the on-device trace is read HERE, on the phone, after
@@ -52,18 +53,18 @@
 </script>
 
 <svelte:head>
-	<title>Settings · TunaTale</title>
+	<title>{t('settings.heading')} · TunaTale</title>
 </svelte:head>
 
 <main class="settings">
-	<h1>Settings</h1>
+	<h1>{t('settings.heading')}</h1>
 
 	<section class="card setting">
 		<div class="setting-head">
-			<h2>Appearance</h2>
-			<p>Choose a theme, or follow your device's setting.</p>
+			<h2>{t('settings.appearance')}</h2>
+			<p>{t('settings.appearanceDesc')}</p>
 		</div>
-		<div class="segmented" role="group" aria-label="Theme">
+		<div class="segmented" role="group" aria-label={t('settings.themeAriaLabel')}>
 			{#each THEME_OPTIONS as option (option.value)}
 				<button
 					type="button"
@@ -81,10 +82,10 @@
 
 	<section class="card setting">
 		<div class="setting-head">
-			<h2>Listen preview</h2>
-			<p>Auto-mark countdown before committing the preview.</p>
+			<h2>{t('settings.listenPreview')}</h2>
+			<p>{t('settings.listenPreviewDesc')}</p>
 		</div>
-		<div class="segmented" role="group" aria-label="Auto-mark countdown">
+		<div class="segmented" role="group" aria-label={t('settings.autoMarkAriaLabel')}>
 			{#each COUNTDOWN_OPTIONS as option (option.value)}
 				<button
 					type="button"
@@ -101,8 +102,8 @@
 
 	<section class="card setting">
 		<div class="setting-head">
-			<h2>Downloads</h2>
-			<p>Cache lessons on wifi so they replay offline for free.</p>
+			<h2>{t('settings.downloads')}</h2>
+			<p>{t('settings.downloadsDesc')}</p>
 		</div>
 		<button
 			type="button"
@@ -113,15 +114,15 @@
 			onclick={() => prefetchPrefStore.toggle()}
 		>
 			<span class="toggle-track"><span class="toggle-thumb"></span></span>
-			Auto-download on wifi: {prefetchPrefStore.enabled ? 'On' : 'Off'}
+			{t('settings.autoDownload')}{prefetchPrefStore.enabled ? t('settings.on') : t('settings.off')}
 		</button>
 	</section>
 
 	{#if languageStore.options.length > 1}
 		<section class="card setting">
 			<div class="setting-head">
-				<h2>Language</h2>
-				<p>Switch the active learning language. The app reloads to refetch your decks.</p>
+				<h2>{t('settings.language')}</h2>
+				<p>{t('settings.languageDesc')}</p>
 			</div>
 			<LanguageSelector />
 		</section>
@@ -130,28 +131,25 @@
 	{#if authStore.enabled}
 		<section class="card setting">
 			<div class="setting-head">
-				<h2>Account</h2>
-				<p>Signed in as {authStore.email}.</p>
+				<h2>{t('settings.account')}</h2>
+				<p>{t('settings.signedInAs', { email: authStore.email ?? '' })}</p>
 			</div>
-			<button class="signout" onclick={() => authStore.logout()}>Sign out</button>
+			<button class="signout" onclick={() => authStore.logout()}>{t('settings.signOut')}</button>
 		</section>
 	{/if}
 
 	{#if mediaTraceOn}
 		<section class="card setting">
 			<div class="setting-head">
-				<h2>Media button log</h2>
-				<p>
-					{mediaTraceEntries.length} {mediaTraceEntries.length === 1 ? 'entry' : 'entries'}
-					recorded.
-				</p>
+				<h2>{t('settings.mediaTraceHeading')}</h2>
+				<p>{t('settings.mediaTraceCount', { count: mediaTraceEntries.length })}</p>
 			</div>
 			<div class="media-trace-body">
 				<pre class="media-trace">{mediaTraceEntries.slice().reverse().join('\n')}</pre>
 				<div class="media-trace-actions">
-					<button type="button" class="media-trace-button" onclick={copyMediaTrace}>Copy</button>
-					<button type="button" class="media-trace-button" onclick={clearMediaTraceView}>Clear</button>
-					<button type="button" class="media-trace-button" onclick={turnOffMediaTrace}>Turn off</button>
+					<button type="button" class="media-trace-button" onclick={copyMediaTrace}>{t('settings.mediaTraceCopy')}</button>
+					<button type="button" class="media-trace-button" onclick={clearMediaTraceView}>{t('settings.mediaTraceClear')}</button>
+					<button type="button" class="media-trace-button" onclick={turnOffMediaTrace}>{t('settings.mediaTraceTurnOff')}</button>
 				</div>
 			</div>
 		</section>

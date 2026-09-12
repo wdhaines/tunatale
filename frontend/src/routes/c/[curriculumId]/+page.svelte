@@ -9,6 +9,7 @@
 	import { pipelineStore } from '$lib/stores/pipeline.svelte';
 	import { llmActivityStore } from '$lib/stores/llmActivity.svelte';
 	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -82,12 +83,11 @@
 </script>
 
 <main>
-	<a class="back" href="/">← Lessons</a>
+	<a class="back" href="/">← {t('curriculum.backToLessons')}</a>
 	<section class="curriculum-section card">
 		<h2>{data.curriculum.topic}</h2>
 		<p class="meta">
-			{data.curriculum.days.length}
-			{data.curriculum.days.length === 1 ? 'day' : 'days'} · {data.curriculum.language_code.toUpperCase()}
+			{t('curriculum.dayCount', { count: data.curriculum.days.length })} · {data.curriculum.language_code.toUpperCase()}
 		</p>
 		<RateLimitWidget />
 		<DayPicker curriculum={data.curriculum} onSelectDay={handleSelectDay} {progress} pipelineStates={pipelineStates} />
@@ -113,7 +113,7 @@
 				}}
 			/>
 		{/if}
-		<a class="plan-link" href="/c/{data.curriculum.id}/plan">Plan next days →</a>
+		<a class="plan-link" href="/c/{data.curriculum.id}/plan">{t('curriculum.planLink')} →</a>
 		{#if error}
 			<p class="error">{error}</p>
 		{/if}

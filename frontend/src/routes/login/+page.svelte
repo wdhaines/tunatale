@@ -3,6 +3,7 @@
 	import { page } from '$app/stores';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import logo from '$lib/assets/logo.png';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	let email = $state('');
 	let password = $state('');
@@ -35,11 +36,10 @@
 			.replace(/^[A-Z]+ \/\S+:\s*/, '');
 		const retryAfter = (err as { retryAfter?: number } | undefined)?.retryAfter;
 		if (retryAfter) {
-			const wait =
+			msg +=
 				retryAfter > 90
-					? `about ${Math.round(retryAfter / 60)} minutes`
-					: `${retryAfter} seconds`;
-			msg += `. Try again in ${wait}`;
+					? t('login.tryAgainInMinutes', { count: Math.round(retryAfter / 60) })
+					: t('login.tryAgainInSeconds', { count: retryAfter });
 		}
 		return msg;
 	}
@@ -59,15 +59,15 @@
 	}
 </script>
 
-<svelte:head><title>Sign in · TunaTale</title></svelte:head>
+<svelte:head><title>{t('login.pageTitle')} · TunaTale</title></svelte:head>
 
 <main>
 	<form class="card" onsubmit={handleSubmit}>
 		<img class="mark" src={logo} alt="" />
 		<h1>TunaTale</h1>
-		<p class="lede">Sign in to continue.</p>
+		<p class="lede">{t('login.lede')}</p>
 
-		<label for="email">Email</label>
+		<label for="email">{t('login.emailLabel')}</label>
 		<!-- svelte-ignore a11y_autofocus -->
 		<input
 			id="email"
@@ -80,7 +80,7 @@
 			bind:value={email}
 		/>
 
-		<label for="password">Password</label>
+		<label for="password">{t('login.passwordLabel')}</label>
 		<input
 			id="password"
 			type="password"
@@ -93,7 +93,7 @@
 			<p class="error" role="alert">{error}</p>
 		{/if}
 
-		<button type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+		<button type="submit" disabled={busy}>{busy ? t('login.signingIn') : t('login.signIn')}</button>
 	</form>
 </main>
 

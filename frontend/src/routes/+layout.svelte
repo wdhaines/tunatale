@@ -19,6 +19,7 @@
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { setUnauthorizedHandler } from '$lib/api';
 	import LlmHealthBanner from '$lib/components/LlmHealthBanner.svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	let { children } = $props();
 
@@ -144,21 +145,21 @@
 	<a href="/" class="brand"><img class="brand-mark" src={logo} alt="" />TunaTale</a>
 	<div class="nav-links">
 		<span class="review-group">
-			<a href="/review" class="nav-link" class:active={onReview}>Review</a>
+			<a href="/review" class="nav-link" class:active={onReview}>{t('layout.navReview')}</a>
 			{#if queueStatsStore.stats && languageStore.syncAvailable}
 				<span class="review-badge"><QueueStatsWidget stats={queueStatsStore.stats} /></span>
 			{/if}
 		</span>
-		<a href="/" class="nav-link" class:active={onLessons}>Lessons</a>
-		<a href="/cards" class="nav-link" class:active={onCards}>Cards</a>
+		<a href="/" class="nav-link" class:active={onLessons}>{t('layout.navLessons')}</a>
+		<a href="/cards" class="nav-link" class:active={onCards}>{t('layout.navCards')}</a>
 	</div>
 	<div class="nav-actions">
 		<a
 			href="/settings"
 			class="settings-link"
 			class:active={onSettings}
-			aria-label="Settings"
-			title="Settings"
+			aria-label={t('layout.navSettings')}
+			title={t('layout.navSettings')}
 		>⚙️</a>
 		<SyncButton syncAvailable={languageStore.syncAvailable} />
 	</div>

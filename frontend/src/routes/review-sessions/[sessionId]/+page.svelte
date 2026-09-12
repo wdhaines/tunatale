@@ -13,6 +13,7 @@
 	import AudioDownloads from '$lib/components/AudioDownloads.svelte';
 	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
 	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
 	import ManualStoryPanel from '$lib/components/ManualStoryPanel.svelte';
 	import { invalidateAll, goto } from '$app/navigation';
 	import { handsFreePref } from '$lib/stores/handsFreePref.svelte';
@@ -104,18 +105,18 @@
 	}
 
 	const MONTHS = [
-		'January',
-		'February',
-		'March',
-		'April',
-		'May',
-		'June',
-		'July',
-		'August',
-		'September',
-		'October',
-		'November',
-		'December'
+		t('reviewSessions.january'),
+		t('reviewSessions.february'),
+		t('reviewSessions.march'),
+		t('reviewSessions.april'),
+		t('reviewSessions.may'),
+		t('reviewSessions.june'),
+		t('reviewSessions.july'),
+		t('reviewSessions.august'),
+		t('reviewSessions.september'),
+		t('reviewSessions.october'),
+		t('reviewSessions.november'),
+		t('reviewSessions.december')
 	];
 
 	/**
@@ -133,7 +134,10 @@
 	// 0", which would read as a grade instead of an observation.
 	const coverage = $derived(
 		data.session.review_requested.length > 0
-			? `reused ${data.session.review_used.length} of ${data.session.review_requested.length}`
+			? t('reviewSessions.reusedOf', {
+					used: data.session.review_used.length,
+					total: data.session.review_requested.length
+				})
 			: null
 	);
 
@@ -150,8 +154,11 @@
 		coverage === null
 			? null
 			: {
-					text: `${data.session.review_used.length}/${data.session.review_requested.length} reused`,
-					tooltip: `${coverage} words you were forgetting`
+					text: t('reviewSessions.reusedFraction', {
+						used: data.session.review_used.length,
+						total: data.session.review_requested.length
+					}),
+					tooltip: t('reviewSessions.coverageTooltip', { coverage })
 				}
 	);
 
@@ -269,12 +276,7 @@
 	 * an error the user has to act on, rather than a wait-and-retry.
 	 */
 	async function handleRegenerate() {
-		const confirmed = await confirmDialog(
-			'Rewrite this session\u2019s dialogue? It keeps its date and its place in the list, ' +
-				'and is rebuilt from what has decayed NOW \u2014 so the words it drills may differ ' +
-				'from the ones it used before. Existing cards are kept. Any audio already ' +
-				'rendered for it is discarded.'
-		);
+		const confirmed = await confirmDialog(t('reviewSessions.confirmRewrite'));
 		if (!confirmed) return;
 		regenerating = true;
 		error = '';
@@ -350,7 +352,7 @@
 			     neither fills a phone's width, so stacking them spent a whole row on
 			     whitespace above a title that already needs three. -->
 			<div class="crumb-row">
-				<a class="back" href="/">← Lessons</a>
+				<a class="back" href="/">← {t('reviewSessions.backToLessons')}</a>
 				<p class="date">{formatSessionDate(data.session.session_date)}</p>
 			</div>
 		{/snippet}
@@ -374,7 +376,7 @@
 				     Costs a row only in the failure case, so it does not undo the header
 				     compaction in 4293cd3. -->
 				{#if data.session.gloss_entry_count === 0}
-					<p class="gloss-notice">No hover translations — the gloss pass came back empty.</p>
+					<p class="gloss-notice">{t('reviewSessions.glossNotice')}</p>
 				{/if}
 			</div>
 		{/snippet}
@@ -394,7 +396,7 @@
 		{#snippet noAudio()}
 			<div class="prepare">
 				<button type="button" class="btn-primary" onclick={prepareAudio} disabled={preparing}>
-					{preparing ? 'Preparing…' : 'Prepare audio'}
+					{preparing ? t('reviewSessions.preparing') : t('reviewSessions.prepareAudio')}
 				</button>
 				{#if renderError}
 					<p class="error" role="alert">{renderError}</p>
@@ -409,14 +411,11 @@
 	     `/api/story/{id}/source` reads the lessons table, and its importer needs a
 	     curriculumId and a day to write back to. -->
 	<details class="card tools-card">
-		<summary>Session tools</summary>
+		<summary>{t('reviewSessions.sessionTools')}</summary>
 		<!-- The standing explainer lives HERE now. It is identical on every visit,
 		     so it was spending 48px of a 390px-wide phone's first screen to tell a
 		     returning reader something they already know. Still one tap away. -->
-		<p class="muted">
-			A review session — built from what has decayed across your whole deck, with no theme
-			and no place in any curriculum.
-		</p>
+		<p class="muted">{t('reviewSessions.sessionExplainer')}</p>
 		<AudioDownloads {audio} />
 		<!-- Shown ONLY on a measured zero. `=== 0`, never falsiness: null means a
 		     session stored before the count existed, and offering to "restore"
@@ -425,14 +424,14 @@
 		{#if data.session.gloss_entry_count === 0}
 			<div class="regen-row">
 				<button class="regen-btn" onclick={handleRegloss} disabled={reglossing}>
-					{reglossing ? 'Restoring…' : 'Restore glosses'}
+					{reglossing ? t('reviewSessions.restoring') : t('reviewSessions.restoreGlosses')}
 				</button>
-				<span class="muted">Keeps the dialogue — only the hover translations are rebuilt.</span>
+				<span class="muted">{t('reviewSessions.keepsDialogue')}</span>
 			</div>
 		{/if}
 		<div class="regen-row">
 			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
-				{regenerating ? 'Rewriting…' : 'Rewrite dialogue'}
+				{regenerating ? t('reviewSessions.rewriting') : t('reviewSessions.rewriteDialogue')}
 			</button>
 			<!-- Rewriting hits the LLM, so the quota chip belongs beside the button
 			     that spends it — the same placement the lesson reader uses. -->
@@ -440,17 +439,14 @@
 			<button
 				type="button"
 				class="help-toggle"
-				aria-label="What does rewriting do?"
+				aria-label={t('reviewSessions.rewriteHelpAria')}
 				aria-expanded={showRegenHelp}
 				onclick={() => (showRegenHelp = !showRegenHelp)}>?</button
 			>
 		</div>
 		{#if showRegenHelp}
 			<p class="help-panel">
-				Rewrites this session&rsquo;s dialogue with the current prompt, keeping its date and
-				its place in the list. It is rebuilt from what has decayed <em>now</em>, so the words
-				it drills may differ from last time. Existing cards stay; any audio already rendered
-				is discarded and can be prepared again.
+				{t('reviewSessions.rewriteHelpLead')}<em>{t('reviewSessions.rewriteHelpEmphasis')}</em>{t('reviewSessions.rewriteHelpTail')}
 			</p>
 		{/if}
 		<ManualStoryPanel

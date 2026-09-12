@@ -9,6 +9,7 @@
 	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 	import { syncStore } from '$lib/stores/sync.svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	type QueueItem = { item: ReviewQueueItem; direction: 'recognition' | 'production' };
 
@@ -145,7 +146,7 @@
 	}
 
 	async function syncPending() {
-		if (!(await confirmDialog(`Commit ${pendingCount} provisional grade${pendingCount === 1 ? '' : 's'}?`))) {
+		if (!(await confirmDialog(t('review.confirmCommitGrades', { count: pendingCount })))) {
 			return;
 		}
 		syncingPending = true;
@@ -178,11 +179,11 @@
 				{#if lessonTitle}
 					<a class="breadcrumb" href={backHref}>← {lessonTitle}</a>
 				{/if}
-				<h1>Check your work</h1>
+				<h1>{t('review.checkYourWork')}</h1>
 			</div>
 		</section>
 	{:else}
-		<h1>Review</h1>
+		<h1>{t('review.pageTitle')}</h1>
 
 		{#if stats}
 			<p class="stats">
@@ -191,7 +192,7 @@
 					<span class="source"> ({stats.cap_source})</span>
 				{/if}
 				{#if stats.fsrs_source !== 'cache'}
-					<span class="source"> · FSRS: defaults</span>
+					<span class="source">{t('review.fsrsDefaults')}</span>
 				{/if}
 			</p>
 		{/if}
@@ -199,22 +200,22 @@
 
 
 	{#if loading}
-		<p>Loading…</p>
+		<p>{t('review.loading')}</p>
 	{:else if error}
 		<p class="error">{error}</p>
 	{:else if done}
 		<section class="done">
-			<h2>Done for today</h2>
-			<p>Reviewed: {reviewed}</p>
+			<h2>{t('review.doneForToday')}</h2>
+			<p>{t('review.reviewedCount', { count: reviewed })}</p>
 			{#if lessonMode && backHref}
-				<a href={backHref}>← Back to lesson</a>
+				<a href={backHref}>← {t('review.backToLesson')}</a>
 			{:else}
-				<a href="/">← Home</a>
+				<a href="/">← {t('review.home')}</a>
 			{/if}
 		</section>
 	{:else if current}
 		<div class="card-meta">
-			<p class="badge">{current.direction === 'recognition' ? 'Recognition' : 'Production'}</p>
+			<p class="badge">{current.direction === 'recognition' ? t('review.recognition') : t('review.production')}</p>
 			<p class="badge state-{current.item.state}">{current.item.state}</p>
 			<!-- Deep-link to this card's row in the Cards viewer: the id highlights the
 			     exact row; the text seeds the search box so the row lands on page 1. -->
@@ -223,7 +224,7 @@
 				href="/cards?focus={current.item.id}&q={encodeURIComponent(current.item.text)}"
 				target="_blank"
 				rel="noopener"
-				title="Open this card in the Cards viewer (new tab)">Card details ↗</a
+				title={t('review.openInCardsTitle')}>{t('review.cardDetails')}</a
 			>
 		</div>
 		<section class="card-section">
@@ -247,10 +248,10 @@
 	{#if !loading && pendingCount > 0}
 		<section class="card sync-row">
 			<span class="sync-label"
-				>{pendingCount} {pendingCount === 1 ? 'word' : 'words'} pre-graded by your listen</span
+				>{t('review.preGradedCount', { count: pendingCount })}</span
 			>
 			<button class="sync-btn" onclick={syncPending} disabled={syncingPending}>
-				{syncingPending ? 'Accepting…' : 'Accept all'}
+				{syncingPending ? t('review.accepting') : t('review.acceptAll')}
 			</button>
 		</section>
 	{/if}

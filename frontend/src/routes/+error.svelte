@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { t } from '$lib/i18n/i18n.svelte';
 </script>
 
 <main>
 	<h1>{$page.status}</h1>
-	<p>{$page.error?.message ?? 'Something went wrong'}</p>
-	<a href="/">← Back to TunaTale</a>
+	<p>{$page.error?.message ?? t('error.genericFallback')}</p>
+	<a href="/">← {t('error.backToTunaTale')}</a>
 </main>
 
 <style>

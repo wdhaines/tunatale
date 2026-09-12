@@ -12,6 +12,7 @@
 	import { llmActivityStore } from '$lib/stores/llmActivity.svelte';
 	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
 	import type { PageData } from './$types';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -25,7 +26,7 @@
 	// committed-day count as context instead.
 	const initialMessages: ChatMessage[] =
 		initial.days.length > 0
-			? [{ role: 'event', content: `${initial.days.length} days committed so far.` }]
+			? [{ role: 'event', content: t('plan.daysCommittedSoFar', { count: initial.days.length }) }]
 			: [];
 
 	let messages: ChatMessage[] = $state(initialMessages);
@@ -54,16 +55,16 @@
 	// theme against review coverage — is the whole point of it, and an enum name
 	// communicates none of it.
 	const PRESSURE_LABELS: Record<ReviewPressure, string> = {
-		NATURAL: 'Theme first',
-		BALANCED: 'Balanced',
-		INSISTENT: 'Review first',
+		NATURAL: t('plan.pressureNatural'),
+		BALANCED: t('plan.pressureBalanced'),
+		INSISTENT: t('plan.pressureInsistent'),
 	};
 	// Describes the SELECTED behaviour rather than the control, so the trade is
 	// legible without changing anything to find out.
 	const PRESSURE_HINTS: Record<ReviewPressure, string> = {
-		NATURAL: 'Lessons stay on their theme. Words you are forgetting appear only where they fit.',
-		BALANCED: 'Lessons look for openings to work in words you are forgetting.',
-		INSISTENT: 'Lessons bend their theme to fit in more of the words you are forgetting.',
+		NATURAL: t('plan.hintNatural'),
+		BALANCED: t('plan.hintBalanced'),
+		INSISTENT: t('plan.hintInsistent'),
 	};
 	let manualMessage = $state('');
 	let copiedPrompt = $state(false);
@@ -228,13 +229,12 @@
 		<header class="plan-head">
 			<h2>{data.curriculum.topic}</h2>
 			<p class="meta">
-				{data.curriculum.cefr_level} · {committedCount}
-				{committedCount === 1 ? 'day' : 'days'} committed
+				{data.curriculum.cefr_level} · {t('plan.committedDays', { count: committedCount })}
 			</p>
 			<div class="head-controls">
 				<RateLimitWidget />
 				<label class="pressure">
-					<span>Review words</span>
+					<span>{t('plan.reviewWords')}</span>
 					<select
 						disabled={pressureLoading}
 						value={reviewPressure}
@@ -250,7 +250,7 @@
 					disabled={modeLoading}
 					onclick={handleToggleMode}
 				>
-					{isManual ? 'Auto' : 'Manual'}
+					{isManual ? t('plan.auto') : t('plan.manual')}
 				</button>
 			</div>
 			<p class="pressure-hint" data-testid="pressure-hint">{PRESSURE_HINTS[reviewPressure]}</p>
@@ -262,14 +262,14 @@
 				<div class="manual-input">
 				<textarea
 					bind:this={manualTextarea}
-					placeholder="Message the planner…"
+					placeholder={t('plan.messagePlaceholder')}
 					rows="2"
 					bind:value={manualMessage}
 					disabled={pending || copiedPrompt}
 				></textarea>
 					<div class="controls">
 						<label class="batch-size">
-							Days per batch
+							{t('plan.daysPerBatch')}
 							<input
 								type="number"
 								min="1"
@@ -283,7 +283,7 @@
 							onclick={handleCopyPrompt}
 							disabled={pending || copiedPrompt || !manualMessage.trim()}
 						>
-							Copy prompt
+							{t('plan.copyPrompt')}
 						</button>
 					</div>
 				</div>
@@ -291,21 +291,21 @@
 					<div class="paste-area">
 						<textarea
 							class="paste-reply"
-							placeholder="Paste Claude's reply…"
+							placeholder={t('plan.pastePlaceholder')}
 							rows="4"
 							bind:value={pastedReply}
 							disabled={pending}
 						></textarea>
 						<div class="paste-controls">
 							<button class="edit-message" onclick={handleEditMessage} disabled={pending}>
-								Edit message
+								{t('plan.editMessage')}
 							</button>
 							<button
 								class="send"
 								onclick={handlePasteSubmit}
 								disabled={pending || !pastedReply.trim()}
 							>
-								{pending ? 'Submitting…' : 'Submit reply'}
+								{pending ? t('plan.submitting') : t('plan.submitReply')}
 							</button>
 						</div>
 					</div>
@@ -326,7 +326,7 @@
 				onblur={handleResetBlur}
 				disabled={pending}
 			>
-				{confirmingReset ? 'Confirm reset' : 'Reset chat'}
+				{confirmingReset ? t('plan.confirmReset') : t('plan.resetChat')}
 			</button>
 		</div>
 	</section>

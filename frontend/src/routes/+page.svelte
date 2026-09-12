@@ -5,13 +5,14 @@
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import { languageStore } from '$lib/stores/language.svelte';
 	import ManualStoryPanel from '$lib/components/ManualStoryPanel.svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	// Tagline names the active L2 (falls back to a generic line before the language
 	// list has loaded, or in a single-language deployment that hasn't resolved yet).
 	const tagline = $derived(
 		languageStore.name
-			? `AI-powered ${languageStore.name}, tuned to what you know.`
-			: 'AI-powered language learning, tuned to what you know.'
+			? t('home.taglineNamed', { name: languageStore.name })
+			: t('home.taglineGeneric')
 	);
 
 	interface CardProgress {
@@ -153,18 +154,18 @@
 	});
 
 	const MONTHS = [
-		'January',
-		'February',
-		'March',
-		'April',
-		'May',
-		'June',
-		'July',
-		'August',
-		'September',
-		'October',
-		'November',
-		'December'
+		t('home.january'),
+		t('home.february'),
+		t('home.march'),
+		t('home.april'),
+		t('home.may'),
+		t('home.june'),
+		t('home.july'),
+		t('home.august'),
+		t('home.september'),
+		t('home.october'),
+		t('home.november'),
+		t('home.december')
 	];
 
 	/**
@@ -184,7 +185,7 @@
 		// null is "never measured" and gets NO line. [] is a measured zero and
 		// gets one — "reused 0 of 5" is a real observation.
 		if (s.review_requested === null || s.review_used === null) return null;
-		return `reused ${s.review_used.length} of ${s.review_requested.length}`;
+		return t('home.reusedOf', { used: s.review_used.length, total: s.review_requested.length });
 	}
 
 	async function handleNewReviewSession() {
@@ -208,7 +209,7 @@
 		} catch (e) {
 			const status = (e as Error & { status?: number }).status;
 			if (status === 409) {
-				nothingDue = 'Nothing to review right now — no vocabulary is due in this language today.';
+				nothingDue = t('home.nothingDue');
 			} else {
 				sessionError = e instanceof Error ? e.message : String(e);
 			}
@@ -231,8 +232,8 @@
 		const allListened = !firstUnlistened;
 		const target = firstUnlistened ?? sorted[sorted.length - 1];
 		const continueLabel = allListened
-			? `Revisit Day ${target.position}`
-			: `Continue → Day ${target.position}`;
+			? t('home.revisitDay', { position: target.position })
+			: t('home.continueDay', { position: target.position });
 		const continueHref = `/c/${curriculumId}/l/${target.lesson_id}`;
 
 		return { listenedCount, totalDays, percent, allListened, continueLabel, continueHref };
@@ -250,23 +251,23 @@
 <main>
 	<header class="page-head">
 		<div>
-			<h1>Lessons</h1>
+			<h1>{t('home.pageTitle')}</h1>
 			<p class="tagline">{tagline}</p>
 		</div>
 		<button class="new-btn" onclick={() => (showForm = !showForm)} aria-expanded={showForm}>
-			{showForm ? 'Cancel' : '+ New curriculum'}
+			{showForm ? t('home.cancel') : t('home.newCurriculum')}
 		</button>
 	</header>
 
 	{#if showForm}
 		<section class="plan-form card">
-			<h2>Plan a curriculum</h2>
+			<h2>{t('home.planHeading')}</h2>
 			<label>
-				Topic
-				<input bind:value={planTopic} placeholder="e.g. ordering coffee in Ljubljana" />
+				{t('home.topicLabel')}
+				<input bind:value={planTopic} placeholder={t('home.topicPlaceholder')} />
 			</label>
 			<label>
-				CEFR Level
+				{t('home.cefrLabel')}
 				<select bind:value={planCefr}>
 					<option>A1</option>
 					<option>A2</option>
@@ -279,7 +280,7 @@
 				onclick={handleStartPlan}
 				disabled={planStarting || !planTopic.trim()}
 			>
-				{planStarting ? 'Starting…' : 'Start planning'}
+				{planStarting ? t('home.starting') : t('home.startPlanning')}
 			</button>
 			{#if planError}
 				<p class="error">{planError}</p>
@@ -288,13 +289,13 @@
 	{/if}
 
 	{#if listLoading}
-		<p class="muted">Loading…</p>
+		<p class="muted">{t('home.loading')}</p>
 	{:else if listError}
 		<p class="error">{listError}</p>
 	{:else if curricula.length === 0}
 		<div class="empty card">
-			<p class="muted">No curricula yet.</p>
-			<p class="muted small">Use “+ New curriculum” above to generate your first one.</p>
+			<p class="muted">{t('home.noCurricula')}</p>
+			<p class="muted small">{t('home.noCurriculaHint')}</p>
 		</div>
 	{:else}
 		<ul class="library">
@@ -308,12 +309,12 @@
 						{#if progressById[c.id]}
 							{@const p = progressById[c.id]}
 							<div class="progress-info">
-								<p class="progress-line">{p.listenedCount} of {p.totalDays} days listened</p>
+								<p class="progress-line">{t('home.daysListened', { listened: p.listenedCount, total: p.totalDays })}</p>
 								<div class="progress-bar">
 									<div class="progress-fill" style="width: {p.percent}%"></div>
 								</div>
 								{#if p.allListened}
-									<p class="all-done">All {p.totalDays} days listened ✓</p>
+									<p class="all-done">{t('home.allListened', { count: p.totalDays })}</p>
 								{/if}
 								<a class="continue-link" href={p.continueHref}>{p.continueLabel}</a>
 							</div>
@@ -323,13 +324,13 @@
 							class="delete-btn"
 							class:confirming={confirmingDeleteId === c.id}
 							aria-label={confirmingDeleteId === c.id
-								? `Confirm delete ${c.topic}`
-								: `Delete ${c.topic}`}
+								? t('home.confirmDeleteTopic', { topic: c.topic })
+								: t('home.deleteTopic', { topic: c.topic })}
 							onclick={() => handleDeleteClick(c.id)}
 							onblur={() => (confirmingDeleteId = null)}
 							disabled={deletingId === c.id}
 						>
-							{confirmingDeleteId === c.id ? 'Confirm delete' : 'Delete'}
+							{confirmingDeleteId === c.id ? t('home.confirmDelete') : t('home.delete')}
 						</button>
 					</div>
 				</li>
@@ -346,14 +347,14 @@
 	-->
 	<section class="review-sessions">
 		<div class="rs-head">
-			<h2>Review sessions</h2>
+			<h2>{t('home.reviewSessions')}</h2>
 			<button
 				type="button"
 				class="new-btn"
 				onclick={handleNewReviewSession}
 				disabled={creatingSession}
 			>
-				{creatingSession ? 'Working…' : '+ New review session'}
+				{creatingSession ? t('home.working') : t('home.newReviewSession')}
 			</button>
 		</div>
 		<!--
@@ -364,7 +365,7 @@
 			the most expensive thing TT does.
 		-->
 		<details class="manual-session">
-			<summary>Write one by hand instead</summary>
+			<summary>{t('home.writeByHand')}</summary>
 			<ManualStoryPanel
 				copyPrompt={async () => {
 					// The words are stashed, not just displayed: nothing server-side
@@ -378,8 +379,7 @@
 			/>
 		</details>
 		<p class="muted small rs-blurb">
-			Built from the words you are closest to forgetting, across everything you have learned —
-			not from any one curriculum.
+			{t('home.rsBlurb')}
 		</p>
 
 		{#if nothingDue}
@@ -397,7 +397,7 @@
 		{/if}
 
 		{#if sessions.length === 0}
-			<p class="muted small">No review sessions yet.</p>
+			<p class="muted small">{t('home.noReviewSessions')}</p>
 		{:else}
 			<!--
 				The SAME card shape the curricula above use — .library / .curric-card /
@@ -415,7 +415,7 @@
 								<span class="meta">{formatSessionDate(s.session_date)}</span>
 							</a>
 							{#if line}
-								<p class="progress-line">{line} words you were forgetting</p>
+								<p class="progress-line">{line} {t('home.wordsForgetting')}</p>
 							{/if}
 						</div>
 					</li>

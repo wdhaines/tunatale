@@ -25,6 +25,7 @@
 	import { lessonMastery, masteryColor } from '$lib/mastery';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
 	import type { WordRating } from '$lib/api';
 	import type { PageData } from './$types';
 
@@ -214,11 +215,7 @@
 	const reviewUsed = $derived(data.lesson.review_used ?? []);
 
 	async function handleRegenerate() {
-		const confirmed = await confirmDialog(
-			`Regenerate Day ${dayPosition}? This creates a new version of the dialogue using the ` +
-				`current generation prompt. Your existing cards are kept; new vocabulary and ` +
-				`morphology drills are added on the next listen + sync.`
-		);
+		const confirmed = await confirmDialog(t('lessonPage.confirmRegenerate', { position: dayPosition }));
 		if (!confirmed) return;
 		regenerating = true;
 		error = '';
@@ -267,7 +264,7 @@
 	// the sync, and surface a short summary (SyncButton hides its own once a
 	// callback is supplied).
 	async function handleSyncResult() {
-		syncStatus = 'Synced with AnkiWeb';
+		syncStatus = t('lessonPage.synced');
 		error = '';
 		const lessonId = data.lesson.id;
 		try {
@@ -339,7 +336,7 @@
 	let regenStatus = $derived.by((): { state: string; message: string | null } | null => {
 		const record = pipelineDayRecord;
 		if (record === null) return null;
-		if (record.state === 'failed') return { state: 'failed', message: record.error ?? 'Regeneration failed' };
+		if (record.state === 'failed') return { state: 'failed', message: record.error ?? t('lessonPage.regenerationFailed') };
 		if (regenerating) return { state: record.state, message: record.detail };
 		return null;
 	});
@@ -425,12 +422,12 @@
 				     Hidden entirely (not rendered empty) when there is no neighbour — an
 				     empty nav would still cost a grid row and its gap. -->
 				{#if prevLesson || nextLesson}
-					<nav class="lesson-nav" aria-label="Lesson navigation">
+					<nav class="lesson-nav" aria-label={t('lessonPage.lessonNavAria')}>
 						{#if prevLesson}
-							<a class="lesson-nav-link" href="/c/{data.curriculum.id}/l/{prevLesson.lesson_id}">← Day {prevLesson.position}</a>
+							<a class="lesson-nav-link" href="/c/{data.curriculum.id}/l/{prevLesson.lesson_id}">← {t('lessonPage.pagerDay', { position: prevLesson.position })}</a>
 						{/if}
 						{#if nextLesson}
-							<a class="lesson-nav-link lesson-nav-next" href="/c/{data.curriculum.id}/l/{nextLesson.lesson_id}">Day {nextLesson.position} →</a>
+							<a class="lesson-nav-link lesson-nav-next" href="/c/{data.curriculum.id}/l/{nextLesson.lesson_id}">{t('lessonPage.pagerDay', { position: nextLesson.position })} →</a>
 						{/if}
 					</nav>
 				{/if}
@@ -454,7 +451,7 @@
 		{#snippet noAudio()}
 				<div class="render-row">
 					<button class="btn-primary" onclick={handleRenderAudio} disabled={audioLoading}>
-						{audioLoading ? 'Rendering…' : 'Render Audio'}
+						{audioLoading ? t('lessonPage.rendering') : t('lessonPage.renderAudio')}
 					</button>
 					{#if thisDayPipeline && !audioLoading}
 						<span class="pipeline-state state-{thisDayPipeline.state}">{thisDayPipeline.state}</span>
@@ -473,35 +470,35 @@
 	<!-- Rare actions live folded away: downloads for offline use, regeneration
 	     as the destructive-ish last resort. -->
 	<details class="card tools-card">
-		<summary>Lesson tools</summary>
+		<summary>{t('lessonPage.lessonTools')}</summary>
 		<AudioDownloads {audio} />
 		{#if reviewRequested.length > 0}
 			<!-- Deliberately neutral: at the default pressure the prompt tells the
 			     model that using none of these is a correct answer, so a low number
 			     is an observation, not a score with a bad end. -->
 			<p class="review-coverage" data-testid="review-coverage">
-				Reused {reviewUsed.length} of {reviewRequested.length} words you were forgetting{#if reviewUsed.length > 0}: <span class="review-words">{reviewUsed.join(', ')}</span>{/if}
+				{t('lessonPage.reusedCoverage', { used: reviewUsed.length, total: reviewRequested.length })}{#if reviewUsed.length > 0}: <span class="review-words">{reviewUsed.join(', ')}</span>{/if}
 			</p>
 		{/if}
 		<div class="regen-row">
 			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
-				{regenerating ? 'Regenerating…' : `Regenerate Day ${dayPosition}`}
+				{regenerating ? t('lessonPage.regenerating') : t('lessonPage.regenerateDay', { position: dayPosition })}
 			</button>
 			<!-- Regeneration hits the LLM, so surface the quota chip here to track usage. -->
 			<RateLimitWidget />
 			<button type="button" class="help-toggle"
-				aria-label="What does regenerate do?"
+				aria-label={t('lessonPage.regenHelpAria')}
 				aria-expanded={showRegenHelp}
 				onclick={() => (showRegenHelp = !showRegenHelp)}>?</button>
 		</div>
 		{#if showRegenHelp}
-			<p class="help-panel">Regenerating rewrites this day's dialogue with the current prompt (better declension &amp; conjugation coverage). Existing cards stay; new vocabulary and morphology drills are added when you next listen and sync.</p>
+			<p class="help-panel">{t('lessonPage.regenHelp')}</p>
 		{/if}
 		{#if regenStatus}
 			<p class="regen-status" data-testid="regen-status">
 				<span class="pipeline-state state-{regenStatus.state}">{regenStatus.state}</span>
 				{#if regenStatus.message}
-					<span class="regen-detail" data-testid="regen-detail">{regenStatus.state === 'failed' ? 'Last regeneration failed: ' : ''}{regenStatus.message}</span>
+					<span class="regen-detail" data-testid="regen-detail">{regenStatus.state === 'failed' ? t('lessonPage.lastRegenFailed') : ''}{regenStatus.message}</span>
 				{/if}
 			</p>
 		{/if}
@@ -522,7 +519,7 @@
 				onblur={handleDeleteDayBlur}
 				disabled={deletingDay}
 			>
-				{confirmingDeleteDay ? 'Confirm delete' : `Delete day ${dayPosition}`}
+				{confirmingDeleteDay ? t('lessonPage.confirmDelete') : t('lessonPage.deleteDay', { position: dayPosition })}
 			</button>
 		</div>
 	</details>
