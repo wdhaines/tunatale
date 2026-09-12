@@ -124,6 +124,18 @@ function findGroupStart(
   return null;
 }
 
+// ⚠️ `navigator.mediaSession` is a GLOBAL SINGLETON, and more than one
+// controller can be alive at once: on a client-side navigation the incoming
+// controller inits BEFORE the outgoing one tears down. Measured against the
+// running app on 2026-09-12 — the new controller set its metadata and the stale
+// one nulled it 1ms later, leaving the car with nothing to display while the
+// buttons kept working, because handlers are re-registered on every mount and
+// metadata was not.
+//
+// So teardown is ownership-scoped: only the controller that most recently
+// claimed the session may clear it.
+let mediaSessionOwner: symbol | null = null;
+
 export function createPlaybackController(deps: Deps): PlaybackController {
   const audioEl = (deps.createAudio?.() ?? new Audio()) as HTMLAudioElement;
   const storage = deps.storage ?? localStorage;
@@ -166,6 +178,8 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // restore one use of hands-free would silently rewrite the saved selection
   // to "English After" (translated).
   let handsFreeRestoreSection: string | null = null;
+  // Identity for the global-mediaSession ownership check above.
+  const ownerToken = Symbol("playbackController");
   let repeatLatched = $state(false);
   // The cue captured when the latch engaged — pinned, never re-read from
   // currentCue, so the loop cannot drift onto the next sentence.
@@ -387,6 +401,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // MediaSession wiring
   if (mediaSession) {
     const ms = mediaSession;
+    mediaSessionOwner = ownerToken;
     try {
       ms.metadata = new MediaMetadata({
         title: deps.lessonTitle || "",
@@ -399,17 +414,23 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     }
 
     // Refresh metadata when section changes
+    // ⚠️ Tracked LOCALLY, not read back off `ms.metadata`. The old guard was
+    // `if (ms.metadata && ms.metadata.artist !== newTitle)`, which made a wipe
+    // PERMANENT: once metadata was null the condition was false forever and no
+    // section change could repopulate it. That is the half that turned a 1ms
+    // race into a display blank for the whole life of the page.
+    let lastArtist: string | null = null;
     audioEl.addEventListener("timeupdate", () => {
       const newTitle = currentSectionTitle;
-      if (ms.metadata && ms.metadata.artist !== newTitle) {
-        try {
-          ms.metadata = new MediaMetadata({
-            title: deps.lessonTitle,
-            artist: newTitle,
-          });
-        } catch {
-          // MediaMetadata not available
-        }
+      if (ms.metadata !== null && newTitle === lastArtist) return;
+      try {
+        ms.metadata = new MediaMetadata({
+          title: deps.lessonTitle,
+          artist: newTitle,
+        });
+        lastArtist = newTitle;
+      } catch {
+        // MediaMetadata not available
       }
     });
 
@@ -895,7 +916,10 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       audioEl.pause();
       saveResume();
       audioEl.src = "";
-      if (mediaSession) {
+      // Ownership-scoped: a stale controller must not clear a session another
+      // controller now owns. See the mediaSessionOwner note at module scope.
+      if (mediaSession && mediaSessionOwner === ownerToken) {
+        mediaSessionOwner = null;
         // The same unsupported-action throw applies at teardown, and nulling a
         // handler that was never registered throws too. Each is wrapped
         // silently — the controller is being destroyed, there is no one left to

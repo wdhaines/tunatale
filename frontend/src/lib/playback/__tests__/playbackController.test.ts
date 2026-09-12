@@ -2365,6 +2365,71 @@ describe("playbackController", () => {
       expect(readMediaTrace().some((l) => l.includes("handsfree:"))).toBe(false);
     });
 
+    it("a stale controller's destroy must not wipe the live one's metadata", () => {
+      // MEASURED against the running app (2026-09-12), not theorised:
+      //   SET      t=3882ms  title="The Dead Man in the Apartment"  <- new init
+      //   SET_NULL t=3883ms  from destroy()                         <- stale teardown
+      //   final: navigator.mediaSession.metadata === null
+      //
+      // navigator.mediaSession is a GLOBAL singleton. On a client-side
+      // navigation the incoming controller inits before the outgoing one tears
+      // down, so the outgoing destroy() nulls metadata the incoming one just
+      // set — and clears the seven handlers it just registered. The real car
+      // log showed 5 mounts, two of them 2.9s apart, so this is reachable in
+      // normal use. It is why the car displayed nothing.
+      const mediaSession = makeFakeMediaSession();
+      const first = createController({ mediaSession: mediaSession as unknown as MediaSession });
+      const second = createController({ mediaSession: mediaSession as unknown as MediaSession });
+
+      first.destroy();
+
+      expect(mediaSession.metadata).not.toBeNull();
+      void second;
+    });
+
+    it("a stale controller's destroy must not unregister the live one's handlers", () => {
+      // Same wipe, other half. The handlers come back on the next mount, which
+      // is why the buttons kept working in the car while the display stayed
+      // blank — one defect, two very different-looking symptoms.
+      const mediaSession = makeFakeMediaSession();
+      const first = createController({ mediaSession: mediaSession as unknown as MediaSession });
+      const second = createController({ mediaSession: mediaSession as unknown as MediaSession });
+      mediaSession.setActionHandler.mockClear();
+
+      first.destroy();
+
+      const cleared = mediaSession.setActionHandler.mock.calls
+        .filter(([, h]) => h === null)
+        .map(([n]) => n);
+      expect(cleared, "a stale destroy unregistered the live controller's handlers").toEqual([]);
+      void second;
+    });
+
+    it("the LAST controller to init still clears on its own destroy", () => {
+      // The control: the guard must not turn teardown into a no-op, or a real
+      // unmount would leave a dead session claiming the car's display.
+      const mediaSession = makeFakeMediaSession();
+      const only = createController({ mediaSession: mediaSession as unknown as MediaSession });
+
+      only.destroy();
+
+      expect(mediaSession.metadata).toBeNull();
+    });
+
+    it("metadata recovers after it has been nulled", () => {
+      // The half that made the wipe PERMANENT: the refresh was guarded on
+      // `ms.metadata &&`, so once metadata was null the condition was false
+      // forever and no section change could ever repopulate it.
+      const mediaSession = makeFakeMediaSession();
+      createController({ mediaSession: mediaSession as unknown as MediaSession });
+      mediaSession.metadata = null;
+
+      audioEl.currentTime = 1;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+
+      expect(mediaSession.metadata).not.toBeNull();
+    });
+
     it("a refused registration is caught independently and the rest still register", () => {
       const mediaSession = makeFakeMediaSession();
       const attempted: string[] = [];
