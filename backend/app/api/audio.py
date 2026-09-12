@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
 from app.api.models import GetLessonAudioResponse, RenderAudioRequest, RenderAudioResponse
+from app.audio.paths import resolve_audio_path
 from app.audio.render_service import render_lesson_audio
 from app.audio.transcode import EXT_MEDIA_TYPE
 from app.generation.section_builder import SECTION_TITLES
@@ -145,10 +146,13 @@ async def download_lesson_zip(lesson_id: str, request: Request):
     if not section_rows:
         raise HTTPException(status_code=404, detail="No section audio files found for this lesson")
 
-    # Validate all files exist before building the ZIP
+    # Validate all files exist before building the ZIP. Resolved the same way
+    # as the single-file endpoint — a DB moved between machines records paths
+    # that are correct for where they were WRITTEN, not for where they are read.
     all_rows = ([full_row] if full_row else []) + section_rows
+    resolved = {id(r): resolve_audio_path(r["file_path"]) for r in all_rows}
     for r in all_rows:
-        if not Path(r["file_path"]).exists():
+        if not resolved[id(r)].exists():
             raise HTTPException(status_code=404, detail=f"Audio file missing: {r['file_path']}")
 
     topic, day = _resolve_topic_day(store, lesson_id)
@@ -160,11 +164,11 @@ async def download_lesson_zip(lesson_id: str, request: Request):
         if full_row:
             full_ext = Path(full_row["file_path"]).suffix or ".wav"
             full_filename = f"{safe_topic}_Day{day:02d}_00_Full{full_ext}"
-            zf.write(full_row["file_path"], arcname=full_filename)
+            zf.write(resolved[id(full_row)], arcname=full_filename)
         for r in sorted(section_rows, key=lambda x: x["section_index"]):
             ext = Path(r["file_path"]).suffix or ".wav"
             filename = _build_section_filename(topic, day, r["section_index"], r["section_type"] or "", ext)
-            zf.write(r["file_path"], arcname=filename)
+            zf.write(resolved[id(r)], arcname=filename)
 
     zip_name = f"{_sanitize_filename(topic)}_Day{day:02d}.zip"
     return Response(
@@ -188,7 +192,11 @@ async def get_audio(audio_id: str, request: Request):
     if row is None:
         raise HTTPException(status_code=404, detail="Audio not found")
 
-    path = Path(row["file_path"])
+    # Resolved, not taken literally: the recorded string may name another
+    # machine's home directory or a CWD this process does not have. See
+    # app/audio/paths.py — the existence check below is unchanged, so a render
+    # that is genuinely absent still 404s.
+    path = resolve_audio_path(row["file_path"])
     if not path.exists():
         raise HTTPException(status_code=404, detail="Audio file missing")
 

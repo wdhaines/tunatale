@@ -563,6 +563,71 @@ class TestAudioEndpoints:
         assert response.headers["content-type"] == "audio/ogg"
         assert ".opus" in response.headers.get("content-disposition", "")
 
+    async def test_get_audio_serves_a_row_recorded_on_another_machine(self, tmp_path, monkeypatch):
+        """A DB carried to a new host still serves its audio.
+
+        Measured on the real Norwegian DB (tunatale-kbb.15): 100 of 104
+        ``audio_files`` rows store an absolute path naming the author's home
+        directory. Moving the data to the production box makes every one of them
+        point at a path that does not exist there, and the endpoint 404s — the
+        bytes migrate fine, only the recorded string does not travel.
+        """
+        from app.config import settings
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        # The file exists HERE, under this machine's audio dir…
+        monkeypatch.setattr(settings, "audio_dir", tmp_path)
+        (tmp_path / "moved.opus").write_bytes(b"OggS-fake-opus")
+        # …while the row still names where it was written on the OLD machine.
+        store.save_audio_file("moved-audio", "ghost-lesson", "/Users/someone-else/backend/output/audio/moved.opus")
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/moved-audio")
+
+        assert response.status_code == 200
+        assert response.content == b"OggS-fake-opus"
+
+    async def test_get_audio_serves_a_row_stored_relative_to_the_old_cwd(self, tmp_path, monkeypatch):
+        """The other 4 of 104 rows are relative, and resolve against the CWD.
+
+        In the container the CWD is ``/app``, not the audio directory, so these
+        miss for a different reason than the absolute ones. Same fix.
+        """
+        from app.config import settings
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        monkeypatch.setattr(settings, "audio_dir", tmp_path)
+        (tmp_path / "rel.opus").write_bytes(b"OggS-fake-opus")
+        store.save_audio_file("rel-audio", "ghost-lesson", "output/audio/rel.opus")
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/rel-audio")
+
+        assert response.status_code == 200
+
+    async def test_get_audio_still_404s_when_the_file_is_genuinely_absent(self, tmp_path, monkeypatch):
+        """The control, and the one outcome the fix must not produce.
+
+        "Resolve harder" must not become "assume it is there": a row whose file
+        is really gone has to stay a 404, or a missing render reads as success.
+        """
+        from app.config import settings
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        monkeypatch.setattr(settings, "audio_dir", tmp_path)
+        store.save_audio_file("gone-audio", "ghost-lesson", "/Users/someone-else/backend/output/audio/gone.opus")
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/gone-audio")
+
+        assert response.status_code == 404
+
     async def test_get_audio_serves_wav_media_type_for_wav_file(self, tmp_path):
         """A pre-existing .wav file still serves as audio/wav (back-compat)."""
         from app.storage.store import ContentStore
