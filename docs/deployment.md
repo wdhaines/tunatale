@@ -821,6 +821,56 @@ uv run python scripts/restore_drill.py \
 restic restores into the target under each source's absolute path, which is why
 the three flags carry that prefix.
 
+### Drill results — 2026-09-11, restored onto a DIFFERENT machine
+
+The drills below were all run on the Mac that made the backup. **That is not the
+disaster scenario.** This one was run on the GCP box, which has never held the
+Mac's Keychain.
+
+**The custody chain holds.** The restic passphrase *and* the B2 application key
+both came from Bitwarden. Nothing was copied off the laptop, so the recovery does
+not depend on the machine being replaced — which is the claim every other
+measurement here rests on.
+
+| Step | Wall clock | Detail |
+|---|---|---|
+| `restore` (download) | **37.6 s** | 615 MB, 9 060 files |
+| Drill on the restored tree | 27 m 14 s | DBs 0.2 s, trees 88 s, 8 567 checksums 18 s, **104 full decodes 1 436 s** |
+
+The drill is slow here and that is not a regression: ~14 s per audio file on
+0.25 vCPU, against ~0.8 s on the Mac. The download is not the RTO's main term —
+38 s of transfer against minutes of verification.
+
+**Four defects surfaced, none of them findable at home.** This is the return on
+running it elsewhere:
+
+1. **`audio_files.file_path` stores absolute `/Users/<author>/…` paths** — 100
+   of 104 rows — and `audio.py` serves them with no re-rooting, so lesson audio
+   404s on the box. `tunatale-kbb.15`, blocks the data migration and cutover.
+2. **Three media rows are case-mismatched** (`sl_zemlja.mp3` recorded,
+   `sl_Zemlja.mp3` on disk). macOS is case-insensitive and resolves them; ext4
+   does not. `tunatale-kbb.14`.
+3. **The drill's own audio check was vacuous on the source machine.** It
+   resolved `tree_root / file_path`, and pathlib discards `tree_root` when the
+   right operand is absolute — so it decoded the **originals** and passed while
+   testing nothing about the restore. Fixed in `51270cb`. ⚠️ **The
+   "48/48 decoded end to end" line in the 2026-08-12 results below is therefore
+   not evidence about that backup**, and cannot retroactively be made into
+   evidence: those rows no longer exist.
+4. **Four Norwegian lessons have a truncated full-lesson audio file** — 267–335 s
+   of audio under a 1 421–3 619 s caption timeline, sections all intact.
+   Pre-existing on the Mac, faithfully backed up. `tunatale-c7tx`.
+
+Two traps worth knowing before a real recovery:
+
+- **`snapshots found — 0` also means "I could not read the directory."** restic
+  restores macOS `0700` modes, so the container user could not read the restored
+  tree at all; the drill reported an empty directory, which is indistinguishable
+  from an empty backup. Run the drill as root against a restored tree.
+- **Ubuntu's apt ships restic 0.16.4**, against a repository written by 0.19.1.
+  Install the official binary (checksum-verified) rather than `apt install
+  restic`, which is what a person in a hurry reaches for.
+
 ### Drill results — 2026-08-12, restored from B2
 
 Performed against `b2:tunatale-backups:tunatale`, the first real upload. Same
