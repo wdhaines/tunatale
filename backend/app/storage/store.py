@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
+from app.audio.paths import resolve_audio_path
 from app.models.curriculum import Curriculum
 from app.models.lesson import Lesson
 
@@ -161,7 +162,7 @@ class ContentStore:
             result.append({"id": row["id"], "topic": c.topic, "created_at": row["created_at"]})
         return result
 
-    def delete_curriculum(self, curriculum_id: str) -> list[str] | None:
+    def delete_curriculum(self, curriculum_id: str) -> list[Path] | None:
         """Delete a curriculum and everything under it; return the orphaned audio paths.
 
         ``None`` means no such curriculum (the caller's 404), a list means
@@ -175,7 +176,7 @@ class ContentStore:
         """
         with self._get_conn() as conn:
             paths = [
-                row["file_path"]
+                resolve_audio_path(row["file_path"])
                 for row in conn.execute(
                     "SELECT file_path FROM audio_files"
                     " WHERE lesson_id IN (SELECT id FROM lessons WHERE curriculum_id = ?)",
@@ -364,7 +365,7 @@ class ContentStore:
             conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (lesson_id,))
             conn.commit()
 
-    def delete_lesson(self, lesson_id: str) -> list[str]:
+    def delete_lesson(self, lesson_id: str) -> list[Path]:
         """Delete ONE lesson version and its audio rows; return the orphaned paths.
 
         Distinct from :meth:`delete_lessons_for_day`, which removes every
@@ -381,13 +382,13 @@ class ContentStore:
         """
         with self._get_conn() as conn:
             rows = conn.execute("SELECT file_path FROM audio_files WHERE lesson_id = ?", (lesson_id,)).fetchall()
-            paths = [row["file_path"] for row in rows]
+            paths = [resolve_audio_path(row["file_path"]) for row in rows]
             conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (lesson_id,))
             conn.execute("DELETE FROM lessons WHERE id = ?", (lesson_id,))
             conn.commit()
         return paths
 
-    def delete_lessons_for_day(self, curriculum_id: str, day: int) -> list[str]:
+    def delete_lessons_for_day(self, curriculum_id: str, day: int) -> list[Path]:
         """Delete every lesson row for a day; return the orphaned audio paths.
 
         There can be multiple lesson versions per day; every one is removed.
@@ -404,10 +405,10 @@ class ContentStore:
                 (curriculum_id, day),
             ).fetchall()
             lesson_ids = [row["id"] for row in rows]
-            paths: list[str] = []
+            paths: list[Path] = []
             for lesson_id in lesson_ids:
                 paths += [
-                    r["file_path"]
+                    resolve_audio_path(r["file_path"])
                     for r in conn.execute("SELECT file_path FROM audio_files WHERE lesson_id = ?", (lesson_id,))
                 ]
                 conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (lesson_id,))
@@ -550,7 +551,7 @@ class ContentStore:
             ).fetchall()
         return [_session_row(row) for row in rows]
 
-    def delete_review_session_audio(self, session_id: str) -> list[str]:
+    def delete_review_session_audio(self, session_id: str) -> list[Path]:
         """Drop one session's audio rows, KEEPING the session; return the paths.
 
         Regeneration rewrites a session in place, so the renders of the previous
@@ -564,14 +565,14 @@ class ContentStore:
         """
         with self._get_conn() as conn:
             paths = [
-                row["file_path"]
+                resolve_audio_path(row["file_path"])
                 for row in conn.execute("SELECT file_path FROM audio_files WHERE lesson_id = ?", (session_id,))
             ]
             conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (session_id,))
             conn.commit()
         return paths
 
-    def delete_review_session(self, session_id: str) -> list[str]:
+    def delete_review_session(self, session_id: str) -> list[Path]:
         """Drop one session and its audio rows; return the orphaned paths.
 
         Rows here, files by the caller — the same split :meth:`delete_lesson`
@@ -579,7 +580,7 @@ class ContentStore:
         """
         with self._get_conn() as conn:
             paths = [
-                row["file_path"]
+                resolve_audio_path(row["file_path"])
                 for row in conn.execute("SELECT file_path FROM audio_files WHERE lesson_id = ?", (session_id,))
             ]
             conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (session_id,))

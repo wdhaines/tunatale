@@ -292,7 +292,7 @@ async def render_lesson_audio(
     results.
     """
     old_rows = store.list_audio_files_for_lesson(lesson_id)
-    old_file_paths = [r["file_path"] for r in old_rows]
+    old_file_paths = [resolve_audio_path(r["file_path"]) for r in old_rows]
 
     audio_dir.mkdir(parents=True, exist_ok=True)
 
@@ -632,12 +632,12 @@ async def reassemble_lesson_audio(
 
     # Only the files this function REPLACED are removed, and only after the new
     # rows are committed. Every other section file is still referenced.
-    Path(old_full["file_path"]).unlink(missing_ok=True)
+    resolve_audio_path(old_full["file_path"]).unlink(missing_ok=True)
     # Unconditional: every new target path carries a fresh uuid4, so it can never
     # be the path being deleted. A `!=` guard here would be a branch nothing can
     # take.
     for i in targets:
-        Path(section_rows[i]["file_path"]).unlink(missing_ok=True)
+        resolve_audio_path(section_rows[i]["file_path"]).unlink(missing_ok=True)
 
     return {
         "audio_id": new_full_id,
