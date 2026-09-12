@@ -302,11 +302,32 @@ class ContentStore:
         section_type: str | None = None,
         cues_json: str | None = None,
     ) -> None:
+        """Persist one audio row. A relative *file_path* is stored absolute.
+
+        ⚠️ A relative path here is a latent silent truncation, not a formatting
+        preference. ffmpeg's concat demuxer resolves a relative entry against
+        the LIST FILE's directory rather than the process CWD, and the list file
+        is written beside the output — so a row that reads
+        ``output/audio/<uuid>.opus`` points somewhere that does not exist by the
+        time the next re-render joins it, and ffmpeg drops it and exits **0**.
+
+        Measured on the real Norwegian DB (tunatale-c7tx): of 104 rows, 4 were
+        relative, all at ``section_index=1``, and those four lessons are exactly
+        the four whose full-lesson audio came out truncated.
+
+        Normalised here rather than at the call sites because the storage layer
+        is the one choke point every writer already passes through. An absolute
+        path is stored byte-for-byte — ``resolve()`` is deliberately NOT applied
+        to it, since that would rewrite symlinked roots (``/tmp`` ->
+        ``/private/tmp`` on macOS) that are correct as recorded.
+        """
+        raw = Path(file_path)
+        stored = file_path if raw.is_absolute() else str(raw.resolve())
         with self._get_conn() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO audio_files (id, lesson_id, file_path, section_index, section_type, cues_json)"
                 " VALUES (?, ?, ?, ?, ?, ?)",
-                (audio_id, lesson_id, file_path, section_index, section_type, cues_json),
+                (audio_id, lesson_id, stored, section_index, section_type, cues_json),
             )
             if self._in_memory:
                 conn.commit()

@@ -559,14 +559,28 @@ class TestConcatAndProbeEdges:
         assert out.read_bytes() == src.read_bytes()
 
     def test_concat_raises_when_ffmpeg_fails(self, tmp_path: Path) -> None:
+        """A non-zero exit is still raised — but it is no longer how a BAD INPUT
+        arrives here.
+
+        This test used to pass a garbage file as input #0, which really did exit
+        non-zero. That is now intercepted earlier and more precisely by the
+        preflight probe (which names the offending file), so reaching this
+        branch takes a failure on the OUTPUT side: ffmpeg exits 235 when it
+        cannot write its target. The real-world shapes are a full disk or a bad
+        permission, both of which must stay loud.
+        """
         from app.audio.render_service import _concat_stream_copy
 
-        bad = tmp_path / "not-audio.opus"
-        bad.write_bytes(b"this is not an opus stream")
-        other = tmp_path / "b.opus"
-        _make_opus_file(other, 0.5)
+        a = tmp_path / "a.opus"
+        b = tmp_path / "b.opus"
+        _make_opus_file(a, 0.5)
+        _make_opus_file(b, 0.5)
+
+        blocked = tmp_path / "out.opus"
+        blocked.mkdir()
+
         with pytest.raises(RuntimeError, match="ffmpeg concat failed"):
-            _concat_stream_copy([bad, other], tmp_path / "out.opus")
+            _concat_stream_copy([a, b], blocked)
 
     def test_duration_raises_when_ffprobe_fails(self, tmp_path: Path) -> None:
         from app.audio.render_service import _read_audio_duration
@@ -1070,3 +1084,206 @@ class TestReassembleArbitrarySectionSet:
             )
         message = str(exc_info.value)
         assert "48000" in message and "44100" in message, message
+
+
+class TestConcatSurvivesFfmpegExitingZeroOnAMissingEntry:
+    """``ffmpeg -f concat`` EXITS 0 when a mid-list entry is unopenable.
+
+    Measured directly (tunatale-c7tx), with real Opus files and the product's
+    own argv: ffmpeg logs "Impossible to open" plus "Error during demuxing",
+    returns **0**, and writes a file truncated at the missing entry. So
+    ``_concat_stream_copy``'s ``raise if returncode != 0`` is true and
+    insufficient, and the four truncated Norwegian full-lesson files are what
+    that hole looks like in production — 267s of audio under a 1400s caption
+    timeline.
+
+    The first entry is a different story and was already covered: ffmpeg exits
+    non-zero when it cannot open input #0. Only a MID-list entry is silent,
+    which is why the existing test passed while the bug shipped.
+    """
+
+    def test_a_missing_mid_list_entry_is_not_silently_truncated(self, tmp_path: Path) -> None:
+        """The production shape: the path names a file that is not there."""
+        from app.audio.render_service import _concat_stream_copy
+
+        a = tmp_path / "a.opus"
+        c = tmp_path / "c.opus"
+        _make_opus_file(a, 1.0)
+        _make_opus_file(c, 1.0)
+        missing = tmp_path / "gone.opus"
+
+        with pytest.raises(RuntimeError, match="would be silently dropped"):
+            _concat_stream_copy([a, missing, c], tmp_path / "out.opus")
+
+    def test_a_mid_list_entry_that_exists_but_is_unopenable_is_caught_too(self, tmp_path: Path) -> None:
+        """An existence preflight alone would NOT be enough.
+
+        Measured separately: a mid-list entry that exists and holds garbage
+        also exits 0 ("Invalid data found when processing input") and truncates
+        at the same place. Only comparing the output's duration against its
+        inputs catches this one, which is why the duration postcondition — not
+        the preflight — is the load-bearing half of the fix.
+        """
+        from app.audio.render_service import _concat_stream_copy
+
+        a = tmp_path / "a.opus"
+        c = tmp_path / "c.opus"
+        _make_opus_file(a, 1.0)
+        _make_opus_file(c, 1.0)
+        bad = tmp_path / "bad.opus"
+        bad.write_bytes(b"this is not an opus stream")
+
+        with pytest.raises(RuntimeError, match="would be silently dropped"):
+            _concat_stream_copy([a, bad, c], tmp_path / "out.opus")
+
+    def test_a_healthy_join_is_not_rejected(self, tmp_path: Path) -> None:
+        """The control, and the one that matters most.
+
+        This detector sits on the render path: a false positive blocks EVERY
+        render, which is a worse outage than the bug it guards. Real drift was
+        measured at **+0.0065s** on both a 2-file and a 7-file concat of real
+        product Opus (output slightly LONGER than the sum), against a smallest
+        droppable entry of a 3.0s inter-section boundary.
+        """
+        from app.audio.render_service import _concat_stream_copy
+
+        parts = []
+        for i, dur in enumerate((1.0, 0.25, 2.0, 0.25, 1.5)):
+            p = tmp_path / f"p{i}.opus"
+            _make_opus_file(p, dur)
+            parts.append(p)
+
+        out = tmp_path / "out.opus"
+        _concat_stream_copy(parts, out)
+
+        assert out.exists()
+        assert _ffprobe_duration(out) == pytest.approx(5.0, abs=0.5)
+
+    def test_a_relative_input_path_is_resolved_against_the_caller_not_the_list_file(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """ffmpeg resolves a relative concat entry against THE LIST FILE's directory.
+
+        The list file is written next to the OUTPUT, so a relative input that is
+        perfectly valid from the process CWD silently resolves somewhere else
+        entirely. That is the exact route the four broken lessons took: their
+        ``audio_files.file_path`` rows read ``output/audio/<uuid>.opus`` while
+        the list file sat in ``backend/output/audio/``.
+        """
+        from app.audio.render_service import _concat_stream_copy
+
+        src = tmp_path / "src"
+        src.mkdir()
+        for i in (0, 1):
+            _make_opus_file(src / f"p{i}.opus", 1.0)
+
+        out_dir = tmp_path / "elsewhere"
+        out_dir.mkdir()
+        monkeypatch.chdir(tmp_path)
+
+        out = out_dir / "out.opus"
+        _concat_stream_copy([Path("src/p0.opus"), Path("src/p1.opus")], out)
+
+        assert _ffprobe_duration(out) == pytest.approx(2.0, abs=0.5)
+
+    def test_a_heterogeneous_entry_that_probes_fine_is_caught_by_the_postcondition(self, tmp_path: Path) -> None:
+        """The other measured exit-0 failure, and it pushes the OPPOSITE way.
+
+        An mp3 among Opus inputs probes perfectly well on its own (1.00s), so no
+        preflight can see it — but ``-c copy`` cannot join it, and ffmpeg exits
+        0 having blown the output timestamps up to **32434s** from 3s of input.
+        A shortfall-only bound would wave this through, which is why the
+        tolerance is two-sided.
+        """
+        import subprocess
+
+        from app.audio.render_service import _concat_stream_copy
+
+        a = tmp_path / "a.opus"
+        c = tmp_path / "c.opus"
+        _make_opus_file(a, 1.0)
+        _make_opus_file(c, 1.0)
+
+        mp3 = tmp_path / "m.mp3"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=24000:cl=mono",
+                "-t",
+                "1",
+                "-c:a",
+                "libmp3lame",
+                str(mp3),
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+        with pytest.raises(RuntimeError, match="does not match its inputs"):
+            _concat_stream_copy([a, mp3, c], tmp_path / "out.opus")
+
+
+class TestReassembleServesALegacyRelativeSectionRow:
+    """The production shape of tunatale-c7tx, end to end.
+
+    Four Norwegian lessons hold an ``audio_files.file_path`` of
+    ``output/audio/<uuid>.opus`` at ``section_index=1`` while every other row on
+    the same lesson is absolute. A later re-render reuses those rows verbatim,
+    hands the relative string to the concat demuxer, and the demuxer resolves it
+    against the LIST FILE's directory — ``backend/output/audio/`` — where
+    ``output/audio/<uuid>.opus`` does not exist. ffmpeg drops the entry and
+    exits 0.
+
+    The row is seeded with raw SQL on purpose: ``save_audio_file`` now refuses
+    to create this shape, so the only way to reproduce it is the way it actually
+    exists — as data written before the fix. Those rows are still in the user's
+    database, so the read path has to serve them.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_relative_section_row_still_joins_at_full_length(self, tmp_path: Path, monkeypatch) -> None:
+        from app.audio import render_service
+
+        store = ContentStore(":memory:")
+        lesson = _build_test_lesson()
+        section_durations = [2.0, 5.0, 8.0, 5.0]
+        audio_dir = tmp_path / "audio"
+        _populate_store(store, lesson, audio_dir, section_durations)
+
+        monkeypatch.setattr(render_service.settings, "audio_dir", audio_dir)
+
+        # Rewrite section 1's row to the legacy relative shape, pointing at the
+        # same real file — the bytes were never the problem, the bookkeeping was.
+        rows = store.list_audio_files_for_lesson(lesson.title)
+        sec1 = next(r for r in rows if r["section_index"] == 1)
+        relative = f"output/audio/{Path(sec1['file_path']).name}"
+        with store._get_conn() as conn:
+            conn.execute("UPDATE audio_files SET file_path = ? WHERE id = ?", (relative, sec1["id"]))
+            conn.commit()
+        assert store.get_audio_file_row(sec1["id"])["file_path"] == relative
+
+        from app.audio.render_service import reassemble_lesson_audio
+
+        await reassemble_lesson_audio(
+            store=store,
+            renderer=_make_fake_renderer(),
+            tts=_CountingTTS(),
+            audio_dir=audio_dir,
+            lesson_id=lesson.title,
+            lesson=lesson,
+        )
+
+        full_row = next(r for r in store.list_audio_files_for_lesson(lesson.title) if r["section_index"] is None)
+        joined = _ffprobe_duration(Path(full_row["file_path"]))
+
+        # title + 4 sections + 4 boundaries. The number that matters is that
+        # section 1's 5.0s is IN there: dropping it is what shipped.
+        expected = 1.0 + sum(section_durations) + 4 * 3.0
+        assert joined == pytest.approx(expected, abs=0.5), f"joined {joined:.2f}s, expected ~{expected:.2f}s"

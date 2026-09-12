@@ -1,5 +1,7 @@
 """ContentStore unit tests."""
 
+from pathlib import Path
+
 import pytest
 
 from app.models.curriculum import Curriculum, CurriculumDay
@@ -163,6 +165,36 @@ class TestAudioFileStorage:
 
     def test_get_audio_file_returns_none_when_missing(self, store):
         assert store.get_audio_file_row("nonexistent") is None
+
+    def test_a_relative_path_is_stored_absolute(self, store, tmp_path, monkeypatch):
+        """A relative ``file_path`` is a latent truncation, not a style choice.
+
+        Measured on the real Norwegian DB (tunatale-c7tx): 100 rows absolute, 4
+        relative, all four at ``section_index=1`` — and those four are exactly
+        the four lessons whose full-lesson audio is truncated. ffmpeg's concat
+        demuxer resolves a relative entry against the LIST FILE's directory
+        rather than the process CWD, so the section silently vanished from the
+        join while ffmpeg exited 0.
+
+        Normalising here, rather than at each of the four call sites, is what
+        makes the invariant hold for callers that do not know they need it.
+        """
+        monkeypatch.chdir(tmp_path)
+        store.save_audio_file("rel1", "l1", "output/audio/rel1.opus")
+
+        stored = store.get_audio_file_row("rel1")["file_path"]
+        assert Path(stored).is_absolute(), stored
+        assert Path(stored) == tmp_path / "output/audio/rel1.opus"
+
+    def test_an_absolute_path_is_stored_byte_for_byte(self, store):
+        """The control: normalisation must not rewrite what is already correct.
+
+        Deliberately uses a path under ``/tmp``, which is a symlink to
+        ``/private/tmp`` on macOS — a ``resolve()``-based normalisation would
+        silently rewrite it and no other test would notice.
+        """
+        store.save_audio_file("abs1", "l1", "/tmp/output/audio/abs1.opus")
+        assert store.get_audio_file_row("abs1")["file_path"] == "/tmp/output/audio/abs1.opus"
 
 
 class TestSectionAudioStorage:
