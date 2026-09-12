@@ -73,7 +73,13 @@ class EdgeTTSService:
     # ------------------------------------------------------------------
 
     async def synthesize(
-        self, text: str, voice_id: str, output_path: Path, rate: str = "+0%", phonemes: Mapping[str, str] | None = None
+        self,
+        text: str,
+        voice_id: str,
+        output_path: Path,
+        rate: str = "+0%",
+        phonemes: Mapping[str, str] | None = None,
+        speak_locale: str | None = None,
     ) -> None:
         """Synthesize *text* to *output_path* using Edge TTS.
 
@@ -88,7 +94,24 @@ class EdgeTTSService:
                 is logged once per instance and the call degrades to plain
                 text — never a silent drop, never an error (Azure is the
                 default provider; this is the secondary path).
+            speak_locale: Accepted for TTSService parity and NOT renderable
+                either, for the same reason — ``<lang>`` is markup. It is
+                warned about only when it would have MATTERED, i.e. when the
+                voice's own locale differs, because Edge serves no Multilingual
+                voice at all: the Read Aloud catalogue that made female-2
+                duplicate Pernille is the same catalogue, so the case is
+                unreachable while TTS_PROVIDER=edge and a warning on every
+                native line would be noise.
         """
+        if speak_locale and not speak_locale.startswith("-".join(voice_id.split("-")[:2])):
+            logger.warning(
+                "EdgeTTS cannot carry a <lang> wrapper; %r will be spoken by %s in its "
+                "own locale and may be mis-detected. Use TTS_PROVIDER=azure for a "
+                "multilingual voice.",
+                text[:40],
+                voice_id,
+            )
+
         if phonemes and not self._phonemes_warned:
             self._phonemes_warned = True
             logger.warning(

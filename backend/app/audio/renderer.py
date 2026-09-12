@@ -25,9 +25,10 @@ from app.models.lesson import Lesson, Phrase, Section
 
 logger = logging.getLogger(__name__)
 
-# (text, voice_id, rate, phoneme mapping) — the mapping belongs in the key
-# because it, not the text alone, determines the audio. See _synth.
-_MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None]
+# (text, voice_id, rate, phoneme mapping, speak locale) — neither the mapping
+# nor the locale is an attribute of the text, and both change the audio. See
+# _synth.
+_MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None, str | None]
 
 _SAMPLE_DTYPE = "float32"
 _WAV_SUBTYPE = "PCM_16"
@@ -110,6 +111,7 @@ class LessonRenderer:
         delivery_bitrate: str = "28k",
         slicers: dict[str, ChunkSlicer] | None = None,
         phoneme_planners: dict[str, PhonemePlanner] | None = None,
+        tts_locales: dict[str, str] | None = None,
     ) -> None:
         self._tts = tts
         self._preprocessors = preprocessors
@@ -127,6 +129,13 @@ class LessonRenderer:
         # language with no planner, or a lexicon that was never built, renders
         # byte-for-byte as it did before <phoneme> existed.
         self._phoneme_planners = phoneme_planners or {}
+        # language code -> the SSML locale its text is written in. Injected like
+        # the maps above rather than read from the registry, so a renderer built
+        # for one language cannot reach for another's config, and an omitted
+        # entry means "declare nothing", which is the pre-<lang> behaviour. Only
+        # a voice from ANOTHER locale is affected: the adapter drops the wrapper
+        # when the voice already speaks the locale.
+        self._tts_locales = tts_locales or {}
 
     @property
     def pause_calculator(self) -> NaturalPauseCalculator:
@@ -259,8 +268,22 @@ class LessonRenderer:
             if ph_map is not None:
                 ipa_indices.add(i)
 
+        # Resolved once per section, and applied only to phrases in the
+        # section's own language: a narrator line is English, and declaring it
+        # as the target locale would tell Azure to read English text as
+        # Norwegian. Same discriminator ``_phrase_phonemes`` already uses.
+        target_locale = self._tts_locales.get(language_code)
+
+        def _phrase_locale(phrase: Phrase) -> str | None:
+            return target_locale if phrase.language_code == language_code else None
+
         async def _synth(
-            phrase_idx: int, text: str, voice_id: str, rate: str, phonemes: Mapping[str, str] | None = None
+            phrase_idx: int,
+            text: str,
+            voice_id: str,
+            rate: str,
+            phonemes: Mapping[str, str] | None = None,
+            speak_locale: str | None = None,
         ) -> Path:
             """Synthesize (or reuse) one phrase; returns its audio file path.
 
@@ -279,13 +302,15 @@ class LessonRenderer:
             # planned rung silently played un-tagged audio. The inverse is
             # worse: a provenance chunk inheriting IPA audio and then being
             # sliced. Same class as 2b's cache-key collision, one level up.
-            key = (text, voice_id, rate, tuple(sorted(phonemes.items())) if phonemes else None)
+            key = (text, voice_id, rate, tuple(sorted(phonemes.items())) if phonemes else None, speak_locale)
             async with memo_lock:
                 entry = synth_memo.get(key)
                 if entry is None:
                     canonical = tmp / f"s{section_idx}_p{phrase_idx}.mp3"
                     task = asyncio.ensure_future(
-                        self._tts.synthesize(text, voice_id, canonical, rate=rate, phonemes=phonemes)
+                        self._tts.synthesize(
+                            text, voice_id, canonical, rate=rate, phonemes=phonemes, speak_locale=speak_locale
+                        )
                     )
                     entry = (canonical, task)
                     synth_memo[key] = entry
@@ -311,7 +336,7 @@ class LessonRenderer:
         phrase_files = list(
             await asyncio.gather(
                 *[
-                    _synth(i, text, phrase.voice_id, phrase.rate, phonemes=ph_map)
+                    _synth(i, text, phrase.voice_id, phrase.rate, phonemes=ph_map, speak_locale=_phrase_locale(phrase))
                     for i, (text, phrase, ph_map) in enumerate(
                         zip(processed_texts, section.phrases, phoneme_maps, strict=True)
                     )

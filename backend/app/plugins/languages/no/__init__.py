@@ -30,6 +30,7 @@ register(
             name="Norwegian",
             native_name="norsk",
             script="latin",
+            tts_locale="nb-NO",
             tts_voice_map={
                 "narrator": NARRATOR_VOICE,
                 "female-1": "nb-NO-PernilleNeural",
@@ -41,7 +42,24 @@ register(
                 # existing audio on disk is unchanged.
                 "female-2": "nb-NO-IselinNeural",
                 "male-1": "nb-NO-FinnNeural",
-                "male-2": "nb-NO-FinnNeural",
+                # nb-NO's native catalogue has ONE male voice, so male-2 was
+                # Finn as well: across the 10 stored lessons that put 300
+                # phrases of a second man into the first man's voice (male-1
+                # carries 858). Azure's Multilingual Neurals fill the slot —
+                # they speak Norwegian under a <lang xml:lang="nb-NO"> wrapper.
+                # William measured WER 0.018, identical to Finn's own, and
+                # -20.2 LUFS against Finn's -20.3 (d0.1, the closest of the
+                # candidates; Florian d0.9 also passed). He also honours the
+                # <phoneme> stress overrides this language depends on: three
+                # renders (plain / IPA-A / IPA-B) hash to three distinct PCMs
+                # and the voice is deterministic, so that verdict is valid —
+                # unlike on Dragon HD, which is nondeterministic by design.
+                # ⚠️ NEW LESSONS ONLY, and not merely "existing audio is
+                # unchanged": a stored lesson blob pins a resolved voice_id per
+                # phrase, so the ten Norwegian lessons on disk keep Finn on
+                # male-2 even if re-rendered. Changing them means regenerating
+                # or backfilling the blob, which this does not do.
+                "male-2": "en-AU-WilliamMultilingualNeural",
                 "female": "nb-NO-PernilleNeural",
                 "male": "nb-NO-FinnNeural",
             },
