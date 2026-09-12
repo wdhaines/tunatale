@@ -19,6 +19,7 @@ import soundfile as sf
 from app.audio import assembly as _assembly
 from app.audio.alignment import resample_to_model_rate
 from app.audio.cues import Cue, CueTiming, build_cue_manifest
+from app.audio.paths import resolve_audio_path
 from app.audio.ports import TTSExhausted
 from app.audio.transcode import CODEC_EXT, encode_audio
 from app.config import settings
@@ -27,6 +28,22 @@ from app.models.lesson import SectionType
 from app.storage.store import ContentStore
 
 logger = logging.getLogger(__name__)
+
+
+# How far a concatenated file's duration may sit from the sum of its inputs
+# before the join is treated as broken. Measured on product Opus, not guessed:
+# real drift is **+0.0065s** — the output runs a hair LONGER than the sum — on
+# both a 2-file and a 7-file concat, and it does not accumulate with piece count
+# (6 boundaries would be 120ms if it did). The smallest entry that can go
+# missing is a 3.0s inter-section boundary, so this bound sits ~77x above the
+# observed noise and 6x below the smallest real loss.
+#
+# Deliberately generous, because this check runs on the render path and a false
+# positive would block every render — an outage worse than the bug it guards.
+# Deliberately two-sided, because the two measured failures push in OPPOSITE
+# directions: a missing entry truncates, while a heterogeneous-codec entry
+# (an mp3 among Opus) blows the output timestamps up to 32434s from 3s of input.
+_CONCAT_DURATION_TOLERANCE_S = 0.5
 
 
 def _concat_stream_copy(file_paths: list[Path], output_path: Path) -> None:
@@ -40,7 +57,10 @@ def _concat_stream_copy(file_paths: list[Path], output_path: Path) -> None:
     is copied verbatim, so the concatenated file's audio is bit-identical to the
     concatenation of the inputs' decoded audio.
 
-    Raises ``RuntimeError`` if ffmpeg exits non-zero.
+    Raises ``RuntimeError`` if ffmpeg exits non-zero, if any input cannot be
+    probed, **or** if the joined file's duration does not match the sum of its
+    inputs. Those last two are not belt-and-braces: ffmpeg exits **0** on the
+    failure that matters here, so the return code alone cannot see it.
     """
     if not file_paths:
         raise ValueError("concat requires at least one file")
@@ -50,8 +70,28 @@ def _concat_stream_copy(file_paths: list[Path], output_path: Path) -> None:
         output_path.write_bytes(file_paths[0].read_bytes())
         return
 
+    # ⚠️ The concat demuxer resolves a RELATIVE entry against the LIST FILE's
+    # own directory, not the process CWD — and the list file is written next to
+    # the output. So a path that is perfectly valid from the caller's CWD can
+    # resolve somewhere else entirely, and does: the four truncated Norwegian
+    # lessons (tunatale-c7tx) held ``output/audio/<uuid>.opus`` in
+    # ``audio_files.file_path`` while the list file sat in
+    # ``backend/output/audio/``. Absolute entries remove the question.
+    resolved = [fp.resolve() for fp in file_paths]
+
+    # Probed BEFORE ffmpeg runs, for two reasons. It names the unusable input —
+    # "which section is broken?" is the question an operator actually has, and
+    # ffmpeg's own stderr is thrown away on the exit-0 path. And it is the
+    # expected total the postcondition below compares against.
+    expected_s = 0.0
+    for fp in resolved:
+        try:
+            expected_s += _read_audio_duration(fp)
+        except RuntimeError as exc:
+            raise RuntimeError(f"concat input is unreadable and would be silently dropped: {fp} ({exc})") from exc
+
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", dir=str(output_path.parent), delete=False) as concat_list:
-        for fp in file_paths:
+        for fp in resolved:
             concat_list.write(f"file '{fp}'\n")
         concat_list_path = concat_list.name
 
@@ -62,6 +102,13 @@ def _concat_stream_copy(file_paths: list[Path], output_path: Path) -> None:
                 "-hide_banner",
                 "-loglevel",
                 "error",
+                # ⚠️ Without -y, ffmpeg asks "Overwrite? [y/N]", reads EOF, prints
+                # "Not overwriting - exiting" — and EXITS 0, having written
+                # nothing. A third way for this call to fail silently, found by
+                # the postcondition below rather than by reading the code. Every
+                # caller here writes to a fresh uuid path so it is not biting
+                # today; -y makes the intent explicit instead of accidental.
+                "-y",
                 "-f",
                 "concat",
                 "-safe",
@@ -79,6 +126,27 @@ def _concat_stream_copy(file_paths: list[Path], output_path: Path) -> None:
             raise RuntimeError(f"ffmpeg concat failed ({proc.returncode}): {proc.stderr}")
     finally:
         Path(concat_list_path).unlink(missing_ok=True)
+
+    # ⚠️ A zero exit is NOT proof the join is whole. Measured directly with real
+    # Opus files and this exact argv (tunatale-c7tx): when a MID-list entry is
+    # unopenable, ffmpeg logs "Impossible to open" plus "Error during demuxing",
+    # returns **0**, and writes a file truncated at that entry. Input #0 is the
+    # only position that exits non-zero, which is why the existing
+    # returncode check — true, and insufficient — let four Norwegian lessons
+    # ship with 267s of audio under a 1400s caption timeline.
+    #
+    # An existence preflight would not be enough either: an entry that EXISTS
+    # and holds garbage truncates exactly the same way, at exit 0. Duration is
+    # the only signal that covers both, since stderr is captured above and
+    # discarded on the success path.
+    actual_s = _read_audio_duration(output_path)
+    if abs(actual_s - expected_s) > _CONCAT_DURATION_TOLERANCE_S:
+        output_path.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"ffmpeg concat produced a file that does not match its inputs (it exited 0): "
+            f"{output_path.name} decoded to {actual_s:.2f}s but its {len(resolved)} inputs "
+            f"sum to {expected_s:.2f}s. ffmpeg's stderr was: {proc.stderr.strip() or '(empty)'}"
+        )
 
 
 # Map from slow section type → the structural-twin section type whose L2 line
@@ -464,8 +532,16 @@ async def reassemble_lesson_audio(
         boundary_path = scratch / f"boundary.{ext}"
         _write_silence(boundary_path, boundary_ms, assembly_rate)
 
+        # ⚠️ resolve_audio_path, not Path(...), for the REUSED rows. A recorded
+        # path is where a render was written, and four Norwegian rows hold a
+        # relative ``output/audio/<uuid>.opus`` that resolves against neither
+        # this process's CWD nor the concat list file's directory. Taken
+        # literally it fed the demuxer a path that does not exist, and the join
+        # came out truncated at exactly that section (tunatale-c7tx). Same
+        # resolver the serving endpoints already use (tunatale-kbb.15).
         section_paths = [
-            new_target_paths[i] if i in targets else Path(r["file_path"]) for i, r in enumerate(section_rows)
+            new_target_paths[i] if i in targets else resolve_audio_path(r["file_path"])
+            for i, r in enumerate(section_rows)
         ]
 
         # Absolute timing in MILLISECONDS throughout. Working in frames needs a
