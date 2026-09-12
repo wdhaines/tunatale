@@ -212,9 +212,11 @@ class TestTheCoveragePair:
 
 
 class TestDeletion:
-    def test_it_removes_the_session_and_returns_the_orphaned_audio(self):
+    def test_it_removes_the_session_and_returns_the_orphaned_audio(self, monkeypatch, tmp_path):
         """Rows here, files by the caller — the same split delete_lesson uses."""
         store = _store()
+        audio_dir = tmp_path / "audio"
+        monkeypatch.setattr("app.config.settings.audio_dir", audio_dir)
         store.save_review_session("sess-1", "no", "2026-09-02", _lesson())
         store.save_audio_file(
             "audio-1", "sess-1", "/media/no/sess-1/0.mp3", section_index=0, section_type="natural_speed"
@@ -222,7 +224,7 @@ class TestDeletion:
 
         paths = store.delete_review_session("sess-1")
 
-        assert paths == ["/media/no/sess-1/0.mp3"]
+        assert paths == [audio_dir / "0.mp3"]
         assert store.get_review_session("sess-1") is None
         assert store.list_audio_files_for_lesson("sess-1") == []
 
@@ -236,8 +238,10 @@ class TestDroppingOnlyTheAudio:
     row with it, and the session's id and date are exactly what regeneration
     preserves."""
 
-    def test_it_orphans_the_audio_and_keeps_the_session(self):
+    def test_it_orphans_the_audio_and_keeps_the_session(self, monkeypatch, tmp_path):
         store = _store()
+        audio_dir = tmp_path / "audio"
+        monkeypatch.setattr("app.config.settings.audio_dir", audio_dir)
         store.save_review_session("sess-1", "no", "2026-09-02", _lesson())
         store.save_audio_file(
             "audio-1", "sess-1", "/media/no/sess-1/0.mp3", section_index=0, section_type="natural_speed"
@@ -245,7 +249,7 @@ class TestDroppingOnlyTheAudio:
 
         paths = store.delete_review_session_audio("sess-1")
 
-        assert paths == ["/media/no/sess-1/0.mp3"]
+        assert paths == [audio_dir / "0.mp3"]
         assert store.list_audio_files_for_lesson("sess-1") == []
         assert store.get_review_session("sess-1") is not None
 

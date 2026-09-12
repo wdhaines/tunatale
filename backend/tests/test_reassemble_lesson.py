@@ -1287,3 +1287,154 @@ class TestReassembleServesALegacyRelativeSectionRow:
         # section 1's 5.0s is IN there: dropping it is what shipped.
         expected = 1.0 + sum(section_durations) + 4 * 3.0
         assert joined == pytest.approx(expected, abs=0.5), f"joined {joined:.2f}s, expected ~{expected:.2f}s"
+
+
+def _reroot_rows_to_basenames(store: ContentStore, lesson_id: str) -> None:
+    """Rewrite every recorded ``file_path`` for a lesson to a bare basename.
+
+    The post-migration shape: a recorded path is where a render was written, and
+    after step 2 the rows carry ``<uuid>.opus`` with the real bytes sitting in
+    ``settings.audio_dir``. Seeding this through :func:`_populate_store` and
+    then rewording the rows is deliberate — the bytes are identical to the
+    absolute shape, so only the bookkeeping is under test.
+    """
+    for r in store.list_audio_files_for_lesson(lesson_id):
+        store.save_audio_file(
+            r["id"],
+            lesson_id,
+            Path(r["file_path"]).name,
+            section_index=r["section_index"],
+            section_type=r["section_type"],
+            cues_json=r["cues_json"],
+        )
+
+
+class _WritingRenderer:
+    """Minimal renderer for render_lesson_audio: writes bytes, needs no ffmpeg."""
+
+    async def render(self, lesson, output_path, section_paths=None):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"full")
+        for sp in section_paths or []:
+            sp.parent.mkdir(parents=True, exist_ok=True)
+            sp.write_bytes(b"sec")
+        return []
+
+
+class TestReassembleUnlinksResolvedFiles:
+    """The reassemble unlinks resolve recorded paths before touching disk.
+
+    Post-migration the rows record bare basenames whose real files live in
+    ``settings.audio_dir``. The DELETE sites in the sweep resolve before
+    returning and the two reassemble unlinks resolve before unlinking; either
+    way, ``Path("<basename>").unlink()`` against the process CWD silently keeps
+    the old file and orphans the render. Before this sweep's edit at
+    ``reassemble_lesson_audio``'s unlink sites, the basename case let the old
+    files survive in place.
+    """
+
+    @pytest.mark.asyncio
+    async def test_basename_rows_have_old_full_and_target_unlinked(self, tmp_path: Path, monkeypatch) -> None:
+        """Scenario (a): the old full-lesson file and the re-rendered section's
+        old file are removed THROUGH their recorded basenames; reused sections
+        keep their files byte-for-byte."""
+        from app.audio import render_service
+        from app.audio.render_service import reassemble_lesson_audio
+
+        store = ContentStore(":memory:")
+        lesson = _build_test_lesson()
+        legacy_dir = tmp_path / "legacy_audio"
+        full_id, _section_ids, old_section_paths = _populate_store(store, lesson, legacy_dir, [2.0, 5.0, 8.0, 5.0])
+        old_full_path = legacy_dir / f"{full_id}.opus"
+        _reroot_rows_to_basenames(store, lesson.title)
+        monkeypatch.setattr(render_service.settings, "audio_dir", legacy_dir)
+
+        await reassemble_lesson_audio(
+            store=store,
+            renderer=_make_fake_renderer(),
+            tts=_CountingTTS(),
+            audio_dir=tmp_path / "new_audio",
+            lesson_id=lesson.title,
+            lesson=lesson,
+        )
+
+        assert not old_full_path.exists(), "the old full-lesson file survived the unlink"
+        assert not old_section_paths[0].exists(), "the re-rendered section's old file survived the unlink"
+        for i in (1, 2, 3):
+            assert old_section_paths[i].exists(), f"reused section {i} file must be kept, not deleted"
+        for r in store.list_audio_files_for_lesson(lesson.title):
+            assert Path(r["file_path"]).exists(), "a new row does not reach a real file"
+
+    @pytest.mark.asyncio
+    async def test_absent_old_files_do_not_raise(self, tmp_path: Path, monkeypatch) -> None:
+        """Scenario (c), CONTROL: an unlink that starts throwing is worse than one
+        that orphans. Old files that genuinely do not exist must not make the
+        reassemble fail."""
+        from app.audio import render_service
+        from app.audio.render_service import reassemble_lesson_audio
+
+        store = ContentStore(":memory:")
+        lesson = _build_test_lesson()
+        legacy_dir = tmp_path / "legacy_audio"
+        full_id, _section_ids, old_section_paths = _populate_store(store, lesson, legacy_dir, [2.0, 5.0, 8.0, 5.0])
+        old_full_path = legacy_dir / f"{full_id}.opus"
+        old_full_path.unlink()
+        old_section_paths[0].unlink()
+        _reroot_rows_to_basenames(store, lesson.title)
+        monkeypatch.setattr(render_service.settings, "audio_dir", legacy_dir)
+
+        payload = await reassemble_lesson_audio(
+            store=store,
+            renderer=_make_fake_renderer(),
+            tts=_CountingTTS(),
+            audio_dir=tmp_path / "new_audio",
+            lesson_id=lesson.title,
+            lesson=lesson,
+        )
+
+        assert len(payload["sections"]) == len(lesson.sections)
+
+
+class TestRenderLessonAudioUnlinksRecordedPaths:
+    """``render_lesson_audio``'s old-cohort unlink resolves recorded basenames.
+
+    The re-render removes the previous cohort's files; on a moved DB those rows
+    are bare basenames that only resolve against ``settings.audio_dir``. The
+    old absolute shape is already covered end to end by the API test in
+    test_api_audio.py; this is the post-migration shape for the same site.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rerender_unlinks_basename_old_files(self, tmp_path: Path, monkeypatch) -> None:
+        from app.audio import render_service
+        from app.audio.render_service import render_lesson_audio
+
+        legacy_dir = tmp_path / "legacy_audio"
+        legacy_dir.mkdir()
+        monkeypatch.setattr(render_service.settings, "audio_dir", legacy_dir)
+        lesson = _build_test_lesson()
+        store = ContentStore(":memory:")
+        old_full = legacy_dir / "old_full.opus"
+        old_sec = legacy_dir / "old_sec.opus"
+        old_full.write_bytes(b"full")
+        old_sec.write_bytes(b"sec")
+        store.save_audio_file("old-full", lesson.title, "old_full.opus", cues_json="[]")
+        store.save_audio_file(
+            "old-sec", lesson.title, "old_sec.opus", section_index=0, section_type="key_phrases", cues_json="[]"
+        )
+
+        result = await render_lesson_audio(
+            store=store,
+            renderer=_WritingRenderer(),
+            audio_dir=tmp_path / "new_audio",
+            lesson_id=lesson.title,
+            lesson=lesson,
+        )
+
+        assert not old_full.exists(), "the old full-lesson render survived the re-render"
+        assert not old_sec.exists(), "the old section render survived the re-render"
+        assert len(result["sections"]) == len(lesson.sections)
+        rows = store.list_audio_files_for_lesson(lesson.title)
+        assert len(rows) == len(lesson.sections) + 1
+        for r in rows:
+            assert Path(r["file_path"]).exists(), "a new row does not reach a real file"

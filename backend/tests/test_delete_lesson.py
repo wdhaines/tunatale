@@ -52,14 +52,16 @@ class TestDeleteLesson:
 
         assert [d["lesson_id"] for d in store.get_lesson_days("c1")] == ["new"]
 
-    def test_returns_the_audio_paths_it_orphaned(self, store):
+    def test_returns_the_audio_paths_it_orphaned(self, store, monkeypatch, tmp_path):
         store.save_lesson("l1", "c1", 1, _lesson())
+        audio_dir = tmp_path / "audio"
+        monkeypatch.setattr("app.config.settings.audio_dir", audio_dir)
         store.save_audio_file("a1", "l1", "/tmp/a1.opus")
         store.save_audio_file("a2", "l1", "/tmp/a2.opus", section_index=0, section_type="key_phrases")
 
         paths = store.delete_lesson("l1")
 
-        assert sorted(paths) == ["/tmp/a1.opus", "/tmp/a2.opus"]
+        assert sorted(paths) == sorted([audio_dir / "a1.opus", audio_dir / "a2.opus"])
 
     def test_removes_the_audio_rows_too(self, store):
         store.save_lesson("l1", "c1", 1, _lesson())

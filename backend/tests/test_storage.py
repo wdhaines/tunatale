@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from app.config import settings
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.storage.store import ContentStore
@@ -260,10 +261,12 @@ class TestSectionAudioStorage:
         assert store.list_audio_files_for_lesson("l1") == []
         assert store.list_audio_files_for_lesson("l2") != []
 
-    def test_delete_lessons_for_day(self, store):
+    def test_delete_lessons_for_day(self, store, monkeypatch, tmp_path):
         """delete_lessons_for_day removes all lessons and their audio for a given day."""
         from app.models.lesson import Lesson
 
+        audio_dir = tmp_path / "audio"
+        monkeypatch.setattr(settings, "audio_dir", audio_dir)
         lesson = Lesson(
             title="Test",
             language_code="sl",
@@ -283,9 +286,10 @@ class TestSectionAudioStorage:
         assert store.get_audio_file_row("a1") is None
         assert store.get_audio_file_row("a2") is None
         assert store.get_audio_file_row("a3") is not None
-        assert sorted(paths) == ["/a1.wav", "/a2.wav"], (
-            "the caller cannot unlink what it is not told about — this return is "
-            "the whole reason deleted days used to leak their audio onto disk"
+        assert sorted(paths) == sorted([audio_dir / "a1.wav", audio_dir / "a2.wav"]), (
+            "the caller cannot unlink what it is not told about — the returned "
+            "paths must reach the files on THIS machine, not name a record "
+            "written on the machine that rendered them"
         )
 
     def test_delete_lessons_for_day_returns_empty_for_an_unknown_day(self, store):
@@ -377,6 +381,72 @@ class TestSectionAudioStorage:
             )
         row = store.get_audio_file_row("test1")
         assert row["cues_json"] == '[{"start_ms": 0, "end_ms": 1000}]'
+
+
+class TestDeleteResolvesRecordedPaths:
+    """The delete sweep hands the caller paths that reach the file on THIS machine.
+
+    A recorded ``file_path`` is where a render was WRITTEN, and that string does
+    not survive leaving the machine that wrote it. Post-migration the rows hold
+    bare basenames that live in ``settings.audio_dir``; the delete methods must
+    resolve them before returning, or the caller's ``Path(p).unlink()`` resolves
+    against the process CWD and silently orphans the render instead of removing
+    it — a soft failure worse than a 500, because nothing ever surfaces.
+    """
+
+    def _lesson(self):
+        return Lesson(
+            title="Test",
+            language_code="sl",
+            generation_metadata={"source_prompt": "x", "model": "y"},
+        )
+
+    def test_bare_basename_row_is_unlinked_from_audio_dir(self, store, monkeypatch, tmp_path):
+        """Scenario (a): the post-migration shape. A row records ``<name>.opus``
+        and the real file sits in ``settings.audio_dir``; the delete returns a
+        path that actually reaches it. Before the sweep this returned the raw
+        basename and the file survived the caller's unlink."""
+        audio_dir = tmp_path / "audio"
+        audio_dir.mkdir()
+        monkeypatch.setattr(settings, "audio_dir", audio_dir)
+        store.save_lesson("l1", "c1", 2, self._lesson())
+        real = audio_dir / "a1.wav"
+        real.write_bytes(b"audio")
+        store.save_audio_file("a1", "l1", "a1.wav")
+
+        paths = store.delete_lessons_for_day("c1", 2)
+
+        assert paths == [audio_dir / "a1.wav"]
+        paths[0].unlink(missing_ok=True)
+        assert not real.exists(), "the caller could not reach the recorded render"
+
+    def test_absolute_existing_path_is_still_unlinkable(self, store, tmp_path):
+        """Scenario (b): no regression on today's data. An absolute path that
+        exists on this machine is returned unchanged and still removes the file."""
+        store.save_lesson("l1", "c1", 2, self._lesson())
+        real = tmp_path / "existing.wav"
+        real.write_bytes(b"audio")
+        store.save_audio_file("a1", "l1", str(real))
+
+        paths = store.delete_lessons_for_day("c1", 2)
+
+        assert paths == [real]
+        paths[0].unlink(missing_ok=True)
+        assert not real.exists()
+
+    def test_genuinely_absent_file_does_not_raise(self, store, monkeypatch, tmp_path):
+        """Scenario (c), CONTROL: a delete that starts throwing is worse than one
+        that orphans. missing_ok stays the caller's contract; resolution of a
+        path no file backs must not change the delete's normal return."""
+        audio_dir = tmp_path / "audio"
+        monkeypatch.setattr(settings, "audio_dir", audio_dir)
+        store.save_lesson("l1", "c1", 2, self._lesson())
+        store.save_audio_file("a1", "l1", "ghost.wav")
+
+        paths = store.delete_lessons_for_day("c1", 2)
+
+        assert paths == [audio_dir / "ghost.wav"]
+        paths[0].unlink(missing_ok=True)
 
 
 class TestLessonDays:
