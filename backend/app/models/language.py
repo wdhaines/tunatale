@@ -19,6 +19,13 @@ class Language:
     native_name: str  # Native name, e.g. "slovenščina"
     script: str  # Writing system, e.g. "latin"
     tts_voice_map: dict[str, str] = field(default_factory=dict)  # role → EdgeTTS voice name
+    # The SSML locale this language's text is written in ("nb-NO", "sl-SI").
+    # Needed only because a voice map may name a voice from ANOTHER locale — a
+    # Multilingual Neural voice filling a role the native catalogue cannot
+    # (sl-SI ships two voices for four roles). The adapter wraps such a render
+    # in <lang> so the voice does not guess the language and get it wrong. A
+    # language that leaves this unset behaves exactly as before: no wrapper.
+    tts_locale: str | None = None
 
     @classmethod
     def english(cls) -> Language:
@@ -27,6 +34,7 @@ class Language:
             name="English",
             native_name="English",
             script="latin",
+            tts_locale="en-US",
             tts_voice_map={
                 "narrator": NARRATOR_VOICE,
                 "female-1": "en-US-AriaNeural",

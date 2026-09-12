@@ -637,7 +637,7 @@ async def test_renderer_completes_through_a_throttled_tts_port(tmp_path):
         def __init__(self):
             self._semaphore = asyncio.Semaphore(settings.tts_max_concurrent_requests)
 
-        async def synthesize(self, text, voice_id, output_path, rate="+0%", phonemes=None):
+        async def synthesize(self, text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
             nonlocal in_flight, observed_max
             async with self._semaphore:
                 in_flight += 1
@@ -874,6 +874,198 @@ async def test_synthesize_sends_the_phoneme_markup_to_the_wire(tmp_path):
 
     body = route.calls[0].request.content.decode()
     assert '<phoneme alphabet="ipa" ph="kɑf.fə">kaffe</phoneme>' in body
+
+
+# ---------------------------------------------------------------------------
+# The <lang> seam: a voice from another locale speaking the target language
+# (tunatale-rag.4)
+# ---------------------------------------------------------------------------
+#
+# MEASURED 2026-09-12, and it overturns an earlier reverted conclusion. The
+# wrapper was once measured to be a no-op and removed — correctly on that
+# evidence, which used sentences a Multilingual voice's own language detection
+# already handled. On an utterance it mis-detects, the wrapper is decisive.
+#
+# "Kavno pivo je na meniju, je hladno ali toplo?" in sl-SI, errors out of 9
+# words, transcribed by Azure STT:
+#
+#   voice                              no <lang>   with <lang>
+#   sl-SI-RokNeural (native)               0           0    (identical PCM)
+#   en-AU-WilliamMultilingualNeural        8           0
+#   en-US-EmmaMultilingualNeural           7           0
+#   en-US-AvaMultilingualNeural            6           0
+#   fr-FR-VivienneMultilingualNeural       5           0
+#   de-DE-FlorianMultilingualNeural        1           0
+#   de-DE-SeraphinaMultilingualNeural      2           0
+#
+# William's unwrapped render transcribes in en-US as "Cavano pivo je na manager
+# je ladno Ali toplo" — it read "meniju" as the English word "manager". The
+# failure is per-utterance language mis-detection, which a native voice cannot
+# have. On the native voice the wrapper is a genuine no-op (byte-identical
+# PCM), which is the control that makes the rest of this readable.
+
+_ML_VOICE = "en-AU-WilliamMultilingualNeural"
+_WRAPPED_SSML = (
+    '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-AU">'
+    '<voice name="en-AU-WilliamMultilingualNeural"><lang xml:lang="nb-NO">'
+    '<prosody rate="+0%">hagen</prosody>'
+    "</lang></voice></speak>"
+)
+
+
+def test_a_foreign_voice_is_wrapped_in_lang():
+    assert AzureTTSService._build_ssml("hagen", _ML_VOICE, "+0%", speak_locale="nb-NO") == _WRAPPED_SSML
+
+
+def test_the_wrapper_sits_inside_voice_and_outside_prosody():
+    """Order matters: <prosody> must stay inside the <lang> it applies to.
+
+    Azure's SSML schema allows <lang> under <voice> and <prosody> under <lang>;
+    inverting them is not equivalent markup, and the measured rescue above was
+    obtained with this nesting.
+    """
+    ssml = AzureTTSService._build_ssml("hagen", _ML_VOICE, "+0%", speak_locale="nb-NO")
+
+    assert ssml.index("<voice") < ssml.index("<lang") < ssml.index("<prosody")
+
+
+def test_a_native_voice_is_not_wrapped():
+    """speak_locale the voice already speaks must change nothing at all.
+
+    Every existing render is a native voice, so this is the case that keeps
+    hundreds of MB of audio byte-reproducible — and on the wire the native
+    voice was measured to produce identical PCM either way, so emitting the
+    wrapper would be markup with no meaning.
+    """
+    assert AzureTTSService._build_ssml("hagen", _VOICE, "+0%", speak_locale="nb-NO") == _PLAIN_SSML
+
+
+@pytest.mark.parametrize("speak_locale", [None, ""], ids=["none", "empty"])
+def test_no_speak_locale_leaves_the_ssml_untouched(speak_locale):
+    assert AzureTTSService._build_ssml("hagen", _VOICE, "+0%", speak_locale=speak_locale) == _PLAIN_SSML
+
+
+def test_a_foreign_voice_without_a_speak_locale_is_left_alone():
+    """No locale supplied means no claim about the language — emit nothing.
+
+    This is the pre-change behaviour and the reason a caller that knows nothing
+    about languages (the vocab-card path with an explicit voice) cannot be
+    broken by this seam.
+    """
+    ssml = AzureTTSService._build_ssml("hagen", _ML_VOICE, "+0%")
+
+    assert "<lang" not in ssml
+    assert 'xml:lang="en-AU"' in ssml
+
+
+def test_the_speak_locale_is_attribute_escaped():
+    """THE injection guard, same as the ph attribute: markup cannot enter here.
+
+    The quote style is quoteattr's business — it switches to single quotes when
+    the value contains a double quote — so the assertion is about the angle
+    brackets, which is the part that would become markup.
+    """
+    ssml = AzureTTSService._build_ssml("hagen", _ML_VOICE, "+0%", speak_locale='x"><script>')
+
+    assert "<script>" not in ssml
+    assert "&lt;script&gt;" in ssml
+
+
+def test_the_wrapper_composes_with_phoneme_markup():
+    """Norwegian stress overrides and a foreign voice must both survive.
+
+    nb male-2 is a Multilingual voice AND Norwegian forces stress through
+    <phoneme>, so these two seams meet on the same clip. Measured on the wire:
+    William's three renders (plain / IPA-A / IPA-B) hash to three distinct PCMs
+    and the voice is deterministic, so <phoneme> is honoured, not ignored.
+    """
+    ssml = AzureTTSService._build_ssml("hagen", _ML_VOICE, "+0%", {"hagen": "hɑː.gən"}, speak_locale="nb-NO")
+
+    assert '<lang xml:lang="nb-NO">' in ssml
+    assert '<phoneme alphabet="ipa" ph="hɑː.gən">hagen</phoneme>' in ssml
+
+
+@pytest.mark.parametrize("speak_locale", [None, "nb-NO"], ids=["none", "native"])
+@pytest.mark.parametrize("text,rate,digest", _ORACLE_DIGESTS)
+def test_cache_digests_unchanged_when_no_wrapper_is_emitted(tmp_path, speak_locale, text, rate, digest):
+    """The 331 MB guard, extended to the new argument.
+
+    Same rule as the phoneme mapping: the key grows ONLY when the SSML actually
+    changes. A native voice with its own locale passed in is the common case
+    once this is wired — every narrator line and every role-1 line — so if that
+    extended the key, the first render after this change would re-synthesize
+    the entire corpus.
+    """
+    svc = _svc(cache_dir=tmp_path)
+
+    assert svc._cache_path(text, _VOICE, rate, None, speak_locale).name == f"{digest}.mp3"
+
+
+def test_a_wrapped_render_gets_its_own_cache_key(tmp_path):
+    svc = _svc(cache_dir=tmp_path)
+
+    plain = svc._cache_path("hagen", _ML_VOICE, "+0%")
+    wrapped = svc._cache_path("hagen", _ML_VOICE, "+0%", None, "nb-NO")
+
+    assert wrapped.name != plain.name
+
+
+def test_different_speak_locales_produce_different_keys(tmp_path):
+    """The same voice serves several languages, and the audio differs by locale.
+
+    A Multilingual voice can be male-2 in more than one language at once, so
+    two languages can ask it for the same surface string — "kava" is a word in
+    more than one Slavic language. Without the locale in the key, whichever
+    rendered first would serve both.
+    """
+    svc = _svc(cache_dir=tmp_path)
+
+    a = svc._cache_path("kava", _ML_VOICE, "+0%", None, "sl-SI")
+    b = svc._cache_path("kava", _ML_VOICE, "+0%", None, "hr-HR")
+
+    assert a.name != b.name
+
+
+def test_a_wrapped_key_differs_from_the_edge_adapter(tmp_path):
+    """Edge cannot emit SSML, so it must never share a key with a wrapped render.
+
+    Both adapters write into one tts_cache_dir and the key carries no provider.
+    Same failure shape as the phoneme mapping: Edge would put a render with NO
+    language declaration on the key Azure uses for the wrapped one, and a later
+    Azure call would cache-hit and serve the mis-detected audio.
+    """
+    from app.audio.edge_tts import EdgeTTSService
+
+    azure = _svc(cache_dir=tmp_path)
+    edge = EdgeTTSService(cache_dir=tmp_path)
+
+    assert (
+        azure._cache_path("hagen", _ML_VOICE, "+0%", None, "nb-NO").name
+        != edge._cache_path("hagen", _ML_VOICE, "+0%").name
+    )
+
+
+@respx.mock
+async def test_synthesize_sends_the_lang_wrapper_to_the_wire(tmp_path):
+    """The locale travels from the keyword argument into the posted SSML."""
+    route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"a"))
+
+    await _svc().synthesize("Kavno pivo", _ML_VOICE, tmp_path / "o.mp3", speak_locale="sl-SI")
+
+    assert '<lang xml:lang="sl-SI">' in route.calls[0].request.content.decode()
+
+
+@respx.mock
+async def test_a_wrapped_render_is_cached_and_reused(tmp_path):
+    """One round trip, then a cache hit — the new argument must not defeat caching."""
+    route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"a"))
+    svc = _svc(cache_dir=tmp_path / "cache")
+
+    await svc.synthesize("Kavno pivo", _ML_VOICE, tmp_path / "one.mp3", speak_locale="sl-SI")
+    await svc.synthesize("Kavno pivo", _ML_VOICE, tmp_path / "two.mp3", speak_locale="sl-SI")
+
+    assert route.call_count == 1
+    assert (tmp_path / "two.mp3").read_bytes() == b"a"
 
 
 # ---------------------------------------------------------------------------

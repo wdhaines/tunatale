@@ -172,7 +172,13 @@ class AzureTTSService:
     # ------------------------------------------------------------------
 
     async def synthesize(
-        self, text: str, voice_id: str, output_path: Path, rate: str = "+0%", phonemes: Mapping[str, str] | None = None
+        self,
+        text: str,
+        voice_id: str,
+        output_path: Path,
+        rate: str = "+0%",
+        phonemes: Mapping[str, str] | None = None,
+        speak_locale: str | None = None,
     ) -> None:
         """Synthesize *text* to *output_path* using Azure Speech.
 
@@ -185,24 +191,30 @@ class AzureTTSService:
                 are wrapped in ``<phoneme>`` elements; everything else is
                 escaped and emitted exactly as before. ``None``/``{}`` change
                 nothing, including the cache key.
+            speak_locale: The locale *text* is written in, when that is not the
+                voice's own locale — a Multilingual voice serving a language it
+                is not named for. Wraps the body in ``<lang>``; see
+                ``_lang_locale`` for why that is not optional. ``None``, and a
+                locale the voice already speaks, change nothing at all,
+                including the cache key.
         """
         self._require_credentials()
 
         if self._cache_dir is not None:
-            cached = self._cache_path(text, voice_id, rate, phonemes)
+            cached = self._cache_path(text, voice_id, rate, phonemes, speak_locale)
             if cached.exists():
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(cached, output_path)
                 logger.debug("Azure TTS cache hit for %r", text[:40])
                 return
 
-        audio = await self._synthesize_with_retry(text, voice_id, rate, phonemes)
+        audio = await self._synthesize_with_retry(text, voice_id, rate, phonemes, speak_locale)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(audio)
 
         if self._cache_dir is not None:
-            cached = self._cache_path(text, voice_id, rate, phonemes)
+            cached = self._cache_path(text, voice_id, rate, phonemes, speak_locale)
             cached.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(output_path, cached)
 
@@ -242,7 +254,14 @@ class AzureTTSService:
     def _url(self, path: str) -> str:
         return f"https://{self._region}.tts.speech.microsoft.com{path}"
 
-    def _cache_path(self, text: str, voice_id: str, rate: str, phonemes: Mapping[str, str] | None = None) -> Path:
+    def _cache_path(
+        self,
+        text: str,
+        voice_id: str,
+        rate: str,
+        phonemes: Mapping[str, str] | None = None,
+        speak_locale: str | None = None,
+    ) -> Path:
         key = f"{voice_id}|{rate}|{text}"
         # Extend the key ONLY when a mapping is present: backend/media and
         # backend/output hold hundreds of MB keyed on the three-part form, and
@@ -250,11 +269,46 @@ class AzureTTSService:
         # ordering cannot split one mapping across two entries.
         if phonemes:
             key += "|" + ",".join(f"{token}:{ipa}" for token, ipa in sorted(phonemes.items()))
+        # Same rule, same reason, and keyed off the EMITTED wrapper rather than
+        # the argument: once this is wired every narrator and role-1 line passes
+        # a speak_locale its voice already speaks, so keying on the argument
+        # would re-synthesize the whole corpus on the first render after this
+        # change. _lang_locale is the single place that decides.
+        if (wrapper := self._lang_locale(voice_id, speak_locale)) is not None:
+            key += f"|lang:{wrapper}"
         digest = hashlib.sha256(key.encode()).hexdigest()[:16]
         return self._cache_dir / f"{digest}.mp3"  # type: ignore[operator]
 
     @staticmethod
-    def _build_ssml(text: str, voice_id: str, rate: str, phonemes: Mapping[str, str] | None = None) -> str:
+    def _lang_locale(voice_id: str, speak_locale: str | None) -> str | None:
+        """The locale to wrap in ``<lang>``, or ``None`` to emit no wrapper.
+
+        A Multilingual Neural voice auto-detects the language of its text, and
+        that detection is per utterance and sometimes wrong: measured
+        2026-09-12, ``en-AU-WilliamMultilingualNeural`` rendered the Slovene
+        line "Kavno pivo je na meniju, je hladno ali toplo?" so that Azure STT
+        read it back in en-US as "Cavano pivo je na manager je ladno Ali toplo"
+        — it pronounced "meniju" as the English word "manager". 8 of 9 words
+        wrong. With the wrapper: 0 of 9, for that voice and five others.
+
+        The wrapper is omitted when the voice already speaks *speak_locale*,
+        which is both correct and load-bearing: on a native voice the wrapper
+        was measured to produce byte-identical PCM, so emitting it would change
+        the cache key of the entire existing corpus to say nothing new.
+        """
+        if not speak_locale:
+            return None
+        voice_locale = "-".join(voice_id.split("-")[:2])
+        return None if speak_locale == voice_locale else speak_locale
+
+    @staticmethod
+    def _build_ssml(
+        text: str,
+        voice_id: str,
+        rate: str,
+        phonemes: Mapping[str, str] | None = None,
+        speak_locale: str | None = None,
+    ) -> str:
         """Wrap *text* in SSML.
 
         The locale is sliced off the voice id ("nb-NO-FinnNeural" -> "nb-NO")
@@ -269,10 +323,16 @@ class AzureTTSService:
         """
         body = AzureTTSService._phoneme_body(text, phonemes) if phonemes else escape(text)
         locale = "-".join(voice_id.split("-")[:2])
+        inner = f"<prosody rate={quoteattr(rate)}>{body}</prosody>"
+        # <lang> goes INSIDE <voice> and OUTSIDE <prosody>: the rate applies to
+        # the foreign-language speech, not the other way round, and that is the
+        # nesting the rescue above was measured with.
+        if (wrapper := AzureTTSService._lang_locale(voice_id, speak_locale)) is not None:
+            inner = f"<lang xml:lang={quoteattr(wrapper)}>{inner}</lang>"
         return (
             f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang={quoteattr(locale)}>'
             f"<voice name={quoteattr(voice_id)}>"
-            f"<prosody rate={quoteattr(rate)}>{body}</prosody>"
+            f"{inner}"
             f"</voice></speak>"
         )
 
@@ -296,12 +356,17 @@ class AzureTTSService:
         return "".join(parts)
 
     async def _synthesize_with_retry(
-        self, text: str, voice_id: str, rate: str, phonemes: Mapping[str, str] | None = None
+        self,
+        text: str,
+        voice_id: str,
+        rate: str,
+        phonemes: Mapping[str, str] | None = None,
+        speak_locale: str | None = None,
     ) -> bytes:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
-                return await self._do_synthesize(text, voice_id, rate, phonemes)
+                return await self._do_synthesize(text, voice_id, rate, phonemes, speak_locale)
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in _FATAL_STATUSES:
                     raise RuntimeError(
@@ -357,7 +422,12 @@ class AzureTTSService:
         )
 
     async def _do_synthesize(
-        self, text: str, voice_id: str, rate: str, phonemes: Mapping[str, str] | None = None
+        self,
+        text: str,
+        voice_id: str,
+        rate: str,
+        phonemes: Mapping[str, str] | None = None,
+        speak_locale: str | None = None,
     ) -> bytes:
         async with self._semaphore:
             headers = {
@@ -379,7 +449,7 @@ class AzureTTSService:
                     response = await http.post(
                         self._url(_SYNTHESIS_PATH),
                         headers=headers,
-                        content=self._build_ssml(text, voice_id, rate, phonemes).encode("utf-8"),
+                        content=self._build_ssml(text, voice_id, rate, phonemes, speak_locale).encode("utf-8"),
                     )
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:

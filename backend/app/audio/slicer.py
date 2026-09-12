@@ -100,7 +100,7 @@ def build_slicers(language_codes: Iterable[str], tts: TTSService, settings: Sett
     language with no ``alignment`` wiring — both of which the renderer reads as
     "synthesize every chunk", i.e. today's behaviour.
     """
-    from app.languages import get_alignment
+    from app.languages import get_alignment, get_tts_locale
 
     if not alignment_installed():
         return {}
@@ -117,6 +117,7 @@ def build_slicers(language_codes: Iterable[str], tts: TTSService, settings: Sett
             syllabify_fn=alignment.syllabify_fn,
             vowels=alignment.vowels,
             cache_dir=settings.audio_alignment_cache_dir,
+            speak_locale=get_tts_locale(code),
         )
     return slicers
 
@@ -133,6 +134,7 @@ class ChunkSlicer:
         vowels: Iterable[str],
         cache_dir: Path | None = None,
         parent_rate: str = PARENT_RATE,
+        speak_locale: str | None = None,
     ) -> None:
         self._tts = tts
         self._aligner_factory = aligner_factory
@@ -141,6 +143,11 @@ class ChunkSlicer:
         self._vowels = frozenset(vowels)
         self._cache_dir = cache_dir
         self._parent_rate = parent_rate
+        # One slicer serves one language, so the locale is per-slicer rather
+        # than per-word. It matters because the parent render it slices syllables
+        # out of may come from a Multilingual voice, which would otherwise guess
+        # the language of a single word with no sentence context at all.
+        self._speak_locale = speak_locale
         # Parent renders memoised for this slicer's lifetime, so every chunk of a
         # word shares one synthesis and one alignment.
         self._words: dict[tuple[str, str], SlicedWord | None] = {}
@@ -156,7 +163,15 @@ class ChunkSlicer:
     def _cache_path(self, word: str, voice_id: str) -> Path | None:
         if self._cache_dir is None:
             return None
-        key = "\x1f".join([word, voice_id, self._parent_rate, self._model_id])
+        parts = [word, voice_id, self._parent_rate, self._model_id]
+        # Extended only when the locale would actually change the render (a
+        # voice from another locale), so every alignment entry already on disk
+        # stays addressable. Without it, one Multilingual voice serving two
+        # languages would share bounds between two different renders of the
+        # same spelling.
+        if self._speak_locale and not voice_id.startswith(self._speak_locale):
+            parts.append(self._speak_locale)
+        key = "\x1f".join(parts)
         return self._cache_dir / f"{hashlib.sha256(key.encode()).hexdigest()[:32]}.json"
 
     def _load_bounds(
@@ -214,7 +229,9 @@ class ChunkSlicer:
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             parent_file = Path(tmp_dir) / "parent.wav"
-            await self._tts.synthesize(word, voice_id, parent_file, rate=self._parent_rate)
+            await self._tts.synthesize(
+                word, voice_id, parent_file, rate=self._parent_rate, speak_locale=self._speak_locale
+            )
             raw, rate = sf.read(str(parent_file), dtype="float32", always_2d=True)
         samples = trim_silence(raw.mean(axis=1), int(rate))
 

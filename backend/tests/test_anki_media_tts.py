@@ -17,6 +17,7 @@ from app.config import settings
 from app.languages import get_tts_voice
 
 SYNTH_URL = "https://eastus.tts.speech.microsoft.com/cognitiveservices/v1"
+_ML_VOICE = "en-US-EmmaMultilingualNeural"
 
 
 @pytest.fixture
@@ -104,6 +105,49 @@ class TestGenerateTtsAudioEdge:
         monkeypatch.setattr("edge_tts.Communicate", FakeCommunicate)
         await generate_tts_audio("voda", voice="sl-SI-RokNeural")
         assert used_voice == ["sl-SI-RokNeural"]
+
+
+class TestSpeakLocaleOnTheDefaultVoice:
+    """The locale is declared only for the voice this module resolves itself."""
+
+    @respx.mock
+    async def test_a_foreign_default_voice_declares_the_target_locale(self, azure, monkeypatch):
+        """The case this exists for: a language whose role-1 voice is not native.
+
+        Both wired languages have a native female-1, so the wrapper is never
+        emitted here today — this swaps in the shape a future language would
+        have (sl-SI already needs Multilingual voices for two of four roles) and
+        checks the declaration actually reaches the wire.
+        """
+        from app.languages import get_language
+
+        monkeypatch.setitem(get_language(settings.target_language).tts_voice_map, "female-1", _ML_VOICE)
+        route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"\xff\xfbmp3"))
+
+        await generate_tts_audio("voda")
+
+        assert '<lang xml:lang="sl-SI">' in route.calls[0].request.content.decode()
+
+    @respx.mock
+    async def test_a_caller_supplied_voice_declares_nothing(self, azure):
+        """A caller passing its own voice owns the locale question — it may be
+        handing us English text with an English voice, where declaring the
+        target locale is worse than declaring nothing."""
+        route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"\xff\xfbmp3"))
+
+        await generate_tts_audio("voda", voice=_ML_VOICE)
+
+        assert "<lang" not in route.calls[0].request.content.decode()
+
+    @respx.mock
+    async def test_a_native_default_voice_still_sends_the_old_ssml(self, azure):
+        """The 331 MB guard at this seam: the real default is native, so the
+        posted SSML — and therefore the cache key — must be untouched."""
+        route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"\xff\xfbmp3"))
+
+        await generate_tts_audio("voda")
+
+        assert "<lang" not in route.calls[0].request.content.decode()
 
 
 async def test_default_voice_uses_settings_language():

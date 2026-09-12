@@ -32,12 +32,20 @@ class TTSService(Protocol):
         output_path: Path,
         rate: str = "+0%",
         phonemes: Mapping[str, str] | None = None,
+        speak_locale: str | None = None,
     ) -> None:
         """Synthesize *text*, optionally wrapping known tokens in ``<phoneme>``.
 
         *phonemes* maps a lowercased surface token to its IPA. It is per-token,
         not whole-text IPA. ``None`` and ``{}`` must behave identically to a
         provider without the capability at all, including the cache key.
+
+        *speak_locale* declares the locale *text* is written in, for a voice
+        that is not named for it — a Multilingual voice filling a dialogue role
+        in another language. ``None``, and a locale the voice already speaks,
+        must behave identically to a provider without the capability, cache key
+        included; an adapter that cannot emit the markup degrades with a warning
+        rather than raising.
         """
         ...
 

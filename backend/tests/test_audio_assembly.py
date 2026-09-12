@@ -98,7 +98,7 @@ class TestBoundaryRuleMovesBothPaths:
             )
             return io_buf.getvalue()
 
-        async def fake_synth(text, voice_id, output_path, rate="+0%", phonemes=None):
+        async def fake_synth(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
             output_path.write_bytes(_clip(1000 if text == "T" else 500))
 
         mock_tts = AsyncMock()

@@ -30,7 +30,7 @@ from app.audio.renderer import LessonRenderer
 from app.audio.transcode import CODEC_EXT
 from app.audio.tts_factory import get_tts_service
 from app.config import settings
-from app.languages import get_preprocessor, get_tts_voice
+from app.languages import get_preprocessor, get_tts_locale, get_tts_voice
 from app.models.lesson import Phrase, Section, SectionType
 from app.plugins.languages.no.breakdown_preview import format_breakdown_preview
 from app.plugins.languages.no.norwegian_breakdown import (
@@ -79,6 +79,7 @@ def _build_renderer() -> LessonRenderer:
         pause_calculator=NaturalPauseCalculator(),
         delivery_codec=settings.audio_delivery_codec,
         delivery_bitrate=settings.audio_delivery_bitrate,
+        tts_locales={_LANGUAGE_CODE: locale} if (locale := get_tts_locale(_LANGUAGE_CODE)) else None,
     )
 
 

@@ -14,6 +14,7 @@ from app.languages import (
     get_morphology_profile,
     get_preprocessor,
     get_syllabifier,
+    get_tts_locale,
     get_tts_voice,
     get_variant_separator,
     get_vocab_notetype,
@@ -247,11 +248,62 @@ class TestGetLanguage:
         stored Norwegian lessons two female characters conversed in a single
         voice — across 462 phrases on female-2 against 90 on female-1. Azure
         serves nb-NO-IselinNeural and edge-tts does not, so this only became
-        fixable once the provider moved. Slovene has no equivalent: Petra + Rok
-        is that catalogue's entirety.
+        fixable once the provider moved.
+
+        Slovene had no native equivalent — Petra + Rok is that catalogue's
+        entirety — and that is why its role-2 slots are Multilingual voices as
+        of 2026-09-12 (tunatale-rag.4); see
+        test_every_dialogue_role_gets_its_own_voice, which covers both languages.
         """
         voices = get_language("no").tts_voice_map
         assert voices["female-1"] != voices["female-2"]
+
+    @pytest.mark.parametrize("code", sorted(known_language_codes() - {"en"}))
+    def test_every_dialogue_role_gets_its_own_voice(self, code):
+        """The four roles the prompts use must be four different voices.
+
+        Stated as an invariant over the registry rather than as one assertion
+        per language, so a new plugin inherits the guard instead of needing its
+        own copy. English is excluded on purpose: it is the narrator/L1
+        language, never a dialogue target, and its map is a placeholder.
+
+        What made this fixable is measurement, not catalogue size: the native
+        catalogues are three voices for nb-NO and TWO for sl-SI, so Slovene
+        could not fill four roles natively at all. Azure's Multilingual Neural
+        voices auto-detect the language, and on 2026-09-12 they measured
+        indistinguishable from native by machine — see the oracle numbers on
+        tunatale-rag.4.
+        """
+        voices = get_language(code).tts_voice_map
+        picked = [voices[role] for role in ("female-1", "female-2", "male-1", "male-2")]
+        assert len(set(picked)) == 4, f"{code} collapses dialogue roles: {picked}"
+
+    @pytest.mark.parametrize("code", sorted(known_language_codes() - {"en"}))
+    def test_a_non_native_dialogue_voice_is_multilingual(self, code):
+        """A dialogue voice from another locale MUST be a Multilingual voice.
+
+        ``AzureTTSService._build_ssml`` derives ``xml:lang`` by slicing the
+        locale off the voice id, so an ordinary ``en-US``/``de-DE`` voice in a
+        Slovene slot would read the Slovene line *as English/German* — the one
+        failure mode this change could introduce. The Multilingual Neurals are
+        immune because they auto-detect the language and ignore the wrapper
+        (measured: identical PCM with and without ``<lang>``), which is why they
+        are the only sanctioned exception.
+
+        The target locale is read off ``male-1``/``female-1`` rather than mapped
+        from the code, keeping the language literal out of the assertion.
+        """
+        voices = get_language(code).tts_voice_map
+        native_locales = {"-".join(voices[r].split("-")[:2]) for r in ("female-1", "male-1")}
+        assert len(native_locales) == 1, f"{code}: role-1 voices disagree on locale: {native_locales}"
+        target = native_locales.pop()
+        for role in ("female-1", "female-2", "male-1", "male-2"):
+            voice = voices[role]
+            if "-".join(voice.split("-")[:2]) != target:
+                assert "Multilingual" in voice, (
+                    f"{code} {role}={voice} is neither {target} nor a Multilingual voice — "
+                    "it would speak the lesson in its own language"
+                )
 
     def test_norwegian_has_legacy_aliases(self):
         lang = get_language("no")
@@ -262,6 +314,30 @@ class TestGetLanguage:
         lang = get_language("no")
         assert "nb-NO" in lang.tts_voice_map["female-1"]
         assert "nb-NO" in lang.tts_voice_map["male-1"]
+
+    @pytest.mark.parametrize("code,locale", [("sl", "sl-SI"), ("no", "nb-NO"), ("en", "en-US")])
+    def test_tts_locale_is_declared_per_language(self, code, locale):
+        assert get_tts_locale(code) == locale
+
+    def test_tts_locale_raises_for_an_unknown_code(self):
+        with pytest.raises(KeyError):
+            get_tts_locale("xyz")
+
+    @pytest.mark.parametrize("code", sorted(known_language_codes()))
+    def test_the_declared_locale_matches_the_native_voices(self, code):
+        """tts_locale and the role-1 voices must agree, or the wrapper is a lie.
+
+        The adapter compares this locale against the voice's own to decide
+        whether to emit ``<lang>``. Declare "sl-SL" by mistake and every native
+        Slovene line would suddenly be wrapped — a new cache key for the whole
+        corpus and a locale Azure does not know. Tying the declaration to the
+        voices that are native by construction is what stops that being a
+        silent, one-character mistake.
+        """
+        lang = get_language(code)
+        role_1_locales = {"-".join(lang.tts_voice_map[r].split("-")[:2]) for r in ("female-1", "male-1")}
+
+        assert role_1_locales == {lang.tts_locale}
 
     def test_narrator_is_english(self):
         lang_en = get_language("en")

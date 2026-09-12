@@ -465,6 +465,62 @@ async def test_warns_once_per_instance_and_synthesizes_plain_text(tmp_path, capl
     assert caplog.text.count("phoneme") == 1
 
 
+async def test_warns_when_a_lang_wrapper_would_have_been_needed(tmp_path, caplog):
+    """Edge cannot emit <lang> either — say so, loudly, for the case that matters.
+
+    Only when the voice is from ANOTHER locale, because that is the only case
+    where the missing wrapper changes anything: a native voice needs no
+    declaration (measured byte-identical either way), and warning on those would
+    bury the real one under a lesson's worth of noise. The case is unreachable
+    today — Edge's catalogue has no Multilingual voice — which is exactly why it
+    must not fail silently if someone configures one.
+    """
+
+    def make_communicate(text, voice, rate):
+        mock = AsyncMock()
+        mock.save = AsyncMock(side_effect=lambda p: Path(p).write_bytes(b"data"))
+        return mock
+
+    with (
+        patch("app.audio.edge_tts.edge_tts.Communicate", side_effect=make_communicate),
+        caplog.at_level("WARNING"),
+    ):
+        svc = EdgeTTSService()
+        await svc.synthesize("hagen", "en-AU-WilliamMultilingualNeural", tmp_path / "a.mp3", speak_locale="nb-NO")
+
+    assert "lang" in caplog.text
+    assert "azure" in caplog.text.lower(), "the warning must name the way out"
+
+
+async def test_no_warning_for_a_voice_that_already_speaks_the_locale(tmp_path, caplog):
+    """Every existing render is this case; a warning here would be pure noise."""
+
+    def make_communicate(text, voice, rate):
+        mock = AsyncMock()
+        mock.save = AsyncMock(side_effect=lambda p: Path(p).write_bytes(b"data"))
+        return mock
+
+    with (
+        patch("app.audio.edge_tts.edge_tts.Communicate", side_effect=make_communicate),
+        caplog.at_level("WARNING"),
+    ):
+        await EdgeTTSService().synthesize("hagen", _VOICE, tmp_path / "a.mp3", speak_locale="nb-NO")
+
+    assert caplog.text == ""
+
+
+async def test_the_edge_cache_key_ignores_the_locale(tmp_path):
+    """Edge renders the same bytes either way, so its key must not split.
+
+    It is Azure's key that must differ (test_azure_tts covers that side): if
+    Edge mirrored the extension it would write un-declared audio onto the key
+    Azure uses for the wrapped render.
+    """
+    svc = EdgeTTSService(cache_dir=tmp_path)
+
+    assert svc._cache_path("hagen", _VOICE, "+0%") == svc._cache_path("hagen", _VOICE, "+0%")
+
+
 async def test_no_warning_when_phonemes_is_none(tmp_path, caplog):
     output = tmp_path / "out.mp3"
 

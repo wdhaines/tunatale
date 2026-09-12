@@ -23,7 +23,7 @@ from app.config import clock_runtime_problems, prod_profile_problems, settings  
 from app.generation.pipeline import LessonPipeline  # noqa: E402
 from app.generation.planner import CurriculumPlanner  # noqa: E402
 from app.generation.story import StoryGenerator  # noqa: E402
-from app.languages import get_language, get_phoneme_planner, get_preprocessor  # noqa: E402
+from app.languages import get_language, get_phoneme_planner, get_preprocessor, get_tts_locale  # noqa: E402
 from app.llm.activity import ActivityLog  # noqa: E402
 from app.llm.cassette import CassetteLLMClient  # noqa: E402
 from app.llm.client import LLMClient, reasoning_params_for_model  # noqa: E402
@@ -228,6 +228,10 @@ async def lifespan(app: FastAPI):
         delivery_codec=settings.audio_delivery_codec,
         delivery_bitrate=settings.audio_delivery_bitrate,
         phoneme_planners=phoneme_planners,
+        # Only languages whose plugin declares one; a language that does not
+        # renders exactly as before. Needed because a voice map may name a voice
+        # from another locale (sl-SI has two native voices for four roles).
+        tts_locales={code: locale for code in db_map if (locale := get_tts_locale(code)) is not None},
     )
     # A setting since Deploy P0.1, so a container can put audio on its data
     # volume. The default reproduces the former `_BACKEND_DIR / "output/audio"`.

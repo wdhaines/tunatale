@@ -413,6 +413,23 @@ def get_tts_voice(code: str, role: str = "female-1") -> str:
     return voice
 
 
+def get_tts_locale(code: str) -> str | None:
+    """Return the SSML locale *code*'s text is written in, or ``None`` if unset.
+
+    Read by the audio pipeline and handed to the TTS adapter as
+    ``speak_locale``. It exists because a voice map may name a voice from
+    another locale: sl-SI ships two native voices for four dialogue roles, so
+    ``male-2`` and ``female-2`` are Azure Multilingual Neural voices, and those
+    auto-detect the language of their text — measured getting it WRONG on a
+    real Slovene line (see ``AzureTTSService._lang_locale``). The adapter emits
+    nothing when the voice already speaks this locale, so the common case is
+    unchanged.
+
+    Raises ``KeyError`` for an unknown code, like every other accessor here.
+    """
+    return get_language(code).tts_locale
+
+
 def get_lemmatizer_type(code: str) -> str:
     """Return the morphological-engine name for *code* (``classla`` / ``stanza`` /
     ``lowercase``).

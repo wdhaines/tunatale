@@ -44,11 +44,15 @@ class FakeTTS:
 
     def __init__(self, duration_ms: float = _PARENT_MS, rate: int = _RATE) -> None:
         self.calls: list[tuple[str, str, str]] = []
+        self.locales: list[str | None] = []
         self._duration_ms = duration_ms
         self._rate = rate
 
-    async def synthesize(self, text: str, voice_id: str, output_path, rate: str = "+0%", phonemes=None) -> None:
+    async def synthesize(
+        self, text: str, voice_id: str, output_path, rate: str = "+0%", phonemes=None, speak_locale=None
+    ) -> None:
         self.calls.append((text, voice_id, rate))
+        self.locales.append(speak_locale)
         n = int(self._duration_ms / 1000.0 * self._rate)
         t = np.arange(n, dtype=np.float32) / self._rate
         # A tone with an amplitude ramp so different spans have different energy,
@@ -83,7 +87,9 @@ class NotchedTTS(FakeTTS):
     the case where refinement would destroy the bounds/syllable invariant.
     """
 
-    async def synthesize(self, text: str, voice_id: str, output_path, rate: str = "+0%", phonemes=None) -> None:
+    async def synthesize(
+        self, text: str, voice_id: str, output_path, rate: str = "+0%", phonemes=None, speak_locale=None
+    ) -> None:
         self.calls.append((text, voice_id, rate))
         n = int(0.100 * _RATE)
         t = np.arange(n, dtype=np.float32) / _RATE
@@ -421,6 +427,16 @@ class TestBuildSlicers:
         slicers = build_slicers(["no"], FakeTTS(), Settings())
         assert slicers["no"]._model_id == get_alignment("no").model_id
 
+    def test_the_slicer_carries_the_declared_locale(self, _alignment_installed):
+        """Wired from the registry, so a Multilingual voice's parent render
+        declares its language. A single word has no sentence context at all, so
+        this is the render most exposed to language auto-detection."""
+        from app.languages import get_tts_locale
+
+        slicers = build_slicers(["no"], FakeTTS(), Settings())
+
+        assert slicers["no"]._speak_locale == get_tts_locale("no")
+
     def test_building_does_not_load_the_model(self, _alignment_installed):
         """Constructing a slicer must not import transformers or download 1.2 GB —
         the aligner is created lazily, on the first word that needs it."""
@@ -434,3 +450,45 @@ async def test_every_span_of_a_two_syllable_word_produces_audio(tmp_path, span):
     out = tmp_path / f"c{span[0]}{span[1]}.wav"
     assert await slicer.slice_to_file(SliceSpec("haden", span[0], span[1], "v"), out) is True
     assert _duration_ms(out) > 0
+
+
+# ---------------------------------------------------------------------------
+# The parent render declares its language (tunatale-rag.4)
+# ---------------------------------------------------------------------------
+
+
+class TestSpeakLocaleOnTheParentRender:
+    async def test_the_locale_reaches_the_adapter(self, tmp_path):
+        tts = FakeTTS()
+        slicer = _slicer(tmp_path, tts=tts, speak_locale="nb-NO")
+
+        await slicer._parent("haden", "en-AU-WilliamMultilingualNeural")
+
+        assert tts.locales == ["nb-NO"]
+
+    async def test_default_is_no_declaration(self, tmp_path):
+        tts = FakeTTS()
+
+        await _slicer(tmp_path, tts=tts)._parent("haden", "nb-NO-FinnNeural")
+
+        assert tts.locales == [None]
+
+    def test_alignment_cache_keys_stay_stable_for_a_native_voice(self, tmp_path):
+        """The alignment cache holds entries keyed on (word, voice, rate, model).
+
+        Extending that key unconditionally would orphan every entry on disk, so
+        the locale joins it only when the voice is NOT the one that speaks it —
+        exactly the rule the TTS cache key uses.
+        """
+        native = _slicer(tmp_path, speak_locale="nb-NO")._cache_path("hagen", "nb-NO-FinnNeural")
+        unset = _slicer(tmp_path)._cache_path("hagen", "nb-NO-FinnNeural")
+
+        assert native == unset
+
+    def test_a_foreign_voice_gets_its_own_alignment_entry(self, tmp_path):
+        """Two languages can hand one Multilingual voice the same spelling, and
+        the syllable bounds belong to a specific render."""
+        wrapped = _slicer(tmp_path, speak_locale="nb-NO")._cache_path("kava", "en-AU-WilliamMultilingualNeural")
+        other = _slicer(tmp_path, speak_locale="sl-SI")._cache_path("kava", "en-AU-WilliamMultilingualNeural")
+
+        assert wrapped != other
