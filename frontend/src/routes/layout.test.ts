@@ -408,6 +408,35 @@ describe("mediatrace URL switch", () => {
     window.history.replaceState(null, "", "/");
   });
 
+  it("?mediatrace=on&src=car records what was sending the buttons", async () => {
+    // A car head unit, a headset and the notification shade are
+    // indistinguishable in the log, so the source has to be declared.
+    window.history.replaceState(null, "", "/?mediatrace=on&src=car");
+    const { unmount } = renderLayout();
+    await waitFor(() => expect(localStorage.getItem("mediaTraceSource")).toBe("car"));
+    unmount();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("src without mediatrace=on is still recorded, so the order of the two does not matter", async () => {
+    localStorage.setItem("mediaTrace", "on");
+    window.history.replaceState(null, "", "/?src=headset");
+    const { unmount } = renderLayout();
+    await waitFor(() => expect(localStorage.getItem("mediaTraceSource")).toBe("headset"));
+    unmount();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("an absent src leaves a previously declared source alone", async () => {
+    localStorage.setItem("mediaTraceSource", "car");
+    window.history.replaceState(null, "", "/?mediatrace=on");
+    const { unmount } = renderLayout();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(localStorage.getItem("mediaTraceSource")).toBe("car");
+    unmount();
+    window.history.replaceState(null, "", "/");
+  });
+
   it("an absent ?mediatrace leaves the key untouched", async () => {
     localStorage.setItem("mediaTrace", "on");
     window.history.replaceState(null, "", "/");

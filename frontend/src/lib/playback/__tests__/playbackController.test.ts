@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createPlaybackController } from "../playbackController.svelte";
 import type { Cue, LessonAudio } from "$lib/api";
-import { readMediaTrace, setMediaTraceEnabled, clearMediaTrace } from "$lib/mediaTrace";
+import {
+  readMediaTrace,
+  setMediaTraceEnabled,
+  setMediaTraceSource,
+  clearMediaTrace,
+} from "$lib/mediaTrace";
 
 function makeCue(overrides: Partial<Cue> & { index: number }): Cue {
   return {
@@ -2305,8 +2310,59 @@ describe("playbackController", () => {
     it("records the mediasession-ready line with the user agent", () => {
       const mediaSession = makeFakeMediaSession();
       createController({ mediaSession: mediaSession as unknown as MediaSession });
-      const ready = readMediaTrace().find((l) => l.includes("mediasession-ready ua="));
+      const ready = readMediaTrace().find((l) => l.includes("mediasession-ready"));
       expect(ready).toBeTruthy();
+      expect(ready).toContain("ua=");
+    });
+
+    it("the mediasession-ready line carries the declared source", () => {
+      // Without this the log cannot say whether an arriving action came from
+      // the car, a headset or the phone — and on 2026-09-12 that ambiguity got
+      // a car-head-unit log read as phone testing.
+      setMediaTraceSource("car");
+      const mediaSession = makeFakeMediaSession();
+      createController({ mediaSession: mediaSession as unknown as MediaSession });
+      const ready = readMediaTrace().find((l) => l.includes("mediasession-ready"));
+      expect(ready).toContain("src=car");
+    });
+
+    it("an undeclared source is recorded as unknown, never guessed", () => {
+      setMediaTraceSource("");
+      const mediaSession = makeFakeMediaSession();
+      createController({ mediaSession: mediaSession as unknown as MediaSession });
+      const ready = readMediaTrace().find((l) => l.includes("mediasession-ready"));
+      expect(ready).toContain("src=unknown");
+    });
+
+    it("setHandsFree logs the flip, because the hf= context field is stale near a mount", () => {
+      // Measured on the real 2026-09-12 car log: hands-free was on for the
+      // whole session, yet every mediasession-ready line and the first
+      // call:togglePlay read hf=0. The context field is not wrong later, but it
+      // cannot be trusted right after a mount — so the transition needs its own
+      // event or no reader can tell when the mode actually changed.
+      const controller = createController();
+      clearMediaTrace();
+      controller.setHandsFree(true);
+      const lines = readMediaTrace();
+      expect(lines.some((l) => l.includes("handsfree:on"))).toBe(true);
+    });
+
+    it("setHandsFree logs turning it off too", () => {
+      const controller = createController();
+      controller.setHandsFree(true);
+      clearMediaTrace();
+      controller.setHandsFree(false);
+      expect(readMediaTrace().some((l) => l.includes("handsfree:off"))).toBe(true);
+    });
+
+    it("setting hands-free to the value it already has logs nothing", () => {
+      // A no-op write must not manufacture a transition: the whole point of the
+      // event is to mark when the mode actually changed.
+      const controller = createController();
+      controller.setHandsFree(true);
+      clearMediaTrace();
+      controller.setHandsFree(true);
+      expect(readMediaTrace().some((l) => l.includes("handsfree:"))).toBe(false);
     });
 
     it("a refused registration is caught independently and the rest still register", () => {

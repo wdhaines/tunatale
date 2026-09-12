@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { setClientLogEnabled, flushClientLog } from '$lib/clientLog';
-	import { setMediaTraceEnabled } from '$lib/mediaTrace';
+	import { setMediaTraceEnabled, setMediaTraceSource } from '$lib/mediaTrace';
 	import { startTouchTrace } from '$lib/touchTrace';
 	import favicon from '$lib/assets/favicon.png';
 	import logo from '$lib/assets/logo.png';
@@ -56,8 +56,17 @@
 		// On-device Media Session button log, same shape as the clientlog switch
 		// above: `?mediatrace=on` must be settable from a phone's address bar,
 		// and it persists so the flag survives the navigations the drive needs.
-		const mtFlag = new URLSearchParams(window.location.search).get('mediatrace');
+		const params = new URLSearchParams(window.location.search);
+		const mtFlag = params.get('mediatrace');
 		if (mtFlag === 'on' || mtFlag === 'off') setMediaTraceEnabled(mtFlag === 'on');
+		// `&src=car` declares WHAT was sending the buttons. A car head unit, a
+		// Bluetooth headset and the phone's own notification shade all arrive
+		// through the same Media Session API and are indistinguishable in the
+		// log, so a log that does not say is ambiguous about the one thing it
+		// measures. Read independently of `mediatrace` so the two can be set in
+		// either order, or the source corrected without re-arming the trace.
+		const mtSrc = params.get('src');
+		if (mtSrc !== null) setMediaTraceSource(mtSrc);
 
 		// Every data request in the app funnels through api.ts, so one handler
 		// covers a session that dies mid-visit — including on pages whose only

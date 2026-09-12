@@ -3,8 +3,10 @@ import {
   clearMediaTrace,
   mediaTrace,
   mediaTraceEnabled,
+  mediaTraceSource,
   readMediaTrace,
   setMediaTraceEnabled,
+  setMediaTraceSource,
 } from "./mediaTrace";
 import { _resetClientLog } from "./clientLog";
 
@@ -113,5 +115,56 @@ describe("mediaTrace", () => {
     clearMediaTrace();
     expect(readMediaTrace()).toEqual([]);
     expect(mediaTraceEnabled()).toBe(true); // a clear must not turn the trace off
+  });
+});
+
+describe("mediaTrace source label", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    _resetClientLog();
+  });
+
+  it("defaults to empty when nothing was declared", () => {
+    expect(mediaTraceSource()).toBe("");
+  });
+
+  it("round-trips a declared source", () => {
+    setMediaTraceSource("car");
+    expect(mediaTraceSource()).toBe("car");
+  });
+
+  it("persists across reads, because the drive spans navigations", () => {
+    setMediaTraceSource("headset");
+    expect(mediaTraceSource()).toBe("headset");
+    expect(localStorage.getItem("mediaTraceSource")).toBe("headset");
+  });
+
+  it("sanitises the label rather than trusting the query string", () => {
+    // It reaches the log verbatim and the log is read back as whitespace-
+    // delimited fields, so a space or a newline would split one field into two
+    // and silently corrupt every parse of that line.
+    setMediaTraceSource("my car  \n stereo!!");
+    expect(mediaTraceSource()).toBe("my-car-stereo");
+  });
+
+  it("caps a long label", () => {
+    setMediaTraceSource("x".repeat(200));
+    expect(mediaTraceSource().length).toBeLessThanOrEqual(32);
+  });
+
+  it("a throwing localStorage yields empty rather than breaking the caller", () => {
+    const spy = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("private mode");
+    });
+    expect(mediaTraceSource()).toBe("");
+    spy.mockRestore();
+  });
+
+  it("a throwing localStorage on write is swallowed", () => {
+    const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("private mode");
+    });
+    expect(() => setMediaTraceSource("car")).not.toThrow();
+    spy.mockRestore();
   });
 });

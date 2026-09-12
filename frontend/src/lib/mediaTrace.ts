@@ -20,6 +20,8 @@ import { clientLog } from "./clientLog";
 
 const ENABLED_KEY = "mediaTrace"; // localStorage: "on" | "off"
 const BUFFER_KEY = "mediaTraceLog"; // localStorage: JSON string[]
+const SOURCE_KEY = "mediaTraceSource"; // localStorage: a short label, e.g. "car"
+const MAX_SOURCE_LEN = 32;
 const MAX_ENTRIES = 500;
 
 export function mediaTraceEnabled(): boolean {
@@ -35,6 +37,46 @@ export function mediaTraceEnabled(): boolean {
 export function setMediaTraceEnabled(next: boolean): void {
   try {
     localStorage.setItem(ENABLED_KEY, next ? "on" : "off");
+  } catch {
+    /* nothing sensible to do, and nothing worth breaking the page for */
+  }
+}
+
+/**
+ * What was sending the buttons — "car", "headset", "phone".
+ *
+ * WHY it must be declared rather than detected: a car head unit, a Bluetooth
+ * headset and the phone's own notification shade all deliver through the same
+ * Media Session API and land in this log identically. Nothing in the platform
+ * distinguishes them, so a log that does not say is ambiguous about the one
+ * thing it exists to measure — which buttons THIS hardware sends. It cost one
+ * reading of the 2026-09-12 log, where the arrival set was read as phone
+ * testing and was actually the car.
+ *
+ * Empty when never declared. Callers must treat that as "unknown", never as a
+ * default device.
+ */
+export function mediaTraceSource(): string {
+  try {
+    return localStorage.getItem(SOURCE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function setMediaTraceSource(next: string): void {
+  // Sanitised, not trusted: this reaches the log verbatim and a log line is
+  // read back as whitespace-delimited `key=value` fields, so a space or a
+  // newline in the label would split one field into two and silently corrupt
+  // every parse of that line.
+  const clean = (next || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, MAX_SOURCE_LEN);
+  try {
+    localStorage.setItem(SOURCE_KEY, clean);
   } catch {
     /* nothing sensible to do, and nothing worth breaking the page for */
   }

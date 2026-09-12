@@ -1,6 +1,6 @@
 import { untrack } from "svelte";
 import type { Cue, CueRef, LessonAudio } from "$lib/api";
-import { mediaTrace } from "$lib/mediaTrace";
+import { mediaTrace, mediaTraceSource } from "$lib/mediaTrace";
 
 // The hands-free pass sequence, in order of playback. One const so a later
 // change is a single edit. Matches LessonPlayer.svelte's pill model
@@ -488,7 +488,14 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     // String(), not a bare .slice: this line runs on EVERY mount, trace on or
     // off, so a navigator without userAgent (a test stub built by spread — see
     // withMediaSessionNavigator) must not be able to throw out of player setup.
-    trace(`mediasession-ready ua=${String(navigator.userAgent).slice(0, 120)}`);
+    // `src=` FIRST, before the unbounded user agent, so it survives any later
+    // truncation of the line. "unknown" rather than a guessed default: a car
+    // head unit, a headset and the notification shade are indistinguishable
+    // here, and on 2026-09-12 that ambiguity got a car log read as phone
+    // testing. Declared via `?mediatrace=on&src=car`.
+    trace(
+      `mediasession-ready src=${mediaTraceSource() || "unknown"} ua=${String(navigator.userAgent).slice(0, 120)}`,
+    );
   }
 
   const RESUME_KEY = `tt-resume-${lessonId}`;
@@ -862,6 +869,16 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       // Capture the active section when turning ON so turning OFF restores it.
       // Restore only if a capture exists. See the handsFreeRestoreSection note.
       if (v !== handsFree) {
+        // The transition needs its OWN event. Every trace line already carries
+        // `hf=`, but that context field is stale right after a mount: on the
+        // real 2026-09-12 car log hands-free was on throughout, and every
+        // mediasession-ready line plus the first call:togglePlay still read
+        // hf=0. Without this, no reader can tell when the mode actually
+        // changed — only what it had settled to by the next event.
+        //
+        // Inside the `v !== handsFree` guard on purpose: a write that changes
+        // nothing must not manufacture a transition.
+        trace(v ? "handsfree:on" : "handsfree:off");
         if (v) {
           handsFreeRestoreSection = activeSectionType;
         } else if (handsFreeRestoreSection !== null) {
