@@ -313,6 +313,48 @@ def test_verify_audio_passes_on_decodable_file(tmp_path: Path, silent_opus: Path
     assert drill.failures == []
 
 
+def test_verify_audio_reroots_an_absolute_db_path_into_the_restored_tree(tmp_path: Path, silent_opus: Path):
+    """A real DB stores ABSOLUTE paths — 100 of 104 rows, naming the author's home.
+
+    ``tree_root / file_path`` DISCARDS tree_root when file_path is absolute:
+    that is pathlib's documented behaviour, and it meant this check read the
+    ORIGINAL file on the machine that made the backup — passing vacuously, while
+    verifying nothing about the restore — and reported "missing" on any other
+    machine. Measured on the production box 2026-09-11, which is the only place
+    it could be measured.
+    """
+    tree = tmp_path / "tree"
+    (tree / "output/audio").mkdir(parents=True)
+    shutil.copy2(silent_opus, tree / "output/audio/x.opus")
+    # Absolute, and deliberately a path that does not exist on any test machine.
+    absolute = "/Users/someone-else/CascadeProjects/tunatale/backend/output/audio/x.opus"
+    db = tmp_path / "db.db"
+    _make_db(db, audio=[("lesson-1", absolute, json.dumps([{"end_ms": 1500}]))])
+    drill = Drill()
+
+    verify_audio(db, tree, drill)
+
+    assert drill.failures == []
+
+
+def test_verify_audio_still_fails_when_an_absolute_row_is_genuinely_absent(tmp_path: Path):
+    """The control for the re-rooting above.
+
+    Without it, "resolve absolute paths more leniently" could be satisfied by
+    something that stops checking at all — turning a missing file into a pass,
+    which is the one outcome a restore drill must never produce.
+    """
+    tree = tmp_path / "tree"
+    (tree / "output/audio").mkdir(parents=True)
+    db = tmp_path / "db.db"
+    _make_db(db, audio=[("lesson-1", "/Users/someone-else/backend/output/audio/gone.opus", None)])
+    drill = Drill()
+
+    verify_audio(db, tree, drill)
+
+    assert any("audio decodes" in f for f in drill.failures)
+
+
 def test_verify_audio_fails_on_truncated_file(tmp_path: Path, silent_opus: Path):
     """Header-only checks pass on a truncated file; a full decode does not.
 

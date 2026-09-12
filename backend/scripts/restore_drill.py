@@ -35,7 +35,7 @@ import sqlite3
 import subprocess
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 DEFAULT_SNAPSHOT_DIR = Path("~/.tunatale/db-backups").expanduser()
 _BACKEND_DIR = Path(__file__).parent.parent
@@ -167,6 +167,33 @@ def verify_media(db: Path, media_root: Path, drill: Drill) -> None:
     )
 
 
+def _in_restored_tree(tree_root: Path, file_path: str) -> Path:
+    """Resolve a DB-recorded audio path INSIDE the restored tree.
+
+    ``audio_files.file_path`` holds both shapes — measured on the real DB:
+    100 of 104 rows are absolute (``/Users/<author>/…/backend/output/audio/x``)
+    and 4 are relative (``output/audio/x``). A plain ``tree_root / file_path``
+    handles the relative ones and silently DISCARDS ``tree_root`` for the
+    absolute ones, because that is what pathlib does with an absolute right
+    operand. The consequence was not a crash but something worse: on the machine
+    that made the backup those absolute paths exist, so the check read the
+    ORIGINAL files and passed while verifying nothing about the restore. Only
+    running the drill on another machine could reveal it (`tunatale-kbb.6`).
+
+    Both shapes end with ``output/audio/<name>``, so re-root at the LAST
+    ``output`` component. The stored absolute paths are themselves a production
+    bug — they 404 on the box — tracked separately as ``tunatale-kbb.15``; this
+    function only makes the DRILL honest about them.
+    """
+    parts = PurePosixPath(file_path).parts
+    if "output" in parts:
+        cut = len(parts) - 1 - parts[::-1].index("output")
+        return tree_root.joinpath(*parts[cut:])
+    # No recognisable anchor: fall back to the bare name, which still cannot
+    # escape tree_root. Never join an absolute path directly.
+    return tree_root / PurePosixPath(file_path).name
+
+
 def verify_audio(db: Path, tree_root: Path, drill: Drill) -> None:
     """Full-decode each lesson's audio and check the caption timeline fits.
 
@@ -195,7 +222,7 @@ def verify_audio(db: Path, tree_root: Path, drill: Drill) -> None:
     for lesson_id, file_path, cues_json in rows:
         stats = lessons.setdefault(lesson_id, {"files": 0, "seconds": 0.0, "errors": 0, "cue_overruns": 0})
         stats["files"] = int(stats["files"]) + 1
-        path = tree_root / file_path
+        path = _in_restored_tree(tree_root, file_path)
         if not path.exists():
             stats["errors"] = int(stats["errors"]) + 1
             failures.append(f"missing {file_path}")
