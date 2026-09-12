@@ -14,6 +14,7 @@ class CachedClozeSentence(NamedTuple):
     sentence: str
     status: str
     competitors: tuple[str, ...]
+    sentence_translation: str = ""
 
 
 class DbKvCacheMixin:
@@ -105,7 +106,7 @@ class DbKvCacheMixin:
         """
         with self._get_conn() as conn:
             row = conn.execute(
-                "SELECT sentence, status, competitors FROM cloze_sentence_cache "
+                "SELECT sentence, status, competitors, sentence_translation FROM cloze_sentence_cache "
                 "WHERE word = ? AND language_code = ? AND model_version = ?",
                 (word, language_code, model_version),
             ).fetchone()
@@ -115,6 +116,7 @@ class DbKvCacheMixin:
             sentence=row["sentence"],
             status=row["status"],
             competitors=tuple(c for c in (row["competitors"] or "").split("\x1f") if c),
+            sentence_translation=row["sentence_translation"] or "",
         )
 
     def set_cached_cloze_sentence(
@@ -126,12 +128,18 @@ class DbKvCacheMixin:
         status: str,
         competitors: tuple[str, ...] = (),
         model_version: str = "",
+        sentence_translation: str = "",
     ) -> None:
         """Cache one generated cloze sentence and the judge's verdict on it.
 
         The verdict rides along so a reader can see WHY a sentence was kept
         without paying for the judgement again — and so the UI can offer "try
         again" on the ones that stayed underdetermined.
+
+        ``sentence_translation`` is a translation OF THE SENTENCE, and is
+        deliberately allowed to be empty: the mint writes it into the cloze's
+        sentence slot, and an empty slot is honest where a duplicated word gloss
+        reads as a translation and is not (tunatale-ml06).
 
         Competitors are US-joined rather than comma-joined: a filler is a single
         word here, but the separator must not be one a word can contain, and
@@ -140,8 +148,17 @@ class DbKvCacheMixin:
         with self._get_conn() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO cloze_sentence_cache "
-                "(word, language_code, model_version, sentence, status, competitors, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
-                (word, language_code, model_version, sentence, status, "\x1f".join(competitors)),
+                "(word, language_code, model_version, sentence, status, competitors, sentence_translation,"
+                " updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+                (
+                    word,
+                    language_code,
+                    model_version,
+                    sentence,
+                    status,
+                    "\x1f".join(competitors),
+                    sentence_translation,
+                ),
             )
             self._commit(conn)

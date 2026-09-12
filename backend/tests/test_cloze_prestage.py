@@ -27,16 +27,37 @@ from app.srs.database import SRSDatabase
 
 
 class ScriptedLLM:
-    """Generator and judge from one double, told apart by the system prompt."""
+    """Generator, judge and translator from one double, told apart by the system prompt.
 
-    def __init__(self, *, generated: dict[str, str] | None = None, fillers: dict[str, str] | None = None):
+    Discriminated most-specific-first. ``"translation"`` would be the obvious
+    needle for the translator and is WRONG: the generate prompt ends "no
+    translation, no quotes, no comment", so it would swallow every generate
+    call. ``"into English"`` appears in exactly one of the three.
+    """
+
+    def __init__(
+        self,
+        *,
+        generated: dict[str, str] | None = None,
+        fillers: dict[str, str] | None = None,
+        translations: dict[str, str] | None = None,
+    ):
         self._generated = generated or {}
         self._fillers = fillers or {}
+        self._translations = translations or {}
         self.generate_calls = 0
         self.judge_calls = 0
+        self.translate_calls = 0
 
     async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256):
-        if "blank" in (system_prompt or ""):
+        system = system_prompt or ""
+        if "into English" in system:
+            self.translate_calls += 1
+            for needle, reply in self._translations.items():
+                if needle in prompt:
+                    return reply
+            return ""
+        if "blank" in system:
             self.judge_calls += 1
             for needle, reply in self._fillers.items():
                 if needle in prompt:
@@ -80,6 +101,56 @@ class TestPrestageClozeSentences:
         assert cached is not None
         assert cached.sentence == "Bilen står foran huset, ikke bak det."
         assert cached.status == "determined"
+
+    @pytest.mark.asyncio
+    async def test_caches_a_translation_OF_THE_SENTENCE_alongside_it(self):
+        """The supply side of tunatale-ml06.
+
+        This table is the LLM tier's whole supply, and it had no translation
+        column — so the mint had only the WORD's gloss in scope and wrote it
+        into the sentence slot, making 18 of 109 live cloze cards show the same
+        text twice. Generating the sentence without a translation of it is what
+        made that substitution look like the only option.
+        """
+        llm = ScriptedLLM(
+            generated={"foran": "Bilen står foran huset, ikke bak det."},
+            fillers={"Bilen står ___ huset, ikke bak det.": "foran"},
+            translations={"Bilen står foran huset": "The car is parked in front of the house, not behind it."},
+        )
+        db = _db_with_awaiting([("foran", "in front of")])
+
+        report = await prestage_cloze_sentences(db, llm, language_code="no", limit=5)
+
+        assert report.written == 1
+        cached = db.get_cached_cloze_sentence("foran", "no")
+        assert cached is not None
+        assert cached.sentence_translation == "The car is parked in front of the house, not behind it."
+        assert llm.translate_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_a_sentence_whose_translation_fails_is_still_cached_with_an_empty_one(self):
+        """A missing translation must not cost the card.
+
+        These words have no image path, so declining reproduces the very
+        `unservable` state this pass exists to clear — the same reasoning that
+        keeps an underdetermined sentence. An empty slot is honest; what is NOT
+        allowed is falling back to the word's gloss, which is the defect.
+        """
+        llm = ScriptedLLM(
+            generated={"foran": "Bilen står foran huset, ikke bak det."},
+            fillers={"Bilen står ___ huset, ikke bak det.": "foran"},
+            translations={},  # the translator returns "" for everything
+        )
+        db = _db_with_awaiting([("foran", "in front of")])
+
+        report = await prestage_cloze_sentences(db, llm, language_code="no", limit=5)
+
+        assert report.written == 1
+        cached = db.get_cached_cloze_sentence("foran", "no")
+        assert cached is not None
+        assert cached.sentence == "Bilen står foran huset, ikke bak det."
+        assert cached.sentence_translation == ""
+        assert cached.sentence_translation != "in front of", "the word gloss must never stand in"
 
     @pytest.mark.asyncio
     async def test_keeps_an_underdetermined_sentence_but_records_the_verdict(self):

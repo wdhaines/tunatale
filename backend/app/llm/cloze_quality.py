@@ -266,6 +266,48 @@ def _strip_preamble(raw: str) -> str:
     return first.strip().strip("\"'`").strip()
 
 
+_TRANSLATE_SYSTEM_PROMPT = (
+    "You translate {language} sentences into English. The user gives you one {language} "
+    "sentence. Reply with a natural English translation of that WHOLE sentence and nothing "
+    "else — no quotes, no comment, no transcription of the original."
+)
+
+
+async def translate_cloze_sentence(
+    client: LLMClient,
+    *,
+    sentence: str,
+    language: str,
+) -> str:
+    """An English translation of *sentence*, or ``""`` when none can be had.
+
+    Separate from :func:`generate_cloze_sentence` on purpose. That prompt ends
+    "no translation, no quotes, no comment", and its output is measured — asking
+    it for two things at once would re-open a prompt whose behaviour is settled
+    in order to bolt on a second one. This costs an extra call on a pass that
+    already makes two (generate, then judge) and runs off the critical path.
+
+    ``""`` rather than ``None``: an absent translation is a normal outcome and
+    every reader treats empty as "say nothing". What callers must NOT do is
+    substitute the word's own gloss — that wrote the same text into a cloze
+    card's word slot and its sentence slot 18 times over (tunatale-ml06).
+    """
+    if not sentence.strip():
+        return ""
+
+    try:
+        reply = await client.complete(
+            prompt=sentence,
+            system_prompt=_TRANSLATE_SYSTEM_PROMPT.format(language=language),
+            temperature=0.3,
+            max_tokens=_MAX_TOKENS,
+        )
+    except Exception:
+        return ""
+
+    return _strip_preamble(reply)
+
+
 async def generate_cloze_sentence(
     client: LLMClient,
     *,

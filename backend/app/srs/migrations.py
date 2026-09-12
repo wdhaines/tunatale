@@ -18,7 +18,7 @@ from app.storage.db_backup import snapshot_before_migration
 
 _logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 46
+CURRENT_VERSION = 48
 
 
 class SchemaTooNewError(RuntimeError):
@@ -1406,6 +1406,74 @@ def migrate_v45_to_v46(conn: sqlite3.Connection) -> None:
     _set_version(conn, 46)
 
 
+def migrate_v46_to_v47(conn: sqlite3.Connection) -> None:
+    """A translation OF THE SENTENCE for the LLM cloze tier (``sentence_translation``).
+
+    ``cloze_sentence_cache`` held a sentence and the judge's verdict and nothing
+    else, so at mint time the only gloss in scope was the WORD's. The mint used
+    it (``ClozeChoice(gloss=unit.translation)``) and ``build_cloze_back_extra``
+    wrote that one string into BOTH the ``<i>`` word slot and the
+    ``<span class="st">`` sentence slot. 18 of 109 live cloze cards showed the
+    same text twice — ``Han ble reddet {{c1::av}} legen.`` rendering as ``of``
+    and ``of`` (tunatale-ml06). All 18 were function words, which is the tell:
+    they have no usable deck-authored example, so they are exactly the words
+    that fall to this tier.
+
+    Data-only — no ``col.scm``, nothing Anki-side. The default is ``''`` rather
+    than NULL because an absent translation is a real, expected state (the
+    generator can decline) and every reader treats empty as "say nothing",
+    which is the honest rendering. A duplicated gloss READS as a translation of
+    the sentence and is not.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(cloze_sentence_cache)")}
+    if "sentence_translation" not in cols:
+        conn.execute("ALTER TABLE cloze_sentence_cache ADD COLUMN sentence_translation TEXT NOT NULL DEFAULT ''")
+    _set_version(conn, 47)
+
+
+def migrate_v47_to_v48(conn: sqlite3.Connection) -> None:
+    """Blank the 18 cloze rows whose sentence gloss is a copy of the word gloss.
+
+    The repair half of tunatale-ml06. Before :func:`migrate_v46_to_v47` there
+    was nowhere to put a translation OF THE SENTENCE, so the mint passed the
+    WORD's and ``build_cloze_back_extra`` wrote that one string into both the
+    ``<i>`` slot and the ``<span class="st">`` slot. Measured on the live
+    Norwegian deck 2026-09-11: 18 of 109 cloze collocations, every one of them a
+    function word — the tell, since those are exactly the words with no usable
+    deck-authored example and therefore the ones that reach the LLM tier.
+
+    Blanking rather than guessing: an empty slot says nothing, while a
+    duplicated gloss READS as a translation of the sentence and is not, which is
+    why this survived four days unnoticed. The next ``prestage_cloze_sentences``
+    pass fills them properly, now that the cache can hold one.
+
+    ⚠️ ``dirty_fields`` is MERGED, never replaced — a translation edit still
+    waiting to push must not be dropped by this repair. That flag is also what
+    carries the fix to Anki: ``sync_push`` rebuilds Back Extra from
+    ``sentence_translation``, which is the sanctioned path rather than a bespoke
+    collection writer. Data-only, so no ``col.scm`` and no full upload.
+
+    Scoped to ``card_type = 'cloze'``: a vocab row's Back Extra is composed by a
+    different path, and its two fields agreeing carries no meaning here.
+    """
+    conn.execute(
+        """
+        UPDATE collocations
+        SET sentence_translation = '',
+            dirty_fields = CASE
+                WHEN dirty_fields IS NULL OR dirty_fields = '' THEN 'sentence_translation'
+                WHEN ',' || dirty_fields || ',' LIKE '%,sentence_translation,%' THEN dirty_fields
+                ELSE dirty_fields || ',sentence_translation'
+            END,
+            updated_at = datetime('now')
+        WHERE card_type = 'cloze'
+          AND translation != ''
+          AND sentence_translation = translation
+        """
+    )
+    _set_version(conn, 48)
+
+
 def migrate_v43_to_v44(conn: sqlite3.Connection) -> None:
     """Record that a word's image search came back empty (``image_unavailable_at``).
 
@@ -1482,6 +1550,8 @@ _MIGRATIONS = {
     43: migrate_v43_to_v44,
     44: migrate_v44_to_v45,
     45: migrate_v45_to_v46,
+    46: migrate_v46_to_v47,
+    47: migrate_v47_to_v48,
 }
 
 

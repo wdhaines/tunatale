@@ -435,3 +435,50 @@ class TestUposForDisambig:
 
         assert upos_for_disambig("") is None
         assert upos_for_disambig("   ") is None
+
+
+class TestTranslateClozeSentence:
+    """A translation OF THE SENTENCE, so the mint has one for the sentence slot.
+
+    Separate from ``generate_cloze_sentence`` deliberately: that prompt ends "no
+    translation, no quotes, no comment" and its output is measured, so asking it
+    for two things at once would re-open settled behaviour to bolt on a second
+    job. This runs off the critical path, on a pass that already makes two calls.
+    """
+
+    @pytest.mark.asyncio
+    async def test_returns_the_translation(self):
+        from app.llm.cloze_quality import translate_cloze_sentence
+
+        client = AsyncMock()
+        client.complete.return_value = "The car is parked in front of the house."
+
+        got = await translate_cloze_sentence(client, sentence="Bilen står foran huset.", language="Norwegian")
+
+        assert got == "The car is parked in front of the house."
+
+    @pytest.mark.asyncio
+    async def test_an_empty_sentence_costs_no_call(self):
+        """Nothing to translate is not a reason to spend a request."""
+        from app.llm.cloze_quality import translate_cloze_sentence
+
+        client = AsyncMock()
+
+        assert await translate_cloze_sentence(client, sentence="   ", language="Norwegian") == ""
+        client.complete.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_call_yields_empty_rather_than_raising(self):
+        """The caller caches the sentence either way.
+
+        These words have no image path, so letting a translation failure abort
+        the write would reproduce the very `unservable` state the pre-stage
+        exists to clear. Empty is honest; what must NOT happen is falling back
+        to the word's own gloss, which is the tunatale-ml06 defect.
+        """
+        from app.llm.cloze_quality import translate_cloze_sentence
+
+        client = AsyncMock()
+        client.complete.side_effect = RuntimeError("429 rate limited")
+
+        assert await translate_cloze_sentence(client, sentence="Bilen står foran huset.", language="Norwegian") == ""
