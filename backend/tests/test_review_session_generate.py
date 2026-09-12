@@ -497,10 +497,20 @@ class TestRegenerating:
 
         assert [row["id"] for row in stored.list_review_sessions("sl")] == ["sess-1"]
 
-    async def test_it_drops_the_audio_of_the_dialogue_it_replaced(self, stored, seeded_db, tmp_path):
+    async def test_it_drops_the_audio_of_the_dialogue_it_replaced(self, stored, seeded_db, tmp_path, monkeypatch):
         """Audio rows key on the session id, so a render of the OLD dialogue
         would otherwise still be served for the new one — the page would read a
-        script that is no longer on screen."""
+        script that is no longer on screen.
+
+        ``settings.audio_dir`` is pointed at the render tree because since
+        kbb.15 step 3 a row stores only a basename, and the delete resolves it
+        under that setting. Production already satisfies this — review sessions
+        render via ``app.state.audio_dir``, which IS ``settings.audio_dir`` — so
+        a file sitting outside it is a shape only a test can build.
+        """
+        from app.config import settings as _settings
+
+        monkeypatch.setattr(_settings, "audio_dir", tmp_path)
         self._stored_session(stored)
         stale = tmp_path / "0.mp3"
         stale.write_bytes(b"old")

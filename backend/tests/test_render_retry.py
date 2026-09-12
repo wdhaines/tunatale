@@ -18,6 +18,18 @@ import pytest
 from app.audio.ports import TTSExhausted
 from app.audio.render_service import _with_render_retries
 
+
+@pytest.fixture(autouse=True)
+def _audio_dir_points_at_the_test_tree(tmp_path, monkeypatch):
+    """``resolve_audio_path`` reads ``settings.audio_dir`` and a row stores only
+    a basename since tunatale-kbb.15 step 3. Without this the resolver reaches
+    the REAL ``backend/output/audio`` — 331 MB of the user's generated audio —
+    which is not somewhere a unit test should be looking at all."""
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "audio_dir", tmp_path / "audio")
+
+
 # Shells out to a real ffmpeg binary. CI's two hostile-timezone jobs deselect
 # these with -m "not ffmpeg" so they need no ffmpeg install; see
 # pyproject.toml [tool.pytest.ini_options] markers.

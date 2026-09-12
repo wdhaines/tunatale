@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from app.audio.cues import Cue, CueTiming
+from app.audio.paths import resolve_audio_path
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 from app.storage.store import ContentStore
@@ -108,12 +109,25 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+@pytest.fixture(autouse=True)
+def _audio_dir_points_at_the_test_tree(tmp_path, monkeypatch):
+    """``resolve_audio_path`` reads ``settings.audio_dir``, and since
+    tunatale-kbb.15 step 3 a row stores only a basename — so without this every
+    stored path resolves against the process CWD instead of the test's render
+    tree. Autouse because it is true of every test in this file; a test that
+    needs a different directory sets its own and wins, its monkeypatch running
+    after this one."""
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "audio_dir", tmp_path / "audio")
+
+
 def _full_path(store, lesson_id: str) -> Path:
     """The stored full-lesson file. The payload mirrors render_lesson_audio's
     shape (audio_id / lesson_id / sections / cues) and deliberately does not add
     a key that one — so the path is read back the way the app reads it."""
     row = next(r for r in store.list_audio_files_for_lesson(lesson_id) if r["section_index"] is None)
-    return Path(row["file_path"])
+    return resolve_audio_path(row["file_path"])
 
 
 def _build_test_lesson(title: str = "Inside the Cabin", n_sections: int = 4) -> Lesson:
@@ -354,7 +368,7 @@ class TestReassembleByteIdentity:
         rows = store.list_audio_files_for_lesson(lesson.title)
         for r in rows:
             if r["section_index"] is not None and r["section_index"] > 0:
-                pre_hashes[r["section_index"]] = _sha256(Path(r["file_path"]))
+                pre_hashes[r["section_index"]] = _sha256(resolve_audio_path(r["file_path"]))
 
         from app.audio.render_service import reassemble_lesson_audio
 
@@ -371,7 +385,7 @@ class TestReassembleByteIdentity:
         post_rows = store.list_audio_files_for_lesson(lesson.title)
         for r in post_rows:
             if r["section_index"] is not None and r["section_index"] > 0:
-                post_hash = _sha256(Path(r["file_path"]))
+                post_hash = _sha256(resolve_audio_path(r["file_path"]))
                 assert pre_hashes[r["section_index"]] == post_hash, (
                     f"Section {r['section_index']} file changed: {pre_hashes[r['section_index']]} → {post_hash}"
                 )
@@ -405,7 +419,7 @@ class TestReassembleDuration:
         # Read section durations from the new section file (KEY_PHRASES was re-rendered)
         kp_section_rows = [r for r in store.list_audio_files_for_lesson(lesson.title) if r["section_index"] == 0]
         assert kp_section_rows
-        kp_dur = _ffprobe_duration(Path(kp_section_rows[0]["file_path"]))
+        kp_dur = _ffprobe_duration(resolve_audio_path(kp_section_rows[0]["file_path"]))
         assert kp_dur > 0, f"KEY_PHRASES section duration invalid: {kp_dur}"
 
         # Recompute expected total. The boundary count is N, not N-1: the
@@ -452,7 +466,7 @@ class TestCueOffsetAccuracy:
         # Record the old full file's duration and last-section cue offsets
         old_rows = store.list_audio_files_for_lesson(lesson.title)
         old_full = next(r for r in old_rows if r["section_index"] is None)
-        old_full_dur = _ffprobe_duration(Path(old_full["file_path"]))
+        old_full_dur = _ffprobe_duration(resolve_audio_path(old_full["file_path"]))
 
         _old_last_sec_cues = json.loads(
             next(r for r in old_rows if r["section_index"] == len(lesson.sections) - 1)["cues_json"]
@@ -864,7 +878,7 @@ class TestReassembleArbitrarySectionSet:
 
         rows_before = {r["section_index"]: r for r in store.list_audio_files_for_lesson(lesson.title)}
         kp_path_before = rows_before[0]["file_path"]
-        kp_sha_before = _sha256(Path(kp_path_before))
+        kp_sha_before = _sha256(resolve_audio_path(kp_path_before))
         slow_path_before = rows_before[3]["file_path"]
 
         await reassemble_lesson_audio(
@@ -879,7 +893,9 @@ class TestReassembleArbitrarySectionSet:
 
         rows_after = {r["section_index"]: r for r in store.list_audio_files_for_lesson(lesson.title)}
         assert rows_after[0]["file_path"] == kp_path_before, "KEY_PHRASES row's file_path must be unchanged"
-        assert _sha256(Path(rows_after[0]["file_path"])) == kp_sha_before, "KEY_PHRASES file must be byte-identical"
+        assert _sha256(resolve_audio_path(rows_after[0]["file_path"])) == kp_sha_before, (
+            "KEY_PHRASES file must be byte-identical"
+        )
         assert rows_after[3]["file_path"] != slow_path_before, "SLOW_SPEED row must point at a NEW path"
         assert not Path(slow_path_before).exists(), "the old SLOW_SPEED file must be unlinked"
 
@@ -895,7 +911,7 @@ class TestReassembleArbitrarySectionSet:
         _populate_store(store, lesson, audio_dir, [2.0, 5.0, 8.0, 5.0])
 
         rows_before = {r["section_index"]: r for r in store.list_audio_files_for_lesson(lesson.title)}
-        sha_before = {i: _sha256(Path(r["file_path"])) for i, r in rows_before.items() if r is not None}
+        sha_before = {i: _sha256(resolve_audio_path(r["file_path"])) for i, r in rows_before.items() if r is not None}
 
         await reassemble_lesson_audio(
             store=store,
@@ -911,7 +927,9 @@ class TestReassembleArbitrarySectionSet:
         for i in (0, 3):
             assert rows_after[i]["file_path"] != rows_before[i]["file_path"], f"section {i} must be re-rendered"
         for i in (1, 2):
-            assert _sha256(Path(rows_after[i]["file_path"])) == sha_before[i], f"section {i} must stay byte-identical"
+            assert _sha256(resolve_audio_path(rows_after[i]["file_path"])) == sha_before[i], (
+                f"section {i} must stay byte-identical"
+            )
 
     @pytest.mark.asyncio
     async def test_o3_discriminator_middle_target_offset_arithmetic(self, tmp_path: Path) -> None:
@@ -944,7 +962,7 @@ class TestReassembleArbitrarySectionSet:
 
         # The duration reassemble WILL use for each section (round(ffprobe)),
         # measured from the seeded files — the container padding is included.
-        dur_ms = [round(_ffprobe_duration(Path(r["file_path"])) * 1000) for r in rows_ordered]
+        dur_ms = [round(_ffprobe_duration(resolve_audio_path(r["file_path"])) * 1000) for r in rows_ordered]
 
         # The title reassemble will measure: same bytes, same round trip.
         rt_mp3 = tmp_path / "title-roundtrip.mp3"
@@ -1009,7 +1027,7 @@ class TestReassembleArbitrarySectionSet:
         # (b) Section AFTER the target shifts by exactly the target's duration
         #     delta — the section at index 2 was 8.0s, now it is 1.5s.
         new_rows = {r["section_index"]: r for r in store.list_audio_files_for_lesson(lesson.title)}
-        new_sec2_dur_ms = round(_ffprobe_duration(Path(new_rows[2]["file_path"])) * 1000)
+        new_sec2_dur_ms = round(_ffprobe_duration(resolve_audio_path(new_rows[2]["file_path"])) * 1000)
         delta_ms = new_sec2_dur_ms - dur_ms[2]
         sec3_before = sorted(section_cues_before[3], key=lambda c: c["phrase_index"])
         sec3_after = sorted(after_by_sec[3], key=lambda c: c["phrase_index"])
@@ -1023,7 +1041,10 @@ class TestReassembleArbitrarySectionSet:
         expected_total = (
             title_ms
             + 4 * boundary_ms
-            + sum(round(_ffprobe_duration(Path(r["file_path"])) * 1000) for r in (new_rows[i] for i in range(4)))
+            + sum(
+                round(_ffprobe_duration(resolve_audio_path(r["file_path"])) * 1000)
+                for r in (new_rows[i] for i in range(4))
+            )
         )
         actual_total = _ffprobe_duration(_full_path(store, lesson.title)) * 1000
         assert abs(actual_total - expected_total) < 60, (actual_total, expected_total)
@@ -1281,7 +1302,7 @@ class TestReassembleServesALegacyRelativeSectionRow:
         )
 
         full_row = next(r for r in store.list_audio_files_for_lesson(lesson.title) if r["section_index"] is None)
-        joined = _ffprobe_duration(Path(full_row["file_path"]))
+        joined = _ffprobe_duration(resolve_audio_path(full_row["file_path"]))
 
         # title + 4 sections + 4 boundaries. The number that matters is that
         # section 1's 5.0s is IN there: dropping it is what shipped.
@@ -1324,6 +1345,15 @@ class _WritingRenderer:
 class TestReassembleUnlinksResolvedFiles:
     """The reassemble unlinks resolve recorded paths before touching disk.
 
+    ⚠️ ONE audio directory throughout, because that is the only shape production
+    has: ``app.state.audio_dir`` IS ``settings.audio_dir`` (``main.py``) and
+    every render entry point takes ``audio_dir`` from there. Since kbb.15 step 3
+    a row stores a BASENAME, so a render written outside ``settings.audio_dir``
+    is unresolvable BY CONSTRUCTION. These tests originally rendered into a
+    second directory, which was only reachable while rows held absolute paths.
+    ``test_every_render_entry_point_uses_the_settings_audio_dir`` pins the
+    invariant that makes the single-directory assumption safe.
+
     Post-migration the rows record bare basenames whose real files live in
     ``settings.audio_dir``. The DELETE sites in the sweep resolve before
     returning and the two reassemble unlinks resolve before unlinking; either
@@ -1353,7 +1383,7 @@ class TestReassembleUnlinksResolvedFiles:
             store=store,
             renderer=_make_fake_renderer(),
             tts=_CountingTTS(),
-            audio_dir=tmp_path / "new_audio",
+            audio_dir=legacy_dir,
             lesson_id=lesson.title,
             lesson=lesson,
         )
@@ -1363,7 +1393,7 @@ class TestReassembleUnlinksResolvedFiles:
         for i in (1, 2, 3):
             assert old_section_paths[i].exists(), f"reused section {i} file must be kept, not deleted"
         for r in store.list_audio_files_for_lesson(lesson.title):
-            assert Path(r["file_path"]).exists(), "a new row does not reach a real file"
+            assert resolve_audio_path(r["file_path"]).exists(), "a new row does not reach a real file"
 
     @pytest.mark.asyncio
     async def test_absent_old_files_do_not_raise(self, tmp_path: Path, monkeypatch) -> None:
@@ -1387,7 +1417,7 @@ class TestReassembleUnlinksResolvedFiles:
             store=store,
             renderer=_make_fake_renderer(),
             tts=_CountingTTS(),
-            audio_dir=tmp_path / "new_audio",
+            audio_dir=legacy_dir,
             lesson_id=lesson.title,
             lesson=lesson,
         )
@@ -1426,7 +1456,7 @@ class TestRenderLessonAudioUnlinksRecordedPaths:
         result = await render_lesson_audio(
             store=store,
             renderer=_WritingRenderer(),
-            audio_dir=tmp_path / "new_audio",
+            audio_dir=legacy_dir,
             lesson_id=lesson.title,
             lesson=lesson,
         )
@@ -1437,4 +1467,4 @@ class TestRenderLessonAudioUnlinksRecordedPaths:
         rows = store.list_audio_files_for_lesson(lesson.title)
         assert len(rows) == len(lesson.sections) + 1
         for r in rows:
-            assert Path(r["file_path"]).exists(), "a new row does not reach a real file"
+            assert resolve_audio_path(r["file_path"]).exists(), "a new row does not reach a real file"

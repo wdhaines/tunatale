@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.api.models import GetLessonAudioResponse, RenderAudioResponse, RenderAudioSection, RenderSectionCue
@@ -12,6 +13,22 @@ from app.models.curriculum import Curriculum
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.models.srs_item import Direction, SRSState
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
+
+
+@pytest.fixture(autouse=True)
+def _settings_audio_dir_follows_the_test_tree(tmp_path, monkeypatch):
+    """These tests set ``app.state.audio_dir`` but ``resolve_audio_path`` reads
+    ``settings.audio_dir``, and since tunatale-kbb.15 step 3 a row stores only a
+    basename — so without this every lookup resolves against the REAL
+    ``backend/output/audio`` instead of the test tree.
+
+    In production the two are the same object (``main.py`` sets
+    ``app.state.audio_dir = settings.audio_dir``); only a test can pull them
+    apart, which is what ``TestBasenameStorageInvariant`` exists to keep true.
+    """
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "audio_dir", tmp_path)
 
 
 def _make_mock_lesson_with_sections() -> Lesson:
@@ -220,8 +237,8 @@ class TestAudioEndpoints:
         Guards backlog 14 part 2: every render mints new UUID paths, so without
         an explicit unlink the old files leaked forever.
         """
-        from pathlib import Path
 
+        from app.audio.paths import resolve_audio_path
         from app.storage.store import ContentStore
 
         mock_renderer = AsyncMock()
@@ -239,13 +256,13 @@ class TestAudioEndpoints:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/audio/render", json={"lesson_id": lesson_id})
             old_paths = [r["file_path"] for r in store.list_audio_files_for_lesson(lesson_id)]
-            assert old_paths and all(Path(p).exists() for p in old_paths)
+            assert old_paths and all(resolve_audio_path(p).exists() for p in old_paths)
 
             await client.post("/api/audio/render", json={"lesson_id": lesson_id})
             new_paths = [r["file_path"] for r in store.list_audio_files_for_lesson(lesson_id)]
 
-            assert all(not Path(p).exists() for p in old_paths), "old cohort files were not unlinked"
-            assert all(Path(p).exists() for p in new_paths), "new cohort files should be on disk"
+            assert all(not resolve_audio_path(p).exists() for p in old_paths), "old cohort files were not unlinked"
+            assert all(resolve_audio_path(p).exists() for p in new_paths), "new cohort files should be on disk"
             assert set(old_paths).isdisjoint(new_paths)
 
     async def test_render_returns_cues_in_post_response(self, tmp_path):

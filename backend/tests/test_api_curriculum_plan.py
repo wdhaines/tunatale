@@ -31,6 +31,22 @@ from app.storage.store import ContentStore
 
 
 @pytest.fixture(autouse=True)
+def _settings_audio_dir_follows_the_test_tree(tmp_path, monkeypatch):
+    """These tests set ``app.state.audio_dir`` but ``resolve_audio_path`` reads
+    ``settings.audio_dir``, and since tunatale-kbb.15 step 3 a row stores only a
+    basename — so without this every lookup resolves against the REAL
+    ``backend/output/audio`` instead of the test tree.
+
+    In production the two are the same object (``main.py`` sets
+    ``app.state.audio_dir = settings.audio_dir``); only a test can pull them
+    apart, which is what ``TestBasenameStorageInvariant`` exists to keep true.
+    """
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "audio_dir", tmp_path)
+
+
+@pytest.fixture(autouse=True)
 def _clean_app_state():
     yield
     for attr in ("content_store", "srs_db"):
