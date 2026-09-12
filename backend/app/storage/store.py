@@ -96,6 +96,7 @@ class ContentStore:
             " ON review_sessions(language_code, session_date DESC)"
         )
         self._migrate_audio_files(conn)
+        self._normalize_audio_paths(conn)
         conn.commit()
 
     def _migrate_audio_files(self, conn: sqlite3.Connection) -> None:
@@ -104,6 +105,28 @@ class ContentStore:
         for col_name, col_type in _AUDIO_FILES_MIGRATION_COLUMNS:
             if col_name not in existing:
                 conn.execute(f"ALTER TABLE audio_files ADD COLUMN {col_name} {col_type}")
+
+    def _normalize_audio_paths(self, conn: sqlite3.Connection) -> None:
+        """Reduce any ``audio_files.file_path`` carrying a directory to its basename.
+
+        Self-healing on open rather than a one-shot migration, and the
+        difference is the whole point: the failure this guards is a database
+        that has MOVED MACHINE, and the production box restores from a backup
+        taken before the write side was fixed (tunatale-kbb.15). A one-shot that
+        had already run on the author's laptop would never run there.
+
+        Idempotent, and the common case is a read: the SELECT matches nothing
+        once the data is clean, so no write is issued. ``LIKE '%/%'`` is the
+        whole test — both broken shapes carry a separator
+        (``/Users/…/x.opus`` and ``output/audio/x.opus``) and the correct one
+        cannot.
+        """
+        rows = conn.execute("SELECT id, file_path FROM audio_files WHERE file_path LIKE '%/%'").fetchall()
+        for row in rows:
+            conn.execute(
+                "UPDATE audio_files SET file_path = ? WHERE id = ?",
+                (Path(row["file_path"]).name, row["id"]),
+            )
 
     @contextmanager
     def _file_conn(self):
@@ -305,25 +328,27 @@ class ContentStore:
     ) -> None:
         """Persist one audio row. A relative *file_path* is stored absolute.
 
-        ⚠️ A relative path here is a latent silent truncation, not a formatting
-        preference. ffmpeg's concat demuxer resolves a relative entry against
-        the LIST FILE's directory rather than the process CWD, and the list file
-        is written beside the output — so a row that reads
-        ``output/audio/<uuid>.opus`` points somewhere that does not exist by the
-        time the next re-render joins it, and ffmpeg drops it and exits **0**.
+        The DIRECTORY part is what does not survive leaving this machine, and it
+        carries no information: the render tree is flat (``<uuid>.opus``) and
+        ``app.audio.paths.resolve_audio_path`` already looks a row up by
+        basename under ``settings.audio_dir``. Measured on the real Norwegian DB
+        (tunatale-kbb.15): 100 of 104 rows named ``/Users/<author>/…`` and every
+        one of them 404'd on the Linux box, while the 4 relative ones resolved
+        against the container's CWD and also missed.
 
-        Measured on the real Norwegian DB (tunatale-c7tx): of 104 rows, 4 were
-        relative, all at ``section_index=1``, and those four lessons are exactly
-        the four whose full-lesson audio came out truncated.
+        ⚠️ This REVERSES tunatale-c7tx, which normalised toward ABSOLUTE. That was
+        to remove an ambiguity for ffmpeg's concat demuxer — it resolves a
+        relative list entry against the LIST FILE's directory rather than the
+        CWD, which silently truncated four lessons. The concat now reads through
+        ``resolve_audio_path`` (9e9bc09), so the absolute form buys nothing there
+        and costs portability everywhere else.
 
         Normalised here rather than at the call sites because the storage layer
-        is the one choke point every writer already passes through. An absolute
-        path is stored byte-for-byte — ``resolve()`` is deliberately NOT applied
-        to it, since that would rewrite symlinked roots (``/tmp`` ->
-        ``/private/tmp`` on macOS) that are correct as recorded.
+        is the one choke point every writer already passes through. Taking the
+        basename also sidesteps ``resolve()``, which would rewrite a symlinked
+        root (``/tmp`` -> ``/private/tmp`` on macOS) that was correct as recorded.
         """
-        raw = Path(file_path)
-        stored = file_path if raw.is_absolute() else str(raw.resolve())
+        stored = Path(file_path).name
         with self._get_conn() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO audio_files (id, lesson_id, file_path, section_index, section_type, cues_json)"

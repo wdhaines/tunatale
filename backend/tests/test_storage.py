@@ -162,40 +162,48 @@ class TestAudioFileStorage:
     def test_save_and_get_audio_file(self, store):
         store.save_audio_file("a1", "l1", "/output/audio/a1.wav")
         result = store.get_audio_file_row("a1")
-        assert result["file_path"] == "/output/audio/a1.wav"
+        assert result["file_path"] == "a1.wav"
 
     def test_get_audio_file_returns_none_when_missing(self, store):
         assert store.get_audio_file_row("nonexistent") is None
 
-    def test_a_relative_path_is_stored_absolute(self, store, tmp_path, monkeypatch):
-        """A relative ``file_path`` is a latent truncation, not a style choice.
+    def test_a_path_is_stored_as_its_BASENAME(self, store):
+        """kbb.15 step 3. The recorded string must not name a machine.
 
-        Measured on the real Norwegian DB (tunatale-c7tx): 100 rows absolute, 4
-        relative, all four at ``section_index=1`` — and those four are exactly
-        the four lessons whose full-lesson audio is truncated. ffmpeg's concat
-        demuxer resolves a relative entry against the LIST FILE's directory
-        rather than the process CWD, so the section silently vanished from the
-        join while ffmpeg exited 0.
+        `resolve_audio_path` already looks a row up by basename under
+        `settings.audio_dir`, and the render tree is flat (`<uuid>.opus`), so the
+        directory part carries no information and is exactly the part that does
+        not survive leaving this laptop. 100 of 104 rows named
+        /Users/<author>/… and 404'd on the box.
 
-        Normalising here, rather than at each of the four call sites, is what
-        makes the invariant hold for callers that do not know they need it.
+        ⚠️ This REVERSES what c7tx did. That commit normalised toward absolute to
+        remove an ambiguity for the ffmpeg concat demuxer; the concat now reads
+        through `resolve_audio_path`, so the absolute form buys nothing and costs
+        portability.
         """
-        monkeypatch.chdir(tmp_path)
-        store.save_audio_file("rel1", "l1", "output/audio/rel1.opus")
+        store.save_audio_file("a1", "l1", "/Users/someone/tunatale/backend/output/audio/a1.opus")
+        assert store.get_audio_file_row("a1")["file_path"] == "a1.opus"
 
-        stored = store.get_audio_file_row("rel1")["file_path"]
-        assert Path(stored).is_absolute(), stored
-        assert Path(stored) == tmp_path / "output/audio/rel1.opus"
+    def test_a_relative_path_is_also_reduced_to_its_basename(self, store):
+        store.save_audio_file("a2", "l1", "output/audio/a2.opus")
+        assert store.get_audio_file_row("a2")["file_path"] == "a2.opus"
 
-    def test_an_absolute_path_is_stored_byte_for_byte(self, store):
-        """The control: normalisation must not rewrite what is already correct.
+    def test_a_bare_basename_is_stored_unchanged(self, store):
+        """The control: the already-correct shape must be a no-op."""
+        store.save_audio_file("a3", "l1", "a3.opus")
+        assert store.get_audio_file_row("a3")["file_path"] == "a3.opus"
 
-        Deliberately uses a path under ``/tmp``, which is a symlink to
-        ``/private/tmp`` on macOS — a ``resolve()``-based normalisation would
-        silently rewrite it and no other test would notice.
+    def test_a_symlinked_root_is_not_resolved_on_the_way_to_the_basename(self, store):
+        """Basename-only means symlink resolution never enters the picture.
+
+        This used to assert an absolute path was preserved byte-for-byte, which
+        kbb.15 step 3 deliberately falsified. What still matters is the reason
+        that test existed: ``/tmp`` is a symlink to ``/private/tmp`` on macOS, and
+        a ``resolve()``-based normalisation would silently rewrite the directory.
+        Taking the basename cannot, because it never looks at the directory.
         """
         store.save_audio_file("abs1", "l1", "/tmp/output/audio/abs1.opus")
-        assert store.get_audio_file_row("abs1")["file_path"] == "/tmp/output/audio/abs1.opus"
+        assert store.get_audio_file_row("abs1")["file_path"] == "abs1.opus"
 
 
 class TestSectionAudioStorage:
@@ -207,8 +215,8 @@ class TestSectionAudioStorage:
         store.save_audio_file("sec0", "l1", "/output/sec0.wav", section_index=0, section_type="key_phrases")
         store.save_audio_file("sec1", "l1", "/output/sec1.wav", section_index=1, section_type="natural_speed")
 
-        assert store.get_audio_file_row("full1")["file_path"] == "/output/full1.wav"
-        assert store.get_audio_file_row("sec0")["file_path"] == "/output/sec0.wav"
+        assert store.get_audio_file_row("full1")["file_path"] == "full1.wav"
+        assert store.get_audio_file_row("sec0")["file_path"] == "sec0.wav"
 
     def test_list_audio_files_for_lesson_ordering(self, store):
         """list_audio_files_for_lesson returns full row first, then sections in order."""
@@ -237,7 +245,7 @@ class TestSectionAudioStorage:
 
         full_row = store.get_audio_file_row("full1")
         assert full_row is not None
-        assert full_row["file_path"] == "/full.wav"
+        assert full_row["file_path"] == "full.wav"
         assert full_row["lesson_id"] == "l1"
         assert full_row["section_index"] is None
         assert full_row["section_type"] is None
@@ -420,13 +428,24 @@ class TestDeleteResolvesRecordedPaths:
         paths[0].unlink(missing_ok=True)
         assert not real.exists(), "the caller could not reach the recorded render"
 
-    def test_absolute_existing_path_is_still_unlinkable(self, store, tmp_path):
-        """Scenario (b): no regression on today's data. An absolute path that
-        exists on this machine is returned unchanged and still removes the file."""
+    def test_a_LEGACY_absolute_row_is_still_unlinkable(self, store, tmp_path):
+        """Scenario (b): no regression on data written before kbb.15 step 3.
+
+        Seeded with raw SQL on purpose — `save_audio_file` now reduces every
+        path to its basename, so this shape can no longer be created through the
+        API and only exists as rows an older build already wrote. Those still
+        have to delete cleanly, which `resolve_audio_path`'s
+        absolute-and-exists branch is what provides.
+        """
         store.save_lesson("l1", "c1", 2, self._lesson())
         real = tmp_path / "existing.wav"
         real.write_bytes(b"audio")
-        store.save_audio_file("a1", "l1", str(real))
+        with store._get_conn() as conn:
+            conn.execute(
+                "INSERT INTO audio_files (id, lesson_id, file_path) VALUES ('a1', 'l1', ?)",
+                (str(real),),
+            )
+            conn.commit()
 
         paths = store.delete_lessons_for_day("c1", 2)
 
@@ -517,3 +536,112 @@ class TestPersistence:
 
         srs.close()
         content.close()
+
+
+class TestAudioPathNormalisationOnOpen:
+    """kbb.15 step 2 — heal rows written by an older build, on open.
+
+    Self-healing rather than a one-shot migration on purpose: the failure this
+    guards is a DB that has MOVED MACHINE, and the production box restores from
+    a backup taken before the write side was fixed. A one-shot that already ran
+    here would never run there.
+
+    Idempotent, so it costs a scan and nothing else once the data is clean.
+    """
+
+    def _db_with(self, tmp_path, rows):
+        """A real on-disk store seeded with pre-fix rows, then reopened."""
+        import sqlite3
+
+        db = tmp_path / "c.db"
+        s = ContentStore(str(db))
+        with s._get_conn() as conn:
+            for i, fp in enumerate(rows):
+                conn.execute(
+                    "INSERT OR REPLACE INTO audio_files (id, lesson_id, file_path) VALUES (?, 'l1', ?)",
+                    (f"a{i}", fp),
+                )
+            conn.commit()
+        s.close()
+        # Prove the pre-fix shape really landed, or the reopen below proves nothing.
+        raw = sqlite3.connect(db)
+        stored = [r[0] for r in raw.execute("SELECT file_path FROM audio_files ORDER BY id")]
+        raw.close()
+        assert stored == list(rows), stored
+        return db
+
+    def test_an_absolute_row_is_healed_on_reopen(self, tmp_path):
+        db = self._db_with(tmp_path, ["/Users/someone/tunatale/backend/output/audio/x.opus"])
+        reopened = ContentStore(str(db))
+        assert reopened.get_audio_file_row("a0")["file_path"] == "x.opus"
+        reopened.close()
+
+    def test_a_legacy_relative_row_is_healed_too(self, tmp_path):
+        """The 4 rows that caused the c7tx truncation had this exact shape."""
+        db = self._db_with(tmp_path, ["output/audio/y.opus"])
+        reopened = ContentStore(str(db))
+        assert reopened.get_audio_file_row("a0")["file_path"] == "y.opus"
+        reopened.close()
+
+    def test_it_is_idempotent(self, tmp_path):
+        db = self._db_with(tmp_path, ["/abs/z.opus"])
+        ContentStore(str(db)).close()
+        again = ContentStore(str(db))
+        assert again.get_audio_file_row("a0")["file_path"] == "z.opus"
+        again.close()
+
+    def test_a_clean_row_is_left_alone(self, tmp_path):
+        """The control: nothing to heal must mean nothing written."""
+        db = self._db_with(tmp_path, ["already.opus"])
+        reopened = ContentStore(str(db))
+        assert reopened.get_audio_file_row("a0")["file_path"] == "already.opus"
+        reopened.close()
+
+
+class TestBasenameStorageInvariant:
+    """kbb.15 step 4 — what makes basename storage safe, stated and pinned.
+
+    A row records only ``<uuid>.opus``, and ``resolve_audio_path`` looks it up
+    under ``settings.audio_dir``. That is correct if and only if EVERY render
+    lands in that one directory. Today it does — ``main.py`` sets
+    ``app.state.audio_dir = settings.audio_dir`` and every render entry point
+    takes ``audio_dir`` from there — but nothing said so, and a future caller
+    passing its own directory would produce rows that resolve to nothing, with
+    no error at write time and a silent 404 later.
+
+    The original bead wanted a check that "no row starts with '/'". That is now
+    guaranteed by construction in ``save_audio_file``, so it would be a vacuous
+    gate. This is the invariant actually worth defending.
+    """
+
+    def test_save_audio_file_cannot_record_a_directory(self, store):
+        """The structural half: whatever a caller passes, no separator survives."""
+        for given in (
+            "/Users/someone/backend/output/audio/x.opus",
+            "output/audio/x.opus",
+            "../x.opus",
+            "x.opus",
+        ):
+            store.save_audio_file("a", "l1", given)
+            stored = store.get_audio_file_row("a")["file_path"]
+            assert "/" not in stored, f"{given!r} -> {stored!r}"
+
+    def test_every_render_entry_point_takes_audio_dir_from_the_setting(self):
+        """The wiring half, read from the source rather than assumed.
+
+        If this goes red, someone has introduced a second audio directory — and
+        basename storage silently stops working for whatever writes there. The
+        fix is NOT to relax this test; it is to decide whether rows should carry
+        a directory again.
+        """
+        main_py = (Path(__file__).resolve().parents[1] / "app" / "main.py").read_text()
+        assert "app.state.audio_dir = settings.audio_dir" in main_py, (
+            "main.py no longer ties app.state.audio_dir to settings.audio_dir"
+        )
+
+        api_audio = (Path(__file__).resolve().parents[1] / "app" / "api" / "audio.py").read_text()
+        reviews = (Path(__file__).resolve().parents[1] / "app" / "api" / "review_sessions.py").read_text()
+        for name, src in (("api/audio.py", api_audio), ("api/review_sessions.py", reviews)):
+            assert "audio_dir=request.app.state.audio_dir" in src, (
+                f"{name} passes an audio_dir that is not app.state.audio_dir"
+            )
