@@ -32,10 +32,17 @@ function makeFakeAudio(overrides: Partial<HTMLAudioElement> = {}): HTMLAudioElem
     playbackRate: 1,
     src: "",
     volume: 1,
-    addEventListener: vi.fn((type: string, handler: EventListener) => {
-      if (!listeners.has(type)) listeners.set(type, new Set());
-      listeners.get(type)!.add(handler);
-    }),
+    // The third argument is honoured, NOT ignored. The controller registers
+    // every listener with `{ signal }` so destroy() can drop them all with one
+    // abort(); a double that silently discarded the options would make that
+    // test pass no matter what the controller did.
+    addEventListener: vi.fn(
+      (type: string, handler: EventListener, opts?: AddEventListenerOptions) => {
+        if (!listeners.has(type)) listeners.set(type, new Set());
+        listeners.get(type)!.add(handler);
+        opts?.signal?.addEventListener("abort", () => listeners.get(type)?.delete(handler));
+      },
+    ),
     removeEventListener: vi.fn((type: string, handler: EventListener) => {
       listeners.get(type)?.delete(handler);
     }),
@@ -2428,6 +2435,47 @@ describe("playbackController", () => {
       audioEl.dispatchEvent(new Event("timeupdate"));
 
       expect(mediaSession.metadata).not.toBeNull();
+    });
+
+    it("every trace line carries a controller id, and two controllers differ", () => {
+      // WHY: on the 2026-09-12 car log `hf` went 1 -> 0 -> 1 with NO
+      // handsfree: transition between them and no remount. That is only
+      // possible if the lines came from DIFFERENT controller instances, but
+      // nothing in the log could say so, and reasoning about it from the code
+      // produced three incompatible theories. An instance id makes the question
+      // answerable instead of arguable.
+      const ms = makeFakeMediaSession() as unknown as MediaSession;
+      const first = createController({ mediaSession: ms });
+      const a = readMediaTrace();
+      clearMediaTrace();
+      const second = createController({ mediaSession: ms });
+      const b = readMediaTrace();
+
+      const idOf = (lines: string[]) => {
+        const m = lines.map((l) => /\bc=([a-z0-9]+)/.exec(l)).find(Boolean);
+        return m ? m[1] : null;
+      };
+      expect(idOf(a), "no c= on any line from the first controller").toBeTruthy();
+      expect(idOf(b)).toBeTruthy();
+      expect(idOf(a)).not.toBe(idOf(b));
+      void first;
+      void second;
+    });
+
+    it("a destroyed controller stops tracing its audio element events", () => {
+      // destroy() removed the document and window listeners but never the audio
+      // element's, so a torn-down controller kept tracing play/pause/ended/
+      // timeupdate — and its timeupdate handler kept writing to the GLOBAL
+      // mediaSession metadata with its own stale section title.
+      const controller = createController();
+      controller.destroy();
+      clearMediaTrace();
+
+      audioEl.dispatchEvent(new Event("play"));
+      audioEl.dispatchEvent(new Event("pause"));
+      audioEl.dispatchEvent(new Event("ended"));
+
+      expect(readMediaTrace()).toEqual([]);
     });
 
     it("a refused registration is caught independently and the rest still register", () => {

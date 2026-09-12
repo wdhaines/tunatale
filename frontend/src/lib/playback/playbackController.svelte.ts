@@ -138,6 +138,24 @@ let mediaSessionOwner: symbol | null = null;
 
 export function createPlaybackController(deps: Deps): PlaybackController {
   const audioEl = (deps.createAudio?.() ?? new Audio()) as HTMLAudioElement;
+  // Short per-instance id, stamped on every trace line as `c=`. More than one
+  // controller can be alive at once (a client-side navigation inits the
+  // incoming one before tearing down the outgoing), and without this a log
+  // cannot say which instance emitted a line. On the 2026-09-12 car log `hf`
+  // went 1 -> 0 -> 1 with no handsfree: transition and no remount between
+  // them — unreadable without an instance id, and three incompatible theories
+  // fit the same bytes.
+  const controllerId = Math.random().toString(36).slice(2, 6);
+  // One signal for every audioEl listener, so teardown can drop them all.
+  // destroy() used to remove only the document and window listeners, leaving a
+  // dead controller still tracing play/pause/ended/timeupdate — and its
+  // timeupdate handler still writing to the GLOBAL mediaSession metadata with
+  // its own stale section title.
+  const listenerAbort = new AbortController();
+  // Every audioEl listener goes through this, so destroy() drops them all with
+  // one abort() and no per-listener bookkeeping to forget.
+  const onEl = (type: string, handler: (event: Event) => void) =>
+    audioEl.addEventListener(type, handler, { signal: listenerAbort.signal });
   const storage = deps.storage ?? localStorage;
   const mediaSession =
     deps.mediaSession ?? (typeof navigator !== "undefined" ? navigator.mediaSession : undefined);
@@ -288,12 +306,12 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // the same context: hands-free mode, active section, and playhead.
   function trace(event: string, extra = ""): void {
     mediaTrace(
-      `${event} hf=${handsFree ? 1 : 0} section=${activeSectionType ?? "-"} t=${audioEl.currentTime.toFixed(1)}${extra ? " " + extra : ""}`,
+      `${event} c=${controllerId} hf=${handsFree ? 1 : 0} section=${activeSectionType ?? "-"} t=${audioEl.currentTime.toFixed(1)}${extra ? " " + extra : ""}`,
     );
   }
 
   // Audio event listeners
-  audioEl.addEventListener("timeupdate", () => {
+  onEl("timeupdate", () => {
     // The loop check runs BEFORE the playhead is copied into the reactive
     // currentTime: a latch-seek must land in the reactive, or a derived read
     // (currentCue) would resolve from the pre-loop position and, past the
@@ -305,7 +323,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       saveResume();
     }
   });
-  audioEl.addEventListener("loadedmetadata", () => {
+  onEl("loadedmetadata", () => {
     duration = audioEl.duration;
     if (pendingResume !== null) {
       const applies = pendingResumeSection === null || pendingResumeSection === activeSectionType;
@@ -327,12 +345,12 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     }
     updatePositionState();
   });
-  audioEl.addEventListener("play", () => {
+  onEl("play", () => {
     trace("el:play");
     playing = true;
     if (mediaSession) mediaSession.playbackState = "playing";
   });
-  audioEl.addEventListener("pause", () => {
+  onEl("pause", () => {
     trace("el:pause", `swapping=${swapping ? 1 : 0}`);
     if (destroyed || swapping) return;
     playing = false;
@@ -340,11 +358,11 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     if (mediaSession) mediaSession.playbackState = "paused";
     updatePositionState();
   });
-  audioEl.addEventListener("ratechange", () => {
+  onEl("ratechange", () => {
     rate = audioEl.playbackRate;
     updatePositionState();
   });
-  audioEl.addEventListener("ended", () => {
+  onEl("ended", () => {
     trace("el:ended");
     // A latched loop over the LAST sentence of a track never sees a timeupdate
     // past the end, so "ended" is its only signal — and seeking alone would
@@ -420,7 +438,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     // section change could repopulate it. That is the half that turned a 1ms
     // race into a display blank for the whole life of the page.
     let lastArtist: string | null = null;
-    audioEl.addEventListener("timeupdate", () => {
+    onEl("timeupdate", () => {
       const newTitle = currentSectionTitle;
       if (ms.metadata !== null && newTitle === lastArtist) return;
       try {
@@ -911,6 +929,10 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     },
     destroy() {
       destroyed = true;
+      // Drops every audioEl listener. Without this a torn-down controller kept
+      // tracing play/pause/ended/timeupdate and kept writing its own stale
+      // section title into the GLOBAL mediaSession metadata.
+      listenerAbort.abort();
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("pagehide", onPageHide);
       audioEl.pause();
