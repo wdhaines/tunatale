@@ -2054,9 +2054,26 @@ class AnkiSync:
                 # answer is absent from its own sentence blanks nothing —
                 # `make_cloze_text` would store the sentence unmarked and Anki
                 # would call the note an empty card.
+                # ⚠️ `cached.sentence_translation`, NEVER `unit.translation`.
+                # ClozeChoice.gloss is the SENTENCE's gloss — it lands in the
+                # `<span class="st">` slot — while `unit.translation` is the
+                # WORD's, which belongs in the `<i>` slot that
+                # `build_cloze_back_extra` fills separately. Passing the word's
+                # here wrote one string into BOTH, and 18 of 109 live cloze
+                # cards rendered the same text twice: `Han ble reddet
+                # {{c1::av}} legen.` showed `of` and `of` (tunatale-ml06).
+                #
+                # All 18 were function words, which is the tell rather than a
+                # coincidence — they have no usable deck-authored example, so
+                # they are exactly the words that reach this tier.
+                #
+                # Empty when the cache has none, which is a real and expected
+                # state: an empty slot says nothing, while a duplicated gloss
+                # READS as a translation of the sentence and is not. That is
+                # why this survived four days unnoticed.
                 choice = ClozeChoice(
                     sentence=cached.sentence,
-                    gloss=unit.translation,
+                    gloss=cached.sentence_translation,
                     surface=unit.text,
                 )
 

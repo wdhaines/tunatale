@@ -670,6 +670,79 @@ class TestPromoteProductionCards:
 
         assert (report.clozed, report.unservable) == (0, 1)
 
+    async def test_the_llm_tier_never_writes_the_WORD_gloss_into_the_SENTENCE_slot(self) -> None:
+        """tunatale-ml06: 18 of 109 live cloze cards showed the same text twice.
+
+        `Han ble reddet {{c1::av}} legen.` rendered as `of` in the word slot and
+        `of` again where the sentence translation belongs. All 18 were function
+        words, which is the tell: they have no usable deck-authored example, so
+        they fall to the LLM tier — whose supply, `cloze_sentence_cache`, had no
+        translation column at all. The only gloss in scope at the mint was the
+        WORD's, and `build_cloze_back_extra` wrote that one string into both the
+        `<i>` and the `<span class="st">` slot.
+
+        Empty, not duplicated, when nothing better exists: an empty slot is
+        honest, while a duplicated one READS as a translation of the sentence and
+        is not — which is why this went unnoticed for four days.
+        """
+        conn = _make_conn()
+        card_id = _add_note(conn, 1000, "beslutning", "decision", examples="Katten sover (<i>The cat sleeps</i>)")
+        db = SRSDatabase(":memory:")
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id, unpicturable=True)
+        db.set_cached_cloze_sentence("beslutning", "sl", sentence="Vi tok en beslutning i går.", status="determined")
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert report.clozed == 1
+        rows, _total = db.list_collocations()
+        cloze = next(item for _id, item, _lang in rows if item.syntactic_unit.card_type == "cloze")
+        assert cloze.syntactic_unit.source_sentence_translation != "decision", (
+            "the WORD's gloss must never stand in for the SENTENCE's"
+        )
+        assert cloze.syntactic_unit.source_sentence_translation == ""
+
+    async def test_the_llm_tier_uses_the_cached_SENTENCE_translation_when_it_has_one(self) -> None:
+        """The other half: once the cache carries one, it is what reaches the card."""
+        conn = _make_conn()
+        card_id = _add_note(conn, 1000, "beslutning", "decision", examples="Katten sover (<i>The cat sleeps</i>)")
+        db = SRSDatabase(":memory:")
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id, unpicturable=True)
+        db.set_cached_cloze_sentence(
+            "beslutning",
+            "sl",
+            sentence="Vi tok en beslutning i går.",
+            status="determined",
+            sentence_translation="We made a decision yesterday.",
+        )
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert report.clozed == 1
+        rows, _total = db.list_collocations()
+        cloze = next(item for _id, item, _lang in rows if item.syntactic_unit.card_type == "cloze")
+        assert cloze.syntactic_unit.source_sentence_translation == "We made a decision yesterday."
+
+    async def test_the_deck_authored_tier_is_untouched(self) -> None:
+        """The control: 88 of the 109 rows were always correct and must stay so.
+
+        A deck-authored example carries its own parenthesised gloss, and that
+        path never read `unit.translation` — so a fix aimed at the LLM tier must
+        leave this one byte-identical.
+        """
+        conn = _make_conn()
+        card_id = _add_note(
+            conn, 1000, "beslutning", "decision", examples="Vi tok beslutning sammen (<i>We decided together</i>)"
+        )
+        db = SRSDatabase(":memory:")
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id, unpicturable=True)
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert report.clozed == 1
+        rows, _total = db.list_collocations()
+        cloze = next(item for _id, item, _lang in rows if item.syntactic_unit.card_type == "cloze")
+        assert cloze.syntactic_unit.source_sentence_translation == "We decided together"
+
     async def test_refuses_a_cloze_that_would_collide_with_the_word_itself(self) -> None:
         """A cloze row carries no disambig, so a word that has none either would
         share its identity — and `add_collocation` would merge into the vocab row

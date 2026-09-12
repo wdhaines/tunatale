@@ -74,7 +74,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 46
+        assert CURRENT_VERSION == 48
 
     def test_migrates_v42_to_v43_adds_base_collocation_id(self, tmp_path):
         """The link that stops a cloze-covered word reading as two words.
@@ -2370,7 +2370,7 @@ class TestMigrateV37ToV38:
     """Tests for v37→v38 (lesson_listens table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 46
+        assert CURRENT_VERSION == 48
 
     def test_v37_to_v38_creates_lesson_listens_table_and_index(self):
         from app.srs.migrations import migrate_v37_to_v38
@@ -2413,7 +2413,7 @@ class TestMigrateV37ToV38:
         try:
             tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "lesson_listens" in tables
-            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 46
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 48
         finally:
             db.close()
 
@@ -2440,7 +2440,7 @@ class TestMigrateV38ToV39:
     """Tests for v38→v39 (lesson_reviews table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 46
+        assert CURRENT_VERSION == 48
 
     def test_v38_to_v39_creates_lesson_reviews_table_and_index(self):
         from app.srs.migrations import migrate_v38_to_v39
@@ -2483,7 +2483,7 @@ class TestMigrateV38ToV39:
         try:
             tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "lesson_reviews" in tables
-            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 46
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 48
         finally:
             db.close()
 
@@ -2500,7 +2500,7 @@ class TestMigrateV38ToV39:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         assert "lesson_listens" in tables
         assert "lesson_reviews" in tables
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 46
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 48
 
 
 class TestMigrationDriverAtomicity:
@@ -2831,3 +2831,152 @@ class TestMigrateV45ToV46:
 
         with db._get_conn() as conn:
             assert conn.execute("SELECT COUNT(*) FROM media WHERE collocation_id = ?", (coll_id,)).fetchone()[0] == 0
+
+
+class TestMigrateV46ToV47ClozeSentenceTranslationColumn:
+    """``cloze_sentence_cache`` gains a translation OF THE SENTENCE (tunatale-ml06)."""
+
+    def test_adds_the_column_with_an_empty_default(self):
+        from app.srs.database import SRSDatabase
+        from app.srs.migrations import migrate_v46_to_v47
+
+        db = SRSDatabase(":memory:")
+        with db._get_conn() as conn:
+            conn.execute("ALTER TABLE cloze_sentence_cache DROP COLUMN sentence_translation")
+            conn.execute("PRAGMA user_version = 46")
+
+            migrate_v46_to_v47(conn)
+
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(cloze_sentence_cache)")}
+            assert "sentence_translation" in cols
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 47
+
+    def test_is_idempotent(self):
+        """Re-running must not fail on a column that is already there."""
+        from app.srs.database import SRSDatabase
+        from app.srs.migrations import migrate_v46_to_v47
+
+        db = SRSDatabase(":memory:")
+        with db._get_conn() as conn:
+            conn.execute("PRAGMA user_version = 46")
+            migrate_v46_to_v47(conn)
+            conn.execute("PRAGMA user_version = 46")
+            migrate_v46_to_v47(conn)
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 47
+
+
+class TestMigrateV47ToV48BlanksDuplicatedClozeGlosses:
+    """The 18 live cloze cards that showed the same text twice (tunatale-ml06).
+
+    ``Han ble reddet {{c1::av}} legen.`` rendered as ``of`` in the word slot and
+    ``of`` again where the sentence translation belongs, because the mint had
+    only the WORD's gloss in scope and ``build_cloze_back_extra`` wrote it into
+    both. Blanking is the honest repair: an empty slot says nothing, a
+    duplicated one READS as a translation of the sentence and is not.
+
+    Marking ``sentence_translation`` dirty is what carries the repair to Anki —
+    ``sync_push`` rebuilds Back Extra from that flag, which is the sanctioned
+    path rather than a bespoke collection writer.
+    """
+
+    def _seeded(self):
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(":memory:")
+        with db._get_conn() as conn:
+            rows = [
+                # (guid, card_type, translation, sentence_translation, dirty_fields)
+                ("g-dup", "cloze", "of", "of", ""),
+                ("g-dup-dirty", "cloze", "and", "and", "translation"),
+                ("g-good", "cloze", "decision", "We made a decision yesterday.", ""),
+                ("g-empty", "cloze", "but", "", ""),
+                ("g-vocab", "vocab", "house", "house", ""),
+            ]
+            for i, (guid, ctype, tr, st, dirty) in enumerate(rows):
+                conn.execute(
+                    "INSERT INTO collocations (guid, language_code, text, translation, word_count,"
+                    " unit_difficulty, source, card_type, sentence_translation, dirty_fields)"
+                    " VALUES (?, 'no', ?, ?, 1, 1, 'anki', ?, ?, ?)",
+                    (guid, f"w{i}", tr, ctype, st, dirty),
+                )
+            conn.execute("PRAGMA user_version = 47")
+            conn.commit()
+        return db
+
+    def _read(self, db):
+        with db._get_conn() as conn:
+            return {
+                r["guid"]: (r["sentence_translation"], r["dirty_fields"] or "")
+                for r in conn.execute("SELECT guid, sentence_translation, dirty_fields FROM collocations")
+            }
+
+    def test_blanks_the_duplicate_and_marks_it_for_push(self):
+        from app.srs.migrations import migrate_v47_to_v48
+
+        db = self._seeded()
+        with db._get_conn() as conn:
+            migrate_v47_to_v48(conn)
+            conn.commit()
+
+        st, dirty = self._read(db)["g-dup"]
+        assert st == ""
+        assert "sentence_translation" in dirty.split(",")
+
+    def test_merges_rather_than_replaces_existing_dirty_fields(self):
+        """A translation edit still waiting to push must survive the repair."""
+        from app.srs.migrations import migrate_v47_to_v48
+
+        db = self._seeded()
+        with db._get_conn() as conn:
+            migrate_v47_to_v48(conn)
+            conn.commit()
+
+        _st, dirty = self._read(db)["g-dup-dirty"]
+        assert set(dirty.split(",")) == {"translation", "sentence_translation"}
+
+    def test_leaves_a_real_sentence_translation_alone(self):
+        """The control: 88 of the 109 rows were always right and must not move."""
+        from app.srs.migrations import migrate_v47_to_v48
+
+        db = self._seeded()
+        with db._get_conn() as conn:
+            migrate_v47_to_v48(conn)
+            conn.commit()
+
+        assert self._read(db)["g-good"] == ("We made a decision yesterday.", "")
+
+    def test_leaves_an_already_empty_row_alone(self):
+        """3 rows were already empty. Touching them would push a no-op edit to Anki."""
+        from app.srs.migrations import migrate_v47_to_v48
+
+        db = self._seeded()
+        with db._get_conn() as conn:
+            migrate_v47_to_v48(conn)
+            conn.commit()
+
+        assert self._read(db)["g-empty"] == ("", "")
+
+    def test_does_not_touch_a_vocab_row(self):
+        """Scoped to cloze. A vocab row's Back Extra is built by a different
+        path and its two fields carrying the same text means nothing here."""
+        from app.srs.migrations import migrate_v47_to_v48
+
+        db = self._seeded()
+        with db._get_conn() as conn:
+            migrate_v47_to_v48(conn)
+            conn.commit()
+
+        assert self._read(db)["g-vocab"] == ("house", "")
+
+    def test_is_idempotent(self):
+        from app.srs.migrations import migrate_v47_to_v48
+
+        db = self._seeded()
+        with db._get_conn() as conn:
+            migrate_v47_to_v48(conn)
+            conn.execute("PRAGMA user_version = 47")
+            migrate_v47_to_v48(conn)
+            conn.commit()
+
+        _st, dirty = self._read(db)["g-dup"]
+        assert dirty.split(",").count("sentence_translation") == 1
