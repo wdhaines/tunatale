@@ -2405,17 +2405,21 @@ class TestExtractTranscriptCaching:
 
 
 class TestWellKnown:
-    """well_known: a recognition card whose memory holds for 180+ days, not due.
+    """well_known: a recognition card whose next review is 90+ days out, not due.
 
     Same predicate the listen preview uses to stop asking about a word
-    (``mastery.is_well_known``), surfaced on the transcript so the dialogue and
-    the mastery line can call it "known" too. Stability-based since 2026-09-10
-    (bd tunatale-yh47) — it was a due-date rule (next review > 365 days out).
+    (``mastery.is_well_known``), surfaced on the transcript so the mastery
+    line's known bucket counts what the preview actually skips. A due-date rule
+    again since 2026-09-13 (bd tunatale-38z9); it was stability-based from
+    2026-09-10 (bd tunatale-yh47), and a 365-day due rule before that.
+
+    This does NOT drive any colour. The rails read ``understand_band`` /
+    ``produce_band``, which remain stability-based, so a word's colour still
+    holds still between reviews while this flag moves with the schedule.
 
     The transcript also requires the card NOT to be due, matching the preview's
-    ``"ahead"`` guard: under the old rule "well known" and "due" could never both
-    hold, and the mastery line's due bucket relied on that. A strong memory that
-    is due today is still a due card.
+    ``"ahead"`` guard, because the mastery line's due bucket relies on the two
+    being exclusive.
     """
 
     def setup_method(self):
@@ -2437,19 +2441,24 @@ class TestWellKnown:
         result = extract_transcript(lesson, self.db, self.lemmatizer, today=date(2026, 6, 1))
         return result.dialogue_lines[0].words[0]
 
-    def test_strong_memory_due_soon_is_well_known(self):
-        # 30 days out: the old due-date rule could never call this known.
+    def test_strong_memory_due_soon_is_not_well_known(self):
+        # 30 days out with 200 days of stability: the top colour band, and the
+        # preview still asks. This pair is the whole point of bd tunatale-38z9.
         self._add("banka", SRSState.REVIEW, datetime(2026, 7, 1, 4, 0, tzinfo=UTC), stability=200.0)
-        assert self._word("banka").well_known is True
-
-    def test_weak_memory_with_a_far_due_date_is_not_well_known(self):
-        # A due date moved far out does not make the memory any stronger.
-        self._add("banka", SRSState.REVIEW, datetime(2029, 1, 1, 4, 0, tzinfo=UTC), stability=100.0)
         assert self._word("banka").well_known is False
 
-    def test_threshold_is_180_days_inclusive(self):
-        self._add("banka", SRSState.REVIEW, datetime(2026, 7, 1, 4, 0, tzinfo=UTC), stability=180.0)
-        self._add("miza", SRSState.REVIEW, datetime(2026, 7, 1, 4, 0, tzinfo=UTC), stability=179.9)
+    def test_weak_memory_with_a_far_due_date_is_well_known(self):
+        # The schedule says it will not come up for years; that is the question
+        # this flag answers, whatever the memory estimate says.
+        self._add("banka", SRSState.REVIEW, datetime(2029, 1, 1, 4, 0, tzinfo=UTC), stability=100.0)
+        assert self._word("banka").well_known is True
+
+    def test_threshold_is_90_days_inclusive(self):
+        # today is 2026-06-01 (see _word): +90d = 2026-08-30, +89d = 2026-08-29.
+        # Stability runs BACKWARDS across the boundary so neither assertion can
+        # pass by reading stability instead of the due date.
+        self._add("banka", SRSState.REVIEW, datetime(2026, 8, 30, 4, 0, tzinfo=UTC), stability=1.0)
+        self._add("miza", SRSState.REVIEW, datetime(2026, 8, 29, 4, 0, tzinfo=UTC), stability=500.0)
         assert self._word("banka").well_known is True
         assert self._word("miza").well_known is False
 

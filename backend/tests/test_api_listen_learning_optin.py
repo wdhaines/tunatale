@@ -93,9 +93,10 @@ def _seed_due(db, text: str) -> None:
 
 
 def _seed_well_known(db, text: str) -> None:
-    # Well known = stability >= 180 days (bd tunatale-yh47), not a far due
-    # date. Due in 30 days so it is "ahead", the only class that defers.
-    _seed(db, text, SRSState.REVIEW, days_until_due=30, stability=300.0)
+    # Well known = next review >= 90 days out (bd tunatale-38z9), which also
+    # makes it "ahead" — the only class that defers. Stability is left at the
+    # helper default to keep this seed honest about which field the rule reads.
+    _seed(db, text, SRSState.REVIEW, days_until_due=200)
 
 
 async def _get_preview() -> dict:

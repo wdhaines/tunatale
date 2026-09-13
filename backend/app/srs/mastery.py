@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
+from datetime import date
 from typing import Literal
 
 from app.models.srs_item import Direction, DirectionState, SRSState
@@ -37,6 +38,23 @@ BAND_MONTHS_FROM_DAYS = 30.0
 # depends on the deck's desired retention and moves when reviews are
 # rescheduled, so the same memory read differently from deck to deck.
 WELL_KNOWN_STABILITY_DAYS = 180.0
+
+# "Well known" — the listen preview's stop-asking horizon — is a DUE-DATE rule,
+# and deliberately NOT the band above (bd tunatale-38z9, 2026-09-13). A word is
+# left alone when its next review is at least this many days out.
+#
+# The two are different questions. `direction_band` answers "how well do you
+# know this", which must not move while you are not reviewing, so it reads
+# stability. This answers "when will I next see this", which is exactly a
+# schedule fact, so it reads the schedule. Welding them meant each decided the
+# other's surface.
+#
+# 90 days, not the 365 the pre-2026-09-10 rule used: at desired retention 0.95
+# FSRS schedules well short of stability, so 365 days out matched 2 cards of
+# 1607 on the live Norwegian deck. 90 matches 199, against 194 under the
+# stability rule it replaces — chosen to hold the population steady so the
+# change is a change of RULE, not a change of how much TunaTale asks.
+WELL_KNOWN_DUE_DAYS_AHEAD = 90
 
 MasteryBand = Literal["none", "new", "learning", "days", "weeks", "months", "solid", "suspended"]
 
@@ -150,17 +168,38 @@ def compute_mastery_progress(directions: Iterable[DirectionState]) -> float | No
     return sum(ms) / len(ms) if ms else None
 
 
-def is_well_known(rec: DirectionState | None) -> bool:
-    """True when a direction's memory holds for :data:`WELL_KNOWN_STABILITY_DAYS`.
+def is_well_known(rec: DirectionState | None, today: date) -> bool:
+    """True when a direction's next review is at least 90 days out.
 
-    Exactly the top band: ``direction_band(rec) == "solid"``. The listen preview
-    stops asking about such a word (only while it is not yet due — the caller's
-    ``"ahead"`` guard) and the transcript renders it as known; both read this ONE
-    predicate, so the display and the preview cannot disagree about a word.
+    The listen preview stops asking about such a word (only while it is not yet
+    due, which this predicate now enforces itself rather than leaning on the
+    caller's ``"ahead"`` guard), and the lesson mastery line counts it in the
+    known bucket.
 
-    LEARNING/RELEARNING are never well known, whatever stability they carry:
-    suppressing a card being acquired would hide work the user owes. Marked-known
-    cards are well known whether they arrive as ``SRSState.KNOWN`` or, after a
-    sync, as REVIEW with a very large stability.
+    NOT the top colour band. ``direction_band(rec) == "solid"`` is a stability
+    rule and stays one; this is a schedule rule. They disagree on purpose — a
+    strong memory due next week is "solid" and still worth asking about, and a
+    modest memory parked a year out is neither. Before bd tunatale-38z9 they
+    were one predicate, which let a 15-day difference in an FSRS *estimate*
+    decide whether TunaTale kept quizzing a word.
+
+    LEARNING/RELEARNING are never well known however far out they are parked:
+    suppressing a card being acquired would hide work the user owes. The
+    stability rule inherited that exclusion from ``direction_band``; this one
+    states it, because there is no band to inherit it from. Marked-known cards
+    are well known whatever their schedule — ``mark_known`` carries no
+    meaningful due date. A missing ``due_at`` reads as not-well-known: with
+    nothing to measure the horizon against, keep asking.
     """
-    return direction_band(rec) == "solid"
+    if rec is None:
+        return False
+    if rec.state == SRSState.KNOWN:
+        return True
+    # The same state gate `_strength_stability` uses: a BURIED card that has
+    # been reviewed still has a real schedule; one with no reps was buried
+    # while still new and has nothing to read.
+    if rec.state != SRSState.REVIEW and not (rec.state == SRSState.BURIED and rec.reps > 0):
+        return False
+    if rec.due_at is None:
+        return False
+    return (rec.due_at.date() - today).days >= WELL_KNOWN_DUE_DAYS_AHEAD

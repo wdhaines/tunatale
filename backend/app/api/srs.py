@@ -700,6 +700,7 @@ def _listen_grade_class(
 def _listen_deferred_reason(
     rec: DirectionState,
     grade_cls: str,
+    today: datetime.date,
 ) -> Literal["known", "learning"] | None:
     """Why a listen defers this row instead of staging it by default.
 
@@ -716,12 +717,15 @@ def _listen_deferred_reason(
     about which rows a listen acts on is the ``6a5c718`` bug class; sharing the
     predicate makes them agree by construction instead of by review. The
     learning arm needs no stability clause — state alone decides. The ``"known"``
-    arm is stability-based (``is_well_known``) and applies only while the card is
-    not yet due: a due card is always offered, however well it is known.
+    arm is a DUE-DATE horizon (``is_well_known``: next review >= 90 days out,
+    bd tunatale-38z9) and applies only while the card is not yet due: a due card
+    is always offered, however far out it was once scheduled. ``today`` is
+    passed in rather than read from the clock so the preview and both commit
+    loops cannot land on opposite sides of a rollover mid-request.
     """
     if grade_cls == "learning":
         return "learning"
-    if grade_cls == "ahead" and is_well_known(rec):
+    if grade_cls == "ahead" and is_well_known(rec, today):
         return "known"
     return None
 
@@ -1333,7 +1337,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
             # Deferred opt-in: a known or learning row is never staged silently.
             # Membership in word_ratings is the opt-in — an explicit "skip" is
             # still a skip, handled by the shared rating check below.
-            if _listen_deferred_reason(rec, grade_cls) is not None and lemma not in body.word_ratings:
+            if _listen_deferred_reason(rec, grade_cls, today) is not None and lemma not in body.word_ratings:
                 continue
             rating_str = body.word_ratings.get(lemma, "good")
             listen_coll_id = db.get_collocation_id_by_guid(existing.guid)
@@ -1385,7 +1389,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
         # Deferred opt-in — the SAME predicate as the word loop above. This
         # loop having its own hand-rolled copy is what 9af858e recorded going
         # wrong; sharing the function is what stops it recurring.
-        if _listen_deferred_reason(rec, grade_cls) is not None and kp.phrase not in body.kp_ratings:
+        if _listen_deferred_reason(rec, grade_cls, today) is not None and kp.phrase not in body.kp_ratings:
             continue
         rating_str = body.kp_ratings.get(kp.phrase, "good")
         kp_coll_id = db.get_collocation_id_by_guid(existing.guid)
@@ -1996,7 +2000,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             # Why (if at all) a listen defers this row — the SAME predicate
             # mark_lesson_listened skips on, so preview and commit cannot
             # disagree about it. `well_known` is derived, never computed twice.
-            deferred = _listen_deferred_reason(rec, grade_cls)
+            deferred = _listen_deferred_reason(rec, grade_cls, today)
             row = {
                 "kind": "word",
                 "text": card_key,
@@ -2048,7 +2052,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             if rec.due_at is not None
             else None
         )
-        deferred = _listen_deferred_reason(rec, grade_cls)
+        deferred = _listen_deferred_reason(rec, grade_cls, today)
         kp_row = {
             "kind": "kp",
             "text": kp.phrase,

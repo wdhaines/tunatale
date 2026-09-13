@@ -253,19 +253,21 @@ class TestConfirmationIsNotInferredFromPresence:
 
         db = _setup_lesson("Banka riba")
         _seed_review_due(db, "banka")
-        # Make it well known: a 180+ day memory, not yet due (bd tunatale-yh47).
+        # Make it well known: next review past the 90-day listen horizon, not
+        # yet due (bd tunatale-38z9). Was a 180+ day stability seed until the
+        # rule moved back to a due date on 2026-09-13.
         item = db.get_collocation("banka")
         rec = item.directions[Direction.RECOGNITION]
         rec.state = SRSState.REVIEW
         rec.stability = 300.0
-        rec.due_at = due_at_rollover_utc(anki_today() + timedelta(days=30))
+        rec.due_at = due_at_rollover_utc(anki_today() + timedelta(days=200))
         db.update_collocation(item)
         # Precondition, stated so this test cannot pass vacuously: when the
         # rule changed from a due-date horizon, the old seed silently stopped
         # being well known and the test kept passing.
         from app.srs.mastery import is_well_known
 
-        assert is_well_known(db.get_collocation("banka").directions[Direction.RECOGNITION])
+        assert is_well_known(db.get_collocation("banka").directions[Direction.RECOGNITION], anki_today())
 
         result = await _listen({"content_id": "lesson-1", "word_ratings": {"banka": "good"}})
 
