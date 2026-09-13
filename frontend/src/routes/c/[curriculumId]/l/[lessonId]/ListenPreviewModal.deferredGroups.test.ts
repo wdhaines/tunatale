@@ -177,7 +177,12 @@ describe("F-5 — learning rows are deferred exactly like known rows", () => {
     const { container } = await open();
     // The rejected answer dropped them from the response entirely; this one
     // only moves them out of the always-visible list.
-    expect(mainTexts(container)).toEqual(["helst", "nabolag", "alle"]);
+    //
+    // "alle" (a create row) leads because the main list now renders the
+    // SERVER's order, which puts the introduction pool first — see
+    // ListenPreviewModal.introOrder.test.ts. This assertion is about
+    // MEMBERSHIP; the ordering contract is that spec's job.
+    expect(mainTexts(container)).toEqual(["alle", "helst", "nabolag"]);
   });
 
   it("renders them in their own collapsed group, not folded into 'known'", async () => {
