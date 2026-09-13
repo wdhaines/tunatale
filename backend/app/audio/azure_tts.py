@@ -17,6 +17,7 @@ import logging
 import random
 import re
 import shutil
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -124,6 +125,7 @@ class AzureTTSService:
         retry_base_delay: float | None = None,
         max_concurrent_requests: int | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
+        now: Callable[[], float] | None = None,
         ledger: AzureCharacterLedger | None = None,
         chars_per_month_limit: int | None = None,
     ) -> None:
@@ -174,6 +176,12 @@ class AzureTTSService:
         # chars_per_month_limit=None resolves the ceiling lazily from settings,
         # like min_delay / retry_base_delay / max_concurrent_requests above.
         self._ledger = ledger
+        # Injected for the same reason `sleep` is, one field up: the clock is a
+        # real code path that a test should pin, not patch. Freezing the
+        # process-global time.time() reaches every other clock in the process
+        # for the duration of the test, which is a far wider blast radius than
+        # the one value the ledger actually reads.
+        self._now = now if now is not None else time.time
         if chars_per_month_limit is None and ledger is not None:
             from app.config import settings
 
@@ -226,7 +234,7 @@ class AzureTTSService:
         # — a warm cache is the only thing that lets a render finish at the
         # cap. A spent allowance raises immediately, with zero requests made.
         if self._ledger is not None:
-            status = self._ledger.budget(chars_limit=self._chars_per_month_limit)
+            status = self._ledger.budget(chars_limit=self._chars_per_month_limit, now=self._now())
             if status.exceeded is not None:
                 days, rem = divmod(int(status.reset_in_s), 86_400)
                 hours = rem // 3_600
@@ -516,6 +524,7 @@ class AzureTTSService:
                 # a clip that eventually succeeds records once, not per attempt.
                 if self._ledger is not None:
                     self._ledger.record(
-                        len(AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale))
+                        len(AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale)),
+                        now=self._now(),
                     )
                 return response.content

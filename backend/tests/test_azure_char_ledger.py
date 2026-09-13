@@ -13,8 +13,6 @@ Every oracle below is an absolute epoch measured 2026-09-13.
 
 from __future__ import annotations
 
-import time
-
 import httpx
 import pytest
 import respx
@@ -185,10 +183,12 @@ def test_now_defaults_to_the_wall_clock(tmp_path):
 # (brief-6zzu1, stages 3 and 5)
 # ---------------------------------------------------------------------------
 #
-# Every seam is injectable (ledger=, cache_dir=, sleep=, chars_per_month_limit=)
-# and the clock is pinned by monkeypatching time.time — the established
-# clock-fake pattern from test_anki_sync_concurrent_review.py, not an app.*
-# patch, so nothing here needs mock_allowlist.txt.
+# EVERY seam is injectable — ledger=, cache_dir=, sleep=, chars_per_month_limit=
+# and now=. Nothing here patches anything, so nothing needs mock_allowlist.txt.
+# The clock is the last of those and was the afterthought: these tests first
+# froze the process-global time.time(), which works and is permitted (stdlib,
+# not app.*) but pins every clock in the process to make one ledger read
+# deterministic. The adapter takes now= for the same reason it takes sleep=.
 
 SYNTH_URL = "https://eastus.tts.speech.microsoft.com/cognitiveservices/v1"
 
@@ -200,6 +200,10 @@ def _svc(**kw):
     # pacing are real code paths here, they just run at zero delay.
     kw.setdefault("min_delay", 0)
     kw.setdefault("retry_base_delay", 0)
+    # Same reason as the two above, and the same reason the adapter injects
+    # `sleep`: pin the clock through the real code path. Freezing the global
+    # time.time() would reach every other clock in the test process.
+    kw.setdefault("now", lambda: SEP_13_1200_UTC)
     return AzureTTSService(**kw)
 
 
@@ -241,13 +245,12 @@ def test_get_tts_service_wires_a_ledger_for_azure_but_not_edge(tmp_path):
 
 
 @respx.mock
-async def test_cache_hit_neither_counts_nor_calls_azure(tmp_path, monkeypatch):
+async def test_cache_hit_neither_counts_nor_calls_azure(tmp_path):
     """A cache hit makes no API call, so Azure bills nothing and the tally must not grow.
 
     The single most likely-to-be-got-wrong acceptance criterion: counting cache
     hits inflates the tally ~3.1x and makes the ledger lie.
     """
-    monkeypatch.setattr(time, "time", lambda: SEP_13_1200_UTC)
     route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"audio"))
     ledger = AzureCharacterLedger(tmp_path / "ledger.log")
     svc = _svc(cache_dir=tmp_path / "cache", ledger=ledger, chars_per_month_limit=500_000)
@@ -264,13 +267,12 @@ async def test_cache_hit_neither_counts_nor_calls_azure(tmp_path, monkeypatch):
 
 
 @respx.mock
-async def test_cache_hit_still_succeeds_at_the_cap(tmp_path, monkeypatch):
+async def test_cache_hit_still_succeeds_at_the_cap(tmp_path):
     """The discriminator: check the quota in the RIGHT place — after the cache.
 
     A warm cache is the only thing that lets a render finish at the cap, so a
     cache hit must keep working even when the ledger says the month is spent.
     """
-    monkeypatch.setattr(time, "time", lambda: SEP_13_1200_UTC)
     route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"audio"))
     ledger = AzureCharacterLedger(tmp_path / "ledger.log")
     svc = _svc(cache_dir=tmp_path / "cache", ledger=ledger, chars_per_month_limit=500_000)
@@ -289,14 +291,13 @@ async def test_cache_hit_still_succeeds_at_the_cap(tmp_path, monkeypatch):
 
 
 @respx.mock
-async def test_at_the_cap_the_call_is_refused_with_no_http(tmp_path, monkeypatch):
+async def test_at_the_cap_the_call_is_refused_with_no_http(tmp_path):
     """The loud refusal — message pinned verbatim.
 
     At the cap on 2026-09-13 12:00 UTC with the default 500k limit, exactly:
     "Monthly Azure TTS budget exhausted: characters per month (500,000 of
     500,000); quota resets in 17d12h"
     """
-    monkeypatch.setattr(time, "time", lambda: SEP_13_1200_UTC)
     route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"audio"))
     ledger = AzureCharacterLedger(tmp_path / "ledger.log")
     ledger.record(500_000)
@@ -313,14 +314,13 @@ async def test_at_the_cap_the_call_is_refused_with_no_http(tmp_path, monkeypatch
 
 
 @respx.mock
-async def test_a_failed_synthesis_does_not_count(tmp_path, monkeypatch):
+async def test_a_failed_synthesis_does_not_count(tmp_path):
     """FACT A consequence 3: only a successfully processed request bills.
 
     A persistent 429 exhausts the ladder into TTSExhausted; the tally must
     still read 0 because the ``else:`` branch of ``_do_synthesize`` — the
     "raise_for_status did not raise" branch — never ran.
     """
-    monkeypatch.setattr(time, "time", lambda: SEP_13_1200_UTC)
     respx.post(SYNTH_URL).mock(return_value=httpx.Response(429))
     ledger = AzureCharacterLedger(tmp_path / "ledger.log")
     svc = _svc(
@@ -338,9 +338,8 @@ async def test_a_failed_synthesis_does_not_count(tmp_path, monkeypatch):
 
 
 @respx.mock
-async def test_a_successful_synthesis_increments_by_the_billable_count(tmp_path, monkeypatch):
+async def test_a_successful_synthesis_increments_by_the_billable_count(tmp_path):
     """One synthesis of oracle row 3 moves the tally by exactly 54."""
-    monkeypatch.setattr(time, "time", lambda: SEP_13_1200_UTC)
     route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"audio"))
     ledger = AzureCharacterLedger(tmp_path / "ledger.log")
     svc = _svc(cache_dir=tmp_path / "cache", ledger=ledger, chars_per_month_limit=500_000)
@@ -355,13 +354,12 @@ async def test_a_successful_synthesis_increments_by_the_billable_count(tmp_path,
 
 
 @respx.mock
-async def test_ledger_none_never_counts_or_refuses(tmp_path, monkeypatch):
+async def test_ledger_none_never_counts_or_refuses(tmp_path):
     """ledger=None means no accounting at all — even text that blows any cap.
 
     Mirrors how cache_dir=None already means "no cache": every test that
     constructs the adapter directly stays inert unless it asks for a ledger.
     """
-    monkeypatch.setattr(time, "time", lambda: SEP_13_1200_UTC)
     route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"audio"))
     svc = _svc(cache_dir=tmp_path / "cache")  # no ledger
 
