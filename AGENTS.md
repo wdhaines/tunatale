@@ -67,6 +67,30 @@ All commands use `uv run` (no manual venv activation). Never commit `.env`. Groq
 - **Peer-sync tests** (`--run-peer-sync`): auto-start a throwaway `anki.syncserver`. Tier 1 as of 2026-08-14 — a third parallel group in `./test.sh`, not a manual step.
 - **CI is authoritative; `./test.sh` is a strict SUBSET of it** (`tunatale-as5`, 2026-08-14). Green locally is necessary but not sufficient. **Adding a check to `test.sh` obliges you to add it to `ci.yml` in the same commit**; the reverse is not required. Six parallel job instances in `.github/workflows/ci.yml` — backend (ruff → checkers → pytest), `backend-hostile-tz` (×1, `Etc/GMT-3`), `backend-hostile-hour`, frontend, `e2e` (Playwright), and `anki-gates` (oracle-parity + peer-sync in one job, because job COUNT is what drives the tail). `backend-hostile-tz` runs ONE instance inside UTC+2..+4, not a matrix at the extremes, because that band is where the only offset bug this repo has ever found reproduces — an extremes matrix is measured blind to it. Job COUNT, not job speed, drives the CI tail. The measurement and the redundancy argument are in the comment above the job. **THREE jobs override the workflow's `TZ: UTC`** — `backend-hostile-tz` (offset), `backend-hostile-hour` (clock), and `anki-gates`, which runs BOTH Anki gates at the 04:00 rollover via `.github/actions/hostile-hour-tz`. The Anki gates must run at the rollover specifically: `backend-hostile-hour` sits in the band on every run but passes no `--run-oracle`, so it can never catch a parity bug there, and a parity job left at `TZ: UTC` reaches the band about once in 600 runs — which is not a defence. Neither job is misconfigured on its own; the hole is at their intersection. ⚠️ If `anki-gates` goes red at the boundary while `backend` is green, suspect PRODUCT code first — the opposite of the guidance for `backend-hostile-tz`, because only `anki-gates` has an oracle to tell "TT and Anki disagree about the day" from "a fixture encodes a wall-clock assumption". The clock/offset jobs are the only CI-only checks; there are no local-only ones. ⚠️ **CI RUNS LEAN, and that split is real** (`0344f42`, 2026-08-31, `tunatale-ouk.6`/`.9`): every backend job installs `uv sync --no-default-groups --group dev` with `UV_NO_SYNC: "1"` at job level, so classla/stanza/torch/transformers are absent there. **A test may import only what the `dev` group declares** — anything transitive through the language groups (e.g. `yaml` via transformers) is green locally and `ModuleNotFoundError` in all four backend jobs. Declare it in `dev`; never widen CI's groups. Full rationale: `.claude/rules/testing.md` § "What a green gate means".
 
+## Paid vendor usage — price it before you run it
+
+**Azure Neural HD (Dragon) voices are RULED OUT** (user's call, 2026-09-12).
+They are a separate billing line — $22/1M characters — and are **excluded from
+the F0 free allowance**, so every HD character bills from the first one.
+Standard/Multilingual Neural voices are ~$15/1M and draw on the free
+0.5M/month. Enforced by
+`test_languages.py::test_no_voice_map_names_a_paid_hd_voice` (an HD id is the
+only voice id containing a colon). It is not a quality judgement: Andrew-HD had
+the best measured WER and was the ear-test favourite.
+
+**Price a render before running it, in characters, and put the number in the
+report.** Cache misses are exactly computable — run the adapter's own
+`_cache_path` against the real `tts_cache_dir` rather than estimating. STT bills
+per audio hour (~$1/h); measure it from the durations of the wavs actually sent.
+For scale: the whole stored Norwegian curriculum is ~69k characters (~$1.04) and
+a single lesson ~$0.10.
+
+⚠️ **The user's cost visibility is limited** — "I guess I'll see" — so do not
+rely on them noticing. F0 vs S0 is measurable without the portal: F0 caps TTS at
+**20 requests / 60s**, so sustaining more rules it out (49/min measured), and HD
+answering 200 also rules out F0, which does not serve it. On that evidence this
+resource behaves like **S0, where characters bill**.
+
 ## Key Conventions
 
 - **No hardcoded language logic** — resolve every per-language facet through the registry `app/languages.py` (`get_language` / `get_preprocessor` / … / `resolve_language_context(code, settings)`). Enforced: `scripts/check_language_literals.py` (`./test.sh` + CI) fails on language literals (`"sl"`/`"no"`, `Slovene`/`Norwegian`, `classla`/`stanza`, `*-Neural` voices) in `backend/app/**` outside allowlisted plugin modules (`tests/language_literals_allowlist.txt`). **Zero tolerance** — its ledger drained 13 → 0 and was deleted (2026-07-30). Rationale: `docs/language-plugin-hardening.md`.

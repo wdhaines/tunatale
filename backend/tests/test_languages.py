@@ -339,6 +339,33 @@ class TestGetLanguage:
 
         assert role_1_locales == {lang.tts_locale}
 
+    @pytest.mark.parametrize("code", sorted(known_language_codes()))
+    def test_no_voice_map_names_a_paid_hd_voice(self, code):
+        """Azure Neural HD is ruled OUT, and on cost rather than on quality.
+
+        It is a SEPARATE billing line from Standard Neural — $22 per 1M
+        characters as of March 2026 — and it is excluded from the F0 free
+        allowance, so every HD character bills from the first one. Standard and
+        Multilingual Neural voices are ordinary neural voices and draw on that
+        allowance. The user ruled HD out explicitly on 2026-09-12 after seeing a
+        session's spend.
+
+        It is not a quality judgement: Andrew-HD had the best WER of any
+        candidate (0.000) and was the user's ear-test favourite. It also cannot
+        be regression-tested — Azure documents it as varying its prosody on
+        every render, and it measured NONDETERMINISTIC, so no hash-based
+        pronunciation oracle exists for it (tunatale-rag.4).
+
+        An HD voice id is spelled with a colon (``en-US-Andrew:DragonHDLatestNeural``),
+        which is the only thing in the catalogue that is, so this catches the
+        whole family rather than one name.
+        """
+        for role, voice in get_language(code).tts_voice_map.items():
+            assert ":" not in voice and "DragonHD" not in voice, (
+                f"{code} {role}={voice} is a paid Neural HD voice: separate billing line, "
+                "$22/1M, no free-tier allowance, and nondeterministic so untestable"
+            )
+
     def test_narrator_is_english(self):
         lang_en = get_language("en")
         lang_no = get_language("no")
