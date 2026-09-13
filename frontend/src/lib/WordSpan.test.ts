@@ -265,19 +265,85 @@ describe("WordSpan", () => {
   });
 
   describe("active_state rendering", () => {
-    it("shows word-unknown class for unknown active_state", () => {
+    it("shows word-unstarted class for unknown active_state", () => {
       const { getByRole } = render(WordSpan, {
         props: { word: makeWordToken({ active_state: "unknown" }) },
       });
-      expect(getByRole("button").className).toContain("word-unknown");
+      expect(getByRole("button").className).toContain("word-unstarted");
     });
 
-    it("does not apply any inline style to the word (mastery text color removed)", () => {
+    // The nit this alignment came from: a card that EXISTS but has never been
+    // studied used to read in the default ink while a word with no card at all
+    // read blue. To the learner they are one state — "not started" — so both
+    // are blue and only the rails differ.
+    it("shows word-unstarted for a card that exists but has never been studied", () => {
+      const { container } = render(WordSpan, {
+        props: {
+          word: makeWordToken({
+            active_state: "new",
+            srs_item_id: 7,
+            understand_band: "new",
+            produce_band: "none",
+          }),
+        },
+      });
+      expect(container.querySelector(".word")!.className).toContain("word-unstarted");
+    });
+
+    it.each(["learning", "days", "weeks", "months", "solid"])(
+      "does not show word-unstarted once the understand side reaches %s",
+      (band) => {
+        const { container } = render(WordSpan, {
+          props: {
+            word: makeWordToken({
+              active_state: "review",
+              srs_item_id: 7,
+              understand_band: band,
+              produce_band: "none",
+            }),
+          },
+        });
+        expect(container.querySelector(".word")!.className).not.toContain("word-unstarted");
+      },
+    );
+
+    // A production-only cloze has NO recognition card, so its understand band
+    // is "none" — the one shape where reading only the understand side would
+    // paint a well-learned word blue.
+    it("does not show word-unstarted for a learned production-only cloze", () => {
+      const { container } = render(WordSpan, {
+        props: {
+          word: makeWordToken({
+            active_state: "review",
+            srs_item_id: 7,
+            understand_band: "none",
+            produce_band: "weeks",
+          }),
+        },
+      });
+      expect(container.querySelector(".word")!.className).not.toContain("word-unstarted");
+    });
+
+    it.each(["suspended", "ignored"])("%s still wins over unstarted blue", (active_state) => {
+      const { container } = render(WordSpan, {
+        props: {
+          word: makeWordToken({ active_state, understand_band: "new", produce_band: "new" }),
+        },
+      });
+      const cls = container.querySelector(".word")!.className;
+      expect(cls).toContain("word-ignored");
+      expect(cls).not.toContain("word-unstarted");
+    });
+
+    it("applies no mastery text colour inline (the ramp moved to the rails)", () => {
       const { getByRole } = render(WordSpan, {
         props: { word: makeWordToken({ active_state: "known", progress: 1 }) },
       });
       const el = getByRole("button");
-      expect(el.getAttribute("style")).toBeNull();
+      // The only inline style a word may carry is the rail custom properties.
+      // A `color` here would be the old progress ramp coming back.
+      expect(el.style.color).toBe("");
+      expect(el.getAttribute("style")).not.toContain("color:");
       expect(el.className).not.toContain("word-known");
     });
 
@@ -296,7 +362,7 @@ describe("WordSpan", () => {
       });
       const tooltip = getByRole("tooltip");
       expect(tooltip.textContent).toContain("Understand: Half a year + · holds ~7 months");
-      expect(tooltip.textContent).toContain("Produce: Not started");
+      expect(tooltip.textContent).toContain("Produce: New");
       expect(tooltip.textContent).not.toContain("82%");
       expect(tooltip.textContent).not.toContain("well recognized");
     });
@@ -424,22 +490,19 @@ describe("WordSpan", () => {
   });
 
   describe("twin rails (painted in the word's padding)", () => {
-    it("renders no rails for a word with no band fields", () => {
+    // Absent band fields are not "paint nothing" — they are "no card on either
+    // side", which is a fact the reader shows, so they paint two dashed rails.
+    it.each([
+      ["no band fields at all", {}],
+      ["bands explicitly null", { understand_band: null, produce_band: null }],
+    ])("paints dashed no-card rails for a word with %s", (_label, bands) => {
       const { container } = render(WordSpan, {
-        props: { word: makeWordToken() },
+        props: { word: makeWordToken(bands) },
       });
       const word = container.querySelector(".word") as HTMLElement;
-      expect(word.className).not.toContain("paint-rails");
-      expect(word.getAttribute("style")).toBeNull();
-    });
-
-    it("renders no rails when bands are explicitly null (untracked word)", () => {
-      const { container } = render(WordSpan, {
-        props: { word: makeWordToken({ understand_band: null, produce_band: null }) },
-      });
-      const word = container.querySelector(".word") as HTMLElement;
-      expect(word.className).not.toContain("paint-rails");
-      expect(word.getAttribute("style")).toBeNull();
+      expect(word.className).toContain("paint-rails");
+      expect(word.style.getPropertyValue("--rail-u-track")).toContain("repeating-linear-gradient");
+      expect(word.style.getPropertyValue("--rail-p-track")).toContain("repeating-linear-gradient");
     });
 
     // An untracked word has no card on EITHER side, so it paints the reader's
@@ -457,32 +520,78 @@ describe("WordSpan", () => {
         },
       });
       const word = container.querySelector(".word") as HTMLElement;
-      expect(word.className).toContain("paint-untracked");
-      expect(word.className).not.toContain("paint-rails");
+      // One paint path for every word that gets rails — the separate
+      // `.paint-untracked` rule is gone, and the dashed tracks now arrive as
+      // the same custom properties a tracked word uses.
+      expect(word.className).toContain("paint-rails");
+      expect(word.style.getPropertyValue("--rail-u-track")).toContain("repeating-linear-gradient");
+      expect(word.style.getPropertyValue("--rail-p-track")).toContain("repeating-linear-gradient");
+      expect(word.style.getPropertyValue("--rail-u-fill")).toBe("transparent");
+      expect(word.style.getPropertyValue("--rail-p-fill")).toBe("transparent");
     });
 
-    it("does not paint untracked rails inside a phrase (the phrase carries the rails)", () => {
+    it("does not paint rails on an untracked word inside a phrase (the phrase carries them)", () => {
       const { container } = render(WordSpan, {
         props: { word: makeWordToken({ active_state: "unknown" }), hideRails: true },
       });
-      expect(container.querySelector(".word")!.className).not.toContain("paint-untracked");
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.className).not.toContain("paint-rails");
+      expect(word.getAttribute("style")).toBeNull();
     });
 
-    it("never paints untracked rails on a tracked or an ignored word", () => {
-      for (const active_state of ["review", "new", "ignored", "suspended"]) {
-        const { container, unmount } = render(WordSpan, {
-          props: {
-            word: makeWordToken({
-              active_state,
-              understand_band: active_state === "review" ? "weeks" : null,
-            }),
-          },
-        });
-        expect(container.querySelector(".word")!.className, active_state).not.toContain(
-          "paint-untracked",
-        );
-        unmount();
-      }
+    it("never paints rails on an ignored word", () => {
+      const { container } = render(WordSpan, {
+        props: {
+          word: makeWordToken({
+            active_state: "ignored",
+            srs_item_id: null,
+            understand_band: null,
+            produce_band: null,
+          }),
+        },
+      });
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.className).not.toContain("paint-rails");
+      expect(word.getAttribute("style")).toBeNull();
+    });
+
+    // A never-studied card and an untracked word are the same blue, so the
+    // rails are the ONLY thing that still separates them: solid empty track
+    // where a card exists, dashed where none does.
+    it("separates a never-studied card from an untracked word by the track alone", () => {
+      const { container } = render(WordSpan, {
+        props: {
+          word: makeWordToken({
+            active_state: "new",
+            srs_item_id: 7,
+            understand_band: "new",
+            produce_band: "none",
+          }),
+        },
+      });
+      const word = container.querySelector(".word") as HTMLElement;
+      expect(word.style.getPropertyValue("--rail-u-track")).not.toContain(
+        "repeating-linear-gradient",
+      );
+      expect(word.style.getPropertyValue("--rail-p-track")).toContain("repeating-linear-gradient");
+    });
+
+    // The popover used to say "not tracked" and nothing else for these words.
+    it("gives an untracked word both popover sides instead of a 'not tracked' label", () => {
+      const { getByRole } = render(WordSpan, {
+        props: {
+          word: makeWordToken({
+            active_state: "unknown",
+            srs_item_id: null,
+            understand_band: null,
+            produce_band: null,
+          }),
+        },
+      });
+      const tooltip = getByRole("tooltip");
+      expect(tooltip.textContent).toContain("Understand: New");
+      expect(tooltip.textContent).toContain("Produce: New");
+      expect(tooltip.textContent).not.toContain("not tracked");
     });
 
     it("paints an understand rail filled to the band width and colour", () => {
@@ -509,16 +618,14 @@ describe("WordSpan", () => {
       expect(word.style.getPropertyValue("--rail-p-pct")).toBe("100%");
     });
 
-    it("paints no produce layers when only the understand band is set", () => {
+    it("paints a dashed no-card produce rail when only the understand band is set", () => {
       const { container } = render(WordSpan, {
         props: { word: makeWordToken({ understand_band: "new" }) },
       });
       const word = container.querySelector(".word") as HTMLElement;
       expect(word.style.getPropertyValue("--rail-p-fill")).toBe("transparent");
       expect(word.style.getPropertyValue("--rail-p-pct")).toBe("0%");
-      expect(word.style.getPropertyValue("--rail-p-track")).toBe(
-        "linear-gradient(transparent, transparent)",
-      );
+      expect(word.style.getPropertyValue("--rail-p-track")).toContain("repeating-linear-gradient");
     });
 
     it("draws an empty unfilled track for a produce band like suspended", () => {

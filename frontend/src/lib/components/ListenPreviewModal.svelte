@@ -525,7 +525,11 @@
 					     longer the grid item. `listen-preview-layout.spec.ts` measures
 					     this cell's left edge against the header's to the pixel. -->
 					<span class="day-cell">
-						<Tooltip masteryLabel={c.kind === 'create' ? t('listenPreview.notTracked') : null} masterySides={c.kind === 'create' ? null : masterySidesFn(c)}>
+						<!-- A create row carries no bands, which `masterySides` reads as "no
+						     card on either side" — so it gets the same two lines as every
+						     other row instead of a bare "not tracked" that named no
+						     direction. Matches WordSpan's popover for the same word. -->
+						<Tooltip masterySides={masterySidesFn(c)}>
 							<span class="tag day paint-rails" class:overdue={isOverdue(c)} class:is-new={dueLabel(c) === 'new'} style={railPropsFor(c) ?? undefined}>
 								{dueLabel(c)}
 							</span>
