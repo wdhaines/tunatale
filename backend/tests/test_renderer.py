@@ -17,6 +17,7 @@ import soundfile as sf
 from app.audio.cues import Cue
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.renderer import LessonRenderer
+from app.languages import get_tts_voice_gain_db
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 from app.plugins.languages.sl.preprocessor import SlovenePreprocessor
 
@@ -488,6 +489,20 @@ class TestLessonNarratorVoice:
         assert restored.narrator_voice == "en-US-AriaNeural"
 
 
+def _gained_marker(marker: float, code: str, voice_id: str) -> float:
+    """The amplitude a constant-*marker* clip has AFTER the per-voice gain.
+
+    These cue tests locate each clip by its unique constant sample value, so
+    the per-voice loudness gain (``renderer._apply_voice_gain``) scales the very
+    value they search for. Scaling the expectation keeps the tests about CUE
+    ARITHMETIC — which a gain cannot move, because it changes amplitude and not
+    sample count — and makes them prove that too. Controlled 2026-09-13: with
+    every ``sl`` gain zeroed both tests pass untouched, which is what identified
+    the marker scaling rather than a timing regression as the cause.
+    """
+    return marker * 10 ** (get_tts_voice_gain_db(code, voice_id) / 20)
+
+
 class TestLessonRendererCues:
     """Tests that render() returns accurate cue offsets.
 
@@ -594,7 +609,13 @@ class TestLessonRendererCues:
         # order — varied durations mean a systematic end-frame bug (e.g. end
         # computed as start + constant) cannot hide behind uniform clips.
         all_phrases: list[dict] = [
-            {"key": (None, 0), "text": lesson.title, "marker": 0.1, "duration_ms": 150},
+            {
+                "key": (None, 0),
+                "text": lesson.title,
+                "marker": 0.1,
+                "duration_ms": 150,
+                "voice_id": lesson.narrator_voice,
+            },
         ]
         for sec_idx, sec in enumerate(lesson.sections):
             for ph_idx, _ in enumerate(sec.phrases):
@@ -605,6 +626,7 @@ class TestLessonRendererCues:
                         "text": sec.phrases[ph_idx].text,
                         "marker": 0.1 * (n + 1),
                         "duration_ms": 150 + 70 * n,
+                        "voice_id": sec.phrases[ph_idx].voice_id,
                     }
                 )
 
@@ -641,8 +663,10 @@ class TestLessonRendererCues:
         assert len(cues) == len(all_phrases)
         for i, cue in enumerate(cues):
             spec = all_phrases[i]
-            idx = np.where(np.abs(buf[:, 0] - spec["marker"]) < 0.003)[0]
-            assert len(idx) > 0, f"Cue {i} '{cue.text}': marker {spec['marker']} not found in buffer"
+            # The per-voice gain scales the constant this search looks for.
+            expected_marker = _gained_marker(spec["marker"], lesson.language_code, spec["voice_id"])
+            idx = np.where(np.abs(buf[:, 0] - expected_marker) < 0.003)[0]
+            assert len(idx) > 0, f"Cue {i} '{cue.text}': marker {expected_marker} not found in buffer"
             assert idx[-1] - idx[0] + 1 == len(idx), f"Cue {i} '{cue.text}': marker run not contiguous"
 
             measured_start_ms = round(idx[0] / buf_rate * 1000)
@@ -690,7 +714,15 @@ class TestLessonRendererCues:
         buf, buf_rate = sf.read(str(output), dtype="float32", always_2d=True)
 
         # Measure the three markers
-        measured = self._measure_clip_starts(buf, buf_rate, [0.1, 0.2, 0.3])
+        measured = self._measure_clip_starts(
+            buf,
+            buf_rate,
+            [
+                _gained_marker(0.1, lesson.language_code, lesson.narrator_voice),
+                _gained_marker(0.2, lesson.language_code, "sl-SI-PetraNeural"),
+                _gained_marker(0.3, lesson.language_code, "sl-SI-PetraNeural"),
+            ],
+        )
 
         # Each cue's start must match its measured buffer position (title at 0;
         # the other two found strictly after it — 0 would mean "not found").
