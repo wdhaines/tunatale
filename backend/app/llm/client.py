@@ -183,11 +183,19 @@ class LLMClient:
         max_tokens: int = 2048,
         *,
         now: float | None = None,
+        call_site: str = "",
     ) -> str:
         """Try Groq, then fallback_client, then Ollama; raise LLMError if all fail.
 
         ``now`` feeds ONLY the day-budget refusal (so tests can pin an absolute
         instant); pacing and 429 timestamps always use the real clock.
+
+        ``call_site`` is the ledger label for the route that made this call
+        (bead 6zzu2 Stage 2) — see ``app.llm.call_sites.CallSite``. The default
+        ``""`` writes ``-`` to the ledger, so legacy callers keep working; the
+        ``check_llm_call_sites.py`` gate ensures product code never relies on
+        that default. The label is forwarded to the fallback client too — the
+        fallback is the SAME route, not a new one.
         """
         if not self.groq_api_key:
             raise LLMError("No GROQ_API_KEY configured")
@@ -201,6 +209,7 @@ class LLMClient:
                 temperature=temperature,
                 max_tokens=max_tokens,
                 now=now,
+                call_site=call_site,
             )
         except LLMError as e:
             attempts.extend(e.attempts)
@@ -210,7 +219,11 @@ class LLMClient:
             if self.fallback_client is not None:
                 try:
                     result = await self.fallback_client.complete(
-                        prompt, system_prompt=system_prompt, temperature=temperature, max_tokens=max_tokens
+                        prompt,
+                        system_prompt=system_prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        call_site=call_site,
                     )
                 except LLMError as fe:
                     attempts.extend(fe.attempts)
@@ -245,6 +258,7 @@ class LLMClient:
         temperature: float,
         max_tokens: int,
         now: float | None = None,
+        call_site: str = "",
     ) -> str:
         headers = {
             "Authorization": f"Bearer {self.groq_api_key}",
@@ -340,7 +354,7 @@ class LLMClient:
 
                 if response.status_code == 429:
                     if self.usage_ledger is not None:
-                        self.usage_ledger.record(0)
+                        self.usage_ledger.record(0, call_site=call_site)
                     retry_after_raw = response.headers.get("retry-after", "2")
                     try:
                         retry_after = float(retry_after_raw)
@@ -378,7 +392,7 @@ class LLMClient:
 
                 if not response.is_success:
                     if self.usage_ledger is not None:
-                        self.usage_ledger.record(0)
+                        self.usage_ledger.record(0, call_site=call_site)
                     msg = f"Groq returned HTTP {response.status_code}"
                     try:
                         body_text = response.text
@@ -422,7 +436,7 @@ class LLMClient:
                     if self.usage_ledger is not None:
                         # The response arrived, so Groq counted it against RPD —
                         # unparseable to us is still spent.
-                        self.usage_ledger.record(0)
+                        self.usage_ledger.record(0, call_site=call_site)
                     msg = "Groq returned malformed response body"
                     self._fire_callback(
                         provider="groq",
@@ -452,6 +466,7 @@ class LLMClient:
                         prompt_tokens=prompt_tokens if isinstance(prompt_tokens, int) else None,
                         completion_tokens=completion_tokens if isinstance(completion_tokens, int) else None,
                         reasoning_tokens=reasoning_tokens if isinstance(reasoning_tokens, int) else None,
+                        call_site=call_site,
                     )
                 if self.last_finish_reason == "length":
                     logger.warning(

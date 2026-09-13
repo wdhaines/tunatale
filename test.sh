@@ -158,6 +158,8 @@ log_step() {
 
   log_step backend "Main styling check" uv run python scripts/check_main_styling.py
 
+  log_step backend "LLM call sites check" uv run python scripts/check_llm_call_sites.py
+
   # pytest-cov combines per-worker coverage, so the 100% gate still applies to
   # the full run at any -n.
   #

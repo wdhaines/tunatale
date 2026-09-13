@@ -36,6 +36,7 @@ from typing import Any, NamedTuple
 
 from app.cards.field_map import upos_for_disambig
 from app.languages import get_language
+from app.llm.call_sites import CallSite
 from app.llm.cloze_quality import generate_cloze_sentence, judge_cloze, translate_cloze_sentence
 from app.srs.function_words import is_function_word
 
@@ -109,15 +110,21 @@ async def prestage_cloze_sentences(
 
     async def _write_one(word: str, gloss: str):
         async with semaphore:
-            sentence = await generate_cloze_sentence(llm, word=word, gloss=gloss, pos="", language=language.name)
+            sentence = await generate_cloze_sentence(
+                llm, caller=CallSite.CALLER_PRESTAGE, word=word, gloss=gloss, pos="", language=language.name
+            )
             if sentence is None:
                 return word, None, None, ""
-            verdict = await judge_cloze(llm, sentence=sentence, surface=word, language=language.name)
+            verdict = await judge_cloze(
+                llm, caller=CallSite.CALLER_PRESTAGE, sentence=sentence, surface=word, language=language.name
+            )
             # A translation OF THE SENTENCE, so the mint has one to put in the
             # cloze's sentence slot. Without it the only gloss in scope there is
             # the WORD's, and using that wrote the same text into both slots on
             # 18 live cards (tunatale-ml06). Failure yields "" and still caches.
-            translation = await translate_cloze_sentence(llm, sentence=sentence, language=language.name)
+            translation = await translate_cloze_sentence(
+                llm, caller=CallSite.CALLER_PRESTAGE, sentence=sentence, language=language.name
+            )
             return word, sentence, verdict, translation
 
     # ⚠️ `return_exceptions=True`, and the reason is measured rather than

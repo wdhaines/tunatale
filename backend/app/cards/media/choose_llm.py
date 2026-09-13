@@ -17,6 +17,8 @@ import logging
 import re
 from typing import Protocol
 
+from app.llm.call_sites import CallSite
+
 logger = logging.getLogger(__name__)
 
 
@@ -89,6 +91,7 @@ async def choose_image_hit(
             system_prompt=IMAGE_CHOICE_SYSTEM_PROMPT,
             temperature=0.0,
             max_tokens=256,
+            call_site=CallSite.MEDIA_CHOOSE,
         )
     except Exception as exc:  # noqa: BLE001 — never block card creation on the LLM
         logger.warning("image chooser failed for %r: %s", word, exc)

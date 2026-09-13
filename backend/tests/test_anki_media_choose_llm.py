@@ -76,7 +76,7 @@ class _StubLLM:
         self._response = response
         self.calls: list[dict] = []
 
-    async def complete(self, prompt, *, system_prompt=None, temperature=None, max_tokens=None):
+    async def complete(self, prompt, *, system_prompt=None, temperature=None, max_tokens=None, call_site=""):
         self.calls.append(
             {"prompt": prompt, "system_prompt": system_prompt, "temperature": temperature, "max_tokens": max_tokens}
         )
@@ -84,7 +84,7 @@ class _StubLLM:
 
 
 class _FailingLLM:
-    async def complete(self, prompt, *, system_prompt=None, temperature=None, max_tokens=None):
+    async def complete(self, prompt, *, system_prompt=None, temperature=None, max_tokens=None, call_site=""):
         raise RuntimeError("LLM is down")
 
 

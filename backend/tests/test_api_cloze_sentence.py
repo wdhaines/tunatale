@@ -51,7 +51,7 @@ class ScriptedLLM:
         self.translate_prompts: list[str] = []
         self.generate_calls = 0
 
-    async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256):
+    async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256, call_site=""):
         system = system_prompt or ""
         if "blank" in system:
             self.judge_prompts.append(prompt)

@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.llm.call_sites import CallSite
 from app.llm.cloze_quality import (
     ClozeVerdict,
     blank_out,
@@ -110,7 +111,7 @@ class TestJudgeCloze:
     @pytest.mark.asyncio
     async def test_single_filler_matching_target_is_determined(self):
         verdict = await judge_cloze(
-            self._client("seg"), sentence="Hun bosatte seg i Malmö", surface="seg", language="no"
+            self._client("seg"), sentence="Hun bosatte seg i Malmö", surface="seg", language="no", caller="api"
         )
         assert verdict.status == "determined"
         assert verdict.fillers == ("seg",)
@@ -122,6 +123,7 @@ class TestJudgeCloze:
             sentence="{{c1::han}} kommer i morgen",
             surface="han",
             language="no",
+            caller="api",
         )
         assert verdict.status == "underdetermined"
         assert "hun" in verdict.fillers
@@ -130,7 +132,7 @@ class TestJudgeCloze:
     async def test_target_absent_from_fillers_is_underdetermined(self):
         """If the model cannot even produce the target, the sentence does not cue it."""
         verdict = await judge_cloze(
-            self._client("bra, fint"), sentence="Alt er ålreit", surface="ålreit", language="no"
+            self._client("bra, fint"), sentence="Alt er ålreit", surface="ålreit", language="no", caller="api"
         )
         assert verdict.status == "underdetermined"
 
@@ -138,7 +140,7 @@ class TestJudgeCloze:
     async def test_target_match_is_case_insensitive(self):
         """`{{c1::Jeg}}` capitalised at sentence start still matches a lowercase reply."""
         verdict = await judge_cloze(
-            self._client("Jeg"), sentence="{{c1::Jeg}} liker kaffe", surface="jeg", language="no"
+            self._client("Jeg"), sentence="{{c1::Jeg}} liker kaffe", surface="jeg", language="no", caller="api"
         )
         assert verdict.status == "determined"
 
@@ -154,6 +156,7 @@ class TestJudgeCloze:
             sentence="Gå gjennom tunnelen",
             surface="gjennom",
             language="no",
+            caller="api",
             also_accept=("igjennom",),
         )
         assert verdict.status == "determined"
@@ -167,7 +170,7 @@ class TestJudgeCloze:
         actual uncertainty instead.
         """
         client = self._client("han, hun")
-        await judge_cloze(client, sentence="{{c1::han}} kommer i morgen", surface="han", language="no")
+        await judge_cloze(client, sentence="{{c1::han}} kommer i morgen", surface="han", language="no", caller="api")
         sent = " ".join(str(v) for v in client.complete.call_args.kwargs.values())
         assert "___" in sent
         assert "han" not in sent.lower()
@@ -182,20 +185,24 @@ class TestJudgeCloze:
         """
         client = AsyncMock()
         client.complete.side_effect = Exception("groq 429")
-        verdict = await judge_cloze(client, sentence="Alt er ålreit", surface="ålreit", language="no")
+        verdict = await judge_cloze(client, sentence="Alt er ålreit", surface="ålreit", language="no", caller="api")
         assert verdict.status == "unknown"
 
     @pytest.mark.asyncio
     async def test_unusable_reply_is_unknown(self):
         verdict = await judge_cloze(
-            self._client("I cannot help with that."), sentence="Alt er ålreit", surface="ålreit", language="no"
+            self._client("I cannot help with that."),
+            sentence="Alt er ålreit",
+            surface="ålreit",
+            language="no",
+            caller="api",
         )
         assert verdict.status == "unknown"
 
     @pytest.mark.asyncio
     async def test_empty_sentence_is_unknown_without_calling_the_llm(self):
         client = self._client("han")
-        verdict = await judge_cloze(client, sentence="", surface="han", language="no")
+        verdict = await judge_cloze(client, sentence="", surface="han", language="no", caller="api")
         assert verdict.status == "unknown"
         client.complete.assert_not_called()
 
@@ -248,7 +255,7 @@ class TestKeb0AcceptanceTable:
     async def test_a_reply_offering_alternatives_is_underdetermined(self, word, sentence, reply):
         client = AsyncMock()
         client.complete.return_value = reply
-        verdict = await judge_cloze(client, sentence=sentence, surface=word, language="no")
+        verdict = await judge_cloze(client, sentence=sentence, surface=word, language="no", caller="api")
         assert verdict.status == "underdetermined"
         assert verdict.competitors, "the alternatives are what the learner would be marked wrong for"
 
@@ -257,7 +264,7 @@ class TestKeb0AcceptanceTable:
     async def test_a_reply_offering_only_the_answer_is_determined(self, word, sentence, reply):
         client = AsyncMock()
         client.complete.return_value = reply
-        verdict = await judge_cloze(client, sentence=sentence, surface=word, language="no")
+        verdict = await judge_cloze(client, sentence=sentence, surface=word, language="no", caller="api")
         assert verdict.status == "determined"
         assert verdict.competitors == ()
 
@@ -299,7 +306,7 @@ class TestJudgeStabilityIsNotAssumed:
         client = AsyncMock()
         client.complete.return_value = reply
         verdict = await judge_cloze(
-            client, sentence="{{c1::hun}} har på seg en hvit kjole", surface="hun", language="no"
+            client, sentence="{{c1::hun}} har på seg en hvit kjole", surface="hun", language="no", caller="api"
         )
         assert verdict.status == expected
 
@@ -317,37 +324,46 @@ class TestGenerateClozeSentence:
     async def test_returns_the_generated_sentence(self):
         """An antecedent in a preceding sentence is the cue for a pronoun."""
         client = self._client("Kari kommer i morgen. Hun tar toget.")
-        result = await generate_cloze_sentence(client, word="hun", gloss="she", pos="PRON", language="no")
+        result = await generate_cloze_sentence(client, word="hun", gloss="she", pos="PRON", language="no", caller="api")
         assert result == "Kari kommer i morgen. Hun tar toget."
 
     @pytest.mark.asyncio
     async def test_rejects_a_sentence_missing_the_target_word(self):
         """A sentence that does not contain the word cannot carry its blank."""
         client = self._client("Kari kommer i morgen.")
-        assert await generate_cloze_sentence(client, word="hun", gloss="she", pos="PRON", language="no") is None
+        assert (
+            await generate_cloze_sentence(client, word="hun", gloss="she", pos="PRON", language="no", caller="api")
+            is None
+        )
 
     @pytest.mark.asyncio
     async def test_matches_the_target_on_a_word_boundary(self):
         """`for` inside `fordi` is not an occurrence — cloze_source's rule again."""
         client = self._client("Jeg blir fordi det regner.")
-        assert await generate_cloze_sentence(client, word="for", gloss="for", pos="ADP", language="no") is None
+        assert (
+            await generate_cloze_sentence(client, word="for", gloss="for", pos="ADP", language="no", caller="api")
+            is None
+        )
 
     @pytest.mark.asyncio
     async def test_rejects_a_reply_that_is_prose_about_the_task(self):
         client = self._client("Sure! Here is a sentence for you: Hun tar toget.")
-        result = await generate_cloze_sentence(client, word="hun", gloss="she", pos="PRON", language="no")
+        result = await generate_cloze_sentence(client, word="hun", gloss="she", pos="PRON", language="no", caller="api")
         assert result == "Hun tar toget."
 
     @pytest.mark.asyncio
     async def test_llm_failure_returns_none(self):
         client = AsyncMock()
         client.complete.side_effect = Exception("groq 429")
-        assert await generate_cloze_sentence(client, word="hun", gloss="she", pos="PRON", language="no") is None
+        assert (
+            await generate_cloze_sentence(client, word="hun", gloss="she", pos="PRON", language="no", caller="api")
+            is None
+        )
 
     @pytest.mark.asyncio
     async def test_empty_word_returns_none_without_calling_the_llm(self):
         client = self._client("noe")
-        assert await generate_cloze_sentence(client, word="  ", gloss="", pos="", language="no") is None
+        assert await generate_cloze_sentence(client, word="  ", gloss="", pos="", language="no", caller="api") is None
         client.complete.assert_not_called()
 
 
@@ -378,7 +394,7 @@ class TestUncoveredEdges:
         """
         client = AsyncMock()
         client.complete.return_value = "whatever"
-        verdict = await judge_cloze(client, sentence="Katten sover", surface="han", language="no")
+        verdict = await judge_cloze(client, sentence="Katten sover", surface="han", language="no", caller="api")
         assert verdict.status == "unknown"
         client.complete.assert_not_called()
 
@@ -387,7 +403,7 @@ class TestUncoveredEdges:
         """Both are optional and both are appended when present."""
         client = AsyncMock()
         client.complete.return_value = "Bilen står foran huset."
-        await generate_cloze_sentence(client, word="foran", gloss="in front of", pos="ADP", language="no")
+        await generate_cloze_sentence(client, word="foran", gloss="in front of", pos="ADP", language="no", caller="api")
         prompt = client.complete.call_args.kwargs["prompt"]
         assert prompt == "foran (in front of) [ADP]"
 
@@ -395,14 +411,16 @@ class TestUncoveredEdges:
     async def test_generate_omits_absent_context(self):
         client = AsyncMock()
         client.complete.return_value = "Bilen står foran huset."
-        await generate_cloze_sentence(client, word="foran", gloss="", pos="", language="no")
+        await generate_cloze_sentence(client, word="foran", gloss="", pos="", language="no", caller="api")
         assert client.complete.call_args.kwargs["prompt"] == "foran"
 
     @pytest.mark.asyncio
     async def test_an_empty_reply_produces_no_sentence(self):
         client = AsyncMock()
         client.complete.return_value = "   "
-        assert await generate_cloze_sentence(client, word="foran", gloss="", pos="", language="no") is None
+        assert (
+            await generate_cloze_sentence(client, word="foran", gloss="", pos="", language="no", caller="api") is None
+        )
 
 
 class TestUposForDisambig:
@@ -453,7 +471,9 @@ class TestTranslateClozeSentence:
         client = AsyncMock()
         client.complete.return_value = "The car is parked in front of the house."
 
-        got = await translate_cloze_sentence(client, sentence="Bilen står foran huset.", language="Norwegian")
+        got = await translate_cloze_sentence(
+            client, sentence="Bilen står foran huset.", language="Norwegian", caller="api"
+        )
 
         assert got == "The car is parked in front of the house."
 
@@ -464,7 +484,7 @@ class TestTranslateClozeSentence:
 
         client = AsyncMock()
 
-        assert await translate_cloze_sentence(client, sentence="   ", language="Norwegian") == ""
+        assert await translate_cloze_sentence(client, sentence="   ", language="Norwegian", caller="api") == ""
         client.complete.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -481,4 +501,67 @@ class TestTranslateClozeSentence:
         client = AsyncMock()
         client.complete.side_effect = RuntimeError("429 rate limited")
 
-        assert await translate_cloze_sentence(client, sentence="Bilen står foran huset.", language="Norwegian") == ""
+        assert (
+            await translate_cloze_sentence(
+                client, sentence="Bilen står foran huset.", language="Norwegian", caller="api"
+            )
+            == ""
+        )
+
+
+class TestCallerThreadsTheLabel:
+    """`caller` composes the ledger label the .complete() call carries (6zzu2 Stage 2).
+
+    The same three helpers serve two routes — the background prestage mint and
+    the interactive card-adding API — and a label stamped at the .complete()
+    site cannot tell them apart. The helper takes the caller and composes
+    ``{caller}.{operation}``; these tests assert the exact composed labels.
+    """
+
+    @pytest.mark.asyncio
+    async def test_judge_composes_prestage_and_api_labels(self):
+        for caller, expected in (
+            (CallSite.CALLER_PRESTAGE, "prestage.cloze_judge"),
+            (CallSite.CALLER_API, "api.cloze_judge"),
+        ):
+            client = AsyncMock()
+            client.complete.return_value = "seg"
+            await judge_cloze(client, sentence="Hun bosatte seg i Malmö", surface="seg", language="no", caller=caller)
+            assert client.complete.call_args.kwargs["call_site"] == expected
+
+    @pytest.mark.asyncio
+    async def test_generate_composes_prestage_and_api_labels(self):
+        for caller, expected in (
+            (CallSite.CALLER_PRESTAGE, "prestage.cloze_generate"),
+            (CallSite.CALLER_API, "api.cloze_generate"),
+        ):
+            client = AsyncMock()
+            client.complete.return_value = "Kari kommer i morgen. Hun tar toget."
+            await generate_cloze_sentence(client, word="hun", gloss="she", pos="PRON", language="no", caller=caller)
+            assert client.complete.call_args.kwargs["call_site"] == expected
+
+    @pytest.mark.asyncio
+    async def test_translate_composes_prestage_label(self):
+        """Only the prestage mints a sentence translation — the API never does."""
+        from app.llm.cloze_quality import translate_cloze_sentence
+
+        client = AsyncMock()
+        client.complete.return_value = "The car is parked in front of the house."
+        await translate_cloze_sentence(
+            client, sentence="Bilen står foran huset.", language="Norwegian", caller=CallSite.CALLER_PRESTAGE
+        )
+        assert client.complete.call_args.kwargs["call_site"] == "prestage.cloze_translate"
+
+    def test_omitting_caller_raises_type_error(self):
+        """`caller` is REQUIRED — a default would create the silent unknown bucket."""
+        from app.llm.cloze_quality import translate_cloze_sentence
+
+        client = AsyncMock()
+        calls = (
+            lambda: judge_cloze(client, sentence="s", surface="s", language="no"),
+            lambda: generate_cloze_sentence(client, word="w", gloss="g", pos="P", language="no"),
+            lambda: translate_cloze_sentence(client, sentence="s", language="Norwegian"),
+        )
+        for make in calls:
+            with pytest.raises(TypeError):
+                make()

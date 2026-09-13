@@ -69,7 +69,7 @@ async def test_saved_cassette_carries_current_version(cassette_dir):
     class FakeClient:
         last_provider = "groq"
 
-        async def complete(self, prompt, system_prompt=None, temperature=None, max_tokens=256):
+        async def complete(self, prompt, system_prompt=None, temperature=None, max_tokens=256, call_site=""):
             return "recorded"
 
     cassette_path = cassette_dir / "versioned.json"
@@ -119,7 +119,7 @@ async def test_record_mode_saves_response(cassette_dir, monkeypatch):
     class FakeClient:
         last_provider = "groq"
 
-        async def complete(self, prompt, system_prompt=None, temperature=None, max_tokens=256):
+        async def complete(self, prompt, system_prompt=None, temperature=None, max_tokens=256, call_site=""):
             return "recorded answer"
 
     client = CassetteLLMClient(mode="record", cassette_path=cassette_path, real_client=FakeClient())
@@ -171,7 +171,7 @@ async def test_patch_mode_replays_known_then_records_new(cassette_dir):
     class FakeClient:
         last_provider = "groq"
 
-        async def complete(self, prompt, system_prompt=None, temperature=None, max_tokens=256):
+        async def complete(self, prompt, system_prompt=None, temperature=None, max_tokens=256, call_site=""):
             return "new answer"
 
     client = CassetteLLMClient(mode="patch", cassette_path=cassette_path, real_client=FakeClient())
@@ -215,7 +215,7 @@ async def test_live_mode_calls_real_client_without_saving(tmp_path):
     class FakeClient:
         last_provider = "groq"
 
-        async def complete(self, prompt, system_prompt=None, temperature=None, max_tokens=256):
+        async def complete(self, prompt, system_prompt=None, temperature=None, max_tokens=256, call_site=""):
             return "live answer"
 
     cassette_path = tmp_path / "cassettes" / "live.json"
@@ -223,6 +223,49 @@ async def test_live_mode_calls_real_client_without_saving(tmp_path):
     result = await client.complete("live prompt")
     assert result == "live answer"
     assert not cassette_path.exists()  # live mode never writes
+
+
+async def test_live_mode_forwards_call_site_to_real_client(cassette_dir, tmp_path):
+    """The label must survive the cassette wrapper (6zzu2 Stage 2) — :102 forwards it."""
+
+    class FakeClient:
+        last_provider = "groq"
+
+        def __init__(self):
+            self.seen: list[dict] = []
+
+        async def complete(self, prompt, system_prompt=None, temperature=None, max_tokens=256, call_site=""):
+            self.seen.append({"prompt": prompt, "call_site": call_site})
+            return "live answer"
+
+    cassette_path = tmp_path / "cassettes" / "live_forward.json"
+    fake = FakeClient()
+    client = CassetteLLMClient(mode="live", cassette_path=cassette_path, real_client=fake)
+    result = await client.complete("live prompt", call_site="word_gloss")
+    assert result == "live answer"
+    assert fake.seen[0]["call_site"] == "word_gloss"
+
+
+async def test_patch_mode_forwards_call_site_to_real_client(cassette_dir):
+    """A patch-mode miss records the label on the real call (6zzu2 Stage 2) — :189 forwards it."""
+
+    class FakeClient:
+        last_provider = "groq"
+
+        def __init__(self):
+            self.seen: list[dict] = []
+
+        async def complete(self, prompt, system_prompt=None, temperature=None, max_tokens=256, call_site=""):
+            self.seen.append({"prompt": prompt, "call_site": call_site})
+            return "new answer"
+
+    cassette_path = cassette_dir / "patch_forward.json"
+    _write_cassette(cassette_path, [])
+    fake = FakeClient()
+    client = CassetteLLMClient(mode="patch", cassette_path=cassette_path, real_client=fake)
+    result = await client.complete("brand new prompt", call_site="story")
+    assert result == "new answer"
+    assert fake.seen[0]["call_site"] == "story"
 
 
 async def test_patch_mode_calls_real_when_entries_exhausted(cassette_dir):

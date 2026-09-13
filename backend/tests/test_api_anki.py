@@ -228,7 +228,7 @@ class TestBuildMediaFn:
             def __init__(self) -> None:
                 self.prompts: list[str] = []
 
-            async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256):
+            async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256, call_site=""):
                 self.prompts.append(prompt)
                 return "courtroom interior"
 
@@ -411,7 +411,7 @@ class TestPreStagesClozeSentences:
     class _LLM:
         """Generator then judge, told apart by the system prompt."""
 
-        async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256):
+        async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256, call_site=""):
             if "blank" in (system_prompt or ""):
                 return "foran"
             return "Bilen står foran huset, ikke bak det."

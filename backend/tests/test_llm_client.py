@@ -274,6 +274,18 @@ class TestFallbackChain:
         assert result == "fallback response"
         fallback.complete.assert_called_once()
 
+    async def test_fallback_client_forwards_call_site(self):
+        """The fallback client is the SAME call site — the label must travel."""
+        fallback = MagicMock()
+        fallback.complete = AsyncMock(return_value="fallback response")
+        client = LLMClient(groq_api_key="test-key", fallback_client=fallback, max_retries_429=0, allow_fallback=True)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(500, json={}))
+            result = await client.complete("q", call_site="story")
+        assert result == "fallback response"
+        fallback.complete.assert_called_once()
+        assert fallback.complete.call_args.kwargs["call_site"] == "story"
+
     async def test_ollama_fallback_when_groq_fails(self):
         client = LLMClient(groq_api_key="test-key", max_retries_429=0, allow_fallback=True)
         with respx.mock:
@@ -453,6 +465,42 @@ class TestRateLimitSnapshot:
             respx.post(GROQ_API_URL).mock(return_value=Response(200, json=resp))
             await client.complete("q")
         assert ledger.tokens_used(200_000) == 15
+
+    async def test_usage_ledger_records_call_site(self, tmp_path):
+        """complete(call_site=...) stamps the label onto the ledger entry (6zzu2 Stage 2)."""
+        from app.llm.usage_ledger import UsageLedger
+
+        ledger = UsageLedger(tmp_path / "usage.log")
+        client = LLMClient(groq_api_key="test-key", usage_ledger=ledger)
+        resp = {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+                "completion_tokens_details": {"reasoning_tokens": 4},
+            },
+        }
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, json=resp))
+            await client.complete("q", call_site="story")
+        assert ledger.tokens_used(200_000) == 15
+        assert ledger._entries[0].call_site == "story"
+        # The split still records alongside the label.
+        split = ledger.split_used()
+        assert split is not None
+        assert split.reasoning_tokens == 4
+
+    async def test_usage_ledger_default_call_site_is_dash(self, tmp_path):
+        """An omitted call_site writes '-' — existing callers keep working untouched."""
+        from app.llm.usage_ledger import UsageLedger
+
+        ledger = UsageLedger(tmp_path / "usage.log")
+        client = LLMClient(groq_api_key="test-key", usage_ledger=ledger)
+        with respx.mock:
+            respx.post(GROQ_API_URL).mock(return_value=Response(200, json=_make_groq_response("ok")))
+            await client.complete("q")
+        assert ledger._entries[0].call_site == "-"
 
     async def test_no_usage_in_response_records_nothing(self, tmp_path):
         from app.llm.usage_ledger import UsageLedger

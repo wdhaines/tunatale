@@ -337,3 +337,97 @@ class TestUsageSplit:
         assert split.prompt_tokens == 10  # only the in-window entry
         assert split.completion_tokens == 10
         assert split.reasoning_tokens == 10
+
+
+class TestCallSiteAttribution:
+    """Call-site labels in the ledger line — bead 6zzu2 Stage 2.
+
+    Field 6 of the 6-field line, written next to the split. The label is
+    observability for "which route spent the budget"; the budget arithmetic
+    must not even notice it exists (the last test proves exactly that).
+    """
+
+    def test_recorded_line_ends_with_label_and_round_trips(self, tmp_path):
+        path = tmp_path / "usage.log"
+        UsageLedger(path).record(
+            98,
+            prompt_tokens=78,
+            completion_tokens=20,
+            reasoning_tokens=10,
+            call_site="prestage.cloze_generate",
+            now=T0,
+        )
+        line = path.read_text().strip()
+        assert line.endswith("prestage.cloze_generate")
+        assert len(line.split()) == 6
+        # A fresh instance parses the same line back (total, split AND label).
+        fresh = UsageLedger(path)
+        assert fresh.tokens_used(TOKEN_LIMIT, now=T0) == 98
+        split = fresh.split_used(now=T0)
+        assert split is not None
+        assert split.prompt_tokens == 78
+        assert split.completion_tokens == 20
+        assert split.reasoning_tokens == 10
+        assert fresh._entries[0].call_site == "prestage.cloze_generate"
+
+    def test_empty_call_site_writes_dash(self, tmp_path):
+        """``call_site=""`` (the complete() default) is written as ``-``."""
+        path = tmp_path / "usage.log"
+        UsageLedger(path).record(98, prompt_tokens=78, completion_tokens=20, reasoning_tokens=10, now=T0)
+        assert path.read_text().strip().endswith(" -")
+
+    def test_call_site_with_spaces_normalised_to_underscores(self, tmp_path):
+        """A whitespace run must not split the whitespace-delimited line."""
+        path = tmp_path / "usage.log"
+        UsageLedger(path).record(
+            98,
+            prompt_tokens=78,
+            completion_tokens=20,
+            reasoning_tokens=10,
+            call_site="two  words",
+            now=T0,
+        )
+        line = path.read_text().strip()
+        assert line.endswith("two_words")
+        assert len(line.split()) == 6
+        assert UsageLedger(path)._entries[0].call_site == "two_words"
+
+    def test_whitespace_only_call_site_becomes_dash(self, tmp_path):
+        path = tmp_path / "usage.log"
+        UsageLedger(path).record(
+            98, prompt_tokens=78, completion_tokens=20, reasoning_tokens=10, call_site="   ", now=T0
+        )
+        assert path.read_text().strip().endswith(" -")
+
+    def test_budget_arithmetic_unchanged_by_presence_of_label(self, tmp_path):
+        """The label rides along; tokens_used/requests_used/budget do not change."""
+        ledger = UsageLedger(tmp_path / "usage.log")
+        ledger.record(100, now=T0)
+        ledger.record(
+            50,
+            prompt_tokens=30,
+            completion_tokens=20,
+            reasoning_tokens=10,
+            call_site="story",
+            now=T0,
+        )
+        assert ledger.tokens_used(TOKEN_LIMIT, now=T0) == 150
+        assert ledger.requests_used(REQUEST_LIMIT, now=T0) == 2
+        status = ledger.budget(tokens_limit=TOKEN_LIMIT, requests_limit=REQUEST_LIMIT, now=T0)
+        assert status.tokens_used == 150
+        assert status.requests_used == 2
+        assert status.exceeded is None
+
+    def test_label_survives_prune_rewrite(self, tmp_path):
+        """The max_entries write-back keeps the label like it keeps the split."""
+        path = tmp_path / "usage.log"
+        ledger = UsageLedger(path, max_entries=2)
+        ledger.record(100, prompt_tokens=80, completion_tokens=20, reasoning_tokens=10, call_site="planner", now=T0)
+        ledger.record(
+            200, prompt_tokens=150, completion_tokens=50, reasoning_tokens=40, call_site="glossing", now=T0 + 1
+        )
+        ledger.record(
+            300, prompt_tokens=120, completion_tokens=180, reasoning_tokens=170, call_site="story", now=T0 + DAY_S + 100
+        )  # exceeds max_entries → prune rewrite
+        fresh = UsageLedger(path)
+        assert fresh._entries[0].call_site == "story"

@@ -49,7 +49,7 @@ class ScriptedLLM:
         self.judge_calls = 0
         self.translate_calls = 0
 
-    async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256):
+    async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256, call_site=""):
         system = system_prompt or ""
         if "into English" in system:
             self.translate_calls += 1
@@ -223,7 +223,7 @@ class TestPrestageClozeSentences:
         """
 
         class Exploding(ScriptedLLM):
-            async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256):
+            async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256, call_site=""):
                 if "bak" in prompt and "blank" not in (system_prompt or ""):
                     raise RuntimeError("groq 500")
                 return await super().complete(prompt, system_prompt, temperature, max_tokens)
@@ -253,7 +253,7 @@ class TestPrestageClozeSentences:
         """
 
         class Cancelling(ScriptedLLM):
-            async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256):
+            async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256, call_site=""):
                 if "bak" in prompt and "blank" not in (system_prompt or ""):
                     raise asyncio.CancelledError
                 return await super().complete(prompt, system_prompt, temperature, max_tokens)
@@ -292,7 +292,7 @@ class TestPrestageEdges:
         import logging
 
         class Cancelling(ScriptedLLM):
-            async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256):
+            async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256, call_site=""):
                 raise asyncio.CancelledError
 
         db = _db_with_awaiting([("foran", "in front of")])

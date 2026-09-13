@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from app.llm.call_sites import CallSite
 from app.llm.client import LLMClient
 
 
@@ -29,6 +30,7 @@ async def translate_term(
             system_prompt=system_prompt,
             temperature=0.3,
             max_tokens=50,
+            call_site=CallSite.TRANSLATE_TERM,
         )
         # NOT parse_gloss_response: this translates terms and short phrases, so
         # the gloss word-cap would truncate legitimate output to "".
@@ -145,6 +147,7 @@ async def generate_word_gloss(
             system_prompt=system_prompt,
             temperature=0.3,
             max_tokens=50,
+            call_site=CallSite.WORD_GLOSS,
         )
         return parse_gloss_response(result)
     except Exception:
