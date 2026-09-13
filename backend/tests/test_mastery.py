@@ -9,13 +9,14 @@ as a word is learned, which is what the transcript color ramp should track.
 from __future__ import annotations
 
 import math
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.srs.mastery import (
     BAND_MONTHS_FROM_DAYS,
     BAND_WEEKS_FROM_DAYS,
     MASTERY_STABILITY_CEILING_DAYS,
+    WELL_KNOWN_DUE_DAYS_AHEAD,
     WELL_KNOWN_STABILITY_DAYS,
     direction_band,
     is_well_known,
@@ -247,60 +248,87 @@ def _dir(
     return DirectionState(direction=Direction.RECOGNITION, state=state, stability=stability, due_at=due_at, reps=reps)
 
 
-class TestIsWellKnown:
-    """ "Well known" is a STABILITY rule: the memory holds for >= 180 days.
+_TODAY = date(2026, 6, 1)
 
-    It replaced a due-date rule (next review more than 365 days out) on
-    2026-09-10 (bd tunatale-yh47). A due date depends on the deck's desired
-    retention — at 0.95 FSRS schedules about half the stability ahead — and it
-    moves when due dates are rescheduled by hand, so the same memory read as
-    "well known" in one deck and not in another. One definition still feeds the
-    listen preview (stop asking about the word) and the transcript (render it as
-    known), and it is the top mastery band by construction.
+
+def _due_in(days: int) -> datetime:
+    """A due_at exactly ``days`` after _TODAY, on the 04:00-UTC day convention."""
+    return datetime.combine(_TODAY, datetime.min.time(), tzinfo=UTC).replace(hour=4) + timedelta(days=days)
+
+
+class TestIsWellKnown:
+    """ "Well known" is a DUE-DATE rule: the next review is >= 90 days out.
+
+    Reverted to a due-date horizon on 2026-09-13 (bd tunatale-38z9). It had
+    been a stability rule since 2026-09-10 (bd tunatale-yh47), which replaced
+    an older 365-day due-date rule.
+
+    Why back: the predicate decides what the listen preview STOPS ASKING
+    about, and "when will I next see this" is a schedule question, not a
+    memory question. It is also legible — a learner can read a due date in
+    Anki and check the call, where a stability of 181d vs 166d is a hidden
+    model estimate they cannot audit.
+
+    What did NOT come back is the coupling. Stability still names the colour
+    band (:func:`direction_band`), so a word's colour stays put between
+    reviews while the preview's horizon moves with the schedule. The two
+    predicates now answer different questions and are tested apart; see
+    :meth:`TestDirectionBand.test_well_known_is_not_the_top_band`.
+
+    The 2026-09-10 rationale for leaving due dates — that a reschedule moves
+    them — was measured against the 2026-09-12 reschedule incident and did not
+    hold: the due rule flipped 25 of 1607 recognition cards where the
+    stability rule flipped 46.
     """
 
-    def test_stability_at_the_threshold_is_well_known(self):
-        assert is_well_known(_dir(SRSState.REVIEW, WELL_KNOWN_STABILITY_DAYS)) is True
+    def test_the_horizon_constant(self):
+        assert WELL_KNOWN_DUE_DAYS_AHEAD == 90
 
-    def test_stability_just_under_the_threshold_is_not(self):
-        assert is_well_known(_dir(SRSState.REVIEW, WELL_KNOWN_STABILITY_DAYS - 0.01)) is False
+    def test_due_exactly_at_the_horizon_is_well_known(self):
+        assert is_well_known(_dir(SRSState.REVIEW, 1.0, due_at=_due_in(90)), _TODAY) is True
 
-    def test_a_near_due_date_does_not_demote_a_strong_memory(self):
-        # The decisive case the old rule got wrong: stability 200 at desired
-        # retention 0.95 is scheduled ~100 days out, never past a 365-day
-        # horizon, so the old rule could not call it well known.
-        assert is_well_known(_dir(SRSState.REVIEW, 200.0, due_at=datetime(2026, 7, 1, tzinfo=UTC))) is True
+    def test_due_just_inside_the_horizon_is_not(self):
+        assert is_well_known(_dir(SRSState.REVIEW, 1.0, due_at=_due_in(89)), _TODAY) is False
 
-    def test_a_moved_due_date_does_not_promote_a_weak_memory(self):
-        # The Slovene shape (bd tunatale-xzp6): due dates pushed far past what
-        # the stability implies. The memory is what counts, not the calendar.
-        assert is_well_known(_dir(SRSState.REVIEW, 100.0, due_at=datetime(2028, 1, 1, tzinfo=UTC))) is False
+    def test_a_strong_memory_due_soon_is_not_well_known(self):
+        # Inverts the stability rule: 200d of stability, but it comes up in 30
+        # days, so the preview keeps asking. This is the case bd tunatale-38z9
+        # is about — the schedule, not the estimate, decides.
+        assert is_well_known(_dir(SRSState.REVIEW, 200.0, due_at=_due_in(30)), _TODAY) is False
 
-    def test_a_null_due_date_does_not_matter(self):
-        assert is_well_known(_dir(SRSState.REVIEW, 400.0, due_at=None)) is True
+    def test_a_weak_memory_due_far_out_is_well_known(self):
+        assert is_well_known(_dir(SRSState.REVIEW, 10.0, due_at=_due_in(400)), _TODAY) is True
 
-    def test_marked_known_is_well_known(self):
-        # A KNOWN card sits in the top band, so it must also be well known —
-        # the two are one set. (Listen never defers it: its grade class is None.)
-        assert is_well_known(_dir(SRSState.KNOWN, 1.0)) is True
+    def test_marked_known_is_well_known_whatever_its_due_date(self):
+        # mark_known carries no meaningful schedule; the state alone decides.
+        assert is_well_known(_dir(SRSState.KNOWN, 1.0, due_at=_due_in(0)), _TODAY) is True
 
     def test_in_steps_cards_are_never_well_known(self):
         # Suppressing a card being acquired would hide work the user owes,
-        # however large a stability it carries.
+        # however far out it happens to be parked. The stability rule got this
+        # from direction_band; the due rule needs its own guard.
         for state in (SRSState.LEARNING, SRSState.RELEARNING):
-            assert is_well_known(_dir(state, 500.0)) is False, state
+            assert is_well_known(_dir(state, 500.0, due_at=_due_in(400)), _TODAY) is False, state
 
     def test_new_and_suspended_are_not_well_known(self):
         for state in (SRSState.NEW, SRSState.SUSPENDED):
-            assert is_well_known(_dir(state, 500.0)) is False, state
+            assert is_well_known(_dir(state, 500.0, due_at=_due_in(400)), _TODAY) is False, state
 
-    def test_buried_review_card_keeps_its_strength(self):
-        # Burying hides a card for the day; it does not weaken the memory.
-        assert is_well_known(_dir(SRSState.BURIED, 300.0, reps=5)) is True
-        assert is_well_known(_dir(SRSState.BURIED, 300.0, reps=0)) is False
+    def test_buried_review_card_keeps_its_horizon(self):
+        # Burying hides a card for the day; it does not move the next review.
+        assert is_well_known(_dir(SRSState.BURIED, 10.0, due_at=_due_in(400), reps=5), _TODAY) is True
+        assert is_well_known(_dir(SRSState.BURIED, 10.0, due_at=_due_in(400), reps=0), _TODAY) is False
+
+    def test_a_due_card_is_never_well_known(self):
+        assert is_well_known(_dir(SRSState.REVIEW, 500.0, due_at=_due_in(-1)), _TODAY) is False
+
+    def test_a_null_due_date_is_not_well_known(self):
+        # Nothing to measure the horizon against, so keep asking rather than
+        # silence a word on a missing value.
+        assert is_well_known(_dir(SRSState.REVIEW, 400.0, due_at=None), _TODAY) is False
 
     def test_missing_direction_is_not_well_known(self):
-        assert is_well_known(None) is False
+        assert is_well_known(None, _TODAY) is False
 
 
 class TestDirectionBand:
@@ -337,10 +365,23 @@ class TestDirectionBand:
         assert direction_band(_dir(SRSState.BURIED, 10.0, reps=3)) == "weeks"
         assert direction_band(_dir(SRSState.BURIED, 10.0, reps=0)) == "new"
 
-    def test_top_band_and_well_known_are_one_set(self):
-        # By construction, not by two constants that happen to agree.
-        for state in SRSState:
-            for stability in (0.5, 7.0, 30.0, 179.0, 180.0, 400.0):
-                for reps in (0, 4):
-                    ds = _dir(state, stability, reps=reps)
-                    assert (direction_band(ds) == "solid") == is_well_known(ds), (state, stability, reps)
+    def test_well_known_is_not_the_top_band(self):
+        """The colour band and the listen horizon are deliberately DIFFERENT.
+
+        They were one set until bd tunatale-38z9 (2026-09-13). Keeping them
+        welded meant a schedule fact (when the card comes up) decided a memory
+        display (what colour the word is), and a memory estimate decided what
+        the preview asked about — each answering the other's question.
+
+        Both directions of the disagreement are asserted, so this cannot pass
+        by one predicate becoming vacuously false.
+        """
+        # Strong memory, comes up soon: top band, but still worth asking about.
+        strong_soon = _dir(SRSState.REVIEW, 400.0, due_at=_due_in(30))
+        assert direction_band(strong_soon) == "solid"
+        assert is_well_known(strong_soon, _TODAY) is False
+
+        # Weak memory parked far out: not the top band, but not worth asking.
+        weak_far = _dir(SRSState.REVIEW, 10.0, due_at=_due_in(400))
+        assert direction_band(weak_far) == "weeks"
+        assert is_well_known(weak_far, _TODAY) is True

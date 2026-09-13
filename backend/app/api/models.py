@@ -49,7 +49,8 @@ class ListenPreviewCandidate(BaseModel):
     translation: str
     progress: float | None
     # Why a listen defers this row instead of staging it by default: "known"
-    # (scheduled past the listen horizon) or "learning" (mid-acquisition — the
+    # (next review >= WELL_KNOWN_DUE_DAYS_AHEAD days out — bd tunatale-38z9,
+    # 2026-09-13) or "learning" (mid-acquisition — the
     # step exists to test recall at a specific interval and a listen is not
     # that test). Both render as a collapsed group, rated `skip` by default and
     # stageable only by an explicit per-row grade.

@@ -57,10 +57,17 @@ class WordToken:
     # None when the word has no recognition direction (untracked, production-only cloze).
     recognition_state: str | None = None
     recognition_is_due: bool = False
-    # Recognition scheduled past the listen horizon — the same cutoff the listen
-    # preview uses to stop asking about a word. Rendered as "known" by the
-    # dialogue and counted in the known bucket of the mastery line, which is
-    # where a card that came back from a sync as REVIEW-due-2126 belongs.
+    # Recognition scheduled past the listen horizon (90 days; bd tunatale-38z9)
+    # — the same cutoff the listen preview uses to stop asking about a word, so
+    # the count and what TunaTale actually asks cannot drift apart.
+    #
+    # Feeds ONLY the known bucket of the mastery line (`mastery.ts` counts.known).
+    # It paints nothing: the reader's colours come from `understand_band` /
+    # `produce_band`, which stay stability-based, so a word's colour holds still
+    # between reviews while this flag tracks the schedule. An earlier version of
+    # this comment claimed the dialogue rendered it; no frontend consumer did.
+    #
+    # A card that came back from a sync as REVIEW-due-2126 belongs here.
     well_known: bool = False
     # Twin rails (bd tunatale-yh47): per-direction mastery bands for the reader.
     # understand_* read the recognition direction, produce_* the production
@@ -639,11 +646,15 @@ def extract_transcript(
                     recognition_reviewable_flag = rec_ds is not None and _is_read_reviewable(rec_ds)
                     recognition_state_val = rec_ds.state.value if rec_ds is not None else None
                     recognition_is_due_flag = _is_due(rec_ds, today) if rec_ds is not None else False
-                    # A due card is never "known", however strong: the preview
-                    # applies the same guard (it defers only "ahead" cards), and
-                    # the mastery line's due bucket relies on the two being
-                    # exclusive, which the old due-date rule guaranteed for free.
-                    well_known_flag = is_well_known(rec_ds) and not recognition_is_due_flag
+                    # A due card is never "known": the preview applies the same
+                    # guard (it defers only "ahead" cards), and the mastery
+                    # line's due bucket relies on the two being exclusive. Under
+                    # the due-date horizon (bd tunatale-38z9) `is_well_known`
+                    # enforces that itself — a due card is 0 days out, never 90 —
+                    # so this clause is belt-and-braces rather than load-bearing.
+                    # It stays because the bucket's correctness should not rest
+                    # on a reader deriving that.
+                    well_known_flag = is_well_known(rec_ds, today) and not recognition_is_due_flag
                     valid_components = [c for c in components if c is not None]
                     progress_val = compute_mastery_progress(valid_components)
 

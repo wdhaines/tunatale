@@ -76,8 +76,13 @@ def _add(db, text: str, word_count: int = 1) -> None:
     )
 
 
-def _set(db, text: str, direction: Direction, stability: float) -> None:
-    """A graduated direction, not due for two days (so the row is 'ahead')."""
+def _set(db, text: str, direction: Direction, stability: float, *, days_until_due: int = 2) -> None:
+    """A graduated direction, 'ahead' by default (not due for two days).
+
+    ``days_until_due`` is separate from ``stability`` because the two now feed
+    different predicates: stability names the colour band, the due date decides
+    whether the preview defers the row (bd tunatale-38z9).
+    """
     from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
 
     item = db.get_collocation(text)
@@ -86,7 +91,7 @@ def _set(db, text: str, direction: Direction, stability: float) -> None:
     ds.stability = stability
     ds.reps = 4
     ds.last_review = datetime.now(UTC) - timedelta(days=3)
-    ds.due_at = due_at_rollover_utc(anki_today() + timedelta(days=2))
+    ds.due_at = due_at_rollover_utc(anki_today() + timedelta(days=days_until_due))
     db.update_direction(item.guid, direction, ds)
 
 
@@ -120,8 +125,11 @@ class TestPreviewRowsCarryBothSides:
         _set(db, "hund", Direction.RECOGNITION, 45.0)
         _set(db, "hund", Direction.PRODUCTION, 5.0)
         # katt — the Norwegian import shape: recognition only, well known.
+        # Stability 200 AND due 200 days out, because the two are read by
+        # different predicates now: the "solid" band below comes from the
+        # stability, the deferral from the due date.
         _add(db, "katt")
-        _set(db, "katt", Direction.RECOGNITION, 200.0)
+        _set(db, "katt", Direction.RECOGNITION, 200.0, days_until_due=200)
         _drop_production(db, "katt")
         # fisk — a card that has never been studied on either side.
         _add(db, "fisk")
