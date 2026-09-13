@@ -18,6 +18,12 @@ RATE_LIMIT_STATUS_KEYS = {
     "requests_used_day",
     "requests_per_day_limit",
     "requests_day_reset_in_s",
+    # Token split observability (bead 6zzu2 Stage 1): prompt/completion/
+    # reasoning breakdown of the day's spend. None = unknown (legacy 2-field
+    # ledger lines carry no split), never a guessed 0.
+    "tokens_prompt_24h",
+    "tokens_completion_24h",
+    "tokens_reasoning_24h",
     "azure_tts_chars_used_month",
     "azure_tts_chars_per_month_limit",
     "azure_tts_month_reset_in_s",

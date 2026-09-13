@@ -1,9 +1,13 @@
 """File-backed leaky-bucket tally of Groq spend, for the rate-limit status endpoint.
 
 Groq's free-tier daily token cap (TPD) appears in no response header, so TT
-counts its own spend. One "<unix_ts> <total_tokens>" line per request;
-file-backed so the tally survives uvicorn --reload restarts. Single-process
-append-only use — no locking needed.
+counts its own spend. One line per request: the legacy two-field form
+``<unix_ts> <total_tokens>`` plus, since 2026-09 (bead 6zzu2), a six-field form
+``<unix_ts> <total_tokens> <prompt_tokens> <completion_tokens>
+<reasoning_tokens> <call_site>``. Field 1 stays ``total_tokens`` forever, so
+old and new lines are read by identical code; a two-field line means "total
+known, split unknown". File-backed so the tally survives uvicorn --reload
+restarts. Single-process append-only use — no locking needed.
 
 The bucket is CONTINUOUS, not a rolling-24h sum and not a calendar day.
 Measured against the live API 2026-08-13 (``openai/gpt-oss-120b``, free plan),
@@ -46,13 +50,50 @@ class BudgetStatus:
     reset_in_s: float
 
 
+@dataclass(frozen=True)
+class UsageSplit:
+    """Prompt/completion/reasoning breakdown of the ledger's recent token spend.
+
+    Observability only — the budget arithmetic never reads these. ``None`` at
+    the aggregate level (see ``UsageLedger.split_used``) means "no split data",
+    never a guessed 0.
+    """
+
+    prompt_tokens: int
+    completion_tokens: int
+    reasoning_tokens: int
+
+
+@dataclass(frozen=True)
+class _Entry:
+    """One ledger line. ``prompt/completion/reasoning`` are ``None`` for a
+    legacy two-field line — "total known, split unknown" — never 0."""
+
+    ts: float
+    total: int
+    prompt: int | None = None
+    completion: int | None = None
+    reasoning: int | None = None
+
+
+def _format_line(entry: _Entry) -> str:
+    """Serialize one entry: 6 fields when the split is fully known, else 2.
+
+    A partial split is treated as unknown (all-or-nothing) — never written as
+    0 or a ``None`` literal that read as a number.
+    """
+    if entry.prompt is not None and entry.completion is not None and entry.reasoning is not None:
+        return f"{entry.ts} {entry.total} {entry.prompt} {entry.completion} {entry.reasoning} -\n"
+    return f"{entry.ts} {entry.total}\n"
+
+
 class UsageLedger:
     def __init__(self, path: Path, max_entries: int = 10_000) -> None:
         self._path = path
         self._max_entries = max_entries
-        self._entries: list[tuple[float, int]] = self._load()
+        self._entries: list[_Entry] = self._load()
 
-    def _load(self) -> list[tuple[float, int]]:
+    def _load(self) -> list[_Entry]:
         if not self._path.exists():
             return []
         entries = []
@@ -62,22 +103,68 @@ class UsageLedger:
                 ts, tokens = float(parts[0]), int(parts[1])
             except IndexError, ValueError:
                 continue
-            entries.append((ts, tokens))
+            prompt = completion = reasoning = None
+            if len(parts) >= 6:
+                try:  # noqa: SIM105
+                    prompt, completion, reasoning = int(parts[2]), int(parts[3]), int(parts[4])
+                except ValueError, IndexError:
+                    pass  # unparseable split → unknown (None); the total still counts
+            entries.append(_Entry(ts, tokens, prompt, completion, reasoning))
         # A hand-edited or interleaved file must not drain backwards: the drain
         # below walks the log in chronological order.
-        return sorted(entries)
+        return sorted(entries, key=lambda e: e.ts)
 
-    def record(self, total_tokens: int, now: float | None = None) -> None:
+    def record(
+        self,
+        total_tokens: int,
+        *,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        reasoning_tokens: int | None = None,
+        now: float | None = None,
+    ) -> None:
         ts = time.time() if now is None else now
-        self._entries.append((ts, total_tokens))
+        entry = _Entry(ts, total_tokens, prompt_tokens, completion_tokens, reasoning_tokens)
+        self._entries.append(entry)
         if len(self._entries) > self._max_entries:
-            self._entries = sorted((t, n) for t, n in self._entries if t >= ts - DAY_S)
+            self._entries = sorted((e for e in self._entries if e.ts >= ts - DAY_S), key=lambda e: e.ts)
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text("".join(f"{t} {n}\n" for t, n in self._entries))
+            self._path.write_text("".join(_format_line(e) for e in self._entries))
         else:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with self._path.open("a") as f:
-                f.write(f"{ts} {total_tokens}\n")
+                f.write(_format_line(entry))
+
+    def split_used(self, now: float | None = None) -> UsageSplit | None:
+        """Raw token split summed over the last ``DAY_S`` seconds.
+
+        ⚠️ This is a FLAT ROLLING-24h SUM and is deliberately **not** the leaky
+        bucket that ``tokens_used`` reports — the two answer different
+        questions and will not agree. ``tokens_used`` is bucket FILL (headroom:
+        how close the cap is), which drains continuously at ``limit / DAY_S``;
+        this is actual SPEND (volume: which half to attack), which does not
+        drain. Measured 2026-09-13: 100k tokens spread evenly over 24h gives
+        ``tokens_used == 0`` and a split summing to 100,000. Spend is the right
+        unit for choosing between prompt hygiene and reasoning effort, so the
+        sum stays — the API field names carry the ``_24h`` window to stop anyone
+        comparing them with the ``_day`` bucket figures.
+
+        Returns ``None`` when no loaded entry carries a known split (a legacy
+        two-field log) — "unknown", never a guessed 0. Otherwise sums the known
+        splits; entries with an unknown split contribute nothing.
+        """
+        now = time.time() if now is None else now
+        prompt = completion = reasoning = 0
+        has_split = False
+        for entry in self._entries:
+            if entry.ts < now - DAY_S:
+                continue
+            if entry.prompt is not None and entry.completion is not None and entry.reasoning is not None:
+                prompt += entry.prompt
+                completion += entry.completion
+                reasoning += entry.reasoning
+                has_split = True
+        return UsageSplit(prompt, completion, reasoning) if has_split else None
 
     def _consumed(self, limit: int, now: float | None, count_requests: bool) -> float:
         """Current leaky-bucket fill level, in ``limit``'s units.
@@ -91,11 +178,11 @@ class UsageLedger:
         rate = limit / DAY_S
         consumed = 0.0
         last = None
-        for ts, tokens in self._entries:
+        for entry in self._entries:
             if last is not None:
-                consumed = max(0.0, consumed - (ts - last) * rate)
-            consumed += 1.0 if count_requests else tokens
-            last = ts
+                consumed = max(0.0, consumed - (entry.ts - last) * rate)
+            consumed += 1.0 if count_requests else entry.total
+            last = entry.ts
         if last is not None:
             consumed = max(0.0, consumed - (now - last) * rate)
         return consumed

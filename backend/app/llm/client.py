@@ -441,7 +441,18 @@ class LLMClient:
                 self.last_usage = data.get("usage") or {}
                 total_tokens = self.last_usage.get("total_tokens")
                 if self.usage_ledger is not None:
-                    self.usage_ledger.record(total_tokens if isinstance(total_tokens, int) else 0)
+                    prompt_tokens = self.last_usage.get("prompt_tokens")
+                    completion_tokens = self.last_usage.get("completion_tokens")
+                    usage_details = self.last_usage.get("completion_tokens_details") or {}
+                    reasoning_tokens = usage_details.get("reasoning_tokens")
+                    # Missing or non-int split fields degrade to None (unknown),
+                    # never 0 — same guard pattern as total_tokens above.
+                    self.usage_ledger.record(
+                        total_tokens if isinstance(total_tokens, int) else 0,
+                        prompt_tokens=prompt_tokens if isinstance(prompt_tokens, int) else None,
+                        completion_tokens=completion_tokens if isinstance(completion_tokens, int) else None,
+                        reasoning_tokens=reasoning_tokens if isinstance(reasoning_tokens, int) else None,
+                    )
                 if self.last_finish_reason == "length":
                     logger.warning(
                         "Groq response truncated at the completion-token cap (finish_reason=length, cap=%s)",

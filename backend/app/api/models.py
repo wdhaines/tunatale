@@ -1098,6 +1098,17 @@ class RateLimitStatusResponse(BaseModel):
     requests_used_day: int | None
     requests_per_day_limit: int
     requests_day_reset_in_s: float | None
+    # Token split observability (bead 6zzu2 Stage 1): None = unknown (legacy
+    # 2-field ledger lines carry no split), never a guessed 0.
+    # ⚠️ These are a flat rolling-24h SUM of spend and do NOT drain, so they do
+    # not reconcile with the tokens_used_day / requests_used_day figures above,
+    # which are continuous leaky-bucket FILL. Hence _24h rather than _day:
+    # measured, 100k tokens spread evenly over a day gives tokens_used_day 0
+    # beside a split summing to 100,000. Spend answers "which half to attack";
+    # fill answers "how close is the cap".
+    tokens_prompt_24h: int | None
+    tokens_completion_24h: int | None
+    tokens_reasoning_24h: int | None
     azure_tts_chars_used_month: int
     azure_tts_chars_per_month_limit: int
     azure_tts_month_reset_in_s: float
