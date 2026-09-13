@@ -113,7 +113,15 @@ function backendServer(i: number) {
 		reuseExistingServer: false,
 		timeout: 30000,
 		env: {
-			LLM_MODE: 'mock',
+			// Default 'mock'. Override to 'patch' to re-record a cassette entry a
+			// prompt change orphaned — patch replays known hashes and records only
+			// the new ones, so the other entries survive (app/llm/cassette.py).
+			// ⚠️ ALWAYS pair it with E2E_WORKERS=1. Every backend shares this one
+			// cassette file and each rewrites it on every call, so two recording
+			// backends clobber each other. One worker means one backend:
+			//   E2E_WORKERS=1 E2E_LLM_MODE=patch bunx playwright test -g "<spec>"
+			// Never 'record' here — that mode does not preload existing entries.
+			LLM_MODE: process.env.E2E_LLM_MODE ?? 'mock',
 			// Every cassette miss is appended here, relative to this backend's cwd,
 			// and tests/global-teardown.ts fails the run on any line. Without it a
 			// miss the app swallows fail-soft is a WARNING nobody reads — how the

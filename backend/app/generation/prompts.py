@@ -28,6 +28,13 @@ PLANNER_CHAT_MSG_CHARS = 1500
 
 # {language_style_notes} is replaced by build_story_system_prompt() before
 # the remaining {language_name}/{language_code} placeholders are resolved.
+#
+# Why the prompt forbids "dialogue_glosses" (bd tunatale-yet7): per-word glosses
+# must cover EVERY unique dialogue word, so they grew with the dialogue while the
+# completion cap could not. At 58% of the response they pushed generation past
+# Groq's per-request ceiling. They are requested in a separate call instead. The
+# rationale lives here rather than in the prompt because the model needs the rule,
+# not the incident — it pays for every word of it on every story request.
 SYSTEM_PROMPT = """\
 You are an expert {language_name} language instructor creating Pimsleur-style audio lessons.
 Your lessons must sound like something a native {language_name} speaker would actually say —
@@ -75,10 +82,8 @@ Respond with ONLY a JSON object matching this schema (no markdown fences, no pre
   ]{morphology_schema}
 }}
 
-⚠️ Do NOT emit a "dialogue_glosses" array. Per-word glosses are requested separately
-(bd tunatale-yet7): they must cover EVERY unique dialogue word, so they grew with the
-dialogue while the completion cap could not, and at 58% of the response they pushed
-generation past Groq's per-request ceiling. Spend the budget on the story.
+⚠️ Do NOT emit a "dialogue_glosses" array. Per-word glosses are requested in a
+separate call — spend the budget on the story.
 
 {morphology_block}
 
@@ -185,17 +190,36 @@ def build_story_system_prompt(language: Language) -> str:
 
 # ── Strategy-specific user prompt templates ───────────────────────────────
 
-_CEFR_BLOCK = """\
-**CEFR Level:** {cefr_level}
-Calibrate all dialogue to this level:
-- A1: Short isolated phrases, present tense, no subordinate clauses
-- A2: Simple connected sentences, present/past/near-future, basic connectors (and, but, because)
-- B1: Multi-clause sentences, all main tenses, relative clauses, varied connectors
-- B2: Complex sentences, nuanced register, conditional mood, idiomatic expressions"""
+_CEFR_DESCRIPTIONS = {
+    "A1": "Short isolated phrases, present tense, no subordinate clauses",
+    "A2": "Simple connected sentences, present/past/near-future, basic connectors (and, but, because)",
+    "B1": "Multi-clause sentences, all main tenses, relative clauses, varied connectors",
+    "B2": "Complex sentences, nuanced register, conditional mood, idiomatic expressions",
+}
+
+_CEFR_HEADER = "**CEFR Level:** {cefr_level}\nCalibrate all dialogue to this level:"
 
 
 def _build_cefr_block(cefr_level: str) -> str:
-    return _CEFR_BLOCK.format(cefr_level=cefr_level)
+    """Render the CEFR calibration block for *cefr_level*.
+
+    Only the level in play is described. The other three were shipped on every
+    request for contrastive calibration ("A1 means short, not A2's connected
+    sentences"); they cost ~75 tokens per request to make a point the named level
+    already makes. If generation drifts toward the wrong register after this, the
+    neighbouring levels are the first thing to put back — this is the one prompt
+    cut here that could plausibly cost quality.
+
+    An unrecognised level falls back to the full ladder rather than to nothing,
+    so an unexpected value can never strip the calibration entirely.
+    """
+    header = _CEFR_HEADER.format(cefr_level=cefr_level)
+    described = _CEFR_DESCRIPTIONS.get(cefr_level)
+    if described is None:
+        lines = [f"- {level}: {text}" for level, text in _CEFR_DESCRIPTIONS.items()]
+    else:
+        lines = [f"- {cefr_level}: {described}"]
+    return "\n".join([header, *lines])
 
 
 STORY_PROMPT_WIDER_TEMPLATE = """\
@@ -249,7 +273,7 @@ STORY_PROMPT_DEEPER_TEMPLATE = """\
 
 **DEEPER STRATEGY RULES**
 - Enhance language complexity while keeping the same scenarios
-- 90%+ L2 dialogue — minimize English usage
+- 90%+ L2 dialogue (overrides the 80% floor above) — minimize English usage
 - Focus on sophisticated, authentic language patterns
 - Each collocation should demonstrate enhanced language complexity
 - Each scene must have 5-12 lines of dialogue

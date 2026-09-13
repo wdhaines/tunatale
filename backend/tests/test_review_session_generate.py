@@ -281,7 +281,17 @@ class TestTheLevel:
 
     async def test_it_comes_from_the_most_recent_curriculum(self, stored, seeded_db):
         """Asserted on the prompt the model actually receives, not on a call
-        shape — the same claim step 4 of the shakedown makes by hand."""
+        shape — the same claim step 4 of the shakedown makes by hand.
+
+        ⚠️ Assert the rendered CEFR LINE, never a bare ``"B2" in prompt``. This
+        test was vacuous until 2026-09-12: the prompt used to list all four CEFR
+        levels on every request, so the literal "B2" was present whichever
+        curriculum won and the assertion could not fail. It was hiding a real
+        bug — both curricula save inside one second, ``created_at`` has second
+        granularity, and ``list_curricula``'s ``ORDER BY created_at DESC`` had
+        no tie-break, so ``_latest_cefr_level`` read the OLDER plan and pitched
+        the session at A1. Asserting A1's absence is what makes this discriminate.
+        """
         stored.save_curriculum(
             "old", Curriculum(id="old", topic="t", language_code="sl", cefr_level="A1", days=[_day()])
         )
@@ -295,7 +305,9 @@ class TestTheLevel:
         resp = await self._post()
 
         assert resp.status_code == 201
-        assert "B2" in _prompt_sent(client)
+        prompt = _prompt_sent(client)
+        assert "**CEFR Level:** B2" in prompt
+        assert "**CEFR Level:** A1" not in prompt
 
     async def test_with_no_curricula_at_all_it_still_works(self, stored, seeded_db):
         """The proof that a review session lives outside any plan.

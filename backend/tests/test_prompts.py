@@ -38,12 +38,31 @@ def test_cefr_block_contains_level():
     assert "B1" in block
 
 
-def test_cefr_block_contains_calibration_table():
+def test_cefr_block_describes_only_the_level_in_play():
+    """All four descriptions used to ship on every request; only the named one does.
+
+    Asserting on the description TEXT, not the bare level code, because "A1" also
+    appears inside the A1 description and a code-only assertion would not notice
+    the other three coming back.
+    """
     block = _build_cefr_block("A2")
-    assert "A1" in block
-    assert "A2" in block
-    assert "B1" in block
-    assert "B2" in block
+    assert "Simple connected sentences" in block
+    assert "no subordinate clauses" not in block  # A1
+    assert "relative clauses" not in block  # B1
+    assert "conditional mood" not in block  # B2
+
+
+def test_cefr_block_unknown_level_falls_back_to_the_full_ladder():
+    """An unrecognised level must degrade to all four, never to no calibration.
+
+    The narrowing above is only safe because this path exists: a caller passing
+    something outside the table still gets the model a register to aim at.
+    """
+    block = _build_cefr_block("C1")
+    assert "no subordinate clauses" in block
+    assert "Simple connected sentences" in block
+    assert "relative clauses" in block
+    assert "conditional mood" in block
 
 
 # ── User prompt templates ─────────────────────────────────────────────────

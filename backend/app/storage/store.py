@@ -177,8 +177,23 @@ class ContentStore:
         return Curriculum.from_json(row["data_json"])
 
     def list_curricula(self) -> list[dict]:
+        """Curricula newest-first. The rowid tie-break is load-bearing.
+
+        ``created_at`` defaults to ``datetime('now')``, which has SECOND
+        granularity, so two curricula saved in the same second carry identical
+        timestamps and ``ORDER BY created_at DESC`` alone has nothing to order
+        them by — SQLite then returns insertion order, i.e. OLDEST first, the
+        exact reverse of what every caller reads this for.
+        ``review_sessions.py::_latest_cefr_level`` takes ``rows[0]`` and pitched
+        a review session at the older plan's level because of it. Found 2026-09-12
+        when a prompt-token trim removed the padding that made its regression
+        test vacuous. ``rowid`` ascends with insertion, so DESC breaks the tie
+        toward the most recently saved row.
+        """
         with self._get_conn() as conn:
-            rows = conn.execute("SELECT id, data_json, created_at FROM curricula ORDER BY created_at DESC").fetchall()
+            rows = conn.execute(
+                "SELECT id, data_json, created_at FROM curricula ORDER BY created_at DESC, rowid DESC"
+            ).fetchall()
         result = []
         for row in rows:
             c = Curriculum.from_json(row["data_json"])
