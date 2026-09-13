@@ -296,16 +296,21 @@ test("a word with no card paints two dashed rails in the app's link blue", async
 		//    in a span depends on which phrase cards other specs left in the
 		//    shared e2e DB. Taking the first match went red once in a full gate
 		//    (0 dashed layers) and green in isolation.
-		//  - dashed understand track: .word-unstarted now ALSO covers a card
-		//    that exists but was never studied, whose understand track is solid.
-		//    Selecting on the class alone would pick one of those and measure 1
-		//    dashed layer, or 0.
+		//  - BOTH tracks dashed: .word-unstarted now ALSO covers a card that
+		//    exists but was never studied, whose track is solid. Filtering on
+		//    the understand track alone is NOT enough and went red on CI where
+		//    it was green locally: the first match there was a production-only
+		//    cloze (no recognition card → understand dashed, production card
+		//    present but unstudied → produce solid), which measures 1 dashed
+		//    layer. Which of these the shared e2e DB offers first is not
+		//    stable, so the selector must name the whole claim.
+		const dashed = (el: Element, prop: string) =>
+			(el as HTMLElement).style.getPropertyValue(prop).includes("repeating-linear-gradient");
 		const w = [...document.querySelectorAll(".transcript-wrapper .word.word-unstarted")].find(
 			(el) =>
 				!el.closest(".collocation-span") &&
-				(el as HTMLElement).style
-					.getPropertyValue("--rail-u-track")
-					.includes("repeating-linear-gradient"),
+				dashed(el, "--rail-u-track") &&
+				dashed(el, "--rail-p-track"),
 		);
 		if (!w) return null;
 		const s = getComputedStyle(w);
