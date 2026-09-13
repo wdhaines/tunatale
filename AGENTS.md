@@ -69,27 +69,55 @@ All commands use `uv run` (no manual venv activation). Never commit `.env`. Groq
 
 ## Paid vendor usage — price it before you run it
 
-**Azure Neural HD (Dragon) voices are RULED OUT** (user's call, 2026-09-12).
-They are a separate billing line — $22/1M characters — and are **excluded from
-the F0 free allowance**, so every HD character bills from the first one.
-Standard/Multilingual Neural voices are ~$15/1M and draw on the free
-0.5M/month. Enforced by
+**The Speech resource is F0 (free tier).** Read from the field, not inferred:
+`az cognitiveservices account list --query "[].{name:name,sku:sku.name}"` →
+`TunaTale / F0 / SpeechServices / eastus`, and the `AZURE_SPEECH_KEY` in
+`backend/.env` matches `key2` of that resource (compared by hash — never print
+the key; one was leaked to a transcript on 2026-09-12 and had to be rotated).
+It is the only Speech account in the subscription.
+
+**So standard/Multilingual Neural characters do NOT bill — they consume a
+500K/month allowance, and the failure mode is a THROTTLE, not an invoice.**
+
+⚠️ **This paragraph replaced a confident wrong claim, and how it got wrong is
+the reusable part.** It read "this resource behaves like S0, where characters
+bill", inferred from two real measurements: TTS sustained **49 requests in a
+60-second window** where F0 documents 20/60s, and Dragon HD answered 200 where
+F0 is not supposed to serve it. Both observations still stand and are still
+unexplained. They were an inference from *behaviour* to *configuration*, and
+`sku.name` outranks them. **Nobody had read the field.** When a claim about
+configuration can be settled by reading configuration, read it.
+
+**Azure Neural HD (Dragon) voices are still RULED OUT** (user's call,
+2026-09-12), and the F0 finding does not soften it: HD is a separate billing
+line at $22/1M **excluded from the F0 allowance**, so it bills from the first
+character even here. Enforced by
 `test_languages.py::test_no_voice_map_names_a_paid_hd_voice` (an HD id is the
-only voice id containing a colon). It is not a quality judgement: Andrew-HD had
-the best measured WER and was the ear-test favourite.
+only voice id containing a colon). Not a quality judgement — Andrew-HD had the
+best measured WER and was the ear-test favourite — and it is also the one voice
+family that cannot be regression-tested, being nondeterministic by design.
 
 **Price a render before running it, in characters, and put the number in the
-report.** Cache misses are exactly computable — run the adapter's own
-`_cache_path` against the real `tts_cache_dir` rather than estimating. STT bills
-per audio hour (~$1/h); measure it from the durations of the wavs actually sent.
-For scale: the whole stored Norwegian curriculum is ~69k characters (~$1.04) and
-a single lesson ~$0.10.
+report.** Compute cache misses with the adapter's own `_cache_path` against the
+real `tts_cache_dir`; that is not merely the cheapest way, it is the ONLY way:
 
-⚠️ **The user's cost visibility is limited** — "I guess I'll see" — so do not
-rely on them noticing. F0 vs S0 is measurable without the portal: F0 caps TTS at
-**20 requests / 60s**, so sustaining more rules it out (49/min measured), and HD
-answering 200 also rules out F0, which does not serve it. On that evidence this
-resource behaves like **S0, where characters bill**.
+⚠️ **There is no usable Azure-side character meter.** `SynthesizedCharacters`
+appears in `az monitor metrics list-definitions` and is **not queryable** — the
+error enumerates what is (`TotalCalls, SuccessfulCalls, TotalErrors,
+BlockedCalls, ServerErrors, ClientErrors, SuccessRate, Ratelimit`). And the
+queryable ones are not trustworthy for this: measured 2026-09-13, `TotalCalls`
+returned **0 for a day in which hundreds of syntheses demonstrably happened**,
+and `Ratelimit` returned no data at all. **So a `BlockedCalls` of 0 proves
+nothing** — zero is also what a lagging or broken meter returns, the same
+clean-negative trap `.claude/rules/tdd.md` is about. Nothing cloud-side will
+catch an error in your local estimate; the local estimate is the instrument.
+
+For scale, measured on the real corpus: a **cold** render of the whole stored
+Norwegian curriculum is ~69k characters, but the 2026-09-12 rebuild of all nine
+lessons actually synthesized **263 clips (~11k chars, ~2% of the monthly
+allowance)** because `rag.4`'s voice work had already warmed most of them. Quote
+the incremental number for "what will this run cost" and the cold number only
+for "what does this cost from empty" — they differ by ~7x here.
 
 ## Key Conventions
 
@@ -359,6 +387,15 @@ the JSON-shape traps above.
   and its Dolt backups sit on the same disk, so nothing leaves this machine until
   that script runs. It pushes the Dolt store, exports, renders `GRAPH.md`,
   commits and pushes.
+  ⚠️ **A bd WRITE is freeze-safe; a bd SYNC is not.** `.beads/` is gitignored, so
+  `bd create` / `close` / `comment` leave `git status` untouched and are safe
+  while another agent holds uncommitted work. `sync.sh` COMMITS AND PUSHES the
+  parent repo, so running it then lands a commit under that agent and moves HEAD
+  beneath their gate fingerprint. Standing authorisation means you need not ask;
+  it does not mean any moment is safe. In a two-agent session, sync after the
+  other agent's commit lands, not during their freeze. (Learned 2026-09-13, when
+  the peer session deliberately wrote a bd comment mid-freeze — correctly — and
+  deliberately did NOT sync.)
 - **Stealth mode (`no-git-ops`) is a privacy guard, not a preference.** `.beads/`
   must sit at the PARENT repo root (bd stops walking up at a git root, so from
   inside `.beads-tasks/` it never finds `../.beads`) — and that root's origin is
