@@ -3311,6 +3311,17 @@
               }
             ]
           },
+          "tokens_completion_24h": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Completion 24H"
+          },
           "tokens_day_reset_in_s": {
             "anyOf": [
               {
@@ -3325,6 +3336,28 @@
           "tokens_per_day_limit": {
             "title": "Tokens Per Day Limit",
             "type": "integer"
+          },
+          "tokens_prompt_24h": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Prompt 24H"
+          },
+          "tokens_reasoning_24h": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Reasoning 24H"
           },
           "tokens_used_day": {
             "anyOf": [
@@ -3350,6 +3383,9 @@
           "requests_used_day",
           "requests_per_day_limit",
           "requests_day_reset_in_s",
+          "tokens_prompt_24h",
+          "tokens_completion_24h",
+          "tokens_reasoning_24h",
           "azure_tts_chars_used_month",
           "azure_tts_chars_per_month_limit",
           "azure_tts_month_reset_in_s"

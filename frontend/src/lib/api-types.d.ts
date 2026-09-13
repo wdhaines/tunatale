@@ -3458,10 +3458,16 @@ export interface components {
       /** Requests Used Day */
       requests_used_day: number | null;
       snapshot: components["schemas"]["RateLimitSnapshot"] | null;
+      /** Tokens Completion 24H */
+      tokens_completion_24h: number | null;
       /** Tokens Day Reset In S */
       tokens_day_reset_in_s: number | null;
       /** Tokens Per Day Limit */
       tokens_per_day_limit: number;
+      /** Tokens Prompt 24H */
+      tokens_prompt_24h: number | null;
+      /** Tokens Reasoning 24H */
+      tokens_reasoning_24h: number | null;
       /** Tokens Used Day */
       tokens_used_day: number | null;
     };

@@ -71,11 +71,13 @@ def _status_payload(client) -> dict:
         tokens_day_reset_in_s = budget.tokens_reset_in_s
         requests_used_day = budget.requests_used
         requests_day_reset_in_s = budget.requests_reset_in_s
+        split = ledger.split_used()
     else:
         tokens_used_day = None
         tokens_day_reset_in_s = None
         requests_used_day = None
         requests_day_reset_in_s = None
+        split = None
 
     # The Azure TTS tally is a local file read, so it is always present — the
     # renderer appends from its own adapter instance, so a fresh read is the
@@ -97,6 +99,9 @@ def _status_payload(client) -> dict:
         "requests_used_day": requests_used_day,
         "requests_per_day_limit": settings.groq_requests_per_day_limit,
         "requests_day_reset_in_s": requests_day_reset_in_s,
+        "tokens_prompt_24h": split.prompt_tokens if split is not None else None,
+        "tokens_completion_24h": split.completion_tokens if split is not None else None,
+        "tokens_reasoning_24h": split.reasoning_tokens if split is not None else None,
         "azure_tts_chars_used_month": azure_budget.chars_used,
         "azure_tts_chars_per_month_limit": settings.azure_tts_chars_per_month_limit,
         "azure_tts_month_reset_in_s": azure_budget.reset_in_s,

@@ -50,6 +50,9 @@ class TestRateLimitStatus:
         assert body["last_429"] is None
         assert body["tokens_used_day"] is None  # no ledger wired
         assert body["requests_used_day"] is None  # no ledger wired
+        assert body["tokens_prompt_24h"] is None  # no ledger wired
+        assert body["tokens_completion_24h"] is None
+        assert body["tokens_reasoning_24h"] is None
         assert body["model"] == "openai/gpt-oss-120b"
         assert body["tokens_per_day_limit"] > 0
 
@@ -110,6 +113,26 @@ class TestRateLimitStatus:
         ledger.record(1234)
         app.state.llm = LLMClient(groq_api_key="test-key", usage_ledger=ledger)
         assert (await _get_status())["tokens_used_day"] == 1234
+
+    async def test_split_day_from_ledger(self, tmp_path):
+        ledger = UsageLedger(tmp_path / "usage.log")
+        ledger.record(98, prompt_tokens=78, completion_tokens=20, reasoning_tokens=10, now=time.time())
+        app.state.llm = LLMClient(groq_api_key="test-key", usage_ledger=ledger)
+        body = await _get_status()
+        assert body["tokens_prompt_24h"] == 78
+        assert body["tokens_completion_24h"] == 20
+        assert body["tokens_reasoning_24h"] == 10
+
+    async def test_two_field_ledger_reports_unknown_split(self, tmp_path):
+        """Legacy 2-field ledger: split is None (unknown), never a guessed 0."""
+        ledger = UsageLedger(tmp_path / "usage.log")
+        ledger.record(1234)
+        app.state.llm = LLMClient(groq_api_key="test-key", usage_ledger=ledger)
+        body = await _get_status()
+        assert body["tokens_used_day"] == 1234
+        assert body["tokens_prompt_24h"] is None
+        assert body["tokens_completion_24h"] is None
+        assert body["tokens_reasoning_24h"] is None
 
     async def test_unwraps_cassette_client(self, tmp_path):
         import json as jsonlib
