@@ -1159,3 +1159,59 @@ async def test_429_backoffs_are_jittered_so_waking_is_not_a_stampede(tmp_path):
     assert len(set(first_rung)) > 1, f"every clip's first backoff was identical: {first_rung}"
     # The ladder is the FLOOR; jitter adds, never subtracts.
     assert all(s >= 2.0 for s in first_rung), f"jitter shortened a wait below the ladder: {first_rung}"
+
+
+# ---------------------------------------------------------------------------
+# STAGE 1: the billable-character function (brief-6zzu1, azure char ledger)
+# ---------------------------------------------------------------------------
+#
+# FACT A (Azure "Billable characters", learn.microsoft.com): billing counts every
+# character in each successfully processed request — text, punctuation, spaces,
+# ALL markup — EXCEPT `<speak>` and `<voice>` tags. What remains is exactly the
+# string `_build_ssml` composes as its local `inner`. The oracle below is a
+# literal table of len(inner) measured 2026-09-13 against the real _build_ssml;
+# a row that disagrees with the code is a FINDING, not a reason to edit the table.
+
+
+@pytest.mark.parametrize(
+    ("text", "voice_id", "rate", "phonemes", "speak_locale", "billable"),
+    [
+        pytest.param("Hei", "nb-NO-FinnNeural", "+0%", None, None, 33, id="plain-text-3c"),
+        pytest.param("Hei", "nb-NO-FinnNeural", "-20%", None, None, 34, id="rate-inside-billable-region"),
+        pytest.param("Kavno pivo je na meniju.", "nb-NO-FinnNeural", "+0%", None, None, 54, id="sentence-24c"),
+        pytest.param("fish & chips", "nb-NO-FinnNeural", "+0%", None, None, 46, id="escaped-ampersand-12c"),
+        pytest.param("Hei", "en-AU-WilliamMultilingualNeural", "+0%", None, "nb-NO", 63, id="lang-wrapper-emitted"),
+        pytest.param("Hei", "nb-NO-FinnNeural", "+0%", None, "nb-NO", 33, id="native-voice-no-wrapper"),
+        pytest.param("Hei du", "nb-NO-FinnNeural", "+0%", {"hei": "hɑi"}, None, 79, id="phoneme-markup"),
+    ],
+)
+def test_billable_body_oracle(text, voice_id, rate, phonemes, speak_locale, billable):
+    """len(_billable_body(...)) matches the measured oracle, not len(text).
+
+    The billable unit is NOT len(text): markup counts, `<speak>`/`<voice>` do
+    not, so the billable string is exactly the SSML inner body. Each row is one
+    real property: the rate lives inside the billable region (rows 1 vs 2), the
+    count is of the ESCAPED form (row 4: `&` becomes `&amp;`), the `<lang>`
+    wrapper bills 30 characters only when emitted (rows 5 vs 6, decided by
+    `_lang_locale`), and `<phoneme>` markup bills (row 7, `hɑi` = 3 code points).
+    """
+    body = AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale)
+
+    assert len(body) == billable
+
+
+def test_billable_body_is_byte_identical_to_the_voice_inner():
+    """`_billable_body` is the extracted `inner` — the refactor moved no character.
+
+    _build_ssml must keep producing byte-identical output: the clip cache and
+    ~400 MB of rendered audio are keyed on the SSML. The existing pinned tests
+    (test_ssml_plain_text_is_byte_identical etc.) pin the composed form; this
+    pins THAT the new function is the piece `_build_ssml` wraps.
+    """
+    ssml = AzureTTSService._build_ssml("hagen", _VOICE, "+0%")
+    body = AzureTTSService._billable_body("hagen", _VOICE, "+0%")
+
+    assert ssml == (
+        '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="nb-NO">'
+        f'<voice name="nb-NO-FinnNeural">{body}</voice></speak>'
+    )

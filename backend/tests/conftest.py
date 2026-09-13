@@ -109,6 +109,9 @@ def _settings_overrides(monkeypatch, tmp_path):
     # The LLM token-usage ledger otherwise appends to the real ~/.tunatale file
     # (and would read a developer's real spend into tally assertions).
     monkeypatch.setattr(settings, "llm_usage_ledger_path", tmp_path / "llm_usage.log")
+    # Same trap, one provider along: the Azure TTS character ledger would
+    # otherwise append to the real ~/.tunatale/azure_tts_usage.log.
+    monkeypatch.setattr(settings, "azure_tts_usage_ledger_path", tmp_path / "azure_tts_usage.log")
     # Add-time vocab media (POST /items, /listen, base cards) reads this key to
     # decide whether to fetch image+audio. A developer's real ``.env`` key would
     # otherwise make card-creating endpoint tests hit Pixabay/Forvo live. Pin

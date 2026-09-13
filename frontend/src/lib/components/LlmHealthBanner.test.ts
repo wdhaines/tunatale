@@ -31,6 +31,9 @@ const STATUS = {
   requests_used_day: null,
   requests_per_day_limit: 1000,
   requests_day_reset_in_s: null,
+  azure_tts_chars_used_month: 0,
+  azure_tts_chars_per_month_limit: 500000,
+  azure_tts_month_reset_in_s: 1512000,
 };
 
 beforeEach(() => {

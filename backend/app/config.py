@@ -227,6 +227,19 @@ class Settings(BaseSettings):
     # it is interpolated straight into the endpoint host.
     azure_speech_key: str = ""
     azure_speech_region: str = ""
+    # "0.5 million characters free per month" (Azure pricing page). F0
+    # THROTTLES at the cap instead of billing over it, so the first symptom of
+    # exhaustion is a render that mysteriously stops working — TT counts its
+    # own spend (AzureCharacterLedger) and refuses loudly against this ceiling.
+    azure_tts_chars_per_month_limit: int = 500_000
+    # Where the Azure character ledger lives; the Groq sibling this mirrors is
+    # llm_usage_ledger_path. File-backed so the tally survives restarts.
+    azure_tts_usage_ledger_path: Path = Path("~/.tunatale/azure_tts_usage.log").expanduser()
+    # The month boundary's TIMEZONE. Azure documents the monthly allowance but
+    # NOT when the month turns over — the quotas page defers to the pricing
+    # page, which says nothing about the boundary. Rather than guess, it is a
+    # knob; defaults to UTC.
+    azure_tts_quota_reset_tz: str = "UTC"
     # Global lemmatizer gate: "lowercase" (default) forces the deterministic
     # lowercase engine for EVERY language (the CI/test pin, and how a deployment
     # disables the heavy PyTorch pipelines). Any other value ("classla", "stanza",

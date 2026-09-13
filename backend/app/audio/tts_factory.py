@@ -46,4 +46,13 @@ def get_tts_service(cache_dir: Path | None = None, provider: str | None = None) 
         valid = ", ".join(sorted(PROVIDERS))
         raise ValueError(f"Unknown TTS_PROVIDER {provider!r}. Valid providers: {valid}.") from None
 
+    # The character ledger goes to the AZURE adapter only, identified by class
+    # (not by a string comparison on the provider name). Edge is a different
+    # endpoint with a different, unmetered deal and takes no such argument.
+    if factory is AzureTTSService:
+        from app.audio.char_ledger import AzureCharacterLedger
+        from app.config import settings
+
+        ledger = AzureCharacterLedger(settings.azure_tts_usage_ledger_path)
+        return factory(cache_dir=cache_dir, ledger=ledger)
     return factory(cache_dir=cache_dir)

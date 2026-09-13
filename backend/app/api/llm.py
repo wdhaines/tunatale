@@ -19,6 +19,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 
 from app.api.models import LlmActivityResponse, LlmHealthResponse, RateLimitStatusResponse
+from app.audio.char_ledger import AzureCharacterLedger
 from app.config import settings
 
 router = APIRouter(prefix="/api/llm", tags=["llm"])
@@ -75,6 +76,15 @@ def _status_payload(client) -> dict:
         tokens_day_reset_in_s = None
         requests_used_day = None
         requests_day_reset_in_s = None
+
+    # The Azure TTS tally is a local file read, so it is always present — the
+    # renderer appends from its own adapter instance, so a fresh read is the
+    # only correct one (caching on app state would go stale).
+    azure_budget = AzureCharacterLedger(
+        settings.azure_tts_usage_ledger_path,
+        reset_tz=settings.azure_tts_quota_reset_tz,
+    ).budget(chars_limit=settings.azure_tts_chars_per_month_limit)
+
     return {
         "provider": "groq",
         "model": getattr(client, "groq_model", None),
@@ -87,6 +97,9 @@ def _status_payload(client) -> dict:
         "requests_used_day": requests_used_day,
         "requests_per_day_limit": settings.groq_requests_per_day_limit,
         "requests_day_reset_in_s": requests_day_reset_in_s,
+        "azure_tts_chars_used_month": azure_budget.chars_used,
+        "azure_tts_chars_per_month_limit": settings.azure_tts_chars_per_month_limit,
+        "azure_tts_month_reset_in_s": azure_budget.reset_in_s,
     }
 
 

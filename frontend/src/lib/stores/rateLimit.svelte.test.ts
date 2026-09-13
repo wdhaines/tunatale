@@ -30,6 +30,9 @@ const STATUS: RateLimitStatus = {
   requests_used_day: 3,
   requests_per_day_limit: 1000,
   requests_day_reset_in_s: 85320,
+  azure_tts_chars_used_month: 0,
+  azure_tts_chars_per_month_limit: 500000,
+  azure_tts_month_reset_in_s: 1512000,
 };
 
 const NO_SNAPSHOT_STATUS: RateLimitStatus = {
@@ -44,6 +47,9 @@ const NO_SNAPSHOT_STATUS: RateLimitStatus = {
   requests_used_day: 3,
   requests_per_day_limit: 1000,
   requests_day_reset_in_s: 85320,
+  azure_tts_chars_used_month: 0,
+  azure_tts_chars_per_month_limit: 500000,
+  azure_tts_month_reset_in_s: 1512000,
 };
 
 const MOCK_MODE_STATUS: RateLimitStatus = {
@@ -58,6 +64,9 @@ const MOCK_MODE_STATUS: RateLimitStatus = {
   requests_used_day: 3,
   requests_per_day_limit: 1000,
   requests_day_reset_in_s: 85320,
+  azure_tts_chars_used_month: 0,
+  azure_tts_chars_per_month_limit: 500000,
+  azure_tts_month_reset_in_s: 1512000,
 };
 
 interface RateLimitStore {
