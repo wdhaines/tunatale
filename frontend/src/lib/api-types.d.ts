@@ -3438,6 +3438,12 @@ export interface components {
      * @description Response of GET /api/llm/rate-limit and POST /api/llm/rate-limit/probe.
      */
     RateLimitStatusResponse: {
+      /** Azure Tts Chars Per Month Limit */
+      azure_tts_chars_per_month_limit: number;
+      /** Azure Tts Chars Used Month */
+      azure_tts_chars_used_month: number;
+      /** Azure Tts Month Reset In S */
+      azure_tts_month_reset_in_s: number;
       last_429: components["schemas"]["Last429"] | null;
       /** Llm Mode */
       llm_mode: string;

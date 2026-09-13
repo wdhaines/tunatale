@@ -1098,6 +1098,9 @@ class RateLimitStatusResponse(BaseModel):
     requests_used_day: int | None
     requests_per_day_limit: int
     requests_day_reset_in_s: float | None
+    azure_tts_chars_used_month: int
+    azure_tts_chars_per_month_limit: int
+    azure_tts_month_reset_in_s: float
 
 
 # ── Batch 7: curriculum listing/detail/progress/source + pipeline + image

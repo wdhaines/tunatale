@@ -499,6 +499,9 @@ export interface RateLimitStatus {
   requests_used_day: number | null;
   requests_per_day_limit: number | null;
   requests_day_reset_in_s: number | null;
+  azure_tts_chars_used_month: number;
+  azure_tts_chars_per_month_limit: number;
+  azure_tts_month_reset_in_s: number;
 }
 
 export interface LlmHealthLastError {

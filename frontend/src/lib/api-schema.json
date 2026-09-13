@@ -3234,6 +3234,18 @@
       "RateLimitStatusResponse": {
         "description": "Response of GET /api/llm/rate-limit and POST /api/llm/rate-limit/probe.",
         "properties": {
+          "azure_tts_chars_per_month_limit": {
+            "title": "Azure Tts Chars Per Month Limit",
+            "type": "integer"
+          },
+          "azure_tts_chars_used_month": {
+            "title": "Azure Tts Chars Used Month",
+            "type": "integer"
+          },
+          "azure_tts_month_reset_in_s": {
+            "title": "Azure Tts Month Reset In S",
+            "type": "number"
+          },
           "last_429": {
             "anyOf": [
               {
@@ -3337,7 +3349,10 @@
           "tokens_day_reset_in_s",
           "requests_used_day",
           "requests_per_day_limit",
-          "requests_day_reset_in_s"
+          "requests_day_reset_in_s",
+          "azure_tts_chars_used_month",
+          "azure_tts_chars_per_month_limit",
+          "azure_tts_month_reset_in_s"
         ],
         "title": "RateLimitStatusResponse",
         "type": "object"

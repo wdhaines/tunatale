@@ -21,6 +21,18 @@ class TTSExhausted(RuntimeError):
     """
 
 
+class TTSQuotaExceeded(RuntimeError):
+    """The monthly Azure character allowance is spent. NOT retryable.
+
+    Distinct from ``TTSExhausted`` — deliberately NOT a subclass — because a
+    throttling episode passes and a spent monthly allowance lasts until the
+    month resets: ``_with_render_retries`` would re-run a render straight into
+    the same wall and burn the retry budget for nothing. Still a
+    ``RuntimeError``, so ``api/audio.py``'s mapping to a 503 carrying the
+    refusal message through unchanged.
+    """
+
+
 @runtime_checkable
 class TTSService(Protocol):
     """Protocol for text-to-speech synthesis services."""

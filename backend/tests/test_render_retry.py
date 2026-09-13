@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.audio.ports import TTSExhausted
+from app.audio.ports import TTSExhausted, TTSQuotaExceeded
 from app.audio.render_service import _with_render_retries
 
 
@@ -119,6 +119,38 @@ async def test_a_configuration_error_is_not_retried():
         await _with_render_retries(attempt, "day 8", max_attempts=3, cooldown_s=15.0, sleep=_never_slept)
 
     assert attempts == 1, f"a configuration error was retried {attempts} times"
+
+
+async def test_a_quota_refusal_is_not_retried():
+    """TTSQuotaExceeded propagates on pass 1 — a month-long wall is not a passing episode.
+
+    The render-level loop retries ``TTSExhausted`` — a throttling episode is
+    exogenous and passes — and nothing else. A spent monthly allowance lasts
+    until the month resets: re-running the render would burn the retry budget
+    for nothing and bury the refusal under "retrying" warnings.
+    """
+    attempts = 0
+
+    async def attempt():
+        nonlocal attempts
+        attempts += 1
+        raise TTSQuotaExceeded("Monthly Azure TTS budget exhausted")
+
+    with pytest.raises(TTSQuotaExceeded, match="Monthly Azure TTS budget exhausted"):
+        await _with_render_retries(attempt, "day 8", max_attempts=3, cooldown_s=0.0, sleep=_never_slept)
+
+    assert attempts == 1, f"a quota refusal was retried {attempts} times"
+
+
+async def test_tts_quota_exceeded_is_not_a_tts_exhausted():
+    """The subclass guard: TTSExhausted catch-sites must never swallow the quota wall.
+
+    ``_with_render_retries`` catches ``TTSExhausted``; were ``TTSQuotaExceeded``
+    a subclass, the previous test would have gone red. It is deliberately a
+    plain ``RuntimeError``, so ``api/audio.py``'s ``except RuntimeError`` →
+    503 mapping carries the refusal message through unchanged.
+    """
+    assert not issubclass(TTSQuotaExceeded, TTSExhausted)
 
 
 async def test_each_pass_is_reported_so_a_long_render_is_not_silent(caplog):

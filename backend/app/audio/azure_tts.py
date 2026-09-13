@@ -25,7 +25,8 @@ from xml.sax.saxutils import escape, quoteattr
 
 import httpx
 
-from app.audio.ports import TTSExhausted
+from app.audio.char_ledger import AzureCharacterLedger
+from app.audio.ports import TTSExhausted, TTSQuotaExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,8 @@ class AzureTTSService:
         retry_base_delay: float | None = None,
         max_concurrent_requests: int | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
+        ledger: AzureCharacterLedger | None = None,
+        chars_per_month_limit: int | None = None,
     ) -> None:
         # Resolved at construction but NOT validated here: the app builds a
         # renderer at startup whether or not anyone renders anything, so an
@@ -166,6 +169,16 @@ class AzureTTSService:
         # 429 headers+body are logged once per instance — a burst produces one
         # diagnostic line, not a hundred identical dumps.
         self._logged_429 = False
+        # ledger=None means no accounting at all — no counting, no refusal, the
+        # same way cache_dir=None already means "no cache". A ledger present but
+        # chars_per_month_limit=None resolves the ceiling lazily from settings,
+        # like min_delay / retry_base_delay / max_concurrent_requests above.
+        self._ledger = ledger
+        if chars_per_month_limit is None and ledger is not None:
+            from app.config import settings
+
+            chars_per_month_limit = settings.azure_tts_chars_per_month_limit
+        self._chars_per_month_limit = chars_per_month_limit
 
     # ------------------------------------------------------------------
     # TTSService Protocol implementation
@@ -207,6 +220,21 @@ class AzureTTSService:
                 shutil.copy2(cached, output_path)
                 logger.debug("Azure TTS cache hit for %r", text[:40])
                 return
+
+        # The quota wall, checked AFTER the cache and BEFORE any request: a
+        # cache hit makes no API call, so it must neither count nor be refused
+        # — a warm cache is the only thing that lets a render finish at the
+        # cap. A spent allowance raises immediately, with zero requests made.
+        if self._ledger is not None:
+            status = self._ledger.budget(chars_limit=self._chars_per_month_limit)
+            if status.exceeded is not None:
+                days, rem = divmod(int(status.reset_in_s), 86_400)
+                hours = rem // 3_600
+                raise TTSQuotaExceeded(
+                    f"Monthly Azure TTS budget exhausted: {status.exceeded} "
+                    f"({status.chars_used:,} of {status.chars_limit:,}); "
+                    f"quota resets in {days}d{hours}h"
+                )
 
         audio = await self._synthesize_with_retry(text, voice_id, rate, phonemes, speak_locale)
 
@@ -302,6 +330,32 @@ class AzureTTSService:
         return None if speak_locale == voice_locale else speak_locale
 
     @staticmethod
+    def _billable_body(
+        text: str,
+        voice_id: str,
+        rate: str,
+        phonemes: Mapping[str, str] | None = None,
+        speak_locale: str | None = None,
+    ) -> str:
+        """The Azure-billable portion of one synthesis request's SSML.
+
+        Azure bills every character of each successfully processed request —
+        text, punctuation, spaces, and ALL markup — except the ``<speak>`` and
+        ``<voice>`` tags (learn.microsoft.com, Text-to-Speech § "Billable
+        characters"). What remains is exactly this string: what ``_build_ssml``
+        wraps in those two tags. ``len(_billable_body(...))`` is therefore the
+        billable character count for one request.
+        """
+        body = AzureTTSService._phoneme_body(text, phonemes) if phonemes else escape(text)
+        inner = f"<prosody rate={quoteattr(rate)}>{body}</prosody>"
+        # <lang> goes INSIDE <voice> and OUTSIDE <prosody>: the rate applies to
+        # the foreign-language speech, not the other way round, and that is the
+        # nesting the rescue above was measured with.
+        if (wrapper := AzureTTSService._lang_locale(voice_id, speak_locale)) is not None:
+            inner = f"<lang xml:lang={quoteattr(wrapper)}>{inner}</lang>"
+        return inner
+
+    @staticmethod
     def _build_ssml(
         text: str,
         voice_id: str,
@@ -321,14 +375,8 @@ class AzureTTSService:
         ALL caller text is still escaped either way — markup can only enter
         the SSML through the argument, never through *text*.
         """
-        body = AzureTTSService._phoneme_body(text, phonemes) if phonemes else escape(text)
         locale = "-".join(voice_id.split("-")[:2])
-        inner = f"<prosody rate={quoteattr(rate)}>{body}</prosody>"
-        # <lang> goes INSIDE <voice> and OUTSIDE <prosody>: the rate applies to
-        # the foreign-language speech, not the other way round, and that is the
-        # nesting the rescue above was measured with.
-        if (wrapper := AzureTTSService._lang_locale(voice_id, speak_locale)) is not None:
-            inner = f"<lang xml:lang={quoteattr(wrapper)}>{inner}</lang>"
+        inner = AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale)
         return (
             f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang={quoteattr(locale)}>'
             f"<voice name={quoteattr(voice_id)}>"
@@ -461,4 +509,13 @@ class AzureTTSService:
                 raise
             else:
                 await self._sleep(self._min_delay)
+                # Record ONLY here: the else branch is exactly "the request was
+                # successfully processed", which is the only thing Azure bills
+                # (FACT A, consequence 3). A 429/5xx/transport error never
+                # reaches this line, and the retry ladder exists precisely so
+                # a clip that eventually succeeds records once, not per attempt.
+                if self._ledger is not None:
+                    self._ledger.record(
+                        len(AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale))
+                    )
                 return response.content
