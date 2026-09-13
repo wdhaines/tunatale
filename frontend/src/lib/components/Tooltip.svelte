@@ -227,6 +227,35 @@
 		}
 	});
 
+	// Vertical flip. `.tt` is `bottom: 100%` — always ABOVE the word — so a word
+	// near the top of the visible area pushed its popover off-screen. Measured on
+	// the real page: a word at y=8 put a 91px popover at y=-83, i.e. 91% of it
+	// invisible.
+	//
+	// The ceiling is NOT the viewport top. `nav.global-nav` is sticky at z-index
+	// 50 while this is 30, so a popover that technically fits on screen can still
+	// be painted underneath it. The layout owns that chrome and publishes its
+	// height as `--tt-safe-top`; this reads it rather than hunting the DOM for
+	// sticky ancestors (the nav is not an ancestor, so a walk like
+	// `clampBounds()` cannot find it). An unset variable parses to 0, which is
+	// what jsdom sees and what a page with no chrome should get.
+	//
+	// The condition reads the ANCHOR's top, never the popover's own, so flipping
+	// cannot change the input that caused the flip — no oscillation.
+	let flipBelow = $state(false);
+	function safeTopPx(): number {
+		const raw = getComputedStyle(document.documentElement).getPropertyValue('--tt-safe-top');
+		return parseFloat(raw) || 0;
+	}
+	$effect(() => {
+		if ((!open && !hovered) || !ttEl || !wrapEl) {
+			flipBelow = false;
+			return;
+		}
+		const roomAbove = wrapEl.getBoundingClientRect().top - (safeTopPx() + EDGE_MARGIN_PX);
+		flipBelow = roomAbove < ttEl.getBoundingClientRect().height;
+	});
+
 	const dueLabel = $derived(word != null ? (word.is_due ? t('tooltip.due') : t('tooltip.notDue')) : null);
 
 	const showCreateInflection = $derived(Boolean(word?.inflectable && actions?.onCreateInflection));
@@ -327,6 +356,7 @@
 			role="tooltip"
 			aria-hidden="false"
 			bind:this={ttEl}
+			class:tt-below={flipBelow}
 			style:transform={`translateX(calc(-50% + ${shiftX}px))`}
 			onclick={(e) => e.stopPropagation()}
 		>
@@ -481,6 +511,18 @@
 		left: 0;
 		right: 0;
 		height: 8px;
+	}
+	/* Flipped below the word when there is no room above (see `flipBelow`).
+	   `::before` is not an arrow — it is the invisible hover-bridge that keeps
+	   the popover open while the pointer travels between word and popover — so
+	   it has to move to the popover's TOP edge, where the gap now is. */
+	.tt.tt-below {
+		bottom: auto;
+		top: 100%;
+	}
+	.tt.tt-below::before {
+		top: auto;
+		bottom: 100%;
 	}
 	.tt-translation {
 		font-weight: 500;

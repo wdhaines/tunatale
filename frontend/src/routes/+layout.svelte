@@ -36,6 +36,26 @@
 
 	let stopTouchTrace: (() => void) | null = null;
 
+	// The nav is `position: sticky` at z-index 50 while a word popover is 30, so
+	// the nav paints OVER a popover opened on a word near the top of the screen.
+	// Publishing the nav's height lets Tooltip.svelte treat it as the ceiling and
+	// flip the popover below the word instead of under the chrome. Measured, not
+	// a constant: the nav wraps to a second row on narrow screens, and a
+	// hard-coded height would be wrong by a whole row exactly where the screen is
+	// smallest. Consumed as `--tt-safe-top`; an unset value parses to 0, which is
+	// the correct answer for any page without this chrome.
+	let navEl: HTMLElement | undefined = $state();
+	function publishNavHeight() {
+		if (!navEl) return;
+		document.documentElement.style.setProperty('--tt-safe-top', `${navEl.offsetHeight}px`);
+	}
+	onMount(() => {
+		publishNavHeight();
+		const ro = new ResizeObserver(publishNavHeight);
+		if (navEl) ro.observe(navEl);
+		return () => ro.disconnect();
+	});
+
 	onMount(() => {
 		// Local preferences first, unconditionally: they need no session, and the
 		// login page should be themed like the rest of the app.
@@ -150,7 +170,7 @@
 {#if !onLogin}
 <LlmHealthBanner />
 
-<nav class="global-nav">
+<nav class="global-nav" bind:this={navEl}>
 	<a href="/" class="brand"><img class="brand-mark" src={logo} alt="" />TunaTale</a>
 	<div class="nav-links">
 		<span class="review-group">

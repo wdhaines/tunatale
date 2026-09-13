@@ -1,7 +1,7 @@
 /**
  * Tests for Tooltip.svelte — interactive hover popover.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import { tick } from "svelte";
 import TooltipTest from "./TooltipTest.svelte";
@@ -958,6 +958,92 @@ describe("Tooltip", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe("vertical flip when there is no room above", () => {
+    /* The popover is `bottom: 100%` — always above the word. A word at the top
+     * of the visible area therefore pushed its popover off-screen: measured on
+     * the real page, a word at y=8 put the popover at y=-83 of 91px tall, i.e.
+     * 91% invisible. A second cause sits just below that: `nav.global-nav` is
+     * sticky with z-index 50 while `.tt` is 30, so a popover that DOES fit can
+     * still be painted under the nav. `--tt-safe-top` is how the layout tells
+     * the popover where the chrome ends; the flip uses it as the ceiling. */
+    function openAt(anchorTop: number, ttHeight: number, safeTop = 0) {
+      document.documentElement.style.setProperty("--tt-safe-top", `${safeTop}px`);
+      const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+      const { container } = render(TooltipTest, {
+        props: { translation: "hello", word, childText: "flip-me" },
+      });
+      const tt = container.querySelector<HTMLElement>(".tt")!;
+      const wrap = container.querySelector<HTMLElement>(".tt-wrap")!;
+      tt.getBoundingClientRect = () =>
+        ({
+          left: 100,
+          right: 300,
+          top: anchorTop - ttHeight,
+          bottom: anchorTop,
+          width: 200,
+          height: ttHeight,
+          x: 100,
+          y: anchorTop - ttHeight,
+          toJSON: () => ({}),
+        }) as DOMRect;
+      wrap.getBoundingClientRect = () =>
+        ({
+          left: 100,
+          right: 300,
+          top: anchorTop,
+          bottom: anchorTop + 18,
+          width: 200,
+          height: 18,
+          x: 100,
+          y: anchorTop,
+          toJSON: () => ({}),
+        }) as DOMRect;
+      return { tt, wrap, container };
+    }
+
+    afterEach(() => document.documentElement.style.removeProperty("--tt-safe-top"));
+
+    it("stays above the word when there is room", async () => {
+      const { tt, container } = openAt(500, 91);
+      await fireEvent.pointerEnter(container.querySelector(".tt-wrap")!);
+      await tick();
+      expect(tt.className).not.toContain("tt-below");
+    });
+
+    it("flips below when the popover would clear the top of the screen", async () => {
+      const { tt, container } = openAt(8, 91);
+      await fireEvent.pointerEnter(container.querySelector(".tt-wrap")!);
+      await tick();
+      expect(tt.className).toContain("tt-below");
+    });
+
+    // The real regression: the word fits on screen, but not above the sticky nav.
+    it("flips below when the space above is taken by sticky chrome", async () => {
+      const { tt, container } = openAt(100, 91, 56);
+      await fireEvent.pointerEnter(container.querySelector(".tt-wrap")!);
+      await tick();
+      expect(tt.className).toContain("tt-below");
+    });
+
+    it("does not flip when the chrome still leaves room", async () => {
+      const { tt, container } = openAt(200, 91, 56);
+      await fireEvent.pointerEnter(container.querySelector(".tt-wrap")!);
+      await tick();
+      expect(tt.className).not.toContain("tt-below");
+    });
+
+    it("clears the flip when the popover is dismissed", async () => {
+      const { tt, container } = openAt(8, 91);
+      const wrap = container.querySelector<HTMLElement>(".tt-wrap")!;
+      await fireEvent.pointerEnter(wrap);
+      await tick();
+      expect(tt.className).toContain("tt-below");
+      await fireEvent.pointerLeave(wrap);
+      await tick();
+      expect(tt.className).not.toContain("tt-below");
     });
   });
 });

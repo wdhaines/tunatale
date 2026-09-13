@@ -100,6 +100,22 @@ beforeEach(async () => {
 });
 
 describe("root +layout.svelte", () => {
+  // The sticky nav (z-index 50) paints over a word popover (z-index 30), so
+  // Tooltip.svelte flips a popover below its word rather than under the chrome.
+  // It needs to know where the chrome ends, and the nav wraps to a second row on
+  // narrow screens — so the height is MEASURED and published here, not guessed
+  // as a constant in the popover.
+  it("publishes the nav height as --tt-safe-top for the popover ceiling", () => {
+    document.documentElement.style.removeProperty("--tt-safe-top");
+    expect(document.documentElement.style.getPropertyValue("--tt-safe-top")).toBe("");
+    const { container } = renderLayout();
+    expect(container.querySelector("nav.global-nav")).toBeTruthy();
+    // jsdom has no layout, so the measured height is 0 — the claim under test is
+    // that the layout PUBLISHES a px length at all, not what the number is. The
+    // number is geometry and is asserted in tests/tooltip-popover.spec.ts.
+    expect(document.documentElement.style.getPropertyValue("--tt-safe-top")).toMatch(/^\d+px$/);
+  });
+
   it("renders the brand and the three nav links with correct hrefs", () => {
     const { getByRole } = renderLayout();
     expect(

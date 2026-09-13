@@ -25,3 +25,18 @@ Object.defineProperty(HTMLMediaElement.prototype, "load", {
   writable: true,
   value: vi.fn(),
 });
+
+// jsdom implements no ResizeObserver. `+layout.svelte` observes the global nav
+// so it can publish the nav's height as `--tt-safe-top` (the ceiling a word
+// popover flips away from). A no-op observer is the right stub here: the
+// component also measures once on mount, so the value under test is still
+// produced — only the re-measure-on-resize path is inert, and that path is
+// geometry, which belongs in Playwright rather than jsdom.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+if (!("ResizeObserver" in globalThis)) {
+  (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
+}
