@@ -49,10 +49,20 @@ export const en = {
   "transcript.interlinear": "Interlinear",
   "transcript.helpInstructions":
     "Tap or hover a word/phrase to open its popover — grading and all other actions live there. Alt+hover a phrase for its individual words. Drag to create a phrase, or tap '+ New phrase' on mobile.",
+  "transcript.legend.wordsLabel": "Words:",
+  "transcript.legend.railsLabel": "Rails (understand / produce):",
+  "transcript.legend.sample": "word",
   "transcript.legend.new": "New",
+  "transcript.legend.due": "Due",
+  "transcript.legend.skipped": "Skipped",
+  // Both rails read "New" FIRST, because that is what the popover says for
+  // either of them — the parenthetical explains the two bars without implying
+  // two different learning states, which is the confusion this whole
+  // alignment removed from the popover.
+  "transcript.legend.noCard": "New (no card yet)",
+  "transcript.legend.newCard": "New (card made)",
   "transcript.legend.learning": "Learning",
-  "transcript.legend.known": "Known",
-  "transcript.legend.unknown": "Unknown",
+  "transcript.legend.known": "Half a year +",
   "transcript.newPhrase": "+ New phrase",
   "transcript.translationFailed": "Translation failed. Check connection and try again.",
   "transcript.gradeUndo": "Undo ↩",
@@ -114,7 +124,6 @@ export const en = {
   "listenPreview.gradeAll": "Grade All",
   "listenPreview.skipAll": "Skip All",
   "listenPreview.noNewWords": "No new words to add.",
-  "listenPreview.notTracked": "not tracked",
   "listenPreview.new": "new",
   "listenPreview.learning": "learning",
   "listenPreview.today": "today",
@@ -278,8 +287,9 @@ export const en = {
   "lessonReader.noTranscript": "No transcript available.",
 
   // masteryBands.ts
-  "masteryBands.bandNone": "No card",
-  "masteryBands.bandNew": "Not started",
+  // One label for both the "none" (no card) and "new" (never studied) bands —
+  // see masteryBands.ts::bandLabel for why they are not named apart.
+  "masteryBands.bandNew": "New",
   "masteryBands.bandLearning": "Learning",
   "masteryBands.bandDays": "Days",
   "masteryBands.bandWeeks": "Weeks",

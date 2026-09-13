@@ -455,7 +455,9 @@ describe("Transcript", () => {
         props: defaultProps({ transcript: transcriptWithCollocation }),
       });
       const span = container.querySelector(".collocation-span") as HTMLElement;
-      expect(span.getAttribute("style")).toBeNull();
+      // Rail custom properties are the only inline style a span may carry; a
+      // background-color here would be the old mastery tint coming back.
+      expect(span.getAttribute("style")).not.toContain("background");
       expect(span.className).not.toContain("coll-bg-ignored");
     });
 
@@ -775,13 +777,17 @@ describe("Transcript", () => {
       };
     }
 
-    it("does not paint rails when bands are null (off-band span)", () => {
+    // A span always resolves to a collocation card, so the backend always
+    // sends both bands — null here is a defensive shape, not a real one, and
+    // it now reads as "no card on either side" rather than painting nothing.
+    it("paints dashed no-card rails when bands are null (off-band span)", () => {
       const { container } = render(Transcript, {
         props: defaultProps({ transcript: makeCollTranscript("review", { progress: 1 }) }),
       });
       const span = container.querySelector(".collocation-span") as HTMLElement;
-      expect(span.className).not.toContain("paint-rails");
-      expect(span.getAttribute("style")).toBeNull();
+      expect(span.className).toContain("paint-rails");
+      expect(span.style.getPropertyValue("--rail-u-track")).toContain("repeating-linear-gradient");
+      expect(span.style.getPropertyValue("--rail-p-track")).toContain("repeating-linear-gradient");
     });
 
     it("paints a rail pair filled from the collocation bands", () => {
@@ -802,7 +808,7 @@ describe("Transcript", () => {
       expect(span.style.getPropertyValue("--rail-p-pct")).toBe("100%");
     });
 
-    it("paints no produce layers when the produce band is null", () => {
+    it("paints a dashed no-card produce rail when the produce band is null", () => {
       const { container } = render(Transcript, {
         props: defaultProps({ transcript: makeCollTranscript("review", { uBand: "days" }) }),
       });
@@ -810,9 +816,7 @@ describe("Transcript", () => {
       expect(span.style.getPropertyValue("--rail-u-fill")).toBe("var(--band-days)");
       expect(span.style.getPropertyValue("--rail-p-fill")).toBe("transparent");
       expect(span.style.getPropertyValue("--rail-p-pct")).toBe("0%");
-      expect(span.style.getPropertyValue("--rail-p-track")).toBe(
-        "linear-gradient(transparent, transparent)",
-      );
+      expect(span.style.getPropertyValue("--rail-p-track")).toContain("repeating-linear-gradient");
     });
 
     it("draws an empty unfilled produce track for a suspended produce band", () => {
@@ -2384,18 +2388,40 @@ describe("Transcript", () => {
       expect(panel!.textContent).toContain("popover");
       expect(panel!.textContent).toContain("Alt+hover");
 
-      // Mastery legend: New → Learning → Known, plus Unknown.
+      // The legend describes what actually paints. It used to advertise a
+      // red→green word-colour ramp that WordSpan stopped painting when the
+      // twin rails landed — colour is now a single blue "not started" cue and
+      // the ramp lives entirely in the rails.
       const legend = panel!.querySelector(".help-legend") as HTMLElement;
       expect(legend.textContent).toContain("New");
+      expect(legend.textContent).toContain("Due");
+      expect(legend.textContent).toContain("Skipped");
       expect(legend.textContent).toContain("Learning");
-      expect(legend.textContent).toContain("Known");
-      expect(legend.textContent).toContain("Unknown");
+      expect(legend.textContent).toContain("Half a year +");
+      // Both rail labels lead with "New" — the word the popover uses for
+      // either of them — and only the parenthetical names the bar difference.
+      expect(legend.textContent).toContain("New (no card yet)");
+      expect(legend.textContent).toContain("New (card made)");
 
-      // Legend swatches reuse WordSpan's actual ramp/off-ramp classes.
-      const swatches = panel!.querySelectorAll(".legend-swatch");
-      expect(swatches.length).toBeGreaterThanOrEqual(4);
-      const unknownSwatch = panel!.querySelector(".legend-swatch.word-unknown");
-      expect(unknownSwatch).toBeTruthy();
+      // The word cues are samples carrying the reader's own cues.
+      expect(legend.querySelector(".legend-word.is-unstarted")).toBeTruthy();
+      expect(legend.querySelector(".legend-word.is-due")).toBeTruthy();
+      expect(legend.querySelector(".legend-word.is-skipped")).toBeTruthy();
+
+      // The rail swatches are painted by railPropsFor, the same function the
+      // words use — so a legend swatch cannot drift from the rail it explains.
+      const rails = [...legend.querySelectorAll(".legend-rail")] as HTMLElement[];
+      expect(rails.length).toBe(4);
+      expect(rails[0].style.getPropertyValue("--rail-u-track")).toContain(
+        "repeating-linear-gradient",
+      );
+      expect(rails[1].style.getPropertyValue("--rail-u-pct")).toBe("0%");
+      expect(rails[2].style.getPropertyValue("--rail-u-fill")).toBe("var(--band-learning)");
+      expect(rails[3].style.getPropertyValue("--rail-u-pct")).toBe("100%");
+
+      // The dead red→green ramp is gone.
+      expect(legend.querySelector(".legend-swatch")).toBeNull();
+      expect(legend.textContent).not.toContain("Unknown");
     });
 
     it("clicking the '?' toggle again closes the help panel", async () => {

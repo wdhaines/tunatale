@@ -6,8 +6,19 @@
 	import type { ReadableLesson, TranscriptData, WordToken } from '$lib/api';
 	import { buildScenes, fallbackScenes, cueHighlight } from '$lib/transcriptScenes';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
-	import { masteryColor } from '$lib/mastery';
 	import { railPropsFor } from '$lib/masteryBands';
+
+	// The legend's rail swatches are painted by the SAME function that paints
+	// the words, so a swatch cannot drift from the rail it explains. (The old
+	// legend showed a red→green word-colour ramp built from `masteryColor` —
+	// paint WordSpan stopped applying when the twin rails landed, so it
+	// described an interface that no longer existed.)
+	const LEGEND_RAILS = [
+		railPropsFor({ understand_band: 'none', produce_band: 'none' }),
+		railPropsFor({ understand_band: 'new', produce_band: 'new' }),
+		railPropsFor({ understand_band: 'learning', produce_band: 'learning' }),
+		railPropsFor({ understand_band: 'solid', produce_band: 'solid' })
+	];
 	import { t } from '$lib/i18n/i18n.svelte';
 
 	interface CreatePhraseArgs {
@@ -492,24 +503,42 @@
 						{t('transcript.helpInstructions')}
 					</p>
 					<div class="help-legend">
+						<div class="legend-group">
+						<span class="legend-label">{t('transcript.legend.wordsLabel')}</span>
 						<span class="legend-row">
-							<span class="legend-swatch" style={`background-color: ${masteryColor(0)};`}></span>
+							<span class="legend-word is-unstarted">{t('transcript.legend.sample')}</span>
 							{t('transcript.legend.new')}
+						</span>
+						<span class="legend-row">
+							<span class="legend-word is-due">{t('transcript.legend.sample')}</span>
+							{t('transcript.legend.due')}
+						</span>
+						<span class="legend-row">
+							<span class="legend-word is-skipped">{t('transcript.legend.sample')}</span>
+							{t('transcript.legend.skipped')}
+						</span>
+						</div>
+						<div class="legend-group">
+						<span class="legend-label">{t('transcript.legend.railsLabel')}</span>
+						<span class="legend-row">
+							<span class="legend-rail paint-rails" style={LEGEND_RAILS[0]}></span>
+							{t('transcript.legend.noCard')}
+						</span>
+						<span class="legend-row">
+							<span class="legend-rail paint-rails" style={LEGEND_RAILS[1]}></span>
+							{t('transcript.legend.newCard')}
 						</span>
 						<span class="legend-arrow">→</span>
 						<span class="legend-row">
-							<span class="legend-swatch" style={`background-color: ${masteryColor(0.5)};`}></span>
+							<span class="legend-rail paint-rails" style={LEGEND_RAILS[2]}></span>
 							{t('transcript.legend.learning')}
 						</span>
 						<span class="legend-arrow">→</span>
 						<span class="legend-row">
-							<span class="legend-swatch" style={`background-color: ${masteryColor(1)};`}></span>
+							<span class="legend-rail paint-rails" style={LEGEND_RAILS[3]}></span>
 							{t('transcript.legend.known')}
 						</span>
-						<span class="legend-row">
-							<span class="legend-swatch word-unknown"></span>
-							{t('transcript.legend.unknown')}
-						</span>
+						</div>
 					</div>
 				</div>
 			{/if}
@@ -551,6 +580,8 @@
 										{@const collOffRamp = collocationOffRamp(segment.words[0].collocation_srs_state)}
 										{@const drilledIn = altHeld || expandedSpanId === segment.span_id}
 										{@const collUndoable = undoableItemId === segment.span_id && onCollocationUndo != null}
+										<!-- A span always resolves to a collocation card, so both bands
+										     are real band strings and the rails always paint. -->
 										{@const collRailProps = railPropsFor({
 												understand_band: segment.words[0].collocation_understand_band,
 												produce_band: segment.words[0].collocation_produce_band,
@@ -572,10 +603,9 @@
 											onDrillIn={() => (expandedSpanId = segment.span_id)}
 										>
 											<span
-												class="collocation-span"
-												class:paint-rails={collRailProps != null}
+												class="collocation-span paint-rails"
 												class:coll-bg-ignored={collOffRamp}
-												style={collRailProps ?? undefined}
+												style={collRailProps}
 												role="button"
 												tabindex="0"
 												data-span-id={segment.span_id}
@@ -771,6 +801,13 @@
 	}
 	.help-legend {
 		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+	}
+	/* One row per group (word cues, rail ramp). They ran together on one
+	   wrapped line before, which read as a single seven-item list. */
+	.legend-group {
+		display: flex;
 		align-items: center;
 		flex-wrap: wrap;
 		gap: 0.4rem;
@@ -783,16 +820,30 @@
 	.legend-arrow {
 		color: var(--color-muted, #6b7280);
 	}
-	.legend-swatch {
-		display: inline-block;
-		width: 0.8rem;
-		height: 0.8rem;
-		border-radius: 2px;
-		border: 1px solid var(--color-border, #e5e7eb);
+	.legend-label {
+		color: var(--color-muted, #6b7280);
 	}
-	/* Same indigo as WordSpan's .word-unknown text color, reused here as a swatch fill. */
-	.legend-swatch.word-unknown {
-		background-color: #818cf8;
+	/* Word cues, carrying the reader's own three: blue = not started, bold =
+	   due, struck grey = skipped. WordSpan's classes are component-scoped, so
+	   the values are restated here from the same custom properties. */
+	.legend-word.is-unstarted {
+		color: var(--word-untracked, var(--color-primary));
+	}
+	.legend-word.is-due {
+		font-weight: bold;
+	}
+	.legend-word.is-skipped {
+		color: #9ca3af;
+		text-decoration: line-through;
+	}
+	/* A rail swatch is a zero-height box whose 7px bottom padding IS the rail
+	   stack — the same painted padding a word carries, so the swatch and the
+	   thing it explains come out of one rule. */
+	.legend-rail {
+		display: inline-block;
+		width: 1.6rem;
+		height: 0;
+		vertical-align: middle;
 	}
 	.new-phrase-btn {
 		font-size: 0.75rem;
@@ -1030,7 +1081,8 @@
 	   a phrase that wraps across rows paint full rails at the end of one row
 	   AND the start of the next. The neutral grey of a suspended/ignored span
 	   is background-color, so it sits under these image layers and still shows. */
-	.collocation-span.paint-rails {
+	.collocation-span.paint-rails,
+	.legend-rail.paint-rails {
 		padding-bottom: 7px;
 		-webkit-box-decoration-break: clone;
 		box-decoration-break: clone;

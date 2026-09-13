@@ -2,7 +2,7 @@
 	import type { WordToken } from './api';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import type { TooltipActions } from '$lib/components/Tooltip.svelte';
-	import { railPropsFor, masterySides as masterySidesFn } from '$lib/masteryBands';
+	import { railPropsFor, isUnstarted, masterySides as masterySidesFn } from '$lib/masteryBands';
 
 	interface Props {
 		word: WordToken;
@@ -49,22 +49,36 @@
 		fire();
 	}
 
-	// Twin rails (bd tunatale-yh47, density): a tracked word's rails are painted
-	// as background-image layers in the word's own padding-bottom — no child
+	// Twin rails (bd tunatale-yh47, density): a word's rails are painted as
+	// background-image layers in the word's own padding-bottom — no child
 	// elements, so an inline word's padding cannot change the line box and a
 	// wrapped row stays exactly one line-height tall. `paintsRails` gates the
 	// paint, `railProps` carries the per-word colour/width/track custom props.
-	const paintsRails = $derived(!hideRails && word.understand_band != null);
+	//
+	// An untracked word paints through this SAME path: `railPropsFor` reads an
+	// absent band as "no card" and hands back two dashed tracks, which is what
+	// the old `.paint-untracked` rule drew by hand. An ignored word is the one
+	// that paints nothing — it is already struck through in grey, and rails
+	// under it would describe a card the user has said they do not want.
+	const paintsRails = $derived(!hideRails && word.active_state !== 'ignored');
 	const railProps = $derived.by(
 		() => (paintsRails ? railPropsFor(word) : null),
 	);
 
-	const colorClass = $derived(
-		word.active_state === 'unknown'
-			? 'word-unknown'
+	// Blue means "you have not started this word", NOT "there is no card row".
+	// A card that exists but has never been studied is the same state to the
+	// learner, so it reads the same blue; the rails carry the difference. Read
+	// from BOTH sides, because a production-only cloze has no recognition card
+	// (understand_band "none") and must not read blue once it is learned.
+	const unstarted = $derived(
+		isUnstarted(word.understand_band) && isUnstarted(word.produce_band)
+	);
 
-			: word.active_state === 'suspended' || word.active_state === 'ignored'
-				? 'word-ignored'
+	const colorClass = $derived(
+		word.active_state === 'suspended' || word.active_state === 'ignored'
+			? 'word-ignored'
+			: unstarted
+				? 'word-unstarted'
 				: ''
 	);
 
@@ -80,9 +94,11 @@
 	// line (the prior if/else swap caused a visible spacing jump).
 	const showTooltip = $derived(!requireModifier || altHover);
 
-	// Per-word mastery label for the tooltip popover.
+	// Per-word mastery label for the tooltip popover. An untracked word used to
+	// get "not tracked" here and NO twin-rail sides — a single line naming no
+	// direction, beside two dashed rails that do name directions. It now falls
+	// through to `masterySides` like every other word.
 	const masteryLabel = $derived.by((): string | null => {
-		if (word.active_state === 'unknown') return 'not tracked';
 		if (word.active_state === 'known') return 'known';
 		if (word.active_state === 'ignored') return 'ignored';
 		return null;
@@ -159,7 +175,6 @@
 		<span
 			class="word {colorClass}"
 			class:paint-rails={paintsRails}
-			class:paint-untracked={word.active_state === 'unknown' && !hideRails}
 			class:word-selected={selected}
 			class:word-due={word.is_due}
 			class:word-overdue={overdueRatio >= 1 && overdueRatio < 3}
@@ -198,7 +213,7 @@
 	.word:hover {
 		opacity: 0.8;
 	}
-	.word-unknown {
+	.word-unstarted {
 		color: var(--word-untracked, #1e5e86);
 	}
 	.word-ignored {
@@ -255,22 +270,6 @@
 	   The four layer rules live here; the per-word colour/width/track arrive as
 	   `--rail-*` custom properties set inline by the component. `background-
 	   color` (the selected tint) sits UNDER these image layers untouched. */
-	/* An untracked word has no card on either side, so it paints the reader's
-	   "no card" symbol — a dashed rail — in BOTH rail slots (user's pick,
-	   2026-09-10), in the same padding the tracked words' rails use. */
-	.word.paint-untracked {
-		padding-bottom: 7px;
-		background-repeat: no-repeat;
-		background-image:
-			repeating-linear-gradient(90deg, var(--color-muted, #6b7280) 0 3px, transparent 3px 6px),
-			repeating-linear-gradient(90deg, var(--color-muted, #6b7280) 0 3px, transparent 3px 6px);
-		background-size:
-			100% 3px,
-			100% 3px;
-		background-position:
-			left bottom 4px,
-			left bottom 0;
-	}
 	.word.paint-rails {
 		padding-bottom: 7px;
 		background-repeat: no-repeat;

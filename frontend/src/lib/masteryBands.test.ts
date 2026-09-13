@@ -9,6 +9,7 @@ import {
   holdsLabel,
   sideLabel,
   masterySides,
+  isUnstarted,
   type MasteryBand,
 } from "./masteryBands";
 
@@ -68,16 +69,25 @@ describe("railPropsFor", () => {
     expect(props).toContain(`--rail-u-track: ${RAIL_TRACK_SOLID};`);
   });
 
-  it("returns null when the understand band is missing (untracked word)", () => {
-    expect(railPropsFor({})).toBeNull();
-    expect(railPropsFor({ understand_band: null, produce_band: null })).toBeNull();
+  // An absent band and the band "none" are the same fact — no card on that
+  // side — so they paint the same dashed rail. Before, an absent understand
+  // band painted NOTHING and the word fell to a separate CSS rule; the two
+  // paths have been collapsed into this one.
+  it("paints dashed no-card rails on both sides when both bands are missing", () => {
+    for (const bands of [{}, { understand_band: null, produce_band: null }]) {
+      const props = railPropsFor(bands);
+      expect(props).toContain(`--rail-u-track: ${RAIL_TRACK_DASHED};`);
+      expect(props).toContain(`--rail-p-track: ${RAIL_TRACK_DASHED};`);
+      expect(props).toContain("--rail-u-fill: transparent;");
+      expect(props).toContain("--rail-p-fill: transparent;");
+    }
   });
 
-  it("paints an invisible produce rail when the produce band is absent", () => {
+  it("paints a dashed no-card produce rail when the produce band is absent", () => {
     const props = railPropsFor({ understand_band: "days" });
     expect(props).toContain("--rail-p-fill: transparent;");
     expect(props).toContain("--rail-p-pct: 0%;");
-    expect(props).toContain("--rail-p-track: linear-gradient(transparent, transparent);");
+    expect(props).toContain(`--rail-p-track: ${RAIL_TRACK_DASHED};`);
   });
 
   it("encodes a dashed track for a no-card (none) band", () => {
@@ -108,8 +118,8 @@ describe("railPropsFor", () => {
 
 describe("bandLabel", () => {
   it.each([
-    ["none", "No card"],
-    ["new", "Not started"],
+    ["none", "New"],
+    ["new", "New"],
     ["learning", "Learning"],
     ["days", "Days"],
     ["weeks", "Weeks"],
@@ -150,8 +160,8 @@ describe("holdsLabel", () => {
       ["solid" as MasteryBand, 36500, "Half a year + · marked known"],
       ["solid" as MasteryBand, null, "Half a year +"],
       ["learning" as MasteryBand, null, "Learning"],
-      ["new" as MasteryBand, null, "Not started"],
-      ["none" as MasteryBand, null, "No card"],
+      ["new" as MasteryBand, null, "New"],
+      ["none" as MasteryBand, null, "New"],
       ["suspended" as MasteryBand, null, "Suspended"],
     ] as const)("sideLabel(%s, %s) → %s", (band, stability, expected) => {
       expect(sideLabel(band, stability)).toBe(expected);
@@ -167,7 +177,7 @@ describe("holdsLabel", () => {
           produce_band: "none",
           produce_stability: null,
         }),
-      ).toEqual(["Understand: Months · holds ~3 months", "Produce: No card"]);
+      ).toEqual(["Understand: Months · holds ~3 months", "Produce: New"]);
     });
 
     it("two-line label with new produce band", () => {
@@ -178,7 +188,7 @@ describe("holdsLabel", () => {
           produce_band: "new",
           produce_stability: null,
         }),
-      ).toEqual(["Understand: Half a year + · holds ~7 months", "Produce: Not started"]);
+      ).toEqual(["Understand: Half a year + · holds ~7 months", "Produce: New"]);
     });
 
     it("two-line label with both directional stabilities", () => {
@@ -198,16 +208,29 @@ describe("holdsLabel", () => {
           understand_band: "learning",
           produce_band: undefined,
         }),
-      ).toEqual(["Understand: Learning", "Produce: No card"]);
+      ).toEqual(["Understand: Learning", "Produce: New"]);
     });
 
-    it("null understand_band returns null (untracked)", () => {
+    // An untracked word used to get NO sides at all, so the popover said
+    // "not tracked" and left the learner to guess which direction that meant.
+    // It now reads both sides, exactly like a word whose card exists but has
+    // never been studied — the rails carry the difference, the words do not.
+    it("an untracked word reads New on both sides", () => {
+      expect(masterySides({})).toEqual(["Understand: New", "Produce: New"]);
+      expect(masterySides({ understand_band: null, produce_band: null })).toEqual([
+        "Understand: New",
+        "Produce: New",
+      ]);
+    });
+
+    it("a missing understand band beside a real produce band still reads both", () => {
       expect(
         masterySides({
           understand_band: null,
           produce_band: "days",
+          produce_stability: 3,
         }),
-      ).toBeNull();
+      ).toEqual(["Understand: New", "Produce: Days · holds ~3 days"]);
     });
 
     it("prototype pollution returns null", () => {
@@ -215,6 +238,21 @@ describe("holdsLabel", () => {
       expect(masterySides({ understand_band: "months", produce_band: "__proto__" })).toBeNull();
     });
   });
+  describe("isUnstarted", () => {
+    // The predicate behind the reader's blue: "nothing has been learned on
+    // this side yet". Absent, "none" and "new" are one state to the learner.
+    it.each([[null], [undefined], ["none"], ["new"]] as const)("%s is unstarted", (band) => {
+      expect(isUnstarted(band)).toBe(true);
+    });
+
+    it.each([["learning"], ["days"], ["weeks"], ["months"], ["solid"], ["suspended"]] as const)(
+      "%s is not unstarted",
+      (band) => {
+        expect(isUnstarted(band)).toBe(false);
+      },
+    );
+  });
+
   it("rounds fractional day/week boundaries sensibly", () => {
     expect(holdsLabel(1.2)).toBe("holds ~1 day");
     expect(holdsLabel(5.7)).toBe("holds ~6 days");

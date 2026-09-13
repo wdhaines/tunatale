@@ -344,13 +344,24 @@
 		}).length,
 	);
 
-	// The gradeable set: every tracked (word/kp) row that is not deferred and
-	// not over budget, plus every create row the server will actually create.
-	// Tail and deferred rows are rendered separately inside their disclosures.
-	let liveCandidates = $derived([
-		...candidates.filter((c) => c.kind !== 'create' && !c.deferred_reason && c.will_create !== false),
-		...candidates.filter((c) => c.kind === 'create' && c.will_create !== false),
-	]);
+	// The gradeable set: every row that is not deferred and not over budget,
+	// IN THE SERVER'S OWN ORDER. Tail and deferred rows are rendered separately
+	// inside their disclosures.
+	//
+	// ⚠️ ONE filter, not two concatenated by `kind`. The previous version was
+	// `[...filter(kind !== 'create'), ...filter(kind === 'create')]`, which
+	// partitioned on "does a card row already exist" — and that is precisely
+	// what `get_listen_preview`'s docstring forbids ("Do not reorder or
+	// interleave"). The server ranks creations and NEW-state cards in ONE pool
+	// by corpus frequency (`_allocate_intro_pool`, F-2) and gives NEW-state rows
+	// `_GROUP_RANK -1` so they sort WITH the creations; the partition tore that
+	// pool in half and put every review row between the pieces. Measured on the
+	// real deck: six NEW-state cards at positions 0-5, 100 "ahead" rows, then
+	// four creates at 106-109, which the user read as "some new at the top and
+	// some at the bottom".
+	let liveCandidates = $derived(
+		candidates.filter((c) => !c.deferred_reason && c.will_create !== false),
+	);
 
 	// One collapsed group per deferred reason. They stay SEPARATE rather than
 	// merging into one "deferred" group: "known" means the flow has stopped
@@ -525,7 +536,11 @@
 					     longer the grid item. `listen-preview-layout.spec.ts` measures
 					     this cell's left edge against the header's to the pixel. -->
 					<span class="day-cell">
-						<Tooltip masteryLabel={c.kind === 'create' ? t('listenPreview.notTracked') : null} masterySides={c.kind === 'create' ? null : masterySidesFn(c)}>
+						<!-- A create row carries no bands, which `masterySides` reads as "no
+						     card on either side" — so it gets the same two lines as every
+						     other row instead of a bare "not tracked" that named no
+						     direction. Matches WordSpan's popover for the same word. -->
+						<Tooltip masterySides={masterySidesFn(c)}>
 							<span class="tag day paint-rails" class:overdue={isOverdue(c)} class:is-new={dueLabel(c) === 'new'} style={railPropsFor(c) ?? undefined}>
 								{dueLabel(c)}
 							</span>

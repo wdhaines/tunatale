@@ -185,8 +185,9 @@ function row(container: HTMLElement, text: string): HTMLElement {
 }
 
 /** The mastery lines inside the popover attached to this row's day tag.
- *  A create row's single "not tracked" label comes back as a one-element list;
- *  a tracked row's two-side label comes back as its two elements; absent → null.
+ *  Every row's two-side label comes back as its two elements; absent → null.
+ *  A one-element list means a `.tt-mastery` single label is being rendered —
+ *  which a create row no longer does, so it now signals a regression.
  *  Deliberately reached THROUGH `.tt-wrap` → `.tt` → `.tt-mastery` / `.tt-side`:
  *  those are Tooltip.svelte's own internals, so a hand-rolled second overlay
  *  carrying the same text would not satisfy this path. */
@@ -228,14 +229,12 @@ describe("F-4 — the day tag names its exact mastery on hover", () => {
 
   it("mirrors WordSpan's vocabulary for the rows that have no percentage", async () => {
     const { container } = await open();
-    // No card at all — the transcript's word for this is "not tracked".
-    expect(tagTooltipLines(container, "alle")).toEqual(["not tracked"]);
-    // A card that exists but has never been introduced — every direction reads
-    // "Not started", exactly as the reader's rails describe it.
-    expect(tagTooltipLines(container, "innover")).toEqual([
-      "Understand: Not started",
-      "Produce: Not started",
-    ]);
+    // No card at all, and a card that exists but was never introduced, read
+    // the SAME two lines. The row's rails carry the difference; the words do
+    // not, because "a row exists in the database" is not something the learner
+    // can act on.
+    expect(tagTooltipLines(container, "alle")).toEqual(["Understand: New", "Produce: New"]);
+    expect(tagTooltipLines(container, "innover")).toEqual(["Understand: New", "Produce: New"]);
   });
 
   it("shows the two-line sides — not a percentage — for a well-known row", async () => {
@@ -243,13 +242,13 @@ describe("F-4 — the day tag names its exact mastery on hover", () => {
     // 0.95 would render as "95%"; asserting both halves is what makes this a
     // carve-out test rather than a rounding test.
     const lines = tagTooltipLines(container, "takk");
-    expect(lines).toEqual(["Understand: Half a year + · holds ~1.1 years", "Produce: Not started"]);
+    expect(lines).toEqual(["Understand: Half a year + · holds ~1.1 years", "Produce: New"]);
     expect(lines!.join(" ")).not.toContain("%");
   });
 
   it("covers the over-budget tail rows too — they carry the same tag", async () => {
     const { container } = await open();
-    expect(tagTooltipLines(container, "smelte")).toEqual(["not tracked"]);
+    expect(tagTooltipLines(container, "smelte")).toEqual(["Understand: New", "Produce: New"]);
   });
 
   it("uses Tooltip.svelte's own popover, never a second overlay", async () => {
@@ -298,7 +297,7 @@ describe("F-4 — WordSpan and the preview describe the same card identically", 
     const wordSides = [...rendered.container.querySelectorAll(".tt-side")].map(
       (el) => el.textContent?.trim() ?? "",
     );
-    expect(wordSides).toEqual(["Understand: Months · holds ~3 months", "Produce: No card"]);
+    expect(wordSides).toEqual(["Understand: Months · holds ~3 months", "Produce: New"]);
     rendered.unmount();
 
     mockGetListenPreview.mockResolvedValue({

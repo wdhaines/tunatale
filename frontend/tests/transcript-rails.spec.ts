@@ -279,7 +279,7 @@ test("a no-card rail paints differently from an empty not-started track", async 
 	);
 });
 
-test("an untracked word paints two dashed rails in the app's link blue", async ({ page, request }) => {
+test("a word with no card paints two dashed rails in the app's link blue", async ({ page, request }) => {
 	test.skip(!(await backendAvailable(request)), "Backend not available");
 	const { curriculumId, lessonId } = await seed(request);
 
@@ -288,14 +288,29 @@ test("an untracked word paints two dashed rails in the app's link blue", async (
 	await expect(page.locator(".tt-wrap").first()).toBeVisible({ timeout: 15000 });
 
 	const r = await page.evaluate(() => {
-		// A standalone untracked word. One inside a multi-word phrase span is
-		// deliberately rail-less (Transcript passes hideRails; the phrase's own
-		// rails cover it) yet still carries .word-unknown — and whether the FIRST
-		// untracked word sits in a span depends on which phrase cards other specs
-		// left in the shared e2e DB. Taking the first match went red once in a
-		// full gate (0 dashed layers) and green in isolation.
-		const w = [...document.querySelectorAll(".transcript-wrapper .word.word-unknown")].find(
-			(el) => !el.closest(".collocation-span"),
+		// A standalone word with NO CARD on either side. Two filters, both
+		// load-bearing:
+		//  - not inside a phrase span: a word there is deliberately rail-less
+		//    (Transcript passes hideRails; the phrase's own rails cover it) yet
+		//    still carries .word-unstarted, and whether the FIRST such word sits
+		//    in a span depends on which phrase cards other specs left in the
+		//    shared e2e DB. Taking the first match went red once in a full gate
+		//    (0 dashed layers) and green in isolation.
+		//  - BOTH tracks dashed: .word-unstarted now ALSO covers a card that
+		//    exists but was never studied, whose track is solid. Filtering on
+		//    the understand track alone is NOT enough and went red on CI where
+		//    it was green locally: the first match there was a production-only
+		//    cloze (no recognition card → understand dashed, production card
+		//    present but unstudied → produce solid), which measures 1 dashed
+		//    layer. Which of these the shared e2e DB offers first is not
+		//    stable, so the selector must name the whole claim.
+		const dashed = (el: Element, prop: string) =>
+			(el as HTMLElement).style.getPropertyValue(prop).includes("repeating-linear-gradient");
+		const w = [...document.querySelectorAll(".transcript-wrapper .word.word-unstarted")].find(
+			(el) =>
+				!el.closest(".collocation-span") &&
+				dashed(el, "--rail-u-track") &&
+				dashed(el, "--rail-p-track"),
 		);
 		if (!w) return null;
 		const s = getComputedStyle(w);
@@ -314,7 +329,7 @@ test("an untracked word paints two dashed rails in the app's link blue", async (
 			primary,
 		};
 	});
-	expect(r, "the fixture has no untracked word to measure").not.toBeNull();
+	expect(r, "the fixture has no no-card word to measure").not.toBeNull();
 	expect(r!.dashedLayers).toBe(2);
 	expect(r!.paddingBottom).toBe("7px");
 	expect(r!.textDecoration).toBe("none");

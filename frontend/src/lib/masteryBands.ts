@@ -33,9 +33,6 @@ export const RAIL_TRACK_SOLID =
 export const RAIL_TRACK_DASHED =
   "repeating-linear-gradient(90deg, var(--color-muted, #6b7280) 0 3px, transparent 3px 6px)";
 
-/** Invisible track: a band that is absent (null) paints no rail at all. */
-const RAIL_TRACK_NONE = "linear-gradient(transparent, transparent)";
-
 export interface RailStyle {
   /** Fill colour, as a `var(--band-<band>)` reference; null when no fill. */
   fill: string | null;
@@ -43,6 +40,17 @@ export interface RailStyle {
   pct: string | null;
   /** Whether the rail is "no card": its track paints dashed in muted ink. */
   dashed: boolean;
+}
+
+/**
+ * A side nothing has been learned on yet. An ABSENT band, the band `"none"`
+ * (no card for this direction) and `"new"` (a card that has never been
+ * studied) are one state as far as the learner is concerned — whether a row
+ * exists in the database is not something they can act on. The reader's blue
+ * and the popover's wording both read this, so they cannot disagree.
+ */
+export function isUnstarted(band: string | null | undefined): boolean {
+  return band == null || band === "none" || band === "new";
 }
 
 /**
@@ -76,35 +84,42 @@ export function railStyle(band: string | null | undefined): RailStyle {
 
 /**
  * The two bands a word (or a collocation span) carries, turned into the inline
- * CSS custom properties the component `<style>` paint rule reads. `null` when
- * the word is untracked (no understood rail) — the caller then paints nothing.
- * A missing produce band paints an invisible track, going all the way down to
- * no produce rail.
+ * CSS custom properties the component `<style>` paint rule reads.
+ *
+ * An ABSENT band reads as `"none"` — no card on that side — so an untracked
+ * word paints two dashed rails through this one function. It used to return
+ * `null` there and leave untracked words to a second CSS rule
+ * (`.paint-untracked`) that hard-coded the same two dashes, plus a third
+ * "invisible track" case for an absent produce band that the API could not
+ * actually produce: a resolved item always sets BOTH bands to a
+ * `direction_band` string, and an unresolved one leaves both null.
  */
 export function railPropsFor(bands: {
   understand_band?: string | null;
   produce_band?: string | null;
-}): string | null {
-  if (bands.understand_band == null) return null;
-  const u = railStyle(bands.understand_band);
-  const p = railStyle(bands.produce_band ?? null);
-  const produceTrack =
-    bands.produce_band == null ? RAIL_TRACK_NONE : p.dashed ? RAIL_TRACK_DASHED : RAIL_TRACK_SOLID;
+}): string {
+  const u = railStyle(bands.understand_band ?? "none");
+  const p = railStyle(bands.produce_band ?? "none");
   return (
     `--rail-u-fill: ${u.fill ?? "transparent"}; ` +
     `--rail-u-pct: ${u.pct ?? "0%"}; ` +
     `--rail-u-track: ${u.dashed ? RAIL_TRACK_DASHED : RAIL_TRACK_SOLID}; ` +
     `--rail-p-fill: ${p.fill ?? "transparent"}; ` +
     `--rail-p-pct: ${p.pct ?? "0%"}; ` +
-    `--rail-p-track: ${produceTrack};`
+    `--rail-p-track: ${p.dashed ? RAIL_TRACK_DASHED : RAIL_TRACK_SOLID};`
   );
 }
 
-/** Human-readable label for a band, for the readaloud/help surfaces. */
+/** Human-readable label for a band, for the readaloud/help surfaces.
+ *
+ * `none` and `new` deliberately share ONE label. They differ only in whether a
+ * card row exists, which is invisible to the learner and not something they
+ * act on; the rails still tell them apart (dashed track vs empty solid track).
+ * Naming them differently — "No card" vs "Not started" — read as a meaningful
+ * distinction that the interface then never cashed out. */
 export function bandLabel(band: MasteryBand): string {
   switch (band) {
     case "none":
-      return t("masteryBands.bandNone");
     case "new":
       return t("masteryBands.bandNew");
     case "learning":
@@ -169,8 +184,10 @@ export function masterySides(bands: {
   understand_stability?: number | null;
   produce_stability?: number | null;
 }): readonly [string, string] | null {
-  const ub = bands.understand_band;
-  if (ub == null) return null;
+  // An absent band means "no card on this side", the same as `"none"`. A word
+  // with no card at all therefore reads both sides rather than the bare "not
+  // tracked" label it used to get, which named no direction at all.
+  const ub = bands.understand_band ?? "none";
   const pb = bands.produce_band ?? "none";
   if (!BAND_SET.has(ub) || !BAND_SET.has(pb)) return null;
   return [
