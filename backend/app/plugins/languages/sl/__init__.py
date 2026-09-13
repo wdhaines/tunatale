@@ -56,6 +56,17 @@ register(
                 "female": "sl-SI-PetraNeural",
                 "male": "sl-SI-RokNeural",
             },
+            # Per-voice loudness gains (dB) applied at assembly, target −20.0
+            # LUFS — derived from rag.4's final comment (Petra −17.6, Rok −18.8,
+            # Emma −18.1, Florian −19.4), one sentence set. Petra and Rok are
+            # themselves 1.2 LUFS apart; this closes that gap while preserving
+            # intra-voice dynamics.
+            tts_voice_gain_db={
+                "sl-SI-PetraNeural": -2.4,
+                "sl-SI-RokNeural": -1.2,
+                "en-US-EmmaMultilingualNeural": -1.9,
+                "de-DE-FlorianMultilingualNeural": -0.6,
+            },
         ),
         preprocessor_factory=SlovenePreprocessor,
         deck_name="1. Slovene",

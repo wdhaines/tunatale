@@ -20,7 +20,7 @@ from app.audio.ports import TTSService
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.slicer import ChunkSlicer, SliceSpec
 from app.audio.transcode import encode_audio
-from app.languages import PhonemePlanner
+from app.languages import PhonemePlanner, get_tts_voice_gain_db
 from app.models.lesson import Lesson, Phrase, Section
 
 logger = logging.getLogger(__name__)
@@ -88,6 +88,35 @@ def _concat(parts: list[_Audio]) -> _Audio:
 def _write_wav(path: Path, audio: _Audio) -> None:
     """Write *audio* to *path* as a 16-bit PCM WAV."""
     sf.write(str(path), audio.samples, audio.rate, subtype=_WAV_SUBTYPE)
+
+
+# 10 ** (-1.0 / 20) — the peak clamp ceiling in linear amplitude.
+# See _apply_voice_gain: a clip whose post-gain peak would exceed this
+# lands exactly on it; never above, never raised.
+_CEILING_LINEAR: float = 0.8912509381337456
+
+
+def _apply_voice_gain(audio: _Audio, gain_db: float) -> _Audio:
+    """Apply a constant dB gain with a peak clamp at −1.0 dBFS.
+
+    Returns *audio* unchanged (bit-identical, same object) when *gain_db* is
+    0.0 — the regression default for English/narrator and every unmeasured
+    voice.  For a non-zero gain, multiplies every sample by ``10 ** (gain_db/20)``
+    and then, if the result's own peak would exceed −1.0 dBFS, reduces THIS
+    clip's gain just enough to land exactly on the ceiling.  Never raises a
+    gain, never clips, never touches other clips.
+
+    The clamp is an outlier guard, not the normal path: measured on the real
+    corpus, 0 of 32 clips exceeded the ceiling after their table gains.
+    """
+    if gain_db == 0.0:
+        return audio
+    linear = np.float32(10 ** (gain_db / 20))
+    gained = audio.samples * linear
+    peak = float(np.max(np.abs(gained)))
+    if peak > _CEILING_LINEAR:
+        gained = gained * np.float32(_CEILING_LINEAR / peak)
+    return _Audio(gained, audio.rate)
 
 
 class LessonRenderer:
@@ -181,6 +210,14 @@ class LessonRenderer:
         current_frame = 0
         for i, phrase in enumerate(section.phrases):
             phrase_audio = _read_audio(phrase_files[i])
+            # Per-voice loudness gain, applied to the clip that goes into the
+            # mix only. The pace_audio read below stays ungained: it exists
+            # solely to decide the following pause, and gain is amplitude-only —
+            # touching it there would invite confusion for no benefit.
+            phrase_audio = _apply_voice_gain(
+                phrase_audio,
+                get_tts_voice_gain_db(phrase.language_code, phrase.voice_id),
+            )
             start_frame = current_frame
             end_frame = current_frame + len(phrase_audio.samples)
             section_cues.append((i, start_frame, end_frame))
@@ -459,6 +496,13 @@ class LessonRenderer:
             await self._tts.synthesize(lesson.title, lesson.narrator_voice, title_file, rate="+0%")
             logger.debug("TTS title → %.0f ms", (time.perf_counter() - t0) * 1000)
             title_audio = await asyncio.to_thread(_read_audio, title_file)
+            # Same per-voice gain as every phrase, keyed by the narrator voice.
+            # A no-op today (no table entry for the narrator) and correct when
+            # one is measured.
+            title_audio = _apply_voice_gain(
+                title_audio,
+                get_tts_voice_gain_db(lesson.language_code, lesson.narrator_voice),
+            )
 
             # Render all sections concurrently — phrases within each section are
             # also parallelised; the TTS adapter's _semaphore caps total concurrency.

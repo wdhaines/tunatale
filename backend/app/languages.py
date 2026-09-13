@@ -430,6 +430,25 @@ def get_tts_locale(code: str) -> str | None:
     return get_language(code).tts_locale
 
 
+def get_tts_voice_gain_db(code: str, voice_id: str) -> float:
+    """Return the constant dB gain applied to *voice_id* at assembly.
+
+    The per-voice loudness normalisation table pins each TTS voice to a target
+    level so two characters in one dialogue sit at the same loudness. Gains are
+    applied downstream of the TTS clip cache — never inside synthesis — because
+    the cache is content-addressed on ``(voice, rate, text, phonemes, locale)``.
+
+    Returns ``0.0`` for an unknown code, an unknown voice, or a language with
+    no table — this is the regression default for English/narrator voices,
+    which are unmeasured and must change nothing.
+    """
+    try:
+        language = get_language(code)
+    except KeyError:
+        return 0.0
+    return language.tts_voice_gain_db.get(voice_id, 0.0)
+
+
 def get_lemmatizer_type(code: str) -> str:
     """Return the morphological-engine name for *code* (``classla`` / ``stanza`` /
     ``lowercase``).

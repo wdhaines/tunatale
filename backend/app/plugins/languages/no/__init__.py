@@ -63,6 +63,18 @@ register(
                 "female": "nb-NO-PernilleNeural",
                 "male": "nb-NO-FinnNeural",
             },
+            # Per-voice loudness gains (dB) applied at assembly, target −20.0
+            # LUFS. Measured 2026-09-13 on the same 8 real lesson sentences
+            # through the product's own synthesize() (ffmpeg ebur128). The
+            # female pair's 1.8 LUFS spread is the whole motivation; Finn vs
+            # William measured 0.0. Constant per voice so intra-voice dynamics
+            # (Finn alone varies 2.4 LUFS) are preserved.
+            tts_voice_gain_db={
+                "nb-NO-PernilleNeural": 1.6,
+                "nb-NO-IselinNeural": -0.2,
+                "nb-NO-FinnNeural": 0.6,
+                "en-AU-WilliamMultilingualNeural": 0.6,
+            },
         ),
         preprocessor_factory=NorwegianPreprocessor,
         deck_name="0. 6000 Most Frequent Norwegian Words [Part 1]",
