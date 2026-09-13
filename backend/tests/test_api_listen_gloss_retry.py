@@ -68,7 +68,7 @@ class _FakeLLM:
     def calls_for(self, word: str) -> int:
         return sum(1 for p in self.prompts if word in self._head(p))
 
-    async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256):
+    async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256, call_site=""):
         self.prompts.append(prompt)
         word = self._word_of(prompt)
         if self._fail_first.get(word, 0) > 0:

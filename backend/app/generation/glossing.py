@@ -24,6 +24,7 @@ import json
 import logging
 import re
 
+from app.llm.call_sites import CallSite
 from app.models.language import Language
 
 logger = logging.getLogger(__name__)
@@ -258,6 +259,7 @@ async def generate_dialogue_glosses(lines: list[str], llm, language: Language) -
         system_prompt=_GLOSS_SYSTEM,
         temperature=0.1,
         max_tokens=gloss_max_tokens(lines),
+        call_site=CallSite.GLOSSING,
     )
     return parse_gloss_array(raw)
 

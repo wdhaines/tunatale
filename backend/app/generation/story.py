@@ -25,6 +25,7 @@ from app.generation.section_builder import (
     build_slow_translated_section,
     build_translated_section,
 )
+from app.llm.call_sites import CallSite
 from app.models.curriculum import CurriculumDay
 from app.models.language import NARRATOR_VOICE, Language
 from app.models.lesson import KeyPhraseInfo, Lesson
@@ -300,7 +301,11 @@ class StoryGenerator:
         failure: StoryGenerationError | None = None
         for attempt in range(2):
             raw = await self._llm.complete(
-                user_prompt, system_prompt=system_prompt, temperature=0.7, max_tokens=max_tokens
+                user_prompt,
+                system_prompt=system_prompt,
+                temperature=0.7,
+                max_tokens=max_tokens,
+                call_site=CallSite.STORY,
             )
             try:
                 data = self._parse_json(raw)

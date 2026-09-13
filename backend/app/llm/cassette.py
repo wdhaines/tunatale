@@ -91,16 +91,26 @@ class CassetteLLMClient:
         system_prompt: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 256,
+        *,
+        call_site: str = "",
     ) -> str:
         if self._mode == "mock":
             return self._replay(prompt, system_prompt)
         if self._mode == "patch":
             return await self._patch(
-                prompt, system_prompt=system_prompt, temperature=temperature, max_tokens=max_tokens
+                prompt,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                call_site=call_site,
             )
         assert self._real_client is not None, "real_client required for live/record mode"
         response = await self._real_client.complete(
-            prompt, system_prompt=system_prompt, temperature=temperature, max_tokens=max_tokens
+            prompt,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            call_site=call_site,
         )
         self.last_provider = self._real_client.last_provider
         self.last_finish_reason = getattr(self._real_client, "last_finish_reason", None)
@@ -174,8 +184,16 @@ class CassetteLLMClient:
         self.last_provider = entry.get("provider", "groq")
         return entry["response"]
 
-    async def _patch(self, prompt: str, **kwargs) -> str:
-        h = _hash_prompt(prompt, kwargs.get("system_prompt"))
+    async def _patch(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 256,
+        call_site: str = "",
+    ) -> str:
+        h = _hash_prompt(prompt, system_prompt)
         entries = self._playback_by_hash.get(h)
         if entries:
             idx = self._playback_used.get(h, 0)
@@ -186,12 +204,23 @@ class CassetteLLMClient:
                 return entry["response"]
 
         assert self._real_client is not None, "real_client required for patch mode"
-        response = await self._real_client.complete(prompt, **kwargs)
+        # ⚠️ call_site is forwarded EXPLICITLY, not through **kwargs. The old
+        # ``**kwargs`` splat could not prove the label: a caller could forward
+        # every keyword but call_site, and the ledger would silently file the
+        # spend under "-" — the exact hole bead 6zzu2 Stage 2 exists to close
+        # (check_llm_call_sites.py treats a splat as an unlabelled call).
+        response = await self._real_client.complete(
+            prompt,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            call_site=call_site,
+        )
         self.last_provider = self._real_client.last_provider
         new_entry = {
             "prompt_hash": h,
             "prompt_preview": prompt[:80].replace("\n", " "),
-            "max_tokens": kwargs.get("max_tokens", 256),
+            "max_tokens": max_tokens,
             "response": response,
             "provider": self.last_provider,
         }

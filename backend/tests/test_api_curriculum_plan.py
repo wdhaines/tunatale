@@ -811,7 +811,7 @@ class _FakeLLMForPlanner:
         self.calls: list[dict] = []
         self.response = response
 
-    async def complete(self, prompt, *, system_prompt=None, temperature=0.7, max_tokens=5500):
+    async def complete(self, prompt, *, system_prompt=None, temperature=0.7, max_tokens=5500, call_site=""):
         self.calls.append({"prompt": prompt, "system_prompt": system_prompt})
         return self.response
 

@@ -41,6 +41,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from app.llm.call_sites import CallSite
 from app.llm.client import LLMClient
 
 #: ``{{c1::han}}`` and ``{{c1::sem::biti, 1sg}}`` alike. A cloze hint never
@@ -178,6 +179,7 @@ _JUDGE_SYSTEM_PROMPT = (
 async def judge_cloze(
     client: LLMClient,
     *,
+    caller: str,
     sentence: str,
     surface: str,
     language: str,
@@ -189,6 +191,10 @@ async def judge_cloze(
     caller's registry-resolved ``card_surface_variants``. A front like
     ``mot, imot`` is ONE word wearing two spellings, so the second spelling
     turning up as a filler does not make the blank free.
+
+    *caller* is the route that asked (``CallSite.CALLER_PRESTAGE`` or
+    ``CallSite.CALLER_API``); it composes the ledger label so the ledger can
+    tell the background mint from interactive card-adding (bead 6zzu2).
 
     The answer is never sent to the model; see the module docstring.
     """
@@ -207,6 +213,7 @@ async def judge_cloze(
             system_prompt=_JUDGE_SYSTEM_PROMPT.format(language=language),
             temperature=0.0,
             max_tokens=_MAX_TOKENS,
+            call_site=CallSite.compose(caller, CallSite.CLOZE_JUDGE),
         )
     except Exception:
         return ClozeVerdict(status="unknown")
@@ -276,6 +283,7 @@ _TRANSLATE_SYSTEM_PROMPT = (
 async def translate_cloze_sentence(
     client: LLMClient,
     *,
+    caller: str,
     sentence: str,
     language: str,
 ) -> str:
@@ -286,6 +294,11 @@ async def translate_cloze_sentence(
     it for two things at once would re-open a prompt whose behaviour is settled
     in order to bolt on a second one. This costs an extra call on a pass that
     already makes two (generate, then judge) and runs off the critical path.
+
+    *caller* composes the ledger label exactly as :func:`judge_cloze` does;
+    only the prestage mints a sentence translation today, so
+    ``prestage.cloze_translate`` is the only reachable label (the API never
+    calls this helper).
 
     ``""`` rather than ``None``: an absent translation is a normal outcome and
     every reader treats empty as "say nothing". What callers must NOT do is
@@ -301,6 +314,7 @@ async def translate_cloze_sentence(
             system_prompt=_TRANSLATE_SYSTEM_PROMPT.format(language=language),
             temperature=0.3,
             max_tokens=_MAX_TOKENS,
+            call_site=CallSite.compose(caller, CallSite.CLOZE_TRANSLATE),
         )
     except Exception:
         return ""
@@ -311,6 +325,7 @@ async def translate_cloze_sentence(
 async def generate_cloze_sentence(
     client: LLMClient,
     *,
+    caller: str,
     word: str,
     gloss: str,
     pos: str,
@@ -322,6 +337,10 @@ async def generate_cloze_sentence(
     The reply must actually contain *word* on a word boundary — a sentence that
     does not cannot carry its cloze, and the boundary check is the same one that
     stops ``for`` matching ``fordi``.
+
+    *caller* composes the ledger label exactly as :func:`judge_cloze` does —
+    both callers reach this helper, so ``prestage.cloze_generate`` and
+    ``api.cloze_generate`` are both real ledger labels.
 
     The result is a CANDIDATE, not a verdict: callers judge it with
     :func:`judge_cloze` before using it. Generating and trusting would replace a
@@ -342,6 +361,7 @@ async def generate_cloze_sentence(
             system_prompt=_GENERATE_SYSTEM_PROMPT.format(language=language),
             temperature=0.7,
             max_tokens=_MAX_TOKENS,
+            call_site=CallSite.compose(caller, CallSite.CLOZE_GENERATE),
         )
     except Exception:
         return None

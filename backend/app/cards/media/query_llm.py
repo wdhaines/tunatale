@@ -27,6 +27,8 @@ import logging
 import re
 from typing import Protocol
 
+from app.llm.call_sites import CallSite
+
 logger = logging.getLogger(__name__)
 
 # Bump when the prompt or target model changes so the cache invalidates.
@@ -120,7 +122,13 @@ async def generate_image_query(
         # tokens before the short search-phrase content; a 32-token ceiling would be
         # fully consumed by reasoning and return empty. Instruct models still emit
         # only the few tokens the phrase needs.
-        raw = await llm.complete(prompt, system_prompt=IMAGE_QUERY_SYSTEM_PROMPT, temperature=0.0, max_tokens=256)
+        raw = await llm.complete(
+            prompt,
+            system_prompt=IMAGE_QUERY_SYSTEM_PROMPT,
+            temperature=0.0,
+            max_tokens=256,
+            call_site=CallSite.MEDIA_QUERY,
+        )
     except Exception as exc:  # noqa: BLE001 — never block card creation on the LLM
         logger.warning("image query generation failed for %r: %s", word, exc)
         return None

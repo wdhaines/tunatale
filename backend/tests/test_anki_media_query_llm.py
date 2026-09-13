@@ -19,7 +19,7 @@ class _FakeLLM:
         self.prompts: list[str] = []
         self.system_prompts: list[str | None] = []
 
-    async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256):
+    async def complete(self, prompt, system_prompt=None, temperature=0.7, max_tokens=256, call_site=""):
         self.prompts.append(prompt)
         self.system_prompts.append(system_prompt)
         if self._error is not None:

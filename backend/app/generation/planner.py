@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from app.generation.json_parsing import split_reply_and_json
 from app.generation.prompts import build_planner_system_prompt, build_planner_turn_prompt
+from app.llm.call_sites import CallSite
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.language import Language
 from app.storage.plan_io import get_planner_state, validate_plan_days
@@ -166,6 +167,7 @@ class CurriculumPlanner:
             system_prompt=system_prompt,
             temperature=0.7,
             max_tokens=5500,
+            call_site=CallSite.PLANNER,
         )
 
         return parse_turn(raw, curriculum=curriculum, batch_size=batch_size)

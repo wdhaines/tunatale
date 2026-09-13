@@ -69,6 +69,7 @@ from app.languages import (
     get_wordfreq_lang,
     known_language_codes,
 )
+from app.llm.call_sites import CallSite
 from app.llm.cloze_quality import ClozeVerdict, generate_cloze_sentence, judge_cloze
 from app.llm.translate import generate_word_gloss, translate_term
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
@@ -2312,7 +2313,12 @@ async def propose_cloze_sentence(item_id: int, request: Request):
 
     async def _verdict(sentence: str) -> ClozeVerdict:
         return await judge_cloze(
-            llm, sentence=sentence, surface=unit.text, language=language.name, also_accept=variants
+            llm,
+            caller=CallSite.CALLER_API,
+            sentence=sentence,
+            surface=unit.text,
+            language=language.name,
+            also_accept=variants,
         )
 
     stored = unit.source_sentence or ""
@@ -2336,7 +2342,12 @@ async def propose_cloze_sentence(item_id: int, request: Request):
     best: ClozeVerdict | None = None
     for _attempt in range(2):
         candidate = await generate_cloze_sentence(
-            llm, word=unit.text, gloss=unit.translation, pos=unit.grammar or "", language=language.name
+            llm,
+            caller=CallSite.CALLER_API,
+            word=unit.text,
+            gloss=unit.translation,
+            pos=unit.grammar or "",
+            language=language.name,
         )
         if candidate is None:
             continue
@@ -2470,7 +2481,13 @@ async def translate_missing(request: Request):
         batch = words[i : i + _TRANSLATE_BATCH_SIZE]
         try:
             prompt = _build_translate_prompt(batch, language.name)
-            raw = await llm.complete(prompt, system_prompt=_TRANSLATE_SYSTEM, temperature=0.1, max_tokens=2048)
+            raw = await llm.complete(
+                prompt,
+                system_prompt=_TRANSLATE_SYSTEM,
+                temperature=0.1,
+                max_tokens=2048,
+                call_site=CallSite.SRS_TRANSLATE,
+            )
             raw = re.sub(r"^```(?:json)?\s*\n?", "", raw.strip())
             raw = re.sub(r"\n?```\s*$", "", raw)
             glosses = json.loads(raw.strip())

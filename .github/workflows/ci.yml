@@ -186,6 +186,9 @@ jobs:
       - name: Main styling check
         run: uv run python scripts/check_main_styling.py
 
+      - name: LLM call sites check
+        run: uv run python scripts/check_llm_call_sites.py
+
       - name: Test
         run: uv run pytest -n auto
 

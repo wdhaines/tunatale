@@ -6,8 +6,10 @@ counts its own spend. One line per request: the legacy two-field form
 ``<unix_ts> <total_tokens> <prompt_tokens> <completion_tokens>
 <reasoning_tokens> <call_site>``. Field 1 stays ``total_tokens`` forever, so
 old and new lines are read by identical code; a two-field line means "total
-known, split unknown". File-backed so the tally survives uvicorn --reload
-restarts. Single-process append-only use — no locking needed.
+known, split unknown". ``call_site`` is a ``-`` when the caller passed none —
+Stage 2 labels it per route; ``check_llm_call_sites.py`` gates that no product
+call site is ever left unlabelled. File-backed so the tally survives uvicorn
+--reload restarts. Single-process append-only use — no locking needed.
 
 The bucket is CONTINUOUS, not a rolling-24h sum and not a calendar day.
 Measured against the live API 2026-08-13 (``openai/gpt-oss-120b``, free plan),
@@ -24,6 +26,7 @@ count), never truncates to zero early.
 from __future__ import annotations
 
 import math
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,23 +70,26 @@ class UsageSplit:
 @dataclass(frozen=True)
 class _Entry:
     """One ledger line. ``prompt/completion/reasoning`` are ``None`` for a
-    legacy two-field line — "total known, split unknown" — never 0."""
+    legacy two-field line — "total known, split unknown" — never 0. ``call_site``
+    is ``-`` when the caller passed none (Stage 1 wrote that literal)."""
 
     ts: float
     total: int
     prompt: int | None = None
     completion: int | None = None
     reasoning: int | None = None
+    call_site: str = "-"
 
 
 def _format_line(entry: _Entry) -> str:
     """Serialize one entry: 6 fields when the split is fully known, else 2.
 
     A partial split is treated as unknown (all-or-nothing) — never written as
-    0 or a ``None`` literal that read as a number.
+    0 or a ``None`` literal that read as a number. The label rides along when
+    the split does; a legacy two-field line has no room for it either way.
     """
     if entry.prompt is not None and entry.completion is not None and entry.reasoning is not None:
-        return f"{entry.ts} {entry.total} {entry.prompt} {entry.completion} {entry.reasoning} -\n"
+        return f"{entry.ts} {entry.total} {entry.prompt} {entry.completion} {entry.reasoning} {entry.call_site}\n"
     return f"{entry.ts} {entry.total}\n"
 
 
@@ -104,12 +110,14 @@ class UsageLedger:
             except IndexError, ValueError:
                 continue
             prompt = completion = reasoning = None
+            call_site = "-"
             if len(parts) >= 6:
                 try:  # noqa: SIM105
                     prompt, completion, reasoning = int(parts[2]), int(parts[3]), int(parts[4])
+                    call_site = parts[5]
                 except ValueError, IndexError:
                     pass  # unparseable split → unknown (None); the total still counts
-            entries.append(_Entry(ts, tokens, prompt, completion, reasoning))
+            entries.append(_Entry(ts, tokens, prompt, completion, reasoning, call_site))
         # A hand-edited or interleaved file must not drain backwards: the drain
         # below walks the log in chronological order.
         return sorted(entries, key=lambda e: e.ts)
@@ -121,10 +129,16 @@ class UsageLedger:
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
         reasoning_tokens: int | None = None,
+        call_site: str = "",
         now: float | None = None,
     ) -> None:
         ts = time.time() if now is None else now
-        entry = _Entry(ts, total_tokens, prompt_tokens, completion_tokens, reasoning_tokens)
+        # ⚠️ The ledger line is whitespace-split, so no label may corrupt the
+        # field count (Oracle 5). Each whitespace run becomes `_`, and an
+        # empty/absent label is written as `-` (the Stage 1 placeholder). The
+        # line is never dropped: a mangled label degrades to a dash, not a gap.
+        label = re.sub(r"\s+", "_", call_site.strip()) or "-"
+        entry = _Entry(ts, total_tokens, prompt_tokens, completion_tokens, reasoning_tokens, label)
         self._entries.append(entry)
         if len(self._entries) > self._max_entries:
             self._entries = sorted((e for e in self._entries if e.ts >= ts - DAY_S), key=lambda e: e.ts)

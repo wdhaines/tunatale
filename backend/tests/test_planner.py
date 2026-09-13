@@ -22,6 +22,7 @@ class StubLLM:
         system_prompt: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 256,
+        call_site: str = "",
     ) -> str:
         self.prompt_seen = prompt
         return self.response

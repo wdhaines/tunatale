@@ -24,6 +24,7 @@ import logging
 
 from app.generation.glossing import parse_gloss_array
 from app.languages import get_language, resolve_db_path
+from app.llm.call_sites import CallSite
 from app.models.language import Language
 from app.models.lesson import Lesson, SectionType
 from app.srs.lemmatizer import Lemmatizer, get_lemmatizer, lemmatize_surfaces_in_context
@@ -96,7 +97,9 @@ async def regloss_lesson(
     if not lines:
         return None
     prompt = build_regloss_prompt(lines, language.name)
-    raw = await llm.complete(prompt, system_prompt=_REGLOSS_SYSTEM, temperature=0.1, max_tokens=2048)
+    raw = await llm.complete(
+        prompt, system_prompt=_REGLOSS_SYSTEM, temperature=0.1, max_tokens=2048, call_site=CallSite.REGLOSS
+    )
     surface_lemma = _surface_lemma_map(lines, lemmatizer, language.code)
     token_glosses: dict[str, str] = {}
     for g in parse_gloss_array(raw):
