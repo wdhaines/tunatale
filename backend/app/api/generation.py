@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from functools import partial
 from typing import Literal
@@ -21,24 +20,25 @@ from app.api.models import (
     LessonSourceResponse,
 )
 from app.generation.glossing import ensure_dialogue_glosses
-from app.generation.ids import mint_id
 from app.generation.json_parsing import parse_json_object
-from app.generation.story import NoReviewVocabularyError, StoryGenerationError, build_story_prompts
+from app.generation.publishing import CurriculumDayTarget, publish_lesson
+from app.generation.story import (
+    NoReviewVocabularyError,
+    StoryGenerationError,
+    build_lesson_from_story,
+    build_story_prompts,
+)
 from app.llm.client import LLMError, LLMQuotaExceededError
 from app.models.language import Language
 from app.models.lesson import Lesson, SectionType
 from app.models.strategy import ContentStrategy
 from app.srs.database import SRSDatabase
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for
-from app.storage.lesson_io import export_lesson, import_lesson, speaker_warnings, sync_curriculum_day_title
+from app.storage.lesson_io import export_lesson, speaker_warnings, validate_story
 
 _logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/story", tags=["generation"])
-
-# Strong refs to fire-and-forget pre-warm tasks: the event loop only keeps a
-# weak reference, so an un-anchored task can be garbage-collected mid-flight.
-_background_tasks: set[asyncio.Task] = set()
 
 
 def _logged_speaker_warnings(story: dict | None, language: Language) -> list[str]:
@@ -272,18 +272,6 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
         # sticky-failed) instead — this hardens the sync endpoint's other callers.
         raise HTTPException(status_code=502, detail=str(e)) from e
 
-    lesson_id = mint_id(lesson.title)
-
-    # Tag BEFORE saving. A detached task races the write: the tags land on an
-    # in-memory Lesson nobody persists again, so the stored lesson is untagged
-    # and every ambiguous word falls back to plain synthesis for the life of
-    # that lesson. Observed in production on 2026-08-26 — a freshly generated
-    # lesson had 0 of 47 chunks tagged, and re-running the same annotation over
-    # the stored copy tagged all 47. This is the pipeline's ordering
-    # (LessonPipeline._generate); the two paths must not disagree.
-    #
-    # Cost is bounded and paid on a request that already waits on an LLM story:
-    # 1.85s cold, 34ms once the sentence analyses are cached.
     # request.state, NOT request.app.state (bd tunatale-pf4i). main.py:181 binds
     # app.state.srs_db to the DEFAULT language once at startup; main.py:310 resolves
     # request.state.srs_db per request from X-TT-Language. `store` and `language` in
@@ -291,23 +279,22 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
     # annotated and prewarmed the WRONG language's deck on any non-default-language
     # request, silently, because both are text-keyed caches.
     srs_db = getattr(request.state, "srs_db", None)
-    if srs_db is not None:
-        await annotate_chunk_upos_for_lesson(lesson, srs_db, **_injected_lemmatizer(request))
 
-    store.save_lesson(lesson_id, body.curriculum_id, body.day, lesson)
-    sync_curriculum_day_title(store, body.curriculum_id, body.day, lesson.title)
-
-    # Pre-warming may stay detached: it only fills a cache, and nothing on the
-    # lesson depends on it having finished.
-    if srs_db is not None:
-        task = asyncio.create_task(_prewarm_lesson(lesson, srs_db))
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
-
-    # Enqueue a render job for this day
-    pipeline = getattr(request.app.state, "pipeline", None)
-    if pipeline is not None:
-        pipeline.enqueue(request.state.language_code, body.curriculum_id, body.day, "render")
+    # UPOS (awaited, pre-write), write, prewarm and render scheduling all live in
+    # publish_lesson; its module docstring explains why the ordering is load-bearing.
+    lesson_id = await publish_lesson(
+        lesson,
+        target=CurriculumDayTarget(
+            store=store,
+            language_code=request.state.language_code,
+            curriculum_id=body.curriculum_id,
+            day=body.day,
+            pipeline=getattr(request.app.state, "pipeline", None),
+        ),
+        srs_db=srs_db,
+        lemmatizer_kwargs=_injected_lemmatizer(request),
+        replace=False,
+    )
 
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
     return {
@@ -345,33 +332,36 @@ async def import_story(body: ImportLessonRequest, request: Request):
     await ensure_dialogue_glosses(story, getattr(request.app.state, "llm", None), language)
 
     try:
-        lesson_id, lesson = import_lesson(
-            store,
-            {"curriculum_id": body.curriculum_id, "day": body.day, "story": story},
-            language,
-        )
+        # Validate and rebuild BEFORE writing — the same derivation import_lesson
+        # used, minus its write. publish_lesson runs UPOS before its single
+        # write, so the old write-then-rewrite (import_lesson wrote, then a
+        # second write persisted the tags) is gone.
+        validate_story(story)
+        curriculum = store.get_curriculum(body.curriculum_id)
+        review_words = curriculum.review_request(body.day) if curriculum is not None else ()
+        lesson = build_lesson_from_story(story, language=language, review_words=review_words)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
-    # import_lesson already wrote the lesson, so the tags need a second write
-    # rather than an earlier one. Awaited and persisted for the same reason as
-    # /generate above: a detached task tags a copy that is never stored.
-    # request.state, NOT request.app.state (bd tunatale-pf4i). main.py:181 binds
-    # app.state.srs_db to the DEFAULT language once at startup; main.py:310 resolves
-    # request.state.srs_db per request from X-TT-Language. `store` and `language` in
-    # this same handler already read request.state — reading app.state here
-    # annotated and prewarmed the WRONG language's deck on any non-default-language
-    # request, silently, because both are text-keyed caches.
+    # request.state, NOT request.app.state (bd tunatale-pf4i): main.py:310
+    # resolves request.state.srs_db per request from X-TT-Language; reading
+    # app.state here annotated and prewarmed the WRONG language's deck on any
+    # non-default-language request.
     srs_db = getattr(request.state, "srs_db", None)
-    if srs_db is not None:
-        if await annotate_chunk_upos_for_lesson(lesson, srs_db, **_injected_lemmatizer(request)):
-            store.update_lesson_data(lesson_id, lesson)
-        asyncio.create_task(_prewarm_lesson(lesson, srs_db))
 
-    # Enqueue a render job for this day
-    pipeline = getattr(request.app.state, "pipeline", None)
-    if pipeline is not None:
-        pipeline.enqueue(request.state.language_code, body.curriculum_id, body.day, "render")
+    lesson_id = await publish_lesson(
+        lesson,
+        target=CurriculumDayTarget(
+            store=store,
+            language_code=request.state.language_code,
+            curriculum_id=body.curriculum_id,
+            day=body.day,
+            pipeline=getattr(request.app.state, "pipeline", None),
+        ),
+        srs_db=srs_db,
+        lemmatizer_kwargs=_injected_lemmatizer(request),
+        replace=False,
+    )
 
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
     return {
