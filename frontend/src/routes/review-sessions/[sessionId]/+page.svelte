@@ -46,6 +46,8 @@
 	let regenerating = $state(false);
 	let reglossing = $state(false);
 	let showRegenHelp = $state(false);
+	let confirmingDeleteSession = $state(false);
+	let deletingSession = $state(false);
 
 	// The render outlives this page: navigating away aborts the fetch but not the
 	// server-side work, so on return the page polls the server until the render
@@ -309,6 +311,43 @@
 		transcriptLoading = false;
 	}
 
+	// Two-click confirm (same pattern as the lesson page's delete-day): first
+	// click arms it, second click deletes. Deleting a session removes its row
+	// and its generated audio and LEAVES the SRS review history intact — the
+	// reviews really happened, their grades already propagated into FSRS state
+	// and out to Anki.
+	async function handleDeleteSession() {
+		confirmingDeleteSession = false;
+		deletingSession = true;
+		error = '';
+		try {
+			// ⚠️ Clear the render poll BEFORE deleting/navigating. A status read
+			// after the session is gone answers 404 (the poll's own gave-up case,
+			// but serving it deliberately is the point — a poll firing against a
+			// deleted id is the obvious way to ship a console error). onDestroy
+			// clears it too on unmount, but the timer must not be live in the
+			// window between the delete reply and the navigation.
+			if (pollTimer) clearTimeout(pollTimer);
+			await api.deleteReviewSession(data.session.id);
+			goto('/review-sessions');
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+			deletingSession = false;
+		}
+	}
+
+	function handleDeleteSessionClick() {
+		if (confirmingDeleteSession) {
+			handleDeleteSession();
+		} else {
+			confirmingDeleteSession = true;
+		}
+	}
+
+	function handleDeleteSessionBlur() {
+		confirmingDeleteSession = false;
+	}
+
 	async function prepareAudio() {
 		preparing = true;
 		renderError = '';
@@ -457,6 +496,19 @@
 			importRaw={async (raw) => api.importReviewSession(data.session.id, raw)}
 			onImported={handlePasteImported}
 		/>
+		<hr />
+		<div class="delete-session-row">
+			<button
+				type="button"
+				class="delete-session-btn"
+				class:confirming={confirmingDeleteSession}
+				onclick={handleDeleteSessionClick}
+				onblur={handleDeleteSessionBlur}
+				disabled={deletingSession}
+			>
+				{confirmingDeleteSession ? t('reviewSessionPage.confirmDelete') : t('reviewSessionPage.deleteSession')}
+			</button>
+		</div>
 	</details>
 </main>
 
@@ -622,5 +674,29 @@
 		margin: 0.5rem 0 0;
 		font-size: 0.85rem;
 		color: var(--color-muted);
+	}
+	.delete-session-row {
+		display: flex;
+		justify-content: flex-end;
+		margin-top: 0.75rem;
+	}
+	.delete-session-btn {
+		margin-top: 0;
+		padding: 0.5rem 1.1rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-pill);
+		background: var(--color-surface);
+		color: var(--color-text);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.delete-session-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.delete-session-btn.confirming {
+		border-color: var(--color-danger);
+		color: var(--color-danger);
 	}
 </style>

@@ -61,11 +61,16 @@ register(
             # Emma −18.1, Florian −19.4), one sentence set. Petra and Rok are
             # themselves 1.2 LUFS apart; this closes that gap while preserving
             # intra-voice dynamics.
+            # en-US-GuyNeural is the shared narrator; the gain is resolved per
+            # language (get_tts_voice_gain_db takes a code), so the same measured
+            # value has to appear in every plugin table. Measured 2026-09-13 at
+            # -19.08 LUFS mean. See the no plugin for the full reasoning.
             tts_voice_gain_db={
                 "sl-SI-PetraNeural": -2.4,
                 "sl-SI-RokNeural": -1.2,
                 "en-US-EmmaMultilingualNeural": -1.9,
                 "de-DE-FlorianMultilingualNeural": -0.6,
+                "en-US-GuyNeural": -0.9,
             },
         ),
         preprocessor_factory=SlovenePreprocessor,

@@ -91,6 +91,24 @@ class TestApplyVoiceGain:
         result = _apply_voice_gain(audio, 1.6)
         assert result.rate == 24000
 
+    def test_empty_clip_does_not_raise(self):
+        """A zero-length clip survives a NON-ZERO gain.
+
+        Regression: the peak clamp called ``np.max`` on the scaled samples, and
+        over a zero-size array that raises ``ValueError: zero-size array to
+        reduction operation maximum`` rather than returning. It stayed latent
+        because every caller hit the ``gain_db == 0.0`` early return — the
+        narrator, the one voice whose clip can be zero-length when synthesis
+        yields nothing, had no table entry. Giving it a measured -0.9 dB made
+        the path live and `test_upos_plumbing` failed with a 0 ms title clip.
+
+        Must exercise a non-zero gain: at 0.0 the early return makes it vacuous.
+        """
+        audio = _Audio(np.zeros((0, 1), dtype="float32"), rate=24000)
+        result = _apply_voice_gain(audio, -0.9)
+        assert result.samples.size == 0
+        assert result.rate == 24000
+
 
 # ---------------------------------------------------------------------------
 # Registry accessor: get_tts_voice_gain_db
@@ -113,6 +131,12 @@ class TestGetVoiceGainDb:
             ("sl", "sl-SI-RokNeural", -1.2),
             ("sl", "en-US-EmmaMultilingualNeural", -1.9),
             ("sl", "de-DE-FlorianMultilingualNeural", -0.6),
+            # The shared narrator, measured 2026-09-13 on real ENGLISH narrator
+            # prose at -19.08 LUFS mean. Resolved per language, so the same value
+            # must be present in BOTH plugin tables — that is what these two rows
+            # defend; dropping either silently returns 0.0 for that language.
+            ("no", "en-US-GuyNeural", -0.9),
+            ("sl", "en-US-GuyNeural", -0.9),
         ],
     )
     def test_measured_gain_for_each_voice(self, code, voice_id, expected):
@@ -121,9 +145,17 @@ class TestGetVoiceGainDb:
     def test_unknown_voice_returns_zero(self):
         assert get_tts_voice_gain_db("no", "some-unknown-voice") == 0.0
 
-    def test_english_narrator_returns_zero(self):
-        """English / narrator: unmeasured, must default to 0.0."""
+    def test_english_narrator_returns_zero_for_the_en_stub(self):
+        """The narrator gain is deliberately NOT wired into the ``en`` config.
+
+        en-US-AriaNeural and en-US-GuyNeural measured +0.5 / -0.9 dB, but ``en``
+        is a stub registration with no plugin — no preprocessor, no syllabifier,
+        no lessons — so a gain there would be dead config. This asserts the
+        omission is deliberate, not an oversight: ``no`` and ``sl`` carry -0.9
+        (above) while ``en`` stays 0.0.
+        """
         assert get_tts_voice_gain_db("en", "en-US-GuyNeural") == 0.0
+        assert get_tts_voice_gain_db("en", "en-US-AriaNeural") == 0.0
 
     def test_unknown_language_returns_zero(self):
         assert get_tts_voice_gain_db("zz", "some-voice") == 0.0

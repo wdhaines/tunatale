@@ -879,7 +879,22 @@ export interface paths {
     get: operations["get_review_session_api_review_sessions__session_id__get"];
     put?: never;
     post?: never;
-    delete?: never;
+    /**
+     * Delete Review Session
+     * @description Delete one session: its row and its audio, NOT its SRS review history.
+     *
+     *     User-decided 2026-09-13: the reviews really happened, their grades already
+     *     propagated into FSRS state and out to Anki, and unwinding ``lesson_reviews``
+     *     would diverge TT from Anki for no benefit. So this touches only
+     *     ``review_sessions`` (via ``store.delete_review_session``) and the files the
+     *     store returns — the same rows-here-files-by-the-caller split
+     *     :func:`app.api.curriculum.delete_day` uses, and an already-missing file is
+     *     the outcome we want, not a 500.
+     *
+     *     No planner-state or chat-event bookkeeping: a session has no curriculum day
+     *     for those to hang off.
+     */
+    delete: operations["delete_review_session_api_review_sessions__session_id__delete"];
     options?: never;
     head?: never;
     patch?: never;
@@ -2280,6 +2295,19 @@ export interface components {
       days: number;
       /** Deleted Day */
       deleted_day: number;
+    };
+    /**
+     * DeleteReviewSessionResponse
+     * @description Response of DELETE /api/review-sessions/{session_id}.
+     *
+     *     The id that was deleted and how many of its audio files the caller removed
+     *     from disk — rows here, files by the caller, the same split delete_day uses.
+     */
+    DeleteReviewSessionResponse: {
+      /** Deleted */
+      deleted: string;
+      /** Files Removed */
+      files_removed: number;
     };
     /**
      * DirectionStateResponse
@@ -5233,6 +5261,37 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ReviewSessionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  delete_review_session_api_review_sessions__session_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DeleteReviewSessionResponse"];
         };
       };
       /** @description Validation Error */

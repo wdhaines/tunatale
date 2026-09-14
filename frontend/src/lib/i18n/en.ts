@@ -531,6 +531,10 @@ export const en = {
   "reviewSessions.rewriteHelpTail":
     ", so the words it drills may differ from last time. Existing cards stay; any audio already rendered is discarded and can be prepared again.",
 
+  // review-sessions/[sessionId]/+page.svelte delete (tunatale-ncdm)
+  "reviewSessionPage.deleteSession": "Delete session",
+  "reviewSessionPage.confirmDelete": "Confirm delete",
+
   // c/[curriculumId]/plan/+page.svelte
   "plan.daysCommittedSoFar": "{count} days committed so far.",
   "plan.pressureNatural": "Theme first",

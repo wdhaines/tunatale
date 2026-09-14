@@ -104,6 +104,90 @@ class TestTheList:
         assert item["review_used"] is None
 
 
+# ── deleting one ────────────────────────────────────────────────────────────
+#
+# tunatale-ncdm, user-decided 2026-09-13: deleting a session removes the
+# `review_sessions` row and its audio, and LEAVES the SRS review history
+# intact — the reviews really happened, their grades already propagated into
+# FSRS and out to Anki. `test_it_leaves_the_srs_review_history_untouched` is
+# the assertion that pins that decision; the rest pin the mechanics.
+
+
+class TestDeletingOne:
+    async def _delete(self, session_id: str):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            return await client.delete(f"/api/review-sessions/{session_id}")
+
+    async def test_it_removes_the_session_its_audio_and_reports(self, stored, tmp_path, monkeypatch):
+        audio_dir = tmp_path / "audio"
+        monkeypatch.setattr("app.config.settings.audio_dir", audio_dir)
+        (audio_dir).mkdir(parents=True)
+        audio_file = audio_dir / "sess-1.mp3"
+        audio_file.write_bytes(b"audio")
+        stored.save_review_session("sess-1", "sl", "2026-09-02", _lesson())
+        stored.save_audio_file(
+            "audio-1", "sess-1", "/media/sl/sess-1/sess-1.mp3", section_index=0, section_type="natural_speed"
+        )
+
+        resp = await self._delete("sess-1")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"deleted": "sess-1", "files_removed": 1}
+        assert stored.get_review_session("sess-1") is None
+        assert stored.list_audio_files_for_lesson("sess-1") == []
+        assert not audio_file.exists(), "deleted session left its audio file on disk"
+
+    async def test_deleting_an_unknown_session_is_404(self, stored):
+        resp = await self._delete("nope")
+
+        assert resp.status_code == 404
+
+    async def test_it_leaves_the_srs_review_history_untouched(self, stored):
+        """The decision that pins this whole feature.
+
+        The reviews really happened — their grades already propagated into FSRS
+        state and out to Anki — so deleting the session must not unwind them.
+        Counts are read BEFORE and AFTER the delete in the same test, never
+        hardcoded: the guard is "unchanged", not "still the number I seeded".
+        """
+        from app.srs.database import SRSDatabase
+
+        db = SRSDatabase(":memory:")
+        app.state.srs_db = db
+        stored.save_review_session("sess-1", "sl", "2026-09-02", _lesson())
+        db.record_review("sess-1")  # the same call mark_lesson_reviewed makes
+
+        with db._get_conn() as conn:
+            reviews_before = conn.execute("SELECT COUNT(*) FROM lesson_reviews").fetchone()[0]
+            revlog_before = conn.execute("SELECT COUNT(*) FROM tt_revlog").fetchone()[0]
+
+        resp = await self._delete("sess-1")
+
+        assert resp.status_code == 200
+        assert stored.get_review_session("sess-1") is None
+        with db._get_conn() as conn:
+            reviews_after = conn.execute("SELECT COUNT(*) FROM lesson_reviews").fetchone()[0]
+            revlog_after = conn.execute("SELECT COUNT(*) FROM tt_revlog").fetchone()[0]
+        assert reviews_after == reviews_before
+        assert revlog_after == revlog_before
+
+    async def test_a_row_whose_file_is_already_missing_still_deletes_cleanly(self, stored, tmp_path, monkeypatch):
+        """missing_ok is the contract: a file already gone is the outcome we
+        want, not a 500."""
+        audio_dir = tmp_path / "audio"
+        monkeypatch.setattr("app.config.settings.audio_dir", audio_dir)
+        stored.save_review_session("sess-1", "sl", "2026-09-02", _lesson())
+        stored.save_audio_file(
+            "audio-1", "sess-1", "/media/sl/sess-1/never_written.mp3", section_index=0, section_type="natural_speed"
+        )
+
+        resp = await self._delete("sess-1")
+
+        assert resp.status_code == 200
+        assert resp.json()["files_removed"] == 1
+        assert stored.get_review_session("sess-1") is None
+
+
 # ── reading one ──────────────────────────────────────────────────────────────
 
 

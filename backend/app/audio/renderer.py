@@ -113,9 +113,15 @@ def _apply_voice_gain(audio: _Audio, gain_db: float) -> _Audio:
         return audio
     linear = np.float32(10 ** (gain_db / 20))
     gained = audio.samples * linear
-    peak = float(np.max(np.abs(gained)))
-    if peak > _CEILING_LINEAR:
-        gained = gained * np.float32(_CEILING_LINEAR / peak)
+    # An EMPTY clip has no peak: np.max over a zero-size array raises
+    # ValueError rather than returning anything. Scaling it is still well
+    # defined (it stays empty), so only the clamp needs the guard. Latent until
+    # the narrator got a measured gain — every caller reached the 0.0 early
+    # return above, so a zero-length synthesis never touched this line.
+    if gained.size:
+        peak = float(np.max(np.abs(gained)))
+        if peak > _CEILING_LINEAR:
+            gained = gained * np.float32(_CEILING_LINEAR / peak)
     return _Audio(gained, audio.rate)
 
 

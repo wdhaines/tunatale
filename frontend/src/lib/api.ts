@@ -15,6 +15,7 @@ export type ClozeSentenceVerdict = components["schemas"]["ClozeSentenceVerdict"]
 export type ProposeClozeResponse = components["schemas"]["ProposeClozeResponse"];
 export type SetClozeSentenceResponse = components["schemas"]["SetClozeSentenceResponse"];
 export type CreateReviewSessionResponse = components["schemas"]["CreateReviewSessionResponse"];
+export type DeleteReviewSessionResponse = components["schemas"]["DeleteReviewSessionResponse"];
 
 // SSR fetches go straight to the backend (the browser uses the Vite proxy via
 // relative URLs). Protocol and port must mirror the proxy target in
@@ -903,6 +904,10 @@ export class TunaTaleAPI {
     return this.request(`/api/curriculum/${id}/days/${day}`, {
       method: "DELETE",
     });
+  }
+
+  async deleteReviewSession(sessionId: string): Promise<DeleteReviewSessionResponse> {
+    return this.request(`/api/review-sessions/${sessionId}`, { method: "DELETE" });
   }
 
   async setGenerationMode(id: string, mode: "auto" | "manual"): Promise<{ mode: string }> {
