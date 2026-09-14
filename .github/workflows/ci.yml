@@ -192,6 +192,9 @@ jobs:
       - name: Media filename case check
         run: uv run python scripts/check_media_filename_case.py
 
+      - name: Content surface parity check
+        run: uv run python scripts/check_content_surface_parity.py
+
       - name: Test
         run: uv run pytest -n auto
 

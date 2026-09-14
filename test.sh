@@ -162,6 +162,8 @@ log_step() {
 
   log_step backend "Media filename case check" uv run python scripts/check_media_filename_case.py
 
+  log_step backend "Content surface parity check" uv run python scripts/check_content_surface_parity.py
+
   # pytest-cov combines per-worker coverage, so the 100% gate still applies to
   # the full run at any -n.
   #

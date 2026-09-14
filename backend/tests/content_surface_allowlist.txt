@@ -1,0 +1,12 @@
+# Content-surface verb-map allowlist — one entry per ABSENT cell (§9b).
+#
+# Shrink-only: an entry must be REMOVED when its cell is filled in. An entry
+# that no longer matches an absent cell is a failing stale line, not debt.
+#
+# DELIBERATE asymmetries — design, not debt:
+prompt-draft lesson  # DELIBERATE: a lesson always has a curriculum day to hang off, so there is no id-less draft prompt to export.
+read-by-position session  # DELIBERATE: a session has no position in a sequence; that is the whole premise of the surface.
+#
+# OPEN GAPS — real asymmetry, tracked as work. Do not reword into sounding deliberate:
+source-export session  # OPEN GAP — bd tunatale-w1fp.4.
+regloss lesson  # OPEN GAP — bd tunatale-w1fp.5.
