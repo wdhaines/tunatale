@@ -18,6 +18,20 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
+import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// This file lives at src/routes/review-sessions/[sessionId]/, so the routes
+// root is two directories up. Resolved from import.meta.url rather than
+// process.cwd() so the check does not depend on where vitest was invoked.
+const ROUTES_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/** Whether *target* (a static SvelteKit path like "/" or "/cards") has a page. */
+function routeExists(target: string): boolean {
+  const rel = target === "/" ? "" : target.replace(/^\//, "");
+  return existsSync(join(ROUTES_DIR, rel, "+page.svelte"));
+}
 
 const mockGoto = vi.fn();
 const mockInvalidateAll = vi.fn();
@@ -944,8 +958,44 @@ describe("deleting the session", () => {
 
     await vi.waitFor(() => {
       expect(api.deleteReviewSession).toHaveBeenCalledWith("sess-1");
-      expect(mockGoto).toHaveBeenCalledWith("/review-sessions");
+      expect(mockGoto).toHaveBeenCalledWith("/");
     });
+  });
+
+  it("navigates somewhere that actually EXISTS after deleting", async () => {
+    // The regression guard for the real defect. The literal assertion above
+    // cannot tell "/" from "/review-sessions" — both are strings, and the test
+    // that shipped the bug asserted a dead one under the name "navigates to the
+    // list". /review-sessions has no +page.svelte: sessions are listed on the
+    // home page (routes/+page.svelte links them as /review-sessions/{id}), so
+    // deleting one dropped the user on a 404.
+    //
+    // This asserts the PROPERTY instead: whatever the delete path navigates to
+    // must be a route this app actually serves. It stays true if the
+    // destination is deliberately changed, and goes red for any target that
+    // does not exist.
+    vi.mocked(api.deleteReviewSession).mockResolvedValue({
+      deleted: "sess-1",
+      files_removed: 1,
+    } as never);
+    const { getByText } = render(Page, { props: { data: data() } });
+    await fireEvent.click(getByText("Delete session"));
+    await fireEvent.click(getByText("Confirm delete"));
+
+    await vi.waitFor(() => expect(mockGoto).toHaveBeenCalled());
+    const target = mockGoto.mock.calls[0][0] as string;
+    expect(routeExists(target), `delete navigates to ${target}, which has no +page.svelte`).toBe(
+      true,
+    );
+  });
+
+  it("routeExists is not vacuous", () => {
+    // Control for the guard above: a check that answers true for everything
+    // would pass on the dead route too, which is exactly how the bug survived.
+    expect(routeExists("/")).toBe(true);
+    expect(routeExists("/cards")).toBe(true);
+    expect(routeExists("/review-sessions")).toBe(false);
+    expect(routeExists("/definitely-not-a-route")).toBe(false);
   });
 
   it("resets the confirm state on blur without deleting", async () => {
@@ -992,7 +1042,7 @@ describe("deleting the session", () => {
       await fireEvent.click(getByText("Delete session"));
       await fireEvent.click(getByText("Confirm delete"));
       await vi.advanceTimersByTimeAsync(0);
-      expect(mockGoto).toHaveBeenCalledWith("/review-sessions");
+      expect(mockGoto).toHaveBeenCalledWith("/");
 
       // A live poll would re-read the status every 2s; the delete path cleared it.
       await vi.advanceTimersByTimeAsync(2000 * 3);

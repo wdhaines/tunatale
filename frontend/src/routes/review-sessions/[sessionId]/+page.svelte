@@ -329,7 +329,12 @@
 			// window between the delete reply and the navigation.
 			if (pollTimer) clearTimeout(pollTimer);
 			await api.deleteReviewSession(data.session.id);
-			goto('/review-sessions');
+			// The home page, which is where sessions are LISTED (it links each as
+			// /review-sessions/{id}). There is no /review-sessions index route, and
+			// navigating there dropped the user on a 404 after a successful delete.
+			// Same shape as the lesson page's delete-day, which returns to the
+			// curriculum page that listed the day.
+			goto('/');
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			deletingSession = false;
