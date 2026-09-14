@@ -584,6 +584,25 @@
         "title": "DeleteDayResponse",
         "type": "object"
       },
+      "DeleteReviewSessionResponse": {
+        "description": "Response of DELETE /api/review-sessions/{session_id}.\n\nThe id that was deleted and how many of its audio files the caller removed\nfrom disk \u2014 rows here, files by the caller, the same split delete_day uses.",
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "string"
+          },
+          "files_removed": {
+            "title": "Files Removed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted",
+          "files_removed"
+        ],
+        "title": "DeleteReviewSessionResponse",
+        "type": "object"
+      },
       "DirectionStateResponse": {
         "description": "One direction of an SRS item; serves the 8 ``_item_to_dict`` endpoints.\n\n``left`` is omitted when None (``srs.py::_direction_to_dict``), so it must\nride on ``response_model_exclude_unset`` \u2014 never a plain ``response_model``.",
         "properties": {
@@ -6317,6 +6336,47 @@
       }
     },
     "/api/review-sessions/{session_id}": {
+      "delete": {
+        "description": "Delete one session: its row and its audio, NOT its SRS review history.\n\nUser-decided 2026-09-13: the reviews really happened, their grades already\npropagated into FSRS state and out to Anki, and unwinding ``lesson_reviews``\nwould diverge TT from Anki for no benefit. So this touches only\n``review_sessions`` (via ``store.delete_review_session``) and the files the\nstore returns \u2014 the same rows-here-files-by-the-caller split\n:func:`app.api.curriculum.delete_day` uses, and an already-missing file is\nthe outcome we want, not a 500.\n\nNo planner-state or chat-event bookkeeping: a session has no curriculum day\nfor those to hang off.",
+        "operationId": "delete_review_session_api_review_sessions__session_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteReviewSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Review Session",
+        "tags": [
+          "review-sessions"
+        ]
+      },
       "get": {
         "description": "One session's body, shaped like a lesson minus the field it has no right to.\n\n``serialize_lesson`` omits ``day`` when it is not passed, so the reading\nfrontend reuses its lesson renderer unchanged and a session still cannot\nclaim a position in a sequence it is not part of.",
         "operationId": "get_review_session_api_review_sessions__session_id__get",

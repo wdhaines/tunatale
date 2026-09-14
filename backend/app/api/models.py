@@ -1321,6 +1321,17 @@ class ReviewSessionRenderStatusResponse(BaseModel):
     rendering: bool
 
 
+class DeleteReviewSessionResponse(BaseModel):
+    """Response of DELETE /api/review-sessions/{session_id}.
+
+    The id that was deleted and how many of its audio files the caller removed
+    from disk — rows here, files by the caller, the same split delete_day uses.
+    """
+
+    deleted: str
+    files_removed: int
+
+
 class LessonSourceResponse(BaseModel):
     """Response of GET /api/story/{lesson_id}/source (``lesson_io.export_lesson``).
 

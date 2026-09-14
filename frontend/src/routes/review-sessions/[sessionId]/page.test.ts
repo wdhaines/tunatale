@@ -55,6 +55,7 @@ vi.mock("$lib/api", () => ({
     audioZipUrl: vi.fn((id: string) => `/audio/lesson/${id}/zip`),
     regenerateReviewSession: vi.fn(),
     reglossReviewSession: vi.fn(),
+    deleteReviewSession: vi.fn(),
     createReviewSession: vi.fn(),
     getReviewSessionPrompt: vi.fn(),
     importReviewSession: vi.fn(),
@@ -907,6 +908,98 @@ describe("the reader", () => {
         });
       });
     });
+  });
+});
+
+describe("deleting the session", () => {
+  // tunatale-ncdm, user-decided 2026-09-13: deleting a session removes its row
+  // and its generated audio, and leaves the SRS review history intact — the
+  // reviews really happened. The button follows the lesson page's two-click
+  // confirm pattern for the same reason: a mis-click must not be one click
+  // from destroying a session.
+
+  const data = () => ({ session: sessionBody(), audio: null });
+
+  it("renders a Delete session button in Session tools", () => {
+    const { getByText } = render(Page, { props: { data: data() } });
+    expect(getByText("Delete session")).toBeTruthy();
+  });
+
+  it("requires a second click to confirm before deleting", async () => {
+    const { getByText } = render(Page, { props: { data: data() } });
+    const btn = getByText("Delete session");
+    await fireEvent.click(btn);
+    expect(getByText("Confirm delete")).toBeTruthy();
+    expect(api.deleteReviewSession).not.toHaveBeenCalled();
+  });
+
+  it("deletes the session and navigates to the list on the second click", async () => {
+    vi.mocked(api.deleteReviewSession).mockResolvedValue({
+      deleted: "sess-1",
+      files_removed: 1,
+    } as never);
+    const { getByText } = render(Page, { props: { data: data() } });
+    await fireEvent.click(getByText("Delete session"));
+    await fireEvent.click(getByText("Confirm delete"));
+
+    await vi.waitFor(() => {
+      expect(api.deleteReviewSession).toHaveBeenCalledWith("sess-1");
+      expect(mockGoto).toHaveBeenCalledWith("/review-sessions");
+    });
+  });
+
+  it("resets the confirm state on blur without deleting", async () => {
+    const { getByText } = render(Page, { props: { data: data() } });
+    const btn = getByText("Delete session");
+    await fireEvent.click(btn);
+    expect(getByText("Confirm delete")).toBeTruthy();
+
+    await fireEvent.blur(getByText("Confirm delete"));
+    expect(getByText("Delete session")).toBeTruthy();
+    expect(api.deleteReviewSession).not.toHaveBeenCalled();
+  });
+
+  it("shows an error and does not navigate when deletion fails", async () => {
+    vi.mocked(api.deleteReviewSession).mockRejectedValue(new Error("delete failed"));
+    const { getByText, findByText } = render(Page, { props: { data: data() } });
+    await fireEvent.click(getByText("Delete session"));
+    await fireEvent.click(getByText("Confirm delete"));
+
+    expect(await findByText("delete failed")).toBeTruthy();
+    expect(mockGoto).not.toHaveBeenCalled();
+  });
+
+  it("stops the render poll before navigating", async () => {
+    // A status read against a deleted id is the obvious way to ship a console
+    // error. The delete path must cancel the pending timer itself, not wait for
+    // onDestroy: the poll answers "rendering" forever here, so a still-armed
+    // timer would keep re-reading the status every RENDER_POLL_MS.
+    vi.useFakeTimers();
+    try {
+      vi.mocked(api.deleteReviewSession).mockResolvedValue({
+        deleted: "sess-1",
+        files_removed: 0,
+      } as never);
+      mockRenderStatus
+        .mockResolvedValueOnce({ rendering: true })
+        .mockResolvedValue({ rendering: true });
+      const { getByText } = render(Page, { props: { data: data() } });
+
+      // The mount read sees "rendering" and arms the poll.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockRenderStatus).toHaveBeenCalledTimes(1);
+
+      await fireEvent.click(getByText("Delete session"));
+      await fireEvent.click(getByText("Confirm delete"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockGoto).toHaveBeenCalledWith("/review-sessions");
+
+      // A live poll would re-read the status every 2s; the delete path cleared it.
+      await vi.advanceTimersByTimeAsync(2000 * 3);
+      expect(mockRenderStatus).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

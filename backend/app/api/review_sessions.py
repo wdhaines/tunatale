@@ -45,6 +45,7 @@ from app.api.models import (
     CreateReviewSessionFromPasteRequest,
     CreateReviewSessionRequest,
     CreateReviewSessionResponse,
+    DeleteReviewSessionResponse,
     GetReviewSessionDraftPromptResponse,
     GetStoryPromptResponse,
     ImportReviewSessionRequest,
@@ -652,3 +653,28 @@ async def regloss_review_session(session_id: str, request: Request):
         "gloss_entry_count": metadata.get("gloss_entry_count", 0),
         "warnings": warnings,
     }
+
+
+@router.delete("/{session_id}", status_code=200, response_model=DeleteReviewSessionResponse)
+async def delete_review_session(session_id: str, request: Request):
+    """Delete one session: its row and its audio, NOT its SRS review history.
+
+    User-decided 2026-09-13: the reviews really happened, their grades already
+    propagated into FSRS state and out to Anki, and unwinding ``lesson_reviews``
+    would diverge TT from Anki for no benefit. So this touches only
+    ``review_sessions`` (via ``store.delete_review_session``) and the files the
+    store returns — the same rows-here-files-by-the-caller split
+    :func:`app.api.curriculum.delete_day` uses, and an already-missing file is
+    the outcome we want, not a 500.
+
+    No planner-state or chat-event bookkeeping: a session has no curriculum day
+    for those to hang off.
+    """
+    store = request.state.content_store
+    if store.get_review_session_row(session_id) is None:
+        raise HTTPException(status_code=404, detail="Review session not found")
+
+    paths = store.delete_review_session(session_id)
+    for file_path in paths:
+        Path(file_path).unlink(missing_ok=True)
+    return {"deleted": session_id, "files_removed": len(paths)}
