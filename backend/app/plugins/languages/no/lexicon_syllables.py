@@ -354,15 +354,45 @@ def lexicon_reading(word: str, db_path: Path | None = None) -> tuple[list[str], 
         return None
 
     # Align every candidate; adopt only the split all readings agree on.
+    #
+    # tunatale-gcut: a reading that cannot be aligned AT ALL is SKIPPED, not
+    # fatal. REFUSE_NO_PATH means no rule maps the spelling onto those phones,
+    # so that reading never reached the cut and holds no opinion about where
+    # the boundaries fall — dropping it cannot contradict the readings that did
+    # align. Norwegian "time" has the noun /ˈtiː.mə/ (aligns ti|me) beside the
+    # English loan /ˈtɑɪ.mə/ (no rule maps i -> /ɑɪ/); the old loop threw the
+    # noun's good split away with the loan's, phoneme_plan refused on gate 1,
+    # and Azure read the bare letters "me" as /meː/.
+    #
+    # Every OTHER refusal stays fatal, deliberately. A guard refusal
+    # (REFUSE_SILENT_AT_CUT, REFUSE_CUT_IN_GRAPHEME, REFUSE_EMPTY) means the
+    # reading reached the cut and the guard rejected the RESULT — that IS an
+    # opinion about the boundaries, and skipping it would override it silently.
+    # Measured: skipping those too buys 5 more words and gets 3 wrong, all via
+    # the retroflex merge (borden -> bo|rden, transporter -> tran|spo|rter),
+    # because 'rd' is one phone and the surviving reading's boundary strands the
+    # written r into the next onset. Pinned by
+    # test_lexicon_syllables.py::TestGuardRefusalStillDiscardsTheWord.
+    #
+    # This does not loosen tunatale-xk1p: over the whole 50006-word wordlist,
+    # 26 words gain a split, 0 lose one, 0 change an existing split, and 0
+    # change a chosen transcription — report_segmentation_disputes.py is
+    # byte-identical to baseline.
     pairs: list[tuple[str, list[str]]] = []
     for transcription in candidates:
         pieces, reason = orthographic_syllables(word, transcription)
         if pieces is None:
+            if reason == REFUSE_NO_PATH:
+                continue
             return None
         pairs.append((transcription, pieces))
 
-    # `pairs` cannot be empty: `candidates` is non-empty above and the loop
-    # either returns or appends for each one.
+    # Unlike the guard refusals above, skipping can empty `pairs` outright —
+    # 1110 words in the wordlist have no alignable reading at all ("shake",
+    # both of whose readings are English). No adoptable split is still None.
+    if not pairs:
+        return None
+
     first = pairs[0][1]
     if all(split == first for _transcription, split in pairs[1:]):
         # Every reading agrees on the split; none was chosen.

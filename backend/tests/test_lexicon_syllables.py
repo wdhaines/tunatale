@@ -511,3 +511,100 @@ class TestLexiconReading:
         assert lexicon_reading("mata", db) == (["ma", "ta"], None)
         # lexicon_syllable_split still returns the decided split (LOST must be 0).
         assert lexicon_syllable_split("mata", db) == ["ma", "ta"]
+
+
+class TestUnalignableReadingIsSkipped:
+    """tunatale-gcut: one homograph reading that cannot be aligned AT ALL must
+    not discard the split the other readings agree on.
+
+    'time' carries two NST readings — the Norwegian noun /ˈtiː.mə/ and the
+    English loan /ˈtɑɪ.mə/. No rule maps the letter ``i`` to /ɑɪ/, so the loan
+    reading refuses with REFUSE_NO_PATH; the old all-must-align loop threw the
+    noun's perfectly good ti|me away with it. phoneme_plan then refused on gate
+    1 and Azure was handed the bare letters 'me', which it read as Norwegian
+    /meː/ — 0.455s against 0.286s for the same fragment with the schwa attached.
+
+    The fix is a DISTINCTION, not a loosening: a reading that cannot be aligned
+    carries no opinion about where the boundaries fall, so dropping it cannot
+    contradict the surviving readings. A reading refused by one of the alignment
+    GUARDS (silent-letter, cut-inside-grapheme, empty syllable) is a different
+    animal — it reached the cut and the guard rejected the result — so those
+    still refuse the whole word. TestGuardRefusalStillDiscardsTheWord pins that
+    half, and it is the half that separates this change from the looser variant.
+
+    Measured over the whole 50006-word wordlist: 26 words gain a split, 0 lose
+    one, 0 change an existing split, 0 change a chosen transcription. The five
+    report_segmentation_disputes.py tallies are byte-identical to baseline
+    (single_part 3783 / compared 199 / fully_agree 93 / only_infl_disputed 60 /
+    stem_disputed 46), so tunatale-xk1p's tightening is untouched.
+    """
+
+    def test_time_adopts_the_noun_split_despite_the_english_reading(self) -> None:
+        """time -> (['ti','me'], None) — the bug's motivating subject.
+
+        The surviving readings AGREE on the split, so the transcription half
+        stays None and the phoneme gate keeps its right to refuse on sound.
+        """
+        assert lexicon_reading("time") == (["ti", "me"], None)
+
+    def test_live_adopts_the_norwegian_split(self) -> None:
+        """A second live subject, so one lexicon edit cannot empty this class.
+
+        live: /ˈliː.və/ aligns li|ve, the English /lɑɪv/ refuses REFUSE_NO_PATH.
+        """
+        assert lexicon_reading("live") == (["li", "ve"], None)
+
+    def test_no_path_is_the_reason_the_loan_reading_refuses(self) -> None:
+        """The discriminator itself, asserted directly rather than inferred.
+
+        If the aligner ever starts refusing /ˈtɑɪ.mə/ for some OTHER reason,
+        the two tests above would go red with no hint why. This names the reason
+        the skip is keyed on.
+        """
+        pieces, reason = orthographic_syllables("time", '""tA*I$m@')
+        assert pieces is None
+        assert reason == REFUSE_NO_PATH
+
+    def test_every_reading_unalignable_still_refuses(self) -> None:
+        """shake -> None: both readings refuse REFUSE_NO_PATH, so nothing survives.
+
+        Skipping unalignable readings must not turn an empty candidate set into
+        an adopted split. 1110 words in the 50006-word list take this path.
+        """
+        assert lexicon_reading("shake") is None
+
+
+class TestGuardRefusalStillDiscardsTheWord:
+    """tunatale-gcut, the half that was NOT loosened — and the reason why.
+
+    Skipping EVERY failed alignment (rather than only the no-path ones) buys 5
+    more words and gets 3 of them wrong. All five refuse for
+    REFUSE_SILENT_AT_CUT, the guard that catches Norwegian's retroflex merge:
+    'rd' is one phone /ɖ/, so the surviving reading's boundary strands the
+    orthographic ``r`` into the next syllable's onset.
+
+        borden       -> bo|rden       (bor|den)
+        gardens      -> ga|rdens      (gar|dens)
+        transporter  -> tran|spo|rter (trans|por|ter)
+
+    A guard refusal means the reading DID reach the cut and the result was
+    rejected; that is an opinion about the boundaries, and dropping it silently
+    overrides it. These tests are the discriminator: they are green before the
+    change and green after it, and they go RED if anyone widens the skip.
+    """
+
+    def test_borden_still_refuses(self) -> None:
+        """borden: the /ɖ/ reading would cut bo|rden, stranding the r."""
+        assert lexicon_reading("borden") is None
+
+    def test_transporter_still_refuses(self) -> None:
+        """A second live subject: tran|spo|rter, which also splits 'trans'."""
+        assert lexicon_reading("transporter") is None
+
+    def test_silent_at_cut_is_the_reason_those_readings_refuse(self) -> None:
+        """Names the reason the skip must NOT be keyed on, for the same reason
+        test_no_path_is_the_reason_the_loan_reading_refuses names the one it is.
+        """
+        pieces, reason = orthographic_syllables("borden", '"bu:$n`=')
+        assert pieces is None
+        assert reason == REFUSE_SILENT_AT_CUT
