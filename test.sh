@@ -160,6 +160,8 @@ log_step() {
 
   log_step backend "LLM call sites check" uv run python scripts/check_llm_call_sites.py
 
+  log_step backend "Media filename case check" uv run python scripts/check_media_filename_case.py
+
   # pytest-cov combines per-worker coverage, so the 100% gate still applies to
   # the full run at any -n.
   #

@@ -189,6 +189,9 @@ jobs:
       - name: LLM call sites check
         run: uv run python scripts/check_llm_call_sites.py
 
+      - name: Media filename case check
+        run: uv run python scripts/check_media_filename_case.py
+
       - name: Test
         run: uv run pytest -n auto
 
