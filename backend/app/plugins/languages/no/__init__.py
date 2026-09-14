@@ -69,11 +69,19 @@ register(
             # female pair's 1.8 LUFS spread is the whole motivation; Finn vs
             # William measured 0.0. Constant per voice so intra-voice dynamics
             # (Finn alone varies 2.4 LUFS) are preserved.
+            # The narrator (en-US-GuyNeural) measured 2026-09-13 on 8 real ENGLISH
+            # narrator sentences from the stored corpus — English text, or the
+            # number means nothing: mean -19.08 LUFS, so it ran 0.9 dB LOUDER
+            # than the L2 voices above. Narrator is the largest single share of a
+            # lesson (1925 phrases across the 10 stored no lessons), so that gap
+            # is the rag.5 defect one level up: every lesson alternated between
+            # two levels. Its own 1.6 LUFS spread is intra-voice dynamics, kept.
             tts_voice_gain_db={
                 "nb-NO-PernilleNeural": 1.6,
                 "nb-NO-IselinNeural": -0.2,
                 "nb-NO-FinnNeural": 0.6,
                 "en-AU-WilliamMultilingualNeural": 0.6,
+                "en-US-GuyNeural": -0.9,
             },
         ),
         preprocessor_factory=NorwegianPreprocessor,
