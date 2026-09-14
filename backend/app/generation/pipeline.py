@@ -9,11 +9,10 @@ import time
 from collections.abc import Callable
 
 from app.audio.render_service import render_lesson_audio
-from app.generation.ids import mint_id
+from app.generation.publishing import CurriculumDayTarget, publish_lesson
 from app.generation.story import StoryGenerationError
 from app.llm.activity import ActivityLog
 from app.llm.client import LLMError
-from app.storage.lesson_io import sync_curriculum_day_title
 from app.storage.store import ContentStore
 
 logger = logging.getLogger(__name__)
@@ -347,28 +346,28 @@ class LessonPipeline:
                 self._activity_log.record_pipeline(curriculum_id, day, "failed", msg)
                 return
 
-            lesson_id = mint_id(lesson.title)
-            # Tag BEFORE saving: the tags live on the lesson, so a detached
-            # task would race the write and be thrown away.
-            srs_db_for_upos = self._srs_dbs.get(language_code)
-            if srs_db_for_upos is not None:
-                from app.api.generation import annotate_chunk_upos_for_lesson
-
-                upos_kwargs: dict[str, object] = {}
-                if self._lemmatizer is not None:
-                    upos_kwargs["lemmatizer"] = self._lemmatizer
-                    upos_kwargs["model_version"] = self._model_version
-                await annotate_chunk_upos_for_lesson(lesson, srs_db_for_upos, **upos_kwargs)
-            store.save_lesson(lesson_id, curriculum_id, day, lesson)
-            sync_curriculum_day_title(store, curriculum_id, day, lesson.title)
-            record["lesson_id"] = lesson_id
-
-            # Pre-warm the analysis cache and annotate chunks with POS tags
+            # Tag BEFORE saving, write, prewarm and render scheduling all live in
+            # publish_lesson; its module docstring explains why the ordering is
+            # load-bearing.
             srs_db = self._srs_dbs.get(language_code)
-            if srs_db is not None:
-                from app.api.generation import _prewarm_lesson
-
-                asyncio.create_task(_prewarm_lesson(lesson, srs_db))
+            upos_kwargs: dict[str, object] = {}
+            if self._lemmatizer is not None:
+                upos_kwargs["lemmatizer"] = self._lemmatizer
+                upos_kwargs["model_version"] = self._model_version
+            lesson_id = await publish_lesson(
+                lesson,
+                target=CurriculumDayTarget(
+                    store=store,
+                    language_code=language_code,
+                    curriculum_id=curriculum_id,
+                    day=day,
+                    pipeline=self,
+                ),
+                srs_db=srs_db,
+                lemmatizer_kwargs=upos_kwargs,
+                replace=False,
+            )
+            record["lesson_id"] = lesson_id
 
             # Transition to render step
             await self._render(record, store, language_code, curriculum_id, day)

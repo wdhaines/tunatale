@@ -17,11 +17,26 @@ no status-by-day, and no retry-by-day. ``LessonPipeline`` is keyed
 session has nothing to walk. Rendering instead calls ``render_lesson_audio``
 directly, which already takes no curriculum and no day (measured on
 tunatale-uv55), so the audio pipeline is reused verbatim rather than widened.
+
+⚠️ THAT BYPASS ONCE COST MORE THAN THIS DOCSTRING SAID, and how it went wrong is
+the reusable part (bd tunatale-w1fp, 2026-09-14). The paragraph above used to
+end by stating the cost as "no 429 wait-and-retry and no sticky-failed + Retry".
+The real cost was that NONE of the four write routes here scheduled a render at
+all: creating a session produced no audio, and regenerating one deleted the
+audio it had. The bound was written down, believed, and wrong — prose can only
+describe a bound, never hold it.
+
+What holds it now is ``app.generation.publishing.publish_lesson``: every writer
+on both content surfaces shares one ordering (UPOS → write → invalidate →
+prewarm → render), and ``backend/tests/test_parity_content_surface.py`` drives
+every route on both routers and fails if a new one omits a step. The residual
+difference is genuinely narrow and lives in one method —
+``ReviewSessionTarget.schedule_render`` has no 429 backoff and no sticky-failed
+state — and it can be closed there without touching a single handler.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import date
 from pathlib import Path
@@ -31,16 +46,10 @@ from fastapi import APIRouter, HTTPException, Request
 from app.api._serializers import serialize_lesson
 
 # Reached across modules rather than duplicated. These are the shared post-generation
-# steps — UPOS tagging BEFORE the write, gloss pre-warm after, speaker warnings
-# mirrored to the log — and a second copy here would drift from the lesson path
-# exactly where the two must agree. No import cycle: generation.py knows nothing
-# about review sessions.
-from app.api.generation import (
-    _injected_lemmatizer,
-    _logged_speaker_warnings,
-    _prewarm_lesson,
-    annotate_chunk_upos_for_lesson,
-)
+# steps — speaker warnings mirrored to the log — and a second copy here would drift
+# from the lesson path exactly where the two must agree. No import cycle: generation.py
+# knows nothing about review sessions.
+from app.api.generation import _injected_lemmatizer, _logged_speaker_warnings
 from app.api.models import (
     CreateReviewSessionFromPasteRequest,
     CreateReviewSessionRequest,
@@ -59,6 +68,7 @@ from app.audio.render_service import render_lesson_audio
 from app.generation.glossing import ensure_dialogue_glosses
 from app.generation.ids import mint_id
 from app.generation.json_parsing import parse_json_object
+from app.generation.publishing import ReviewSessionTarget, publish_lesson
 from app.generation.story import (
     NoReviewVocabularyError,
     StoryGenerationError,
@@ -71,10 +81,6 @@ from app.storage.lesson_io import validate_story
 _logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/review-sessions", tags=["review-sessions"])
-
-# Strong refs to fire-and-forget pre-warm tasks: the event loop only keeps a weak
-# reference, so an un-anchored task can be garbage-collected mid-flight.
-_background_tasks: set[asyncio.Task] = set()
 
 _FALLBACK_CEFR_LEVEL = "A2"
 
@@ -126,14 +132,21 @@ def _latest_cefr_level(store) -> str:
     return store.get_curriculum(rows[0]["id"]).cefr_level
 
 
-async def _generate_and_store(request: Request, *, session_id: str | None, session_date: str | None) -> dict:
+async def _generate_and_store(
+    request: Request,
+    *,
+    session_id: str | None,
+    session_date: str | None,
+    replace: bool,
+) -> dict:
     """Generate one session and write it, minting id and date only when asked.
 
-    Shared by create and regenerate, which differ in EXACTLY two things: whether
-    the id and date are minted or supplied, and the status code. Everything else
-    — the four-way error mapping, the UPOS pass before the write, the gloss
-    pre-warm after it — has to be identical, and a second copy would drift
-    precisely where the two must agree.
+    Shared by create and regenerate, which differ in EXACTLY three things:
+    whether the id and date are minted or supplied, the status code, and whether
+    the session replaces existing content (regenerate drops the audio of the
+    dialogue it replaces). Everything else — the four-way error mapping, the
+    UPOS pass before the write, the gloss pre-warm after it — has to be
+    identical, and a second copy would drift precisely where the two must agree.
 
     ⚠️ The generation happens BEFORE anything is written, and that ordering is
     load-bearing for regenerate: a refusal (nothing due, a 429, an upstream
@@ -161,29 +174,31 @@ async def _generate_and_store(request: Request, *, session_id: str | None, sessi
     except LLMError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
 
-    # No `if srs_db is not None` guard, and that is not an oversight: reaching this
-    # line proves it is not None. A session with no SRS database selects no words,
-    # and no words raises NoReviewVocabularyError above, before any LLM call.
-    # Guarding here would add a branch nothing can execute.
-    await annotate_chunk_upos_for_lesson(lesson, srs_db, **_injected_lemmatizer(request))
-
+    # Reaching this line proves srs_db is not None: a session with no SRS
+    # database selects no words, and no words raises NoReviewVocabularyError
+    # above, before any LLM call. publish_lesson still guards, for the routes
+    # whose write is not generation-shaped.
     session_id = session_id or mint_id(lesson.title)
     metadata = lesson.generation_metadata
     # Read the clock ONCE. Called twice, this would store one date and report
     # another across a midnight boundary — rare, silent, and unreproducible.
     session_date = session_date or date.today().isoformat()
-    store.save_review_session(
-        session_id,
-        request.state.language_code,
-        session_date,
-        lesson,
-        review_requested=metadata.get("review_requested"),
-        review_used=metadata.get("review_used"),
-    )
 
-    task = asyncio.create_task(_prewarm_lesson(lesson, srs_db))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    await publish_lesson(
+        lesson,
+        target=ReviewSessionTarget(
+            store=store,
+            language_code=request.state.language_code,
+            session_id=session_id,
+            session_date=session_date,
+            renderer=getattr(request.app.state, "renderer", None),
+            audio_dir=getattr(request.app.state, "audio_dir", None),
+            renders_in_flight=_renders_in_flight(request.app),
+        ),
+        srs_db=srs_db,
+        lemmatizer_kwargs=_injected_lemmatizer(request),
+        replace=replace,
+    )
 
     warnings = _logged_speaker_warnings(metadata.get("story"), language)
     if metadata.get("gloss_entry_count") == 0:
@@ -283,25 +298,25 @@ async def create_review_session_from_paste(body: CreateReviewSessionFromPasteReq
         raise HTTPException(status_code=422, detail=str(e)) from e
 
     srs_db = getattr(request.state, "srs_db", None)
-    if srs_db is not None:
-        await annotate_chunk_upos_for_lesson(lesson, srs_db, **_injected_lemmatizer(request))
-
     session_id = mint_id(lesson.title)
     metadata = lesson.generation_metadata
     session_date = date.today().isoformat()
-    store.save_review_session(
-        session_id,
-        request.state.language_code,
-        session_date,
-        lesson,
-        review_requested=metadata.get("review_requested"),
-        review_used=metadata.get("review_used"),
-    )
 
-    if srs_db is not None:
-        task = asyncio.create_task(_prewarm_lesson(lesson, srs_db))
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
+    await publish_lesson(
+        lesson,
+        target=ReviewSessionTarget(
+            store=store,
+            language_code=request.state.language_code,
+            session_id=session_id,
+            session_date=session_date,
+            renderer=getattr(request.app.state, "renderer", None),
+            audio_dir=getattr(request.app.state, "audio_dir", None),
+            renders_in_flight=_renders_in_flight(request.app),
+        ),
+        srs_db=srs_db,
+        lemmatizer_kwargs=_injected_lemmatizer(request),
+        replace=False,
+    )
 
     warnings = _logged_speaker_warnings(metadata.get("story"), language)
     if metadata.get("gloss_entry_count") == 0:
@@ -324,7 +339,7 @@ async def create_review_session(body: CreateReviewSessionRequest, request: Reque
     Takes no identifiers at all — see ``CreateReviewSessionRequest`` for why that
     is enforced rather than merely documented.
     """
-    return await _generate_and_store(request, session_id=None, session_date=None)
+    return await _generate_and_store(request, session_id=None, session_date=None, replace=False)
 
 
 @router.post("/{session_id}/regenerate", status_code=200, response_model=CreateReviewSessionResponse)
@@ -355,15 +370,12 @@ async def regenerate_review_session(session_id: str, request: Request):
     if row is None:
         raise HTTPException(status_code=404, detail="Review session not found")
 
-    result = await _generate_and_store(request, session_id=session_id, session_date=row["session_date"])
-
-    # AFTER the write, and only on success. Audio rows key on the session id, so
-    # renders of the dialogue we just replaced would otherwise still be served
-    # for the new one — the player would read a script no longer on screen.
-    # Unlink as well as delete the rows, missing_ok for the same reason the
-    # day-delete path gives: a file already gone is the outcome we want.
-    for file_path in store.delete_review_session_audio(session_id):
-        Path(file_path).unlink(missing_ok=True)
+    result = await _generate_and_store(
+        request,
+        session_id=session_id,
+        session_date=row["session_date"],
+        replace=True,
+    )
 
     return result
 
@@ -457,30 +469,27 @@ async def import_review_session(session_id: str, body: ImportReviewSessionReques
         raise HTTPException(status_code=422, detail=str(e)) from e
 
     srs_db = getattr(request.state, "srs_db", None)
-    if srs_db is not None:
-        await annotate_chunk_upos_for_lesson(lesson, srs_db, **_injected_lemmatizer(request))
-
     metadata = lesson.generation_metadata
-    store.save_review_session(
-        session_id,
-        request.state.language_code,
-        row["session_date"],
+
+    # publish_lesson runs the invalidate AFTER the write and only on success,
+    # exactly as regenerate does it: audio rows key on the session id, so renders
+    # of the dialogue just replaced would otherwise still be served for the new
+    # one and the player would read a script no longer on screen.
+    await publish_lesson(
         lesson,
-        review_requested=metadata.get("review_requested"),
-        review_used=metadata.get("review_used"),
+        target=ReviewSessionTarget(
+            store=store,
+            language_code=request.state.language_code,
+            session_id=session_id,
+            session_date=row["session_date"],
+            renderer=getattr(request.app.state, "renderer", None),
+            audio_dir=getattr(request.app.state, "audio_dir", None),
+            renders_in_flight=_renders_in_flight(request.app),
+        ),
+        srs_db=srs_db,
+        lemmatizer_kwargs=_injected_lemmatizer(request),
+        replace=True,
     )
-
-    # AFTER the write and only on success, exactly as regenerate does it: audio
-    # rows key on the session id, so renders of the dialogue we just replaced
-    # would still be served for the new one and the player would read a script no
-    # longer on screen.
-    for file_path in store.delete_review_session_audio(session_id):
-        Path(file_path).unlink(missing_ok=True)
-
-    if srs_db is not None:
-        task = asyncio.create_task(_prewarm_lesson(lesson, srs_db))
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
 
     warnings = _logged_speaker_warnings(story, language)
     if metadata.get("gloss_entry_count") == 0:

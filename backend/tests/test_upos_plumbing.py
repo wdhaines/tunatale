@@ -1013,11 +1013,19 @@ class TestTaggedBeforeSaved:
         )
 
     async def test_imported_lesson_is_re_saved_with_its_tags(self, tmp_path: Path) -> None:
-        """/import writes the lesson before it can be tagged, so the tags need
-        a SECOND write. Without it the import path has the same silent bug the
-        generate path had — the difference is only where the save happens."""
-        import copy as _copy
+        """The lesson /import STORES must carry its UPOS tags.
 
+        ⚠️ Rewritten 2026-09-14 (bd tunatale-w1fp). This used to assert that a
+        SECOND write happened — ``update_lesson_data`` being called after the
+        initial save — because /import wrote the lesson before it could be
+        tagged. ``publish_lesson`` now runs the UPOS pass BEFORE the write, so
+        one write carries the tags and there is no second one.
+
+        The assertion therefore moved from the MECHANISM to the OUTCOME: read
+        the stored lesson back and require the tags to be on it. That is what
+        actually protects against the silent bug (an untagged stored lesson
+        falls back to plain synthesis for its whole life), and it holds whether
+        the tags arrive in one write or two."""
         from httpx import ASGITransport, AsyncClient
 
         from app.languages import get_language
@@ -1026,13 +1034,6 @@ class TestTaggedBeforeSaved:
         from app.srs.database import SRSDatabase
         from app.srs.lemmatizer import TokenAnalysis
         from app.storage.store import ContentStore
-
-        updates: list[Lesson] = []
-
-        class _RecordingStore(ContentStore):
-            def update_lesson_data(self, lesson_id, lesson):  # type: ignore[override]
-                updates.append(_copy.deepcopy(lesson))
-                return super().update_lesson_data(lesson_id, lesson)
 
         curriculum = Curriculum(
             id="c1",
@@ -1050,7 +1051,7 @@ class TestTaggedBeforeSaved:
                 )
             ],
         )
-        store = _RecordingStore(":memory:")
+        store = ContentStore(":memory:")
         store.save_curriculum("c1", curriculum)
         app.state.content_store = store
         app.state.language = get_language("no")
@@ -1078,6 +1079,12 @@ class TestTaggedBeforeSaved:
                 if hasattr(app.state, attr):
                     delattr(app.state, attr)
 
-        assert updates, "the tagged lesson was never written back — the tags are lost"
-        sporet = [p for sec in updates[-1].sections for p in sec.phrases if p.source_word == "sporet"]
-        assert sporet and all(p.upos == "NOUN" for p in sporet), [(p.text, p.upos) for p in sporet]
+        lesson_id = response.json()["id"]
+        stored = store.get_lesson(lesson_id)
+        assert stored is not None, "the import stored no lesson at all"
+        sporet = [p for sec in stored.sections for p in sec.phrases if p.source_word == "sporet"]
+        assert sporet, "no phrase carried source_word 'sporet' — the fixture stopped exercising the tag path"
+        assert all(p.upos == "NOUN" for p in sporet), (
+            "the STORED lesson is untagged: every ambiguous word falls back to plain "
+            f"synthesis for the life of this lesson — {[(p.text, p.upos) for p in sporet]}"
+        )
