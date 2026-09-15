@@ -17,6 +17,7 @@
  * the Skip segment of the per-row grade control. Tests address a specific row's
  * control via [data-candidate="<kind>:<text>"][data-grade="<rating>"].
  */
+import { candidateId } from "$lib/../test/factories";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import ListenPreviewModal from "$lib/components/ListenPreviewModal.svelte";
@@ -107,7 +108,7 @@ const wordCandidate = (
 ) => ({
   kind: "word" as const,
   text,
-  item_id: 42,
+  item_id: candidateId(text),
   grade_class: opts?.grade_class ?? ("due" as const),
   rating: "good" as const,
   translation: opts?.translation ?? "",
@@ -136,7 +137,7 @@ const newStateCandidate = (text: string, opts?: { will_create?: boolean }) =>
 const kpCandidate = (text: string, opts?: { translation?: string; progress?: number }) => ({
   kind: "kp" as const,
   text,
-  item_id: 99,
+  item_id: candidateId(text),
   grade_class: "learning" as const,
   rating: "good" as const,
   translation: opts?.translation ?? "",
@@ -353,15 +354,16 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith(
-        "l1",
-        { kava: "skip", prosim: "skip" },
-        {},
-        [],
-        [],
-        [],
-        [],
-      );
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: { [candidateId("prosim")]: "skip" },
+        createRatings: { kava: "skip" },
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -466,7 +468,16 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(btn);
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], [], [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
       expect(onDone).toHaveBeenCalledWith({
         status: "ok",
         created: 2,
@@ -504,7 +515,16 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { kava: "skip" }, {}, [], [], [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: { kava: "skip" },
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -572,7 +592,16 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], [], [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [candidateId("prosim")],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -640,15 +669,16 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText(/Mark 1 as listened/));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith(
-        "l1",
-        { voda: "skip" },
-        { voda: "easy" },
-        [],
-        ["voda"],
-        [],
-        [],
-      );
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: { [candidateId("voda")]: "skip" },
+        createRatings: {},
+        kpRatings: { voda: "easy" },
+        confirmedWords: [],
+        confirmedKps: ["voda"],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -677,7 +707,16 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], [], [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [candidateId("prosim")],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -706,19 +745,20 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith(
-        "l1",
-        { prosim: "again" },
-        {},
-        ["prosim"],
-        [],
-        [],
-        [],
-      );
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: { [candidateId("prosim")]: "again" },
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [candidateId("prosim")],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
-  it("'hard' on a create candidate routes into word_ratings", async () => {
+  it("'hard' on a create candidate routes into create_ratings, not word_ratings", async () => {
     mockGetListenPreview.mockResolvedValue({
       candidates: [createCandidate("kava")],
     });
@@ -743,15 +783,16 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith(
-        "l1",
-        { kava: "hard" },
-        {},
-        ["kava"],
-        [],
-        [],
-        [],
-      );
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: { kava: "hard" },
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -780,15 +821,16 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith(
-        "l1",
-        {},
-        { "na zdravje": "again" },
-        [],
-        ["na zdravje"],
-        [],
-        [],
-      );
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: {},
+        kpRatings: { "na zdravje": "again" },
+        confirmedWords: [],
+        confirmedKps: ["na zdravje"],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -832,7 +874,16 @@ describe("ListenPreviewModal", () => {
 
     await waitFor(() => {
       // Restored to the default (good) → omitted from the payload.
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], [], [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [candidateId("prosim")],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -861,15 +912,16 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith(
-        "l1",
-        { prosim: "easy" },
-        {},
-        ["prosim"],
-        [],
-        [],
-        [],
-      );
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: { [candidateId("prosim")]: "easy" },
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [candidateId("prosim")],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -934,7 +986,16 @@ describe("ListenPreviewModal", () => {
 
     await waitFor(() => {
       expect(mockMarkAsListened).toHaveBeenCalledTimes(1);
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], [], [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
       expect(onDone).toHaveBeenCalledTimes(1);
     });
   });
@@ -991,7 +1052,16 @@ describe("ListenPreviewModal", () => {
 
     await waitFor(() => {
       expect(mockMarkAsListened).toHaveBeenCalledTimes(1);
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], [], [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
       expect(onDone).toHaveBeenCalledTimes(1);
     });
   });
@@ -1367,7 +1437,16 @@ describe("ListenPreviewModal", () => {
     await waitFor(() => {
       // Only prosim is in wordRatings (checked+good → omitted as default);
       // hvala (unchecked well-known) sends "skip" so the backend won't stage it.
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { hvala: "skip" }, {}, [], [], [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: { [candidateId("hvala")]: "skip" },
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -1413,15 +1492,16 @@ describe("ListenPreviewModal", () => {
     await fireEvent.click(getByText("Mark 2 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith(
-        "l1",
-        { hvala: "good" },
-        {},
-        ["hvala"],
-        [],
-        [],
-        [],
-      );
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: { [candidateId("hvala")]: "good" },
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [candidateId("hvala")],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -1963,15 +2043,20 @@ describe("ListenPreviewModal", () => {
         // always. Confirmation survives the round trip too: a, b and d were
         // graded by hand, so they are applied rather than staged. "c" was
         // never touched, so it stays auto and keeps its safety net.
-        expect(mockMarkAsListened).toHaveBeenCalledWith(
-          "l1",
-          { a: "again", b: "hard", d: "easy" },
-          {},
-          ["a", "b", "d"],
-          [],
-          [],
-          [],
-        );
+        expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+          wordRatings: {
+            [candidateId("a")]: "again",
+            [candidateId("b")]: "hard",
+            [candidateId("d")]: "easy",
+          },
+          createRatings: {},
+          kpRatings: {},
+          confirmedWords: [candidateId("a"), candidateId("b"), candidateId("d")],
+          confirmedKps: [],
+          overCapWords: [],
+          overCapCreates: [],
+          overCapKps: [],
+        });
       });
     });
   });
@@ -2041,7 +2126,16 @@ describe("ListenPreviewModal", () => {
         // "prosim" keeps the default rating (so it is still omitted from the
         // ratings map) but must appear in confirmed_words — that split is the
         // whole contract.
-        expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, ["prosim"], [], [], []);
+        expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+          wordRatings: {},
+          createRatings: {},
+          kpRatings: {},
+          confirmedWords: [candidateId("prosim")],
+          confirmedKps: [],
+          overCapWords: [],
+          overCapCreates: [],
+          overCapKps: [],
+        });
       });
     });
 
@@ -2068,15 +2162,16 @@ describe("ListenPreviewModal", () => {
       await fireEvent.click(getByText("Mark 2 as listened"));
 
       await waitFor(() => {
-        expect(mockMarkAsListened).toHaveBeenCalledWith(
-          "l1",
-          { prosim: "hard" },
-          { "dober dan": "easy" },
-          ["prosim"],
-          ["dober dan"],
-          [],
-          [],
-        );
+        expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+          wordRatings: { [candidateId("prosim")]: "hard" },
+          createRatings: {},
+          kpRatings: { "dober dan": "easy" },
+          confirmedWords: [candidateId("prosim")],
+          confirmedKps: ["dober dan"],
+          overCapWords: [],
+          overCapCreates: [],
+          overCapKps: [],
+        });
       });
     });
 
@@ -2112,9 +2207,9 @@ describe("ListenPreviewModal", () => {
       await fireEvent.click(getByText("Mark 1 as listened"));
 
       await waitFor(() => {
-        const call = mockMarkAsListened.mock.calls.at(-1)!;
-        expect(call[3]).toEqual([]); // confirmed_words
-        expect(call[4]).toEqual([]); // confirmed_kps
+        const payload = mockMarkAsListened.mock.calls.at(-1)![1]!;
+        expect(payload.confirmedWords).toEqual([]);
+        expect(payload.confirmedKps).toEqual([]);
       });
       // The auto styling survives Grade All, because nothing was reviewed.
       expect(gradeBtn(container, "word:prosim", "good").classList.contains("auto")).toBe(true);
@@ -2216,7 +2311,16 @@ describe("NEW-state rows and the shared introduction budget", () => {
     await fireEvent.click(getByText("Mark 1 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], [], [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 });

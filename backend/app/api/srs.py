@@ -1103,6 +1103,54 @@ def _resolve_card_for_lemma(
     return res
 
 
+def _lemmas_losing_a_shared_card(
+    resolved: dict[str, tuple[int, SRSItem] | None],
+    card_key_by_lemma: dict[str, str],
+) -> set[str]:
+    """Which lemmas must NOT get a row, because another lemma owns the same card.
+
+    ⚠️ Identity is the collocation id, NEVER the text. That sentence is already
+    in ``_claimed_by_key_phrases``' docstring, where it reconciles the WORD pass
+    against the KEY-PHRASE pass. Nothing reconciled the word pass against
+    **itself**, and two keys for one card is the same defect on a second axis
+    (bd ``tunatale-og4d``).
+
+    Two keys arise from a lemmatizer defect plus a fallback working as designed:
+    Stanza over-strips ``mappen`` to ``mapp``, ``_card_key_for_lemma`` rejects
+    the fragment against NST and keys the card on the surface ``mappen``, and
+    that surface resolves — through the deck's own Inflections table — to the
+    card ``mappe`` already has a row for. The fallback is load-bearing (bd
+    ``tunatale-q5pl``) and is NOT the thing to remove.
+
+    **The winner is the lemma whose card key equals the card's own stored
+    lemma** — the headword the deck itself uses — so the surviving row is named
+    with a real word rather than whichever surface the dialogue happened to use
+    first. When no key matches, first-in-candidate-order wins; ``resolved`` is
+    insertion-ordered by the caller's candidate order, which the preview and the
+    commit share.
+
+    Pure function over an already-resolved map: the two call sites resolve by
+    different keys (the preview by card key, the commit by lemma), so what is
+    shared here is the TIE-BREAK, which is the half that must not drift.
+    """
+    sharers_by_card: dict[int, list[str]] = {}
+    for lemma, res in resolved.items():
+        if res is not None:
+            sharers_by_card.setdefault(res[0], []).append(lemma)
+
+    dropped: set[str] = set()
+    for sharers in sharers_by_card.values():
+        if len(sharers) == 1:
+            continue
+        stored_lemma = resolved[sharers[0]][1].syntactic_unit.lemma  # type: ignore[index]
+        winner = next(
+            (lem for lem in sharers if card_key_by_lemma.get(lem, lem) == stored_lemma),
+            sharers[0],
+        )
+        dropped.update(lem for lem in sharers if lem != winner)
+    return dropped
+
+
 @router.post("/listen", status_code=200, response_model=ListenResponse)
 async def mark_lesson_listened(body: ListenRequest, request: Request, background_tasks: BackgroundTasks):
     store = request.state.content_store
@@ -1183,6 +1231,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     # separate from the ratings maps: presence in `word_ratings` is overloaded
     # (absent = default "good" = create), so it cannot carry the opt-in signal.
     over_cap_words = set(body.over_cap_words)
+    over_cap_creates = set(body.over_cap_creates)
     over_cap_kps = set(body.over_cap_kps)
     # Built on first use: most listens confirm nothing, and the load-balancer
     # histogram is not free. The shared balancer + monotonic grade clock across
@@ -1262,7 +1311,35 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     variant_index = _build_variant_index(db, lesson.language_code)
     inflection_index = _build_inflection_index(db, lesson.language_code)
 
+    # Resolved once per request: the lemma-plausibility predicate (or None —
+    # "cannot tell", keep the lemma as-is). Hoisted above the word loop because
+    # the dedupe pre-pass below needs it to compute card keys; the creation pass
+    # further down is its other consumer.
+    lemma_plausible = get_lemma_plausible(lesson.language_code)
+
+    # Two keys, one card — the commit's half of bd tunatale-og4d. MUST drop the
+    # same rows the preview dropped: a row the user never saw must not be
+    # auto-rated and staged behind their back, which is the 6a5c718
+    # preview↔commit class. Only ever drops TRACKED lemmas (an unresolved lemma
+    # has no card to share), so creation is untouched.
+    _commit_resolved: dict[str, tuple[int, SRSItem] | None] = {}
+    _commit_card_keys: dict[str, str] = {}
+    for _lem in lemma_to_sentence:
+        _is_func = is_function_word_for(_lem, lemma_to_surfaces.get(_lem, set()), lesson.language_code, surface_to_upos)
+        _commit_card_keys[_lem] = _card_key_for_lemma(
+            _lem,
+            lemma_to_first_surface.get(_lem, _lem),
+            is_func=_is_func,
+            lemma_plausible=lemma_plausible,
+        )
+        _commit_resolved[_lem] = _resolve_card_for_lemma(
+            db, _lem, lemma_to_surfaces.get(_lem, set()), variant_index, inflection_index
+        )
+    dropped_lemmas = _lemmas_losing_a_shared_card(_commit_resolved, _commit_card_keys)
+
     for lemma in lemma_to_sentence:
+        if lemma in dropped_lemmas:
+            continue
         # Cloze cards are always on, for every language (no feature flag, no
         # language gate — see ~/.claude/plans/word-learning-state-machine.md
         # Phase 1). Whether a cloze is actually created is capability-driven:
@@ -1288,7 +1365,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
                 continue
             # "skip" on an untracked lemma consumes its rank slot rather than
             # freeing it for the next-ranked lemma to be promoted into.
-            if body.word_ratings.get(lemma, "good") == "skip":
+            # `create_ratings`, not `word_ratings`: this branch is the CREATE
+            # population, which has no card and therefore no id to be keyed by.
+            if body.create_ratings.get(lemma, "good") == "skip":
                 skipped_lemmas.add(lemma)
             lemma_candidates.append(lemma)
         else:
@@ -1335,14 +1414,17 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
             grade_cls = _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc)
             if grade_cls is None:
                 continue
+            # Resolved BEFORE the ratings are consulted: the tracked maps are
+            # keyed by collocation id (bd tunatale-og4d), so the id is the lookup
+            # key, not just something stamped on the staged row afterwards.
+            listen_coll_id = db.get_collocation_id_by_guid(existing.guid)
+            assert listen_coll_id is not None
             # Deferred opt-in: a known or learning row is never staged silently.
             # Membership in word_ratings is the opt-in — an explicit "skip" is
             # still a skip, handled by the shared rating check below.
-            if _listen_deferred_reason(rec, grade_cls, today) is not None and lemma not in body.word_ratings:
+            if _listen_deferred_reason(rec, grade_cls, today) is not None and listen_coll_id not in body.word_ratings:
                 continue
-            rating_str = body.word_ratings.get(lemma, "good")
-            listen_coll_id = db.get_collocation_id_by_guid(existing.guid)
-            assert listen_coll_id is not None
+            rating_str = body.word_ratings.get(listen_coll_id, "good")
             if grade_cls == "new":
                 # Deferred to the shared introduction budget below. Allocation
                 # is rating-independent — the preview has no ratings to consult,
@@ -1351,7 +1433,12 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
                 # The skip filter is applied when the allocated rows are staged.
                 new_state_pending.append(
                     (
-                        (listen_coll_id, rating_str, lemma in confirmed_words, lemma in over_cap_words),
+                        (
+                            listen_coll_id,
+                            rating_str,
+                            listen_coll_id in confirmed_words,
+                            listen_coll_id in over_cap_words,
+                        ),
                         _created_in_window(db.get_created_at_by_guid(existing.guid), today_start, today_end),
                         lemma,
                         False,
@@ -1360,7 +1447,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
                 continue
             if rating_str == "skip":
                 continue
-            if lemma in confirmed_words:
+            if listen_coll_id in confirmed_words:
                 _apply_confirmed(listen_coll_id, rating_str)
             else:
                 db.stage_pending_grade(
@@ -1448,16 +1535,13 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
             staged_count += 1
 
     live_create_set = set(live_creates)
-    # Resolved once per request: the lemma-plausibility predicate (or None —
-    # "cannot tell", keep the lemma as-is).
-    lemma_plausible = get_lemma_plausible(lesson.language_code)
     for cand in ranked:
         # Over-budget rows are skipped (a gated `continue`, not a `break`) so
         # an opted-in tail lemma ranked BELOW the first over-budget row is still
         # reached. A name is honoured only here, while iterating real ranked
         # candidates — an unknown or in-budget lemma matches nothing and
         # creates nothing, structurally (no standalone validation pass).
-        if cand not in live_create_set and cand not in over_cap_words:
+        if cand not in live_create_set and cand not in over_cap_creates:
             continue
         if cand in skipped_lemmas:
             continue  # slot consumed, nothing created — no promotion
@@ -1942,8 +2026,37 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
     # `will_create`.
     new_state_rows: list[tuple[dict, bool, str, bool]] = []
 
+    # ── Two keys, one card: resolve first, then drop the losers ─────────
+    # A pre-pass rather than a `seen_ids` guard inside the loop, because the
+    # winner is not "whichever came first" — see _lemmas_losing_a_shared_card.
+    # The resolution is repeated below rather than cached: these are indexed
+    # lookups on an in-process SQLite, and threading a cache through both call
+    # sites would couple the preview and the commit far more tightly than the
+    # tie-break they actually need to share.
+    _preview_resolved: dict[str, tuple[int, SRSItem] | None] = {}
+    _preview_card_keys: dict[str, str] = {}
+    for lemma in words.first_sentence:
+        _is_func = is_function_word_for(
+            lemma, words.surfaces.get(lemma, set()), lesson.language_code, words.surface_upos
+        )
+        if _is_func and is_clozes_only_verb(lemma, lesson.language_code):
+            continue
+        _key = _card_key_for_lemma(
+            lemma,
+            words.first_surface.get(lemma, lemma),
+            is_func=_is_func,
+            lemma_plausible=lemma_plausible,
+        )
+        _preview_card_keys[lemma] = _key
+        _preview_resolved[lemma] = _resolve_card_for_lemma(
+            db, _key, words.surfaces.get(lemma, set()), variant_index, inflection_index
+        )
+    dropped_lemmas = _lemmas_losing_a_shared_card(_preview_resolved, _preview_card_keys)
+
     # ── Word-level candidates (tracked + untracked) ─────────────────────
     for lemma in words.first_sentence:
+        if lemma in dropped_lemmas:
+            continue
         is_func = is_function_word_for(
             lemma, words.surfaces.get(lemma, set()), lesson.language_code, words.surface_upos
         )

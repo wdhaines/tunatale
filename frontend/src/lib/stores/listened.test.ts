@@ -251,7 +251,7 @@ describe("listenedStore", () => {
 
       const result = await listenedStore.markListened("l1");
 
-      expect(mockApi.markAsListened).toHaveBeenCalledWith("l1", {}, {}, [], [], [], []);
+      expect(mockApi.markAsListened).toHaveBeenCalledWith("l1", {});
       expect(result).toEqual(response);
       expect(listenedStore.has("l1")).toBe(true);
       expect(listenedStore.count("l1")).toBe(4);
@@ -267,17 +267,14 @@ describe("listenedStore", () => {
         listen_count: 1,
       });
 
-      await listenedStore.markListened("l1", { banka: "hard" });
+      await listenedStore.markListened("l1", { wordRatings: { 11: "hard" } });
 
-      expect(mockApi.markAsListened).toHaveBeenCalledWith(
-        "l1",
-        { banka: "hard" },
-        {},
-        [],
-        [],
-        [],
-        [],
-      );
+      // The store forwards the payload OBJECT through untouched — it adds no
+      // defaults of its own, which is why this pins the exact object identity
+      // rather than a normalised eight-argument tuple.
+      expect(mockApi.markAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: { 11: "hard" },
+      });
     });
 
     it("does not update state on API error", async () => {

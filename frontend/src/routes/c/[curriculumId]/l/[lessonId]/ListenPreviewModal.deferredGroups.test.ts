@@ -28,8 +28,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, waitFor, fireEvent } from "@testing-library/svelte";
 import ListenPreviewModal from "$lib/components/ListenPreviewModal.svelte";
-import { api, type ListenPreviewCandidate } from "$lib/api";
+import { api, type ListenPayload, type ListenPreviewCandidate } from "$lib/api";
 import { listenCountdownPref } from "$lib/stores/listenCountdownPref.svelte";
+import { candidateId } from "$lib/../test/factories";
 
 vi.mock("$lib/api", () => ({
   api: {
@@ -57,7 +58,6 @@ beforeEach(() => {
 // ── Fixtures ──────────────────────────────────────────────────────────
 
 const base = {
-  item_id: 42,
   rating: "good" as const,
   translation: "",
   progress: 0.3,
@@ -69,6 +69,7 @@ const base = {
 
 const dueRow = (text: string): ListenPreviewCandidate => ({
   ...base,
+  item_id: candidateId(text),
   kind: "word",
   text,
   grade_class: "due",
@@ -76,6 +77,7 @@ const dueRow = (text: string): ListenPreviewCandidate => ({
 });
 const learningRow = (text: string): ListenPreviewCandidate => ({
   ...base,
+  item_id: candidateId(text),
   kind: "word",
   text,
   grade_class: "learning",
@@ -84,6 +86,7 @@ const learningRow = (text: string): ListenPreviewCandidate => ({
 });
 const knownRow = (text: string): ListenPreviewCandidate => ({
   ...base,
+  item_id: candidateId(text),
   kind: "word",
   text,
   grade_class: "ahead",
@@ -167,8 +170,10 @@ const commit = async (container: HTMLElement) => {
 
 /** The word_ratings map actually sent to the API — the only thing that decides
  *  what the backend stages. DOM state is a proxy; this is the real contract. */
-const sentWordRatings = () =>
-  (mockMarkAsListened.mock.calls.at(-1)![1] ?? {}) as Record<string, string>;
+const sentWordRatings = () => {
+  const payload = (mockMarkAsListened.mock.calls.at(-1)![1] ?? {}) as ListenPayload;
+  return payload.wordRatings ?? {};
+};
 
 // ── Tests ─────────────────────────────────────────────────────────────
 
@@ -233,9 +238,9 @@ describe("F-5 — learning rows are deferred exactly like known rows", () => {
     // Opted in. `hage` MUST appear explicitly: for a deferred row, absence
     // from word_ratings is what tells the backend to leave it alone, so
     // emitting nothing would silently drop the user's grade.
-    expect(sent["hage"]).toBe("good");
+    expect(sent[candidateId("hage")]).toBe("good");
     // svinge was left at its default — never staged.
-    expect(sent["svinge"]).toBe("skip");
+    expect(sent[candidateId("svinge")]).toBe("skip");
   });
 
   it("leaves them alone on Grade All — a bulk action is not an opt-in", async () => {

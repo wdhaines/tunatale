@@ -436,7 +436,7 @@ class TestSkipAndOptInSurviveTheOnePool:
         (`25f2cab`) — a `break` here would also stop the opt-in test below."""
         db = _new_state_fixture(cap=1)
 
-        await _post_listen({"content_id": "lesson-1", "word_ratings": {"delo": "skip"}})
+        await _post_listen({"content_id": "lesson-1", "create_ratings": {"delo": "skip"}})
 
         assert _created(db, _CREATES) == set(), "the slot was consumed, not promoted"
         assert _pending_texts(db) == set(), "and nothing was promoted into it"
@@ -447,6 +447,6 @@ class TestSkipAndOptInSurviveTheOnePool:
         the over-budget rows instead of breaking out at the first one."""
         db = _new_state_fixture(cap=1)
 
-        await _post_listen({"content_id": "lesson-1", "over_cap_words": ["okno"]})
+        await _post_listen({"content_id": "lesson-1", "over_cap_creates": ["okno"]})
 
         assert "okno" in _created(db, _CREATES)

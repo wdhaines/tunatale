@@ -99,6 +99,14 @@ def _seed_well_known(db, text: str) -> None:
     _seed(db, text, SRSState.REVIEW, days_until_due=200)
 
 
+def _coll_id(db, text: str) -> int:
+    """Collocation id for a tracked row's text — the /listen key domain."""
+    item = db.get_collocation(text)
+    cid = db.get_collocation_id_by_guid(item.guid)
+    assert cid is not None, text
+    return cid
+
+
 async def _get_preview() -> dict:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(PREVIEW_URL)
@@ -197,7 +205,7 @@ class TestLearningCommitParity:
         _seed_learning(db, "alpha")
         _seed_due(db, "beta")
 
-        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {"alpha": "good"}})
+        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {str(_coll_id(db, "alpha")): "good"}})
         assert result["staged"] == 2
 
     async def test_an_explicit_skip_is_still_a_skip(self):
@@ -207,7 +215,7 @@ class TestLearningCommitParity:
         _seed_learning(db, "alpha")
         _seed_due(db, "beta")
 
-        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {"alpha": "skip"}})
+        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {str(_coll_id(db, "alpha")): "skip"}})
         assert result["staged"] == 1
 
 
@@ -251,5 +259,5 @@ class TestWellKnownBehaviourIsUnchanged:
         _seed_well_known(db, "alpha")
         _seed_due(db, "beta")
 
-        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {"alpha": "good"}})
+        result = await _post_listen({"content_id": "lesson-1", "word_ratings": {str(_coll_id(db, "alpha")): "good"}})
         assert result["staged"] == 2

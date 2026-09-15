@@ -122,6 +122,13 @@ def _cid(db, item) -> int:
     return cid
 
 
+def _coll_id(db, text: str) -> int:
+    """Collocation id for a seeded tracked row's text — the /listen key domain."""
+    item = db.get_collocation(text)
+    assert item is not None, text
+    return _cid(db, item)
+
+
 def _snapshot(db, text: str) -> dict:
     """The FSRS/sync-visible facts a listen must leave completely untouched."""
     rec = db.get_collocation(text).directions[Direction.RECOGNITION]
@@ -190,7 +197,7 @@ class TestListenStagesInsteadOfGrading:
         _seed(db, "banka", klass="learning")
         before = _snapshot(db, "banka")
 
-        data = await _listen(word_ratings={"banka": "good"})
+        data = await _listen(word_ratings={str(_coll_id(db, "banka")): "good"})
 
         rows = db.get_pending_grades(LESSON_ID)
         assert len(rows) == 1
@@ -282,7 +289,7 @@ class TestListenRestagesRatherThanDuplicating:
         _seed(db, "banka", klass="due")
 
         await _listen()
-        await _listen(word_ratings={"banka": "again"})
+        await _listen(word_ratings={str(_coll_id(db, "banka")): "again"})
 
         rows = db.get_pending_grades(LESSON_ID)
         assert len(rows) == 1
@@ -294,7 +301,7 @@ class TestListenRatings:
         db = _setup(_lesson(["banka"]))
         _seed(db, "banka", klass="due")
 
-        data = await _listen(word_ratings={"banka": "again"})
+        data = await _listen(word_ratings={str(_coll_id(db, "banka")): "again"})
 
         rows = db.get_pending_grades(LESSON_ID)
         assert len(rows) == 1
@@ -309,7 +316,7 @@ class TestListenRatings:
         db = _setup(_lesson(["banka"]))
         _seed(db, "banka", klass="due")
 
-        data = await _listen(word_ratings={"banka": "skip"})
+        data = await _listen(word_ratings={str(_coll_id(db, "banka")): "skip"})
 
         assert db.get_pending_grades(LESSON_ID) == []
         assert data["staged"] == 0
@@ -320,7 +327,7 @@ class TestListenRatings:
         _seed(db, "banka", klass="due")
         center = _seed(db, "center", klass="due")
 
-        data = await _listen(word_ratings={"banka": "skip"})
+        data = await _listen(word_ratings={str(_coll_id(db, "banka")): "skip"})
 
         rows = db.get_pending_grades(LESSON_ID)
         assert len(rows) == 1

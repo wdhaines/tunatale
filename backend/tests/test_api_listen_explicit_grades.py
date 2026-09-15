@@ -83,6 +83,14 @@ async def _listen(payload: dict) -> dict:
     return resp.json()
 
 
+def _coll_id(db, text: str) -> int:
+    """Collocation id for a tracked row's text — the /listen key domain."""
+    item = db.get_collocation(text)
+    cid = db.get_collocation_id_by_guid(item.guid)
+    assert cid is not None, text
+    return cid
+
+
 def _pending(db, text: str) -> dict | None:
     item = db.get_collocation(text)
     coll_id = db.get_collocation_id_by_guid(item.guid)
@@ -101,8 +109,8 @@ class TestExplicitGradesApplyImmediately:
         result = await _listen(
             {
                 "content_id": "lesson-1",
-                "word_ratings": {"banka": "hard"},
-                "confirmed_words": ["banka"],
+                "word_ratings": {str(_coll_id(db, "banka")): "hard"},
+                "confirmed_words": [_coll_id(db, "banka")],
             }
         )
 
@@ -121,7 +129,7 @@ class TestExplicitGradesApplyImmediately:
         db = _setup_lesson("Banka riba")
         _seed_review_due(db, "banka")
 
-        result = await _listen({"content_id": "lesson-1", "confirmed_words": ["banka"]})
+        result = await _listen({"content_id": "lesson-1", "confirmed_words": [_coll_id(db, "banka")]})
 
         assert _pending(db, "banka") is None
         assert _reps(db, "banka") == 6
@@ -148,8 +156,8 @@ class TestExplicitGradesApplyImmediately:
         result = await _listen(
             {
                 "content_id": "lesson-1",
-                "word_ratings": {"banka": "skip"},
-                "confirmed_words": ["banka"],
+                "word_ratings": {str(_coll_id(db, "banka")): "skip"},
+                "confirmed_words": [_coll_id(db, "banka")],
             }
         )
 
@@ -165,8 +173,8 @@ class TestExplicitGradesApplyImmediately:
         result = await _listen(
             {
                 "content_id": "lesson-1",
-                "word_ratings": {"banka": "easy", "riba": "skip"},
-                "confirmed_words": ["banka", "riba"],
+                "word_ratings": {str(_coll_id(db, "banka")): "easy", str(_coll_id(db, "riba")): "skip"},
+                "confirmed_words": [_coll_id(db, "banka"), _coll_id(db, "riba")],
             }
         )
 
@@ -204,8 +212,8 @@ class TestExplicitGradesApplyImmediately:
         await _listen(
             {
                 "content_id": "lesson-1",
-                "word_ratings": {"banka": "hard"},
-                "confirmed_words": ["banka"],
+                "word_ratings": {str(_coll_id(db, "banka")): "hard"},
+                "confirmed_words": [_coll_id(db, "banka")],
             }
         )
 
@@ -224,8 +232,12 @@ class TestExplicitGradesApplyImmediately:
         await _listen(
             {
                 "content_id": "lesson-1",
-                "word_ratings": {"banka": "hard", "riba": "good", "mesto": "easy"},
-                "confirmed_words": ["banka", "riba", "mesto"],
+                "word_ratings": {
+                    str(_coll_id(db, "banka")): "hard",
+                    str(_coll_id(db, "riba")): "good",
+                    str(_coll_id(db, "mesto")): "easy",
+                },
+                "confirmed_words": [_coll_id(db, "banka"), _coll_id(db, "riba"), _coll_id(db, "mesto")],
             }
         )
 
@@ -269,7 +281,7 @@ class TestConfirmationIsNotInferredFromPresence:
 
         assert is_well_known(db.get_collocation("banka").directions[Direction.RECOGNITION], anki_today())
 
-        result = await _listen({"content_id": "lesson-1", "word_ratings": {"banka": "good"}})
+        result = await _listen({"content_id": "lesson-1", "word_ratings": {str(_coll_id(db, "banka")): "good"}})
 
         assert _pending(db, "banka") is not None, "unconfirmed must stage, whatever the rating map says"
         assert _reps(db, "banka") == 5
@@ -304,7 +316,13 @@ class TestConfirmedGradesClearAnyPendingRow:
         _seed_review_due(db, "banka")
         self._stage(db, "banka", lesson_id="lesson-2")
 
-        await _listen({"content_id": "lesson-1", "word_ratings": {"banka": "easy"}, "confirmed_words": ["banka"]})
+        await _listen(
+            {
+                "content_id": "lesson-1",
+                "word_ratings": {str(_coll_id(db, "banka")): "easy"},
+                "confirmed_words": [_coll_id(db, "banka")],
+            }
+        )
 
         assert _pending(db, "banka") is None, "a just-graded card must not keep a pending row"
 
@@ -318,7 +336,13 @@ class TestConfirmedGradesClearAnyPendingRow:
         _seed_review_due(db, "banka")
         self._stage(db, "banka")
 
-        await _listen({"content_id": "lesson-1", "word_ratings": {"banka": "easy"}, "confirmed_words": ["banka"]})
+        await _listen(
+            {
+                "content_id": "lesson-1",
+                "word_ratings": {str(_coll_id(db, "banka")): "easy"},
+                "confirmed_words": [_coll_id(db, "banka")],
+            }
+        )
         reps_after_confirm = _reps(db, "banka")
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

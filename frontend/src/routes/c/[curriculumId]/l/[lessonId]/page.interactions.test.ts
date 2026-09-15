@@ -341,7 +341,16 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     await waitFor(() => {
       // F7: a row left checked + "good" (the default) contributes nothing —
       // the backend defaults an absent entry to "good".
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], [], [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
       expect(mockGetTranscript).toHaveBeenCalledWith("l1");
     });
   });

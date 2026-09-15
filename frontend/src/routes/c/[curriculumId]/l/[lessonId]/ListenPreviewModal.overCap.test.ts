@@ -39,6 +39,7 @@ import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import ListenPreviewModal from "$lib/components/ListenPreviewModal.svelte";
 import { api, type ListenPreviewCandidate } from "$lib/api";
 import { listenCountdownPref } from "$lib/stores/listenCountdownPref.svelte";
+import { candidateId } from "$lib/../test/factories";
 
 vi.mock("$lib/api", () => ({
   api: {
@@ -84,7 +85,7 @@ const createCandidate = (text: string, willCreate: boolean): ListenPreviewCandid
 const newStateCandidate = (text: string, willCreate: boolean): ListenPreviewCandidate => ({
   kind: "word" as const,
   text,
-  item_id: 42,
+  item_id: candidateId(text),
   grade_class: "new" as const,
   rating: "good" as const,
   translation: "",
@@ -97,7 +98,7 @@ const newStateCandidate = (text: string, willCreate: boolean): ListenPreviewCand
 const kpCandidate = (text: string, willCreate: boolean): ListenPreviewCandidate => ({
   kind: "kp" as const,
   text,
-  item_id: 99,
+  item_id: candidateId(text),
   grade_class: "new" as const,
   rating: "good" as const,
   translation: "",
@@ -182,7 +183,7 @@ describe("ListenPreviewModal — opting past the daily new-card cap", () => {
     expect(gradeBtn(container, "create:kake", "good")!.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("sends the rating AND the text in over_cap_words when a tail row is graded", async () => {
+  it("sends the rating AND the text in over_cap_creates when a tail create row is graded", async () => {
     mockGetListenPreview.mockResolvedValue(previewWithTail());
     mockMarkAsListened.mockResolvedValue(listenResult);
 
@@ -201,15 +202,16 @@ describe("ListenPreviewModal — opting past the daily new-card cap", () => {
       // over_cap_words the backend leaves the row past the budget and creates
       // nothing. The name alone is not enough either — that is what tells the
       // backend this specific row was a deliberate choice.
-      expect(mockMarkAsListened).toHaveBeenCalledWith(
-        "l1",
-        { brød: "good" },
-        {},
-        [],
-        [],
-        ["brød"],
-        [],
-      );
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: { brød: "good" },
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: ["brød"],
+        overCapKps: [],
+      });
     });
   });
 
@@ -232,15 +234,16 @@ describe("ListenPreviewModal — opting past the daily new-card cap", () => {
     await fireEvent.click(getByText("Mark 2 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith(
-        "l1",
-        {},
-        { "lahko noc": "hard" },
-        [],
-        [],
-        [],
-        ["lahko noc"],
-      );
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: {},
+        kpRatings: { "lahko noc": "hard" },
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: ["lahko noc"],
+      });
     });
   });
 
@@ -264,15 +267,16 @@ describe("ListenPreviewModal — opting past the daily new-card cap", () => {
     await fireEvent.click(getByText("Mark 2 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith(
-        "l1",
-        { lund: "easy" },
-        {},
-        [],
-        [],
-        ["lund"],
-        [],
-      );
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: { [candidateId("lund")]: "easy" },
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [candidateId("lund")],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -291,7 +295,16 @@ describe("ListenPreviewModal — opting past the daily new-card cap", () => {
     await fireEvent.click(getByText("Mark 2 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], [], [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -320,7 +333,16 @@ describe("ListenPreviewModal — opting past the daily new-card cap", () => {
     await fireEvent.click(getByText("Mark 2 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], [], [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -409,7 +431,16 @@ describe("ListenPreviewModal — opting past the daily new-card cap", () => {
     await fireEvent.click(getByText("Mark 2 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], [], [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -436,15 +467,16 @@ describe("ListenPreviewModal — opting past the daily new-card cap", () => {
 
     await waitFor(() => {
       // Only the two LIVE rows are named. No tail row appears anywhere.
-      expect(mockMarkAsListened).toHaveBeenCalledWith(
-        "l1",
-        { kake: "skip", melk: "skip" },
-        {},
-        [],
-        [],
-        [],
-        [],
-      );
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: { kake: "skip", melk: "skip" },
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -481,15 +513,16 @@ describe("ListenPreviewModal — opting past the daily new-card cap", () => {
     await fireEvent.click(getByText("Mark 3 as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith(
-        "l1",
-        { ost: "good" },
-        {},
-        [],
-        [],
-        ["ost"],
-        [],
-      );
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: { ost: "good" },
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: ["ost"],
+        overCapKps: [],
+      });
     });
   });
 });

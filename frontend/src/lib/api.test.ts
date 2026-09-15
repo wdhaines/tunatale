@@ -1102,6 +1102,7 @@ describe("TunaTaleAPI", () => {
           body: JSON.stringify({
             content_id: "lesson-1",
             word_ratings: {},
+            create_ratings: {},
             kp_ratings: {},
             confirmed_words: [],
             confirmed_kps: [],
@@ -1130,24 +1131,25 @@ describe("TunaTaleAPI", () => {
         ),
       );
 
-      await api.markAsListened(
-        "lesson-1",
-        { banka: "hard", zdravo: "easy" },
-        { "na zdravje": "skip" },
-        ["banka", "zdravo"],
-        [],
-      );
+      await api.markAsListened("lesson-1", {
+        // Tracked words are keyed by COLLOCATION ID, not text (bd tunatale-og4d).
+        wordRatings: { 11: "hard", 22: "easy" },
+        kpRatings: { "na zdravje": "skip" },
+        confirmedWords: [11, 22],
+        confirmedKps: [],
+      });
 
       expect(fetch).toHaveBeenCalledWith(
         `${BASE}/api/srs/listen`,
         expect.objectContaining({
           body: JSON.stringify({
             content_id: "lesson-1",
-            word_ratings: { banka: "hard", zdravo: "easy" },
+            word_ratings: { 11: "hard", 22: "easy" },
+            create_ratings: {},
             kp_ratings: { "na zdravje": "skip" },
             // The grades the user picked by hand: applied on commit rather
             // than staged for "Check your work".
-            confirmed_words: ["banka", "zdravo"],
+            confirmed_words: [11, 22],
             confirmed_kps: [],
           }),
         }),
@@ -1176,27 +1178,65 @@ describe("TunaTaleAPI", () => {
         ),
       );
 
-      await api.markAsListened(
-        "lesson-1",
-        { hotel: "good" },
-        { "dober dan": "hard" },
-        [],
-        [],
-        ["hotel"],
-        ["dober dan"],
-      );
+      await api.markAsListened("lesson-1", {
+        wordRatings: { 33: "good" },
+        kpRatings: { "dober dan": "hard" },
+        overCapWords: [33],
+        overCapKps: ["dober dan"],
+      });
 
       expect(fetch).toHaveBeenCalledWith(
         `${BASE}/api/srs/listen`,
         expect.objectContaining({
           body: JSON.stringify({
             content_id: "lesson-1",
-            word_ratings: { hotel: "good" },
+            word_ratings: { 33: "good" },
+            create_ratings: {},
             kp_ratings: { "dober dan": "hard" },
             confirmed_words: [],
             confirmed_kps: [],
-            over_cap_words: ["hotel"],
+            over_cap_words: [33],
             over_cap_kps: ["dober dan"],
+          }),
+        }),
+      );
+    });
+
+    it("markAsListened routes an opted-past-the-cap CREATE row to over_cap_creates", async () => {
+      // A create row has no card yet, so it cannot be named by a collocation id
+      // — its card key is the only identity there is (bd tunatale-og4d). This
+      // is the field that keeps it out of `over_cap_words`, whose items are
+      // typed `number[]` precisely so the two populations cannot be confused.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            status: "ok",
+            created: 1,
+            staged: 0,
+            applied: 0,
+            remaining_candidates: 0,
+            listen_count: 1,
+          }),
+        ),
+      );
+
+      await api.markAsListened("lesson-1", {
+        createRatings: { okno: "good" },
+        overCapCreates: ["okno"],
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/listen`,
+        expect.objectContaining({
+          body: JSON.stringify({
+            content_id: "lesson-1",
+            word_ratings: {},
+            create_ratings: { okno: "good" },
+            kp_ratings: {},
+            confirmed_words: [],
+            confirmed_kps: [],
+            over_cap_creates: ["okno"],
           }),
         }),
       );

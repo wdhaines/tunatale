@@ -150,8 +150,8 @@ class TestPreviewDeduplication:
         await _post_listen(
             {
                 "content_id": "lesson-1",
-                "word_ratings": {"derimot": "again"},
-                "confirmed_words": ["derimot"],
+                "word_ratings": {str(coll_id): "again"},
+                "confirmed_words": [coll_id],
             }
         )
 

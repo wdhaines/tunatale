@@ -80,6 +80,14 @@ def _rec_reps(db, text: str) -> int:
     return db.get_collocation(text).directions[Direction.RECOGNITION].reps
 
 
+def _coll_id(db, text: str) -> int:
+    """Collocation id for a tracked row's text — the /listen key domain."""
+    item = db.get_collocation(text)
+    cid = db.get_collocation_id_by_guid(item.guid)
+    assert cid is not None, text
+    return cid
+
+
 async def _post_listen(payload: dict) -> dict:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(LISTEN_URL, json=payload)
@@ -98,7 +106,7 @@ class TestSkipRating:
         _seed_review_due(db, "banka")
         due_before = db.get_collocation("banka").directions[Direction.RECOGNITION].due_at
 
-        await _post_listen({"content_id": "lesson-1", "word_ratings": {"banka": "skip"}})
+        await _post_listen({"content_id": "lesson-1", "word_ratings": {str(_coll_id(db, "banka")): "skip"}})
 
         item = db.get_collocation("banka")
         rec = item.directions[Direction.RECOGNITION]
@@ -113,7 +121,7 @@ class TestSkipRating:
         without suppressing creation of the lesson's other new words."""
         db = _setup_lesson("Banka riba")
 
-        await _post_listen({"content_id": "lesson-1", "word_ratings": {"banka": "skip"}})
+        await _post_listen({"content_id": "lesson-1", "create_ratings": {"banka": "skip"}})
 
         assert db.get_collocation_by_lemma("banka") is None, "skip must suppress creation"
         assert db.get_collocation_by_lemma("riba") is not None, "skip must not leak to other words"

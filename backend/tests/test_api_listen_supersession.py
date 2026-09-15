@@ -86,6 +86,14 @@ async def _listen(payload: dict) -> dict:
     return resp.json()
 
 
+def _coll_id(db, text: str) -> int:
+    """Collocation id for a tracked row's text — the /listen key domain."""
+    item = db.get_collocation(text)
+    cid = db.get_collocation_id_by_guid(item.guid)
+    assert cid is not None, text
+    return cid
+
+
 class TestARelistenSupersedesThePreviousBucket:
     async def test_skipping_everything_empties_the_bucket(self):
         """The reported case: re-listen with every row skipped ⇒ nothing pending."""
@@ -96,7 +104,12 @@ class TestARelistenSupersedesThePreviousBucket:
         first = await _listen({"content_id": LESSON_ID})
         assert first["staged"] == 2
 
-        await _listen({"content_id": LESSON_ID, "word_ratings": {"banka": "skip", "riba": "skip"}})
+        await _listen(
+            {
+                "content_id": LESSON_ID,
+                "word_ratings": {str(_coll_id(db, "banka")): "skip", str(_coll_id(db, "riba")): "skip"},
+            }
+        )
 
         assert db.get_pending_grades(LESSON_ID) == []
 
@@ -106,7 +119,7 @@ class TestARelistenSupersedesThePreviousBucket:
         _seed_review_due(db, "riba")
         await _listen({"content_id": LESSON_ID})
 
-        await _listen({"content_id": LESSON_ID, "word_ratings": {"banka": "skip"}})
+        await _listen({"content_id": LESSON_ID, "word_ratings": {str(_coll_id(db, "banka")): "skip"}})
 
         pending = db.get_pending_grades(LESSON_ID)
         assert [p["collocation_id"] for p in pending] == [
@@ -123,8 +136,8 @@ class TestARelistenSupersedesThePreviousBucket:
         result = await _listen(
             {
                 "content_id": LESSON_ID,
-                "word_ratings": {"banka": "easy", "riba": "skip"},
-                "confirmed_words": ["banka"],
+                "word_ratings": {str(_coll_id(db, "banka")): "easy", str(_coll_id(db, "riba")): "skip"},
+                "confirmed_words": [_coll_id(db, "banka")],
             }
         )
 
@@ -137,7 +150,13 @@ class TestARelistenSupersedesThePreviousBucket:
         cid = _seed_review_due(db, "banka")
         db.stage_pending_grade("lesson-2", cid, Direction.RECOGNITION.value, "hard", "due")
 
-        await _listen({"content_id": LESSON_ID, "word_ratings": {"banka": "skip", "riba": "skip"}})
+        await _listen(
+            {
+                "content_id": LESSON_ID,
+                "word_ratings": {str(_coll_id(db, "banka")): "skip"},
+                "create_ratings": {"riba": "skip"},
+            }
+        )
 
         surviving = db.get_pending_grade(cid, Direction.RECOGNITION.value)
         assert surviving is not None

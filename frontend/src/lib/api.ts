@@ -216,6 +216,44 @@ export interface DayProgress {
 // "good" is the default a listen stages; "skip" means "stage nothing for this item".
 export type WordRating = "again" | "hard" | "good" | "easy" | "skip";
 
+/** The three populations a listen commits, each with its own identity domain.
+ *
+ * ⚠️ TRACKED rows are keyed by COLLOCATION ID, never by text (bd tunatale-og4d).
+ * Two surface forms of one lemma — `mappe` and `mappen` — are two card keys for
+ * ONE card, so a text key let the user confirm one and have the twin auto-rated
+ * into "Check your work" behind them. CREATE rows have no card yet, so their
+ * card key is the only identity available and they keep string keys.
+ *
+ * ⚠️ The dict halves are NOT distinguishable at compile time. JSON Schema cannot
+ * say "object keys are integers", so `dict[int, …]` and `dict[str, …]` generate
+ * the identical TypeScript type and swapping `wordRatings` for `createRatings`
+ * type-checks. The backend rejects it at runtime with a 422 (pydantic fails the
+ * int coercion) — loud, but runtime. The ARRAY halves are genuinely typed
+ * (`number[]` vs `string[]`), which is why they are separate fields rather than
+ * one list.
+ *
+ * An options object rather than positional arguments on purpose: this call had
+ * eight positional parameters and several adjacent same-typed arrays, and it has
+ * already shipped one silent wire bug (`lesson_id` after the field was renamed
+ * `content_id`, which 422'd every Listen apply).
+ */
+export interface ListenPayload {
+  /** Tracked words → rating, keyed by collocation id. */
+  wordRatings?: Record<number, WordRating>;
+  /** Rows a listen would MINT → rating, keyed by card key. */
+  createRatings?: Record<string, WordRating>;
+  /** Key phrases → rating, keyed by phrase text (a phrase is its own identity). */
+  kpRatings?: Record<string, WordRating>;
+  /** Collocation ids the user graded by hand — applied, never staged. */
+  confirmedWords?: number[];
+  confirmedKps?: string[];
+  /** NEW-state TRACKED rows opted past the daily new-card cap. */
+  overCapWords?: number[];
+  /** CREATE rows opted past the cap — card keys, since no card exists yet. */
+  overCapCreates?: string[];
+  overCapKps?: string[];
+}
+
 export interface WordToken {
   surface: string;
   prefix_punct?: string;
@@ -1110,21 +1148,18 @@ export class TunaTaleAPI {
     // `contentId`, not `lessonId`: /api/srs/listen resolves a lesson OR a review
     // session through ContentStore.get_readable_content.
     contentId: string,
-    wordRatings: Record<string, WordRating> = {},
-    kpRatings: Record<string, WordRating> = {},
-    // Items the user graded by hand in the preview. These are applied
-    // immediately; everything else is staged for "Check your work". Separate
-    // from the ratings maps because presence there is already overloaded — a
-    // well-known row must be listed for the backend to consider it at all.
-    confirmedWords: string[] = [],
-    confirmedKps: string[] = [],
-    // Rows the user opted PAST the daily new-card cap, by grading them in the
-    // preview. Same shape as confirmed_* — separate from the ratings maps
-    // because presence there is inverted for create rows (absent means the
-    // backend's default "good", which creates the card).
-    overCapWords: string[] = [],
-    overCapKps: string[] = [],
+    payload: ListenPayload = {},
   ): Promise<ListenResponse> {
+    const {
+      wordRatings = {},
+      createRatings = {},
+      kpRatings = {},
+      confirmedWords = [],
+      confirmedKps = [],
+      overCapWords = [],
+      overCapCreates = [],
+      overCapKps = [],
+    } = payload;
     // ⚠️ TYPED against the generated schema, not `Record<string, unknown>`.
     // This shipped posting `lesson_id` after the backend renamed the field to
     // `content_id`, so every Listen apply 422'd — on lessons as well as review
@@ -1143,6 +1178,7 @@ export class TunaTaleAPI {
       Pick<components["schemas"]["ListenRequest"], "content_id"> = {
       content_id: contentId,
       word_ratings: wordRatings,
+      create_ratings: createRatings,
       kp_ratings: kpRatings,
       confirmed_words: confirmedWords,
       confirmed_kps: confirmedKps,
@@ -1150,6 +1186,7 @@ export class TunaTaleAPI {
     // Empty arrays are omitted rather than always posted: the backend defaults
     // both to [] anyway, and the untouched-list request is otherwise unchanged.
     if (overCapWords.length > 0) body.over_cap_words = overCapWords;
+    if (overCapCreates.length > 0) body.over_cap_creates = overCapCreates;
     if (overCapKps.length > 0) body.over_cap_kps = overCapKps;
     return this.request("/api/srs/listen", {
       method: "POST",

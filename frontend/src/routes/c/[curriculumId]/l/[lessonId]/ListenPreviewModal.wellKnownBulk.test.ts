@@ -41,8 +41,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import ListenPreviewModal from "$lib/components/ListenPreviewModal.svelte";
-import { api, type ListenPreviewCandidate } from "$lib/api";
+import { api, type ListenPayload, type ListenPreviewCandidate } from "$lib/api";
 import { listenCountdownPref } from "$lib/stores/listenCountdownPref.svelte";
+import { candidateId } from "$lib/../test/factories";
 
 vi.mock("$lib/api", () => ({
   api: {
@@ -74,11 +75,11 @@ beforeEach(() => {
 const dueCandidate = (text: string): ListenPreviewCandidate => ({
   kind: "word" as const,
   text,
-  item_id: 42,
   grade_class: "due" as const,
   rating: "good" as const,
   translation: "",
   progress: 0.3,
+  item_id: candidateId(text),
   well_known: false,
   due_at: "2026-08-04T04:00:00+00:00",
   will_create: true,
@@ -89,11 +90,11 @@ const dueCandidate = (text: string): ListenPreviewCandidate => ({
 const knownCandidate = (text: string): ListenPreviewCandidate => ({
   kind: "word" as const,
   text,
-  item_id: 43,
   grade_class: "ahead" as const,
   rating: "good" as const,
   translation: "",
   progress: 0.95,
+  item_id: candidateId(text),
   deferred_reason: "known",
   well_known: true,
   due_at: "2126-01-01T04:00:00+00:00",
@@ -134,8 +135,10 @@ const bulk = (container: HTMLElement, label: "Grade All" | "Skip All") =>
 
 /** The word_ratings map actually sent to the API — the only thing that decides
  *  what the backend stages. DOM state is a proxy; this is the real contract. */
-const sentWordRatings = () =>
-  (mockMarkAsListened.mock.calls.at(-1)![1] ?? {}) as Record<string, string>;
+const sentWordRatings = () => {
+  const payload = (mockMarkAsListened.mock.calls.at(-1)![1] ?? {}) as ListenPayload;
+  return payload.wordRatings ?? {};
+};
 
 const commit = async (container: HTMLElement) => {
   const btn = [...container.querySelectorAll("button")].find((b) =>
@@ -183,10 +186,10 @@ describe("F-3 — bulk actions leave well-known rows alone", () => {
       // 'skip' is the safe value here: the backend stages a well-known lemma
       // only when it carries a non-skip rating. What must NEVER appear is
       // 'good' — that is the bug, and it would stage all 20 known words.
-      expect(wr["hvala"] ?? "skip").toBe("skip");
-      expect(wr["bergen"] ?? "skip").toBe("skip");
+      expect(wr[candidateId("hvala")] ?? "skip").toBe("skip");
+      expect(wr[candidateId("bergen")] ?? "skip").toBe("skip");
       // The ordinary rows still went, or Grade All has been broken outright.
-      expect(wr["prosim"] ?? "good").not.toBe("skip");
+      expect(wr[candidateId("prosim")] ?? "good").not.toBe("skip");
     });
   });
 
@@ -241,8 +244,8 @@ describe("F-3 — bulk actions leave well-known rows alone", () => {
 
     await waitFor(() => {
       const wr = sentWordRatings();
-      expect(wr["hvala"]).toBe("hard"); // the hand-graded row, unchanged
-      expect(wr["bergen"] ?? "skip").toBe("skip"); // its untouched neighbour
+      expect(wr[candidateId("hvala")]).toBe("hard"); // the hand-graded row, unchanged
+      expect(wr[candidateId("bergen")] ?? "skip").toBe("skip"); // its untouched neighbour
     });
   });
 

@@ -78,6 +78,14 @@ async def _post_listen(payload: dict) -> dict:
     return resp.json()
 
 
+def _coll_id(db, text: str) -> int:
+    """Collocation id for a tracked row's text — the /listen key domain."""
+    item = db.get_collocation(text)
+    cid = db.get_collocation_id_by_guid(item.guid)
+    assert cid is not None, text
+    return cid
+
+
 class TestWellKnownIsDueHorizon:
     """Well known = the next review is WELL_KNOWN_DUE_DAYS_AHEAD days out or more.
 
@@ -195,7 +203,7 @@ class TestWellKnownCommitParity:
         result = await _post_listen(
             {
                 "content_id": "lesson-1",
-                "word_ratings": {"anna": "good"},
+                "word_ratings": {str(_coll_id(db, "anna")): "good"},
             }
         )
         # Both should be staged now
