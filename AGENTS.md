@@ -112,12 +112,36 @@ nothing** — zero is also what a lagging or broken meter returns, the same
 clean-negative trap `.claude/rules/tdd.md` is about. Nothing cloud-side will
 catch an error in your local estimate; the local estimate is the instrument.
 
-For scale, measured on the real corpus: a **cold** render of the whole stored
-Norwegian curriculum is ~69k characters, but the 2026-09-12 rebuild of all nine
-lessons actually synthesized **263 clips (~11k chars, ~2% of the monthly
-allowance)** because `rag.4`'s voice work had already warmed most of them. Quote
-the incremental number for "what will this run cost" and the cold number only
-for "what does this cost from empty" — they differ by ~7x here.
+**Price it with the tracked instrument, not from a remembered number**
+(`backend/scripts/report_render_cost.py`, shipped 2026-09-15):
+
+```bash
+cd backend
+uv run python scripts/report_render_cost.py --language no --all   # incremental
+uv run python scripts/report_render_cost.py --language no --all \
+    --cache-dir "$(mktemp -d)"                                    # cold, from empty
+```
+
+Quote the **incremental** number for "what will this run cost" and the cold one
+only for "what does this cost from empty". They have differed by ~7x, which is
+the whole reason to say which one you are quoting.
+
+⚠️ **This replaced two hardcoded figures, and how they were wrong is the
+reusable part.** It read *"a cold render of the whole stored Norwegian
+curriculum is ~69k characters"* beside a `263 clips (~11k chars)` incremental
+figure. Both were **text counts, not billable counts** — the cold figure is
+really **157,196** billable characters, because markup counts while `<speak>`
+and `<voice>` do not. The gap is not rounding: `sum(len(text))` over that corpus
+is 80,489, and its ~2,019 distinct requests each add ~36 characters of
+`<prosody>` wrapper. In a corpus of thousands of short utterances **the markup
+dominates**, so a text count understates by ~2x.
+
+That anchor sat three paragraphs below "the billable unit is NOT `len(text)`"
+and modelled the exact error this section exists to prevent. It was stale by
+construction too — it said "all nine lessons" and there are now eleven. A number
+measured against a living corpus rots the way a bare `file:line` citation does,
+and the fix is the one this file already prescribes there: cite the thing that
+regenerates the answer, not the answer.
 
 ## Key Conventions
 
