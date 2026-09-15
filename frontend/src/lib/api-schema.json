@@ -2219,7 +2219,7 @@
           "confirmed_words": {
             "default": [],
             "items": {
-              "type": "string"
+              "type": "integer"
             },
             "title": "Confirmed Words",
             "type": "array"
@@ -2227,6 +2227,21 @@
           "content_id": {
             "title": "Content Id",
             "type": "string"
+          },
+          "create_ratings": {
+            "additionalProperties": {
+              "enum": [
+                "again",
+                "hard",
+                "good",
+                "easy",
+                "skip"
+              ],
+              "type": "string"
+            },
+            "default": {},
+            "title": "Create Ratings",
+            "type": "object"
           },
           "kp_ratings": {
             "additionalProperties": {
@@ -2243,6 +2258,14 @@
             "title": "Kp Ratings",
             "type": "object"
           },
+          "over_cap_creates": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Over Cap Creates",
+            "type": "array"
+          },
           "over_cap_kps": {
             "default": [],
             "items": {
@@ -2254,7 +2277,7 @@
           "over_cap_words": {
             "default": [],
             "items": {
-              "type": "string"
+              "type": "integer"
             },
             "title": "Over Cap Words",
             "type": "array"

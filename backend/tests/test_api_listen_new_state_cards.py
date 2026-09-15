@@ -114,6 +114,14 @@ def _pending_texts(db) -> set[str]:
     return {r[0] for r in rows}
 
 
+def _coll_id(db, text: str) -> int:
+    """Collocation id for a tracked row's text — the /listen key domain."""
+    item = db.get_collocation(text)
+    cid = db.get_collocation_id_by_guid(item.guid)
+    assert cid is not None, text
+    return cid
+
+
 class TestGradeClass:
     """`_listen_grade_class` gains a "new" class; every other return is unchanged."""
 
@@ -407,7 +415,7 @@ class TestNewStateRatingPaths:
         _set_new_cap(db, 5)
         _seed_new_state(db, "banka", created_days_ago=3)
 
-        data = await _post_listen({"content_id": "lesson-1", "word_ratings": {"banka": "skip"}})
+        data = await _post_listen({"content_id": "lesson-1", "word_ratings": {str(_coll_id(db, "banka")): "skip"}})
 
         assert _pending_texts(db) == set()
         assert data["staged"] == 0
@@ -419,7 +427,11 @@ class TestNewStateRatingPaths:
         _seed_new_state(db, "banka", created_days_ago=3)
 
         data = await _post_listen(
-            {"content_id": "lesson-1", "word_ratings": {"banka": "good"}, "confirmed_words": ["banka"]}
+            {
+                "content_id": "lesson-1",
+                "word_ratings": {str(_coll_id(db, "banka")): "good"},
+                "confirmed_words": [_coll_id(db, "banka")],
+            }
         )
 
         assert _pending_texts(db) == set(), "a confirmed grade is applied, never staged"

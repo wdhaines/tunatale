@@ -279,7 +279,10 @@ class TestListenClozeIntegration:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/srs/listen",
-                json={"content_id": "lesson-1", "word_ratings": {"banka": "good"}},
+                json={
+                    "content_id": "lesson-1",
+                    "word_ratings": {str(db.get_collocation_id_by_guid(banka.guid)): "good"},
+                },
             )
         assert response.status_code == 200
         data = response.json()

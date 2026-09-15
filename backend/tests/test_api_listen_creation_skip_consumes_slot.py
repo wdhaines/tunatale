@@ -122,7 +122,7 @@ class TestSkipConsumesItsCreationSlot:
         db = _setup()
         db.set_anki_state_cache("daily_new_cap", "2")
 
-        listen = await _post_listen({"content_id": "lesson-1", "word_ratings": {"mesto": "skip"}})
+        listen = await _post_listen({"content_id": "lesson-1", "create_ratings": {"mesto": "skip"}})
 
         assert listen["created"] == 1
         assert _created(db, _EXPECTED_RANK) == {"center"}
@@ -133,7 +133,7 @@ class TestSkipConsumesItsCreationSlot:
         db = _setup()
         db.set_anki_state_cache("daily_new_cap", "2")
 
-        listen = await _post_listen({"content_id": "lesson-1", "word_ratings": {"mesto": "skip", "center": "skip"}})
+        listen = await _post_listen({"content_id": "lesson-1", "create_ratings": {"mesto": "skip", "center": "skip"}})
 
         assert listen["created"] == 0
         assert _created(db, _EXPECTED_RANK) == set()
@@ -145,7 +145,7 @@ class TestSkipConsumesItsCreationSlot:
         db = _setup()
         db.set_anki_state_cache("daily_new_cap", "2")
 
-        listen = await _post_listen({"content_id": "lesson-1", "word_ratings": {"kava": "skip"}})
+        listen = await _post_listen({"content_id": "lesson-1", "create_ratings": {"kava": "skip"}})
 
         assert listen["created"] == 2
         assert _created(db, _EXPECTED_RANK) == {"mesto", "center"}
@@ -157,7 +157,7 @@ class TestSkipConsumesItsCreationSlot:
         db = _setup()
         db.set_anki_state_cache("daily_new_cap", "2")
 
-        await _post_listen({"content_id": "lesson-1", "word_ratings": {"mesto": "skip", "center": "skip"}})
+        await _post_listen({"content_id": "lesson-1", "create_ratings": {"mesto": "skip", "center": "skip"}})
 
         preview = await _get_preview()
         creates = [c["text"] for c in preview["candidates"] if c["kind"] == "create"]

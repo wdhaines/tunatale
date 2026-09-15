@@ -11,7 +11,7 @@
  *  - refresh()       — async: resets hydration latch + re-runs hydrate()
  *  - reset()         — sync: clears entries + hydration latch (test seam)
  */
-import { api, type ListenResponse, type WordRating } from "$lib/api";
+import { api, type ListenPayload, type ListenResponse } from "$lib/api";
 
 const LEGACY_LISTENED_KEY = "tunatale:listened-lessons";
 const LEGACY_HOME_KEY = "tunatale:home";
@@ -56,24 +56,8 @@ function createListenedStore() {
     },
 
     /** Async: calls the listen API, updates local state, returns full response. */
-    async markListened(
-      lessonId: string,
-      wordRatings: Record<string, WordRating> = {},
-      kpRatings: Record<string, WordRating> = {},
-      confirmedWords: string[] = [],
-      confirmedKps: string[] = [],
-      overCapWords: string[] = [],
-      overCapKps: string[] = [],
-    ): Promise<ListenResponse> {
-      const result = await api.markAsListened(
-        lessonId,
-        wordRatings,
-        kpRatings,
-        confirmedWords,
-        confirmedKps,
-        overCapWords,
-        overCapKps,
-      );
+    async markListened(lessonId: string, payload: ListenPayload = {}): Promise<ListenResponse> {
+      const result = await api.markAsListened(lessonId, payload);
       entries = {
         ...entries,
         [lessonId]: {

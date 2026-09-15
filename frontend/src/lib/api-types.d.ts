@@ -3002,9 +3002,16 @@ export interface components {
        * Confirmed Words
        * @default []
        */
-      confirmed_words: string[];
+      confirmed_words: number[];
       /** Content Id */
       content_id: string;
+      /**
+       * Create Ratings
+       * @default {}
+       */
+      create_ratings: {
+        [key: string]: "again" | "hard" | "good" | "easy" | "skip";
+      };
       /**
        * Kp Ratings
        * @default {}
@@ -3012,6 +3019,11 @@ export interface components {
       kp_ratings: {
         [key: string]: "again" | "hard" | "good" | "easy" | "skip";
       };
+      /**
+       * Over Cap Creates
+       * @default []
+       */
+      over_cap_creates: string[];
       /**
        * Over Cap Kps
        * @default []
@@ -3021,7 +3033,7 @@ export interface components {
        * Over Cap Words
        * @default []
        */
-      over_cap_words: string[];
+      over_cap_words: number[];
       /**
        * Word Ratings
        * @default {}

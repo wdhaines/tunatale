@@ -123,6 +123,14 @@ def _created(db, lemmas: list[str]) -> set[str]:
     return {lem for lem in lemmas if db.get_collocation_by_lemma(lem) is not None}
 
 
+def _coll_id(db, text: str) -> int:
+    """Collocation id for a tracked row's text — the /listen key domain."""
+    item = db.get_collocation(text)
+    cid = db.get_collocation_id_by_guid(item.guid)
+    assert cid is not None, text
+    return cid
+
+
 def _pending_texts(db) -> set[str]:
     with db._get_conn() as conn:
         rows = conn.execute(
@@ -164,7 +172,7 @@ class TestOverCapCreateRow:
         _live, tail = await _create_split()
         assert tail[0] == "hotel"
 
-        listen = await _post_listen({"over_cap_words": ["hotel"]})
+        listen = await _post_listen({"over_cap_creates": ["hotel"]})
 
         assert listen["created"] == 3
         assert _created(db, _EXPECTED_RANK) == {"mesto", "center", "hotel"}
@@ -187,7 +195,7 @@ class TestOverCapCreateRow:
         assert tail[-1] == "kava", "the opt-in target must be the LAST tail row"
         assert tail.index("kava") == 2, "…and several ranks past the budget"
 
-        listen = await _post_listen({"over_cap_words": ["kava"]})
+        listen = await _post_listen({"over_cap_creates": ["kava"]})
 
         assert listen["created"] == 3
         assert _created(db, _EXPECTED_RANK) == {"mesto", "center", "kava"}
@@ -198,7 +206,7 @@ class TestOverCapCreateRow:
         db = _setup()
         _set_cap(db, 2)
 
-        listen = await _post_listen({"over_cap_words": ["hotel", "kava"]})
+        listen = await _post_listen({"over_cap_creates": ["hotel", "kava"]})
 
         assert listen["created"] == 4
         assert _created(db, _EXPECTED_RANK) == {"mesto", "center", "hotel", "kava"}
@@ -213,7 +221,7 @@ class TestSkipBeatsOptIn:
         db = _setup()
         _set_cap(db, 2)
 
-        listen = await _post_listen({"word_ratings": {"hotel": "skip"}, "over_cap_words": ["hotel"]})
+        listen = await _post_listen({"create_ratings": {"hotel": "skip"}, "over_cap_creates": ["hotel"]})
 
         assert listen["created"] == 2
         assert _created(db, _EXPECTED_RANK) == {"mesto", "center"}
@@ -228,7 +236,7 @@ class TestValidation:
         db = _setup()
         _set_cap(db, 2)
 
-        listen = await _post_listen({"over_cap_words": ["zzzneobstojece", "kaviarna"]})
+        listen = await _post_listen({"over_cap_creates": ["zzzneobstojece", "kaviarna"]})
 
         assert listen["created"] == 2
         assert _created(db, _EXPECTED_RANK) == {"mesto", "center"}
@@ -241,7 +249,7 @@ class TestValidation:
         db = _setup()
         _set_cap(db, 2)
 
-        listen = await _post_listen({"over_cap_words": ["mesto"]})
+        listen = await _post_listen({"over_cap_creates": ["mesto"]})
 
         assert listen["created"] == 2
         assert _created(db, _EXPECTED_RANK) == {"mesto", "center"}
@@ -284,7 +292,7 @@ class TestOverCapNewStateRow:
         assert len(live) == 1 and len(tail) == 1, "fixture must produce exactly one tail row"
         tail_text = next(iter(tail))
 
-        await _post_listen({"over_cap_words": [tail_text]})
+        await _post_listen({"over_cap_words": [_coll_id(db, tail_text)]})
 
         assert _pending_texts(db) == live | tail, "the opted-in tail row must stage like a live one"
 
@@ -317,7 +325,7 @@ class TestOverCapNewStateRow:
         cands = [c for c in (await _get_preview())["candidates"] if c["grade_class"] == "new"]
         tail_text = next(c["text"] for c in cands if not c["will_create"])
 
-        await _post_listen({"over_cap_words": [tail_text]})
+        await _post_listen({"over_cap_words": [_coll_id(db, tail_text)]})
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(COMMIT_URL)
@@ -377,6 +385,6 @@ class TestOverCapKeyPhrase:
         live = {c["text"] for c in cands if c["will_create"]}
         tail_text = next(c["text"] for c in cands if not c["will_create"])
 
-        await _post_listen({"over_cap_words": [tail_text]})
+        await _post_listen({"over_cap_words": [_coll_id(db, tail_text)]})
 
         assert _pending_texts(db) == live

@@ -89,7 +89,7 @@ class TestRatingValidation:
                 LISTEN_URL,
                 json={
                     "content_id": "lesson-1",
-                    "word_ratings": {
+                    "create_ratings": {
                         "banka": "again",
                         "riba": "hard",
                         "mesto": "good",

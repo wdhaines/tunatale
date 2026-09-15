@@ -358,7 +358,16 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
       // is outside the budget window so naming it is inert, but emitting "skip"
       // would still be wrong — it asserts a decision the user never made about a
       // row they were never offered.
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {}, {}, [], [], [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: {},
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -377,7 +386,16 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     await waitFor(() => {
       // kake is named so the server consumes its slot without creating it.
       // melk stays default-good and is omitted. No tail row appears.
-      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", { kake: "skip" }, {}, [], [], [], []);
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: { kake: "skip" },
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 
@@ -404,15 +422,16 @@ describe("ListenPreviewModal — over-budget creation tail", () => {
     await fireEvent.click(getByText("Mark as listened"));
 
     await waitFor(() => {
-      expect(mockMarkAsListened).toHaveBeenCalledWith(
-        "l1",
-        { kake: "skip", melk: "skip" },
-        {},
-        [],
-        [],
-        [],
-        [],
-      );
+      expect(mockMarkAsListened).toHaveBeenCalledWith("l1", {
+        wordRatings: {},
+        createRatings: { kake: "skip", melk: "skip" },
+        kpRatings: {},
+        confirmedWords: [],
+        confirmedKps: [],
+        overCapWords: [],
+        overCapCreates: [],
+        overCapKps: [],
+      });
     });
   });
 

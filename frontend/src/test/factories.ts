@@ -119,3 +119,29 @@ export function makeSRSItemDetail(overrides: Partial<SRSItemDetail> = {}): SRSIt
     ...overrides,
   };
 }
+
+/** A distinct, deterministic collocation id per candidate text.
+ *
+ * Listen-preview fixtures used to hardcode one id (`item_id: 42`) on every word
+ * row, which was harmless while the commit payload was keyed by TEXT. It is not
+ * harmless now: tracked rows are keyed by COLLOCATION ID (bd tunatale-og4d), so
+ * two rows sharing an id collapse onto one payload entry and the second silently
+ * overwrites the first.
+ *
+ * A shared 42 was never realistic either — the backend guarantees one row per
+ * card (`_lemmas_losing_a_shared_card`, pinned by
+ * `test_api_listen_word_word_collision.py::test_no_candidate_id_is_duplicated`),
+ * so a real preview cannot repeat an item_id.
+ *
+ * Stable within a file run, so an assertion can name a card the same way the
+ * fixture did: `confirmedWords: [candidateId("prosim")]`.
+ */
+const _candidateIds = new Map<string, number>();
+export function candidateId(text: string): number {
+  let id = _candidateIds.get(text);
+  if (id === undefined) {
+    id = 1000 + _candidateIds.size;
+    _candidateIds.set(text, id);
+  }
+  return id;
+}

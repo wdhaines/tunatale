@@ -526,7 +526,7 @@ class TestListenReviewCap:
 
         db.set_anki_state_cache("daily_review_cap", "0")
 
-        data = await self._listen(word_ratings={"banka": "good"})
+        data = await self._listen(word_ratings={str(db.get_collocation_id_by_guid(item.guid)): "good"})
 
         assert data["staged"] == 1
         item = db.get_collocation("banka")

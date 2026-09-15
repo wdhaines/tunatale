@@ -1,7 +1,13 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { SvelteDate, SvelteSet } from 'svelte/reactivity';
-	import { api, type ListenPreviewCandidate, type ListenResponse, type WordRating } from '$lib/api';
+	import { SvelteSet } from 'svelte/reactivity';
+	import {
+		api,
+		type ListenPayload,
+		type ListenPreviewCandidate,
+		type ListenResponse,
+		type WordRating,
+	} from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import { listenCountdownPref } from '$lib/stores/listenCountdownPref.svelte';
 	import { railPropsFor, masterySides as masterySidesFn } from '$lib/masteryBands';
@@ -100,6 +106,20 @@
 		easy: 'drillCard.easy',
 	};
 
+	// Per-ROW state key (which row is skipped, revealed, confirmed). Deliberately
+	// NOT the card identity — that is `c.item_id`, and the WIRE is keyed by it in
+	// `buildRatings` (bd tunatale-og4d).
+	//
+	// ⚠️ Keying this by id as well was tried and REVERTED, on purpose. It is
+	// redundant: the backend now guarantees one row per card
+	// (`_lemmas_losing_a_shared_card`, pinned by
+	// `test_api_listen_word_word_collision.py::test_no_candidate_id_is_duplicated`),
+	// which restores `${kind}:${text}` uniqueness that the `mappe`/`mappen`
+	// duplicate had broken. And it is actively worse as a failure mode: with an
+	// id key, a duplicate reaching the client is a Svelte `each_key_duplicate`
+	// ERROR that blanks the modal, where a text key degrades to a harmless
+	// repeated row. A crash is not the right response to a server-side
+	// regression the user could otherwise still work around.
 	function candidateKey(c: ListenPreviewCandidate): string {
 		return `${c.kind}:${c.text}`;
 	}
@@ -276,16 +296,47 @@
 		ratings = rts;
 	}
 
-	/** Whole days from today (UTC) until the card is due; null if unknown. */
+	/** TT's study day rolls at 4 AM LOCAL, mirroring Anki — the frontend half of
+	 *  `ANKI_ROLLOVER_HOUR` in backend/app/config.py. A compile-time constant on
+	 *  both sides; nothing plumbs it over the wire. */
+	const ROLLOVER_HOUR = 4;
+
+	/** Whole days from the current STUDY DAY until the card is due; null if unknown.
+	 *
+	 * ⚠️ Two different day domains meet here, and mixing them was bd tunatale-l0b6.
+	 * The DUE side is a UTC date: `due_at_rollover_utc` writes day-level due
+	 * timestamps at 04:00 **UTC** on the due date, so flooring to UTC midnight
+	 * recovers the due date exactly. The TODAY side is NOT a UTC date — it is
+	 * `rollover.py::anki_today`, the LOCAL date of the most recent 04:00 LOCAL
+	 * rollover. Using the browser's UTC date for it read every count one day low
+	 * from 20:00 to 04:00 at UTC-4 — roughly a third of the day, reported as
+	 * "lots of -1s in the evening".
+	 *
+	 * Plain `Date`, not `SvelteDate`: these are throwaway values that are never
+	 * mutated, so the reactive wrapper tracked nothing — and because
+	 * `SvelteDate extends Date` binds `Date` at module-eval time, it also made
+	 * the clock unreachable from `vi.setSystemTime`, so this function could not
+	 * be tested at all.
+	 */
 	function dueDays(due_at: string | null): number | null {
 		if (!due_at) return null;
-		const dueDate = new SvelteDate(due_at);
+		const dueDate = new Date(due_at);
 		if (isNaN(dueDate.getTime())) return null;
-		const today = new SvelteDate();
-		today.setUTCHours(0, 0, 0, 0);
-		const dueDay = new SvelteDate(dueDate);
-		dueDay.setUTCHours(0, 0, 0, 0);
-		return Math.round((dueDay.getTime() - today.getTime()) / 86400000);
+		// Both sides are built with `Date.UTC` and NOTHING is mutated. That is
+		// required, not stylistic: `svelte/prefer-svelte-reactivity` rejects a
+		// MUTABLE `Date`, and `SvelteDate` cannot be used here because it binds
+		// the real clock at module-eval time (see the note above). Read-only
+		// `Date` satisfies the rule and stays testable.
+		const dueDay = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
+		// `Date.UTC` normalises an out-of-range day, so day-1 before the rollover
+		// rolls back across month and year ends without a branch.
+		const now = new Date();
+		const today = Date.UTC(
+			now.getFullYear(),
+			now.getMonth(),
+			now.getDate() - (now.getHours() < ROLLOVER_HOUR ? 1 : 0),
+		);
+		return Math.round((dueDay - today) / 86400000);
 	}
 
 	function formatDueAt(due_at: string | null): string | null {
@@ -384,19 +435,14 @@
 	// earns an entry, and it is carried by over_cap_words / over_cap_kps so the
 	// backend knows it was a deliberate choice past the daily cap. A tail row
 	// rated `skip` also emits nothing: it is the undo for a mis-tapped opt-in.
-	function buildRatings(): {
-		wordRatings: Record<string, WordRating>;
-		kpRatings: Record<string, WordRating>;
-		confirmedWords: string[];
-		confirmedKps: string[];
-		overCapWords: string[];
-		overCapKps: string[];
-	} {
-		const wordRatings: Record<string, WordRating> = {};
+	function buildRatings(): ListenPayload {
+		const wordRatings: Record<number, WordRating> = {};
+		const createRatings: Record<string, WordRating> = {};
 		const kpRatings: Record<string, WordRating> = {};
-		const confirmedWords: string[] = [];
+		const confirmedWords: number[] = [];
 		const confirmedKps: string[] = [];
-		const overCapWords: string[] = [];
+		const overCapWords: number[] = [];
+		const overCapCreates: string[] = [];
 		const overCapKps: string[] = [];
 
 		const tailKeys = new Set(tailCandidates.map((c) => candidateKey(c)));
@@ -411,9 +457,12 @@
 					if (c.kind === 'kp') {
 						kpRatings[c.text] = rating;
 						overCapKps.push(c.text);
+					} else if (c.kind === 'create') {
+						createRatings[c.text] = rating;
+						overCapCreates.push(c.text);
 					} else {
-						wordRatings[c.text] = rating;
-						overCapWords.push(c.text);
+						wordRatings[c.item_id!] = rating;
+						overCapWords.push(c.item_id!);
 					}
 				}
 				continue;
@@ -424,8 +473,12 @@
 			// for the backend to consider it at all, so "present" cannot also
 			// mean "reviewed". A skipped row is graded by nobody, so it is never
 			// confirmed.
+			// A create row is never "confirmed": there is no card to apply a
+			// review to, and the backend has only ever consulted this list for
+			// tracked rows. Sending one was dead weight the old text keys hid.
 			if (rating !== 'skip' && confirmed.has(key)) {
-				(c.kind === 'kp' ? confirmedKps : confirmedWords).push(c.text);
+				if (c.kind === 'kp') confirmedKps.push(c.text);
+				else if (c.kind === 'word') confirmedWords.push(c.item_id!);
 			}
 			// ⚠️ The inverted-polarity edge, stated once. For a DEFERRED row
 			// (known or learning) the backend skips anything absent from
@@ -440,37 +493,31 @@
 			if (value === null) continue;
 			if (c.kind === 'kp') {
 				kpRatings[c.text] = value;
+			} else if (c.kind === 'create') {
+				createRatings[c.text] = value;
 			} else {
-				wordRatings[c.text] = value;
+				wordRatings[c.item_id!] = value;
 			}
 		}
 
-		return { wordRatings, kpRatings, confirmedWords, confirmedKps, overCapWords, overCapKps };
+		return {
+			wordRatings,
+			createRatings,
+			kpRatings,
+			confirmedWords,
+			confirmedKps,
+			overCapWords,
+			overCapCreates,
+			overCapKps,
+		};
 	}
 
 	async function doCommit() {
 		committing = true;
 		error = '';
 
-		const {
-			wordRatings,
-			kpRatings,
-			confirmedWords,
-			confirmedKps,
-			overCapWords,
-			overCapKps,
-		} = buildRatings();
-
 		try {
-			const result = await listenedStore.markListened(
-				lessonId,
-				wordRatings,
-				kpRatings,
-				confirmedWords,
-				confirmedKps,
-				overCapWords,
-				overCapKps,
-			);
+			const result = await listenedStore.markListened(lessonId, buildRatings());
 			onDone(result);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);

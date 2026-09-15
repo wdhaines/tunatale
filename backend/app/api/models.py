@@ -13,7 +13,20 @@ class ListenRequest(BaseModel):
     # `content_id`, not `lesson_id`: a review session is listened to exactly like
     # a lesson and resolves through ContentStore.get_readable_content.
     content_id: str
-    word_ratings: dict[str, Literal["again", "hard", "good", "easy", "skip"]] = {}  # lemma → rating
+    # ⚠️ TRACKED words are keyed by COLLOCATION ID, never by text (bd
+    # tunatale-og4d). Two surface forms of one lemma — `mappe` and `mappen`,
+    # whose Stanza lemma `mapp` fails NST and falls back to the surface — are
+    # two card KEYS for ONE card. Under the old text keys, confirming one left
+    # the other unconfirmed, and the twin was auto-rated into the pending bucket:
+    # the user was re-asked a card they had just reviewed. The id cannot collide.
+    #
+    # The type change is the migration: a stale client sending `{"mappe": ...}`
+    # fails int coercion and gets a 422 rather than silently losing every grade.
+    word_ratings: dict[int, Literal["again", "hard", "good", "easy", "skip"]] = {}  # collocation id → rating
+    # CREATE rows have no card yet, so the card key IS the only identity there
+    # is. Kept a separate field rather than a union so the two populations cannot
+    # be confused at a call site — the tracked maps are id-typed all the way down.
+    create_ratings: dict[str, Literal["again", "hard", "good", "easy", "skip"]] = {}  # card key → rating
     kp_ratings: dict[str, Literal["again", "hard", "good", "easy", "skip"]] = {}  # key-phrase text → same domain
     # Items the user actually graded in the preview, as opposed to ones the
     # listen auto-rated. A confirmed grade is a review the user performed, so it
@@ -22,7 +35,7 @@ class ListenRequest(BaseModel):
     # presence there is already overloaded — a well-known row must be listed for
     # the backend to consider it at all, so "present" cannot also mean
     # "reviewed".
-    confirmed_words: list[str] = []  # lemmas the user graded by hand
+    confirmed_words: list[int] = []  # collocation ids the user graded by hand
     confirmed_kps: list[str] = []  # key-phrase texts the user graded by hand
     # Lemmas / key-phrase texts the user deliberately opted past the daily
     # new-card cap in the preview. Kept separate from the ratings maps for the
@@ -30,7 +43,8 @@ class ListenRequest(BaseModel):
     # create row the polarity is INVERTED: absent from `word_ratings` means the
     # backend's default "good", which CREATES the card, so presence cannot
     # distinguish "opted in past the cap" from an ordinary live row.
-    over_cap_words: list[str] = []  # lemmas the user opted past the daily new-card cap
+    over_cap_words: list[int] = []  # collocation ids (NEW-state tracked rows) opted past the cap
+    over_cap_creates: list[str] = []  # card keys of CREATE rows opted past the cap
     over_cap_kps: list[str] = []  # key-phrase texts, same
 
 
