@@ -145,3 +145,38 @@ export function candidateId(text: string): number {
   }
   return id;
 }
+
+/** A `due_at` for the card that is due *days* study-days from now.
+ *
+ * ⚠️ The anchor is the STUDY DAY — the local date of the most recent 04:00
+ * LOCAL rollover — not the browser's UTC date, and the difference is a whole
+ * calendar day for a third of every day. `ListenPreviewModal.svelte::dueDays`
+ * compares a UTC-dated `due_at` against exactly that local study day, so a seed
+ * anchored on `new Date().toISOString()` reads one day HIGH from 20:00 to 04:00
+ * local at UTC-4: "today" renders as "1d" and the suite goes red every evening
+ * on a tree nobody touched.
+ *
+ * Measured 2026-09-15: five tests across two files failed at 22:11 EDT and the
+ * same commit passed at 04:11 CEST. That control — same code, different wall
+ * clock — is the one that tells a seeding bug from a product bug, and it is
+ * cheaper than reading either file.
+ *
+ * The emitted timestamp keeps the 04:00-UTC convention `due_at_rollover_utc`
+ * writes, because `dueDays` recovers the due date by flooring it to UTC
+ * midnight.
+ */
+export function studyDayDueAt(days = 0): string {
+  const now = new Date();
+  const ROLLOVER_HOUR = 4;
+  return new Date(
+    Date.UTC(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() - (now.getHours() < ROLLOVER_HOUR ? 1 : 0) + days,
+      ROLLOVER_HOUR,
+      0,
+      0,
+      0,
+    ),
+  ).toISOString();
+}

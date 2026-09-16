@@ -180,11 +180,31 @@ def _build_collocation_index(
 
 
 def resolve_active_direction(item: object) -> Direction:
-    """Return the active direction for a resolved SRSItem.
+    """Return the direction the LESSON surfaces read and grade for *item*.
 
-    Cloze → PRODUCTION (only direction it has).
-    Vocab → RECOGNITION while rec.state != REVIEW; else PRODUCTION.
-    When both REVIEW, active = production.
+    RECOGNITION whenever the item has one; PRODUCTION only when it does not
+    (cloze, and the production-only vocab of bd tunatale-eez9). The contract
+    that never changes: the returned direction must be one the item actually
+    has, or the caller's ``item.directions[active_dir]`` raises KeyError — the
+    lesson-transcript 500 that made recognition-only Norwegian words unreadable.
+
+    ⚠️ This used to hand over to PRODUCTION the moment recognition reached
+    REVIEW and a production direction existed, and that is the bug behind the
+    2026-09-15 reader-bolding report: the frontend bolds on ``is_due``, which
+    ``extract_transcript`` computes on THIS direction, so a word whose
+    recognition was due today reported ``is_due=False`` off its NEW production
+    card. Measured on the "Booking a Group Trip in July" session: 16 of its
+    words were in that day's review queue and 3 were bold, the other 13 all
+    reading ``active=production, state=new``. The mastery line disagreed too —
+    ``mastery.ts`` already buckets "due" off ``recognition_is_due``.
+
+    The reason recognition wins is not just the bolding. Reading and listening
+    are recognition evidence by construction — the listen path hardcodes
+    ``Direction.RECOGNITION`` throughout, and ``readingActions`` already refused
+    to trust this function for read-ahead grading for exactly that reason. The
+    review queue remains the only surface that drills production. When
+    production gets its own review path in the lesson (bd tunatale-dvdm), that
+    path decides its own direction; it must not come back through here.
     """
     from app.models.srs_item import SRSItem as _SRSItem
 
@@ -193,16 +213,7 @@ def resolve_active_direction(item: object) -> Direction:
     ct = item.syntactic_unit.card_type
     if ct == "cloze":
         return Direction.PRODUCTION
-    rec = item.directions.get(Direction.RECOGNITION)
-    prod = item.directions.get(Direction.PRODUCTION)
-    # Recognition is active until it graduates (REVIEW), then production takes over
-    # — BUT only if production exists. Single-direction cards (the imported
-    # Norwegian deck is recognition-only) have nothing to advance to, so they stay
-    # on the direction they actually have. Returning an absent direction makes the
-    # caller's item.directions[active_dir] KeyError (the lesson-transcript 500).
-    if rec is not None and rec.state == SRSState.REVIEW and prod is not None:
-        return Direction.PRODUCTION
-    if rec is not None:
+    if item.directions.get(Direction.RECOGNITION) is not None:
         return Direction.RECOGNITION
     return Direction.PRODUCTION
 

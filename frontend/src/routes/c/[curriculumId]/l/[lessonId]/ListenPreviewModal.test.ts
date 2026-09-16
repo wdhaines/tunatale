@@ -57,12 +57,12 @@ beforeEach(() => {
 // seed written as "today" on a local calendar date goes red the moment UTC rolls
 // past it — 3 tests failed at 2026-07-26T00:00Z while it was still 2026-07-25 EDT.
 // 04:00 UTC mirrors the backend's due_at convention.
-const dueInDays = (days: number): string => {
-  const d = new Date();
-  d.setUTCHours(4, 0, 0, 0);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString();
-};
+// Anchored on the STUDY DAY, not the browser's UTC date — see
+// `studyDayDueAt`. The UTC-anchored version this replaced went red every
+// evening between 20:00 and 04:00 local.
+import { studyDayDueAt } from "../../../../../test/factories";
+
+const dueInDays = (days: number): string => studyDayDueAt(days);
 
 const createCandidate = (text: string) => ({
   kind: "create" as const,

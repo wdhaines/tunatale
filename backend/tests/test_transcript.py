@@ -986,10 +986,14 @@ class TestRecognitionReviewable:
         vsak = next(w for w in result.dialogue_lines[0].words if w.lemma == "vsak")
         assert vsak.recognition_reviewable is False
 
-    def test_true_for_graduated_word_when_active_direction_is_production(self):
-        """Once recognition graduates (REVIEW) with production present, the active
-        direction flips to PRODUCTION — but reading still evidences recognition,
-        so recognition_reviewable stays True."""
+    def test_true_for_graduated_word_with_production_present(self):
+        """A graduated word with a production direction still reads as recognition.
+
+        The active direction used to flip to PRODUCTION here; it no longer does
+        (the reader is recognition-only until production gets its own lesson
+        review path — bd tunatale-dvdm). ``recognition_reviewable`` was already
+        True through the flip and stays True without it.
+        """
         unit = SyntacticUnit(text="banka", translation="x", word_count=1, difficulty=1, source="llm", lemma="banka")
         self.db.add_collocation(unit, language_code="sl")
         item = self.db.get_collocation("banka")
@@ -999,7 +1003,7 @@ class TestRecognitionReviewable:
             ds.due_at = datetime(2099, 1, 1, 4, 0, tzinfo=UTC)
             self.db.update_direction(item.guid, d, ds)
         word = self._word("banka")
-        assert word.active_direction == "production"
+        assert word.active_direction == "recognition"
         assert word.recognition_reviewable is True
 
 
@@ -1023,7 +1027,13 @@ class TestResolveActiveDirection:
         # NEW → recognition
         assert resolve_active_direction(srs) == Direction.RECOGNITION
 
-    def test_vocab_recognition_review_returns_production(self):
+    def test_vocab_recognition_review_stays_recognition(self):
+        """Graduating recognition no longer hands the reader over to production.
+
+        The lesson surfaces (reading, listening) evidence RECOGNITION only, so
+        the direction they report and grade must be recognition whenever the
+        card has one. See ``resolve_active_direction``.
+        """
         item = SyntacticUnit(
             text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka", card_type="vocab"
         )
@@ -1031,9 +1041,9 @@ class TestResolveActiveDirection:
 
         srs = SRSItem(syntactic_unit=item)
         srs.directions[Direction.RECOGNITION].state = SRSState.REVIEW
-        assert resolve_active_direction(srs) == Direction.PRODUCTION
+        assert resolve_active_direction(srs) == Direction.RECOGNITION
 
-    def test_vocab_both_review_returns_production(self):
+    def test_vocab_both_review_returns_recognition(self):
         item = SyntacticUnit(
             text="banka", translation="bank", word_count=1, difficulty=1, source="llm", lemma="banka", card_type="vocab"
         )
@@ -1042,7 +1052,7 @@ class TestResolveActiveDirection:
         srs = SRSItem(syntactic_unit=item)
         srs.directions[Direction.RECOGNITION].state = SRSState.REVIEW
         srs.directions[Direction.PRODUCTION].state = SRSState.REVIEW
-        assert resolve_active_direction(srs) == Direction.PRODUCTION
+        assert resolve_active_direction(srs) == Direction.RECOGNITION
 
     def test_recognition_only_review_stays_recognition(self):
         """A recognition-only vocab card (e.g. the imported Norwegian deck — single
@@ -1211,7 +1221,7 @@ class TestTranscriptEnrichment:
         assert word.active_direction == "recognition"
         assert word.active_state == "new"
 
-    def test_vocab_both_review_active_direction_production(self):
+    def test_vocab_both_review_active_direction_recognition(self):
         from app.models.srs_item import Direction, SRSState
 
         self._add_vocab("banka", "bank", lemma="banka")
@@ -1225,7 +1235,7 @@ class TestTranscriptEnrichment:
         lesson = _make_lesson([("female-1", "banka")])
         result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
         word = result.dialogue_lines[0].words[0]
-        assert word.active_direction == "production"
+        assert word.active_direction == "recognition"
         assert word.active_state == "review"
 
     def test_cloze_base_active_direction_production(self):
@@ -1646,16 +1656,15 @@ class TestTranscriptEnrichment:
         word = result.dialogue_lines[0].words[0]
 
         assert word.inflectable is False
-        # ...and the flip of the ACTIVE direction is not a regression in what the
-        # reader sees. `resolve_active_direction` hands over to production the
-        # moment one exists, so a word mature for a year starts reporting
-        # `active_state='new'` — but the colour and the tooltip percentage are
-        # driven by `progress`, and that does not move: a recognition-only word
-        # was already capped at half, and the minted direction supplies the
-        # other half's zero.
+        # ...and minting the production direction does not move what the reader
+        # reports. The active direction STAYS recognition (it no longer flips the
+        # moment a production direction exists), so a word mature for a year keeps
+        # reporting its mature recognition state. `progress` is unaffected either
+        # way: a recognition-only word was already capped at half, and the minted
+        # direction supplies the other half's zero.
         from app.srs.mastery import compute_mastery_progress
 
-        assert word.active_direction == "production"
+        assert word.active_direction == "recognition"
         before = compute_mastery_progress([item.directions[Direction.RECOGNITION]])
         assert word.progress == before == 0.5
 
@@ -2291,8 +2300,9 @@ class TestRecognitionState:
 
     def test_flip_case_recognition_review_production_new(self):
         """Case 5 (guardrail): recognition REVIEW + production NEW → recognition_state
-        'review', NOT 'new'. The active direction is production (active_state='new'),
-        but /listen grades ONLY recognition — the mastery line must reflect recognition."""
+        'review', NOT 'new'. The active direction is recognition too, so
+        ``active_state`` agrees with it — /listen and the reader both grade ONLY
+        recognition, and the mastery line must reflect recognition."""
         self._add_vocab("banka", "bank", lemma="banka")
         item = self.db.get_collocation("banka")
         rec = item.directions[Direction.RECOGNITION]
@@ -2305,12 +2315,41 @@ class TestRecognitionState:
         lesson = _make_lesson([("female-1", "banka")])
         result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
         word = result.dialogue_lines[0].words[0]
-        # Active direction is production (rec=REVIEW, prod=NEW, prod exists → prod active)
-        assert word.active_direction == "production"
-        assert word.active_state == "new"  # production is NEW
-        # But recognition is REVIEW
+        # Active direction is recognition even though a production direction exists
+        assert word.active_direction == "recognition"
+        assert word.active_state == "review"  # recognition is REVIEW
         assert word.recognition_state == "review"
         assert word.recognition_is_due is False
+
+    def test_due_recognition_bolds_even_with_a_production_direction(self):
+        """THE reader-bolding regression: a due recognition card must read as due.
+
+        Reported 2026-09-15 against the "Booking a Group Trip in July" session:
+        16 of the transcript's words were in that day's review queue and only 3
+        rendered bold. The 13 misses shared one signature — recognition REVIEW
+        and due, production NEW — because the active direction had flipped to
+        production, whose NEW state is never "due". The frontend bolds on
+        ``is_due``, so the queue and the transcript disagreed about the same
+        card. Recognition is what reading evidences, so recognition is what the
+        reader reports.
+        """
+        self._add_vocab("banka", "bank", lemma="banka")
+        item = self.db.get_collocation("banka")
+        rec = item.directions[Direction.RECOGNITION]
+        rec.state = SRSState.REVIEW
+        rec.due_at = datetime(2026, 5, 30, 4, 0, tzinfo=UTC)  # due before self.today
+        rec.last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        rec.stability = 30.0
+        self.db.update_direction(item.guid, Direction.RECOGNITION, rec)
+        # Production exists and is untouched — the state that used to hide the bold.
+        assert item.directions[Direction.PRODUCTION].state is SRSState.NEW
+
+        lesson = _make_lesson([("female-1", "banka")])
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        word = result.dialogue_lines[0].words[0]
+        assert word.is_due is True
+        assert word.active_direction == "recognition"
+        assert word.overdue_ratio is not None  # the heavier-bold ramp also lights up
 
     def test_cloze_production_only_recognition_state_none(self):
         """Case 6: cloze (production-only) → recognition_state is None."""
