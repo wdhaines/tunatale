@@ -78,10 +78,14 @@ const base = {
   produce_stability: null as number | null,
 };
 
-// Today's UTC date at the 04:00 rollover convention, so `dueLabel` reads
-// "today". A hardcoded date would drift the tag's text as the calendar moves
-// and turn the last test in this file into a nightly failure.
-const TODAY_DUE_AT = `${new Date().toISOString().slice(0, 10)}T04:00:00+00:00`;
+// Today at the 04:00 rollover convention, so `dueLabel` reads "today". A
+// hardcoded date would drift the tag's text as the calendar moves and turn the
+// last test in this file into a nightly failure — but so did anchoring on the
+// browser's UTC date, which is what this used to do. `studyDayDueAt` anchors on
+// the local study day instead; the note there has the measurement.
+import { studyDayDueAt } from "../../../../../test/factories";
+
+const TODAY_DUE_AT = studyDayDueAt(0);
 
 const dueBands: {
   understand_band: string;
