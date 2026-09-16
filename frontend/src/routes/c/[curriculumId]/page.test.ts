@@ -397,7 +397,6 @@ describe("/c/[curriculumId] page", () => {
       id: "l-new",
       title: "T",
       sections: [],
-      warnings: [],
     });
 
     const { getByText, container } = render(Page, {

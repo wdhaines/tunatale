@@ -29,32 +29,15 @@ from app.generation.story import (
     build_story_prompts,
 )
 from app.llm.client import LLMError, LLMQuotaExceededError
-from app.models.language import Language
 from app.models.lesson import Lesson, SectionType
 from app.models.strategy import ContentStrategy
 from app.srs.database import SRSDatabase
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for
-from app.storage.lesson_io import export_lesson, speaker_warnings, validate_story
+from app.storage.lesson_io import export_lesson, validate_story
 
 _logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/story", tags=["generation"])
-
-
-def _logged_speaker_warnings(story: dict | None, language: Language) -> list[str]:
-    """Speaker warnings, mirrored to the server log.
-
-    Returning them in a 201 body is not delivery — nothing reads the body of a
-    successful generate in normal use, so an unmapped speaker was effectively
-    invisible on the path that produces most lessons.
-
-    ``story`` is ``None`` for lessons stored before the exact Story-JSON source
-    was persisted in ``generation_metadata``; those carry no speakers to check.
-    """
-    warnings = speaker_warnings(story, language) if story else []
-    for warning in warnings:
-        _logger.warning("%s", warning)
-    return warnings
 
 
 async def _prewarm_lesson(lesson: Lesson, srs_db: SRSDatabase) -> None:
@@ -301,7 +284,6 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
         "id": lesson_id,
         "title": lesson.title,
         "sections": sections,
-        "warnings": _logged_speaker_warnings(lesson.generation_metadata.get("story"), language),
     }
 
 
@@ -336,7 +318,7 @@ async def import_story(body: ImportLessonRequest, request: Request):
         # used, minus its write. publish_lesson runs UPOS before its single
         # write, so the old write-then-rewrite (import_lesson wrote, then a
         # second write persisted the tags) is gone.
-        validate_story(story)
+        validate_story(story, language=language)
         curriculum = store.get_curriculum(body.curriculum_id)
         review_words = curriculum.review_request(body.day) if curriculum is not None else ()
         lesson = build_lesson_from_story(story, language=language, review_words=review_words)
@@ -368,7 +350,6 @@ async def import_story(body: ImportLessonRequest, request: Request):
         "id": lesson_id,
         "title": lesson.title,
         "sections": sections,
-        "warnings": _logged_speaker_warnings(story, language),
     }
 
 

@@ -37,11 +37,7 @@
 	let pasteText = $state('');
 	let validationError = $state('');
 	let importError = $state('');
-	let importWarnings: string[] = $state([]);
 	let importLoading = $state(false);
-	// Set when an import succeeded WITH warnings: navigation is deferred so the
-	// user can actually read them; the continue button hands off to onImported.
-	let importedLessonId: string | null = $state(null);
 
 	let copyLabel = $state('');
 
@@ -60,15 +56,11 @@
 		pasteText = target.value;
 		validationError = '';
 		importError = '';
-		importWarnings = [];
-		importedLessonId = null;
 	}
 
 	async function handleImport() {
 		validationError = '';
 		importError = '';
-		importWarnings = [];
-		importedLessonId = null;
 
 		let parsed: Record<string, unknown>;
 		try {
@@ -85,12 +77,7 @@
 				day,
 				story: parsed,
 			});
-			if (result.warnings.length > 0) {
-				importWarnings = result.warnings;
-				importedLessonId = result.id;
-			} else {
-				onImported(result.id);
-			}
+			onImported(result.id);
 		} catch (e) {
 			importError = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -137,30 +124,13 @@
 				<p class="error">{importError}</p>
 			{/if}
 
-			{#if importWarnings.length > 0}
-				<ul class="warnings">
-				{#each importWarnings as w (w)}
-					<li>{w}</li>
-				{/each}
-				</ul>
-			{/if}
-
-			{#if importedLessonId}
-				<button
-					data-testid="continue-btn"
-					onclick={() => onImported(importedLessonId!)}
-				>
-					{t('lessonSourcePanel.continueImported')}
-				</button>
-			{:else}
-				<button
-					data-testid="import-btn"
-					onclick={handleImport}
-					disabled={importLoading || !pasteText.trim()}
-				>
-					{importLoading ? t('lessonSourcePanel.importing') : t('lessonSourcePanel.import')}
-				</button>
-			{/if}
+			<button
+				data-testid="import-btn"
+				onclick={handleImport}
+				disabled={importLoading || !pasteText.trim()}
+			>
+				{importLoading ? t('lessonSourcePanel.importing') : t('lessonSourcePanel.import')}
+			</button>
 		</div>
 	{/if}
 </details>
@@ -256,14 +226,5 @@
 		color: var(--color-muted);
 		font-style: italic;
 		font-size: 0.85rem;
-	}
-	.warnings {
-		margin: 0;
-		padding: 0 0 0 1.25rem;
-		font-size: 0.82rem;
-		color: var(--color-warning, #b8860b);
-	}
-	.warnings li {
-		margin: 0.15rem 0;
 	}
 </style>

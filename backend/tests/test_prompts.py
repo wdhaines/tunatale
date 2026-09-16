@@ -16,8 +16,15 @@ from app.models.strategy import ContentStrategy
 
 
 def test_system_prompt_contains_voice_protocol():
-    assert "female-1" in SYSTEM_PROMPT
-    assert "male-1" in SYSTEM_PROMPT
+    """The built prompt advertises both L2 voice families.
+
+    The raw SYSTEM_PROMPT template no longer hardcodes a role list (rag.6:
+    roles are derived from the language's voice map at build time), so the
+    protocol line lives in the built prompt, not the template.
+    """
+    prompt = build_story_system_prompt(get_language("no"))
+    assert "female-1" in prompt
+    assert "male-1" in prompt
 
 
 def test_system_prompt_contains_json_schema():
@@ -200,3 +207,27 @@ def test_norwegian_prompt_keeps_shared_sections():
     assert "VOICE ASSIGNMENT PROTOCOL" in prompt
     assert "SCENE HEADER FORMAT" in prompt
     assert "5-12" in prompt or "5–12" in prompt
+
+
+def test_norwegian_prompt_names_all_eight_roles_from_the_map():
+    """The cap is gone and the cast comes from the no voice map (rag.6)."""
+    prompt = build_story_system_prompt(get_language("no"))
+    assert (
+        "- Use ONLY these 8 L2 voices: female-1, female-2, female-3, female-4, male-1, male-2, male-3, male-4" in prompt
+    )
+    assert "NEVER use voice numbers higher than 2" not in prompt
+    assert "these 4 L2 voices" not in prompt
+
+
+def test_story_prompt_derives_roles_from_the_voice_map():
+    """The role list comes from the map, not a constant: a two-role map
+    advertises exactly those two."""
+    tl = Language(
+        code="tl",
+        name="Tagalog",
+        native_name="Tagalog",
+        script="latin",
+        tts_voice_map={"narrator": "en-US-GuyNeural", "female-1": "v-f", "male-1": "v-m"},
+    )
+    prompt = build_story_system_prompt(tl)
+    assert "- Use ONLY these 2 L2 voices: female-1, male-1" in prompt

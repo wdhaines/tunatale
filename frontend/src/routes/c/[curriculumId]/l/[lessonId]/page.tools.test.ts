@@ -297,7 +297,6 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         id: "new-l1",
         title: "Day 1 v2",
         sections: [],
-        warnings: [],
       });
 
       const { container } = render(Page, {

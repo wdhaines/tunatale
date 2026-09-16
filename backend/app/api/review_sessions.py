@@ -49,7 +49,7 @@ from app.api._serializers import serialize_lesson
 # steps — speaker warnings mirrored to the log — and a second copy here would drift
 # from the lesson path exactly where the two must agree. No import cycle: generation.py
 # knows nothing about review sessions.
-from app.api.generation import _injected_lemmatizer, _logged_speaker_warnings
+from app.api.generation import _injected_lemmatizer
 from app.api.models import (
     CreateReviewSessionFromPasteRequest,
     CreateReviewSessionRequest,
@@ -200,7 +200,7 @@ async def _generate_and_store(
         replace=replace,
     )
 
-    warnings = _logged_speaker_warnings(metadata.get("story"), language)
+    warnings: list[str] = []
     if metadata.get("gloss_entry_count") == 0:
         warnings.append("This session has no hover translations")
     return {
@@ -292,7 +292,7 @@ async def create_review_session_from_paste(body: CreateReviewSessionFromPasteReq
         # Validated BEFORE building, exactly as import_lesson and the rewrite route
         # do: a story missing lines[].speaker otherwise dies on a bare KeyError in
         # the speaker-warning pass — a 500 for what is really a malformed paste.
-        validate_story(story)
+        validate_story(story, language=language)
         lesson = build_lesson_from_story(story, language=language, review_words=review_words)
     except (StoryGenerationError, ValueError) as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
@@ -318,7 +318,7 @@ async def create_review_session_from_paste(body: CreateReviewSessionFromPasteReq
         replace=False,
     )
 
-    warnings = _logged_speaker_warnings(metadata.get("story"), language)
+    warnings: list[str] = []
     if metadata.get("gloss_entry_count") == 0:
         warnings.append("This session has no hover translations")
     return {
@@ -463,7 +463,7 @@ async def import_review_session(session_id: str, body: ImportReviewSessionReques
         # it a story missing ``lines[].speaker`` reaches the speaker-warning pass
         # and dies on a bare KeyError — a 500 for what is really a malformed
         # paste, which is the whole reason validate_story exists.
-        validate_story(story)
+        validate_story(story, language=language)
         lesson = build_lesson_from_story(story, language=language, review_words=review_words)
     except (StoryGenerationError, ValueError) as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
@@ -491,7 +491,7 @@ async def import_review_session(session_id: str, body: ImportReviewSessionReques
         replace=True,
     )
 
-    warnings = _logged_speaker_warnings(story, language)
+    warnings: list[str] = []
     if metadata.get("gloss_entry_count") == 0:
         warnings.append("This session has no hover translations")
     return {
@@ -642,7 +642,7 @@ async def regloss_review_session(session_id: str, request: Request):
     await ensure_dialogue_glosses(story, getattr(request.app.state, "llm", None), language)
 
     try:
-        validate_story(story)
+        validate_story(story, language=language)
         lesson = build_lesson_from_story(
             story,
             language=language,

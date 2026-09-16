@@ -36,7 +36,7 @@ def _require(entry: object, path: str, fields: tuple[str, ...]) -> None:
             raise ValueError(f"{path}.{field} must be a non-empty string")
 
 
-def validate_story(story: object) -> None:
+def validate_story(story: object, language: Language | None = None) -> None:
     """Reject malformed Story JSON with a clear message (not a deep KeyError).
 
     Requirements mirror the hard key accesses in ``build_lesson_from_story``
@@ -44,6 +44,10 @@ def validate_story(story: object) -> None:
     ``build_translated_section`` reads unconditionally. Required fields must be
     non-empty strings: they all end up as TTS phrases (a "" line renders fine
     at import and then breaks audio rendering).
+
+    When a *language* is passed, an unknown ``lines[].speaker`` is rejected
+    too — ``_resolve_voice`` raises for exactly that case at render time, and
+    red over a warning is the user's standing preference.
     """
     if not isinstance(story, dict):
         raise ValueError("story must be a JSON object")
@@ -60,6 +64,7 @@ def validate_story(story: object) -> None:
         raise ValueError("story needs at least one of 'key_phrases' or 'scenes'")
     for i, kp in enumerate(key_phrases):
         _require(kp, f"key_phrases[{i}]", ("phrase", "translation"))
+    known = set(language.tts_voice_map) if language is not None else None
     for i, scene in enumerate(scenes):
         _require(scene, f"scenes[{i}]", ("label",))
         lines = scene.get("lines", [])
@@ -67,31 +72,13 @@ def validate_story(story: object) -> None:
             raise ValueError(f"scenes[{i}].lines must be a list")
         for j, line in enumerate(lines):
             _require(line, f"scenes[{i}].lines[{j}]", ("speaker", "text", "translation"))
-
-
-def speaker_warnings(story: dict, language: Language) -> list[str]:
-    """Warn once per speaker missing from the voice map.
-
-    The message names the voice that is actually substituted.
-    ``section_builder._resolve_voice`` falls back to the map's ``female-1``,
-    reaching the narrator only if ``female-1`` is itself absent — which it never
-    is for a configured language. The earlier wording promised the narrator: an
-    English voice a listener catches instantly. What the code delivers is the
-    target-language female lead, which sounds like an ordinary speaker and so is
-    never noticed. A warning that describes a loud failure during a quiet one is
-    worse than none.
-    """
-    known = set(language.tts_voice_map)
-    unknown: list[str] = []
-    for scene in story.get("scenes", []):
-        for line in scene.get("lines", []):
-            speaker = line["speaker"].lower()
-            if speaker not in known and speaker not in unknown:
-                unknown.append(speaker)
-    return [
-        f"speaker '{s}' is not in the {language.code} voice map; its lines fall back to the 'female-1' voice"
-        for s in unknown
-    ]
+            if known is not None:
+                speaker = line["speaker"].lower()
+                if speaker not in known:
+                    raise ValueError(
+                        f"speaker '{speaker}' is not in the {language.code} voice map; "
+                        f"known roles: {', '.join(sorted(language.tts_voice_map))}"
+                    )
 
 
 def export_lesson(store: ContentStore, lesson_id: str) -> dict:
@@ -156,7 +143,7 @@ def import_lesson(store: ContentStore, file: dict, language: Language) -> tuple[
     per day wins (``get_latest_lesson_by_day``), exactly like regeneration.
     """
     story = file.get("story")
-    validate_story(story)
+    validate_story(story, language=language)
     # The set the EXPORTED prompt asked for, not a fresh selection: recomputing
     # here diverges exactly when time has passed between paste-out and paste-back,
     # which is the case the check exists for (tunatale-fgeq.1). Absent means

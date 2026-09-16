@@ -315,6 +315,55 @@ class TestGetLanguage:
         assert "nb-NO" in lang.tts_voice_map["female-1"]
         assert "nb-NO" in lang.tts_voice_map["male-1"]
 
+    def test_norwegian_widened_cast_has_eight_distinct_dialogue_voices(self):
+        """The numbered dialogue cast must be eight DISTINCT voices.
+
+        Regression guard for the William/Finn class: until rag.6, male-1 and
+        male-2 measured Finn 97.0 Hz vs William 101.9 Hz — 4.9 Hz and 0.005
+        harmonicity apart — so two male characters conversed in a near-
+        duplicate. ``narrator`` and the bare ``female``/``male`` aliases are
+        deliberately excluded here: they are not cast members.
+        """
+        voices = get_language("no").tts_voice_map
+        cast = {
+            role: voices[role]
+            for role in (
+                "female-1",
+                "female-2",
+                "female-3",
+                "female-4",
+                "male-1",
+                "male-2",
+                "male-3",
+                "male-4",
+            )
+        }
+        assert len(set(cast.values())) == 8, f"collapsed cast: {cast}"
+
+    def test_every_norwegian_map_voice_has_a_measured_gain(self):
+        """Every voice named in the no voice map also has a tts_voice_gain_db entry.
+
+        An unmapped voice renders at 0.0 dB — silently un-normalised against
+        the rest of the cast. The narrator (en-US-GuyNeural, measured on
+        ENGLISH text) is covered too.
+        """
+        lang = get_language("no")
+        missing = set(lang.tts_voice_map.values()) - set(lang.tts_voice_gain_db)
+        assert not missing, f"voices without a measured gain: {missing}"
+
+    def test_william_left_the_map_but_stays_in_the_gain_table(self):
+        """en-AU-William was male-2 until rag.6; legacy audio must stay normalised.
+
+        A stored lesson pins a RESOLVED voice_id per phrase, so the Norwegian
+        lessons on disk still name William on male-2. ``get_tts_voice_gain_db``
+        returns 0.0 for an unknown voice, which would silently un-normalise
+        legacy audio on the next re-render — the table is keyed by VOICE, not
+        role, precisely so it can outlive a role reassignment.
+        """
+        voices = get_language("no").tts_voice_map
+        assert "en-AU-WilliamMultilingualNeural" not in set(voices.values())
+        assert "en-AU-WilliamMultilingualNeural" in get_language("no").tts_voice_gain_db
+
     @pytest.mark.parametrize("code,locale", [("sl", "sl-SI"), ("no", "nb-NO"), ("en", "en-US")])
     def test_tts_locale_is_declared_per_language(self, code, locale):
         assert get_tts_locale(code) == locale

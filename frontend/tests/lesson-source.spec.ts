@@ -11,7 +11,7 @@ test.use({
 	permissions: ['clipboard-read', 'clipboard-write'],
 });
 
-test('lesson source panel: copy, warned import defers navigation, clean import navigates to the new lesson', async ({
+test('lesson source panel: copy, unknown speaker is rejected, clean import navigates to the new lesson', async ({
 	page,
 	request,
 }) => {
@@ -49,11 +49,15 @@ test('lesson source panel: copy, warned import defers navigation, clean import n
 	expect(promptClip).toContain('SCHEMA REMINDER');
 	expect(promptClip).toContain('Ordering Coffee');
 
-	// 1) Import a story with an unknown speaker → REAL backend returns a
-	// speaker warning; navigation is deferred behind the Continue button.
-	const warnedStory = {
+	// 1) Import a story with an unknown speaker → REAL backend REJECTS it.
+	// Since rag.6 an unmapped speaker is a hard failure, not a warning: the
+	// render path (`section_builder._resolve_voice`) raises rather than
+	// silently substituting female-1, so letting the import through would only
+	// defer the break to render time. No lesson is created and no Continue
+	// button appears — there is nothing to continue to.
+	const rejectedStory = {
 		...CANNED_STORY,
-		title: 'Ordering Coffee warned',
+		title: 'Ordering Coffee rejected',
 		scenes: [
 			{
 				label: 'At the Café',
@@ -61,13 +65,13 @@ test('lesson source panel: copy, warned import defers navigation, clean import n
 			},
 		],
 	};
-	await page.locator('textarea').fill(JSON.stringify(warnedStory));
+	await page.locator('textarea').fill(JSON.stringify(rejectedStory));
 	await page.getByTestId('import-btn').click();
 	await expect(page.getByText(/speaker 'alien-9' is not in the sl voice map/)).toBeVisible({
 		timeout: 15000,
 	});
 	await expect(page).toHaveURL(new RegExp(lessonId)); // still on the original lesson
-	await expect(page.getByTestId('continue-btn')).toBeVisible();
+	await expect(page.getByTestId('continue-btn')).toHaveCount(0);
 
 	// 2) Re-paste a clean edited story (known speakers) → REAL import returns
 	// no warnings and the page navigates straight to the new lesson.

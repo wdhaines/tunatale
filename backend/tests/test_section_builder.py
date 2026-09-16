@@ -1,7 +1,10 @@
 """Tests for the mechanical section builder."""
 
+import pytest
+
 from app.generation.section_builder import (
     SECTION_TITLES,
+    _resolve_voice,
     build_en_translated_section,
     build_key_phrases_section,
     build_natural_speed_section,
@@ -307,16 +310,16 @@ def test_key_phrases_skips_missing_fields():
 def test_natural_speed_skips_malformed_scene_and_line():
     """A scene missing its label or a line missing speaker/text is skipped, plus non-dict entries."""
     scenes = [
-        {"label": "Good", "lines": [{"speaker": "f1", "text": "Dober dan", "translation": "Good day"}]},
+        {"label": "Good", "lines": [{"speaker": "female-1", "text": "Dober dan", "translation": "Good day"}]},
         {"not_a_label": 42, "lines": []},
-        {"label": "", "lines": [{"speaker": "f1", "text": "Empty label"}]},
+        {"label": "", "lines": [{"speaker": "female-1", "text": "Empty label"}]},
         42,
         {
             "label": "Bad lines",
             "lines": [
-                {"speaker": "f1", "text": "Hello", "translation": "Zdravo"},
+                {"speaker": "female-1", "text": "Hello", "translation": "Zdravo"},
                 {"speaker": "", "text": "No speaker"},
-                {"speaker": "f1", "text": "", "translation": "No text"},
+                {"speaker": "female-1", "text": "", "translation": "No text"},
                 "not a dict",
             ],
         },
@@ -335,7 +338,7 @@ def test_natural_speed_skips_malformed_scene_and_line():
 def test_slow_speed_skips_malformed_line():
     """Slow-speed builder skips malformed scenes and lines (non-dict, missing label, missing fields)."""
     scenes = [
-        {"label": "Scene", "lines": [{"speaker": "f1", "text": "Kava prosim", "translation": "Coffee please"}]},
+        {"label": "Scene", "lines": [{"speaker": "female-1", "text": "Kava prosim", "translation": "Coffee please"}]},
         {"not_a_label": True},
         {"label": "", "lines": []},
         42,
@@ -343,7 +346,7 @@ def test_slow_speed_skips_malformed_line():
             "label": "Bad lines",
             "lines": [
                 {"missing": "speaker"},
-                {"speaker": "f1", "text": ""},
+                {"speaker": "female-1", "text": ""},
                 "not a dict",
             ],
         },
@@ -424,15 +427,15 @@ def test_slow_speed_slovene_unchanged():
 def test_translated_skips_line_without_translation():
     """build_translated_section skips malformed scenes and lines (non-dict, missing fields)."""
     scenes = [
-        {"label": "S1", "lines": [{"speaker": "f1", "text": "Dober dan", "translation": "Good day"}]},
+        {"label": "S1", "lines": [{"speaker": "female-1", "text": "Dober dan", "translation": "Good day"}]},
         {"not_a_label": True},
         {"label": "", "lines": []},
         42,
         {
             "label": "S2",
             "lines": [
-                {"speaker": "f1", "text": "Has it", "translation": "Ima"},
-                {"speaker": "f1", "text": "No translation"},
+                {"speaker": "female-1", "text": "Has it", "translation": "Ima"},
+                {"speaker": "female-1", "text": "No translation"},
                 "not a dict",
             ],
         },
@@ -495,9 +498,9 @@ def test_slow_translated_skips_line_without_translation():
         {
             "label": "Scene",
             "lines": [
-                {"speaker": "f1", "text": "Dober dan", "translation": "Good day"},
-                {"speaker": "f1", "text": "No translation here"},
-                {"speaker": "f1", "text": "Prosim kavo", "translation": "A coffee please"},
+                {"speaker": "female-1", "text": "Dober dan", "translation": "Good day"},
+                {"speaker": "female-1", "text": "No translation here"},
+                {"speaker": "female-1", "text": "Prosim kavo", "translation": "A coffee please"},
             ],
         }
     ]
@@ -511,16 +514,16 @@ def test_slow_translated_skips_line_without_translation():
 def test_slow_translated_skips_malformed_input():
     """Malformed scenes/lines are skipped without crashing."""
     scenes = [
-        {"label": "Good", "lines": [{"speaker": "f1", "text": "Dober dan", "translation": "Good day"}]},
+        {"label": "Good", "lines": [{"speaker": "female-1", "text": "Dober dan", "translation": "Good day"}]},
         {"not_a_label": True},
         {"label": "", "lines": []},
         42,
         {
             "label": "Bad",
             "lines": [
-                {"speaker": "f1", "text": "Kava prosim", "translation": "Coffee please"},
+                {"speaker": "female-1", "text": "Kava prosim", "translation": "Coffee please"},
                 {"missing": "speaker"},
-                {"speaker": "f1", "text": ""},
+                {"speaker": "female-1", "text": ""},
                 "not a dict",
             ],
         },
@@ -594,9 +597,9 @@ def test_en_translated_skips_line_without_translation():
         {
             "label": "Scene",
             "lines": [
-                {"speaker": "f1", "text": "Dober dan", "translation": "Good day"},
-                {"speaker": "f1", "text": "No translation here"},
-                {"speaker": "f1", "text": "Prosim kavo", "translation": "A coffee please"},
+                {"speaker": "female-1", "text": "Dober dan", "translation": "Good day"},
+                {"speaker": "female-1", "text": "No translation here"},
+                {"speaker": "female-1", "text": "Prosim kavo", "translation": "A coffee please"},
             ],
         }
     ]
@@ -609,16 +612,16 @@ def test_en_translated_skips_line_without_translation():
 
 def test_en_translated_skips_malformed_input():
     scenes = [
-        {"label": "Good", "lines": [{"speaker": "f1", "text": "Dober dan", "translation": "Good day"}]},
+        {"label": "Good", "lines": [{"speaker": "female-1", "text": "Dober dan", "translation": "Good day"}]},
         {"not_a_label": True},
         {"label": "", "lines": []},
         42,
         {
             "label": "Bad",
             "lines": [
-                {"speaker": "f1", "text": "Kava prosim", "translation": "Coffee please"},
+                {"speaker": "female-1", "text": "Kava prosim", "translation": "Coffee please"},
                 {"missing": "speaker"},
-                {"speaker": "f1", "text": ""},
+                {"speaker": "female-1", "text": ""},
                 "not a dict",
             ],
         },
@@ -666,8 +669,8 @@ def test_slow_en_translated_skips_line_without_translation():
         {
             "label": "Scene",
             "lines": [
-                {"speaker": "f1", "text": "Dober dan", "translation": "Good day"},
-                {"speaker": "f1", "text": "No translation here"},
+                {"speaker": "female-1", "text": "Dober dan", "translation": "Good day"},
+                {"speaker": "female-1", "text": "No translation here"},
             ],
         }
     ]
@@ -679,16 +682,16 @@ def test_slow_en_translated_skips_line_without_translation():
 
 def test_slow_en_translated_skips_malformed_input():
     scenes = [
-        {"label": "Good", "lines": [{"speaker": "f1", "text": "Dober dan", "translation": "Good day"}]},
+        {"label": "Good", "lines": [{"speaker": "female-1", "text": "Dober dan", "translation": "Good day"}]},
         {"not_a_label": True},
         {"label": "", "lines": []},
         42,
         {
             "label": "Bad",
             "lines": [
-                {"speaker": "f1", "text": "Kava prosim", "translation": "Coffee please"},
+                {"speaker": "female-1", "text": "Kava prosim", "translation": "Coffee please"},
                 {"missing": "speaker"},
-                {"speaker": "f1", "text": ""},
+                {"speaker": "female-1", "text": ""},
                 "not a dict",
             ],
         },
@@ -702,6 +705,24 @@ def test_slow_en_translated_skips_malformed_input():
 
 
 # ── slow-word resolution ──────────────────────────────────────────────────
+
+
+def test_resolve_voice_raises_for_unknown_speaker():
+    """An unknown speaker is a loud failure (ValueError), not a silent swap.
+
+    Until rag.6, ``_resolve_voice`` returned the map's ``female-1`` for any
+    unknown role, so a 'female-3' line was simply spoken by the female lead —
+    the silent-collapse defect the role widening exists to remove. Returning a
+    value at all is the failure mode: pytest.raises fails the test unless an
+    exception is raised, so no substituted voice can pass here.
+    """
+    voice_map = {
+        "narrator": "en-US-GuyNeural",
+        "female-1": "sl-SI-PetraNeural",
+        "male-1": "sl-SI-RokNeural",
+    }
+    with pytest.raises(ValueError, match="ghost-9"):
+        _resolve_voice("ghost-9", voice_map)
 
 
 def _register_slow_word_only(monkeypatch, slow_fn):

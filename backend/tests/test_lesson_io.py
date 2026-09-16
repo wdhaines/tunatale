@@ -14,7 +14,6 @@ from app.models.curriculum import Curriculum, CurriculumDay
 from app.storage.lesson_io import (
     export_lesson,
     import_lesson,
-    speaker_warnings,
     validate_story,
 )
 from app.storage.store import ContentStore
@@ -95,6 +94,24 @@ class TestValidateStory:
         del story["scenes"][0]["lines"][1]["speaker"]
         with pytest.raises(ValueError, match=r"scenes\[0\].lines\[1\].*speaker"):
             validate_story(story)
+
+    def test_rejects_unknown_speaker_when_language_given(self, language):
+        """With a language, an unknown speaker is rejected up front (rag.6).
+
+        ``section_builder._resolve_voice`` now raises for a speaker absent from
+        the map, so a story that would die at render time is refused at the
+        door instead — red over a warning, per the user's standing preference.
+        """
+        story = _story()
+        story["scenes"][0]["lines"][0]["speaker"] = "robot-8"
+        with pytest.raises(ValueError, match="robot-8"):
+            validate_story(story, language=language)
+
+    def test_accepts_unknown_speaker_without_language(self):
+        """Without a language, validation behaves exactly as before."""
+        story = _story()
+        story["scenes"][0]["lines"][0]["speaker"] = "robot-8"
+        validate_story(story)
 
     def test_line_missing_text(self):
         story = _story()
@@ -182,7 +199,7 @@ class TestValidateStory:
             validate_story(story)
 
     def test_line_non_string_speaker_rejected(self):
-        # speaker_warnings calls line["speaker"].lower() — a non-string would
+        # validate_story calls line["speaker"].lower() — a non-string would
         # 500 with an AttributeError after import succeeded.
         story = _story()
         story["scenes"][0]["lines"][0]["speaker"] = 42
@@ -382,33 +399,3 @@ class TestRoundTrip:
         assert exported["story"] == file["story"]
         assert exported["curriculum_id"] == "c1"
         assert exported["day"] == 4
-
-
-class TestSpeakerWarnings:
-    def test_known_speakers_are_silent(self, language):
-        assert speaker_warnings(_story(), language) == []
-
-    def test_unknown_speaker_warns_naming_the_real_fallback_voice(self, language):
-        """The warning must name the voice actually substituted, not the narrator.
-
-        ``section_builder._resolve_voice`` falls back to the map's ``female-1``,
-        reaching the narrator only if ``female-1`` is itself absent — which it
-        never is for a configured language. The old text promised a narrator
-        (English, obviously wrong, caught by ear at once) while the code
-        delivered the target-language female lead, which sounds entirely
-        plausible and is therefore never noticed. A warning that describes a
-        loud failure during a quiet one is worse than no warning.
-        """
-        story = _story()
-        story["scenes"][0]["lines"][0]["speaker"] = "male-9"
-        warnings = speaker_warnings(story, language)
-        assert len(warnings) == 1
-        assert "male-9" in warnings[0]
-        assert "female-1" in warnings[0]
-        assert "narrator" not in warnings[0]
-
-    def test_duplicate_unknown_speaker_warns_once(self, language):
-        story = _story()
-        for line in story["scenes"][0]["lines"]:
-            line["speaker"] = "robot-7"
-        assert len(speaker_warnings(story, language)) == 1

@@ -2416,8 +2416,6 @@ export interface components {
       sections: unknown[];
       /** Title */
       title: string;
-      /** Warnings */
-      warnings: string[];
     };
     /** GenerationModeRequest */
     GenerationModeRequest: {
@@ -2667,8 +2665,6 @@ export interface components {
       sections: components["schemas"]["StorySection"][];
       /** Title */
       title: string;
-      /** Warnings */
-      warnings: string[];
     };
     /** InflectionClozeRequest */
     InflectionClozeRequest: {

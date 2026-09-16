@@ -121,11 +121,20 @@ class TestGetVoiceGainDb:
     @pytest.mark.parametrize(
         "code,voice_id,expected",
         [
-            # Norwegian — target −20.0 LUFS, measured on one sentence set.
-            ("no", "nb-NO-PernilleNeural", 1.6),
-            ("no", "nb-NO-IselinNeural", -0.2),
-            ("no", "nb-NO-FinnNeural", 0.6),
-            ("no", "en-AU-WilliamMultilingualNeural", 0.6),
+            # Norwegian — target −20.0 LUFS, measured 2026-09-16 on ONE sentence
+            # set so the cast is mutually consistent (rag.6 table).
+            ("no", "nb-NO-PernilleNeural", 1.2),
+            ("no", "nb-NO-IselinNeural", -0.1),
+            ("no", "en-US-EmmaMultilingualNeural", -1.8),
+            ("no", "en-US-ShimmerTurboMultilingualNeural", 0.4),
+            ("no", "nb-NO-FinnNeural", 0.8),
+            ("no", "en-US-DerekMultilingualNeural", 0.2),
+            ("no", "it-IT-GiuseppeMultilingualNeural", -0.7),
+            ("no", "en-US-DustinMultilingualNeural", 0.9),
+            # William left the voice map in rag.6 but STAYS in the gain table:
+            # stored lessons pin resolved voice_ids, and 0.0 for an unknown
+            # voice would silently un-normalise legacy audio on re-render.
+            ("no", "en-AU-WilliamMultilingualNeural", 0.9),
             # Slovene — from rag.4's final comment, one sentence set.
             ("sl", "sl-SI-PetraNeural", -2.4),
             ("sl", "sl-SI-RokNeural", -1.2),

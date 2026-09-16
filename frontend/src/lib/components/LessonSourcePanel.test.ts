@@ -42,7 +42,6 @@ const IMPORT_RESULT = {
   id: "new-lesson-123",
   title: "Kavarna v2",
   sections: [{ type: "key_phrases", phrase_count: 1 }],
-  warnings: ["speaker 'barman' is not in the sl voice map; its lines will use the narrator voice"],
 };
 
 const onImported = vi.fn();
@@ -179,32 +178,15 @@ describe("LessonSourcePanel", () => {
     });
   });
 
-  it("import with warnings shows them and DEFERS navigation until Continue", async () => {
-    // Regression: onImported used to fire immediately alongside the warnings,
-    // so the page navigated away before the user could read them.
-    const { container } = render(LessonSourcePanel, { props: PROPS });
-    await openPanel(container);
-
-    await waitFor(() => {
-      expect(container.querySelector("textarea")).toBeTruthy();
-    });
-    const textarea = container.querySelector("textarea")!;
-    await fireEvent.input(textarea!, { target: { value: JSON.stringify(SOURCE_STORY) } });
-    const importBtn = container.querySelector('[data-testid="import-btn"]')!;
-    await fireEvent.click(importBtn);
-
-    await waitFor(() => {
-      expect(container.textContent).toContain("speaker 'barman' is not in the sl voice map");
-    });
-    expect(onImported).not.toHaveBeenCalled();
-
-    const continueBtn = container.querySelector('[data-testid="continue-btn"]')!;
-    expect(continueBtn).toBeTruthy();
-    await fireEvent.click(continueBtn);
-    expect(onImported).toHaveBeenCalledWith("new-lesson-123");
-  });
-
-  it("editing the pasted text after a warned import returns to the Import button", async () => {
+  it("a rejected import shows the error and never navigates", async () => {
+    // Since rag.6 an unmapped speaker is a hard 422, not a warning: the render
+    // path raises rather than substituting female-1, so there is nothing to
+    // continue to and onImported must not fire.
+    mockImportStory.mockRejectedValue(
+      new Error(
+        "speaker 'barman' is not in the sl voice map; known roles: female-1, female-2, male-1, male-2",
+      ),
+    );
     const { container } = render(LessonSourcePanel, { props: PROPS });
     await openPanel(container);
 
@@ -214,17 +196,17 @@ describe("LessonSourcePanel", () => {
     const textarea = container.querySelector("textarea")!;
     await fireEvent.input(textarea!, { target: { value: JSON.stringify(SOURCE_STORY) } });
     await fireEvent.click(container.querySelector('[data-testid="import-btn"]')!);
-    await waitFor(() => {
-      expect(container.querySelector('[data-testid="continue-btn"]')).toBeTruthy();
-    });
 
-    await fireEvent.input(textarea!, { target: { value: "{}" } });
+    await waitFor(() => {
+      expect(container.textContent).toContain("speaker 'barman' is not in the sl voice map");
+    });
+    expect(onImported).not.toHaveBeenCalled();
     expect(container.querySelector('[data-testid="continue-btn"]')).toBeNull();
     expect(container.querySelector('[data-testid="import-btn"]')).toBeTruthy();
   });
 
-  it("calls onImported immediately when import succeeds without warnings", async () => {
-    mockImportStory.mockResolvedValue({ ...IMPORT_RESULT, warnings: [] });
+  it("calls onImported as soon as the import succeeds", async () => {
+    mockImportStory.mockResolvedValue(IMPORT_RESULT);
     const { container } = render(LessonSourcePanel, { props: PROPS });
     await openPanel(container);
 

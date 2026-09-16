@@ -254,8 +254,8 @@ class TestStoryGeneration:
                 {
                     "label": "Scene 1",
                     "lines": [
-                        {"speaker": "f1", "text": "Dober dan!", "translation": "Good day!"},
-                        {"speaker": "f1", "text": "Kje je banka?", "translation": "Where is the bank?"},
+                        {"speaker": "female-1", "text": "Dober dan!", "translation": "Good day!"},
+                        {"speaker": "female-1", "text": "Kje je banka?", "translation": "Where is the bank?"},
                     ],
                 }
             ],
@@ -277,8 +277,8 @@ class TestStoryGeneration:
                 {
                     "label": "Scene 1",
                     "lines": [
-                        {"speaker": "f1", "text": "Dober dan!", "translation": "Good day!"},
-                        {"speaker": "f1", "text": "Brez prevoda", "translation": ""},
+                        {"speaker": "female-1", "text": "Dober dan!", "translation": "Good day!"},
+                        {"speaker": "female-1", "text": "Brez prevoda", "translation": ""},
                     ],
                 }
             ],
@@ -301,8 +301,8 @@ class TestStoryGeneration:
                 {
                     "label": "Scene 1",
                     "lines": [
-                        {"speaker": "f1", "text": "   ", "translation": "Good day!"},  # blank → skipped
-                        {"speaker": "f1", "text": "Dober dan!", "translation": "Good day!"},
+                        {"speaker": "female-1", "text": "   ", "translation": "Good day!"},  # blank → skipped
+                        {"speaker": "female-1", "text": "Dober dan!", "translation": "Good day!"},
                     ],
                 }
             ],
@@ -354,7 +354,7 @@ class TestStoryGeneration:
             "scenes": [
                 {
                     "label": "S1",
-                    "lines": [{"speaker": "f1", "text": "Dober dan", "translation": "Good day"}],
+                    "lines": [{"speaker": "female-1", "text": "Dober dan", "translation": "Good day"}],
                 },
             ],
         }
@@ -377,7 +377,7 @@ class TestStoryGeneration:
                 {
                     "label": "S1",
                     "lines": [
-                        {"speaker": "f1", "text": "Dober dan", "translation": "Good day"},
+                        {"speaker": "female-1", "text": "Dober dan", "translation": "Good day"},
                     ],
                 }
             ],
