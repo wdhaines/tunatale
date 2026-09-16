@@ -229,7 +229,6 @@ export const en = {
   "lessonSourcePanel.copied": "Copied ✓",
   "lessonSourcePanel.pasteEditedJson": "Paste edited JSON here…",
   "lessonSourcePanel.invalidJson": "Invalid JSON — check the syntax and try again.",
-  "lessonSourcePanel.continueImported": "Continue to imported lesson →",
   "lessonSourcePanel.importing": "Importing…",
   "lessonSourcePanel.import": "Import",
 

@@ -3,7 +3,7 @@
 
 	interface Props {
 		copyPrompt: () => Promise<string>;
-		importRaw: (raw: string) => Promise<{ id: string; warnings: string[] }>;
+		importRaw: (raw: string) => Promise<{ id: string; warnings?: string[] }>;
 		onImported: (id: string) => void;
 		onDelete?: () => Promise<void>;
 	}
@@ -48,7 +48,7 @@
 		importLoading = true;
 		try {
 			const result = await importRaw(pasteText);
-			if (result.warnings.length > 0) {
+			if (result.warnings && result.warnings.length > 0) {
 				importWarnings = result.warnings;
 				importedLessonId = result.id;
 			} else {

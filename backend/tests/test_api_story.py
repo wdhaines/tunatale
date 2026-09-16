@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from unittest.mock import AsyncMock
 
 from httpx import ASGITransport, AsyncClient
@@ -372,8 +371,8 @@ class TestStoryEndpoints:
                 json={"curriculum_id": "test-curriculum-id", "day": 1, "strategy": "WIDER"},
             )
 
-        assert set(response.json().keys()) == {"id", "title", "sections", "warnings"}
-        assert set(GenerateStoryResponse.model_fields) == {"id", "title", "sections", "warnings"}
+        assert set(response.json().keys()) == {"id", "title", "sections"}
+        assert set(GenerateStoryResponse.model_fields) == {"id", "title", "sections"}
         app.state.srs_db.close()
 
     async def test_generate_story_returns_201(self, monkeypatch):
@@ -723,44 +722,3 @@ async def _post_generate():
             "/api/story/generate",
             json={"curriculum_id": "test-curriculum-id", "day": 1, "strategy": "WIDER"},
         )
-
-
-class TestGenerateSpeakerWarnings:
-    """POST /generate must surface unmapped speakers, not only POST /import.
-
-    The warning existed but was wired to the import path alone, so the LLM path
-    — the one that invents speaker names unsupervised — was the unguarded one.
-    """
-
-    async def test_unmapped_speaker_is_reported(self):
-        _generate_state(_story_with_speakers("female-1", "barista-3"))
-        response = await _post_generate()
-        assert response.status_code == 201
-        warnings = response.json()["warnings"]
-        assert len(warnings) == 1
-        assert "barista-3" in warnings[0]
-
-    async def test_known_speakers_produce_no_warnings(self):
-        _generate_state(_story_with_speakers("female-1", "male-1"))
-        response = await _post_generate()
-        assert response.status_code == 201
-        assert response.json()["warnings"] == []
-
-    async def test_lesson_without_persisted_story_is_not_an_error(self):
-        """Legacy lessons carry no Story-JSON; that is silence, not a crash."""
-        _generate_state(None)
-        response = await _post_generate()
-        assert response.status_code == 201
-        assert response.json()["warnings"] == []
-
-    async def test_warning_is_logged_server_side(self, caplog):
-        """A 201 body nobody reads is not delivery — the log is.
-
-        This is the same lesson the backup notifications taught: a signal that
-        only exists somewhere nobody looks has not been delivered.
-        """
-        _generate_state(_story_with_speakers("barista-3"))
-        with caplog.at_level(logging.WARNING, logger="app.api.generation"):
-            response = await _post_generate()
-        assert response.status_code == 201
-        assert any("barista-3" in r.message for r in caplog.records)

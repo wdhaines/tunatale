@@ -34,53 +34,59 @@ register(
             tts_voice_map={
                 "narrator": NARRATOR_VOICE,
                 "female-1": "nb-NO-PernilleNeural",
-                # Iselin is served by Azure but NOT by edge-tts, so this slot
-                # could only stop duplicating Pernille once the provider moved.
-                # It carries the bulk of female dialogue (462 phrases vs 90 on
-                # female-1 across the stored lessons) — leaving it collapsed put
-                # two characters in one voice. Affects future renders only;
-                # existing audio on disk is unchanged.
                 "female-2": "nb-NO-IselinNeural",
+                "female-3": "en-US-EmmaMultilingualNeural",
+                "female-4": "en-US-ShimmerTurboMultilingualNeural",
                 "male-1": "nb-NO-FinnNeural",
-                # nb-NO's native catalogue has ONE male voice, so male-2 was
-                # Finn as well: across the 10 stored lessons that put 300
-                # phrases of a second man into the first man's voice (male-1
-                # carries 858). Azure's Multilingual Neurals fill the slot —
-                # they speak Norwegian under a <lang xml:lang="nb-NO"> wrapper.
-                # William measured WER 0.018, identical to Finn's own, and
-                # -20.2 LUFS against Finn's -20.3 (d0.1, the closest of the
-                # candidates; Florian d0.9 also passed). He also honours the
-                # <phoneme> stress overrides this language depends on: three
-                # renders (plain / IPA-A / IPA-B) hash to three distinct PCMs
-                # and the voice is deterministic, so that verdict is valid —
-                # unlike on Dragon HD, which is nondeterministic by design.
-                # ⚠️ NEW LESSONS ONLY, and not merely "existing audio is
-                # unchanged": a stored lesson blob pins a resolved voice_id per
-                # phrase, so the ten Norwegian lessons on disk keep Finn on
-                # male-2 even if re-rendered. Changing them means regenerating
-                # or backfilling the blob, which this does not do.
-                "male-2": "en-AU-WilliamMultilingualNeural",
+                "male-2": "en-US-DerekMultilingualNeural",
+                "male-3": "it-IT-GiuseppeMultilingualNeural",
+                "male-4": "en-US-DustinMultilingualNeural",
                 "female": "nb-NO-PernilleNeural",
                 "male": "nb-NO-FinnNeural",
             },
+            # The dialogue cast, measured 2026-09-16 through the product's own
+            # synthesize() (ffmpeg ebur128 for loudness, Azure STT for WER):
+            #   female-1 nb-NO-Pernille  163.3 Hz F0 / 0.722 harmonicity / WER 0.031 / 1 voice-specific error
+            #   female-2 nb-NO-Iselin    205.1 Hz F0 / 0.821                / WER 0.042 / 1 voice-specific error
+            #   female-3 en-US-Emma      181.8 Hz F0 / 0.773                / WER 0.021
+            #   female-4 en-US-Shimmer   149.5 Hz F0 / 0.702                / WER 0.010
+            #   male-1   nb-NO-Finn       97.0 Hz F0 / 0.538                / WER 0.021
+            #   male-2   en-US-Derek     114.3 Hz F0 / 0.597                / WER 0.010
+            #   male-3   it-IT-Giuseppe  128.0 Hz F0 / 0.650                / WER 0.010
+            #   male-4   en-US-Dustin    160.0 Hz F0 / 0.734                / WER 0.010
+            # Minimum pitch gap 13.8 Hz (women) / 13.7 Hz (men); the user
+            # confirmed all eight by ear on a loudness-normalised track.
+            # ⚠️ male-2 was en-AU-William until this cast, deliberately: Finn
+            # 97.0 vs William 101.9 Hz is 4.9 Hz and 0.005 harmonicity apart —
+            # a near-duplicate, the defect this widening exists to remove. Only
+            # 2 of the other 31 nb-capable male voices sit closer to Finn than
+            # William did.
+            # ⚠️ en-US-ShimmerTurboMultilingualNeural is a Turbo voice whose
+            # VoiceType is still Neural (read from the live /voices/list, which
+            # has only Neural and NeuralHD) — NOT the paid HD line. Keep it.
             # Per-voice loudness gains (dB) applied at assembly, target −20.0
-            # LUFS. Measured 2026-09-13 on the same 8 real lesson sentences
-            # through the product's own synthesize() (ffmpeg ebur128). The
-            # female pair's 1.8 LUFS spread is the whole motivation; Finn vs
-            # William measured 0.0. Constant per voice so intra-voice dynamics
-            # (Finn alone varies 2.4 LUFS) are preserved.
-            # The narrator (en-US-GuyNeural) measured 2026-09-13 on 8 real ENGLISH
-            # narrator sentences from the stored corpus — English text, or the
-            # number means nothing: mean -19.08 LUFS, so it ran 0.9 dB LOUDER
-            # than the L2 voices above. Narrator is the largest single share of a
-            # lesson (1925 phrases across the 10 stored no lessons), so that gap
-            # is the rag.5 defect one level up: every lesson alternated between
-            # two levels. Its own 1.6 LUFS spread is intra-voice dynamics, kept.
+            # LUFS. Measured 2026-09-16 on ONE real lesson sentence set through
+            # synthesize() (ffmpeg ebur128), so the cast is mutually
+            # consistent — mixing rag.5's set with this one is what the rag.5
+            # brief warns against. Constant per voice so intra-voice dynamics
+            # are preserved. Keyed by VOICE, not role: a stored lesson pins a
+            # RESOLVED voice_id per phrase, so William (male-2 until rag.6)
+            # stays at 0.9 even though he left the map — an unknown voice
+            # returns 0.0, which would silently un-normalise legacy audio on
+            # the next re-render.
+            # The narrator (en-US-GuyNeural) speaks ENGLISH, so its level is
+            # measured on English text and cannot come from this sentence set.
+            # Unchanged from rag.5 at −0.9; do not re-derive it here.
             tts_voice_gain_db={
-                "nb-NO-PernilleNeural": 1.6,
-                "nb-NO-IselinNeural": -0.2,
-                "nb-NO-FinnNeural": 0.6,
-                "en-AU-WilliamMultilingualNeural": 0.6,
+                "nb-NO-PernilleNeural": 1.2,
+                "nb-NO-IselinNeural": -0.1,
+                "en-US-EmmaMultilingualNeural": -1.8,
+                "en-US-ShimmerTurboMultilingualNeural": 0.4,
+                "nb-NO-FinnNeural": 0.8,
+                "en-US-DerekMultilingualNeural": 0.2,
+                "it-IT-GiuseppeMultilingualNeural": -0.7,
+                "en-US-DustinMultilingualNeural": 0.9,
+                "en-AU-WilliamMultilingualNeural": 0.9,
                 "en-US-GuyNeural": -0.9,
             },
         ),

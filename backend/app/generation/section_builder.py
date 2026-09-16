@@ -34,8 +34,11 @@ SECTION_TITLES: dict[SectionType, str] = {
 }
 
 
-def _resolve_voice(speaker: str, l2_voice_map: dict[str, str], narrator_voice: str) -> str:
-    return l2_voice_map.get(speaker, l2_voice_map.get("female-1", narrator_voice))
+def _resolve_voice(speaker: str, l2_voice_map: dict[str, str]) -> str:
+    voice = l2_voice_map.get(speaker)
+    if voice is None:
+        raise ValueError(f"speaker {speaker!r} is not in the voice map; known roles: {', '.join(sorted(l2_voice_map))}")
+    return voice
 
 
 def build_word_breakdown(phrase_text: str, language_code: str | None = None) -> list[str]:
@@ -213,7 +216,7 @@ def build_natural_speed_section(
             if not speaker or not text:
                 logger.warning("Skipping dialogue line with missing speaker or text: %r", line)
                 continue
-            voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
+            voice_id = _resolve_voice(speaker, l2_voice_map)
             phrases.append(Phrase(text=text, voice_id=voice_id, language_code=l2_code, role=speaker))
 
     return Section(section_type=SectionType.NATURAL_SPEED, phrases=phrases)
@@ -250,7 +253,7 @@ def build_slow_speed_section(
             if not speaker or not text:
                 logger.warning("Skipping dialogue line with missing speaker or text: %r", line)
                 continue
-            voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
+            voice_id = _resolve_voice(speaker, l2_voice_map)
             slow_fn = get_slow_word(l2_code)
             slowed = " ... ".join((slow_fn(w) if slow_fn else w) for w in text.split())
             phrases.append(Phrase(text=slowed, voice_id=voice_id, language_code=l2_code, role=speaker))
@@ -293,7 +296,7 @@ def _build_translated_phrases(
             if not speaker or not text or not translation:
                 logger.warning("Skipping dialogue line with missing speaker, text, or translation: %r", line)
                 continue
-            voice_id = _resolve_voice(speaker, l2_voice_map, narrator_voice)
+            voice_id = _resolve_voice(speaker, l2_voice_map)
             if slow:
                 slow_fn = get_slow_word(l2_code)
                 l2_text = " ... ".join((slow_fn(w) if slow_fn else w) for w in text.split())

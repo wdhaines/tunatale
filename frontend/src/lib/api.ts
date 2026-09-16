@@ -643,7 +643,6 @@ export interface ImportStoryResponse {
   id: string;
   title: string;
   sections: Array<{ type: string; phrase_count: number }>;
-  warnings: string[];
 }
 
 export interface PeerSyncResult {

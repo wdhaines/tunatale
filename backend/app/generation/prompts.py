@@ -7,6 +7,7 @@ All prompts request JSON responses for deterministic parsing.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 
 from app.languages import (
@@ -54,13 +55,12 @@ not like a translated textbook. Authenticity and natural idiom are the primary q
 - Each scene: 5–12 lines of dialogue (never 2–3 stub exchanges)
 - Key phrases: 3–8 practical collocations (female-1 only in KEY_PHRASES section)
 - NEVER generate syllable breakdowns — those are added by post-processing
-- NEVER use voice numbers higher than 2 (no female-3, male-3)
 
 **LANGUAGE-SPECIFIC AUTHENTICITY RULES**
 {language_style_notes}
 
 **VOICE ASSIGNMENT PROTOCOL**
-- Use ONLY these 4 L2 voices: female-1, female-2, male-1, male-2
+{language_l2_roles_line}
 - KEY_PHRASES section: always use female-1 only
 - Maintain character-to-voice consistency within each lesson
 - Narrator (English descriptions and translations): narrator voice only
@@ -166,6 +166,24 @@ def _morphology_sections(language_code: str) -> tuple[str, str]:
     return ("", "")
 
 
+def _l2_roles_line(language: Language) -> str:
+    """Render the VOICE ASSIGNMENT line from the language's actual voice map.
+
+    Selects numbered dialogue roles (``^(female|male)-\\d+$``), excluding
+    ``narrator`` and the bare ``female``/``male`` aliases, sorted by
+    (prefix, number) so ``male-10`` does not sort before ``male-2``. Returns
+    ``""`` when the map has no numbered roles, so the template renders a clean
+    section rather than a nonsense count.
+    """
+    roles = sorted(
+        (role for role in language.tts_voice_map if re.fullmatch(r"^(female|male)-\d+$", role)),
+        key=lambda r: (r.split("-")[0], int(r.split("-")[1])),
+    )
+    if not roles:
+        return ""
+    return f"- Use ONLY these {len(roles)} L2 voices: {', '.join(roles)}"
+
+
 def build_story_system_prompt(language: Language) -> str:
     """Build the story system prompt for a given language, including style notes.
 
@@ -182,6 +200,7 @@ def build_story_system_prompt(language: Language) -> str:
     template = SYSTEM_PROMPT.replace("{language_style_notes}", style_notes)
     template = template.replace("{morphology_schema}", morphology_schema)
     template = template.replace("{morphology_block}", morphology_block)
+    template = template.replace("{language_l2_roles_line}", _l2_roles_line(language))
     return template.format(
         language_name=language.name,
         language_code=language.code,

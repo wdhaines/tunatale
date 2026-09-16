@@ -894,7 +894,6 @@ describe("TunaTaleAPI", () => {
             id: "new-l1",
             title: "Day 1 v2",
             sections: [],
-            warnings: ["speaker 'barman' is not in the sl voice map"],
           }),
         ),
       );
@@ -917,7 +916,6 @@ describe("TunaTaleAPI", () => {
         }),
       );
       expect(result.id).toBe("new-l1");
-      expect(result.warnings).toHaveLength(1);
     });
 
     it("importStory throws on non-ok response", async () => {
@@ -936,7 +934,6 @@ describe("TunaTaleAPI", () => {
             id: "new-l1",
             title: "Day 1",
             sections: [],
-            warnings: [],
           }),
         ),
       );

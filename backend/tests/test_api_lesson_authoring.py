@@ -139,10 +139,9 @@ class TestLessonAuthoringEndpoints:
         assert data["id"].startswith("ordering-coffee-")
         assert data["title"] == "Ordering Coffee"
         assert len(data["sections"]) == 7
-        assert data["warnings"] == []
         assert store.get_lesson(data["id"]) is not None
-        assert set(data.keys()) == {"id", "title", "sections", "warnings"}
-        assert set(ImportStoryResponse.model_fields) == {"id", "title", "sections", "warnings"}
+        assert set(data.keys()) == {"id", "title", "sections"}
+        assert set(ImportStoryResponse.model_fields) == {"id", "title", "sections"}
         for section in data["sections"]:
             assert set(section.keys()) == {"type", "phrase_count"}
             assert set(StorySection.model_fields) == {"type", "phrase_count"}
@@ -181,7 +180,13 @@ class TestLessonAuthoringEndpoints:
         assert "scenes[0].lines[0]" in response.json()["detail"]
         assert "speaker" in response.json()["detail"]
 
-    async def test_import_warns_on_unknown_speaker(self):
+    async def test_import_rejects_unknown_speaker(self):
+        """An unknown speaker is a hard 422 now, not a warning (rag.6).
+
+        ``validate_story`` runs with the language at import time, and an
+        unknown speaker would die at render time in ``_resolve_voice`` anyway —
+        red over a warning, per the user's standing preference.
+        """
         store = self._store_with_curriculum()
         app.state.content_store = store
         app.state.language = get_language("sl")
@@ -194,13 +199,8 @@ class TestLessonAuthoringEndpoints:
                 json={"curriculum_id": "c1", "day": 1, "story": story},
             )
 
-        assert response.status_code == 201
-        data = response.json()
-        warnings = data["warnings"]
-        assert len(warnings) == 1
-        assert "robot-9" in warnings[0]
-        assert set(data.keys()) == {"id", "title", "sections", "warnings"}
-        assert set(ImportStoryResponse.model_fields) == {"id", "title", "sections", "warnings"}
+        assert response.status_code == 422
+        assert "robot-9" in response.json()["detail"]
 
     async def test_import_round_trips_via_source(self):
         """Export → import → export: the story survives the round trip."""

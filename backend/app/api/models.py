@@ -520,7 +520,6 @@ class GenerateStoryResponse(BaseModel):
     id: str
     title: str
     sections: list
-    warnings: list[str]
 
 
 class CreateReviewSessionRequest(BaseModel):
@@ -672,7 +671,6 @@ class ImportStoryResponse(BaseModel):
     id: str
     title: str
     sections: list[StorySection]
-    warnings: list[str]
 
 
 class LanguageItem(BaseModel):
