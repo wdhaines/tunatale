@@ -112,17 +112,34 @@ class CurriculumDayTarget:
         self._curriculum_id = curriculum_id
         self._day = day
         self._pipeline = pipeline
+        self._superseded_id: str | None = None
 
     def write(self, lesson: Lesson) -> str:
+        # A regenerate mints a FRESH id (mint_id is {slug}-{uuid4hex8}), so it
+        # INSERTS a second row rather than overwriting. Capture the day's current
+        # lesson id here, before the write, so invalidate_audio can drop the old
+        # row's audio once the new lesson is saved — the new id has no audio of
+        # its own, which is exactly why the no-op could not be fixed in place.
+        latest = self._store.get_latest_lesson_by_day(self._curriculum_id, self._day)
+        self._superseded_id = latest[0] if latest is not None else None
         lesson_id = mint_id(lesson.title)
         self._store.save_lesson(lesson_id, self._curriculum_id, self._day, lesson)
         sync_curriculum_day_title(self._store, self._curriculum_id, self._day, lesson.title)
         return lesson_id
 
     def invalidate_audio(self, content_id: str) -> None:
-        # Lesson-side stale-audio invalidation is a separate bead; a day write
-        # path must NOT render-invalidate here.
-        pass
+        # Drop the SUPERSEDED lesson's audio: rows deleted from the store, files
+        # unlinked from disk (the storage layer owns rows, the caller owns the
+        # filesystem). The superseded lesson ROW itself is deliberately KEPT —
+        # the user's decision (2026-09-17): a row is cheap and a possible undo,
+        # while orphaned audio is bigger and can always be regenerated. The
+        # content_id guard stops the id just written from being deleted if a
+        # degenerate lookup ever captures it as the superseded id.
+        superseded_id = self._superseded_id
+        if superseded_id is None or superseded_id == content_id:
+            return
+        for file_path in self._store.delete_audio_files_for_lesson(superseded_id):
+            file_path.unlink(missing_ok=True)
 
     async def schedule_render(self, content_id: str, lesson: Lesson) -> None:
         pipeline = self._pipeline

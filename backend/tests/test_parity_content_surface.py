@@ -29,6 +29,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.api import generation, review_sessions
+from app.config import settings
 from app.generation import publishing
 from app.generation.pipeline import LessonPipeline
 from app.languages import get_language
@@ -400,18 +401,18 @@ def test_every_fire_and_forget_task_on_a_publish_path_is_strongly_referenced():
     )
 
 
-def test_a_curriculum_day_publish_does_not_invalidate_its_audio():
-    """``CurriculumDayTarget.invalidate_audio`` is deliberately a no-op.
+def test_invalidate_audio_without_a_prior_write_is_a_no_op():
+    """``invalidate_audio`` on a target that never wrote anything does nothing.
 
-    Not an oversight and not dead code: the lesson side has no
-    ``delete_lesson_audio`` at all and relies on the re-render overwriting by
-    id, so a regenerate whose render FAILS leaves the player reading a script no
-    longer on screen. The review-session side already deletes first for exactly
-    that reason. Closing the gap is bd tunatale-c8a9, deliberately split out so
-    this refactor's diff stays behaviour-preserving on the lesson path.
+    REWRITTEN when bd tunatale-c8a9 landed. It used to assert that
+    ``CurriculumDayTarget.invalidate_audio`` was a no-op in ALL cases and
+    predicted it "should fail and be rewritten" — it did not fail, because its
+    assertion was only ever about the lesson ROW surviving, and that is now the
+    user's explicit decision (2026-09-17) rather than an accident of the no-op.
 
-    This pins the decision rather than the line: when c8a9 lands, this test is
-    the one that should fail and be rewritten.
+    What it pins today is the None-side: ``write()`` was never called, so no
+    superseded id was captured and there is nothing to invalidate. The
+    regenerate behaviour itself is pinned by the tunatale-c8a9 tests below.
     """
     store = ContentStore(":memory:")
     _seed_curriculum(store)
@@ -421,3 +422,164 @@ def test_a_curriculum_day_publish_does_not_invalidate_its_audio():
     target.invalidate_audio(lesson_id or "l1")
 
     assert store.get_lesson("l1") is not None, "invalidate_audio must not remove the lesson"
+
+
+# ── stale-audio invalidation on regenerate (bd tunatale-c8a9) ───────────────
+#
+# A regenerate mints a FRESH lesson id (ids.py::mint_id = {slug}-{uuid4hex8}),
+# so it inserts a second row instead of overwriting. The superseded row stays
+# (the user's decision, 2026-09-17: cheap, and a possible undo) but its audio —
+# rows and files — must go. These tests pin that split through the real
+# publish_lesson seam, exactly the order production runs.
+
+
+def _seed_day_lesson_with_audio(store: ContentStore, lesson_id: str, audio_files: list[_Path]) -> None:
+    """A curriculum day that already owns *lesson_id* and audio rows for *audio_files*."""
+    store.save_lesson(lesson_id, "c1", 1, _lesson())
+    for i, path in enumerate(audio_files):
+        store.save_audio_file(f"audio-{lesson_id}-{i}", lesson_id, str(path))
+
+
+async def test_a_regenerate_deletes_the_superseded_lesson_audio_rows():
+    """A regenerate (replace=True) empties the superseded lesson's audio ROWS."""
+    store = ContentStore(":memory:")
+    _seed_curriculum(store)
+    _seed_day_lesson_with_audio(store, "l-superseded", [_Path("/audio/old-full.opus"), _Path("/audio/old-sec.opus")])
+
+    await publishing.publish_lesson(
+        _lesson(),
+        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None),
+        srs_db=None,
+        lemmatizer_kwargs={},
+        replace=True,
+    )
+
+    assert store.list_audio_files_for_lesson("l-superseded") == []
+
+
+async def test_a_regenerate_unlinks_the_superseded_lesson_audio_files(tmp_path, monkeypatch):
+    """A regenerate UNLINKS the superseded lesson's files — rows alone are not the fix."""
+    monkeypatch.setattr(settings, "audio_dir", tmp_path)
+    store = ContentStore(":memory:")
+    _seed_curriculum(store)
+    full = tmp_path / "full.opus"
+    section = tmp_path / "section.opus"
+    full.write_bytes(b"full-render")
+    section.write_bytes(b"section-render")
+    _seed_day_lesson_with_audio(store, "l-superseded", [full, section])
+
+    await publishing.publish_lesson(
+        _lesson(),
+        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None),
+        srs_db=None,
+        lemmatizer_kwargs={},
+        replace=True,
+    )
+
+    assert not full.exists(), "superseded lesson's full audio file must be unlinked"
+    assert not section.exists(), "superseded lesson's section audio must be unlinked"
+
+
+async def test_a_regenerate_keeps_the_superseded_lesson_row():
+    """⚠️ The superseded lesson ROW survives a regenerate — the user's decision.
+
+    Kept as a possible undo; only its audio goes. If a later change makes this
+    fail, that change is wrong (decided 2026-09-17, do not re-open).
+    """
+    store = ContentStore(":memory:")
+    _seed_curriculum(store)
+    _seed_day_lesson_with_audio(store, "l-superseded", [_Path("/audio/old-full.opus")])
+
+    await publishing.publish_lesson(
+        _lesson(),
+        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None),
+        srs_db=None,
+        lemmatizer_kwargs={},
+        replace=True,
+    )
+
+    assert store.get_lesson_row("l-superseded") is not None
+
+
+async def test_a_first_generate_deletes_no_audio(tmp_path, monkeypatch):
+    """A first generate (force=False -> replace=False) deletes NOTHING.
+
+    The control that stops the fix from eating a day's audio on ordinary
+    generation: audio rows and files that already exist survive a non-replace
+    publish, even though write() has a superseded candidate to remember.
+    """
+    monkeypatch.setattr(settings, "audio_dir", tmp_path)
+    store = ContentStore(":memory:")
+    _seed_curriculum(store)
+    existing = tmp_path / "existing.opus"
+    existing.write_bytes(b"existing-render")
+    _seed_day_lesson_with_audio(store, "l-existing", [existing])
+
+    await publishing.publish_lesson(
+        _lesson(),
+        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None),
+        srs_db=None,
+        lemmatizer_kwargs={},
+        replace=False,
+    )
+
+    assert store.list_audio_files_for_lesson("l-existing"), "rows must survive a first generate"
+    assert existing.exists(), "files must survive a first generate"
+
+
+async def test_a_regenerate_tolerates_an_already_missing_audio_file(tmp_path, monkeypatch):
+    """Unlink is tolerant: an already-gone render is the outcome we want, not a 500."""
+    monkeypatch.setattr(settings, "audio_dir", tmp_path)
+    store = ContentStore(":memory:")
+    _seed_curriculum(store)
+    ghost = tmp_path / "ghost.opus"  # recorded in the store, never on disk
+    _seed_day_lesson_with_audio(store, "l-superseded", [ghost])
+
+    await publishing.publish_lesson(
+        _lesson(),
+        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None),
+        srs_db=None,
+        lemmatizer_kwargs={},
+        replace=True,
+    )
+
+    assert store.list_audio_files_for_lesson("l-superseded") == []
+
+
+async def test_invalidate_audio_guards_against_the_captured_superseded_id():
+    """The ``!= content_id`` guard: invalidating the captured id itself deletes nothing.
+
+    publish_lesson always passes the freshly written id, which a fresh mint can
+    never collide with; this pins the guard the brief requires so a degenerate
+    same-id case cannot delete audio either.
+    """
+    store = ContentStore(":memory:")
+    _seed_curriculum(store)
+    _seed_day_lesson_with_audio(store, "l-superseded", [_Path("/audio/old-full.opus")])
+    target = publishing.CurriculumDayTarget(store, "sl", "c1", 1, None)
+    target.write(_lesson())  # captures "l-superseded" as the superseded id
+
+    target.invalidate_audio("l-superseded")  # the captured id itself
+
+    assert store.list_audio_files_for_lesson("l-superseded"), "same-id invalidation must be a no-op"
+
+
+async def test_a_replace_publish_with_nothing_to_supersede_deletes_nothing():
+    """A day with no prior lesson: write() remembers nothing, invalidate no-ops.
+
+    Covers invalidate_audio's empty-side through the real seam (replace=True,
+    but there is nothing to supersede) and the store method's empty-rows return.
+    """
+    store = ContentStore(":memory:")
+    _seed_curriculum(store)
+
+    lesson_id = await publishing.publish_lesson(
+        _lesson(),
+        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None),
+        srs_db=None,
+        lemmatizer_kwargs={},
+        replace=True,
+    )
+
+    assert store.get_lesson_row(lesson_id) is not None
+    assert store.delete_audio_files_for_lesson(lesson_id) == []
