@@ -579,6 +579,14 @@ class ReglossReviewSessionResponse(BaseModel):
     warnings: list[str]
 
 
+class ReglossLessonResponse(BaseModel):
+    """Response of POST /api/story/{lesson_id}/regloss."""
+
+    id: str
+    gloss_entry_count: int
+    warnings: list[str]
+
+
 class ReviewSessionSummary(BaseModel):
     """One row of the dated list on the Lessons index.
 

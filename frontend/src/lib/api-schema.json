@@ -3448,6 +3448,33 @@
         "title": "RefreshMediaResponse",
         "type": "object"
       },
+      "ReglossLessonResponse": {
+        "description": "Response of POST /api/story/{lesson_id}/regloss.",
+        "properties": {
+          "gloss_entry_count": {
+            "title": "Gloss Entry Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "gloss_entry_count",
+          "warnings"
+        ],
+        "title": "ReglossLessonResponse",
+        "type": "object"
+      },
       "ReglossReviewSessionResponse": {
         "description": "Response of POST /api/review-sessions/{session_id}/regloss.",
         "properties": {
@@ -8685,6 +8712,49 @@
           }
         },
         "summary": "Get Lesson",
+        "tags": [
+          "generation"
+        ]
+      }
+    },
+    "/api/story/{lesson_id}/regloss": {
+      "post": {
+        "description": "Re-run the gloss pass on a stored lesson's story.\n\nLessons can be stored with zero hover translations when\n``ensure_dialogue_glosses`` degrades. This repairs them in place \u2014 only\n``dialogue_glosses`` inside the story blob is replaced, then the lesson is\nrebuilt through the same derivation the import route uses.\n\n\u26a0\ufe0f Uses ``update_lesson_data``, NEVER ``save_lesson``: the latter is\n``INSERT OR REPLACE``, which assigns a NEW rowid and resets ``created_at``.\n``get_lesson_days`` surfaces only ``MAX(rowid)``, so a regloss written that\nway would leave the previous row invisible-but-present \u2014 manufacturing the\nduplicate-row condition tracked as bd tunatale-326c.",
+        "operationId": "regloss_lesson_story_api_story__lesson_id__regloss_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "lesson_id",
+            "required": true,
+            "schema": {
+              "title": "Lesson Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReglossLessonResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Regloss Lesson Story",
         "tags": [
           "generation"
         ]

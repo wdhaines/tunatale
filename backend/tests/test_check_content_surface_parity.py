@@ -23,14 +23,14 @@ from check_content_surface_parity import (  # noqa: E402
     do_check,
 )
 
-# The three absent cells of the orchestrator-measured map (§9b), in the exact
-# shape the allowlist file uses: two DELIBERATE, one OPEN GAP. `source-export
-# session` was the fourth until tunatale-w1fp.4 filled that cell.
+# The two absent cells of the orchestrator-measured map (§9b), in the exact
+# shape the allowlist file uses: both DELIBERATE, and neither will ever be
+# filled. `source-export session` was the third until tunatale-w1fp.4 filled
+# that cell, and `regloss lesson` the fourth until tunatale-w1fp.5 filled it.
 _DELIBERATE = (
     "prompt-draft lesson",
     "read-by-position session",
 )
-_OPEN_GAPS = ("regloss lesson",)
 
 # Lesson route → owning router, mirroring §9a's four-router spread ("the
 # lesson-side verbs are spread across FOUR routers"); session cells all live on
@@ -44,9 +44,8 @@ _LESSON_HOST = {
     "read": "generation",
     "read-by-position": "curriculum",
     "source-export": "generation",
-    # `regloss` has no lesson route in the real map; this host exists so the
-    # shrink-only tests can SIMULATE filling that cell (tunatale-w1fp.5 is the
-    # bead that would fill it for real, on the story router beside the others).
+    # `regloss` now has a REAL lesson route (tunatale-w1fp.5), hosted on the
+    # generation router beside the other story routes.
     "regloss": "generation",
     "list": "curriculum",
     "render": "audio",
@@ -116,7 +115,7 @@ class TestNormalizePath:
 
 class TestLegitimateMap:
     def test_real_map_against_mirrored_routers_passes(self, tmp_path, capsys):
-        path = _write_allowlist(tmp_path, *_DELIBERATE, *_OPEN_GAPS)
+        path = _write_allowlist(tmp_path, *_DELIBERATE)
         assert do_check(routers=_build_routers(), allowlist_path=path) == 0
         assert capsys.readouterr().out == ""
 
@@ -127,12 +126,12 @@ class TestLegitimateMap:
             (method, path.replace("{session_id}", "{id}")) for method, path in _specs_by_router()["review_sessions"]
         ]
         routers["review_sessions"] = _router(renamed)
-        path = _write_allowlist(tmp_path, *_DELIBERATE, *_OPEN_GAPS)
+        path = _write_allowlist(tmp_path, *_DELIBERATE)
         assert do_check(routers=routers, allowlist_path=path) == 0
 
     def test_shared_lesson_route_passes(self, tmp_path):
         """create-from-paste and replace-in-place SHARE ``POST /api/story/import``."""
-        path = _write_allowlist(tmp_path, *_DELIBERATE, *_OPEN_GAPS)
+        path = _write_allowlist(tmp_path, *_DELIBERATE)
         assert do_check(routers=_build_routers(), allowlist_path=path) == 0
 
 
@@ -143,7 +142,7 @@ class TestMissingRouteDetection:
     def test_missing_lesson_route_fails(self, tmp_path, capsys):
         routers = _build_routers()
         routers["generation"] = _router(_drop(_specs_by_router()["generation"], ("GET", "/api/story/prompt")))
-        path = _write_allowlist(tmp_path, *_DELIBERATE, *_OPEN_GAPS)
+        path = _write_allowlist(tmp_path, *_DELIBERATE)
         assert do_check(routers=routers, allowlist_path=path) == 1
         assert "prompt-pinned" in capsys.readouterr().out
 
@@ -152,7 +151,7 @@ class TestMissingRouteDetection:
         routers["review_sessions"] = _router(
             _drop(_specs_by_router()["review_sessions"], ("POST", "/api/review-sessions"))
         )
-        path = _write_allowlist(tmp_path, *_DELIBERATE, *_OPEN_GAPS)
+        path = _write_allowlist(tmp_path, *_DELIBERATE)
         assert do_check(routers=routers, allowlist_path=path) == 1
         assert "create" in capsys.readouterr().out
 
@@ -162,7 +161,7 @@ class TestMissingRouteDetection:
         routers["review_sessions"] = _router(
             _drop(_specs_by_router()["review_sessions"], ("GET", "/api/review-sessions/prompt"))
         )
-        path = _write_allowlist(tmp_path, *_DELIBERATE, *_OPEN_GAPS)
+        path = _write_allowlist(tmp_path, *_DELIBERATE)
         assert do_check(routers=routers, allowlist_path=path) == 1
         out = capsys.readouterr().out
         assert "prompt-draft" in out
@@ -170,7 +169,7 @@ class TestMissingRouteDetection:
         assert "not a content-surface verb" not in out
 
     def test_empty_routers_fail_without_crashing(self, tmp_path):
-        path = _write_allowlist(tmp_path, *_DELIBERATE, *_OPEN_GAPS)
+        path = _write_allowlist(tmp_path, *_DELIBERATE)
         assert do_check(routers={}, allowlist_path=path) == 1
 
 
@@ -182,7 +181,7 @@ class TestContentRouterSweep:
         routers = _build_routers()
         specs = _specs_by_router()["generation"] + [("GET", "/api/story/export/zip")]
         routers["generation"] = _router(specs)
-        path = _write_allowlist(tmp_path, *_DELIBERATE, *_OPEN_GAPS)
+        path = _write_allowlist(tmp_path, *_DELIBERATE)
         assert do_check(routers=routers, allowlist_path=path) == 1
         assert "not a content-surface verb" in capsys.readouterr().out
 
@@ -190,7 +189,7 @@ class TestContentRouterSweep:
         routers = _build_routers()
         specs = _specs_by_router()["review_sessions"] + [("GET", "/api/review-sessions/stats")]
         routers["review_sessions"] = _router(specs)
-        path = _write_allowlist(tmp_path, *_DELIBERATE, *_OPEN_GAPS)
+        path = _write_allowlist(tmp_path, *_DELIBERATE)
         assert do_check(routers=routers, allowlist_path=path) == 1
         assert "not a content-surface verb" in capsys.readouterr().out
 
@@ -198,7 +197,7 @@ class TestContentRouterSweep:
         routers = _build_routers()
         specs = _specs_by_router()["generation"] + [("GET", "/api/story/export/zip")]
         routers["generation"] = _router(specs)
-        path = _write_allowlist(tmp_path, *_DELIBERATE, *_OPEN_GAPS)
+        path = _write_allowlist(tmp_path, *_DELIBERATE)
         assert do_check(routers=routers, allowlist_path=path, out_of_scope={("GET", "/api/story/export/zip")}) == 0
         assert capsys.readouterr().out == ""
 
@@ -211,7 +210,7 @@ class TestContentRouterSweep:
             ("GET", "/api/curriculum/{curriculum_id}/progress"),
         ]
         routers["curriculum"] = _router(specs)
-        path = _write_allowlist(tmp_path, *_DELIBERATE, *_OPEN_GAPS)
+        path = _write_allowlist(tmp_path, *_DELIBERATE)
         assert do_check(routers=routers, allowlist_path=path) == 0
         assert capsys.readouterr().out == ""
 
@@ -221,43 +220,37 @@ class TestContentRouterSweep:
 
 class TestAllowlist:
     def test_missing_allowlist_entry_fails(self, tmp_path, capsys):
-        path = _write_allowlist(tmp_path, *_DELIBERATE)
+        """A missing entry for a real absent cell fails the check."""
+        path = _write_allowlist(tmp_path, "read-by-position session")
         assert do_check(routers=_build_routers(), allowlist_path=path) == 1
-        assert "regloss" in capsys.readouterr().out
+        assert "prompt-draft" in capsys.readouterr().out
 
     def test_missing_allowlist_file_fails(self, tmp_path):
         assert do_check(routers=_build_routers(), allowlist_path=tmp_path / "nope.txt") == 1
 
     def test_stale_allowlist_entry_fails(self, tmp_path, capsys):
-        """Shrink-only: a filled-in cell must drop its allowlist line."""
-        filled = tuple(
-            ("regloss", "POST /api/story/{lesson_id}/regloss", "POST /api/review-sessions/{session_id}/regloss")
-            if verb == "regloss"
-            else (verb, lesson, session)
-            for verb, lesson, session in VERB_MAP
-        )
-        path = _write_allowlist(tmp_path, *_DELIBERATE, *_OPEN_GAPS)  # still carries the stale line
-        assert do_check(routers=_build_routers(filled), allowlist_path=path, verb_map=filled) == 1
+        """Shrink-only: a filled-in cell must drop its allowlist line.
+
+        ``regloss lesson`` is now filled for real (tunatale-w1fp.5), so an
+        allowlist still carrying its old entry is stale and must fail.
+        """
+        path = _write_allowlist(tmp_path, *_DELIBERATE, "regloss lesson  # OPEN GAP — bd tunatale-w1fp.5.")
+        assert do_check(routers=_build_routers(), allowlist_path=path) == 1
         assert "shrink-only" in capsys.readouterr().out.lower()
 
     def test_filled_cell_requires_no_entry(self, tmp_path, capsys):
-        filled = tuple(
-            ("regloss", "POST /api/story/{lesson_id}/regloss", "POST /api/review-sessions/{session_id}/regloss")
-            if verb == "regloss"
-            else (verb, lesson, session)
-            for verb, lesson, session in VERB_MAP
-        )
+        """A filled cell needs no allowlist entry — the real map is filled now."""
         path = _write_allowlist(tmp_path, *_DELIBERATE)
-        assert do_check(routers=_build_routers(filled), allowlist_path=path, verb_map=filled) == 0
+        assert do_check(routers=_build_routers(), allowlist_path=path) == 0
         assert capsys.readouterr().out == ""
 
     def test_unknown_verb_entry_fails(self, tmp_path, capsys):
-        path = _write_allowlist(tmp_path, *_DELIBERATE, *_OPEN_GAPS, "write lesson")
+        path = _write_allowlist(tmp_path, *_DELIBERATE, "write lesson")
         assert do_check(routers=_build_routers(), allowlist_path=path) == 1
         assert "write" in capsys.readouterr().out
 
     def test_malformed_entry_fails(self, tmp_path, capsys):
-        path = _write_allowlist(tmp_path, *_DELIBERATE, *_OPEN_GAPS, "read-by-position")
+        path = _write_allowlist(tmp_path, *_DELIBERATE, "read-by-position")
         assert do_check(routers=_build_routers(), allowlist_path=path) == 1
         assert "read-by-position" in capsys.readouterr().out
 
@@ -267,7 +260,6 @@ class TestAllowlist:
             "# Content-surface verb-map — shrink-only.",
             "prompt-draft lesson  # DELIBERATE: no id-less draft to export.",
             "read-by-position session  # DELIBERATE: sessions have no position.",
-            "regloss lesson  # OPEN GAP — bd tunatale-w1fp.5.",
         )
         assert do_check(routers=_build_routers(), allowlist_path=path) == 0
         assert capsys.readouterr().out == ""

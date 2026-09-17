@@ -56,6 +56,7 @@ ROUTE_TABLE: list[tuple[str, str, str, bool, bool, str]] = [
     ("GET", "/api/story/prompt", "get_story_prompt", False, False, ""),
     ("GET", "/api/story/{lesson_id}/source", "get_lesson_source", False, False, ""),
     ("GET", "/api/story/{lesson_id}", "get_lesson", False, False, ""),
+    ("POST", "/api/story/{lesson_id}/regloss", "regloss_lesson_story", False, False, _REGLOSS_EXEMPTION),
     ("POST", "/api/review-sessions", "create_review_session", True, True, ""),
     ("POST", "/api/review-sessions/import", "create_review_session_from_paste", True, True, ""),
     ("POST", "/api/review-sessions/{session_id}/regenerate", "regenerate_review_session", True, True, ""),

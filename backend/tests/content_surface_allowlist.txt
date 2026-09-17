@@ -8,4 +8,3 @@ prompt-draft lesson  # DELIBERATE: a lesson always has a curriculum day to hang 
 read-by-position session  # DELIBERATE: a session has no position in a sequence; that is the whole premise of the surface.
 #
 # OPEN GAPS — real asymmetry, tracked as work. Do not reword into sounding deliberate:
-regloss lesson  # OPEN GAP — bd tunatale-w1fp.5.
