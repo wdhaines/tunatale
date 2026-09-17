@@ -1,12 +1,12 @@
 """Azure Speech adapter — implements the TTSService Protocol.
 
-Replaces the unofficial Edge Read Aloud endpoint that ``edge_tts`` talks to. The
-same neural voices are served from here, but with terms, a support channel, and
-a documented failure surface.
+Replaces the unofficial Edge Read Aloud endpoint. The same neural voices are
+served from here, but with terms, a support channel, and a documented failure
+surface. It is the only adapter behind ``TTSService``.
 
-Deliberately mirrors ``EdgeTTSService``'s shape (cache layout, retry ladder,
-concurrency cap) so the two are interchangeable behind ``TTSService`` and a
-provider switch changes only the endpoint, not the behaviour around it.
+Its shape (cache layout, retry ladder, concurrency cap) mirrors the retired
+adapter's, so the interchangeability the two once shared leaves no seam
+behind; that mirror is now vestigial.
 """
 
 from __future__ import annotations
@@ -272,15 +272,13 @@ class AzureTTSService:
     def _require_credentials(self) -> None:
         """Fail loudly, naming the setting, rather than degrading quietly.
 
-        There is deliberately no fallback to the edge provider here. An
+        There is deliberately no fallback and no second provider here. An
         automatic swap would render part of a curriculum in a different
         provider's rendition of the "same" voice, silently — id parity is not
-        voice parity. Choosing edge is a human decision via TTS_PROVIDER.
+        voice parity.
         """
         if not self._key:
-            raise RuntimeError(
-                "AZURE_SPEECH_KEY is not set. Set it in backend/.env, or select a different provider with TTS_PROVIDER."
-            )
+            raise RuntimeError("AZURE_SPEECH_KEY is not set. Set it in backend/.env.")
         if not self._region:
             raise RuntimeError(
                 "AZURE_SPEECH_REGION is not set. Use the machine-readable form "

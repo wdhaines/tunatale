@@ -247,8 +247,8 @@ class TestGetLanguage:
         They did until the Azure port: both mapped to Pernille, so in 5 of the 6
         stored Norwegian lessons two female characters conversed in a single
         voice — across 462 phrases on female-2 against 90 on female-1. Azure
-        serves nb-NO-IselinNeural and edge-tts does not, so this only became
-        fixable once the provider moved.
+        serves nb-NO-IselinNeural, and the retired adapter did not, so this
+        only became fixable once the provider moved.
 
         Slovene had no native equivalent — Petra + Rok is that catalogue's
         entirety — and that is why its role-2 slots are Multilingual voices as

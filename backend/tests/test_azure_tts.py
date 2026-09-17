@@ -587,7 +587,7 @@ async def test_no_trailing_sleep_after_final_attempt(tmp_path):
     used to be: at retry_base_delay=1 the real ladder is 1+2+4+8+16 = 31s, so
     the old elapsed-time form would have turned into a half-minute test that
     still could not say WHERE the extra sleep was. This is the shape the
-    edge_tts twin already used.
+    equivalent test in the retired adapter's suite already used.
     """
     respx.post(SYNTH_URL).mock(return_value=httpx.Response(503))
     sleeps: list[float] = []
@@ -792,28 +792,6 @@ def test_mapping_order_does_not_change_the_key(tmp_path):
     b = svc._cache_path("Jeg vil gjerne ha en kaffe", _VOICE, "+0%", {"vil": "ʋɪl", "kaffe": "kɑf.fə"})
 
     assert a.name == b.name
-
-
-def test_both_adapters_produce_identical_cache_keys(tmp_path):
-    """The key formula lives in both adapters; a divergence would silently split caches."""
-    from app.audio.edge_tts import EdgeTTSService
-
-    azure = _svc(cache_dir=tmp_path)
-    edge = EdgeTTSService(cache_dir=tmp_path)
-
-    cases: list[tuple] = [(t, _VOICE, r) for t, r, _ in _ORACLE_DIGESTS]
-    cases.append(("hagen", _VOICE, "+0%"))
-    for args in cases:
-        assert azure._cache_path(*args).name == edge._cache_path(*args).name
-
-    # ...but WITH a mapping they must DIFFER. Both providers share one
-    # tts_cache_dir and the key carries no provider, so if Edge mirrored the
-    # extension it would write PLAIN audio (it cannot render markup) onto the
-    # key Azure uses for IPA audio — and a later Azure call would cache-hit
-    # and silently serve non-IPA audio. Measured: mirrored, both hashed this
-    # input to 2110be571ffeb4d2.
-    phonemes = {"hagen": "hɑː.gən"}
-    assert azure._cache_path("hagen", _VOICE, "+0%", phonemes).name != edge._cache_path("hagen", _VOICE, "+0%").name
 
 
 def test_ssml_markup_in_text_stays_escaped():
@@ -1024,25 +1002,6 @@ def test_different_speak_locales_produce_different_keys(tmp_path):
     b = svc._cache_path("kava", _ML_VOICE, "+0%", None, "hr-HR")
 
     assert a.name != b.name
-
-
-def test_a_wrapped_key_differs_from_the_edge_adapter(tmp_path):
-    """Edge cannot emit SSML, so it must never share a key with a wrapped render.
-
-    Both adapters write into one tts_cache_dir and the key carries no provider.
-    Same failure shape as the phoneme mapping: Edge would put a render with NO
-    language declaration on the key Azure uses for the wrapped one, and a later
-    Azure call would cache-hit and serve the mis-detected audio.
-    """
-    from app.audio.edge_tts import EdgeTTSService
-
-    azure = _svc(cache_dir=tmp_path)
-    edge = EdgeTTSService(cache_dir=tmp_path)
-
-    assert (
-        azure._cache_path("hagen", _ML_VOICE, "+0%", None, "nb-NO").name
-        != edge._cache_path("hagen", _ML_VOICE, "+0%").name
-    )
 
 
 @respx.mock

@@ -222,10 +222,10 @@ class TestAudioEndpoints:
             assert len(store.list_audio_files_for_lesson(lesson_id)) == expected_count
 
             # Second render fails mid-flight — now returns 503.
-            mock_renderer.render = AsyncMock(side_effect=RuntimeError("edge-tts blew up"))
+            mock_renderer.render = AsyncMock(side_effect=RuntimeError("renderer blew up"))
             resp2 = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
             assert resp2.status_code == 503
-            assert "edge-tts blew up" in resp2.json()["detail"]
+            assert "renderer blew up" in resp2.json()["detail"]
 
             # The old rows must survive — the lesson still has its audio.
             after_fail = store.list_audio_files_for_lesson(lesson_id)
