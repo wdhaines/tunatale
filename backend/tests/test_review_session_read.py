@@ -31,6 +31,7 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.models import ReviewSessionSourceResponse
 from app.languages import get_language
 from app.main import app
 from app.models.lesson import Lesson, Phrase, Section, SectionType
@@ -234,6 +235,93 @@ class TestReadingOne:
         resp = await _get("/api/review-sessions/lesson-1")
 
         assert resp.status_code == 404
+
+
+# ── source export ─────────────────────────────────────────────────────────────
+#
+# Lessons export their editable Story-JSON (GET /api/story/{lesson_id}/source);
+# this is the mirror for sessions (bd tunatale-w1fp.4). The blob is the same
+# shape, so the only difference is the envelope: a session has no curriculum_id
+# or day, and the export is keyed by the session's own id and date — the two
+# things regeneration preserves.
+
+
+class TestSourceExport:
+    async def test_it_exports_id_date_and_story(self, stored):
+        stored.save_review_session("sess-1", "sl", "2026-09-02", _lesson())
+
+        resp = await _get("/api/review-sessions/sess-1/source")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        # The exact key set is the premise error guard: a session must never
+        # grow a curriculum_id/day, and id/date are what regeneration preserves.
+        assert set(data.keys()) == {"session_id", "session_date", "story"}
+        assert data["session_id"] == "sess-1"
+        assert data["session_date"] == "2026-09-02"
+        assert set(data["story"].keys()) == {"title", "key_phrases", "scenes", "dialogue_glosses", "morphology_focus"}
+        assert set(ReviewSessionSourceResponse.model_fields) == {"session_id", "session_date", "story"}
+
+    async def test_an_unknown_session_is_404(self, stored):
+        resp = await _get("/api/review-sessions/nope/source")
+
+        assert resp.status_code == 404
+
+    async def test_a_stored_story_is_returned_exactly(self, stored):
+        """A session built since the source was persisted returns that exact
+        blob, never a reconstruction — the same rule export_lesson follows."""
+        pinned = {
+            "title": "Pinned Story",
+            "key_phrases": [],
+            "scenes": [
+                {
+                    "label": "Only Scene",
+                    "lines": [{"speaker": "female-1", "text": "Kavo.", "translation": "A coffee."}],
+                }
+            ],
+            "dialogue_glosses": [],
+            "morphology_focus": [],
+        }
+        lesson = _lesson()
+        lesson.generation_metadata["story"] = pinned
+        stored.save_review_session("sess-pinned", "sl", "2026-09-02", lesson)
+
+        body = (await _get("/api/review-sessions/sess-pinned/source")).json()
+
+        assert body["story"] == pinned
+
+    async def test_a_legacy_session_exports_a_reconstructed_story(self, stored):
+        """A session stored before the source was persisted still exports a
+        usable Story-JSON via the reconstruction fallback."""
+        from app.generation.story import build_lesson_from_story
+
+        story = {
+            "title": "A Missed Train",
+            "key_phrases": [{"phrase": "dober dan", "translation": "good day"}],
+            "scenes": [
+                {
+                    "label": "On the Platform",
+                    "lines": [
+                        {"speaker": "female-1", "text": "Dober dan!", "translation": "Good day!"},
+                        {"speaker": "male-1", "text": "Prosim kavo.", "translation": "A coffee please."},
+                    ],
+                }
+            ],
+            "dialogue_glosses": [{"word": "kavo", "translation": "coffee"}],
+            "morphology_focus": [],
+        }
+        lesson = build_lesson_from_story(story, language=get_language("sl"))
+        del lesson.generation_metadata["story"]  # legacy session: no stored source
+        stored.save_review_session("sess-legacy", "sl", "2026-09-02", lesson)
+
+        body = (await _get("/api/review-sessions/sess-legacy/source")).json()
+
+        assert body["story"]["title"] == "A Missed Train"
+        assert body["story"]["scenes"][0]["lines"][0] == {
+            "speaker": "female-1",
+            "text": "Dober dan!",
+            "translation": "Good day!",
+        }
 
 
 # ── gloss_entry_count ─────────────────────────────────────────────────────────

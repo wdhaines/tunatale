@@ -1358,6 +1358,22 @@ class LessonSourceResponse(BaseModel):
     story: dict
 
 
+class ReviewSessionSourceResponse(BaseModel):
+    """Response of GET /api/review-sessions/{session_id}/source (``lesson_io.export_review_session``).
+
+    The session mirror of ``LessonSourceResponse``: a session has no
+    ``curriculum_id``/``day`` to export, so it is keyed by the session's own id
+    and date — the two things regeneration preserves. ``story`` stays a bare
+    dict for the same reason it does there: it is the raw editable Story-JSON
+    file, heterogeneous, versioned, and already treated as opaque by
+    ``ImportReviewSessionRequest.story`` and the frontend.
+    """
+
+    session_id: str
+    session_date: str
+    story: dict
+
+
 class RenderCueRef(BaseModel):
     """Non-null value of RenderSectionCue.ref.
 

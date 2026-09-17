@@ -97,6 +97,32 @@ def export_lesson(store: ContentStore, lesson_id: str) -> dict:
     }
 
 
+def export_review_session(store: ContentStore, session_id: str) -> dict:
+    """Export a stored review session as its editable Story-JSON source.
+
+    The mirror of :func:`export_lesson` on the session surface. The blob is the
+    same shape, but the envelope differs by design: a session has no
+    ``curriculum_id``/``day``, and it is keyed by its own id and date — the two
+    things regeneration preserves (``store.delete_review_session_audio``).
+
+    ⚠️ The lesson comes from ``store.get_review_session`` rather than
+    ``row["data_json"]``: the row helper returns only the metadata columns, so
+    the body is fetched and parsed by the store method that selects it.
+    """
+    row = store.get_review_session_row(session_id)
+    if row is None:
+        raise KeyError(f"Review session not found: {session_id}")
+    lesson = store.get_review_session(session_id)
+    # Prefer the exact persisted source (present on sessions built since the
+    # story began being stored); reconstruction is the fallback for legacy ones.
+    story = lesson.generation_metadata.get("story") or _reconstruct_story(lesson)
+    return {
+        "session_id": row["id"],
+        "session_date": row["session_date"],
+        "story": story,
+    }
+
+
 def _reconstruct_story(lesson: Lesson) -> dict:
     """Rebuild Story JSON from the expanded Lesson (legacy lessons lack a stored source).
 
