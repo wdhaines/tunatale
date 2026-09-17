@@ -63,6 +63,7 @@ from app.api.models import (
     RenderAudioResponse,
     ReviewSessionRenderStatusResponse,
     ReviewSessionResponse,
+    ReviewSessionSourceResponse,
 )
 from app.audio.render_service import render_lesson_audio
 from app.generation.glossing import ensure_dialogue_glosses
@@ -76,7 +77,7 @@ from app.generation.story import (
     build_review_session_prompts,
 )
 from app.llm.client import LLMError, LLMQuotaExceededError
-from app.storage.lesson_io import validate_story
+from app.storage.lesson_io import export_review_session, validate_story
 
 _logger = logging.getLogger(__name__)
 
@@ -414,6 +415,22 @@ async def get_review_session_prompt(session_id: str, request: Request):
         raise HTTPException(status_code=409, detail=str(e)) from e
 
     return {"system_prompt": prompts.system_prompt, "user_prompt": prompts.user_prompt}
+
+
+@router.get("/{session_id}/source", status_code=200, response_model=ReviewSessionSourceResponse)
+async def get_review_session_source(session_id: str, request: Request):
+    """Export a review session as its editable, self-describing Story-JSON file.
+
+    The session mirror of ``get_lesson_source``: lessons export their editable
+    source and sessions had no equivalent, so the only way out was the prompt.
+    A session has no curriculum_id/day, so the payload is keyed by the
+    session's own id and date — the two things regeneration preserves.
+    """
+    store = request.state.content_store
+    try:
+        return export_review_session(store, session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Review session not found") from None
 
 
 @router.post("/{session_id}/import", status_code=200, response_model=CreateReviewSessionResponse)

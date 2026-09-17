@@ -3792,6 +3792,31 @@
         "title": "ReviewSessionResponse",
         "type": "object"
       },
+      "ReviewSessionSourceResponse": {
+        "description": "Response of GET /api/review-sessions/{session_id}/source (``lesson_io.export_review_session``).\n\nThe session mirror of ``LessonSourceResponse``: a session has no\n``curriculum_id``/``day`` to export, so it is keyed by the session's own id\nand date \u2014 the two things regeneration preserves. ``story`` stays a bare\ndict for the same reason it does there: it is the raw editable Story-JSON\nfile, heterogeneous, versioned, and already treated as opaque by\n``ImportReviewSessionRequest.story`` and the frontend.",
+        "properties": {
+          "session_date": {
+            "title": "Session Date",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "story": {
+            "additionalProperties": true,
+            "title": "Story",
+            "type": "object"
+          }
+        },
+        "required": [
+          "session_id",
+          "session_date",
+          "story"
+        ],
+        "title": "ReviewSessionSourceResponse",
+        "type": "object"
+      },
       "ReviewSessionSummary": {
         "description": "One row of the dated list on the Lessons index.\n\n\u26a0\ufe0f ``review_requested``/``review_used`` are OPTIONAL, and the ``None`` is\nload-bearing: it means \"never measured\" and renders as no readout at all,\nwhile ``[]`` is a measured zero. Defaulting them to ``[]`` here would put a\npermanent \"reused 0 of 0\" on any row that predates the meter \u2014 a grade where\nan observation belongs.",
         "properties": {
@@ -6689,6 +6714,49 @@
           }
         },
         "summary": "Get Review Session Render Status",
+        "tags": [
+          "review-sessions"
+        ]
+      }
+    },
+    "/api/review-sessions/{session_id}/source": {
+      "get": {
+        "description": "Export a review session as its editable, self-describing Story-JSON file.\n\nThe session mirror of ``get_lesson_source``: lessons export their editable\nsource and sessions had no equivalent, so the only way out was the prompt.\nA session has no curriculum_id/day, so the payload is keyed by the\nsession's own id and date \u2014 the two things regeneration preserves.",
+        "operationId": "get_review_session_source_api_review_sessions__session_id__source_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewSessionSourceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Review Session Source",
         "tags": [
           "review-sessions"
         ]

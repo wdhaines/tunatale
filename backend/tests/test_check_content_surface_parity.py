@@ -23,16 +23,14 @@ from check_content_surface_parity import (  # noqa: E402
     do_check,
 )
 
-# The four absent cells of the orchestrator-measured map (§9b), in the exact
-# shape the allowlist file uses: two DELIBERATE, two OPEN GAPS.
+# The three absent cells of the orchestrator-measured map (§9b), in the exact
+# shape the allowlist file uses: two DELIBERATE, one OPEN GAP. `source-export
+# session` was the fourth until tunatale-w1fp.4 filled that cell.
 _DELIBERATE = (
     "prompt-draft lesson",
     "read-by-position session",
 )
-_OPEN_GAPS = (
-    "source-export session",
-    "regloss lesson",
-)
+_OPEN_GAPS = ("regloss lesson",)
 
 # Lesson route → owning router, mirroring §9a's four-router spread ("the
 # lesson-side verbs are spread across FOUR routers"); session cells all live on
@@ -46,6 +44,10 @@ _LESSON_HOST = {
     "read": "generation",
     "read-by-position": "curriculum",
     "source-export": "generation",
+    # `regloss` has no lesson route in the real map; this host exists so the
+    # shrink-only tests can SIMULATE filling that cell (tunatale-w1fp.5 is the
+    # bead that would fill it for real, on the story router beside the others).
+    "regloss": "generation",
     "list": "curriculum",
     "render": "audio",
     "render-status": "pipeline",
@@ -221,9 +223,7 @@ class TestAllowlist:
     def test_missing_allowlist_entry_fails(self, tmp_path, capsys):
         path = _write_allowlist(tmp_path, *_DELIBERATE)
         assert do_check(routers=_build_routers(), allowlist_path=path) == 1
-        out = capsys.readouterr().out
-        assert "source-export" in out
-        assert "regloss" in out
+        assert "regloss" in capsys.readouterr().out
 
     def test_missing_allowlist_file_fails(self, tmp_path):
         assert do_check(routers=_build_routers(), allowlist_path=tmp_path / "nope.txt") == 1
@@ -231,8 +231,8 @@ class TestAllowlist:
     def test_stale_allowlist_entry_fails(self, tmp_path, capsys):
         """Shrink-only: a filled-in cell must drop its allowlist line."""
         filled = tuple(
-            ("source-export", "GET /api/story/{lesson_id}/source", "GET /api/review-sessions/{session_id}/source")
-            if verb == "source-export"
+            ("regloss", "POST /api/story/{lesson_id}/regloss", "POST /api/review-sessions/{session_id}/regloss")
+            if verb == "regloss"
             else (verb, lesson, session)
             for verb, lesson, session in VERB_MAP
         )
@@ -242,12 +242,12 @@ class TestAllowlist:
 
     def test_filled_cell_requires_no_entry(self, tmp_path, capsys):
         filled = tuple(
-            ("source-export", "GET /api/story/{lesson_id}/source", "GET /api/review-sessions/{session_id}/source")
-            if verb == "source-export"
+            ("regloss", "POST /api/story/{lesson_id}/regloss", "POST /api/review-sessions/{session_id}/regloss")
+            if verb == "regloss"
             else (verb, lesson, session)
             for verb, lesson, session in VERB_MAP
         )
-        path = _write_allowlist(tmp_path, *_DELIBERATE, "regloss lesson")
+        path = _write_allowlist(tmp_path, *_DELIBERATE)
         assert do_check(routers=_build_routers(filled), allowlist_path=path, verb_map=filled) == 0
         assert capsys.readouterr().out == ""
 
@@ -267,7 +267,6 @@ class TestAllowlist:
             "# Content-surface verb-map — shrink-only.",
             "prompt-draft lesson  # DELIBERATE: no id-less draft to export.",
             "read-by-position session  # DELIBERATE: sessions have no position.",
-            "source-export session  # OPEN GAP — bd tunatale-w1fp.4.",
             "regloss lesson  # OPEN GAP — bd tunatale-w1fp.5.",
         )
         assert do_check(routers=_build_routers(), allowlist_path=path) == 0
