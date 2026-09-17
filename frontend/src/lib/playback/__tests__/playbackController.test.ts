@@ -752,6 +752,14 @@ describe("playbackController", () => {
       expect(meta.artist).toBe("Key Phrases");
     });
 
+    it("sets metadata artwork to the TunaTale icon at seed", () => {
+      const mediaSession = makeFakeMediaSession();
+      createController({ mediaSession: mediaSession as unknown as MediaSession });
+
+      const meta = mediaSession.metadata as unknown as MediaMetadata;
+      expect(meta.artwork).toEqual([{ src: "/icon-512.png", sizes: "512x512", type: "image/png" }]);
+    });
+
     it("calls setPositionState on initialization", () => {
       const mediaSession = makeFakeMediaSession();
       createController({ mediaSession: mediaSession as unknown as MediaSession });
@@ -770,6 +778,20 @@ describe("playbackController", () => {
       audioEl.currentTime = 2.0;
       audioEl.dispatchEvent(new Event("timeupdate"));
       expect((mediaSession.metadata as unknown as MediaMetadata).artist).toBe("Natural Speed");
+    });
+
+    it("keeps metadata artwork after a section change", () => {
+      // The timeupdate refresh REPLACES the whole MediaMetadata object, so a
+      // seed-only artwork would silently disappear at the first section
+      // change. This is the test that catches that regression.
+      const mediaSession = makeFakeMediaSession();
+      createController({ mediaSession: mediaSession as unknown as MediaSession });
+      // Advance past section boundary (sec 0 → sec 1 at 1500ms)
+      audioEl.currentTime = 2.0;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect((mediaSession.metadata as unknown as MediaMetadata).artwork).toEqual([
+        { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      ]);
     });
 
     it("calls setPositionState after seek", () => {
