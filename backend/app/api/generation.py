@@ -18,6 +18,7 @@ from app.api.models import (
     ImportStoryResponse,
     LessonResponse,
     LessonSourceResponse,
+    ReglossLessonResponse,
 )
 from app.generation.glossing import ensure_dialogue_glosses
 from app.generation.json_parsing import parse_json_object
@@ -419,3 +420,56 @@ async def get_lesson(lesson_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Lesson not found")
     lesson = Lesson.from_json(row["data_json"])
     return serialize_lesson(lesson_id, lesson, day=row["day"])
+
+
+@router.post("/{lesson_id}/regloss", status_code=200, response_model=ReglossLessonResponse)
+async def regloss_lesson_story(lesson_id: str, request: Request):
+    """Re-run the gloss pass on a stored lesson's story.
+
+    Lessons can be stored with zero hover translations when
+    ``ensure_dialogue_glosses`` degrades. This repairs them in place — only
+    ``dialogue_glosses`` inside the story blob is replaced, then the lesson is
+    rebuilt through the same derivation the import route uses.
+
+    ⚠️ Uses ``update_lesson_data``, NEVER ``save_lesson``: the latter is
+    ``INSERT OR REPLACE``, which assigns a NEW rowid and resets ``created_at``.
+    ``get_lesson_days`` surfaces only ``MAX(rowid)``, so a regloss written that
+    way would leave the previous row invisible-but-present — manufacturing the
+    duplicate-row condition tracked as bd tunatale-326c.
+    """
+    store = request.state.content_store
+    row = store.get_lesson_row(lesson_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+
+    lesson = Lesson.from_json(row["data_json"])
+    story = lesson.generation_metadata.get("story")
+    if story is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This lesson has no stored story to re-gloss",
+        )
+
+    story.pop("dialogue_glosses", None)
+    language = request.state.language
+    await ensure_dialogue_glosses(story, getattr(request.app.state, "llm", None), language)
+
+    try:
+        validate_story(story, language=language)
+        curriculum = store.get_curriculum(row["curriculum_id"])
+        review_words = curriculum.review_request(row["day"]) if curriculum is not None else ()
+        lesson = build_lesson_from_story(story, language=language, review_words=review_words)
+    except (StoryGenerationError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    store.update_lesson_data(lesson_id, lesson)
+
+    metadata = lesson.generation_metadata
+    warnings: list[str] = []
+    if metadata.get("gloss_entry_count") == 0:
+        warnings.append("This lesson has no hover translations")
+    return {
+        "id": lesson_id,
+        "gloss_entry_count": metadata.get("gloss_entry_count", 0),
+        "warnings": warnings,
+    }

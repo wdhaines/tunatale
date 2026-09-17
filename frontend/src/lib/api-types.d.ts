@@ -1985,6 +1985,37 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/story/{lesson_id}/regloss": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Regloss Lesson Story
+     * @description Re-run the gloss pass on a stored lesson's story.
+     *
+     *     Lessons can be stored with zero hover translations when
+     *     ``ensure_dialogue_glosses`` degrades. This repairs them in place — only
+     *     ``dialogue_glosses`` inside the story blob is replaced, then the lesson is
+     *     rebuilt through the same derivation the import route uses.
+     *
+     *     ⚠️ Uses ``update_lesson_data``, NEVER ``save_lesson``: the latter is
+     *     ``INSERT OR REPLACE``, which assigns a NEW rowid and resets ``created_at``.
+     *     ``get_lesson_days`` surfaces only ``MAX(rowid)``, so a regloss written that
+     *     way would leave the previous row invisible-but-present — manufacturing the
+     *     duplicate-row condition tracked as bd tunatale-326c.
+     */
+    post: operations["regloss_lesson_story_api_story__lesson_id__regloss_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/story/{lesson_id}/source": {
     parameters: {
       query?: never;
@@ -3548,6 +3579,18 @@ export interface components {
       unchanged: number;
       /** Updated */
       updated: number;
+    };
+    /**
+     * ReglossLessonResponse
+     * @description Response of POST /api/story/{lesson_id}/regloss.
+     */
+    ReglossLessonResponse: {
+      /** Gloss Entry Count */
+      gloss_entry_count: number;
+      /** Id */
+      id: string;
+      /** Warnings */
+      warnings: string[];
     };
     /**
      * ReglossReviewSessionResponse
@@ -6907,6 +6950,37 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["LessonResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  regloss_lesson_story_api_story__lesson_id__regloss_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        lesson_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReglossLessonResponse"];
         };
       };
       /** @description Validation Error */
