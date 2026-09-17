@@ -226,22 +226,14 @@ def test_chars_per_month_limit_resolves_from_settings_when_a_ledger_is_present(m
     assert _svc()._chars_per_month_limit is None
 
 
-def test_get_tts_service_wires_a_ledger_for_azure_but_not_edge(tmp_path):
-    """Production's only builder constructs the ledger for azure, and only azure.
-
-    Edge is a different (unmetered) endpoint — EdgeTTSService takes no such
-    argument, and passing one would change its signature for nothing.
-    """
-    from app.audio.edge_tts import EdgeTTSService
+def test_get_tts_service_wires_a_ledger(tmp_path):
+    """Production's only builder constructs the ledger for the Azure adapter."""
     from app.audio.tts_factory import get_tts_service
 
-    azure_svc = get_tts_service(cache_dir=tmp_path / "cache", provider="azure")
-    edge_svc = get_tts_service(cache_dir=tmp_path / "cache", provider="edge")
+    svc = get_tts_service(cache_dir=tmp_path / "cache")
 
-    assert isinstance(azure_svc, AzureTTSService)
-    assert azure_svc._ledger is not None
-    assert isinstance(edge_svc, EdgeTTSService)
-    assert not hasattr(edge_svc, "_ledger")
+    assert isinstance(svc, AzureTTSService)
+    assert svc._ledger is not None
 
 
 @respx.mock

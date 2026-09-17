@@ -48,8 +48,8 @@ class TestAllowlist:
         assert matches_allowlist("app.srs.fsrs.schedule", ["app.srs.fsrs.schedule"]) is True
 
     def test_matches_allowlist_glob(self):
-        patterns = ["app.audio.edge_tts.edge_tts.*", "app.config.settings.*"]
-        assert matches_allowlist("app.audio.edge_tts.edge_tts.Communicate", patterns) is True
+        patterns = ["app.audio.azure_tts.azure_tts.*", "app.config.settings.*"]
+        assert matches_allowlist("app.audio.azure_tts.azure_tts.Communicate", patterns) is True
         assert matches_allowlist("app.config.settings.anki_collection_path", patterns) is True
         assert matches_allowlist("app.plugins.anki_sync.sync.main", patterns) is False
 

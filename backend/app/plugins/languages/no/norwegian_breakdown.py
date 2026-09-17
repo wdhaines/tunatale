@@ -505,8 +505,10 @@ _NORWEGIAN_VOWELS: frozenset[str] = frozenset("aeiouyæøå")
 # fragment sent to the nb-NO voice ALONE is read as the identically-spelled
 # *word*, so the weak-past ending ``-de`` (``had|DE``, ``bøy|DE``) came out as
 # the pronoun ``de`` /diː/ instead of the schwa /də/, and was respelled ``deh``
-# to steer the voice (edge-tts XML-escapes its input and exposes no
-# ``<phoneme>`` SSML, so orthography was the only lever).
+# to steer the voice. That was a workaround for the retired edge-tts adapter,
+# which XML-escaped its input and exposed no ``<phoneme>`` SSML — orthography
+# was then the only lever. Azure accepts IPA via ``<phoneme>``, so the
+# constraint is gone; this comment is the surviving history.
 #
 # Syllable slicing removed the premise: the chunk is cut out of a whole-word
 # render of ``hadde``, so no voice ever sees the fragment. What remained was

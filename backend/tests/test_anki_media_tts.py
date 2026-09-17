@@ -1,9 +1,9 @@
-"""Card-pronunciation TTS — now provider-agnostic (was S3.8: edge-tts only).
+"""Card-pronunciation TTS — provider-agnostic (was S3.8: the unofficial adapter).
 
-``generate_tts_audio`` renders through whichever adapter TTS_PROVIDER selects,
-so these exercise it under BOTH providers rather than reaching for edge_tts
-directly. The azure leg uses respx (transport-level); the edge leg patches
-``edge_tts.Communicate``, the allowlisted network boundary.
+``generate_tts_audio`` renders through whichever adapter
+app/audio/tts_factory.py builds. These exercise it via respx at the
+transport level (the retired unofficial-adapter leg patched its network
+client at object level instead).
 """
 
 from __future__ import annotations
@@ -22,15 +22,9 @@ _ML_VOICE = "en-US-EmmaMultilingualNeural"
 
 @pytest.fixture
 def azure(monkeypatch):
-    """Select the Azure provider with usable credentials."""
-    monkeypatch.setattr(settings, "tts_provider", "azure")
+    """Provide usable Azure credentials."""
     monkeypatch.setattr(settings, "azure_speech_key", "test-key")
     monkeypatch.setattr(settings, "azure_speech_region", "eastus")
-
-
-@pytest.fixture
-def edge(monkeypatch):
-    monkeypatch.setattr(settings, "tts_provider", "edge")
 
 
 class TestGenerateTtsAudioAzure:
@@ -58,7 +52,6 @@ class TestGenerateTtsAudioAzure:
         Without the log line this looks identical to "the text had no audio",
         which is how an unset key hides as mysteriously silent cards.
         """
-        monkeypatch.setattr(settings, "tts_provider", "azure")
         monkeypatch.setattr(settings, "azure_speech_key", "")
         assert await generate_tts_audio("voda") is None
         assert "AZURE_SPEECH_KEY" in caplog.text
@@ -68,43 +61,6 @@ class TestGenerateTtsAudioAzure:
         route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"x"))
         await generate_tts_audio("voda", voice="sl-SI-RokNeural")
         assert 'name="sl-SI-RokNeural"' in route.calls[0].request.content.decode()
-
-
-class TestGenerateTtsAudioEdge:
-    async def test_returns_mp3_bytes_when_stream_succeeds(self, edge, monkeypatch):
-        fake_data = b"\xff\xfbfake_mp3_data"
-
-        async def fake_stream(self):
-            yield {"type": "audio", "data": fake_data[:4]}
-            yield {"type": "WordBoundary", "data": "ignored"}
-            yield {"type": "audio", "data": fake_data[4:]}
-
-        monkeypatch.setattr("edge_tts.Communicate.stream", fake_stream)
-        assert await generate_tts_audio("voda") == fake_data
-
-    async def test_returns_none_on_exception(self, edge, monkeypatch):
-        async def fake_stream(self):
-            raise RuntimeError("TTS network error")
-            yield  # make it a generator
-
-        monkeypatch.setattr("edge_tts.Communicate.stream", fake_stream)
-        assert await generate_tts_audio("voda") is None
-
-    async def test_accepts_custom_voice(self, edge, monkeypatch):
-        used_voice: list[str] = []
-
-        class FakeCommunicate:
-            def __init__(self, text, voice, rate="+0%"):
-                used_voice.append(voice)
-
-            async def save(self, path):
-                from pathlib import Path
-
-                Path(path).write_bytes(b"x")
-
-        monkeypatch.setattr("edge_tts.Communicate", FakeCommunicate)
-        await generate_tts_audio("voda", voice="sl-SI-RokNeural")
-        assert used_voice == ["sl-SI-RokNeural"]
 
 
 class TestSpeakLocaleOnTheDefaultVoice:

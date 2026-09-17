@@ -101,7 +101,6 @@ async def test_rerun_after_a_failed_render_does_not_resynthesize_what_succeeded(
 
     monkeypatch.setattr(settings, "database_url", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.setattr(settings, "llm_mode", "mock")
-    monkeypatch.setattr(settings, "tts_provider", "azure")
     monkeypatch.setattr(settings, "azure_speech_key", "test-key")
     monkeypatch.setattr(settings, "azure_speech_region", "eastus")
     monkeypatch.setattr(settings, "tts_min_request_delay_s", 0.0)

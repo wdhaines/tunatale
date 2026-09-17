@@ -162,7 +162,7 @@ class TestValidateStory:
             validate_story(story)
 
     # Empty/whitespace values pass a bare presence check but blow up much
-    # later — at TTS render time (edge-tts on "" text) — with an opaque error.
+    # later — at TTS render time (the adapter on "" text) — with an opaque error.
     # Import is the seam where a hand-edited Story JSON must be told clearly.
 
     def test_key_phrase_empty_phrase_rejected(self):

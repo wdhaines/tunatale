@@ -1,7 +1,7 @@
 """TTS audio generation for Anki card pronunciations.
 
-Provider-agnostic: renders through whichever adapter ``TTS_PROVIDER`` selects
-(see app/audio/tts_factory.py), rather than talking to edge-tts directly.
+Provider-agnostic: renders through the adapter built by
+app/audio/tts_factory.py.
 """
 
 from __future__ import annotations

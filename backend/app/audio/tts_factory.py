@@ -1,13 +1,12 @@
-"""Provider selection for text-to-speech.
+"""TTS adapter construction — Azure Speech is the only provider.
 
-Two implementations sit behind ``TTSService``: Azure Speech (the official
-endpoint, the default) and Edge Read Aloud (the unofficial one being retired by
-``tunatale-i69``). ``TTS_PROVIDER`` picks between them.
-
-The selection is EXPLICIT and there is no automatic runtime fallback — if the
-chosen provider cannot render, the render fails. An automatic swap would splice
-a second provider's rendition of the "same" voice into a curriculum silently,
-and voice-id parity is not voice parity.
+Azure Speech is the sole implementation behind ``TTSService``; the unofficial
+Edge Read Aloud adapter (once selectable through a provider setting) was
+retired by ``tunatale-i69``. With one provider there is nothing to select and,
+deliberately, nothing to fall back to: if Azure cannot render, the render
+fails. An automatic runtime swap would splice a second provider's rendition of
+the "same" voice into a curriculum silently, and voice-id parity is not voice
+parity.
 """
 
 from __future__ import annotations
@@ -15,44 +14,19 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.audio.azure_tts import AzureTTSService
-from app.audio.edge_tts import EdgeTTSService
 from app.audio.ports import TTSService
 
-PROVIDERS = {
-    "azure": AzureTTSService,
-    "edge": EdgeTTSService,
-}
 
-
-def get_tts_service(cache_dir: Path | None = None, provider: str | None = None) -> TTSService:
-    """Return the configured TTS adapter.
+def get_tts_service(cache_dir: Path | None = None) -> TTSService:
+    """Return the configured TTS adapter (Azure Speech), ledger wired in.
 
     Args:
-        cache_dir: Optional file-cache directory, honoured by both adapters.
-        provider: Override for ``settings.tts_provider``; mainly for callers
-            that need to pin a provider without mutating global settings.
+        cache_dir: Optional file-cache directory, honoured by the adapter.
     """
-    if provider is None:
-        from app.config import settings
+    # The character ledger counts Azure spend; Azure is the only adapter, so
+    # every service gets one.
+    from app.audio.char_ledger import AzureCharacterLedger
+    from app.config import settings
 
-        provider = settings.tts_provider
-
-    try:
-        factory = PROVIDERS[provider]
-    except KeyError:
-        # Loud, and it names the valid options: an unrecognised value silently
-        # falling back to a default is how half a curriculum gets rendered by
-        # the wrong provider without anyone noticing.
-        valid = ", ".join(sorted(PROVIDERS))
-        raise ValueError(f"Unknown TTS_PROVIDER {provider!r}. Valid providers: {valid}.") from None
-
-    # The character ledger goes to the AZURE adapter only, identified by class
-    # (not by a string comparison on the provider name). Edge is a different
-    # endpoint with a different, unmetered deal and takes no such argument.
-    if factory is AzureTTSService:
-        from app.audio.char_ledger import AzureCharacterLedger
-        from app.config import settings
-
-        ledger = AzureCharacterLedger(settings.azure_tts_usage_ledger_path)
-        return factory(cache_dir=cache_dir, ledger=ledger)
-    return factory(cache_dir=cache_dir)
+    ledger = AzureCharacterLedger(settings.azure_tts_usage_ledger_path)
+    return AzureTTSService(cache_dir=cache_dir, ledger=ledger)

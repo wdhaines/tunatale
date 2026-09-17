@@ -77,7 +77,7 @@ async def fetch_card_media(
 ) -> MediaResult:
     """Fetch audio and image for a vocabulary card.
 
-    Tries Forvo first, falls back to edge-tts. Image from Pixabay.
+    Tries Forvo first, falls back to TTS. Image from Pixabay.
     Pass used_image_urls (a shared set) across cards to prevent duplicate images.
 
     ``image_query`` controls image selection (see ``query_llm`` contract):

@@ -175,13 +175,12 @@ class Settings(BaseSettings):
     #: own notes carry no clozable example. It is a backlog to drain, not a
     #: stream to keep up with.
     prestage_cloze_limit: int = 10
-    # Which TTS adapter renders audio: "azure" (official Azure Speech, the
-    # default) or "edge" (the unofficial Edge Read Aloud endpoint, retained as an
-    # explicit escape hatch and retired by tunatale-i69). The switch is a human
-    # decision — there is NO automatic runtime fallback between them, because a
-    # silent mid-render swap would mix two providers' renditions of the "same"
-    # voice into one curriculum. See app/audio/tts_factory.py.
-    tts_provider: str = "azure"
+    # TTS renders through Azure Speech (the official endpoint; the unofficial
+    # Edge Read Aloud adapter was retired by tunatale-i69, so there is no
+    # provider switch to configure). The no-automatic-fallback reasoning still
+    # stands for any future second provider: a silent mid-render swap would
+    # mix two providers' renditions of the "same" voice into one curriculum.
+    # See app/audio/tts_factory.py.
     # TTS concurrency and pacing. tts_max_concurrent_requests stays at 1: Azure
     # has never been tested above 1, so concurrency is a separate, untested axis
     # (findings-tts-pacing-2026-08-21.md, "Explicitly OUT of scope") — do not
@@ -197,7 +196,7 @@ class Settings(BaseSettings):
     # time only; it does not and must not be sold as reducing throttling. Safe to
     # lower only because the burst-amplification bug (a throttled request paying
     # no pacing delay and freeing its slot instantly) is fixed first — see
-    # app/audio/azure_tts.py::_do_synthesize and app/audio/edge_tts.py::_do_synthesize.
+    # app/audio/azure_tts.py::_do_synthesize.
     tts_max_concurrent_requests: int = 1
     tts_min_request_delay_s: float = 0.2
     # Per-provider pacing override, falling back to tts_min_request_delay_s when
@@ -217,10 +216,10 @@ class Settings(BaseSettings):
     # builds its adapters through get_tts_service(), which never passed one:
     # the ladder was the only pacing knob no caller could reach.
     tts_retry_base_delay_s: float = 0.5
-    # Azure Speech (TTS). Replaces the unofficial Edge Read Aloud endpoint that
-    # `edge-tts` talks to — same underlying neural voices, but an official API with
-    # terms and a support channel. F0 (free tier) allows 500K chars/month and
-    # THROTTLES at the cap rather than billing over it.
+    # Azure Speech (TTS). Replaces the unofficial Edge Read Aloud endpoint —
+    # same underlying neural voices, but an official API with terms and a support
+    # channel. F0 (free tier) allows 500K chars/month and THROTTLES at the cap
+    # rather than billing over it.
     # Both default EMPTY on purpose: a region default would let a missing .env still
     # produce a well-formed call to the wrong datacenter, so the call site must fail
     # loudly instead. Region is the machine-readable form ("eastus"), not "East US" —
