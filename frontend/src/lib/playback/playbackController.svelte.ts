@@ -19,6 +19,11 @@ export const HANDS_FREE_SEQUENCE = [
   "translated",
 ] as const;
 
+// Art for the lock screen / car head unit. One entry, shared by BOTH
+// MediaMetadata constructions — the timeupdate listener replaces the whole
+// object, so a seed-only entry would vanish at the first section change.
+const MEDIA_ARTWORK = [{ src: "/icon-512.png", sizes: "512x512", type: "image/png" }];
+
 export interface PlaybackController {
   readonly currentCue: Cue | null;
   readonly currentSectionIndex: number | null;
@@ -426,6 +431,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
         // Intentional initial-value read (untrack): this seeds the metadata once
         // at init; the timeupdate listener below keeps the artist fresh.
         artist: untrack(() => currentSectionTitle) || "",
+        artwork: MEDIA_ARTWORK,
       });
     } catch {
       // MediaMetadata not available (jsdom, some browsers)
@@ -445,6 +451,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
         ms.metadata = new MediaMetadata({
           title: deps.lessonTitle,
           artist: newTitle,
+          artwork: MEDIA_ARTWORK,
         });
         lastArtist = newTitle;
       } catch {
