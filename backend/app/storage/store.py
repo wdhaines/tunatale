@@ -399,11 +399,21 @@ class ContentStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def delete_audio_files_for_lesson(self, lesson_id: str) -> None:
-        """Delete all audio file rows for a lesson so re-render replaces, not appends."""
+    def delete_audio_files_for_lesson(self, lesson_id: str) -> list[Path]:
+        """Drop a lesson's audio rows, KEEPING the lesson; return the paths.
+
+        Re-render replaces by id, so the previous render's rows must go while
+        the lesson row itself stays. Rows here, files by the caller — the same
+        split :meth:`delete_review_session_audio` uses.
+        """
         with self._get_conn() as conn:
+            paths = [
+                resolve_audio_path(row["file_path"])
+                for row in conn.execute("SELECT file_path FROM audio_files WHERE lesson_id = ?", (lesson_id,))
+            ]
             conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (lesson_id,))
             conn.commit()
+        return paths
 
     def delete_lesson(self, lesson_id: str) -> list[Path]:
         """Delete ONE lesson version and its audio rows; return the orphaned paths.
