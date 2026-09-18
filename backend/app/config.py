@@ -394,6 +394,16 @@ def prod_profile_problems(s: Settings) -> list[str]:
                 f"{name} is unset — every lesson render and card audio would fail at the"
                 f" first synthesis, on a server that otherwise looks healthy (set {name.upper()})"
             )
+    # Shape, not validity: the guard makes no network call. Every Groq key starts
+    # "gsk_". On 2026-09-18 the box carried a literal placeholder from its first
+    # smoke-test env; it passed every other check, served /api/health 200, and
+    # failed the user's first sync with "invalid API key".
+    if not s.groq_api_key.startswith("gsk_"):
+        problems.append(
+            "groq_api_key is unset or not a Groq key (they start with 'gsk_') — every"
+            " generation and gloss would fail on a server that otherwise looks healthy"
+            " (set GROQ_API_KEY)"
+        )
     problems += _relative_sqlite_problems(s)
     problems += _zone_problems(s)
     return problems
