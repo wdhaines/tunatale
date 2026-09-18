@@ -34,4 +34,4 @@ FROM caddy:2-alpine AS web
 COPY Caddyfile /etc/caddy/Caddyfile
 COPY --from=frontend-build /app/build /srv
 
-EXPOSE 80
+EXPOSE 80 443 443/udp

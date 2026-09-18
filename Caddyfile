@@ -1,5 +1,38 @@
-:80 {
+# The site address comes from SITE_ADDRESS, set on the box in web.env (see
+# docker-compose.yml). A domain there makes Caddy obtain and renew a Let's
+# Encrypt certificate on its own and redirect :80 to HTTPS. Unset — every
+# laptop — it falls back to plain :80, exactly what this file served before
+# TLS existed (tunatale-1oq).
+{$SITE_ADDRESS::80} {
 	root * /srv
+
+	# Just above the API's own 10 MB image-upload limit (srs_images.py
+	# _MAX_UPLOAD_BYTES), so a legitimate upload still reaches the API's more
+	# informative error instead of a bare 413 from the proxy.
+	request_body {
+		max_size 12MB
+	}
+
+	header {
+		# One year, this host only: the other subdomains are served elsewhere,
+		# and includeSubDomains/preload are hard to undo.
+		Strict-Transport-Security "max-age=31536000"
+		# The frontend loads nothing cross-origin (measured 2026-09-18).
+		# 'unsafe-inline' scripts: app.html's pre-paint theme script and
+		# SvelteKit's bootstrap are inline, and the bootstrap's hash changes on
+		# every build, so a hash list here would break the next deploy. The
+		# value of this policy is the origin fence: connect-src 'self' stops an
+		# injection from shipping data anywhere, frame-ancestors stops framing.
+		# 'wasm-unsafe-eval' + blob: workers are for the voice-probe spike page
+		# (onnxruntime-web); data: images for the language selector's flags.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# The microphone stays available to this origin for voice control
+		# (tunatale-qi5); nothing else is used.
+		Permissions-Policy "microphone=(self), camera=(), geolocation=(), payment=(), usb=()"
+		-Server
+	}
 
 	handle /api/* {
 		# Caddy appends the real peer to X-Forwarded-For; the backend reads

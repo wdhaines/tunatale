@@ -87,3 +87,38 @@ def test_every_mutable_path_lands_on_the_one_volume(services):
     assert env["MEDIA_DIR"].startswith("/data/")
     assert env["AUDIO_DIR"].startswith("/data/")
     assert all(url.startswith("sqlite:////data/") for url in yaml.safe_load(env["DATABASE_URLS"]).values())
+
+
+# ── TLS (tunatale-1oq) ──────────────────────────────────────────────────────
+
+
+def test_web_publishes_https_on_tcp_and_udp(services):
+    """443/tcp for HTTPS and 443/udp for HTTP/3; 80 stays for the ACME HTTP
+    challenge and the redirect Caddy serves there."""
+    ports = {str(p) for p in services["web"]["ports"]}
+    assert {"80:80", "443:443", "443:443/udp"} <= ports, ports
+
+
+def test_web_keeps_its_certificates_across_redeploys(services):
+    """Caddy stores issued certificates under /data and its autosaved config under
+    /config. Without named volumes every deploy recreates the container empty and
+    re-requests a certificate, and Let's Encrypt's duplicate-certificate limit
+    (5 per week) turns a busy deploy day into a site with no TLS at all."""
+    mounts = {m.split(":")[1]: m.split(":")[0] for m in services["web"]["volumes"]}
+    assert set(mounts) >= {"/data", "/config"}, mounts
+    top = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))["volumes"]
+    for target in ("/data", "/config"):
+        assert mounts[target] in top, f"{mounts[target]} is not a declared named volume"
+    # The API's `data` volume is a DIFFERENT volume: sharing it would put the
+    # certificates beside the SQLite files and inside the app's backups.
+    assert mounts["/data"] != "data"
+
+
+def test_the_site_address_comes_from_an_optional_box_only_file(services):
+    """The domain is a property of the box, not of the repo. deploy.sh rewrites
+    `.env` on every deploy, so it cannot live there, and a laptop has no such file
+    — `required: false` keeps `docker compose up` working locally, where the
+    Caddyfile's `:80` default applies."""
+    env_files = services["web"]["env_file"]
+    assert {"path": "web.env", "required": False} in env_files, env_files
+    assert "itcanbeeasilydone" not in COMPOSE.read_text(encoding="utf-8")
