@@ -30,6 +30,8 @@ SESSION_SECRET=not-a-real-secret
 TRUSTED_PROXY_HEADER=X-Forwarded-For
 CORS_ORIGINS=["https://tunatale.example.com"]
 TZ=America/New_York
+AZURE_SPEECH_KEY=a-real-key
+AZURE_SPEECH_REGION=eastus
 """
 
 

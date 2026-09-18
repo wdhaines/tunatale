@@ -58,6 +58,8 @@ def _clean_settings(monkeypatch, tmp_path, **overrides) -> Settings:
         "SESSION_SECRET",
         "LLM_MODE",
         "TZ",
+        "AZURE_SPEECH_KEY",
+        "AZURE_SPEECH_REGION",
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.chdir(tmp_path)
@@ -127,6 +129,8 @@ def test_prod_profile_clean_when_fully_configured(monkeypatch, tmp_path):
         cors_origins=["https://tunatale.example.com"],
         trusted_proxy_header="X-Forwarded-For",
         tz="America/New_York",
+        azure_speech_key="a-real-key",
+        azure_speech_region="eastus",
     )
     assert prod_profile_problems(s) == []
 
@@ -144,6 +148,8 @@ def test_prod_profile_clean_when_fully_configured(monkeypatch, tmp_path):
         ({"trusted_proxy_header": ""}, "trusted_proxy_header"),
         ({"tz": ""}, "tz"),
         ({"tz": "Mars/Olympus_Mons"}, "tz"),
+        ({"azure_speech_key": ""}, "azure_speech_key"),
+        ({"azure_speech_region": ""}, "azure_speech_region"),
     ],
 )
 def test_prod_profile_flags_each_misconfiguration(monkeypatch, tmp_path, overrides, fragment):
@@ -156,6 +162,8 @@ def test_prod_profile_flags_each_misconfiguration(monkeypatch, tmp_path, overrid
         "cors_origins": ["https://tunatale.example.com"],
         "trusted_proxy_header": "X-Forwarded-For",
         "tz": "America/New_York",
+        "azure_speech_key": "a-real-key",
+        "azure_speech_region": "eastus",
     }
     s = _clean_settings(monkeypatch, tmp_path, **{**base, **overrides})
     problems = prod_profile_problems(s)
@@ -167,7 +175,8 @@ def test_prod_profile_reports_every_problem_at_once(monkeypatch, tmp_path):
     """One boot, one list — not a whack-a-mole of restarts."""
     s = _clean_settings(monkeypatch, tmp_path, tt_env="prod")
     problems = prod_profile_problems(s)
-    assert len(problems) == 4, problems  # llm_mode, auth_enabled, session_secret, tz
+    # llm_mode, auth_enabled, session_secret, tz, azure_speech_key, azure_speech_region
+    assert len(problems) == 6, problems
 
 
 def test_prod_profile_ignores_wildcard_regex_only_when_scoped(monkeypatch, tmp_path):
@@ -183,6 +192,8 @@ def test_prod_profile_ignores_wildcard_regex_only_when_scoped(monkeypatch, tmp_p
         cors_allow_origin_regex=r"^https://[a-z0-9-]+\.example\.com$",
         trusted_proxy_header="X-Forwarded-For",
         tz="America/New_York",
+        azure_speech_key="a-real-key",
+        azure_speech_region="eastus",
     )
     assert prod_profile_problems(s) == []
 
@@ -259,6 +270,8 @@ async def test_lifespan_starts_when_the_prod_profile_is_satisfied(tmp_path, monk
     monkeypatch.setattr(settings, "session_secret", "a-real-secret")
     monkeypatch.setattr(settings, "cors_origins", ["https://tunatale.example.com"])
     monkeypatch.setattr(settings, "trusted_proxy_header", "X-Forwarded-For")
+    monkeypatch.setattr(settings, "azure_speech_key", "a-real-key")
+    monkeypatch.setattr(settings, "azure_speech_region", "eastus")
     monkeypatch.setattr(settings, "tz", _zone_agreeing_with_local())
     monkeypatch.setattr(settings, "pipeline_autostart", False)
 
@@ -284,6 +297,8 @@ async def test_lifespan_raises_when_the_process_is_not_keeping_the_configured_zo
     monkeypatch.setattr(settings, "session_secret", "a-real-secret")
     monkeypatch.setattr(settings, "cors_origins", ["https://tunatale.example.com"])
     monkeypatch.setattr(settings, "trusted_proxy_header", "X-Forwarded-For")
+    monkeypatch.setattr(settings, "azure_speech_key", "a-real-key")
+    monkeypatch.setattr(settings, "azure_speech_region", "eastus")
     monkeypatch.setattr(settings, "tz", _zone_disagreeing_with_local())
     monkeypatch.setattr(settings, "pipeline_autostart", False)
 

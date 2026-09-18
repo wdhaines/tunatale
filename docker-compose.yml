@@ -94,10 +94,26 @@ services:
     # not to this file. Do not "fix" this by adding a platform key — verify the
     # reasoning in tunatale-014's notes first.
     restart: unless-stopped
+    # The domain lives in web.env on the box, NOT in `.env`: deploy.sh rewrites
+    # `.env` on every deploy. A laptop has no web.env, so the Caddyfile's plain
+    # :80 default applies there (tunatale-1oq). Needs compose >= 2.24.
+    env_file:
+      - path: web.env
+        required: false
     ports:
       - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    # Issued certificates live in /data and autosaved config in /config. Without
+    # named volumes every deploy starts Caddy empty and re-requests a
+    # certificate, and Let's Encrypt allows 5 duplicates a week.
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
     depends_on:
       - api
 
 volumes:
   data:
+  caddy_data:
+  caddy_config:

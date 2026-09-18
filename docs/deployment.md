@@ -415,6 +415,74 @@ shipped in it, so mock mode dies at startup with a `FileNotFoundError` from
 `LLM_MODE=live` and the `TT_ENV=prod` guard already refuses anything else — but
 a non-prod boot of the prod image hits the ugly version.
 
+## HTTPS and the domain
+
+Caddy terminates TLS for one subdomain and serves the SPA and the API from the
+same origin, so the browser never makes a cross-origin request and no CORS
+headers are needed in normal use. The `Caddyfile` site address is
+`{$SITE_ADDRESS::80}`: set it and Caddy obtains and renews a Let's Encrypt
+certificate by itself and redirects :80 to HTTPS; leave it unset (every laptop)
+and it serves plain :80 as before.
+
+### The one box-side file
+
+The domain is a property of the box, so it lives in `web.env` beside
+`docker-compose.yml`, **not** in `.env` — `deploy.sh` rewrites `.env` on every
+deploy. Compose loads it with `required: false` (compose ≥ 2.24; the box has
+5.x), so a laptop without it still starts.
+
+```bash
+echo 'SITE_ADDRESS=<subdomain>' > /opt/tunatale/web.env
+```
+
+### DNS
+
+One **A record** for the subdomain, pointing at the reserved static IP. No
+AAAA: the VM has no external IPv6. Two things to check before relying on it:
+
+- **A wildcard record elsewhere on the domain is fine** — an explicit record
+  wins — but until the new record propagates the name resolves to the
+  wildcard's target, and a certificate request made then fails.
+- **CAA must admit Let's Encrypt.** `dig +short CAA <domain>` must list
+  `letsencrypt.org`, or be empty. A CAA naming only other CAs makes issuance
+  fail with an error that does not mention CAA prominently.
+
+### Certificates survive redeploys
+
+Issued certificates live in the `caddy_data` volume and autosaved config in
+`caddy_config`. Without them every deploy starts Caddy empty and requests a new
+certificate, and Let's Encrypt allows 5 duplicate certificates a week. They are
+deliberately NOT the API's `data` volume, which would put key material beside
+the SQLite files and inside the app backups.
+
+### ⚠️ The loopback override must go — but only after auth is on
+
+Until go-live the box carried a `docker-compose.override.yml` binding :80 to
+`127.0.0.1`, because the app ran with auth disabled and a placeholder env. It
+must be deleted for Caddy to be reachable, and **deleting it before the
+production profile is in place publishes an open API**. Order:
+
+1. `backend/.env` from `backend/.env.prod.example`, every `set-me` filled.
+   `TT_ENV=prod` makes the app refuse to boot on a wrong profile, which is the
+   check that this step is done — not reading the file.
+2. Create the account (§ Accounts), since `AUTH_ENABLED=true` is in the profile.
+3. `web.env`, then delete the override, then deploy.
+
+### Verifying
+
+From a device that has never been on the tailnet:
+
+```bash
+curl -sI https://<subdomain>/ | head -1                 # HTTP/2 200, trusted cert (no -k)
+curl -sI http://<subdomain>/  | grep -i '^location'      # redirect to https
+curl -s  https://<subdomain>/api/definitely-not-a-route  # the API's JSON 404, NOT the HTML shell
+curl -sI https://<subdomain>/ | grep -iE 'strict-transport|content-security'
+```
+
+The third line is the one that catches the classic misorder: with the SPA
+fallback matched before `/api/*`, an unknown API path answers 200 with
+`index.html` and every client error reads as success.
+
 ## Accounts
 
 There is **no self-serve signup**, by design, at any point in Phases 1–3. Every

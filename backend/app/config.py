@@ -385,6 +385,15 @@ def prod_profile_problems(s: Settings) -> list[str]:
             " appears to come from the proxy, so login throttling would treat all"
             " callers as one client (set TRUSTED_PROXY_HEADER=X-Forwarded-For)"
         )
+    # Azure is the ONLY synthesis engine since edge-tts was retired, and both
+    # settings default empty on purpose. Without them the box boots, answers
+    # /api/health, and then fails every render and every card's audio.
+    for name in ("azure_speech_key", "azure_speech_region"):
+        if not getattr(s, name):
+            problems.append(
+                f"{name} is unset — every lesson render and card audio would fail at the"
+                f" first synthesis, on a server that otherwise looks healthy (set {name.upper()})"
+            )
     problems += _zone_problems(s)
     return problems
 
