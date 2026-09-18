@@ -154,7 +154,14 @@ to_prod() {
 
   echo "==> stopping the prod api"; compose stop api
   echo "==> saving prod's current state to $bk"
-  ssh_box "sudo mkdir -p '$bk' && cd '$VOL' && for f in tunatale_no.db* tunatale_sl.db* .tunatale/tt_collection.anki2* .tunatale/tt_collection.media.db2* .tunatale/*_usage.log; do [ -e \"\$f\" ] && sudo cp -a --parents \"\$f\" '$bk/'; done; true"
+  # As ROOT throughout: the volume's mountpoint is not traversable by the login
+  # user, and the first live run's non-sudo `cd` failed while a trailing `true`
+  # hid it — the "undo material" it then advertised did not exist. Now any
+  # failure here stops the transfer before a single file is overwritten.
+  ssh_box "sudo sh -c 'set -e; mkdir -p \"$bk\"; cd \"$VOL\"; n=0
+    for f in tunatale_no.db* tunatale_sl.db* .tunatale/tt_collection.anki2* .tunatale/tt_collection.media.db2* .tunatale/*_usage.log; do
+      if [ -e \"\$f\" ]; then cp -a --parents \"\$f\" \"$bk/\"; n=\$((n+1)); fi
+    done; echo \"    saved \$n files\"'" || die "could not save prod's current state — nothing was overwritten"
 
   echo "==> copying databases"
   for e in "${SQLITE[@]}" "${SQLITE_UP[@]}"; do
