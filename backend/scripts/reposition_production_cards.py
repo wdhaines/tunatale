@@ -24,8 +24,12 @@ arbitrarily, nothing corrupts — but it drifts the TT mirror, and it happened t
 times on 2026-08-22, every one of them a re-run rather than normal operation.
 
 Renumbering is never routine. The full renumber is what put the population into note-id
-(deck/frequency) order and that has been done once; one new card at the head shifts
-every index by one, so a routine renumber rewrites and re-pushes everything for nothing.
+(deck/frequency) order; one new card at the head shifts every index by one, so a
+routine renumber rewrites and re-pushes everything for nothing. It has been run twice:
+2026-08-22 (Layer 83) and 2026-09-18 (tunatale-azkb), the second because every mint
+since the first appended FIFO, leaving ~300 cards minted before the deck-order fix
+(357f4b2) ahead of the whole frequency-ordered backfill. Clozes now sort at their base
+word's position, read from the TunaTale DB.
 
 All of the logic — and all of the tests — live in
 ``app.plugins.anki_sync.reposition_production_cards``. This file is the wiring.
@@ -46,6 +50,7 @@ from app.plugins.anki_sync.reposition_production_cards import (
     mirror_positions_to_tt,
     plan_repositioning,
     read_band_positions,
+    read_cloze_base_note_ids,
 )
 from app.plugins.anki_sync.safety import safe_open
 from app.plugins.anki_sync.sqlite_reader import find_deck_id
@@ -78,6 +83,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    # Anki has no link from a cloze note to its word; TunaTale does. Read it first so
+    # the plan sorts every production card by its WORD's frequency (tunatale-azkb).
+    with db._get_conn() as tt_conn:
+        sort_keys = read_cloze_base_note_ids(tt_conn)
+
     mode = "rw" if args.apply else "ro"
     with safe_open(settings.anki_collection_path, mode=mode) as ctx:
         deck_id = find_deck_id(ctx.conn, context.deck_name)
@@ -85,13 +95,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"REFUSING: deck {context.deck_name!r} not found in the collection")
             return 2
 
-        plan = plan_repositioning(ctx.conn, deck_id)
+        plan = plan_repositioning(ctx.conn, deck_id, sort_keys=sort_keys)
         stranded = cards_outside_band(ctx.conn, deck_id)
         print(f"deck            {context.deck_name}")
         print(f"minted cards    {plan.total}")
         print(f"outside band    {len(stranded)}")
         print(f"already placed  {plan.already_placed}")
         print(f"to move         {len(plan.moves)}")
+        print(f"cloze sort keys {len(sort_keys)}")
         if plan.moves:
             first, last = plan.moves[0], plan.moves[-1]
             print(f"first move      card {first[0]} -> position {first[1]}")
