@@ -55,6 +55,16 @@ fi
 # blind, and that job is the eye.
 export TZ=UTC
 
+# The gate must not inherit the developer's AnkiWeb-sync switch. backend/.env is
+# read by pydantic AND copied into os.environ by app/main.py's load_dotenv(), and
+# data-transfer.sh sets SYNC_ENABLED=false there whenever production is the live
+# TunaTale. With it off the anki router is not mounted, so the OpenAPI snapshot
+# check and every sync-UI Playwright spec went red on an unchanged tree
+# (2026-09-18). CI has no .env and runs with the default (true); this pins the
+# local gate to the same value. An exported variable outranks both the .env file
+# and load_dotenv (which does not override), so this is the one place it can go.
+export SYNC_ENABLED=true
+
 backend_log="$(mktemp)"
 frontend_log="$(mktemp)"
 peer_sync_log="$(mktemp)"

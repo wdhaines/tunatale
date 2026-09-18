@@ -502,6 +502,65 @@ minutes because Tailscale had stopped on the Mac, so the `tunatale` hostname
 no longer resolved; the containers had in fact come up, and only the history
 append was lost. If a deploy hangs, check `tailscale status` before the box.
 
+## Moving data between dev and prod
+
+`data-transfer.sh` moves TunaTale's whole state between this Mac and the box,
+in either direction, and is meant to be run more than once — to go live, to
+pull production back to a laptop for development, and to push it back again.
+
+```bash
+export TT_DEPLOY_USER=<os-login name>      # § Connecting
+./data-transfer.sh status                  # compare both sides; changes nothing
+./data-transfer.sh to-prod                 # dry run: the same comparison, plus the plan
+./data-transfer.sh to-prod --apply         # dev -> prod
+./data-transfer.sh to-dev  --apply         # prod -> dev
+```
+
+**A transfer is a handover.** Afterwards exactly one side syncs with AnkiWeb —
+the destination. `--apply` rewrites `SYNC_ENABLED` in both sides'
+`backend/.env` to make that so. Two TunaTales pushing to one AnkiWeb account
+from different states is how scheduling data gets overwritten, so do not study
+on the side that is not live.
+
+**Before `--apply`:** run one last TunaTale sync on the SOURCE, stop the dev
+server, and quit desktop Anki. The script refuses to run otherwise.
+
+### What moves
+
+| item | dev (this Mac) | prod (data volume) | direction |
+|---|---|---|---|
+| content DBs | `backend/tunatale_{sl,no}.db` | `/data/tunatale_{sl,no}.db` | both |
+| TT's Anki collection | `~/.tunatale/tt_collection.anki2` | `/data/.tunatale/` | both |
+| card media / lesson audio | `backend/media`, `backend/output/audio` | `/data/media`, `/data/output/audio` | both |
+| TTS cache, alignment cache | `~/.tunatale/tts-cache`, `alignment-cache` | `/data/.tunatale/` | both |
+| usage ledgers | `~/.tunatale/{azure_tts,llm}_usage.log` | `/data/.tunatale/` | both |
+| **Anki media + its sync DB** | `~/.tunatale/tt_collection.media{,.db2}` | `/data/.tunatale/` | **to-prod only** |
+
+Never moved: `auth.db` (production only), logs, the AnkiWeb password file, and
+the Mac's backup directories.
+
+⚠️ **Why the Anki media pair is one-way.** On the Mac `tt_collection.media` is
+a SYMLINK to desktop Anki's own `collection.media`, so writing into it would
+rewrite the user's real media library — and `rsync --delete` would delete from
+it. On the box it is a real directory. It moves up only, and always together
+with `tt_collection.media.db2`: a media DB that lists files the folder lacks
+reads as deletions on the next media sync, which AnkiWeb then propagates to
+every device. The script also refuses to write through any symlink.
+
+### How it stays safe
+
+- SQLite files go through the backup API (`backend/scripts/data_snapshot.py`),
+  never `cp`: the DBs run in WAL mode, and a byte copy of the main file drops
+  rows still in `-wal`. That helper is stdlib-only and 3.12-compatible because
+  it also runs on the box's system `python3`.
+- The destination is saved first: `transfer-backups/<timestamp>/` holds its
+  previous DBs and ledgers, and rsync's `--backup-dir` keeps every file it
+  overwrites or deletes there. Undoing a transfer is copying that back.
+- Verification counts every table in every DB and every file in every
+  directory, source against destination, **before the destination app starts**
+  (so nothing it writes on boot can blur the comparison). A mismatch exits 1
+  and leaves the prod api stopped.
+
 ## Accounts
 
 There is **no self-serve signup**, by design, at any point in Phases 1–3. Every
