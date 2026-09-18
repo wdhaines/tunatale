@@ -60,6 +60,12 @@ def _clean_settings(monkeypatch, tmp_path, **overrides) -> Settings:
         "TZ",
         "AZURE_SPEECH_KEY",
         "AZURE_SPEECH_REGION",
+        # app/main.py calls load_dotenv() at import, so once any test in the
+        # worker has imported it, the dev .env's RELATIVE database URLs are in
+        # os.environ — green alone, red in the full gate, and green in CI (no .env).
+        "DATABASE_URL",
+        "DATABASE_URLS",
+        "AUTH_DATABASE_URL",
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.chdir(tmp_path)
@@ -131,6 +137,8 @@ def test_prod_profile_clean_when_fully_configured(monkeypatch, tmp_path):
         tz="America/New_York",
         azure_speech_key="a-real-key",
         azure_speech_region="eastus",
+        auth_database_url="sqlite:////data/auth.db",
+        database_url="sqlite:////data/tunatale_sl.db",
     )
     assert prod_profile_problems(s) == []
 
@@ -150,6 +158,12 @@ def test_prod_profile_clean_when_fully_configured(monkeypatch, tmp_path):
         ({"tz": "Mars/Olympus_Mons"}, "tz"),
         ({"azure_speech_key": ""}, "azure_speech_key"),
         ({"azure_speech_region": ""}, "azure_speech_region"),
+        ({"auth_database_url": "sqlite:///./auth.db"}, "auth_database_url"),
+        ({"database_url": "sqlite:///./tunatale_sl.db"}, "database_url"),
+        (
+            {"database_urls": {"sl": "sqlite:////data/tunatale_sl.db", "no": "sqlite:///./tunatale_no.db"}},
+            "database_urls['no']",
+        ),
     ],
 )
 def test_prod_profile_flags_each_misconfiguration(monkeypatch, tmp_path, overrides, fragment):
@@ -164,6 +178,8 @@ def test_prod_profile_flags_each_misconfiguration(monkeypatch, tmp_path, overrid
         "tz": "America/New_York",
         "azure_speech_key": "a-real-key",
         "azure_speech_region": "eastus",
+        "auth_database_url": "sqlite:////data/auth.db",
+        "database_url": "sqlite:////data/tunatale_sl.db",
     }
     s = _clean_settings(monkeypatch, tmp_path, **{**base, **overrides})
     problems = prod_profile_problems(s)
@@ -175,8 +191,9 @@ def test_prod_profile_reports_every_problem_at_once(monkeypatch, tmp_path):
     """One boot, one list — not a whack-a-mole of restarts."""
     s = _clean_settings(monkeypatch, tmp_path, tt_env="prod")
     problems = prod_profile_problems(s)
-    # llm_mode, auth_enabled, session_secret, tz, azure_speech_key, azure_speech_region
-    assert len(problems) == 6, problems
+    # llm_mode, auth_enabled, session_secret, tz, azure_speech_key,
+    # azure_speech_region, auth_database_url, database_url (both relative by default)
+    assert len(problems) == 8, problems
 
 
 def test_prod_profile_ignores_wildcard_regex_only_when_scoped(monkeypatch, tmp_path):
@@ -194,6 +211,8 @@ def test_prod_profile_ignores_wildcard_regex_only_when_scoped(monkeypatch, tmp_p
         tz="America/New_York",
         azure_speech_key="a-real-key",
         azure_speech_region="eastus",
+        auth_database_url="sqlite:////data/auth.db",
+        database_url="sqlite:////data/tunatale_sl.db",
     )
     assert prod_profile_problems(s) == []
 
@@ -272,6 +291,7 @@ async def test_lifespan_starts_when_the_prod_profile_is_satisfied(tmp_path, monk
     monkeypatch.setattr(settings, "trusted_proxy_header", "X-Forwarded-For")
     monkeypatch.setattr(settings, "azure_speech_key", "a-real-key")
     monkeypatch.setattr(settings, "azure_speech_region", "eastus")
+    monkeypatch.setattr(settings, "auth_database_url", f"sqlite:///{tmp_path / 'auth.db'}")
     monkeypatch.setattr(settings, "tz", _zone_agreeing_with_local())
     monkeypatch.setattr(settings, "pipeline_autostart", False)
 
@@ -299,6 +319,7 @@ async def test_lifespan_raises_when_the_process_is_not_keeping_the_configured_zo
     monkeypatch.setattr(settings, "trusted_proxy_header", "X-Forwarded-For")
     monkeypatch.setattr(settings, "azure_speech_key", "a-real-key")
     monkeypatch.setattr(settings, "azure_speech_region", "eastus")
+    monkeypatch.setattr(settings, "auth_database_url", f"sqlite:///{tmp_path / 'auth.db'}")
     monkeypatch.setattr(settings, "tz", _zone_disagreeing_with_local())
     monkeypatch.setattr(settings, "pipeline_autostart", False)
 
@@ -450,3 +471,27 @@ async def test_preflight_refuses_an_unlisted_origin():
             },
         )
     assert "access-control-allow-origin" not in res.headers
+
+
+def test_prod_profile_ignores_the_single_url_when_per_language_urls_are_set(monkeypatch, tmp_path):
+    """With DATABASE_URLS set, the single DATABASE_URL is not the database the app
+    opens, so its (relative) default must not block a correct boot. The control
+    for the database_url case above: a guard that flagged every relative URL
+    regardless would pass that case and refuse the real box."""
+    s = _clean_settings(
+        monkeypatch,
+        tmp_path,
+        tt_env="prod",
+        llm_mode="live",
+        auth_enabled=True,
+        session_secret="a-real-secret",
+        cors_origins=["https://tunatale.example.com"],
+        trusted_proxy_header="X-Forwarded-For",
+        tz="America/New_York",
+        azure_speech_key="a-real-key",
+        azure_speech_region="eastus",
+        auth_database_url="sqlite:////data/auth.db",
+        database_urls={"sl": "sqlite:////data/tunatale_sl.db", "no": "sqlite:////data/tunatale_no.db"},
+    )
+    assert s.database_url.startswith("sqlite:///./"), "fixture precondition: the single URL is still relative"
+    assert prod_profile_problems(s) == []

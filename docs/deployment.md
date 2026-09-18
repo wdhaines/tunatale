@@ -483,6 +483,25 @@ The third line is the one that catches the classic misorder: with the SPA
 fallback matched before `/api/*`, an unknown API path answers 200 with
 `index.html` and every client error reads as success.
 
+### Verified 2026-09-18
+
+Deployed `be2c181`; every line above checked from outside the box:
+
+| check | result |
+|---|---|
+| `https://` | 200 over HTTP/2, `ssl_verify_result=0`, Let's Encrypt `YE2`, expires 2026-12-17 |
+| `http://` | 308 → `https://` |
+| unknown `/api/` path | the API's JSON `{"detail":"Not Found"}`, 404, `application/json` |
+| `/api/health` | 200, with database / content_store / audio_dir / media_dir all `ok` |
+| a protected endpoint, logged out | 401 |
+| headers | HSTS, CSP, nosniff, Referrer-Policy, Permissions-Policy present; `Server` stripped; `alt-svc: h3` |
+| headless Chromium | redirects to `/login`, inline theme script ran, service worker registered, **no CSP violations** (only the expected logged-out 401s) |
+
+Deploy time, re-run with Tailscale up: **19 s**. A first attempt hung for
+minutes because Tailscale had stopped on the Mac, so the `tunatale` hostname
+no longer resolved; the containers had in fact come up, and only the history
+append was lost. If a deploy hangs, check `tailscale status` before the box.
+
 ## Accounts
 
 There is **no self-serve signup**, by design, at any point in Phases 1–3. Every
@@ -496,15 +515,23 @@ On a deployed container:
 
 ```bash
 docker compose exec -T api \
-  uv run python -m app.auth.cli create-user you@example.com
+  /app/.venv/bin/python -m app.auth.cli create-user you@example.com
 # then type the password and press ctrl-D, or pipe it from a shell variable:
 read -rs NEW_PASSWORD          # prompts without echoing
 printf '%s\n' "$NEW_PASSWORD" | docker compose exec -T api \
-  uv run python -m app.auth.cli create-user you@example.com
+  /app/.venv/bin/python -m app.auth.cli create-user you@example.com
 ```
 
-Locally, drop the `docker compose exec -T api` prefix and run it from
-`backend/`.
+Locally, drop the `docker compose exec -T api` prefix and run
+`uv run python -m app.auth.cli ...` from `backend/`.
+
+⚠️ **Never `uv run` inside the container.** The image's venv holds only the
+production dependencies, and `uv run` re-syncs it to the project's DEFAULT
+groups first — on 2026-09-18 that started downloading PyTorch and the NVIDIA
+CUDA wheels (several GB) into the uv cache on the data volume, at 100% CPU for
+minutes, before failing on the read-only venv. It left 4.7 GB behind in
+`/data/.uv-cache`. Call the venv's interpreter directly, exactly as the app's
+own entrypoint does.
 
 ⚠️ **`-T` matters.** Without it `docker compose exec` allocates a TTY, the CLI
 takes that as an interactive session and prompts via `getpass`, and a piped
@@ -513,9 +540,10 @@ password is never read — the command then blocks with no visible reason.
 ### The other commands
 
 ```bash
-uv run python -m app.auth.cli list-users
-uv run python -m app.auth.cli set-password you@example.com     # revokes that account's sessions
-uv run python -m app.auth.cli deactivate-user you@example.com  # revokes its sessions too
+CLI="docker compose exec -T api /app/.venv/bin/python -m app.auth.cli"   # on the box
+$CLI list-users
+$CLI set-password you@example.com     # revokes that account's sessions
+$CLI deactivate-user you@example.com  # revokes its sessions too
 ```
 
 `set-password` and `deactivate-user` both delete the account's server-side
@@ -534,8 +562,10 @@ process-accounting logs. The two supported sources are stdin and
 `TT_AUTH_PASSWORD`:
 
 ```bash
-TT_AUTH_PASSWORD="$NEW_PASSWORD" docker compose exec -T api \
-  uv run python -m app.auth.cli create-user you@example.com
+# -e with no value passes the variable through; without it the variable is set
+# for the docker CLI only and never reaches the container.
+TT_AUTH_PASSWORD="$NEW_PASSWORD" docker compose exec -T -e TT_AUTH_PASSWORD api \
+  /app/.venv/bin/python -m app.auth.cli create-user you@example.com
 ```
 
 Both examples read a shell variable rather than showing a literal. A runbook

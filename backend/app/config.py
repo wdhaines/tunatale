@@ -394,8 +394,33 @@ def prod_profile_problems(s: Settings) -> list[str]:
                 f"{name} is unset — every lesson render and card audio would fail at the"
                 f" first synthesis, on a server that otherwise looks healthy (set {name.upper()})"
             )
+    problems += _relative_sqlite_problems(s)
     problems += _zone_problems(s)
     return problems
+
+
+def _relative_sqlite_problems(s: Settings) -> list[str]:
+    """SQLite files the app opens that sit at a path relative to the CWD.
+
+    In a container the CWD is the image's own filesystem, which is replaced on
+    every redeploy — so a relative path is a database that silently resets. The
+    accounts DB did exactly that on 2026-09-18 (``./auth.db``): the first redeploy
+    after creating an account deleted it. ``sqlite:////x`` is absolute;
+    ``sqlite:///x`` is relative. The single ``database_url`` is only checked when
+    ``database_urls`` is empty, because otherwise it is not what the app opens.
+    """
+    urls = {"auth_database_url": s.auth_database_url}
+    if s.database_urls:
+        urls |= {f"database_urls[{code!r}]": url for code, url in s.database_urls.items()}
+    else:
+        urls["database_url"] = s.database_url
+    return [
+        f"{name} is {url!r}, a path relative to the working directory — in a container"
+        " that is the image's own filesystem, so the database is lost on every"
+        " redeploy (use an absolute path on the data volume, e.g. sqlite:////data/...)"
+        for name, url in urls.items()
+        if url.startswith("sqlite:///") and not url.startswith("sqlite:////")
+    ]
 
 
 def _zone_problems(s: Settings) -> list[str]:

@@ -122,3 +122,14 @@ def test_the_site_address_comes_from_an_optional_box_only_file(services):
     env_files = services["web"]["env_file"]
     assert {"path": "web.env", "required": False} in env_files, env_files
     assert "itcanbeeasilydone" not in COMPOSE.read_text(encoding="utf-8")
+
+
+def test_every_database_the_api_opens_is_on_the_data_volume(services):
+    """The accounts DB defaulted to ./auth.db, which resolves inside the
+    container (/app) — so on 2026-09-18 the first redeploy after creating an
+    account deleted it, and login answered "invalid credentials". Every SQLite
+    file must be under the `data` volume's mount point."""
+    env = services["api"]["environment"]
+    urls = [env["DATABASE_URL"], env["AUTH_DATABASE_URL"], *yaml.safe_load(env["DATABASE_URLS"]).values()]
+    for url in urls:
+        assert url.startswith("sqlite:////data/"), url

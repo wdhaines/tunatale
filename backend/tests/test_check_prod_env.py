@@ -32,6 +32,8 @@ CORS_ORIGINS=["https://tunatale.example.com"]
 TZ=America/New_York
 AZURE_SPEECH_KEY=a-real-key
 AZURE_SPEECH_REGION=eastus
+AUTH_DATABASE_URL=sqlite:////data/auth.db
+DATABASE_URLS={"sl": "sqlite:////data/tunatale_sl.db", "no": "sqlite:////data/tunatale_no.db"}
 """
 
 
