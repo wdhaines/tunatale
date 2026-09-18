@@ -28,6 +28,7 @@ from app.plugins.anki_sync.reposition_production_cards import (
     mirror_positions_to_tt,
     plan_repositioning,
     read_band_positions,
+    read_cloze_base_note_ids,
 )
 from app.plugins.anki_sync.sync_writer import _PRODUCTION_BAND_CEILING, _PRODUCTION_BAND_FLOOR
 from app.srs.database import SRSDatabase
@@ -125,6 +126,36 @@ class TestPlanRepositioning:
         plan = plan_repositioning(conn, DECK_ID)
 
         assert [card_id for card_id, _ in plan.moves] == [mine]
+
+    def test_a_cloze_takes_its_base_words_frequency_slot(self):
+        """tunatale-azkb. A cloze is a TunaTale-created note, so its own id is an
+        add-time epoch and sorts behind the whole imported deck — which put the clozes
+        of the MOST frequent words at the very back of the band. The user's rule is
+        frequency order by WORD, image card or cloze alike, so a cloze sorts as its
+        base word's note. The base sits mid-deck here so that "sorted by base" and
+        "sorted by own id" (last) and "unsorted" (insertion order) all disagree."""
+        conn = _conn()
+        first = _vocab_note(conn, note_id=10, card_id=900, due=TAIL)
+        base = _vocab_note(conn, note_id=20, card_id=700, due=TAIL + 1)
+        third = _vocab_note(conn, note_id=30, card_id=500, due=TAIL + 2)
+        cloze_nid = 1_787_508_605_091
+        cloze = _cloze_note(conn, note_id=cloze_nid, card_id=950, due=TAIL + 3)
+
+        plan = plan_repositioning(conn, DECK_ID, sort_keys={cloze_nid: 20})
+
+        assert [card_id for card_id, _ in plan.assignments] == [first, base, cloze, third]
+
+    def test_without_a_sort_key_a_note_sorts_by_its_own_id(self):
+        """A cloze with no base word (or any note missing from the mapping) keeps
+        its own id — the pre-azkb order — rather than being dropped or raising."""
+        conn = _conn()
+        first = _vocab_note(conn, note_id=10, card_id=900, due=TAIL)
+        orphan = _cloze_note(conn, note_id=1_787_508_605_091, card_id=950, due=TAIL + 1)
+        second = _vocab_note(conn, note_id=20, card_id=700, due=TAIL + 2)
+
+        plan = plan_repositioning(conn, DECK_ID, sort_keys={999: 5})
+
+        assert [card_id for card_id, _ in plan.assignments] == [first, second, orphan]
 
     def test_assignments_cover_every_card_even_when_nothing_moves(self):
         """The regression that cost a real repair on 2026-08-22. When the collection
@@ -297,6 +328,50 @@ class TestMirrorPositionsToTt:
 
         with db._get_conn() as tt_conn:
             assert mirror_positions_to_tt(tt_conn, plan.assignments) == 0
+
+
+class TestReadClozeBaseNoteIds:
+    """The TunaTale half of the azkb sort key: Anki holds no link from a cloze note to
+    its word, so the mapping comes from `collocations.base_collocation_id`."""
+
+    @staticmethod
+    def _insert(tt_conn, cid, text, card_type, anki_note_id, base=None):
+        # Shaped like the live rows: the vocab base carries its POS as disambig_key
+        # and the cloze an empty one, which is what lets both share `text`.
+        disambig = "" if card_type == "cloze" else "conjunction"
+        tt_conn.execute(
+            "INSERT INTO collocations (id, text, translation, language_code, card_type, disambig_key, "
+            "anki_note_id, base_collocation_id) VALUES (?, ?, 'x', 'no', ?, ?, ?, ?)",
+            (cid, text, card_type, disambig, anki_note_id, base),
+        )
+
+    def test_maps_each_linked_cloze_to_its_base_words_note(self):
+        db = SRSDatabase(":memory:")
+        with db._get_conn() as tt_conn:
+            self._insert(tt_conn, 1, "innen", "vocab", 1_696_398_300_049)
+            self._insert(tt_conn, 2, "innen", "cloze", 1_787_508_605_091, base=1)
+            self._insert(tt_conn, 3, "blant", "vocab", 1_696_398_299_869)
+            self._insert(tt_conn, 4, "blant", "cloze", 1_787_538_069_103, base=3)
+            tt_conn.commit()
+
+            assert read_cloze_base_note_ids(tt_conn) == {
+                1_787_508_605_091: 1_696_398_300_049,
+                1_787_538_069_103: 1_696_398_299_869,
+            }
+
+    def test_skips_clozes_without_a_base_or_not_yet_in_anki(self):
+        """No base (a function-word cloze minted standalone), an unsynced cloze with
+        no note id yet, and a base that is itself unsynced — none has a key to give."""
+        db = SRSDatabase(":memory:")
+        with db._get_conn() as tt_conn:
+            self._insert(tt_conn, 1, "alle", "cloze", 1_787_000_000_001)
+            self._insert(tt_conn, 2, "om", "vocab", 1_696_000_000_002)
+            self._insert(tt_conn, 3, "om", "cloze", None, base=2)
+            self._insert(tt_conn, 4, "fra", "vocab", None)
+            self._insert(tt_conn, 5, "fra", "cloze", 1_787_000_000_005, base=4)
+            tt_conn.commit()
+
+            assert read_cloze_base_note_ids(tt_conn) == {}
 
 
 class TestCardsOutsideBand:

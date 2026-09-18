@@ -21,8 +21,10 @@ read-the-max-then-write) and lands two cards on one ``due``.
 ``notes.id`` ascending, which for the imported deck is deck (frequency) order —
 `Spearman(note_id, zipf) = -0.701`, measured 2026-08-21, head `være/og/i/en/det`.
 Card id is NOT a substitute: it correlates the other way (+0.509). TunaTale's own
-notes carry ms-epoch ids and therefore sort after the whole imported deck, which is
-the intended precedence.
+notes carry ms-epoch ids and therefore sort after the whole imported deck — EXCEPT a
+cloze, which sorts at its base word's position (``sort_keys``, tunatale-azkb): the
+user's rule is frequency order by word, image card or cloze alike, and a cloze's own
+id put the clozes of the most frequent words at the very back.
 
 **Deck-scoped on purpose.** The band is only ahead of the queue under ascending
 gather. The Slovene deck is on HighestPosition, where the tail already IS the front,
@@ -39,6 +41,7 @@ from __future__ import annotations
 
 import sqlite3
 import time as _time
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from app.plugins.anki_sync.add_production_template import PRODUCTION_TEMPLATE
@@ -48,7 +51,7 @@ from app.plugins.anki_sync.sync_writer import _PRODUCTION_BAND_CEILING, _PRODUCT
 #: ``Production`` template, or the single card of a Cloze note (the non-imageable
 #: production branch). Ordered by note id — see the module docstring.
 _SELECT_MINTED_PRODUCTION = f"""
-    SELECT c.id AS card_id, c.due AS due
+    SELECT c.id AS card_id, c.nid AS nid, c.due AS due
     FROM cards c
     JOIN notes n ON n.id = c.nid
     LEFT JOIN templates t ON t.ntid = n.mid AND t.ord = c.ord
@@ -92,8 +95,15 @@ def plan_repositioning(
     *,
     band_floor: int = _PRODUCTION_BAND_FLOOR,
     band_ceiling: int = _PRODUCTION_BAND_CEILING,
+    sort_keys: Mapping[int, int] | None = None,
 ) -> RepositionPlan:
     """Assign consecutive band slots to the deck's minted production cards.
+
+    ``sort_keys`` maps a note id to the note id it should sort AS (tunatale-azkb):
+    a cloze sorts at its base word's position, so the band is in frequency order by
+    WORD whether the production card is an image card or a cloze. Build it with
+    ``read_cloze_base_note_ids``. A note missing from it sorts by its own id, and
+    ties (a word's image card and its cloze) keep note-id then card-id order.
 
     Read-only. Raises ValueError if the deck holds more minted production cards than
     the band has room for — a million slots against a 3009-word deck, so reaching it
@@ -104,6 +114,8 @@ def plan_repositioning(
     is reachable from a test without a narrow band being a production possibility.
     """
     rows = conn.execute(_SELECT_MINTED_PRODUCTION, (deck_id,)).fetchall()
+    keys = sort_keys or {}
+    rows.sort(key=lambda row: (keys.get(row["nid"], row["nid"]), row["nid"], row["card_id"]))
     capacity = band_ceiling - band_floor
     if len(rows) > capacity:
         raise ValueError(f"{len(rows)} minted production cards exceed the band's {capacity} slots")
@@ -171,6 +183,26 @@ def apply_repositioning(conn: sqlite3.Connection, plan: RepositionPlan) -> None:
     )
     # col.mod only — never col.usn, which is the sync anchor (Layer 61).
     conn.execute("UPDATE col SET mod = ?", (ts,))
+
+
+def read_cloze_base_note_ids(tt_conn: sqlite3.Connection) -> dict[int, int]:
+    """Map each cloze's Anki note id to its base word's note id — the azkb sort key.
+
+    Anki holds no link from a cloze note to the word it drills; TunaTale does, as
+    ``collocations.base_collocation_id``. Clozes with no base, or where either side
+    has no Anki note yet, are omitted and so keep sorting by their own id.
+    """
+    rows = tt_conn.execute(
+        """
+        SELECT z.anki_note_id AS cloze_nid, b.anki_note_id AS base_nid
+        FROM collocations z
+        JOIN collocations b ON b.id = z.base_collocation_id
+        WHERE z.card_type = 'cloze'
+          AND z.anki_note_id IS NOT NULL
+          AND b.anki_note_id IS NOT NULL
+        """
+    ).fetchall()
+    return {row[0]: row[1] for row in rows}
 
 
 def mirror_positions_to_tt(tt_conn: sqlite3.Connection, positions: list[tuple[int, int]]) -> int:
