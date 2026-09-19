@@ -199,6 +199,7 @@ async def _generate_and_store(
         srs_db=srs_db,
         lemmatizer_kwargs=_injected_lemmatizer(request),
         replace=replace,
+        llm=getattr(request.app.state, "llm", None),
     )
 
     warnings: list[str] = []
@@ -317,6 +318,7 @@ async def create_review_session_from_paste(body: CreateReviewSessionFromPasteReq
         srs_db=srs_db,
         lemmatizer_kwargs=_injected_lemmatizer(request),
         replace=False,
+        llm=getattr(request.app.state, "llm", None),
     )
 
     warnings: list[str] = []
@@ -506,6 +508,7 @@ async def import_review_session(session_id: str, body: ImportReviewSessionReques
         srs_db=srs_db,
         lemmatizer_kwargs=_injected_lemmatizer(request),
         replace=True,
+        llm=getattr(request.app.state, "llm", None),
     )
 
     warnings: list[str] = []

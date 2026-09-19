@@ -6,6 +6,10 @@ bug that started this: creating a review session never rendered audio, while
 creating a lesson always did. ``publish_lesson`` is the one ordering every
 writer must share, and the ordering is load-bearing:
 
+0. Lemma resolution, AWAITED and BEFORE the UPOS step, so the tags it reads
+   already reflect context (``app.srs.lemma_resolver``; a no-op unless the
+   language runs a table lemmatizer). *llm* is a required keyword so a new
+   writer cannot silently skip it.
 1. UPOS annotation, AWAITED and BEFORE the write. A detached task races the
    write: the tags land on an in-memory Lesson nobody persists again, so the
    stored lesson is untagged and every ambiguous word falls back to plain
@@ -79,14 +83,17 @@ async def publish_lesson(
     srs_db,
     lemmatizer_kwargs: dict,
     replace: bool,
+    llm,
 ) -> str:
-    """UPOS (awaited, pre-write) -> write -> invalidate -> prewarm -> render."""
+    """Lemmas + UPOS (awaited, pre-write) -> write -> invalidate -> prewarm -> render."""
     if srs_db is not None:
         # Imported here, not at module scope: publishing is imported by the API
         # routers, and these helpers live in app.api.generation, so a module-
         # level import would be a cycle. Same lazy pattern LessonPipeline uses.
         from app.api.generation import annotate_chunk_upos_for_lesson
+        from app.srs.lemma_resolver import resolve_lesson_lemmas
 
+        await resolve_lesson_lemmas(lesson, srs_db, llm, **lemmatizer_kwargs)
         await annotate_chunk_upos_for_lesson(lesson, srs_db, **lemmatizer_kwargs)
 
     content_id = target.write(lesson)

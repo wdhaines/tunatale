@@ -246,6 +246,8 @@ class Settings(BaseSettings):
     # registry (app.languages.get_lemmatizer_type: sl→classla, no→stanza). This is
     # per-language, not one-engine-per-process, so multi-language mode
     # (database_urls) analyzes each language with its own model. See get_lemmatizer.
+    # "table" is the production value: each language's shipped lemma table, which
+    # reproduces its model without PyTorch (app.srs.lemma_table, tunatale-kbb.18).
     lemmatizer_type: str = "lowercase"
 
     anki_new_per_day_default: int = 20
@@ -403,6 +405,15 @@ def prod_profile_problems(s: Settings) -> list[str]:
             "groq_api_key is unset or not a Groq key (they start with 'gsk_') — every"
             " generation and gloss would fail on a server that otherwise looks healthy"
             " (set GROQ_API_KEY)"
+        )
+    # The lowercase engine keeps every inflected form as its own word, so deg is
+    # not du and a known word shows as NEW (tunatale-kbb.18, 2026-09-18). The
+    # heavy model does not fit the host; the shipped lemma table reproduces it.
+    if s.lemmatizer_type != "table":
+        problems.append(
+            f"lemmatizer_type is {s.lemmatizer_type!r}, not 'table' — inflected words would"
+            " not resolve to the cards the user knows (deg would not match du), and the"
+            " PyTorch model does not fit the host (set LEMMATIZER_TYPE=table)"
         )
     problems += _relative_sqlite_problems(s)
     problems += _zone_problems(s)

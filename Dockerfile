@@ -19,6 +19,10 @@ RUN uv sync --frozen --no-dev --no-group slovene --no-group norwegian --no-group
 
 COPY backend/app ./app
 
+# Build the lemma tables' SQLite indexes now, so the running container never
+# writes into /app (appuser does not own it) and the first request is not slow.
+RUN /app/.venv/bin/python -m app.srs.lemma_table
+
 RUN useradd --home-dir /data --no-create-home appuser \
     && chown appuser:appuser /app
 

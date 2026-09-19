@@ -139,6 +139,7 @@ def test_prod_profile_clean_when_fully_configured(monkeypatch, tmp_path):
         azure_speech_key="a-real-key",
         azure_speech_region="eastus",
         groq_api_key="gsk_" + "x" * 52,
+        lemmatizer_type="table",
         auth_database_url="sqlite:////data/auth.db",
         database_url="sqlite:////data/tunatale_sl.db",
     )
@@ -165,6 +166,10 @@ def test_prod_profile_clean_when_fully_configured(monkeypatch, tmp_path):
         # The value the box actually shipped with on 2026-09-18: it passed every
         # check, booted healthy, and failed the first sync with "invalid API key".
         ({"groq_api_key": "placeholder-not-real"}, "groq_api_key"),
+        # What the box ran until 2026-09-18: deg stayed deg, so the listen preview
+        # called a word the user knows NEW (tunatale-kbb.18).
+        ({"lemmatizer_type": "lowercase"}, "lemmatizer_type"),
+        ({"lemmatizer_type": "stanza"}, "lemmatizer_type"),
         ({"database_url": "sqlite:///./tunatale_sl.db"}, "database_url"),
         (
             {"database_urls": {"sl": "sqlite:////data/tunatale_sl.db", "no": "sqlite:///./tunatale_no.db"}},
@@ -185,6 +190,7 @@ def test_prod_profile_flags_each_misconfiguration(monkeypatch, tmp_path, overrid
         "azure_speech_key": "a-real-key",
         "azure_speech_region": "eastus",
         "groq_api_key": "gsk_" + "x" * 52,
+        "lemmatizer_type": "table",
         "auth_database_url": "sqlite:////data/auth.db",
         "database_url": "sqlite:////data/tunatale_sl.db",
     }
@@ -199,8 +205,9 @@ def test_prod_profile_reports_every_problem_at_once(monkeypatch, tmp_path):
     s = _clean_settings(monkeypatch, tmp_path, tt_env="prod")
     problems = prod_profile_problems(s)
     # llm_mode, auth_enabled, session_secret, tz, azure_speech_key,
-    # azure_speech_region, groq_api_key, auth_database_url, database_url
-    assert len(problems) == 9, problems
+    # azure_speech_region, groq_api_key, auth_database_url, database_url,
+    # lemmatizer_type
+    assert len(problems) == 10, problems
 
 
 def test_prod_profile_ignores_wildcard_regex_only_when_scoped(monkeypatch, tmp_path):
@@ -219,6 +226,7 @@ def test_prod_profile_ignores_wildcard_regex_only_when_scoped(monkeypatch, tmp_p
         azure_speech_key="a-real-key",
         azure_speech_region="eastus",
         groq_api_key="gsk_" + "x" * 52,
+        lemmatizer_type="table",
         auth_database_url="sqlite:////data/auth.db",
         database_url="sqlite:////data/tunatale_sl.db",
     )
@@ -300,6 +308,7 @@ async def test_lifespan_starts_when_the_prod_profile_is_satisfied(tmp_path, monk
     monkeypatch.setattr(settings, "azure_speech_key", "a-real-key")
     monkeypatch.setattr(settings, "azure_speech_region", "eastus")
     monkeypatch.setattr(settings, "groq_api_key", "gsk_" + "x" * 52)
+    monkeypatch.setattr(settings, "lemmatizer_type", "table")
     monkeypatch.setattr(settings, "auth_database_url", f"sqlite:///{tmp_path / 'auth.db'}")
     monkeypatch.setattr(settings, "tz", _zone_agreeing_with_local())
     monkeypatch.setattr(settings, "pipeline_autostart", False)
@@ -329,6 +338,7 @@ async def test_lifespan_raises_when_the_process_is_not_keeping_the_configured_zo
     monkeypatch.setattr(settings, "azure_speech_key", "a-real-key")
     monkeypatch.setattr(settings, "azure_speech_region", "eastus")
     monkeypatch.setattr(settings, "groq_api_key", "gsk_" + "x" * 52)
+    monkeypatch.setattr(settings, "lemmatizer_type", "table")
     monkeypatch.setattr(settings, "auth_database_url", f"sqlite:///{tmp_path / 'auth.db'}")
     monkeypatch.setattr(settings, "tz", _zone_disagreeing_with_local())
     monkeypatch.setattr(settings, "pipeline_autostart", False)
@@ -501,6 +511,7 @@ def test_prod_profile_ignores_the_single_url_when_per_language_urls_are_set(monk
         azure_speech_key="a-real-key",
         azure_speech_region="eastus",
         groq_api_key="gsk_" + "x" * 52,
+        lemmatizer_type="table",
         auth_database_url="sqlite:////data/auth.db",
         database_urls={"sl": "sqlite:////data/tunatale_sl.db", "no": "sqlite:////data/tunatale_no.db"},
     )

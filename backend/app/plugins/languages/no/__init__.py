@@ -126,5 +126,7 @@ register(
         a1_morphology=NORWEGIAN_A1_MORPHOLOGY,
         lexicon_factory=create_nst_lexicon,
         phoneme_planner_factory=create_phoneme_planner,
+        # Built from Stanza by scripts/build_stanza_lemma_table.py (tunatale-kbb.18).
+        lemma_table_path=Path(__file__).parent / "data" / "stanza_lemmas.tsv.gz",
     ),
 )

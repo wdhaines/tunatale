@@ -37,6 +37,7 @@ class CallSite:
     MEDIA_CHOOSE: Final = "media_choose"
     REGLOSS: Final = "regloss"
     SRS_TRANSLATE: Final = "srs_translate"
+    LEMMA_RESOLVE: Final = "lemma_resolve"
 
     # ── Operation suffixes for the three threaded cloze helpers ──────────────
     CLOZE_GENERATE: Final = "cloze_generate"
@@ -58,6 +59,7 @@ class CallSite:
             MEDIA_CHOOSE,
             REGLOSS,
             SRS_TRANSLATE,
+            LEMMA_RESOLVE,
         }
     )
     OPERATION_SUFFIXES: Final = frozenset({CLOZE_GENERATE, CLOZE_JUDGE, CLOZE_TRANSLATE})

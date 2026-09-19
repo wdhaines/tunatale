@@ -1,6 +1,6 @@
 """Tests for the declared LLM call-site label set (bead 6zzu2 Stage 2).
 
-The labels are literals the brief pins: the 9 flat labels, the 3 cloze
+The labels are literals the brief pins: the 9 flat labels (10 since lemma_resolve), the 3 cloze
 operation suffixes, and the 2 callers. A test asserting the FULL set means
 an added label cannot slip in unnoticed — the checker's completeness is only
 as good as this enumeration's honesty.
@@ -14,7 +14,8 @@ from app.llm.call_sites import CallSite
 #: uppercase would corrupt the column count (Oracle 5).
 _FIELD_SAFE = re.compile(r"^[a-z0-9_.]+$")
 
-#: Exactly the 9 single-route sites from the label table (Oracle 4/table).
+#: Exactly the 9 single-route sites from the label table (Oracle 4/table), plus
+#: lemma_resolve (tunatale-kbb.18: the table lemmatizer's publish-time resolver).
 _EXPECTED_FLAT = {
     "story",
     "planner",
@@ -25,6 +26,7 @@ _EXPECTED_FLAT = {
     "media_choose",
     "regloss",
     "srs_translate",
+    "lemma_resolve",
 }
 
 #: Exactly the 3 threaded-helper operation suffixes from the label table.
@@ -49,9 +51,9 @@ class TestCallSitePattern:
 class TestCallSiteEnumeration:
     """The full set is asserted, so an added label cannot slip in unnoticed."""
 
-    def test_flat_labels_are_exactly_the_nine_single_route_sites(self):
+    def test_flat_labels_are_exactly_the_ten_single_route_sites(self):
         assert CallSite.FLAT_LABELS == _EXPECTED_FLAT
-        assert len(CallSite.FLAT_LABELS) == 9
+        assert len(CallSite.FLAT_LABELS) == 10
 
     def test_operation_suffixes_are_exactly_the_three_helpers(self):
         assert CallSite.OPERATION_SUFFIXES == _EXPECTED_SUFFIXES

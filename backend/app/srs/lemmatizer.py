@@ -313,6 +313,8 @@ def get_lemmatizer(language_code: str) -> Lemmatizer:
 
     The engine is a **property of the language** (``app.languages.get_lemmatizer_type``):
     ``classla`` for Slovene, ``stanza`` for Norwegian, ``lowercase`` otherwise.
+    ``settings.lemmatizer_type == "table"`` builds the language's torch-free lemma
+    table instead (production; see ``app.srs.lemma_table``).
     ``settings.lemmatizer_type == "lowercase"`` (the default, and the test/CI pin)
     is a global off-switch — every language gets ``LowercaseLemmatizer`` so analysis
     stays deterministic without the heavy PyTorch deps. **Any other value** opts in
@@ -335,6 +337,16 @@ def get_lemmatizer(language_code: str) -> Lemmatizer:
     # heavy NLP pipelines everywhere).
     if settings.lemmatizer_type == "lowercase":
         return LowercaseLemmatizer()
+
+    # Torch-free production engine: the language's shipped lemma table, which
+    # reproduces its real model (app.srs.lemma_table). Languages without a table
+    # stay lowercase — never the heavy model, which this setting exists to avoid.
+    if settings.lemmatizer_type == "table":
+        from app.languages import get_lemma_table_path
+        from app.srs.lemma_table import TableLemmatizer
+
+        table_path = get_lemma_table_path(language_code)
+        return TableLemmatizer(language_code, table_path) if table_path else LowercaseLemmatizer()
 
     engine = get_lemmatizer_type(language_code)
     if engine == "classla":
@@ -419,6 +431,13 @@ def analyze_sentence_cached(
     cached = db.get_sentence_analysis(sentence, language_code, model_version)
     if cached is not None:
         return _deserialize_analyses(cached)
+    # A table engine (app.srs.lemma_table) reproduces a real model; rows that
+    # model cached are exact, so they win over computing. Read-only: they stay
+    # under the model's own key.
+    for compatible in getattr(lemmatizer, "compatible_cache_versions", ()):
+        cached = db.get_sentence_analysis(sentence, language_code, compatible)
+        if cached is not None:
+            return _deserialize_analyses(cached)
     analyses = lemmatizer.analyze_sentence(sentence, language_code)
     db.set_sentence_analysis(sentence, language_code, model_version, _serialize_analyses(analyses))
     return analyses

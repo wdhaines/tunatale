@@ -452,6 +452,7 @@ async def test_a_regenerate_deletes_the_superseded_lesson_audio_rows():
         srs_db=None,
         lemmatizer_kwargs={},
         replace=True,
+        llm=None,
     )
 
     assert store.list_audio_files_for_lesson("l-superseded") == []
@@ -474,6 +475,7 @@ async def test_a_regenerate_unlinks_the_superseded_lesson_audio_files(tmp_path, 
         srs_db=None,
         lemmatizer_kwargs={},
         replace=True,
+        llm=None,
     )
 
     assert not full.exists(), "superseded lesson's full audio file must be unlinked"
@@ -496,6 +498,7 @@ async def test_a_regenerate_keeps_the_superseded_lesson_row():
         srs_db=None,
         lemmatizer_kwargs={},
         replace=True,
+        llm=None,
     )
 
     assert store.get_lesson_row("l-superseded") is not None
@@ -521,6 +524,7 @@ async def test_a_first_generate_deletes_no_audio(tmp_path, monkeypatch):
         srs_db=None,
         lemmatizer_kwargs={},
         replace=False,
+        llm=None,
     )
 
     assert store.list_audio_files_for_lesson("l-existing"), "rows must survive a first generate"
@@ -541,6 +545,7 @@ async def test_a_regenerate_tolerates_an_already_missing_audio_file(tmp_path, mo
         srs_db=None,
         lemmatizer_kwargs={},
         replace=True,
+        llm=None,
     )
 
     assert store.list_audio_files_for_lesson("l-superseded") == []
@@ -579,6 +584,7 @@ async def test_a_replace_publish_with_nothing_to_supersede_deletes_nothing():
         srs_db=None,
         lemmatizer_kwargs={},
         replace=True,
+        llm=None,
     )
 
     assert store.get_lesson_row(lesson_id) is not None

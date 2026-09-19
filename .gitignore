@@ -79,6 +79,9 @@ backend/output/
 frontend/test-results/
 # NST lexicon build artifact (~44 MB), rebuildable from the committed gz via scripts/build_nst_lexicon.py build
 backend/app/plugins/languages/no/data/nst_lexicon.sqlite3
+# Lemma-table build artifact, rebuilt from the committed stanza_lemmas.tsv.gz on first use (app.srs.lemma_table)
+backend/app/plugins/languages/no/data/stanza_lemmas.sqlite3
+backend/app/plugins/languages/no/data/stanza_lemmas.sqlite3.*.tmp
 # Playwright's signed-in cookie, produced per run by tests/global-setup.ts.
 # A session token — never committed.
 frontend/tests/.auth/
