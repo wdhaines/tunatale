@@ -278,6 +278,7 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
         srs_db=srs_db,
         lemmatizer_kwargs=_injected_lemmatizer(request),
         replace=False,
+        llm=getattr(request.app.state, "llm", None),
     )
 
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
@@ -344,6 +345,7 @@ async def import_story(body: ImportLessonRequest, request: Request):
         srs_db=srs_db,
         lemmatizer_kwargs=_injected_lemmatizer(request),
         replace=False,
+        llm=getattr(request.app.state, "llm", None),
     )
 
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]

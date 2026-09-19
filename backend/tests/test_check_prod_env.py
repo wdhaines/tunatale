@@ -33,6 +33,7 @@ TZ=America/New_York
 AZURE_SPEECH_KEY=a-real-key
 AZURE_SPEECH_REGION=eastus
 GROQ_API_KEY=gsk_a-real-looking-key
+LEMMATIZER_TYPE=table
 AUTH_DATABASE_URL=sqlite:////data/auth.db
 DATABASE_URLS={"sl": "sqlite:////data/tunatale_sl.db", "no": "sqlite:////data/tunatale_no.db"}
 """

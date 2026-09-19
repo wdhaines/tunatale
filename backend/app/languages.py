@@ -264,6 +264,11 @@ class LanguageConfig:
     # languages with no planner — callers pass ``phonemes=None`` to TTS.
     # See ``get_phoneme_planner``.
     phoneme_planner_factory: Callable[[], PhonemePlanner] | None = None
+    # Gzipped lemma table that reproduces this language's lemmatizer model without
+    # PyTorch (``surface, upos, lemma, is_default`` rows; see
+    # ``app.srs.lemma_table``). Served when ``settings.lemmatizer_type == "table"``
+    # — production. ``None`` for languages without one: they stay lowercase there.
+    lemma_table_path: Path | None = None
 
 
 _CONFIGS: dict[str, LanguageConfig] = {}
@@ -737,6 +742,19 @@ def get_lexicon(code: str) -> PronunciationLexicon | None:
     if config is None or config.lexicon_factory is None:
         return None
     return config.lexicon_factory()
+
+
+def get_lemma_table_path(code: str) -> Path | None:
+    """Return *code*'s shipped lemma-table extract, or ``None`` when it has none."""
+    discover()
+    config = _CONFIGS.get(code)
+    return config.lemma_table_path if config else None
+
+
+def all_lemma_table_paths() -> list[Path]:
+    """Every registered language's lemma-table extract, in registration order."""
+    discover()
+    return [c.lemma_table_path for c in _CONFIGS.values() if c.lemma_table_path is not None]
 
 
 def get_phoneme_planner(code: str) -> PhonemePlanner | None:

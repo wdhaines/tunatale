@@ -56,7 +56,9 @@ services:
       # first redeploy after an account existed (2026-09-18). The prod guard now
       # refuses any relative SQLite path.
       AUTH_DATABASE_URL: sqlite:////data/auth.db
-      LEMMATIZER_TYPE: lowercase
+      # The torch-free lemma table that reproduces Stanza (tunatale-kbb.18). The
+      # prod guard refuses anything else.
+      LEMMATIZER_TYPE: table
       UV_CACHE_DIR: /data/.uv-cache
     volumes:
       - data:/data

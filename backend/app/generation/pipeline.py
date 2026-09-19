@@ -366,6 +366,7 @@ class LessonPipeline:
                 srs_db=srs_db,
                 lemmatizer_kwargs=upos_kwargs,
                 replace=record["force"],
+                llm=self._llm_client,
             )
             record["lesson_id"] = lesson_id
 
