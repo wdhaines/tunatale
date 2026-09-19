@@ -256,6 +256,13 @@ class Settings(BaseSettings):
     # Lesson audio delivery format. Opus is ~10-20× smaller than WAV for speech,
     # cutting mobile-data use when streaming lessons to a phone. Set to "wav" to
     # restore uncompressed delivery. Codec must be a key of transcode.CODEC_EXT.
+    # One render at a time. A render holds a whole lesson as float32 PCM plus
+    # its section buffers plus a WAV copy for ffmpeg — ~1 GB peak for a 58-minute
+    # review session — and production is a 953 MB box, so two concurrent renders
+    # go to swap and take ~50 minutes each (bd tunatale-rwkz.2, measured
+    # 2026-09-19). Raise only on a machine whose memory you have actually
+    # measured against a full-length lesson.
+    max_concurrent_renders: int = 1
     audio_delivery_codec: str = "opus"  # opus | aac | mp3 | wav
     audio_delivery_bitrate: str = "28k"
 

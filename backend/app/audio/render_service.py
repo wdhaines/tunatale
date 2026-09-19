@@ -8,6 +8,7 @@ import logging
 import subprocess
 import tempfile
 import uuid
+import weakref
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import asdict, replace
@@ -278,6 +279,35 @@ async def _with_render_retries[T](
     raise AssertionError("unreachable: the final pass either returns or re-raises")  # pragma: no cover
 
 
+# ── one render at a time, per process ────────────────────────────────────────
+#
+# bd tunatale-rwkz.2. A render holds an entire lesson as float32 PCM (~340 MB
+# for a 58-minute review session) plus its section buffers plus a WAV copy for
+# ffmpeg, so one render nearly fills the 953 MB box production runs on. On
+# 2026-09-19 two ran at once, went to swap, and took 47 and 58 minutes — with the
+# machine starved badly enough that Docker's DNS timed out and Caddy 502'd.
+#
+# ⚠️ NOT the same guard as ``review_sessions._renders_in_flight``, which refuses
+# a second render of the SAME session id. That one correctly let the 2026-09-19
+# pair through: they were two different ids. This is about the machine.
+#
+# Keyed by event loop, and lazily, because a module-level Semaphore would bind
+# whichever loop imported this module (module-level side effects are banned here
+# for exactly this class of reason) and every test loop would then share — or
+# deadlock on — one foreign primitive. The map is weak so a finished loop's
+# entry goes with it.
+_render_gates: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = weakref.WeakKeyDictionary()
+
+
+def _render_gate() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    gate = _render_gates.get(loop)
+    if gate is None:
+        gate = asyncio.Semaphore(max(1, settings.max_concurrent_renders))
+        _render_gates[loop] = gate
+    return gate
+
+
 async def render_lesson_audio(
     store: ContentStore,
     renderer,
@@ -290,7 +320,25 @@ async def render_lesson_audio(
     Lifted verbatim from the POST /api/audio/render endpoint. Returns the same
     payload shape so both the endpoint and the pipeline caller get identical
     results.
+
+    Serialised against every other render in this process — see ``_render_gate``.
+    A caller that arrives while another render holds the gate WAITS (the event
+    loop stays free, so the API keeps answering) rather than being refused: a
+    refusal would trade a slow box for a lesson with no audio.
     """
+    async with _render_gate():
+        return await _render_lesson_audio(store, renderer, audio_dir, lesson_id, lesson)
+
+
+async def _render_lesson_audio(
+    store: ContentStore,
+    renderer,
+    audio_dir: Path,
+    lesson_id: str,
+    lesson,
+) -> dict:
+    """The render itself. Split out so the gate above is a single statement and
+    ``async with`` releases it on every path, success or failure."""
     old_rows = store.list_audio_files_for_lesson(lesson_id)
     old_file_paths = [resolve_audio_path(r["file_path"]) for r in old_rows]
 
