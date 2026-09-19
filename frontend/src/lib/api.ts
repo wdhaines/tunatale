@@ -668,6 +668,18 @@ export interface ImageCandidatesResponse {
   candidates: ImageCandidate[];
 }
 
+/**
+ * The `Idempotency-Key` header, or nothing at all when there is no key.
+ *
+ * Spread rather than set conditionally so an absent key cannot become the
+ * STRING "undefined" — which the server would accept as a real key and then
+ * dedupe every keyless caller against, collapsing unrelated imports into one
+ * session. bd tunatale-rwkz.1.
+ */
+function idempotencyHeader(key?: string): Record<string, string> {
+  return key ? { "Idempotency-Key": key } : {};
+}
+
 export class TunaTaleAPI {
   private baseUrl: string;
 
@@ -833,18 +845,25 @@ export class TunaTaleAPI {
   async createReviewSessionFromPaste(
     raw: string,
     reviewWords: string[],
+    idempotencyKey?: string,
   ): Promise<CreateReviewSessionResponse> {
     return this.request("/api/review-sessions/import", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...idempotencyHeader(idempotencyKey),
+      },
       body: JSON.stringify({ raw, review_words: reviewWords }),
     });
   }
 
-  async createReviewSession(): Promise<CreateReviewSessionResponse> {
+  async createReviewSession(idempotencyKey?: string): Promise<CreateReviewSessionResponse> {
     return this.request("/api/review-sessions", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...idempotencyHeader(idempotencyKey),
+      },
       body: "{}",
     });
   }

@@ -402,6 +402,11 @@ def test_cors_kwargs_track_settings(monkeypatch, tmp_path):
     # seeks. Dropping either turns a locked-down deploy into a broken one.
     assert "X-TT-Language" in kwargs["allow_headers"]
     assert "Range" in kwargs["allow_headers"]
+    # Idempotency-Key is what stops one paste becoming two review sessions
+    # (bd tunatale-rwkz.1). It is not CORS-safelisted either, so a dev browser
+    # on :5173 would have its preflight refused and fall back to sending no key
+    # at all — deduplication silently off, with nothing on screen to say so.
+    assert "Idempotency-Key" in kwargs["allow_headers"]
 
 
 def test_cors_kwargs_omit_an_empty_origin_regex(monkeypatch):

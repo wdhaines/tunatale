@@ -188,13 +188,28 @@
 		return t('home.reusedOf', { used: s.review_used.length, total: s.review_requested.length });
 	}
 
+	/**
+	 * Same contract as ManualStoryPanel's importKey (bd tunatale-rwkz.1): minted
+	 * when a generation starts, kept while it keeps failing so a retry joins the
+	 * first attempt, dropped on success so the next tap is a new session.
+	 *
+	 * It matters MORE here than on the paste path: a lost response on this route
+	 * means the retry burns a second story call, the most expensive thing TT
+	 * does, for a session nobody asked for.
+	 */
+	let sessionKey: string | null = null;
+
 	async function handleNewReviewSession() {
 		creatingSession = true;
+		sessionKey ??= crypto.randomUUID();
 		sessionError = '';
 		nothingDue = '';
 		sessionWarnings = [];
 		try {
-			const created = await api.createReviewSession();
+			const created = await api.createReviewSession(sessionKey);
+			// Only a success ends the intent; a failure keeps the key so the
+			// retry is recognisably the same attempt.
+			sessionKey = null;
 			sessionWarnings = created.warnings;
 			sessions = [
 				{
@@ -374,7 +389,8 @@
 					draftWords = r.review_words;
 					return r.system_prompt + '\n\n' + r.user_prompt;
 				}}
-				importRaw={async (raw) => api.createReviewSessionFromPaste(raw, draftWords)}
+				importRaw={async (raw, idempotencyKey) =>
+					api.createReviewSessionFromPaste(raw, draftWords, idempotencyKey)}
 				onImported={(id) => goto(`/review-sessions/${id}`)}
 			/>
 		</details>

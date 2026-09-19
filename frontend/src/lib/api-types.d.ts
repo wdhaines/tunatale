@@ -795,6 +795,11 @@ export interface paths {
      *
      *     Takes no identifiers at all — see ``CreateReviewSessionRequest`` for why that
      *     is enforced rather than merely documented.
+     *
+     *     ``Idempotency-Key`` is a HEADER rather than a body field precisely because
+     *     the body forbids extras — and because a browser resending a dropped POST
+     *     repeats its headers, which is the retry a body field written by the click
+     *     handler would miss. See ``app.api.idempotency``.
      */
     post: operations["create_review_session_api_review_sessions_post"];
     delete?: never;
@@ -825,6 +830,11 @@ export interface paths {
      *     recomputed, by ``build_lesson_from_story``, against the pasted text — carrying
      *     a number forward would report one text's score for another, which is this
      *     epic's characteristic silently-plausible wrong answer.
+     *
+     *     ⚠️ The whole body is single-flighted on ``Idempotency-Key`` (bd
+     *     tunatale-rwkz.1). The 2026-09-19 duplicate was this route, called twice with
+     *     the same paste 75 s apart, each call minting an id and starting a render on a
+     *     box that could not afford one.
      */
     post: operations["create_review_session_from_paste_api_review_sessions_import_post"];
     delete?: never;
@@ -5257,7 +5267,9 @@ export interface operations {
   create_review_session_api_review_sessions_post: {
     parameters: {
       query?: never;
-      header?: never;
+      header?: {
+        "idempotency-key"?: string | null;
+      };
       path?: never;
       cookie?: never;
     };
@@ -5290,7 +5302,9 @@ export interface operations {
   create_review_session_from_paste_api_review_sessions_import_post: {
     parameters: {
       query?: never;
-      header?: never;
+      header?: {
+        "idempotency-key"?: string | null;
+      };
       path?: never;
       cookie?: never;
     };

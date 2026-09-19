@@ -3,7 +3,10 @@
 
 	interface Props {
 		copyPrompt: () => Promise<string>;
-		importRaw: (raw: string) => Promise<{ id: string; warnings?: string[] }>;
+		importRaw: (
+			raw: string,
+			idempotencyKey: string
+		) => Promise<{ id: string; warnings?: string[] }>;
 		onImported: (id: string) => void;
 		onDelete?: () => Promise<void>;
 	}
@@ -17,6 +20,19 @@
 	let importWarnings: string[] = $state([]);
 	let importLoading = $state(false);
 	let importedLessonId: string | null = $state(null);
+	/**
+	 * The key that makes a retry a RETRY rather than a second session
+	 * (bd tunatale-rwkz.1). Minted when an import starts, kept for as long as
+	 * that import keeps failing, dropped once one succeeds.
+	 *
+	 * ⚠️ Kept on failure ON PURPOSE. The 2026-09-19 duplicate happened because
+	 * the first request's fetch died on a phone while the server went on to
+	 * write the session; the button re-enabled and the learner tried again.
+	 * Minting a new key there would send a second intent and recreate the very
+	 * duplicate the server-side single-flight exists to collapse.
+	 */
+	let importKey: string | null = null;
+
 	let confirmingDelete = $state(false);
 	let deleting = $state(false);
 	let deleteError = $state('');
@@ -46,8 +62,12 @@
 		importedLessonId = null;
 
 		importLoading = true;
+		importKey ??= crypto.randomUUID();
 		try {
-			const result = await importRaw(pasteText);
+			const result = await importRaw(pasteText, importKey);
+			// Only a SUCCESS ends the intent. Anything else leaves the key in
+			// place for the next attempt.
+			importKey = null;
 			if (result.warnings && result.warnings.length > 0) {
 				importWarnings = result.warnings;
 				importedLessonId = result.id;

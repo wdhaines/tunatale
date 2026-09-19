@@ -40,8 +40,9 @@ from __future__ import annotations
 import logging
 from datetime import date
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.api._serializers import serialize_lesson
 
@@ -50,6 +51,7 @@ from app.api._serializers import serialize_lesson
 # from the lesson path exactly where the two must agree. No import cycle: generation.py
 # knows nothing about review sessions.
 from app.api.generation import _injected_lemmatizer
+from app.api.idempotency import once
 from app.api.models import (
     CreateReviewSessionFromPasteRequest,
     CreateReviewSessionRequest,
@@ -263,7 +265,11 @@ async def get_review_session_draft_prompt(request: Request):
 
 
 @router.post("/import", status_code=201, response_model=CreateReviewSessionResponse)
-async def create_review_session_from_paste(body: CreateReviewSessionFromPasteRequest, request: Request):
+async def create_review_session_from_paste(
+    body: CreateReviewSessionFromPasteRequest,
+    request: Request,
+    idempotency_key: Annotated[str | None, Header()] = None,
+):
     """Create a session FROM a hand-written dialogue, generating nothing.
 
     201 and the same body as auto-create, because the outcome is the same kind of
@@ -275,6 +281,20 @@ async def create_review_session_from_paste(body: CreateReviewSessionFromPasteReq
     recomputed, by ``build_lesson_from_story``, against the pasted text — carrying
     a number forward would report one text's score for another, which is this
     epic's characteristic silently-plausible wrong answer.
+
+    ⚠️ The whole body is single-flighted on ``Idempotency-Key`` (bd
+    tunatale-rwkz.1). The 2026-09-19 duplicate was this route, called twice with
+    the same paste 75 s apart, each call minting an id and starting a render on a
+    box that could not afford one.
+    """
+    return await once(request, "import", idempotency_key, lambda: _import_and_store(body, request))
+
+
+async def _import_and_store(body: CreateReviewSessionFromPasteRequest, request: Request) -> dict:
+    """The paste route's body, extracted so it runs as one single-flighted unit.
+
+    Split out rather than nested inside the handler so the route above stays a
+    signature plus its contract, the way the rest of this router reads.
     """
     if body.raw is not None:
         try:
@@ -336,13 +356,27 @@ async def create_review_session_from_paste(body: CreateReviewSessionFromPasteReq
 
 
 @router.post("", status_code=201, response_model=CreateReviewSessionResponse)
-async def create_review_session(body: CreateReviewSessionRequest, request: Request):
+async def create_review_session(
+    body: CreateReviewSessionRequest,
+    request: Request,
+    idempotency_key: Annotated[str | None, Header()] = None,
+):
     """Generate one review session: no curriculum, no day, no theme.
 
     Takes no identifiers at all — see ``CreateReviewSessionRequest`` for why that
     is enforced rather than merely documented.
+
+    ``Idempotency-Key`` is a HEADER rather than a body field precisely because
+    the body forbids extras — and because a browser resending a dropped POST
+    repeats its headers, which is the retry a body field written by the click
+    handler would miss. See ``app.api.idempotency``.
     """
-    return await _generate_and_store(request, session_id=None, session_date=None, replace=False)
+    return await once(
+        request,
+        "create",
+        idempotency_key,
+        lambda: _generate_and_store(request, session_id=None, session_date=None, replace=False),
+    )
 
 
 @router.post("/{session_id}/regenerate", status_code=200, response_model=CreateReviewSessionResponse)

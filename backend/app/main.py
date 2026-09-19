@@ -284,17 +284,19 @@ def cors_kwargs() -> dict:
     authentication — under which any page the browser loaded could read and
     write TunaTale data over localhost or the tailnet.
 
-    Methods and headers are enumerated too, not just origins. The two headers
+    Methods and headers are enumerated too, not just origins. The three headers
     are load-bearing and a lockdown that drops them is a broken deploy, not a
-    safe one: ``X-TT-Language`` is how the frontend selects its language, and
-    ``Range`` is how the audio player seeks (neither is CORS-safelisted, so
-    both must be named).
+    safe one: ``X-TT-Language`` is how the frontend selects its language,
+    ``Range`` is how the audio player seeks, and ``Idempotency-Key`` is what
+    keeps one paste from becoming two review sessions. None is CORS-safelisted,
+    so all three must be named — and the idempotency one fails QUIETLY if it is
+    dropped, with deduplication simply off.
     """
     kwargs: dict = {
         "allow_origins": list(settings.cors_origins),
         "allow_credentials": True,
         "allow_methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "X-TT-Language", "Range"],
+        "allow_headers": ["Content-Type", "X-TT-Language", "Range", "Idempotency-Key"],
         "expose_headers": ["Content-Range", "Accept-Ranges", "Content-Length"],
     }
     # Only when set: Starlette compiles whatever it receives, and re.compile("")
