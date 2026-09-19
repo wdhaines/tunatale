@@ -90,6 +90,41 @@ describe("TunaTaleAPI", () => {
   });
 
   describe("review sessions", () => {
+    it("createReviewSessionFromPaste sends the idempotency key as a header", async () => {
+      // A header, not a body field: the create body is extra="forbid" server
+      // side, and a browser resending a dropped POST repeats headers verbatim.
+      // bd tunatale-rwkz.1.
+      const fetchMock = vi.fn().mockResolvedValue(mockOk({ id: "s1", warnings: [] }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await api.createReviewSessionFromPaste("{}", ["fisk"], "key-abc");
+
+      const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+      expect(headers["Idempotency-Key"]).toBe("key-abc");
+    });
+
+    it("createReviewSession sends the idempotency key as a header", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(mockOk({ id: "s1", warnings: [] }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await api.createReviewSession("key-xyz");
+
+      const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+      expect(headers["Idempotency-Key"]).toBe("key-xyz");
+    });
+
+    it("omits the header entirely when no key is given", async () => {
+      // An absent key must not become the string "undefined", which the server
+      // would treat as a real key and dedupe every keyless caller against.
+      const fetchMock = vi.fn().mockResolvedValue(mockOk({ id: "s1", warnings: [] }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await api.createReviewSession();
+
+      const headers = (fetchMock.mock.calls[0][1]?.headers ?? {}) as Record<string, string>;
+      expect("Idempotency-Key" in headers).toBe(false);
+    });
+
     it("listReviewSessions unwraps the envelope to a bare list", async () => {
       vi.stubGlobal(
         "fetch",

@@ -6290,8 +6290,26 @@
         ]
       },
       "post": {
-        "description": "Generate one review session: no curriculum, no day, no theme.\n\nTakes no identifiers at all \u2014 see ``CreateReviewSessionRequest`` for why that\nis enforced rather than merely documented.",
+        "description": "Generate one review session: no curriculum, no day, no theme.\n\nTakes no identifiers at all \u2014 see ``CreateReviewSessionRequest`` for why that\nis enforced rather than merely documented.\n\n``Idempotency-Key`` is a HEADER rather than a body field precisely because\nthe body forbids extras \u2014 and because a browser resending a dropped POST\nrepeats its headers, which is the retry a body field written by the click\nhandler would miss. See ``app.api.idempotency``.",
         "operationId": "create_review_session_api_review_sessions_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -6332,8 +6350,26 @@
     },
     "/api/review-sessions/import": {
       "post": {
-        "description": "Create a session FROM a hand-written dialogue, generating nothing.\n\n201 and the same body as auto-create, because the outcome is the same kind of\nthing \u2014 the caller should not have to care which door it came through.\n\n\u26a0\ufe0f ``review_requested`` is the list the CLIENT hands back, never a fresh\nselection: it is what ``GET /prompt`` asked for, and re-selecting would score\nan overnight rewrite against a set that had since moved. ``review_used`` IS\nrecomputed, by ``build_lesson_from_story``, against the pasted text \u2014 carrying\na number forward would report one text's score for another, which is this\nepic's characteristic silently-plausible wrong answer.",
+        "description": "Create a session FROM a hand-written dialogue, generating nothing.\n\n201 and the same body as auto-create, because the outcome is the same kind of\nthing \u2014 the caller should not have to care which door it came through.\n\n\u26a0\ufe0f ``review_requested`` is the list the CLIENT hands back, never a fresh\nselection: it is what ``GET /prompt`` asked for, and re-selecting would score\nan overnight rewrite against a set that had since moved. ``review_used`` IS\nrecomputed, by ``build_lesson_from_story``, against the pasted text \u2014 carrying\na number forward would report one text's score for another, which is this\nepic's characteristic silently-plausible wrong answer.\n\n\u26a0\ufe0f The whole body is single-flighted on ``Idempotency-Key`` (bd\ntunatale-rwkz.1). The 2026-09-19 duplicate was this route, called twice with\nthe same paste 75 s apart, each call minting an id and starting a render on a\nbox that could not afford one.",
         "operationId": "create_review_session_from_paste_api_review_sessions_import_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {

@@ -61,7 +61,10 @@ describe("ManualStoryPanel", () => {
     await fireEvent.click(importBtn);
 
     await waitFor(() => {
-      expect(importRaw).toHaveBeenCalledWith(rawText);
+      // The second argument is the idempotency key (bd tunatale-rwkz.1); its
+      // VALUE is a fresh uuid, so this pins the shape and
+      // ManualStoryPanel.idempotency.test.ts pins the lifecycle.
+      expect(importRaw).toHaveBeenCalledWith(rawText, expect.any(String));
     });
   });
 

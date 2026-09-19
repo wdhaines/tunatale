@@ -113,7 +113,9 @@ describe("manual mode on the index", () => {
     });
     await fireEvent.click(getByTestId("import-btn"));
 
-    await waitFor(() => expect(mockFromPaste).toHaveBeenCalledWith(STORY, WORDS));
+    await waitFor(() =>
+      expect(mockFromPaste).toHaveBeenCalledWith(STORY, WORDS, expect.any(String)),
+    );
   });
 
   it("opens the session it just created", async () => {

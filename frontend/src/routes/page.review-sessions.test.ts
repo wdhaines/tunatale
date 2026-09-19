@@ -218,6 +218,58 @@ describe("making a review session", () => {
     await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
   });
 
+  it("reuses the idempotency key when a failed generation is retried", async () => {
+    // bd tunatale-rwkz.1. A generation whose response was lost has still made a
+    // session server-side; retrying with a FRESH key would mint a second one and
+    // burn a second story call. The key ends only on success.
+    mockCreateSession.mockRejectedValueOnce(new Error("Failed to fetch")).mockResolvedValueOnce({
+      id: "fresh",
+      session_date: "2026-09-03",
+      title: "The Late Bus",
+      review_requested: [],
+      review_used: [],
+      warnings: [],
+    });
+    const { findByRole } = render(Page);
+
+    const button = await findByRole("button", { name: /new review session/i });
+    await fireEvent.click(button);
+    await waitFor(() => expect(mockCreateSession).toHaveBeenCalledOnce());
+    await fireEvent.click(button);
+    await waitFor(() => expect(mockCreateSession).toHaveBeenCalledTimes(2));
+
+    const [firstKey] = mockCreateSession.mock.calls[0];
+    const [secondKey] = mockCreateSession.mock.calls[1];
+    expect(firstKey).toBeTruthy();
+    expect(secondKey).toBe(firstKey);
+  });
+
+  it("mints a fresh key for a deliberate second session", async () => {
+    // Distinct ids: two successes both land in the keyed session list, and a
+    // repeated id makes Svelte throw each_key_duplicate — a failure of the
+    // fixture, not of the behaviour under test.
+    const created = (id: string) => ({
+      id,
+      session_date: "2026-09-03",
+      title: "The Late Bus",
+      review_requested: [],
+      review_used: [],
+      warnings: [],
+    });
+    mockCreateSession
+      .mockResolvedValueOnce(created("fresh-1"))
+      .mockResolvedValueOnce(created("fresh-2"));
+    const { findByRole } = render(Page);
+
+    const button = await findByRole("button", { name: /new review session/i });
+    await fireEvent.click(button);
+    await waitFor(() => expect(mockCreateSession).toHaveBeenCalledOnce());
+    await fireEvent.click(button);
+    await waitFor(() => expect(mockCreateSession).toHaveBeenCalledTimes(2));
+
+    expect(mockCreateSession.mock.calls[1][0]).not.toBe(mockCreateSession.mock.calls[0][0]);
+  });
+
   it("shows BOTH warnings the server returned, as visible text", async () => {
     // Two DISTINCT strings on purpose: a broken render that shows only the
     // first still passes a one-string fixture (bd tunatale-gmup).
