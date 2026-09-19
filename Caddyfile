@@ -17,7 +17,10 @@
 		# One year, this host only: the other subdomains are served elsewhere,
 		# and includeSubDomains/preload are hard to undo.
 		Strict-Transport-Security "max-age=31536000"
-		# The frontend loads nothing cross-origin (measured 2026-09-18).
+		# One cross-origin load: the image picker's Pixabay thumbnails
+		# (<img src={preview_url}>, served from cdn.pixabay.com). "Nothing
+		# cross-origin" was measured 2026-09-18 without opening the picker, and
+		# the picker shipped broken. Images only: connect-src stays 'self'.
 		# 'unsafe-inline' scripts: app.html's pre-paint theme script and
 		# SvelteKit's bootstrap are inline, and the bootstrap's hash changes on
 		# every build, so a hash list here would break the next deploy. The
@@ -25,7 +28,7 @@
 		# injection from shipping data anywhere, frame-ancestors stops framing.
 		# 'wasm-unsafe-eval' + blob: workers are for the voice-probe spike page
 		# (onnxruntime-web); data: images for the language selector's flags.
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cdn.pixabay.com; media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		# The microphone stays available to this origin for voice control

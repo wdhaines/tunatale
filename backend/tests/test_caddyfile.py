@@ -50,15 +50,31 @@ def test_security_headers_are_set(text, header):
     assert re.search(rf"^\s*{re.escape(header)}\s", text, re.MULTILINE), f"{header} is not set"
 
 
-def test_the_csp_admits_only_this_origin(text):
-    """No third-party origin anywhere: the frontend loads nothing cross-origin
-    (measured 2026-09-18), so `connect-src 'self'` is what stops a successful
-    injection from shipping data anywhere, and `frame-ancestors 'none'` stops
-    the app being framed for clickjacking."""
+def _csp_directives(text) -> dict[str, list[str]]:
     csp = re.search(r'Content-Security-Policy\s+"([^"]+)"', text).group(1)
-    for directive in ("default-src 'self'", "connect-src 'self'", "frame-ancestors 'none'", "object-src 'none'"):
-        assert directive in csp, f"missing {directive!r} in {csp!r}"
-    assert "http" not in csp, f"a scheme or host crept into the CSP: {csp!r}"
+    return {d.split()[0]: d.split()[1:] for d in (p.strip() for p in csp.split(";")) if d}
+
+
+def test_the_csp_admits_only_this_origin(text):
+    """`connect-src 'self'` is what stops a successful injection from shipping
+    data anywhere, and `frame-ancestors 'none'` stops the app being framed for
+    clickjacking. The one cross-origin load is below."""
+    directives = _csp_directives(text)
+    assert directives["default-src"] == ["'self'"]
+    assert directives["connect-src"] == ["'self'"]
+    assert directives["frame-ancestors"] == ["'none'"]
+    assert directives["object-src"] == ["'none'"]
+    hosts = {name: [v for v in values if "http" in v] for name, values in directives.items()}
+    assert {name: v for name, v in hosts.items() if v} == {"img-src": ["https://cdn.pixabay.com"]}
+
+
+def test_the_image_picker_can_show_pixabay_thumbnails(text):
+    """ImageEditModal renders each candidate as <img src={c.preview_url}>, and
+    Pixabay serves previewURL from cdn.pixabay.com (checked against the live API
+    2026-09-18). Without it in img-src every thumbnail is blocked: the picker
+    shipped broken on prod the day the CSP went on, because the comment above
+    the policy claimed the frontend loads nothing cross-origin."""
+    assert "https://cdn.pixabay.com" in _csp_directives(text)["img-src"]
 
 
 def test_request_bodies_are_capped_above_the_upload_limit(text):
