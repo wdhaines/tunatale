@@ -26,6 +26,12 @@ def _clean_app_state():
         # silently replaced real resolution downstream.
         "lemmatizer",
         "model_version",
+        # The idempotency registry (app.api.idempotency). Keys are
+        # (scope, language, key) and test files reuse one constant key across
+        # tests, so a leaked registry hands the next test the PREVIOUS test's
+        # session id — against a store that no longer holds it. Exactly the
+        # lemmatizer leak above, one seam over.
+        "idempotent_writes",
     ):
         if hasattr(app.state, attr):
             delattr(app.state, attr)
