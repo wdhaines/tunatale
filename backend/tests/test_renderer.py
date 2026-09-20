@@ -333,6 +333,29 @@ class TestLessonRenderer:
         phrase_call = next(c for c in rate_calls if c[0] == "hvala")
         assert phrase_call[1] == "-20%"
 
+    async def test_render_raises_on_mismatched_rates_within_one_section(self, tmp_path):
+        """A mismatch BETWEEN PHRASES, which is a different guard from the one
+        above (bd tunatale-rwkz.2).
+
+        The full-lesson export no longer concatenates, so the title-vs-sections
+        case is now refused by the streaming writer. ``_concat`` still assembles
+        each section from its phrases, and this is what still reaches its check —
+        without this test that branch goes uncovered and the phrase-level
+        mismatch would be free to ship.
+        """
+        lesson = _minimal_lesson()
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+            sample_rate = 22050 if "hvala" in text else 11025
+            output_path.write_bytes(_make_wav_bytes(rate=sample_rate))
+
+        mock_tts = AsyncMock()
+        mock_tts.synthesize = fake_synthesize
+        rdr = _make_renderer(mock_tts)
+
+        with pytest.raises(ValueError, match="mismatched"):
+            await rdr.render(lesson, tmp_path / "lesson.wav")
+
     async def test_render_raises_on_mismatched_sample_rates(self, tmp_path):
         """Mismatched sample rates fail loudly rather than silently re-speeding.
 
@@ -823,12 +846,38 @@ class TestEventLoopResponsiveness:
 
         # Slow fake at the subprocess.Popen / subprocess.run boundary —
         # each call sleeps 250ms to simulate ffmpeg encode time.
-        # 6 encode_audio calls (5 sections + 1 full lesson) = ~1.5s of sleep.
         def fake_run(cmd, *args, **kwargs):
             time.sleep(0.25)
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=b"faked opus data")
 
+        class _SlowPopen:
+            """⚠️ Popen is faked TOO, and without it this test silently stops
+            testing anything (bd tunatale-rwkz.2).
+
+            The full-lesson export streams through ``subprocess.Popen`` now, not
+            ``subprocess.run``, so faking only ``run`` left the encode fast. The
+            render then finished before the monitor thread's measurement window
+            closed, and the ``monitor_thread.join()`` below — which blocks the
+            loop by design — became what the ticker measured. The test failed
+            claiming the loop was blocked during the encode, when the encode had
+            already finished. A green here means nothing unless the fake covers
+            the boundary the code actually uses.
+            """
+
+            def __init__(self, cmd, *args, **kwargs):
+                self.returncode = 0
+                self.stdin = BytesIO()
+                self.stderr = BytesIO(b"")
+
+            def wait(self):
+                time.sleep(0.25)
+                return 0
+
+            def kill(self):  # pragma: no cover - only the mono guard calls this
+                pass
+
         monkeypatch.setattr(subprocess, "run", fake_run)
+        monkeypatch.setattr(subprocess, "Popen", _SlowPopen)
 
         rdr = LessonRenderer(
             tts=mock_tts,

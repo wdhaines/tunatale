@@ -12,8 +12,11 @@ support, which varies by build and can't set a speech bitrate.
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
+from collections.abc import Iterable
 from io import BytesIO
+from pathlib import Path
 
 import numpy as np
 import soundfile as sf
@@ -44,6 +47,85 @@ _FFMPEG_ARGS: dict[str, list[str]] = {
     "mp3": ["-c:a", "libmp3lame", "-f", "mp3"],
     "aac": ["-c:a", "aac", "-movflags", "frag_keyframe+empty_moov", "-f", "mp4"],
 }
+
+
+def encode_audio_stream(
+    chunks: Iterable[np.ndarray],
+    rate: int,
+    codec: str,
+    bitrate: str,
+    out_path: Path,
+) -> None:
+    """Encode *chunks* to *out_path* as ONE continuous stream, holding none of it.
+
+    The full-lesson export used to concatenate every piece into a single float32
+    buffer (~340 MB for a 58-minute lesson), render it to a WAV ``BytesIO``, and
+    copy that again for ffmpeg's stdin. This writes the pieces to ffmpeg as they
+    arrive, so peak memory is one piece rather than the lesson (bd
+    tunatale-rwkz.2).
+
+    ⚠️ ONE ENCODE, not a join of encoded parts. Concatenating separately-encoded
+    Opus segments adds a frame of padding per seam — measured at +20 ms each,
+    cumulative — which would drift every cue after the first, and produces
+    chained Ogg streams that ``soundfile`` refuses to open at all. Streaming the
+    PCM keeps the encoder's timeline identical to the old one-shot encode.
+
+    Raw ``f32le`` on stdin rather than a WAV wrapper: a WAV header must declare
+    its length up front, which is precisely what a streaming writer does not
+    know. It also drops the old path's intermediate 16-bit quantisation — the
+    samples now reach the encoder at the precision they were assembled in.
+    """
+    channels = None
+    proc = subprocess.Popen(  # noqa: S603
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "f32le",
+            "-ar",
+            str(rate),
+            "-ac",
+            "1",  # replaced below once the first chunk says how many channels
+            "-i",
+            "pipe:0",
+            *_FFMPEG_ARGS[codec],
+            "-b:a",
+            bitrate,
+            "-y",
+            str(out_path),
+        ],
+        stdin=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    stderr = b""
+    try:
+        for chunk in chunks:
+            if channels is None:
+                channels = chunk.shape[1]
+                if channels != 1:
+                    # Guarded rather than supported: every renderer path is mono
+                    # today, and a silent mis-declaration to ffmpeg would halve
+                    # or double the playback rate instead of failing.
+                    proc.kill()
+                    msg = f"encode_audio_stream is mono-only, got {channels} channels"
+                    raise ValueError(msg)
+            proc.stdin.write(np.ascontiguousarray(chunk, dtype="float32").tobytes())
+    except BrokenPipeError:  # pragma: no cover - ffmpeg died early; its stderr is the real error
+        pass
+    finally:
+        # suppress(), not an `if closed` guard: closing a pipe ffmpeg has
+        # already dropped raises again, and the branch for "already closed" is
+        # unreachable in any test that does not also kill ffmpeg mid-write.
+        with contextlib.suppress(BrokenPipeError):
+            proc.stdin.close()
+        stderr = proc.stderr.read()
+        proc.stderr.close()
+        proc.wait()
+
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed ({proc.returncode}): {stderr.decode(errors='replace')}")
 
 
 def encode_audio(samples: np.ndarray, rate: int, codec: str, bitrate: str) -> bytes:
