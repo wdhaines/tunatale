@@ -868,6 +868,18 @@ class TestEventLoopResponsiveness:
                 self.returncode = 0
                 self.stdin = BytesIO()
                 self.stderr = BytesIO(b"")
+                # A pid above every platform's pid_max, so the spawn helper's
+                # renice raises ESRCH and takes its documented "priority is an
+                # optimisation" path. Deliberately NOT this process's own pid:
+                # that would renice the pytest worker for the rest of the run.
+                self.pid = 2**31 - 1
+
+            def communicate(self, input=None):  # noqa: A002 - matches Popen's signature
+                # encode_audio moved to Popen+communicate so its child could be
+                # reniced; without this the fake loses the buffered path and the
+                # test measures a real, fast ffmpeg instead of a slow one.
+                time.sleep(0.25)
+                return b"faked opus data", b""
 
             def wait(self):
                 time.sleep(0.25)
