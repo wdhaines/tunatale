@@ -19,7 +19,7 @@ from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.ports import TTSService
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.slicer import ChunkSlicer, SliceSpec
-from app.audio.transcode import encode_audio
+from app.audio.transcode import encode_audio, encode_audio_stream
 from app.languages import PhonemePlanner, get_tts_voice_gain_db
 from app.models.lesson import Lesson, Phrase, Section
 
@@ -194,6 +194,54 @@ class LessonRenderer:
             _write_wav(path, audio)
         else:
             path.write_bytes(encode_audio(audio.samples, audio.rate, self._delivery_codec, self._delivery_bitrate))
+
+    def _write_audio_stream(self, path: Path, pieces: list[_Audio | None], rate: int) -> None:
+        """Write *pieces*, in order, as one continuous file — never joined first.
+
+        The list is consumed destructively: each piece is released as soon as it
+        has been handed to the writer, so the full lesson is never resident
+        (bd tunatale-rwkz.2). ``pieces`` holds the ONLY remaining reference by
+        the time this is called, which is what makes that release real rather
+        than decorative.
+
+        ⚠️ Still ONE encode, not a join of encoded parts: concatenating
+        separately-encoded Opus segments drifts +20 ms per seam and yields
+        chained Ogg that soundfile will not open. See ``encode_audio_stream``.
+        """
+
+        # ⚠️ VALIDATED UP FRONT, because dropping the concatenation dropped the
+        # check that came with it. ``_concat`` was what refused a piece at a
+        # foreign sample rate, and a stream that skipped that would hand ffmpeg
+        # a 22 kHz title declared as 11 kHz — playing it at the wrong speed with
+        # nothing raised. test_render_raises_on_mismatched_sample_rates caught
+        # exactly this when the join was removed.
+        head = next(p for p in pieces if p is not None)
+        channels = head.samples.shape[1]
+        for piece in pieces:
+            if piece is None:  # pragma: no cover - defensive; the list is built full
+                continue
+            if piece.rate != rate or piece.samples.shape[1] != channels:
+                raise ValueError(
+                    "cannot concatenate audio with mismatched format: "
+                    f"expected {rate} Hz / {channels} ch, "
+                    f"got {piece.rate} Hz / {piece.samples.shape[1]} ch"
+                )
+
+        def drain():
+            for i, piece in enumerate(pieces):
+                if piece is None:  # pragma: no cover - defensive; the list is built full
+                    continue
+                pieces[i] = None
+                yield piece.samples
+
+        if self._delivery_codec == "wav":
+            # soundfile writes incrementally through an open handle, so the WAV
+            # path streams too rather than keeping a second full copy.
+            with sf.SoundFile(str(path), "w", samplerate=rate, channels=1, subtype=_WAV_SUBTYPE) as out:
+                for samples in drain():
+                    out.write(samples)
+        else:
+            encode_audio_stream(drain(), rate, self._delivery_codec, self._delivery_bitrate, path)
 
     def _assemble_section_audio(
         self,
@@ -573,13 +621,16 @@ class LessonRenderer:
             boundary = _silence(layout.boundary_ms, title_audio)
             # piece_descriptions starts with "title"; everything after it is a
             # boundary or a section, stitched in the shared order.
-            parts: list[_Audio] = [title_audio]
+            # The pieces in playback order. NOT concatenated: joining them here
+            # is the ~340 MB allocation this bead removes, and nothing below
+            # needs the joined buffer — the cue offsets are computed from the
+            # piece LENGTHS, which is why this could be split at all.
+            parts: list[_Audio | None] = [title_audio]
             for desc in layout.piece_descriptions[1:]:
                 if desc == "boundary":
                     parts.append(boundary)
                 else:
                     parts.append(section_audios[int(desc.split("_")[1])])
-            combined = await asyncio.to_thread(_concat, parts)
 
             # Build cue manifest with absolute frame offsets.  Walk the shared
             # layout's piece order once, accumulating frame offsets so the
@@ -621,12 +672,15 @@ class LessonRenderer:
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
-        await asyncio.to_thread(self._write_audio, output_path, combined)
+        await asyncio.to_thread(self._write_audio_stream, output_path, parts, rate)
         logger.debug("Full lesson export → %.0f ms", (time.perf_counter() - t0) * 1000)
         logger.info(
             "Rendered lesson to %s (audio: %d ms, wall: %.0f ms)",
             output_path,
-            round(combined.duration_ms),
+            # From the LAYOUT, not from a joined buffer: there no longer is one,
+            # and the layout is the same source the cue offsets come from — so
+            # this line cannot drift from the timeline it reports on.
+            layout.piece_offsets_ms[-1] + layout.piece_durations_ms[-1],
             (time.perf_counter() - t_start) * 1000,
         )
 
