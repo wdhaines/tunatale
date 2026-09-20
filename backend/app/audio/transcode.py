@@ -13,6 +13,8 @@ support, which varies by build and can't set a speech bitrate.
 from __future__ import annotations
 
 import contextlib
+import logging
+import os
 import subprocess
 from collections.abc import Iterable
 from io import BytesIO
@@ -20,6 +22,10 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Delivery codec → file extension (no leading dot).
 CODEC_EXT: dict[str, str] = {
@@ -49,6 +55,27 @@ _FFMPEG_ARGS: dict[str, list[str]] = {
 }
 
 
+def _spawn_ffmpeg(args: list[str], **kwargs) -> subprocess.Popen:
+    """Start ffmpeg and drop its CPU priority below the API's.
+
+    ⚠️ Reniced from the PARENT rather than with ``preexec_fn``. preexec_fn runs
+    between fork and exec, and every encode here happens inside
+    ``asyncio.to_thread`` — a multi-threaded process, where CPython's own docs
+    warn preexec_fn can deadlock. The child therefore runs at normal priority
+    for a few milliseconds before being reniced, which is nothing against an
+    encode measured in minutes.
+
+    A refused renice is logged and ignored: priority is an optimisation, and
+    audio is the product.
+    """
+    proc = subprocess.Popen(args, **kwargs)  # noqa: S603
+    try:
+        os.setpriority(os.PRIO_PROCESS, proc.pid, settings.ffmpeg_nice)
+    except OSError as e:
+        logger.debug("Could not renice ffmpeg (pid %s): %s", proc.pid, e)
+    return proc
+
+
 def encode_audio_stream(
     chunks: Iterable[np.ndarray],
     rate: int,
@@ -76,7 +103,7 @@ def encode_audio_stream(
     samples now reach the encoder at the precision they were assembled in.
     """
     channels = None
-    proc = subprocess.Popen(  # noqa: S603
+    proc = _spawn_ffmpeg(
         [
             "ffmpeg",
             "-hide_banner",
@@ -139,7 +166,10 @@ def encode_audio(samples: np.ndarray, rate: int, codec: str, bitrate: str) -> by
     wav_buf = BytesIO()
     sf.write(wav_buf, samples, rate, format="WAV", subtype="PCM_16")
 
-    proc = subprocess.run(
+    # Popen + communicate rather than subprocess.run, so the child has a pid to
+    # renice. Section files and per-clip encodes come through here and were 39%
+    # of a render's wall time — exempting them would leave most of the problem.
+    proc = _spawn_ffmpeg(
         [
             "ffmpeg",
             "-hide_banner",
@@ -152,9 +182,11 @@ def encode_audio(samples: np.ndarray, rate: int, codec: str, bitrate: str) -> by
             bitrate,
             "pipe:1",
         ],
-        input=wav_buf.getvalue(),
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
+    stdout, stderr = proc.communicate(wav_buf.getvalue())
     if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg failed ({proc.returncode}): {proc.stderr.decode(errors='replace')}")
-    return proc.stdout
+        raise RuntimeError(f"ffmpeg failed ({proc.returncode}): {stderr.decode(errors='replace')}")
+    return stdout

@@ -263,6 +263,14 @@ class Settings(BaseSettings):
     # 2026-09-19). Raise only on a machine whose memory you have actually
     # measured against a full-length lesson.
     max_concurrent_renders: int = 1
+    # ffmpeg runs at LOWER priority than the API (positive = nicer on POSIX).
+    # The CPU of a render is almost entirely in ffmpeg children, so renicing
+    # them lets the kernel serve the learner's requests first and give ffmpeg
+    # what is left. From a user report while a render was in flight on the box:
+    # "the site is very slow to respond" — load average 3.30, and section
+    # exports at 102 s against 40 s for identical code on an idle box
+    # (2026-09-19). A render is background work and must schedule like it.
+    ffmpeg_nice: int = 10
     audio_delivery_codec: str = "opus"  # opus | aac | mp3 | wav
     audio_delivery_bitrate: str = "28k"
 
