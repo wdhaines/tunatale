@@ -862,9 +862,16 @@ def pytest_configure(config: pytest.Config) -> None:
     #     TZ=UTC PATH="$CLEAN" uv run pytest -n 4 --no-cov -q -m "not ffmpeg"
     # It must report zero failures.
     # It exists so CI's two hostile-TIMEZONE jobs can deselect them with
-    # `-m "not ffmpeg"` and skip installing ffmpeg altogether (10 modules, 204
-    # tests). Marking a test with it therefore REMOVES timezone coverage from it;
+    # `-m "not ffmpeg"` and skip installing ffmpeg altogether (12 modules, 236
+    # tests as of 2026-09-19 — read the current figure with
+    # `uv run pytest --collect-only -q -m ffmpeg`, since a written count rots).
+    # Marking a test with it therefore REMOVES timezone coverage from it;
     # mark only tests that genuinely shell out to the binary.
+    #
+    # ⚠️ PIN SYNC_ENABLED=true WHEN RUNNING THE PROBE ABOVE, exactly as test.sh
+    # does. Without it the dev .env leaves the Anki sync routes unregistered and
+    # test_api_anki fails with 404s that look like the marker being incomplete
+    # and are nothing of the kind (mis-diagnosed this way on 2026-09-19).
     config.addinivalue_line(
         "markers",
         "ffmpeg: shells out to a real ffmpeg binary on PATH.",

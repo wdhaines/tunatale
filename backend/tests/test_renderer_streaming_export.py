@@ -42,6 +42,12 @@ from app.audio.renderer import LessonRenderer, NaturalPauseCalculator
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.plugins.languages.sl.preprocessor import SlovenePreprocessor
 
+# Every test here drives a real ffmpeg, so the whole module carries the marker
+# CI's two hostile-timezone jobs deselect with `-m "not ffmpeg"` — they do not
+# install the binary at all. Without this the module reddened both of them with
+# FileNotFoundError while the `backend` job stayed green (run 35479824454).
+pytestmark = pytest.mark.ffmpeg
+
 _RATE = 11025
 
 # Per-phrase synthetic durations, so every cue below is a consequence of numbers
