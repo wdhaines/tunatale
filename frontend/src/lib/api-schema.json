@@ -34,6 +34,84 @@
         "title": "BackfillTranslationsResponse",
         "type": "object"
       },
+      "BackgroundJobFinished": {
+        "description": "The most recent background job to finish.",
+        "properties": {
+          "elapsed_s": {
+            "title": "Elapsed S",
+            "type": "number"
+          },
+          "finished_ago_s": {
+            "title": "Finished Ago S",
+            "type": "number"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "ok",
+          "elapsed_s",
+          "finished_ago_s"
+        ],
+        "title": "BackgroundJobFinished",
+        "type": "object"
+      },
+      "BackgroundWorkResponse": {
+        "description": "Response of GET /api/admin/background-work (tunatale-rwkz.6).\n\nCounts are keyed by job kind and cover this process's lifetime.",
+        "properties": {
+          "completed": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Completed",
+            "type": "object"
+          },
+          "failed": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Failed",
+            "type": "object"
+          },
+          "idle": {
+            "title": "Idle",
+            "type": "boolean"
+          },
+          "inflight": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Inflight",
+            "type": "object"
+          },
+          "last_finished": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BackgroundJobFinished"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "idle",
+          "inflight",
+          "completed",
+          "failed",
+          "last_finished"
+        ],
+        "title": "BackgroundWorkResponse",
+        "type": "object"
+      },
       "Body_put_image_upload_api_srs_items__item_id__image_upload_put": {
         "properties": {
           "file": {
@@ -4859,6 +4937,28 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/admin/background-work": {
+      "get": {
+        "description": "Report background jobs still running after their request returned.\n\nA sync's prestage and ``/listen``'s media fetches outlive the response by\ndesign (tunatale-rwkz.6). ``idle`` is the signal to wait on before measuring\nanything on the box; inferring it from log volume failed twice.",
+        "operationId": "background_work_status_api_admin_background_work_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackgroundWorkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Background Work Status",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/api/admin/refresh-media": {
       "post": {
         "description": "Re-import media from Anki, updating changed files (SHA-aware).\n\nReturns counts: {updated, unchanged, new, errors}.",

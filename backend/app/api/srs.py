@@ -57,6 +57,7 @@ from app.api.models import (
     UpdateItemRequest,
 )
 from app.audio.cloze_tts import synthesize_cloze_audios
+from app.common.background_work import background_work
 from app.common.guid import compute_guid
 from app.config import settings
 from app.languages import (
@@ -1617,7 +1618,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     # Off the critical path: Starlette runs this after the response is sent.
     if pending_vocab or pending_cloze or pending_regloss:
         background_tasks.add_task(
-            _complete_listen_media,
+            background_work(request.app).track("listen_media", _complete_listen_media),
             db,
             llm,
             vocab=pending_vocab,
