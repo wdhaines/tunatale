@@ -278,6 +278,50 @@ for (const { width, fourAcross } of [
 	});
 }
 
+// The sentence row gained a fifth button, Section ▶ (tunatale-0w2w), in a row
+// that is `flex-wrap: nowrap` on a phone. So the failure is not a wrap, it is an
+// OVERFLOW: the row runs past the card and the last button is cut off or
+// scrolls away. 412 and 360 are common Android widths (the user tests on
+// Android); 320 is the floor.
+for (const width of [412, 360, 320]) {
+	test(`player: the five sentence-row buttons fit one line at ${width}px`, async ({ page, request }) => {
+		test.skip(!(await backendAvailable(request)), "Backend not available");
+		await page.setViewportSize({ width, height: 844 });
+		const cid = await curriculumId(request);
+		await stubFullAudio(page);
+		await page.goto(`/c/${cid}`);
+		await page.getByRole("button", { name: "Day 1" }).click();
+
+		const row = page.locator(".player-card .sentence-row");
+		// If this times out the stub stopped working — do NOT relax it, or the
+		// checks below measure an absent row and pass.
+		await expect(row).toBeVisible({ timeout: 15000 });
+		const m = await row.evaluate((el) => {
+			const buttons = [...el.querySelectorAll("button")];
+			const card = el.closest(".player-card")!.getBoundingClientRect();
+			return {
+				count: buttons.length,
+				overflow: el.scrollWidth - el.clientWidth,
+				tops: [...new Set(buttons.map((b) => Math.round(b.getBoundingClientRect().top)))],
+				clipped: buttons.filter((b) => b.scrollWidth > b.clientWidth).map((b) => b.textContent?.trim()),
+				outside: buttons
+					.filter((b) => {
+						const r = b.getBoundingClientRect();
+						return r.left < card.left - 0.5 || r.right > card.right + 0.5;
+					})
+					.map((b) => b.textContent?.trim()),
+				pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+			};
+		});
+		expect(m.count, "the row should hold five buttons").toBe(5);
+		expect(m.overflow, "the row overflows its own box").toBeLessThanOrEqual(0);
+		expect(m.tops.length, "the buttons share one line").toBe(1);
+		expect(m.clipped, "a button's label is cut off").toEqual([]);
+		expect(m.outside, "a button sits outside the card").toEqual([]);
+		expect(m.pageOverflow, "the page scrolls horizontally").toBeLessThanOrEqual(0);
+	});
+}
+
 test("lesson card: Mark as Listened stays centered in the card", async ({ page, request }) => {
 	test.skip(!(await backendAvailable(request)), "Backend not available");
 	await page.setViewportSize(PHONE);

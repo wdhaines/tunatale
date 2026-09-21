@@ -1802,5 +1802,152 @@ describe("LessonPlayer", () => {
 
       expect(ctrl.currentTime).toBeLessThanOrEqual(0.1);
     });
+
+    it("a second tap after the loop fired once turns it OFF, not a silent re-engage (b2mn)", async () => {
+      // USER 2026-09-18 (Android): a second tap on Repeat repeated the sentence
+      // instead of turning the loop off — i.e. the latch had been cleared
+      // between the taps, so the second tap ENGAGED again (its seek is exactly
+      // "repeats the sentence immediately"). Whatever clears it must not run
+      // inside the latch's own loop, and the release tap must not rewind.
+      const created: HTMLAudioElement[] = [];
+      const OrigAudio = globalThis.Audio;
+      class RecordingAudio extends OrigAudio {
+        constructor(src?: string) {
+          super(src);
+          created.push(this);
+        }
+      }
+      globalThis.Audio = RecordingAudio as unknown as typeof Audio;
+      try {
+        const { ctrl, container } = await renderWith(audioWithCues);
+        const btn = repeatBtn(container);
+
+        fireEvent.click(btn); // 1st tap: engage
+        await tick();
+        expect(ctrl.repeatLatched).toBe(true);
+
+        const el = created[0];
+        expect(
+          el,
+          "the controller's element must be recorded for this to mean anything",
+        ).toBeTruthy();
+        el.currentTime = 0.9; // cue 0 runs 0-800ms: the loop fires, rewinds to 0
+        expect(el.currentTime).toBeCloseTo(0, 3);
+        expect(ctrl.repeatLatched, "the loop must not clear the latch").toBe(true);
+
+        const before = el.currentTime;
+        fireEvent.click(btn); // 2nd tap: must DISENGAGE
+        await tick();
+        expect(ctrl.repeatLatched).toBe(false); // OFF, not re-engaged
+        expect(el.currentTime).toBeCloseTo(before, 3); // and must not rewind
+      } finally {
+        globalThis.Audio = OrigAudio;
+      }
+    });
+  });
+
+  // ── Section ▶ next-section button (0w2w) ───────────────────────────────
+  describe("Section ▶ next-section button", () => {
+    async function renderWith(audio: LessonAudio) {
+      let ctrl: PlaybackController | null = null;
+      const result = render(PillSyncHarness, {
+        props: {
+          audio,
+          onController: (c: PlaybackController) => {
+            ctrl = c;
+          },
+        },
+      });
+      await tick();
+      return { ctrl: ctrl as unknown as PlaybackController, ...result };
+    }
+
+    function sectionBtn(container: HTMLElement) {
+      return container.querySelector<HTMLButtonElement>('button[title="Next section"]')!;
+    }
+
+    it("renders as the fifth and last button in the sentence row, icon-only with a name", async () => {
+      // Row: ⏮ ◀ [Repeat] ▶ ⏭ — the four step buttons are icon-only (five
+      // labelled buttons overflow an Android screen; measured in
+      // tests/lesson-header-layout.spec.ts), so the name lives in aria-label.
+      const { container } = await renderWith(audioWithAllSections);
+      const row = container.querySelector(".sentence-row")!;
+      const buttons = Array.from(row.querySelectorAll("button"));
+      const btn = sectionBtn(container);
+
+      expect(buttons.length).toBe(5);
+      expect(buttons[buttons.length - 1]).toBe(btn);
+      expect(btn.getAttribute("aria-label")).toBe("Next section");
+      expect(buttons.map((b) => b.textContent?.trim())).toEqual(["", "", "Repeat", "", ""]);
+      for (const b of buttons) {
+        expect(
+          b.getAttribute("aria-label") ?? b.textContent?.trim(),
+          "every button has a name",
+        ).toBeTruthy();
+      }
+    });
+
+    it("is enabled on an English variant too — there it hands off to the next lesson", async () => {
+      const onSequenceEnd = vi.fn();
+      let ctrl: PlaybackController | null = null;
+      const { container } = render(PillSyncHarness, {
+        props: {
+          audio: audioWithAllSections,
+          onController: (c: PlaybackController) => {
+            ctrl = c;
+          },
+          onSequenceEnd,
+        },
+      });
+      await tick();
+      const c = ctrl as unknown as PlaybackController;
+      c.selectTrack("slow_translated");
+      await tick();
+      expect(c.activeSectionType).toBe("slow_translated");
+      expect(sectionBtn(container).disabled).toBe(false);
+
+      fireEvent.click(sectionBtn(container));
+      await tick();
+      expect(onSequenceEnd).toHaveBeenCalledTimes(1);
+    });
+
+    it("clicking it moves natural_speed -> slow_speed, the next step of the sequence", async () => {
+      // Through the REAL button. The fixture's ARRAY puts translated (s3)
+      // after natural_speed; the sequence goes to slow_speed (s4), so this
+      // discriminates the two orders.
+      const created: HTMLAudioElement[] = [];
+      const OrigAudio = globalThis.Audio;
+      class RecordingAudio extends OrigAudio {
+        constructor(src?: string) {
+          super(src);
+          created.push(this);
+        }
+      }
+      globalThis.Audio = RecordingAudio as unknown as typeof Audio;
+      try {
+        const { ctrl, container } = await renderWith(audioWithAllSections);
+        const btn = sectionBtn(container);
+        expect(ctrl.activeSectionType).toBe("natural_speed");
+
+        fireEvent.click(btn);
+        await tick();
+
+        expect(ctrl.activeSectionType).toBe("slow_speed");
+        expect(created[0].src).toContain("/api/audio/s4");
+      } finally {
+        globalThis.Audio = OrigAudio;
+      }
+    });
+
+    it("stays ENABLED on the last pass when hands-free is ON — pressing completes the run", async () => {
+      const { ctrl, container } = await renderWith(audioWithAllSections);
+      ctrl.setHandsFree(true);
+      await tick();
+      ctrl.selectTrack("translated");
+      await tick();
+
+      expect(ctrl.activeSectionType).toBe("translated");
+      expect(sectionBtn(container).disabled).toBe(false);
+    });
   });
 });

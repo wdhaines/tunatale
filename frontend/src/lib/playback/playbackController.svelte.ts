@@ -19,6 +19,22 @@ export const HANDS_FREE_SEQUENCE = [
   "translated",
 ] as const;
 
+// Where each track sits in HANDS_FREE_SEQUENCE, for the Section ▶ button
+// (tunatale-0w2w). The user's order, 2026-09-21: "Key Phrases, Natural, Slow,
+// EN last, next lesson" — so every English variant (after/before, natural/slow)
+// is the one EN step, and ▶ from any of them hands off to the next lesson.
+// A Map, not an object literal: an object would answer `constructor` and
+// `__proto__` from Object.prototype.
+const SEQUENCE_STEP: ReadonlyMap<string, number> = new Map([
+  ["key_phrases", 0],
+  ["natural_speed", 1],
+  ["slow_speed", 2],
+  ["translated", 3],
+  ["slow_translated", 3],
+  ["en_translated", 3],
+  ["slow_en_translated", 3],
+]);
+
 // Art for the lock screen / car head unit. One entry, shared by BOTH
 // MediaMetadata constructions — the timeupdate listener replaces the whole
 // object, so a seed-only entry would vanish at the first section change.
@@ -36,6 +52,9 @@ export interface PlaybackController {
   readonly repeatLatched: boolean;
   readonly activeSectionType: string | null;
   readonly activeCues: Cue[] | null;
+  // Whether the Section ▶ button has anywhere to go. True on every track of the
+  // sequence, the EN step included — ▶ there hands off to the next lesson.
+  readonly hasNextSection: boolean;
   // The section a saved resume offset belongs to, while that offset is still
   // waiting for loadedmetadata; null once applied or discarded, or when there
   // is no offset or the saved value predates per-section resume. Not reactive —
@@ -51,6 +70,11 @@ export interface PlaybackController {
   nextSection(): void;
   prevSection(): void;
   restartSection(): void;
+  // Section ▶ button action: the next step of HANDS_FREE_SEQUENCE this lesson
+  // has, from its start; from the EN step, the next-lesson hand-off. The same
+  // with hands-free on or off. Unlike nextSection(), which seeks by cue
+  // section_index and is a silent no-op in track mode.
+  nextSectionAction(): void;
   nextCue(): void;
   prevCue(): void;
   repeatCue(): void;
@@ -244,6 +268,10 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     return sectionTitles[currentSectionIndex] ?? "";
   });
 
+  // Drives the Section ▶ button's disabled state. Only a track outside
+  // SEQUENCE_STEP (or none: a legacy full-track lesson) has nowhere to go.
+  let hasNextSection = $derived(activeSectionType !== null && SEQUENCE_STEP.has(activeSectionType));
+
   function updatePositionState() {
     if (mediaSession?.setPositionState) {
       try {
@@ -377,41 +405,17 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       void audioEl.play();
       return;
     }
-    // Hands-free: advance to the next pass of the sequence, starting from the
-    // beginning of that track. MUST run BEFORE `playing = false` below —
-    // selectTrack captures wasPlayingBeforeSwap = playing to decide whether to
-    // resume after the swap; if it ran after that assignment the resume would
-    // be lost and the next pass would load and sit silent (looking exactly
-    // like "hands-free doesn't work").
+    // Hands-free: advance to the next pass of the sequence (shared with the
+    // Section ▶ button — see advanceHandsFreePass). MUST run BEFORE
+    // `playing = false` below: selectTrack captures wasPlayingBeforeSwap =
+    // playing to decide whether to resume after the swap; if it ran after that
+    // assignment the resume would be lost and the next pass would load and sit
+    // silent (looking exactly like "hands-free doesn't work"). Anything other
+    // than "no-advance" (a plain track ending outside the sequence) is fully
+    // handled by the helper and returns from here.
     if (handsFree && activeSectionType !== null) {
-      const idx = (HANDS_FREE_SEQUENCE as readonly string[]).indexOf(activeSectionType);
-      // Skip to the next pass this lesson actually HAS. selectTrack no-ops on a
-      // missing section, so advancing blindly to idx + 1 would leave the same
-      // track selected and then play() it — an ended element restarts, so the
-      // pass would repeat forever with no escape but the transport.
-      const next =
-        idx === -1
-          ? undefined
-          : HANDS_FREE_SEQUENCE.slice(idx + 1).find((t) =>
-              audioSections.some((s) => s.section_type === t),
-            );
-      if (next !== undefined) {
-        selectTrack(next, null, true);
-        void audioEl.play();
-        return;
-      }
-      // In the sequence with nothing left to play: the run is COMPLETE, as
-      // distinct from a track that merely ended. Reported after the state below
-      // is settled, so a handler that navigates cannot observe a half-updated
-      // controller. idx === -1 (a section outside the sequence) is not a
-      // completion and stays silent.
-      if (idx !== -1) {
-        playing = false;
-        if (mediaSession) mediaSession.playbackState = "none";
-        updatePositionState();
-        deps.onHandsFreeEnd?.();
-        return;
-      }
+      const step = (HANDS_FREE_SEQUENCE as readonly string[]).indexOf(activeSectionType);
+      if (advanceHandsFreePass(step) !== "no-advance") return;
     }
     playing = false;
     if (mediaSession) mediaSession.playbackState = "none";
@@ -574,7 +578,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // --- Section navigation ---
 
   function nextSection(): void {
-    cancelRepeatLatch();
+    cancelRepeatLatch("nextSection");
     if (!activeCues) return;
     if (currentSectionIndex === null) {
       const firstCue = activeCues.find((c) => c.section_index != null);
@@ -592,7 +596,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   }
 
   function prevSection(): void {
-    cancelRepeatLatch();
+    cancelRepeatLatch("prevSection");
     if (!activeCues) return;
     if (currentSectionIndex === null) {
       doSeek(0);
@@ -607,7 +611,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   }
 
   function restartSection(): void {
-    cancelRepeatLatch();
+    cancelRepeatLatch("restartSection");
     if (!activeCues) return;
     if (currentSectionIndex === null) {
       doSeek(0);
@@ -617,6 +621,19 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     if (firstCueInSection) {
       doSeek(firstCueInSection.start_ms / 1000);
     }
+  }
+
+  // Section ▶ button (tunatale-0w2w). A TRACK-level advance through
+  // HANDS_FREE_SEQUENCE, with hands-free on or off (the user's call,
+  // 2026-09-21). Cue-level seeks cannot cross a section boundary in track mode
+  // (every per-track cue carries section_index 0), hence selectTrack. English
+  // variants all sit at the EN step, so ▶ from any of them hands off.
+  function nextSectionAction(): void {
+    cancelRepeatLatch("nextSectionAction");
+    if (activeSectionType === null) return;
+    const step = SEQUENCE_STEP.get(activeSectionType);
+    if (step === undefined) return;
+    advanceHandsFreePass(step);
   }
 
   // --- Ref-group cue stepping ---
@@ -630,7 +647,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   }
 
   function nextCueAction(): void {
-    cancelRepeatLatch();
+    cancelRepeatLatch("nextCue");
     const groupIdx = findCurrentGroupIdx();
     if (groupIdx < 0) return;
     const nextCueIndex = findGroupStart(refGroups, groupIdx, "next");
@@ -642,7 +659,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   }
 
   function prevCueAction(): void {
-    cancelRepeatLatch();
+    cancelRepeatLatch("prevCue");
     const groupIdx = findCurrentGroupIdx();
     if (groupIdx < 0) return;
     const prevCueIndex = findGroupStart(refGroups, groupIdx, "prev");
@@ -660,7 +677,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     seekRef: CueRef | null = null,
     fromStart = false,
   ): void {
-    cancelRepeatLatch();
+    cancelRepeatLatch("selectTrack");
     const section = audioSections.find((s) => s.section_type === sectionType);
     if (!section) return;
 
@@ -757,7 +774,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // there — no track change, preserving the chosen variant. Otherwise switch to
   // the ref's canonical section and seek to it.
   function playRef(ref: CueRef): void {
-    cancelRepeatLatch();
+    cancelRepeatLatch("playRef");
     const here =
       activeCues?.find(
         (c) => c.ref && c.ref.kind === ref.kind && c.ref.target_index === ref.target_index,
@@ -783,7 +800,13 @@ export function createPlaybackController(deps: Deps): PlaybackController {
 
   // --- Latching repeat (tunatale-b23x) ---
 
-  function cancelRepeatLatch(): void {
+  // `by` names the action, for the trace only (tunatale-b2mn): a second tap on
+  // Repeat was seen RE-ENGAGING on Android, meaning something cleared the latch
+  // between taps, and jsdom does not reproduce it. A device log with
+  // ?mediatrace=on now names that something. Silent when nothing was latched,
+  // so ordinary navigation does not flood the trace.
+  function cancelRepeatLatch(by: string): void {
+    if (repeatLatched) trace("latch:off", `by=${by}`);
     repeatLatched = false;
     latchedCue = null;
   }
@@ -802,7 +825,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
 
   function toggleRepeatLatch(): void {
     if (repeatLatched) {
-      cancelRepeatLatch();
+      cancelRepeatLatch("toggle");
       return;
     }
     // Engaging pins the CURRENT cue — captured once, never re-read on a tick,
@@ -812,8 +835,55 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     if (!cue) return;
     latchedCue = cue;
     repeatLatched = true;
+    trace("latch:on", `cue=${cue.index}`);
     // Engaging is itself the first repetition: rewind the sentence.
     doSeek(cue.start_ms / 1000);
+  }
+
+  // --- Hands-free advance (shared by `ended` and Section ▶) ---
+
+  // Move the hands-free playback to the next pass of HANDS_FREE_SEQUENCE,
+  // starting from the beginning of that track. Extracted so the Section ▶
+  // button reuses the EXACT path the auto-advance takes on `ended` — one code
+  // path, one test surface. Skipped passes are skipped the same way: the next
+  // pass is found over the sections this lesson actually has, and
+  // selectTrack no-ops on a missing section, so advancing blindly to idx + 1
+  // would leave the same track selected and then play() it — an ended element
+  // restarts, so the pass would repeat forever with no escape but the
+  // transport.
+  //
+  // Returns:
+  //  - "advanced": a later pass was loaded and play() called.
+  //  - "completed": in-sequence with nothing left to play — the run is
+  //    COMPLETE, reported after the state below is settled so a handler that
+  //    navigates cannot observe a half-updated controller.
+  //  - "no-advance": the active section is outside the sequence (a plain track
+  //    ending) — silent here, the caller falls through to the plain end-of-
+  //    track state.
+  //
+  // `idx` is the current position in HANDS_FREE_SEQUENCE, -1 for none. The
+  // caller resolves it: `ended` by exact membership (an English variant is not
+  // a hands-free pass), the button by SEQUENCE_STEP (it is the EN step).
+  function advanceHandsFreePass(idx: number): "advanced" | "completed" | "no-advance" {
+    const next =
+      idx === -1
+        ? undefined
+        : HANDS_FREE_SEQUENCE.slice(idx + 1).find((t) =>
+            audioSections.some((s) => s.section_type === t),
+          );
+    if (next !== undefined) {
+      selectTrack(next, null, true);
+      void audioEl.play();
+      return "advanced";
+    }
+    if (idx !== -1) {
+      playing = false;
+      if (mediaSession) mediaSession.playbackState = "none";
+      updatePositionState();
+      deps.onHandsFreeEnd?.();
+      return "completed";
+    }
+    return "no-advance";
   }
 
   // --- Public API ---
@@ -851,6 +921,9 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     },
     get activeCues() {
       return activeCues;
+    },
+    get hasNextSection() {
+      return hasNextSection;
     },
     get resumeSection() {
       return pendingResume !== null ? pendingResumeSection : null;
@@ -895,6 +968,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     nextSection,
     prevSection,
     restartSection,
+    nextSectionAction,
     nextCue: nextCueAction,
     prevCue: prevCueAction,
     repeatCue,

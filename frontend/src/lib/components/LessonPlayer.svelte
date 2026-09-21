@@ -502,13 +502,14 @@
 
 	{#if hasCues && !collapsed}
 		<div class="sentence-row">
-			<button class="ctrl-btn small" onclick={() => ctrl.restartSection()} title={t('lessonPlayer.restartSection')}>
-				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><rect x="2" y="2" width="2" height="12" rx="1" fill="currentColor"/><polygon points="14,2 6,8 14,14" fill="currentColor"/></svg>
-				{t('lessonPlayer.section')}
+			<!-- Icon-only step buttons, Repeat keeps its word: five labelled buttons
+			     overflow a 412px Android screen (measured, tunatale-0w2w). The
+			     aria-label carries the name the text used to. -->
+			<button class="ctrl-btn small icon-only" onclick={() => ctrl.restartSection()} title={t('lessonPlayer.restartSection')} aria-label={t('lessonPlayer.restartSection')}>
+				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle" aria-hidden="true"><rect x="2" y="2" width="2" height="12" rx="1" fill="currentColor"/><polygon points="14,2 6,8 14,14" fill="currentColor"/></svg>
 			</button>
-			<button class="ctrl-btn small" onclick={() => ctrl.prevCue()} title={t('lessonPlayer.previousSentence')}>
-				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="12,2 4,8 12,14" fill="currentColor"/></svg>
-				{t('lessonPlayer.sentence')}
+			<button class="ctrl-btn small icon-only" onclick={() => ctrl.prevCue()} title={t('lessonPlayer.previousSentence')} aria-label={t('lessonPlayer.previousSentence')}>
+				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle" aria-hidden="true"><polygon points="12,2 4,8 12,14" fill="currentColor"/></svg>
 			</button>
 			<button
 				class="ctrl-btn small"
@@ -520,9 +521,17 @@
 				{t('lessonPlayer.repeat')}
 				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><path d="M4 8a4 4 0 0 1 7.5-2L10 8h3V4l-1 1a5 5 0 0 0-9 3h1zm8 0a4 4 0 0 1-7.5 2L6 8H3v4l1-1a5 5 0 0 0 9-3h-1z" fill="currentColor"/></svg>
 			</button>
-			<button class="ctrl-btn small" onclick={() => ctrl.nextCue()} title={t('lessonPlayer.nextSentence')}>
-				{t('lessonPlayer.sentence')}
-				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle"><polygon points="4,2 12,8 4,14" fill="currentColor"/></svg>
+			<button class="ctrl-btn small icon-only" onclick={() => ctrl.nextCue()} title={t('lessonPlayer.nextSentence')} aria-label={t('lessonPlayer.nextSentence')}>
+				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle" aria-hidden="true"><polygon points="4,2 12,8 4,14" fill="currentColor"/></svg>
+			</button>
+			<button
+				class="ctrl-btn small icon-only"
+				onclick={() => ctrl.nextSectionAction()}
+				title={t('lessonPlayer.nextSection')}
+				aria-label={t('lessonPlayer.nextSection')}
+				disabled={!ctrl.hasNextSection}
+			>
+				<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:middle" aria-hidden="true"><polygon points="2,2 10,8 2,14" fill="currentColor"/><rect x="12" y="2" width="2" height="12" rx="1" fill="currentColor"/></svg>
 			</button>
 		</div>
 	{/if}
@@ -718,6 +727,14 @@
 		background: var(--color-primary);
 		color: var(--color-on-primary);
 	}
+	/* Disabled Section ▶ at the last section: read-only surface, no pointer —
+	   beats the :hover rule above on the specificity tie (0,2,0 vs 0,1,1). */
+	.ctrl-btn:disabled {
+		opacity: 0.4;
+		cursor: default;
+		background: var(--color-surface-2);
+		color: var(--color-text);
+	}
 	/* Engaged Repeat latch: held in the primary colour so the loop state stays
 	   visible when not hovering, mirroring the phase pills' .active treatment. */
 	.ctrl-btn.active {
@@ -738,6 +755,11 @@
 		min-height: 36px;
 		padding: 0.35rem 0.65rem;
 		font-size: 0.8rem;
+	}
+	/* Icon-only step buttons keep a finger-sized target: the glyph alone would
+	   shrink them to ~29px, small for a tap while driving. */
+	.sentence-row .icon-only {
+		min-width: 2.5rem;
 	}
 	.sentence-row {
 		display: flex;
@@ -924,9 +946,8 @@
 			padding: 0.5rem 0.6rem;
 			font-size: 0.8rem;
 		}
-		/* The sentence row's four buttons (Section / Sentence / Repeat /
-		   Sentence) must fit one line now that Keys-skip moved to the toggles;
-		   tighten padding + gap so the last "Sentence" no longer wraps. */
+		/* The sentence row (four icon buttons around Repeat) must fit one line;
+		   tests/lesson-header-layout.spec.ts measures it down to 320px. */
 		.sentence-row {
 			gap: 0.3rem;
 			flex-wrap: nowrap;
