@@ -561,6 +561,58 @@ every device. The script also refuses to write through any symlink.
   (so nothing it writes on boot can blur the comparison). A mismatch exits 1
   and leaves the prod api stopped.
 
+## Switching where you learn: prod ↔ laptop
+
+`switch.sh` is the everyday form of the above (tunatale-qyw0). It moves your
+learning to a **separate instance on the laptop** and back, and parks whichever
+side you left.
+
+```bash
+export TT_DEPLOY_USER=<os-login name>   # § Connecting
+./switch.sh status                      # where TunaTale is live right now
+./switch.sh to-laptop                   # dry run: what would move down
+./switch.sh to-laptop --apply           # prod -> laptop; prints the phone URL
+./switch.sh to-prod --apply             # laptop -> prod
+./switch.sh start | stop                # the laptop instance alone (after a reboot)
+./switch.sh prepare                     # pre-build prod's commit; moves no data
+```
+
+Quit desktop Anki before `--apply` (the transfer refuses otherwise). The dev
+server can stay running: the laptop instance never touches it.
+
+**The laptop instance is not the dev server.** It is a git worktree at the
+commit prod runs (`~/TunaTaleLive/app`), built with prod's dependency set, on
+its own data (`~/TunaTaleLive/data`, laid out exactly like prod's volume) and
+its own ports: API 8100, page 5273 at `https://<mac>.ts.net:5273`. So learning
+never runs code that is mid-edit, and a dev-server reload never migrates your
+live data. Its keys come from the dev `backend/.env`; everything it must not
+share is set on its command line, and `~/TunaTaleLive/live.env` holds its
+`SYNC_ENABLED` (flipped by the transfer) and optional `PARKED_AT`.
+
+**`TT_HOME`, not `HOME`.** Every `~/.tunatale` path derives from
+`app.config.tt_home()`, so the instance points `TT_HOME` at its own data dir.
+Relocating `HOME` was the obvious alternative and is wrong: the AnkiWeb
+password comes from the macOS Keychain, and `security find-generic-password`
+under a relocated `HOME` reports the item as not found (exit 44, measured), so
+sync would fail looking like missing credentials. `switch.sh` refuses to build a
+commit that predates `tt_home()`, because that code would ignore `TT_HOME` and
+write into the dev server's `~/.tunatale`.
+
+**Parking.** `to-laptop` writes `PARKED_AT=<laptop URL>` into prod's
+`backend/.env`; `to-prod` removes it. While it is set, every `/api/*` route
+except `/api/health` answers 503 with `parked_at`, and the app shows only a
+"TunaTale is running on your laptop" page linking there. Anything graded on the
+parked copy would be overwritten by the next hand-back, so it cannot be.
+
+**The Anki media database** on the laptop side starts as a copy of
+`~/.tunatale/tt_collection.media.db2` (SQLite backup API) on the first
+`to-laptop`, the same starting point a plain `data-transfer.sh to-dev` has; the
+media FOLDER is desktop Anki's, symlinked by the app as on dev.
+
+Under the hood this is `data-transfer.sh` with `TT_LAPTOP_ROOT`,
+`TT_LOCAL_ENV_FILE`, `TT_LOCAL_SERVER_PATTERN` and `TT_PARK_URL` set, so every
+safety property in § "How it stays safe" holds unchanged.
+
 ## Accounts
 
 There is **no self-serve signup**, by design, at any point in Phases 1–3. Every
