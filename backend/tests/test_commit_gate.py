@@ -328,7 +328,23 @@ class TestTreeIdNamesTheTreeARunTested:
         assert proc.returncode == 0
         out = proc.stdout.strip()
         assert out and "\t" not in out and "\n" not in out  # one TSV-safe column
-        assert out == _load_hook().tree_id(str(_REPO_ROOT))
+        in_process = _load_hook().tree_id(str(_REPO_ROOT))
+        # The fingerprint hashes every changed and untracked-not-ignored path, so
+        # a mismatch means the checkout changed between the two calls. It has
+        # flaked twice in CI (runs 35640927131, and PR #186's) and never locally,
+        # even under a verified 0.2 s poller, so the failure must NAME what
+        # changed: two bare hashes told nobody anything the first time, and the
+        # `.coverage.*` fix made from them (430d406) was not the whole story.
+        assert out == in_process, (
+            f"tree changed mid-test: {out} != {in_process}\n"
+            + subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=all"],
+                cwd=_REPO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            ).stdout
+        )
 
     def test_per_worker_coverage_files_cannot_move_the_fingerprint(self) -> None:
         """Under ``pytest -n auto`` with coverage, each xdist worker writes
