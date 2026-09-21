@@ -31,6 +31,9 @@ certs/
 
 # Test & coverage artifacts
 .coverage
+# pytest-cov under xdist: one data file per worker, written as each finishes.
+# Unignored, they entered the commit gate's tree fingerprint mid-run.
+.coverage.*
 coverage.xml
 coverage.json
 htmlcov/

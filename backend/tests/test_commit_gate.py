@@ -330,6 +330,20 @@ class TestTreeIdNamesTheTreeARunTested:
         assert out and "\t" not in out and "\n" not in out  # one TSV-safe column
         assert out == _load_hook().tree_id(str(_REPO_ROOT))
 
+    def test_per_worker_coverage_files_cannot_move_the_fingerprint(self) -> None:
+        """Under ``pytest -n auto`` with coverage, each xdist worker writes
+        ``.coverage.<host>.<pid>.<random>`` as it finishes. ``.gitignore`` named
+        only ``.coverage``, so those files were UNTRACKED, fed tree_fingerprint,
+        and made the test above fail whenever a worker finished between its two
+        calls (CI run 35640927131, 2026-09-21: the covered ``backend`` job only,
+        at the last second of the suite)."""
+        probe = subprocess.run(
+            ["git", "check-ignore", "-q", "backend/.coverage.runnervm.1234.XyZabc"],
+            cwd=_REPO_ROOT,
+            timeout=60,
+        )
+        assert probe.returncode == 0, "per-worker coverage data files must be gitignored"
+
     def test_outside_a_repo_it_still_returns_a_token(self, tmp_path: Path) -> None:
         """A history line with an unknown tree beats a history line that was never written."""
         hook = _load_hook()
