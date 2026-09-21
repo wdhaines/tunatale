@@ -5,6 +5,8 @@
 #   ./switch.sh to-laptop [--apply] prod -> laptop: copy data down, park prod, start the laptop instance
 #   ./switch.sh to-prod   [--apply] laptop -> prod: stop the laptop instance, copy data up, unpark prod
 #   ./switch.sh start | stop        the laptop instance alone (e.g. after a reboot)
+#   ./switch.sh update              after a deploy, while learning is ON THE LAPTOP: rebuild
+#                                   the laptop instance at prod's new commit; moves no data
 #   ./switch.sh prepare             check out and build prod's commit now, moving no data
 #                                   (the first build takes minutes; to-laptop does it anyway)
 #
@@ -62,6 +64,9 @@ prod_ref() {  # the commit prod runs: the last tag deploy.sh recorded
   [ -n "$ref" ] || die "prod's deploy-history.log names no commit"
   echo "$ref"
 }
+
+# The laptop is live when the last handover gave IT the AnkiWeb sync.
+laptop_live() { grep -qx 'SYNC_ENABLED=true' "$LIVE_ENV" 2>/dev/null; }
 
 pid_alive() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
 running() { pid_alive "$RUN/api.pid" || pid_alive "$RUN/web.pid"; }
@@ -204,10 +209,23 @@ status() {
 case "${1:-}" in
   status) status ;;
   prepare) build "$(prod_ref)" ;;
+  update)
+    laptop_live || die "learning is not on the laptop — nothing to update (switch with to-laptop)"
+    ref="$(prod_ref)"
+    running && stop
+    build "$ref"
+    start
+    echo "==> the laptop instance now runs ${ref:0:10}; no data moved"
+    ;;
   start) start ;;
   stop) stop ;;
   to-laptop)
     ref="$(prod_ref)"
+    # Learning already on the laptop means prod holds the OLDER copy, and this
+    # would copy it DOWN over everything studied since the last switch. After a
+    # deploy, what is wanted is `update`. (Written the wrong way round in the
+    # 2026-09-21 handoff and caught before it was run.)
+    laptop_live && die "learning is already on the laptop — to-laptop would overwrite it with prod's older copy. After a deploy use: ./switch.sh update"
     [ "${2:-}" = --apply ] || { transfer to-dev; exit 0; }
     running && stop
     build "$ref"          # the SAME commit as prod, so the data's schema matches the code
@@ -223,6 +241,6 @@ case "${1:-}" in
     transfer to-prod --apply
     echo "==> learning is on prod again (the laptop instance is stopped)"
     ;;
-  -h|--help|"") sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|"") sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try --help)" ;;
 esac

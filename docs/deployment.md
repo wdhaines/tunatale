@@ -574,8 +574,14 @@ export TT_DEPLOY_USER=<os-login name>   # § Connecting
 ./switch.sh to-laptop --apply           # prod -> laptop; prints the phone URL
 ./switch.sh to-prod --apply             # laptop -> prod
 ./switch.sh start | stop                # the laptop instance alone (after a reboot)
+./switch.sh update                      # after a deploy, while on the laptop; moves no data
 ./switch.sh prepare                     # pre-build prod's commit; moves no data
 ```
+
+⚠️ **After a deploy while learning is on the laptop, run `update`, never
+`to-laptop`.** Prod then holds the OLDER copy, and `to-laptop` copies it DOWN
+over everything studied since the switch. `switch.sh` refuses `to-laptop` while
+the laptop holds the AnkiWeb sync, for exactly this reason.
 
 Quit desktop Anki before `--apply` (the transfer refuses otherwise). The dev
 server can stay running: the laptop instance never touches it.
