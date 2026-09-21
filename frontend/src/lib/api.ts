@@ -49,6 +49,16 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
   unauthorizedHandler = handler;
 }
 
+// A 503 carrying `parked_at` means this instance is parked (tunatale-qyw0):
+// TunaTale is live elsewhere and this copy must not be studied on. Reported
+// the same way as a 401, for the same reason — the layout decides what to show.
+let parkedHandler: ((url: string) => void) | null = null;
+
+/** Register (or clear, with `null`) the callback fired when the API says it is parked. */
+export function setParkedHandler(handler: ((url: string) => void) | null): void {
+  parkedHandler = handler;
+}
+
 // `/api/auth/*` is excluded from the handler on purpose: 401 is an ORDINARY
 // answer there, not a session expiry. `login` answers 401 for a wrong password
 // — treating that as "session expired" would bounce the user off the very
@@ -714,6 +724,8 @@ export class TunaTaleAPI {
       let detail = "";
       try {
         const body = await res.json();
+        const parkedAt = (body as { parked_at?: unknown }).parked_at;
+        if (res.status === 503 && typeof parkedAt === "string") parkedHandler?.(parkedAt);
         const d = (body as { detail?: unknown }).detail;
         if (typeof d === "string") {
           detail = d;

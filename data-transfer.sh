@@ -22,6 +22,13 @@
 #
 # NOT transferred: auth.db (production only), logs, the AnkiWeb password file,
 # and the Mac's backup directories. See docs/deployment.md § "Moving data".
+#
+# Normally the laptop side is the dev checkout (backend/*.db, ~/.tunatale).
+# switch.sh points it at the separate live instance instead (tunatale-qyw0):
+#   TT_LAPTOP_ROOT          laptop data dir, laid out exactly like prod's volume
+#   TT_LOCAL_ENV_FILE       the env file whose SYNC_ENABLED this script flips
+#   TT_LOCAL_SERVER_PATTERN pgrep -f pattern for the server that must be stopped
+#   TT_PARK_URL             to-dev parks prod with PARKED_AT=<this>; to-prod unparks
 set -euo pipefail
 
 HOST="${TT_DEPLOY_HOST:-tunatale}"
@@ -67,9 +74,26 @@ FILES=(
   "llm_usage.log|$DEV_TT/llm_usage.log|.tunatale/llm_usage.log"
 )
 
+field() { echo "$1" | cut -d'|' -f"$2"; }
+# Laptop-root mode: every laptop path becomes <root>/<the prod-relative path>,
+# because the live instance's data dir mirrors the prod volume's layout.
+LOCAL_ENV_FILE="${TT_LOCAL_ENV_FILE:-$BACKEND/.env}"
+LOCAL_SERVER_PATTERN="${TT_LOCAL_SERVER_PATTERN:-uvicorn app.main}"
+PARK_URL="${TT_PARK_URL:-}"
+if [ -n "${TT_LAPTOP_ROOT:-}" ]; then
+  # No namerefs: /bin/bash on macOS is 3.2, and nothing should depend on
+  # which bash happens to be first on PATH.
+  reroot() { echo "$(field "$1" 1)|$TT_LAPTOP_ROOT/$(field "$1" 3)|$(field "$1" 3)"; }
+  _t=(); for e in "${SQLITE[@]}"; do _t+=("$(reroot "$e")"); done; SQLITE=("${_t[@]}")
+  _t=(); for e in "${DIRS[@]}"; do _t+=("$(reroot "$e")"); done; DIRS=("${_t[@]}")
+  _t=(); for e in "${SQLITE_UP[@]}"; do _t+=("$(reroot "$e")"); done; SQLITE_UP=("${_t[@]}")
+  _t=(); for e in "${DIRS_UP[@]}"; do _t+=("$(reroot "$e")"); done; DIRS_UP=("${_t[@]}")
+  _t=(); for e in "${FILES[@]}"; do _t+=("$(reroot "$e")"); done; FILES=("${_t[@]}")
+  DEV_TT="$TT_LAPTOP_ROOT/.tunatale"
+fi
+
 die() { echo "data-transfer: $*" >&2; exit 1; }
 ssh_box() { ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=15 "${USER_AT}${HOST}" "$@"; }
-field() { echo "$1" | cut -d'|' -f"$2"; }
 compose() { ssh_box "cd $REMOTE_DIR && sudo docker compose $*"; }
 RSYNC_REMOTE=(rsync -a --rsync-path="sudo rsync" -e "ssh -i $SSH_KEY -o BatchMode=yes")
 
@@ -83,7 +107,7 @@ preflight() {
   scp -q -i "$SSH_KEY" -o BatchMode=yes "$HELPER" "${USER_AT}${HOST}:$REMOTE_DIR/data_snapshot.py"
 }
 
-dev_server_running() { pgrep -f "uvicorn app.main" >/dev/null 2>&1; }
+dev_server_running() { pgrep -f "$LOCAL_SERVER_PATTERN" >/dev/null 2>&1; }
 # Desktop Anki, not a TunaTale process: its media folder is part of the source.
 anki_running() { pgrep -x Anki >/dev/null 2>&1 || pgrep -f "Anki.app/Contents/MacOS" >/dev/null 2>&1; }
 
@@ -122,9 +146,20 @@ set_sync() {  # $1 = dev|prod, $2 = true|false — rewrites SYNC_ENABLED in that
   if [ "$1" = prod ]; then
     ssh_box "cd $REMOTE_DIR/backend && sed -i -E '/^[Ss][Yy][Nn][Cc]_[Ee][Nn][Aa][Bb][Ll][Ee][Dd]=/d' .env && echo '$line' >> .env"
   else
-    sed -i '' -E '/^[Ss][Yy][Nn][Cc]_[Ee][Nn][Aa][Bb][Ll][Ee][Dd]=/d' "$BACKEND/.env" && echo "$line" >> "$BACKEND/.env"
+    touch "$LOCAL_ENV_FILE"
+    sed -i '' -E '/^[Ss][Yy][Nn][Cc]_[Ee][Nn][Aa][Bb][Ll][Ee][Dd]=/d' "$LOCAL_ENV_FILE" && echo "$line" >> "$LOCAL_ENV_FILE"
   fi
   echo "    $1: $line"
+}
+
+set_park() {  # $1 = URL to park prod at, or "" to unpark. Takes effect at the next api start.
+  if [ -n "$1" ]; then
+    ssh_box "cd $REMOTE_DIR/backend && sed -i -E '/^PARKED_AT=/d' .env && echo 'PARKED_AT=$1' >> .env"
+    echo "    prod: parked at $1"
+  else
+    ssh_box "cd $REMOTE_DIR/backend && sed -i -E '/^PARKED_AT=/d' .env"
+    echo "    prod: unparked"
+  fi
 }
 
 wait_healthy() {
@@ -187,7 +222,7 @@ to_prod() {
     || die "verification FAILED — prod api left STOPPED; prod's previous state is in $bk"
 
   echo "==> handing AnkiWeb sync to prod"
-  set_sync prod true; set_sync dev false
+  set_sync prod true; set_sync dev false; set_park ""
   echo "==> starting the prod api"; compose up -d api; wait_healthy
   echo "==> done. prod is the live TunaTale; dev has sync OFF. Undo material: $HOST:$bk"
 }
@@ -235,6 +270,8 @@ to_dev() {
 
   echo "==> handing AnkiWeb sync to dev"
   set_sync prod false; set_sync dev true
+  if [ -n "$PARK_URL" ]; then set_park "$PARK_URL"
+  else echo "    prod: NOT parked (no TT_PARK_URL) — it will still serve the stale copy"; fi
   echo "==> restarting the prod api (sync OFF — do not study there until you transfer back)"
   compose up -d api; wait_healthy
   echo "==> done. dev is the live TunaTale. Undo material: $bk"

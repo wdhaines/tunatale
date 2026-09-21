@@ -17,7 +17,8 @@
 	import { llmHealthStore } from '$lib/stores/llmHealth.svelte';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
-	import { setUnauthorizedHandler } from '$lib/api';
+	import { setParkedHandler, setUnauthorizedHandler } from '$lib/api';
+	import { parkedStore } from '$lib/stores/parked.svelte';
 	import LlmHealthBanner from '$lib/components/LlmHealthBanner.svelte';
 	import { t } from '$lib/i18n/i18n.svelte';
 
@@ -92,12 +93,17 @@
 		// covers a session that dies mid-visit — including on pages whose only
 		// fetch is a `+page.ts` load that ran before this layout ever mounted.
 		setUnauthorizedHandler(() => void authStore.handleUnauthorized());
+		// A parked instance (tunatale-qyw0) answers every data call with a 503
+		// naming where TunaTale is live; the first one flips the whole app to
+		// the parked page, however the visit started.
+		setParkedHandler((url) => parkedStore.set(url));
 		void boot();
 
 		return () => {
 			stopTouchTrace?.();
 			void flushClientLog();
 			setUnauthorizedHandler(null);
+			setParkedHandler(null);
 			clearInterval(healthTimer);
 		};
 	});
@@ -167,6 +173,20 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
+{#if parkedStore.at}
+<main class="parked">
+	<img class="brand-mark" src={logo} alt="" />
+	<h1>{t('parked.title')}</h1>
+	<p>{t('parked.body')}</p>
+	<!-- Linked only when it is http(s): the value comes from the server, and an
+	     href is the one place a string turns into something executable. -->
+	{#if /^https?:\/\//.test(parkedStore.at)}
+		<a class="parked-link" href={parkedStore.at}>{parkedStore.at}</a>
+	{:else}
+		<p class="parked-link">{parkedStore.at}</p>
+	{/if}
+</main>
+{:else}
 {#if !onLogin}
 <LlmHealthBanner />
 
@@ -196,8 +216,25 @@
 {/if}
 
 {@render children()}
+{/if}
 
 <style>
+	.parked {
+		max-width: 28rem;
+		margin: 4rem auto;
+		padding: 0 1rem;
+		text-align: center;
+	}
+	.parked .brand-mark {
+		width: 3rem;
+		height: 3rem;
+	}
+	.parked-link {
+		display: inline-block;
+		margin-top: 0.5rem;
+		overflow-wrap: anywhere;
+		font-weight: 600;
+	}
 	/* Mobile-first: base targets small screens; min-width layers on desktop. */
 	.global-nav {
 		position: sticky;

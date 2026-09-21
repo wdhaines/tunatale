@@ -2,7 +2,7 @@
  * TunaTaleAPI client unit tests.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { TunaTaleAPI, setUnauthorizedHandler } from "./api";
+import { TunaTaleAPI, setParkedHandler, setUnauthorizedHandler } from "./api";
 import { makeSRSItemDetail } from "../test/factories";
 
 const BASE = "http://test-backend";
@@ -2933,5 +2933,66 @@ describe("401 interception", () => {
     } catch (err) {
       expect((err as Error & { retryAfter?: number }).retryAfter).toBeUndefined();
     }
+  });
+});
+
+describe("parked instance (tunatale-qyw0)", () => {
+  let api: TunaTaleAPI;
+  const LAPTOP = "https://my-mac.tail1234.ts.net:5273";
+
+  beforeEach(() => {
+    api = new TunaTaleAPI(BASE);
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setParkedHandler(null);
+  });
+
+  it("a 503 naming parked_at notifies the handler with where TunaTale is, and still throws", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(mockFailBody({ detail: "running elsewhere", parked_at: LAPTOP }, 503)),
+    );
+    const onParked = vi.fn();
+    setParkedHandler(onParked);
+
+    await expect(api.listCurricula()).rejects.toThrow("running elsewhere");
+
+    expect(onParked).toHaveBeenCalledWith(LAPTOP);
+  });
+
+  it("a plain 503 (an outage, not parking) does not notify", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFailBody({ detail: "down" }, 503)));
+    const onParked = vi.fn();
+    setParkedHandler(onParked);
+
+    await expect(api.listCurricula()).rejects.toThrow();
+
+    expect(onParked).not.toHaveBeenCalled();
+  });
+
+  it("parked_at on any status other than 503 is ignored", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(mockFailBody({ detail: "x", parked_at: LAPTOP }, 500)),
+    );
+    const onParked = vi.fn();
+    setParkedHandler(onParked);
+
+    await expect(api.listCurricula()).rejects.toThrow();
+
+    expect(onParked).not.toHaveBeenCalled();
+  });
+
+  it("with no handler registered a parked 503 still just throws", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(mockFailBody({ detail: "x", parked_at: LAPTOP }, 503)),
+    );
+    await expect(api.listCurricula()).rejects.toThrow();
   });
 });

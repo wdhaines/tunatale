@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 
-_CACHE_PATH = Path("~/.tunatale/anki_model_name.txt").expanduser()
+from app.config import tt_home
+
+_CACHE_PATH = tt_home() / "anki_model_name.txt"
 
 
 def get_or_discover_model_name_offline(conn: sqlite3.Connection, deck_name: str) -> str:

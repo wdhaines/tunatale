@@ -12,6 +12,7 @@ load_dotenv()
 
 from fastapi import Depends, FastAPI, Request, Response  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
 
 from app.api.health import STATUS_OK, check_health  # noqa: E402
 from app.api.models import HealthResponse, LanguagesResponse  # noqa: E402
@@ -336,6 +337,27 @@ async def _resolve_language_state(request, call_next):
         request.state.content_store = getattr(state, "content_store", None)
         request.state.language = getattr(state, "language", None)
     request.state.language_code = code
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def _refuse_while_parked(request, call_next):
+    """Refuse the whole API while this instance is parked (tunatale-qyw0).
+
+    Declared after the language middleware so it wraps it: a parked request is
+    answered before anything opens a database. ``/api/health`` is exempt by
+    EXACT path, because the container healthcheck and uptime monitoring poll
+    it and a parked box is still a healthy one. Read per request so switch.sh
+    can park and unpark with an .env edit and a restart, and tests can
+    monkeypatch it.
+    """
+    target = settings.parked_at
+    path = request.url.path
+    if target and path.startswith("/api/") and path != "/api/health":
+        return JSONResponse(
+            status_code=503,
+            content={"detail": f"TunaTale is running elsewhere right now: {target}", "parked_at": target},
+        )
     return await call_next(request)
 
 

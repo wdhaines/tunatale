@@ -1,9 +1,11 @@
 """Application configuration via Pydantic Settings."""
 
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The installed backend package root (``backend/``), used to anchor mutable-path
@@ -11,6 +13,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # systemd unit, or a restore drill starts somewhere other than ``backend/``, and
 # a CWD-relative default silently splits the writer from the reader.
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
+
+
+def tt_home() -> Path:
+    """TunaTale's data home: logs, ledgers, caches, backups, its Anki collection.
+
+    ``TT_HOME`` from the process environment, else ``~/.tunatale``. It exists so
+    the laptop's live instance can keep its data apart from the dev server's
+    (tunatale-qyw0). Relocating ``HOME`` instead would also relocate the macOS
+    Keychain lookup for the AnkiWeb password, which then fails as "not found"
+    (measured 2026-09-21: exit 44 vs 0). Read from the environment, not from
+    ``.env``, because it must be fixed before anything imports a path from here.
+    """
+    return Path(os.environ.get("TT_HOME") or "~/.tunatale").expanduser()
 
 
 class Settings(BaseSettings):
@@ -44,14 +59,14 @@ class Settings(BaseSettings):
     groq_requests_per_day_limit: int = 1_000
     # Ollama/secondary fallback when Groq fails; default off — failures fail loudly.
     llm_allow_fallback: bool = False
-    llm_usage_ledger_path: Path = Path("~/.tunatale/llm_usage.log").expanduser()
+    llm_usage_ledger_path: Path = Field(default_factory=lambda: tt_home() / "llm_usage.log")
 
     target_language: str = "sl"
 
     anki_collection_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.anki2").expanduser()
     anki_media_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.media").expanduser()
     anki_deck_name: str = "1. Slovene"
-    anki_backup_dir: Path = Path("~/.tunatale/anki-backups").expanduser()
+    anki_backup_dir: Path = Field(default_factory=lambda: tt_home() / "anki-backups")
     # Retention cap for the safe_open backup directory. safe_open writes a full
     # ~16 MB collection snapshot on every call; without a cap the directory grows
     # without bound. Keep the N most recent snapshots (~16 MB each); <= 0 disables.
@@ -62,14 +77,14 @@ class Settings(BaseSettings):
     # wiped the Slovene curricula (2026-06-30, 2026-07-13). Snapshotted once per
     # day at startup into a dir OUTSIDE the repo (an in-repo rm/glob can't reach
     # it); the N most recent daily snapshots are kept. <= 0 disables.
-    db_backup_dir: Path = Path("~/.tunatale/db-backups").expanduser()
+    db_backup_dir: Path = Field(default_factory=lambda: tt_home() / "db-backups")
     db_backup_keep_days: int = 5
     # Pre-migration snapshots, one per schema version ever left behind. A
     # SEPARATE directory from db_backup_dir on purpose: those rotate after
     # db_backup_keep_days, and the snapshot that makes a schema rollback
     # possible has to outlive that window — you learn you need it long after
     # the deploy. Never pruned; see app/storage/db_backup.py.
-    migration_backup_dir: Path = Path("~/.tunatale/pre-migration-backups").expanduser()
+    migration_backup_dir: Path = Field(default_factory=lambda: tt_home() / "pre-migration-backups")
     # TT's canonical media dir, served at /api/srs/media/{filename} and written
     # by the import side (media/importer.py, anki_sync/import_seed.py) and the
     # add-time vocab path. ONE setting on purpose: this used to be a CWD-relative
@@ -85,15 +100,15 @@ class Settings(BaseSettings):
     # main.py::lifespan hardcoded ``_BACKEND_DIR / "output/audio"``, which this
     # default reproduces exactly, so a dev with no env change sees no difference.
     audio_dir: Path = _BACKEND_DIR / "output/audio"
-    anki_fallback_log: Path = Path("~/.tunatale/logs/anki-fallback.log").expanduser()
+    anki_fallback_log: Path = Field(default_factory=lambda: tt_home() / "logs/anki-fallback.log")
     # Durable per-sync soak log: every non-dry sync (CLI or API) appends a
     # SYNC_SOAK heartbeat + one RECOMPUTE_DIVERGENCE line per divergence.
-    sync_log: Path = Path("~/.tunatale/logs/sync.log").expanduser()
+    sync_log: Path = Field(default_factory=lambda: tt_home() / "logs/sync.log")
     # Durable WARNING sink. Everything else on the generation path is volatile:
     # the dev server logs to a tty with no redirect, and /api/llm/activity is a
     # 300-event in-memory ring a --reload empties. bd tunatale-y0bk.6.
     # ⚠️ UTC, unlike sync.log above, which is local — see app/logging_sink.py.
-    warning_log: Path = Path("~/.tunatale/logs/warnings.log").expanduser()
+    warning_log: Path = Field(default_factory=lambda: tt_home() / "logs/warnings.log")
     # Where a mock-mode cassette miss is appended, one line each, before it
     # raises. None = off. Only the e2e webServer env sets it, and Playwright's
     # global teardown fails the run on any line: a fail-soft caller (the gloss
@@ -106,7 +121,7 @@ class Settings(BaseSettings):
     # because a bug that only reproduces on a real phone currently leaves no
     # evidence anywhere — Playwright's tap() cannot reproduce a fingertip losing
     # a hit-test, and a device console dies with the tab.
-    client_log: Path = Path("~/.tunatale/logs/client.log").expanduser()
+    client_log: Path = Field(default_factory=lambda: tt_home() / "logs/client.log")
     client_log_enabled: bool = False
 
     # Peer-sync (anki subprocess) config — see sync_orchestrator.py. Also the
@@ -114,7 +129,7 @@ class Settings(BaseSettings):
     # whether to mount app.api.anki.router at all — defaults True to preserve
     # the pre-Stage-4 behavior (the router was mounted unconditionally); set
     # False to run TunaTale with the anki_sync plugin fully disabled.
-    tt_collection_path: Path = Path("~/.tunatale/tt_collection.anki2").expanduser()
+    tt_collection_path: Path = Field(default_factory=lambda: tt_home() / "tt_collection.anki2")
     sync_enabled: bool = True
     sync_endpoint: str = ""  # "" → AnkiWeb default; else self-host URL
     sync_username: str = ""
@@ -233,7 +248,7 @@ class Settings(BaseSettings):
     azure_tts_chars_per_month_limit: int = 500_000
     # Where the Azure character ledger lives; the Groq sibling this mirrors is
     # llm_usage_ledger_path. File-backed so the tally survives restarts.
-    azure_tts_usage_ledger_path: Path = Path("~/.tunatale/azure_tts_usage.log").expanduser()
+    azure_tts_usage_ledger_path: Path = Field(default_factory=lambda: tt_home() / "azure_tts_usage.log")
     # The month boundary's TIMEZONE. Azure documents the monthly allowance but
     # NOT when the month turns over — the quotas page defers to the pricing
     # page, which says nothing about the boundary. Rather than guess, it is a
@@ -276,7 +291,7 @@ class Settings(BaseSettings):
 
     # Where aligned syllable boundaries are cached between renders, so a re-render
     # never re-runs the model. Boundaries are keyed by (word, voice, rate, model).
-    audio_alignment_cache_dir: Path = Path("~/.tunatale/alignment-cache").expanduser()
+    audio_alignment_cache_dir: Path = Field(default_factory=lambda: tt_home() / "alignment-cache")
 
     # Where synthesized clips are cached BETWEEN renders, keyed by
     # (voice, rate, text) — the sha256 mp3 cache both TTS adapters have always
@@ -285,7 +300,7 @@ class Settings(BaseSettings):
     # throttle (fb0a17f) a lesson is a ~24-minute serial run of TTS calls, so
     # one clip failing at minute 23 used to cost all 24 minutes again.
     # Unbounded — nothing evicts from it; see tunatale-rm6v.
-    tts_cache_dir: Path = Path("~/.tunatale/tts-cache").expanduser()
+    tts_cache_dir: Path = Field(default_factory=lambda: tt_home() / "tts-cache")
 
     # A render that dies on ONE exhausted clip re-runs itself rather than
     # waiting for a human to notice and press the button again (tunatale-uxm0).
@@ -365,6 +380,12 @@ class Settings(BaseSettings):
     # TT_ENV=prod, where the container inherits nothing from its host and the
     # fallback — UTC — moves ANKI_ROLLOVER_HOUR away from the user's 4 AM.
     tz: str = ""
+    # Where TunaTale is live while THIS instance is parked (tunatale-qyw0), e.g.
+    # the laptop's tailnet URL. Non-empty = parked: every /api/* route except
+    # /api/health answers 503 naming it, so a stale copy cannot be studied on.
+    # Anything graded here would be overwritten by the next hand-back.
+    # Written and cleared by switch.sh; empty everywhere else.
+    parked_at: str = ""
 
 
 def prod_profile_problems(s: Settings) -> list[str]:
