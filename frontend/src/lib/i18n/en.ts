@@ -3,6 +3,8 @@ import type { Message } from "./i18n.svelte";
 // English catalog. One flat object; keys are `<fileStem>.<purpose>` where
 // fileStem is the source file in lowerCamelCase. Groups follow sweep order.
 export const en = {
+  "parked.title": "TunaTale is running on your laptop",
+  "parked.body": "This copy is parked so nothing studied here gets lost. Continue here:",
   // LessonPlayer.svelte
   "lessonPlayer.keyPhrases": "Key Phrases",
   "lessonPlayer.dialogue": "Dialogue",

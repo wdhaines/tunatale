@@ -23,6 +23,7 @@ vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...ar
 vi.mock("$lib/api", () => ({
   LANGUAGE_STORAGE_KEY: "tt-language",
   setUnauthorizedHandler: vi.fn(),
+  setParkedHandler: vi.fn(),
   api: {
     peerSync: vi.fn(),
     fetchQueueStats: vi.fn(),
@@ -42,7 +43,8 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-import { api, setUnauthorizedHandler } from "$lib/api";
+import { api, setParkedHandler, setUnauthorizedHandler } from "$lib/api";
+import { parkedStore } from "$lib/stores/parked.svelte";
 import { authStore } from "$lib/stores/auth.svelte";
 import { syncStore } from "$lib/stores/sync.svelte";
 import { queueStatsStore } from "$lib/stores/queueStats.svelte";
@@ -461,5 +463,41 @@ describe("mediatrace URL switch", () => {
     expect(localStorage.getItem("mediaTrace")).toBe("on");
     unmount();
     window.history.replaceState(null, "", "/");
+  });
+});
+
+describe("root +layout.svelte — parked (tunatale-qyw0)", () => {
+  const LAPTOP = "https://my-mac.tail1234.ts.net:5273";
+
+  beforeEach(() => parkedStore.clear());
+
+  it("registers a parked handler that records where TunaTale is", () => {
+    renderLayout();
+    const handler = vi.mocked(setParkedHandler).mock.calls[0][0] as (url: string) => void;
+    handler(LAPTOP);
+    expect(parkedStore.at).toBe(LAPTOP);
+  });
+
+  it("while parked, shows only the parked page, linking to the live instance", async () => {
+    const { container, getByRole, queryByTestId } = renderLayout();
+    parkedStore.set(LAPTOP);
+    await waitFor(() => expect(getByRole("link", { name: LAPTOP })).toBeTruthy());
+    expect(getByRole("link", { name: LAPTOP }).getAttribute("href")).toBe(LAPTOP);
+    // Nothing that could be studied on: no page content, no nav, no Sync.
+    expect(queryByTestId("slot")).toBeNull();
+    expect(container.querySelector(".global-nav")).toBeNull();
+  });
+
+  it("a non-http(s) parked_at is shown as text, never as a link", async () => {
+    const { findByText, queryByRole } = renderLayout();
+    parkedStore.set("javascript:alert(1)");
+    expect(await findByText("javascript:alert(1)")).toBeTruthy();
+    expect(queryByRole("link", { name: "javascript:alert(1)" })).toBeNull();
+  });
+
+  it("unregisters the handler on unmount", () => {
+    const { unmount } = renderLayout();
+    unmount();
+    expect(vi.mocked(setParkedHandler)).toHaveBeenLastCalledWith(null);
   });
 });
