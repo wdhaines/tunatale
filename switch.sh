@@ -5,6 +5,8 @@
 #   ./switch.sh to-laptop [--apply] prod -> laptop: copy data down, park prod, start the laptop instance
 #   ./switch.sh to-prod   [--apply] laptop -> prod: stop the laptop instance, copy data up, unpark prod
 #   ./switch.sh start | stop        the laptop instance alone (e.g. after a reboot)
+#   ./switch.sh prepare             check out and build prod's commit now, moving no data
+#                                   (the first build takes minutes; to-laptop does it anyway)
 #
 # Without --apply the two switches are dry runs: they show what would move.
 #
@@ -100,18 +102,35 @@ start() {
     || die "the laptop checkout is not built — run ./switch.sh to-laptop"
   # shellcheck disable=SC1090
   set -a; . "$LIVE_ENV"; set +a
+  local port
+  for port in "$API_PORT" "$WEB_PORT"; do
+    # A taken port is a refusal, not a detail: vite would quietly move to the
+    # next one and the phone's bookmark would reach whatever holds this one.
+    if lsof -tiTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      die "port $port is in use by pid $(lsof -tiTCP:"$port" -sTCP:LISTEN | head -1) — ./switch.sh stop, or find what holds it"
+    fi
+  done
   echo "==> starting the laptop instance (sync ${SYNC_ENABLED:-false})"
-  (cd "$APP/backend" && \
-    TT_HOME="$DATA/.tunatale" MEDIA_DIR="$DATA/media" AUDIO_DIR="$DATA/output/audio" \
+  # Half a start is worse than none: if anything below dies, take down what did start.
+  trap 'stop >/dev/null 2>&1 || true' ERR EXIT
+  # Each server is the backgrounded command ITSELF (env and nohup exec
+  # through), so $! is the server's pid. Backgrounding a `cd && ...` list
+  # instead records a wrapper shell, and `stop` then leaves the server running.
+  cd "$APP/backend"
+  env TT_HOME="$DATA/.tunatale" MEDIA_DIR="$DATA/media" AUDIO_DIR="$DATA/output/audio" \
     DATABASE_URL="sqlite:///$DATA/tunatale_sl.db" \
     DATABASE_URLS="{\"sl\": \"sqlite:///$DATA/tunatale_sl.db\", \"no\": \"sqlite:///$DATA/tunatale_no.db\"}" \
     AUTH_DATABASE_URL="sqlite:///$DATA/auth.db" LEMMATIZER_TYPE=table \
     SYNC_ENABLED="${SYNC_ENABLED:-false}" PARKED_AT="${PARKED_AT:-}" \
     nohup .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port "$API_PORT" \
       --ssl-keyfile ../certs/localhost-key.pem --ssl-certfile ../certs/localhost.pem \
-      > "$RUN/api.log" 2>&1 & echo $! > "$RUN/api.pid")
-  (cd "$APP/frontend" && VITE_SSL_ENABLED=true API_PORT="$API_PORT" \
-    nohup bun scripts/preview.mjs --port "$WEB_PORT" > "$RUN/web.log" 2>&1 & echo $! > "$RUN/web.pid")
+      < /dev/null > "$RUN/api.log" 2>&1 &
+  echo $! > "$RUN/api.pid"
+  cd "$APP/frontend"
+  env VITE_SSL_ENABLED=true API_PORT="$API_PORT" \
+    nohup bun scripts/preview.mjs --port "$WEB_PORT" < /dev/null > "$RUN/web.log" 2>&1 &
+  echo $! > "$RUN/web.pid"
+  cd "$REPO"
   local i
   for i in $(seq 1 60); do
     curl -skf -o /dev/null "https://localhost:$API_PORT/api/health" && break
@@ -119,14 +138,34 @@ start() {
     sleep 1
   done
   curl -skf -o /dev/null "https://localhost:$API_PORT/api/health" || die "the API never became healthy — see $RUN/api.log"
+  # And the page itself, on THIS port: preview.mjs runs with strictPort, so a
+  # taken port kills it here instead of it drifting to the next one.
+  for i in $(seq 1 30); do
+    curl -skf -o /dev/null "https://localhost:$WEB_PORT/" && break
+    pid_alive "$RUN/web.pid" || die "the web server exited — see $RUN/web.log"
+    sleep 1
+  done
+  curl -skf -o /dev/null "https://localhost:$WEB_PORT/" || die "the web server never answered on $WEB_PORT — see $RUN/web.log"
+  trap - ERR EXIT
   echo "    live at $(laptop_url)"
 }
 
 stop() {
-  local f
+  local f port i
   for f in "$RUN/web.pid" "$RUN/api.pid"; do
     if pid_alive "$f"; then kill "$(cat "$f")"; fi
     rm -f "$f"
+  done
+  # Stopped means the PORTS are free, not that a kill was sent: a leaked
+  # server keeps answering the phone with whatever data it last had.
+  for port in "$API_PORT" "$WEB_PORT"; do
+    for i in $(seq 1 20); do
+      lsof -tiTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 || break
+      sleep 0.5
+    done
+    if lsof -tiTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      die "port $port is still held by pid $(lsof -tiTCP:"$port" -sTCP:LISTEN | head -1) after stop"
+    fi
   done
   echo "==> laptop instance stopped"
 }
@@ -164,6 +203,7 @@ status() {
 
 case "${1:-}" in
   status) status ;;
+  prepare) build "$(prod_ref)" ;;
   start) start ;;
   stop) stop ;;
   to-laptop)
@@ -183,6 +223,6 @@ case "${1:-}" in
     transfer to-prod --apply
     echo "==> learning is on prod again (the laptop instance is stopped)"
     ;;
-  -h|--help|"") sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|"") sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try --help)" ;;
 esac

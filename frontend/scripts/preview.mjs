@@ -29,5 +29,9 @@ process.on("uncaughtException", (err) => {
 const portFlag = process.argv.indexOf("--port");
 const port = portFlag !== -1 ? Number(process.argv[portFlag + 1]) : 5173;
 
-const server = await preview({ preview: { port } });
+// strictPort: a taken port is an error, never a quiet move to the next one.
+// The phone reaches this server by a bookmarked port; if vite drifted, that
+// bookmark would reach whatever still held the old one (found 2026-09-21 by
+// switch.sh's own test: a leaked server kept 5273 and the new one took 5274).
+const server = await preview({ preview: { port, strictPort: true } });
 server.printUrls();
