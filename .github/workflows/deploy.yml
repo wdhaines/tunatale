@@ -33,6 +33,19 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # actions/checkout resolves a FULL commit SHA, a branch or a tag, but a
+      # SHORT sha is fetched as a branch/tag name, matches nothing, and dies
+      # three retries later with a bare "git failed with exit code 1"
+      # (run 35655601953, 2026-09-21). Refuse it up front with the fix.
+      - name: Refuse a short commit SHA
+        env:
+          REF: ${{ github.event.inputs.ref }}
+        run: |
+          if printf '%s' "$REF" | grep -Eqi '^[0-9a-f]{4,39}$'; then
+            echo "::error::'$REF' looks like a SHORT commit SHA. Pass the full 40-character SHA: gh workflow run deploy-images -f ref=\$(git rev-parse $REF)"
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.ref || github.sha }}
