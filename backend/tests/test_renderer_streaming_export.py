@@ -174,6 +174,49 @@ class TestTheTimelineIsUnchanged:
         assert 499.0 < len(samples) / rate * 1000 - _PINNED_CUES[-1][2] < 500.5
 
 
+class TestSectionFilesKeepTheirLength:
+    """bd tunatale-rwkz.5: the per-section files stream too, and stay exactly as long.
+
+    The reader highlights a section file against cues REBASED from the full
+    lesson (render_service::derive_section_cues). Those are computed, so no
+    encode change can move them; what an encode change CAN move is the file's
+    own length, and then every rebased cue stops lining up with the audio.
+
+    MEASURED against the pre-change (buffered) renderer on 2026-09-21:
+        wav  frames 15654 / 9923 / 14993 at 11025 Hz
+        opus 1419.92 / 900.08 / 1359.92 ms, each within 0.1 ms of its WAV twin
+    WAV is pinned exactly. Opus is pinned RELATIVE to WAV (within 5 ms) rather
+    than by frame count, because end-trimming can differ between ffmpeg
+    versions and CI's is not this Mac's; 5 ms still catches the failure that
+    matters, one Opus frame (20 ms) of padding.
+    """
+
+    _WAV_FRAMES = [15654, 9923, 14993]
+
+    async def _render(self, tts, tmp_path, codec):
+        ext = "wav" if codec == "wav" else "opus"
+        paths = [tmp_path / f"s{i}.{ext}" for i in range(3)]
+        await _renderer(tts, codec=codec).render(_lesson(), tmp_path / f"full.{ext}", section_paths=paths)
+        return paths
+
+    async def test_wav_sections_are_exactly_the_pinned_length(self, tts, tmp_path):
+        paths = await self._render(tts, tmp_path, "wav")
+        assert [sf.info(str(p)).frames for p in paths] == self._WAV_FRAMES
+
+    async def test_opus_sections_match_the_pcm_length_and_open_in_soundfile(self, tts, tmp_path):
+        (tmp_path / "w").mkdir()
+        (tmp_path / "o").mkdir()
+        wav = await self._render(tts, tmp_path / "w", "wav")
+        opus = await self._render(tts, tmp_path / "o", "opus")
+        for w, o in zip(wav, opus, strict=True):
+            wi = sf.info(str(w))
+            # sf.info on the Opus file is also the "one readable Ogg stream"
+            # check: soundfile refuses chained Ogg outright.
+            oi = sf.info(str(o))
+            assert o.read_bytes()[:4] == b"OggS"
+            assert abs(oi.frames / oi.samplerate - wi.frames / wi.samplerate) * 1000 < 5, o.name
+
+
 class TestTheStreamingEncoder:
     """``encode_audio_stream`` is the seam that removes the big allocation.
 
@@ -184,7 +227,30 @@ class TestTheStreamingEncoder:
     The peak-memory claim itself is measured out of band (see the PR), because
     numpy buffers are allocated outside tracemalloc's view and a unit test that
     pretended to measure them would be decoration.
+
+    ⚠️ CORRECTED 2026-09-21 (bd tunatale-rwkz.5): that holds for the numpy
+    buffers, but NOT for the copy this writer used to make. ``.tobytes()``
+    builds a Python ``bytes`` object, which tracemalloc does see, and for a
+    one-chunk call (a whole section) it was a full float32 copy: measured 57.9
+    MB extra for a 10-minute section, against 32.4 MB for the old buffered
+    path. The zero-copy test below guards exactly that.
     """
+
+    def test_a_large_chunk_is_written_without_copying_it(self, tmp_path):
+        """A section is streamed as ONE chunk, so a per-chunk copy is a copy of
+        the whole section. Control: the chunk's own size, which a copy would
+        reach and a view does not come near."""
+        import tracemalloc
+
+        from app.audio.transcode import encode_audio_stream
+
+        rate = 24000
+        chunk = np.zeros((rate * 20, 1), dtype="float32")  # 20 s, 1.92 MB
+        tracemalloc.start()
+        encode_audio_stream(iter([chunk]), rate, "opus", "28k", tmp_path / "big.opus")
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        assert peak < chunk.nbytes * 0.25, f"peak {peak} bytes for a {chunk.nbytes}-byte chunk: it was copied"
 
     def test_it_consumes_a_generator_lazily(self, tmp_path):
         """A generator, not a list: taking a sequence would let a caller build

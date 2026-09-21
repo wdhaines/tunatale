@@ -19,7 +19,7 @@ from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.ports import TTSService
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.slicer import ChunkSlicer, SliceSpec
-from app.audio.transcode import encode_audio, encode_audio_stream
+from app.audio.transcode import encode_audio_stream
 from app.languages import PhonemePlanner, get_tts_voice_gain_db
 from app.models.lesson import Lesson, Phrase, Section
 
@@ -83,11 +83,6 @@ def _concat(parts: list[_Audio]) -> _Audio:
                 f"got {part.rate} Hz / {part.samples.shape[1]} ch"
             )
     return _Audio(np.concatenate([p.samples for p in parts], axis=0), head.rate)
-
-
-def _write_wav(path: Path, audio: _Audio) -> None:
-    """Write *audio* to *path* as a 16-bit PCM WAV."""
-    sf.write(str(path), audio.samples, audio.rate, subtype=_WAV_SUBTYPE)
 
 
 # 10 ** (-1.0 / 20) — the peak clamp ceiling in linear amplitude.
@@ -189,11 +184,14 @@ class LessonRenderer:
         ``"wav"`` writes uncompressed PCM (the historical default); any other
         codec routes the buffer through ffmpeg for a compressed, mobile-friendly
         file. The caller is responsible for giving *path* the matching extension.
+
+        A one-piece stream (bd tunatale-rwkz.5): the old buffered route rendered
+        the whole buffer to a WAV ``BytesIO`` for ffmpeg's stdin, which for a
+        10-minute section was 32.4 MB extra; streamed it is 0.3 MB, same file
+        length, same wall time. Every section writer (the export in ``render``,
+        ``render_section`` and the breakdown previews) comes through here.
         """
-        if self._delivery_codec == "wav":
-            _write_wav(path, audio)
-        else:
-            path.write_bytes(encode_audio(audio.samples, audio.rate, self._delivery_codec, self._delivery_bitrate))
+        self._write_audio_stream(path, [audio], audio.rate)
 
     def _write_audio_stream(self, path: Path, pieces: list[_Audio | None], rate: int) -> None:
         """Write *pieces*, in order, as one continuous file — never joined first.

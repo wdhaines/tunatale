@@ -138,7 +138,12 @@ def encode_audio_stream(
                     proc.kill()
                     msg = f"encode_audio_stream is mono-only, got {channels} channels"
                     raise ValueError(msg)
-            proc.stdin.write(np.ascontiguousarray(chunk, dtype="float32").tobytes())
+            # A VIEW, not .tobytes(): a section arrives as one chunk, and a
+            # bytes copy of it was a full float32 copy, larger than the WAV the
+            # buffered path used to build (bd tunatale-rwkz.5, measured).
+            # ascontiguousarray only copies when the input is not already
+            # contiguous float32, which renderer output always is.
+            proc.stdin.write(memoryview(np.ascontiguousarray(chunk, dtype="float32")).cast("B"))
     except BrokenPipeError:  # pragma: no cover - ffmpeg died early; its stderr is the real error
         pass
     finally:
