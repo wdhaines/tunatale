@@ -4,6 +4,30 @@
  */
 
 export interface paths {
+  "/api/admin/background-work": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Background Work Status
+     * @description Report background jobs still running after their request returned.
+     *
+     *     A sync's prestage and ``/listen``'s media fetches outlive the response by
+     *     design (tunatale-rwkz.6). ``idle`` is the signal to wait on before measuring
+     *     anything on the box; inferring it from log volume failed twice.
+     */
+    get: operations["background_work_status_api_admin_background_work_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/admin/refresh-media": {
     parameters: {
       query?: never;
@@ -2074,6 +2098,43 @@ export interface components {
       glosses_found: number;
       /** Updated */
       updated: number;
+    };
+    /**
+     * BackgroundJobFinished
+     * @description The most recent background job to finish.
+     */
+    BackgroundJobFinished: {
+      /** Elapsed S */
+      elapsed_s: number;
+      /** Finished Ago S */
+      finished_ago_s: number;
+      /** Kind */
+      kind: string;
+      /** Ok */
+      ok: boolean;
+    };
+    /**
+     * BackgroundWorkResponse
+     * @description Response of GET /api/admin/background-work (tunatale-rwkz.6).
+     *
+     *     Counts are keyed by job kind and cover this process's lifetime.
+     */
+    BackgroundWorkResponse: {
+      /** Completed */
+      completed: {
+        [key: string]: number;
+      };
+      /** Failed */
+      failed: {
+        [key: string]: number;
+      };
+      /** Idle */
+      idle: boolean;
+      /** Inflight */
+      inflight: {
+        [key: string]: number;
+      };
+      last_finished: components["schemas"]["BackgroundJobFinished"] | null;
     };
     /** Body_put_image_upload_api_srs_items__item_id__image_upload_put */
     Body_put_image_upload_api_srs_items__item_id__image_upload_put: {
@@ -4178,6 +4239,26 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+  background_work_status_api_admin_background_work_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BackgroundWorkResponse"];
+        };
+      };
+    };
+  };
   refresh_media_api_admin_refresh_media_post: {
     parameters: {
       query?: never;

@@ -327,6 +327,30 @@ class TestPreStagesNextSyncsImages:
         assert (tmp_path / "media" / filename).read_bytes() == b"IMGBYTES"
 
     @pytest.mark.usefixtures("sociable_tt_collection")
+    async def test_the_prestage_is_visible_as_background_work(self, fake_driver, tmp_path, monkeypatch):
+        """tunatale-rwkz.6: the sync returning is not the work finishing, so the
+        prestage must be counted by the app's background-work tracker."""
+        from app.common.background_work import background_work
+
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path / "media")
+        self._seed_awaiting_production(app.state.srs_db)
+        before = background_work(app).snapshot()["completed"].get("prestage_images", 0)
+
+        class _M:
+            image_bytes, image_ext, audio_bytes, audio_source = b"IMGBYTES", "jpg", None, None
+
+        async def _fake_fetch(*a, **k):
+            return _M()
+
+        with patch("app.api.anki.fetch_card_media", _fake_fetch):
+            response = await _post_peer_sync()
+
+        assert response.status_code == 200
+        snap = background_work(app).snapshot()
+        assert snap["completed"].get("prestage_images", 0) == before + 1
+        assert "prestage_images" not in snap["inflight"]
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
     async def test_a_dry_run_prestages_nothing(self, fake_driver, tmp_path, monkeypatch):
         """A dry run must not spend live media fetches — it changes nothing by definition."""
         monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path / "media")
@@ -434,6 +458,27 @@ class TestPreStagesClozeSentences:
         assert cached is not None, "the background cloze pre-stage did not store a sentence"
         assert cached.sentence == "Bilen står foran huset, ikke bak det."
         assert cached.status == "determined"
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    async def test_the_cloze_prestage_is_visible_as_background_work(self, fake_driver, tmp_path, monkeypatch):
+        """tunatale-rwkz.6, the cloze half: counted under its own kind."""
+        from app.common.background_work import background_work
+
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path / "media")
+        self._seed_closed_class(app.state.srs_db)
+        app.state.llm = self._LLM()
+        before = background_work(app).snapshot()["completed"].get("prestage_cloze", 0)
+
+        async def _fake_fetch(*a, **k):
+            raise RuntimeError("no network in tests")
+
+        with patch("app.api.anki.fetch_card_media", _fake_fetch):
+            response = await _post_peer_sync()
+
+        assert response.status_code == 200
+        snap = background_work(app).snapshot()
+        assert snap["completed"].get("prestage_cloze", 0) == before + 1
+        assert "prestage_cloze" not in snap["inflight"]
 
     @pytest.mark.usefixtures("sociable_tt_collection")
     async def test_the_limit_setting_can_disable_it(self, fake_driver, tmp_path, monkeypatch):

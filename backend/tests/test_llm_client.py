@@ -199,15 +199,26 @@ class TestRateLimit:
         assert result == "ok"
 
     async def test_pacing_wait_applied(self):
-        """Verify _next_call_at causes a wait before the request."""
+        """_next_call_at holds the request back until the deadline.
+
+        Asserts the behaviour, not the mechanism: this used to patch
+        ``asyncio.sleep`` and check it was awaited, but since tunatale-rwkz.3 the
+        wait is enforced by the admission gate (``app/llm/priority_gate.py``).
+        """
         client = LLMClient(groq_api_key="test-key")
-        client._next_call_at = time.monotonic() + 0.5
+        deadline = time.monotonic() + 0.2
+        client._next_call_at = deadline
+        sent_at: list[float] = []
+
+        def _record(request):
+            sent_at.append(time.monotonic())
+            return Response(200, json=_make_groq_response("ok"))
+
         with respx.mock:
-            respx.post(GROQ_API_URL).mock(return_value=Response(200, json=_make_groq_response("ok")))
-            with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-                result = await client.complete("q")
+            respx.post(GROQ_API_URL).mock(side_effect=_record)
+            result = await client.complete("q")
         assert result == "ok"
-        mock_sleep.assert_awaited_once()
+        assert sent_at[0] >= deadline
 
     async def test_pacing_reset_after_60s(self):
         """Verify _groq_call_delay is reset after 60s with no 429."""

@@ -114,6 +114,17 @@ class TestListenMediaIsOffTheCriticalPath:
         assert seen["tts_calls"] > 0, "cloze audio was never synthesized"
         assert seen["vocab_calls"] > 0, "vocab media was never generated"
 
+    async def test_the_deferred_media_is_visible_as_background_work(self, monkeypatch, tmp_path):
+        """tunatale-rwkz.6: work that outlives the response must be counted."""
+        from app.common.background_work import background_work
+
+        before = background_work(app).snapshot()["completed"].get("listen_media", 0)
+        await self._run(monkeypatch, tmp_path, lesson_id="lesson-async-bg")
+
+        snap = background_work(app).snapshot()
+        assert snap["completed"].get("listen_media", 0) == before + 1
+        assert "listen_media" not in snap["inflight"]
+
     async def test_one_failing_word_does_not_strand_the_rest_of_the_batch(self, monkeypatch, tmp_path):
         """A word whose media fetch raises must not abort the remaining words.
 

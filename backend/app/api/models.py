@@ -349,6 +349,28 @@ class HealthResponse(BaseModel):
     checks: dict[str, str]
 
 
+class BackgroundJobFinished(BaseModel):
+    """The most recent background job to finish."""
+
+    kind: str
+    ok: bool
+    elapsed_s: float
+    finished_ago_s: float
+
+
+class BackgroundWorkResponse(BaseModel):
+    """Response of GET /api/admin/background-work (tunatale-rwkz.6).
+
+    Counts are keyed by job kind and cover this process's lifetime.
+    """
+
+    idle: bool
+    inflight: dict[str, int]
+    completed: dict[str, int]
+    failed: dict[str, int]
+    last_finished: BackgroundJobFinished | None
+
+
 class StatusResponse(BaseModel):
     """Response of endpoints that return only a fixed ``status`` string:
     DELETE /api/srs/items/{id}, POST /api/srs/ignored-lemmas,

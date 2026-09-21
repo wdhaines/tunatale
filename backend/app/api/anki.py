@@ -58,6 +58,7 @@ async def trigger_peer_sync(request: Request, background_tasks: BackgroundTasks,
 
     from app.cards.cloze_prestage import prestage_cloze_sentences
     from app.cards.media.prestage import prestage_production_images
+    from app.common.background_work import background_work
     from app.config import settings
     from app.plugins.anki_sync.sync_orchestrator import PeerSyncError, peer_sync
 
@@ -85,7 +86,7 @@ async def trigger_peer_sync(request: Request, background_tasks: BackgroundTasks,
     # only TT media, never the Anki collection, which is why it is safe off-sync.
     if not dry_run and settings.prestage_images_limit > 0:
         background_tasks.add_task(
-            prestage_production_images,
+            background_work(request.app).track("prestage_images", prestage_production_images),
             db,
             media_fn,
             language_code=language_code or settings.target_language,
@@ -99,7 +100,7 @@ async def trigger_peer_sync(request: Request, background_tasks: BackgroundTasks,
     # (tunatale-keb0).
     if not dry_run and llm is not None and settings.prestage_cloze_limit > 0:
         background_tasks.add_task(
-            prestage_cloze_sentences,
+            background_work(request.app).track("prestage_cloze", prestage_cloze_sentences),
             db,
             llm,
             language_code=language_code or settings.target_language,
