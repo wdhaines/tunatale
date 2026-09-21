@@ -13,6 +13,9 @@ from collections.abc import Callable
 
 import httpx
 
+from app.common.background_work import in_background
+from app.llm.priority_gate import BACKGROUND, FOREGROUND, PriorityGate
+
 logger = logging.getLogger(__name__)
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -119,8 +122,22 @@ class LLMClient:
         self.consecutive_primary_failures: int = 0
         self.last_primary_error: dict | None = None
         self._next_call_at: float = 0.0
+        self._gate: PriorityGate | None = None
+        self._gate_loop: asyncio.AbstractEventLoop | None = None
         self._groq_call_delay: float = 0.0
         self._last_429_at: float = 0.0
+
+    def _admission_gate(self) -> PriorityGate:
+        """The gate for the running event loop.
+
+        One per loop because its events bind to the loop that first awaits
+        them; the app has one loop, but a client can outlive a test's loop.
+        """
+        loop = asyncio.get_running_loop()
+        if self._gate is None or self._gate_loop is not loop:
+            self._gate = PriorityGate(ready_at=lambda: self._next_call_at)
+            self._gate_loop = loop
+        return self._gate
 
     def _fire_callback(
         self,
@@ -300,75 +317,99 @@ class LLMClient:
                     f"({used:,} of {limit:,}); full budget restored in {hours}h{minutes}m"
                 )
 
+        # One call at a time, foreground first (tunatale-rwkz.3): see
+        # app/llm/priority_gate.py for why a shared timestamp was not enough.
+        gate = self._admission_gate()
+        priority = BACKGROUND if in_background() else FOREGROUND
+        ticket = gate.ticket()
         async with httpx.AsyncClient(timeout=self.timeout) as http:
             for attempt in range(self.max_retries_429 + 1):
                 if self._groq_call_delay > 0 and time.monotonic() - self._last_429_at > 60:
                     self._groq_call_delay = 0.0
                 wait = self._next_call_at - time.monotonic()
                 if wait > 0:
-                    logger.info("Groq RPM pacing: waiting %.1fs", wait)
-                    await asyncio.sleep(wait)
-
-                start = time.monotonic()
-                try:
-                    response = await http.post(GROQ_API_URL, headers=headers, json=body)
-                except httpx.TransportError as err:
-                    # TransportError covers timeout AND connect/read/protocol errors
-                    # (network down, DNS failure, connection refused). All must raise
-                    # LLMError so complete()'s fallback chain engages — a raw
-                    # ConnectError would escape it entirely.
-                    latency_ms = int((time.monotonic() - start) * 1000)
-                    if isinstance(err, httpx.TimeoutException):
-                        status: str = "timeout"
-                        msg = f"Groq timed out after {self.timeout}s"
-                    else:
-                        status = "connect_error"
-                        msg = f"Groq transport error: {err}"
-                    self._fire_callback(
-                        provider="groq",
-                        model=self.groq_model,
-                        latency_ms=latency_ms,
-                        status=status,
-                        prompt=prompt,
-                        error=msg,
+                    logger.info(
+                        "Groq RPM pacing: waiting %.1fs (priority=%s, queued=%d)",
+                        wait,
+                        "background" if priority == BACKGROUND else "foreground",
+                        gate.waiting(),
                     )
-                    self._update_health_after_groq(success=False, status=status, message=msg)
-                    raise LLMError(msg, [self._make_attempt("groq", self.groq_model, status, msg, latency_ms)]) from err
-                latency_ms = int((time.monotonic() - start) * 1000)
-
-                # Log rate-limit headers
-                rl_tokens_remaining = response.headers.get("x-ratelimit-remaining-tokens", "?")
-                rl_tokens_limit = response.headers.get("x-ratelimit-limit-tokens", "?")
-                rl_requests_remaining = response.headers.get("x-ratelimit-remaining-requests", "?")
-                rl_requests_limit = response.headers.get("x-ratelimit-limit-requests", "?")
-                logger.info(
-                    "Groq rate-limit: tokens=%s/%s requests=%s/%s",
-                    rl_tokens_remaining,
-                    rl_tokens_limit,
-                    rl_requests_remaining,
-                    rl_requests_limit,
-                )
-                rl_snapshot = self._snapshot_rate_limits(response)
-                if rl_snapshot is not None:
-                    self.last_rate_limits = rl_snapshot
-
-                if response.status_code == 429:
-                    if self.usage_ledger is not None:
-                        self.usage_ledger.record(0, call_site=call_site)
-                    retry_after_raw = response.headers.get("retry-after", "2")
+                await gate.acquire(priority, ticket)
+                try:
+                    start = time.monotonic()
                     try:
-                        retry_after = float(retry_after_raw)
-                    except ValueError:
-                        retry_after = 2.0
-                    msg = f"Groq returned 429 Too Many Requests (retry after {retry_after_raw}s)"
-                    self.last_429 = {"at": time.time(), "retry_after_s": retry_after}
-                    if retry_after <= self.max_retry_after_s:
-                        self._last_429_at = time.monotonic()
-                        self._groq_call_delay = retry_after
-                    if attempt < self.max_retries_429 and retry_after <= self.max_retry_after_s:
-                        logger.warning(
-                            "Groq 429, retry %d/%d after %.1fs", attempt + 1, self.max_retries_429, retry_after
+                        response = await http.post(GROQ_API_URL, headers=headers, json=body)
+                    except httpx.TransportError as err:
+                        # TransportError covers timeout AND connect/read/protocol errors
+                        # (network down, DNS failure, connection refused). All must raise
+                        # LLMError so complete()'s fallback chain engages — a raw
+                        # ConnectError would escape it entirely.
+                        latency_ms = int((time.monotonic() - start) * 1000)
+                        if isinstance(err, httpx.TimeoutException):
+                            status: str = "timeout"
+                            msg = f"Groq timed out after {self.timeout}s"
+                        else:
+                            status = "connect_error"
+                            msg = f"Groq transport error: {err}"
+                        self._fire_callback(
+                            provider="groq",
+                            model=self.groq_model,
+                            latency_ms=latency_ms,
+                            status=status,
+                            prompt=prompt,
+                            error=msg,
                         )
+                        self._update_health_after_groq(success=False, status=status, message=msg)
+                        raise LLMError(
+                            msg, [self._make_attempt("groq", self.groq_model, status, msg, latency_ms)]
+                        ) from err
+                    latency_ms = int((time.monotonic() - start) * 1000)
+
+                    # Log rate-limit headers
+                    rl_tokens_remaining = response.headers.get("x-ratelimit-remaining-tokens", "?")
+                    rl_tokens_limit = response.headers.get("x-ratelimit-limit-tokens", "?")
+                    rl_requests_remaining = response.headers.get("x-ratelimit-remaining-requests", "?")
+                    rl_requests_limit = response.headers.get("x-ratelimit-limit-requests", "?")
+                    logger.info(
+                        "Groq rate-limit: tokens=%s/%s requests=%s/%s",
+                        rl_tokens_remaining,
+                        rl_tokens_limit,
+                        rl_requests_remaining,
+                        rl_requests_limit,
+                    )
+                    rl_snapshot = self._snapshot_rate_limits(response)
+                    if rl_snapshot is not None:
+                        self.last_rate_limits = rl_snapshot
+
+                    if response.status_code == 429:
+                        if self.usage_ledger is not None:
+                            self.usage_ledger.record(0, call_site=call_site)
+                        retry_after_raw = response.headers.get("retry-after", "2")
+                        try:
+                            retry_after = float(retry_after_raw)
+                        except ValueError:
+                            retry_after = 2.0
+                        msg = f"Groq returned 429 Too Many Requests (retry after {retry_after_raw}s)"
+                        self.last_429 = {"at": time.time(), "retry_after_s": retry_after}
+                        if retry_after <= self.max_retry_after_s:
+                            self._last_429_at = time.monotonic()
+                            self._groq_call_delay = retry_after
+                        if attempt < self.max_retries_429 and retry_after <= self.max_retry_after_s:
+                            logger.warning(
+                                "Groq 429, retry %d/%d after %.1fs", attempt + 1, self.max_retries_429, retry_after
+                            )
+                            self._fire_callback(
+                                provider="groq",
+                                model=self.groq_model,
+                                latency_ms=latency_ms,
+                                status=429,
+                                prompt=prompt,
+                                error=msg,
+                            )
+                            # The gate enforces the wait, so the slot is free for a
+                            # foreground call while this one backs off.
+                            self._next_call_at = max(self._next_call_at, time.monotonic() + retry_after)
+                            continue
                         self._fire_callback(
                             provider="groq",
                             model=self.groq_model,
@@ -377,164 +418,156 @@ class LLMClient:
                             prompt=prompt,
                             error=msg,
                         )
-                        await asyncio.sleep(retry_after)
-                        continue
-                    self._fire_callback(
-                        provider="groq",
-                        model=self.groq_model,
-                        latency_ms=latency_ms,
-                        status=429,
-                        prompt=prompt,
-                        error=msg,
-                    )
-                    self._update_health_after_groq(success=False, status=429, message=msg)
-                    raise LLMError(msg, [self._make_attempt("groq", self.groq_model, 429, msg, latency_ms)])
+                        self._update_health_after_groq(success=False, status=429, message=msg)
+                        raise LLMError(msg, [self._make_attempt("groq", self.groq_model, 429, msg, latency_ms)])
 
-                if not response.is_success:
-                    if self.usage_ledger is not None:
-                        self.usage_ledger.record(0, call_site=call_site)
-                    msg = f"Groq returned HTTP {response.status_code}"
-                    try:
-                        body_text = response.text
-                        if body_text:
-                            try:
-                                body_json = response.json()
-                                detail = body_json.get("error", {}).get("message", "")
-                                if not detail:
+                    if not response.is_success:
+                        if self.usage_ledger is not None:
+                            self.usage_ledger.record(0, call_site=call_site)
+                        msg = f"Groq returned HTTP {response.status_code}"
+                        try:
+                            body_text = response.text
+                            if body_text:
+                                try:
+                                    body_json = response.json()
+                                    detail = body_json.get("error", {}).get("message", "")
+                                    if not detail:
+                                        detail = body_text
+                                except Exception:
                                     detail = body_text
-                            except Exception:
-                                detail = body_text
-                            # `detail` is always truthy here (either the parsed
-                            # message or the guaranteed-non-empty body_text
-                            # fallback) — a non-string message (e.g. a number)
-                            # fails the slice and is caught below instead.
-                            detail = detail[:200]
-                            msg += f" — {detail}"
-                    except Exception:
-                        pass
-                    self._fire_callback(
-                        provider="groq",
-                        model=self.groq_model,
-                        latency_ms=latency_ms,
-                        status=response.status_code,
-                        prompt=prompt,
-                        error=msg,
-                    )
-                    self._update_health_after_groq(success=False, status=response.status_code, message=msg)
-                    raise LLMError(
-                        msg, [self._make_attempt("groq", self.groq_model, response.status_code, msg, latency_ms)]
-                    )
+                                # `detail` is always truthy here (either the parsed
+                                # message or the guaranteed-non-empty body_text
+                                # fallback) — a non-string message (e.g. a number)
+                                # fails the slice and is caught below instead.
+                                detail = detail[:200]
+                                msg += f" — {detail}"
+                        except Exception:
+                            pass
+                        self._fire_callback(
+                            provider="groq",
+                            model=self.groq_model,
+                            latency_ms=latency_ms,
+                            status=response.status_code,
+                            prompt=prompt,
+                            error=msg,
+                        )
+                        self._update_health_after_groq(success=False, status=response.status_code, message=msg)
+                        raise LLMError(
+                            msg, [self._make_attempt("groq", self.groq_model, response.status_code, msg, latency_ms)]
+                        )
 
-                try:
-                    data = response.json()
-                    content = data["choices"][0]["message"]["content"]
-                    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-                except (ValueError, KeyError, IndexError, TypeError) as err:
-                    # 2xx with an unexpected body (non-JSON, missing keys, null
-                    # content) must raise LLMError, not escape as a decode/key
-                    # error, so the fallback chain engages.
+                    try:
+                        data = response.json()
+                        content = data["choices"][0]["message"]["content"]
+                        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                    except (ValueError, KeyError, IndexError, TypeError) as err:
+                        # 2xx with an unexpected body (non-JSON, missing keys, null
+                        # content) must raise LLMError, not escape as a decode/key
+                        # error, so the fallback chain engages.
+                        if self.usage_ledger is not None:
+                            # The response arrived, so Groq counted it against RPD —
+                            # unparseable to us is still spent.
+                            self.usage_ledger.record(0, call_site=call_site)
+                        msg = "Groq returned malformed response body"
+                        self._fire_callback(
+                            provider="groq",
+                            model=self.groq_model,
+                            latency_ms=latency_ms,
+                            status="malformed",
+                            prompt=prompt,
+                            error=msg,
+                        )
+                        self._update_health_after_groq(success=False, status="malformed", message=msg)
+                        raise LLMError(
+                            msg, [self._make_attempt("groq", self.groq_model, "malformed", msg, latency_ms)]
+                        ) from err
+                    self.last_provider = "groq"
+                    self.last_finish_reason = data["choices"][0].get("finish_reason")
+                    self.last_usage = data.get("usage") or {}
+                    total_tokens = self.last_usage.get("total_tokens")
                     if self.usage_ledger is not None:
-                        # The response arrived, so Groq counted it against RPD —
-                        # unparseable to us is still spent.
-                        self.usage_ledger.record(0, call_site=call_site)
-                    msg = "Groq returned malformed response body"
-                    self._fire_callback(
-                        provider="groq",
-                        model=self.groq_model,
-                        latency_ms=latency_ms,
-                        status="malformed",
-                        prompt=prompt,
-                        error=msg,
-                    )
-                    self._update_health_after_groq(success=False, status="malformed", message=msg)
-                    raise LLMError(
-                        msg, [self._make_attempt("groq", self.groq_model, "malformed", msg, latency_ms)]
-                    ) from err
-                self.last_provider = "groq"
-                self.last_finish_reason = data["choices"][0].get("finish_reason")
-                self.last_usage = data.get("usage") or {}
-                total_tokens = self.last_usage.get("total_tokens")
-                if self.usage_ledger is not None:
-                    prompt_tokens = self.last_usage.get("prompt_tokens")
-                    completion_tokens = self.last_usage.get("completion_tokens")
-                    usage_details = self.last_usage.get("completion_tokens_details") or {}
-                    reasoning_tokens = usage_details.get("reasoning_tokens")
-                    # Missing or non-int split fields degrade to None (unknown),
-                    # never 0 — same guard pattern as total_tokens above.
-                    self.usage_ledger.record(
-                        total_tokens if isinstance(total_tokens, int) else 0,
-                        prompt_tokens=prompt_tokens if isinstance(prompt_tokens, int) else None,
-                        completion_tokens=completion_tokens if isinstance(completion_tokens, int) else None,
-                        reasoning_tokens=reasoning_tokens if isinstance(reasoning_tokens, int) else None,
-                        call_site=call_site,
-                    )
-                if self.last_finish_reason == "length":
-                    logger.warning(
-                        "Groq response truncated at the completion-token cap (finish_reason=length, cap=%s)",
-                        body.get("max_completion_tokens") or body.get("max_tokens"),
-                    )
-                self._update_health_after_groq(success=True)
-                logger.info("Groq success: model=%s latency=%dms", self.groq_model, latency_ms)
+                        prompt_tokens = self.last_usage.get("prompt_tokens")
+                        completion_tokens = self.last_usage.get("completion_tokens")
+                        usage_details = self.last_usage.get("completion_tokens_details") or {}
+                        reasoning_tokens = usage_details.get("reasoning_tokens")
+                        # Missing or non-int split fields degrade to None (unknown),
+                        # never 0 — same guard pattern as total_tokens above.
+                        self.usage_ledger.record(
+                            total_tokens if isinstance(total_tokens, int) else 0,
+                            prompt_tokens=prompt_tokens if isinstance(prompt_tokens, int) else None,
+                            completion_tokens=completion_tokens if isinstance(completion_tokens, int) else None,
+                            reasoning_tokens=reasoning_tokens if isinstance(reasoning_tokens, int) else None,
+                            call_site=call_site,
+                        )
+                    if self.last_finish_reason == "length":
+                        logger.warning(
+                            "Groq response truncated at the completion-token cap (finish_reason=length, cap=%s)",
+                            body.get("max_completion_tokens") or body.get("max_tokens"),
+                        )
+                    self._update_health_after_groq(success=True)
+                    logger.info("Groq success: model=%s latency=%dms", self.groq_model, latency_ms)
 
-                if self.on_call:
-                    _rl: dict = {}
-                    if rl_tokens_remaining.isdigit():
-                        _rl["tokens_remaining"] = int(rl_tokens_remaining)
-                    if rl_tokens_limit.isdigit():
-                        _rl["tokens_limit"] = int(rl_tokens_limit)
-                    if rl_requests_remaining.isdigit():
-                        _rl["requests_remaining"] = int(rl_requests_remaining)
-                    if rl_requests_limit.isdigit():
-                        _rl["requests_limit"] = int(rl_requests_limit)
-                    self._fire_callback(
-                        provider="groq",
-                        model=self.groq_model,
-                        latency_ms=latency_ms,
-                        status="success",
-                        prompt=prompt,
-                        response_text=content,
-                        rate_limits=_rl if _rl else None,
-                    )
+                    if self.on_call:
+                        _rl: dict = {}
+                        if rl_tokens_remaining.isdigit():
+                            _rl["tokens_remaining"] = int(rl_tokens_remaining)
+                        if rl_tokens_limit.isdigit():
+                            _rl["tokens_limit"] = int(rl_tokens_limit)
+                        if rl_requests_remaining.isdigit():
+                            _rl["requests_remaining"] = int(rl_requests_remaining)
+                        if rl_requests_limit.isdigit():
+                            _rl["requests_limit"] = int(rl_requests_limit)
+                        self._fire_callback(
+                            provider="groq",
+                            model=self.groq_model,
+                            latency_ms=latency_ms,
+                            status="success",
+                            prompt=prompt,
+                            response_text=content,
+                            rate_limits=_rl if _rl else None,
+                        )
 
-                # Proactive pacing: RPM + TPM
-                proactive_delay = 0.0
-                rem_req_raw = response.headers.get("x-ratelimit-remaining-requests", "")
-                rst_req_raw = response.headers.get("x-ratelimit-reset-requests", "")
-                if rem_req_raw.isdigit() and rst_req_raw:
-                    rem_req = int(rem_req_raw)
-                    rst_req_s = _parse_reset_duration(rst_req_raw)
-                    if rem_req == 0 and rst_req_s > 0:
-                        proactive_delay = rst_req_s
-                    elif rem_req > 0 and rst_req_s > 0:
-                        proactive_delay = rst_req_s / rem_req
+                    # Proactive pacing: RPM + TPM
+                    proactive_delay = 0.0
+                    rem_req_raw = response.headers.get("x-ratelimit-remaining-requests", "")
+                    rst_req_raw = response.headers.get("x-ratelimit-reset-requests", "")
+                    if rem_req_raw.isdigit() and rst_req_raw:
+                        rem_req = int(rem_req_raw)
+                        rst_req_s = _parse_reset_duration(rst_req_raw)
+                        if rem_req == 0 and rst_req_s > 0:
+                            proactive_delay = rst_req_s
+                        elif rem_req > 0 and rst_req_s > 0:
+                            proactive_delay = rst_req_s / rem_req
 
-                rem_tok_raw = response.headers.get("x-ratelimit-remaining-tokens", "")
-                rst_tok_raw = response.headers.get("x-ratelimit-reset-tokens", "")
-                lim_tok_raw = response.headers.get("x-ratelimit-limit-tokens", "")
-                if rem_tok_raw.isdigit() and rst_tok_raw and lim_tok_raw.isdigit():
-                    rem_tok = int(rem_tok_raw)
-                    rst_tok_s = _parse_reset_duration(rst_tok_raw)
-                    lim_tok = int(lim_tok_raw)
-                    if rem_tok == 0 and rst_tok_s > 0:
-                        proactive_delay = max(proactive_delay, rst_tok_s)
-                    elif rem_tok > 0 and rst_tok_s > 0 and lim_tok > 0 and rem_tok < lim_tok * 0.20:
-                        tokens_per_call = body.get("max_completion_tokens") or body.get("max_tokens") or max_tokens
-                        calls_left = max(rem_tok / max(tokens_per_call, 1), 1.0)
-                        tok_delay = rst_tok_s / calls_left
-                        proactive_delay = max(proactive_delay, tok_delay)
+                    rem_tok_raw = response.headers.get("x-ratelimit-remaining-tokens", "")
+                    rst_tok_raw = response.headers.get("x-ratelimit-reset-tokens", "")
+                    lim_tok_raw = response.headers.get("x-ratelimit-limit-tokens", "")
+                    if rem_tok_raw.isdigit() and rst_tok_raw and lim_tok_raw.isdigit():
+                        rem_tok = int(rem_tok_raw)
+                        rst_tok_s = _parse_reset_duration(rst_tok_raw)
+                        lim_tok = int(lim_tok_raw)
+                        if rem_tok == 0 and rst_tok_s > 0:
+                            proactive_delay = max(proactive_delay, rst_tok_s)
+                        elif rem_tok > 0 and rst_tok_s > 0 and lim_tok > 0 and rem_tok < lim_tok * 0.20:
+                            tokens_per_call = body.get("max_completion_tokens") or body.get("max_tokens") or max_tokens
+                            calls_left = max(rem_tok / max(tokens_per_call, 1), 1.0)
+                            tok_delay = rst_tok_s / calls_left
+                            proactive_delay = max(proactive_delay, tok_delay)
 
-                if proactive_delay > 0.5:
-                    logger.info(
-                        "Groq proactive pacing: req=%s/%s tok=%s/%s → %.2fs delay",
-                        rem_req_raw,
-                        rst_req_raw,
-                        rem_tok_raw,
-                        rst_tok_raw,
-                        proactive_delay,
-                    )
-                delay = max(self._groq_call_delay, proactive_delay)
-                self._next_call_at = time.monotonic() + delay
-                return content
+                    if proactive_delay > 0.5:
+                        logger.info(
+                            "Groq proactive pacing: req=%s/%s tok=%s/%s → %.2fs delay",
+                            rem_req_raw,
+                            rst_req_raw,
+                            rem_tok_raw,
+                            rst_tok_raw,
+                            proactive_delay,
+                        )
+                    delay = max(self._groq_call_delay, proactive_delay)
+                    self._next_call_at = time.monotonic() + delay
+                    return content
+                finally:
+                    gate.release()
 
         raise LLMError("Groq call loop exhausted", [])  # pragma: no cover
 

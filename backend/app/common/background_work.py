@@ -12,8 +12,10 @@ So every such job is wrapped by :meth:`BackgroundWork.track`, which counts it
 while it runs and logs one ``BACKGROUND_DONE`` line when it finishes. The counts
 are read from ``GET /api/admin/background-work``.
 
-Scope: visibility only. This neither orders nor throttles the work — that is
-tunatale-rwkz.3 — and it must not make prestage synchronous with the sync.
+It also marks the job's context as background (:func:`in_background`), which
+is how the LLM client knows to let a foreground call go first (tunatale-rwkz.3).
+It never throttles the work, and it must not make prestage synchronous with the
+sync.
 """
 
 from __future__ import annotations
@@ -22,11 +24,22 @@ import inspect
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from typing import Any
 
 from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger(__name__)
+
+# True inside a tracked job. The LLM client reads it to give such calls lower
+# priority than a request someone is waiting on (tunatale-rwkz.3), so anything
+# scheduled through track() is deprioritised without each call site declaring it.
+_IN_BACKGROUND: ContextVar[bool] = ContextVar("tt_in_background", default=False)
+
+
+def in_background() -> bool:
+    """Whether the current task is running inside :meth:`BackgroundWork.track`."""
+    return _IN_BACKGROUND.get()
 
 
 class BackgroundWork:
@@ -57,6 +70,7 @@ class BackgroundWork:
             self._inflight[kind] = self._inflight.get(kind, 0) + 1
             start = self._clock()
             ok = False
+            token = _IN_BACKGROUND.set(True)
             try:
                 if inspect.iscoroutinefunction(fn):
                     await fn(*args, **kwargs)
@@ -64,6 +78,7 @@ class BackgroundWork:
                     await run_in_threadpool(fn, *args, **kwargs)
                 ok = True
             finally:
+                _IN_BACKGROUND.reset(token)
                 self._finish(kind, ok, self._clock() - start)
 
         return run
