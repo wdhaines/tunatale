@@ -535,6 +535,48 @@ describe("playbackController", () => {
       expect(createController().repeatLatched).toBe(false);
     });
 
+    // tunatale-b2mn: on Android a second tap RE-ENGAGED the loop, so something
+    // cleared the latch between taps — and nothing in jsdom reproduces it. The
+    // trace is how a device log names the culprit: every engage/release, and
+    // every cancel labelled with the action that caused it.
+    it("traces engage, release, and WHICH action cancelled the latch (b2mn)", () => {
+      clearMediaTrace();
+      setMediaTraceEnabled(true);
+      try {
+        const ctrl = createController();
+        advanceTo(ctrl, 1.2);
+        ctrl.toggleRepeatLatch(); // on
+        ctrl.toggleRepeatLatch(); // off, by the button
+        ctrl.toggleRepeatLatch(); // on
+        ctrl.nextCue(); // off, by navigation
+        const lines = readMediaTrace();
+        expect(lines.filter((l) => l.includes("latch:on")).length).toBe(2);
+        const off = (by: string) =>
+          lines.filter((l) => l.includes("latch:off") && l.includes(`by=${by}`)).length;
+        expect(off("toggle")).toBe(1);
+        expect(off("nextCue")).toBe(1);
+        expect(lines.find((l) => l.includes("latch:on"))).toContain("cue=1");
+      } finally {
+        setMediaTraceEnabled(false);
+        clearMediaTrace();
+      }
+    });
+
+    it("a navigation that cancels nothing leaves no latch line", () => {
+      clearMediaTrace();
+      setMediaTraceEnabled(true);
+      try {
+        const ctrl = createController();
+        advanceTo(ctrl, 1.2);
+        ctrl.nextCue();
+        ctrl.restartSection();
+        expect(readMediaTrace().some((l) => l.includes("latch:"))).toBe(false);
+      } finally {
+        setMediaTraceEnabled(false);
+        clearMediaTrace();
+      }
+    });
+
     it("engaging mid-sentence restarts that sentence from its beginning", () => {
       // Acceptance: "loops from the cue's start, not from where playback
       // happened to be." Engaging is itself the first repetition, which is why
@@ -674,6 +716,27 @@ describe("playbackController", () => {
 
       expect(ctrl.repeatLatched).toBe(false);
       expect(audioEl.currentTime).toBe(1.0);
+    });
+
+    it("a second toggle while the loop is live disengages without re-engaging (b2mn)", () => {
+      // USER 2026-09-18 (Android): a second tap on Repeat repeated the sentence
+      // instead of turning the loop off. That is the ENGAGE path's seek, so at
+      // the second tap the latch had been cleared between the taps. The pin:
+      // after the loop has fired once, the latch must still be live, and the
+      // release tap must cancel WITHOUT seeking.
+      const ctrl = createController();
+      advanceTo(ctrl, 1.0); // inside cue 1 (800-1500ms)
+      ctrl.toggleRepeatLatch(); // engage: pins cue 1, seeks to its start
+      expect(ctrl.repeatLatched).toBe(true);
+
+      advanceTo(ctrl, 1.5); // cross the pinned cue's end -> the loop fires once
+      expect(audioEl.currentTime).toBeCloseTo(0.8, 3);
+      expect(ctrl.repeatLatched, "the loop's own seek must not cancel the latch").toBe(true);
+
+      const beforeSecondTap = audioEl.currentTime;
+      ctrl.toggleRepeatLatch(); // the second tap, latch still live
+      expect(ctrl.repeatLatched).toBe(false); // OFF, not re-engaged
+      expect(audioEl.currentTime).toBeCloseTo(beforeSecondTap, 3); // no seek on release
     });
   });
 
@@ -1789,6 +1852,276 @@ describe("playbackController", () => {
       audioEl.dispatchEvent(new Event("loadedmetadata"));
       audioEl.dispatchEvent(new Event("timeupdate"));
       expect(mediaSession.metadata?.artist).toBe("Slow Speed");
+    });
+  });
+
+  // ── Section ▶ (tunatale-0w2w): a next-section button in the sentence row ──
+  //
+  // The sentence row's nav actions pair section with sentence: ⏮ Section,
+  // ◀ Sentence, Repeat, Sentence ▶. The new Section ▶ mirrors ⏮ Section at the
+  // other end. Both hands-free states share ONE method but follow DIFFERENT
+  // orders:
+  //   - OFF: the deps.audio.sections ARRAY order — the order the player
+  //     presents the sections in (key_phrases, natural_speed, translated,
+  //     slow_speed, slow_translated on real lessons). At the last section the
+  //     button is disabled and the method no-ops.
+  //   - ON: the same HANDS_FREE_SEQUENCE the `ended` listener advances through
+  //     (key_phrases → natural_speed → slow_speed → translated), skipping
+  //     passes the lesson lacks; on the LAST pass it completes the run exactly
+  //     as `ended` does — the onHandsFreeEnd hand-off, fired once.
+  // The fixtures below deliberately let the two orders DIVERGE (slow_speed sits
+  // AFTER translated in sections order but BEFORE it in the sequence), so a
+  // test that conflates them fails.
+  //
+  // The MediaSession `nexttrack` handler's split (nextSection when OFF,
+  // nextCueAction when ON) is already pinned by "nexttrack calls nextSection by
+  // default, nextCue when handsFree=true" above — the Section ▶ button is a
+  // NEW path, and the setActionHandler blocks must not change.
+  describe("Section ▶ (nextSectionAction / hasNextSection)", () => {
+    function seqCues(sectionType: string, sectionIndex: number): Cue[] {
+      return [
+        makeCue({
+          index: 0,
+          start_ms: 0,
+          end_ms: 500,
+          section_index: sectionIndex,
+          section_type: sectionType,
+          phrase_index: 0,
+          text: "Dober dan",
+          ref: { kind: "line", target_index: 0 },
+        }),
+        makeCue({
+          index: 1,
+          start_ms: 500,
+          end_ms: 1000,
+          section_index: sectionIndex,
+          section_type: sectionType,
+          phrase_index: 1,
+          text: "Kako si",
+          ref: { kind: "line", target_index: 1 },
+        }),
+      ];
+    }
+
+    // Track-mode lesson with every pass plus an out-of-sequence section.
+    // Sections ARRAY order: key_phrases, natural_speed, translated, slow_speed,
+    // slow_translated (the backend's render order — see render_service.py's
+    // `sections = [...]`).
+    const seqAudio: LessonAudio = {
+      audio_id: "a1",
+      lesson_id: "l1",
+      sections: [
+        {
+          audio_id: "sec-key",
+          section_index: 0,
+          section_type: "key_phrases",
+          title: "Key Phrases",
+          cues: seqCues("key_phrases", 0),
+        },
+        {
+          audio_id: "sec-natural",
+          section_index: 1,
+          section_type: "natural_speed",
+          title: "Natural Speed",
+          cues: seqCues("natural_speed", 1),
+        },
+        {
+          audio_id: "sec-translated",
+          section_index: 2,
+          section_type: "translated",
+          title: "Translated",
+          cues: seqCues("translated", 2),
+        },
+        {
+          audio_id: "sec-slow",
+          section_index: 3,
+          section_type: "slow_speed",
+          title: "Slow Speed",
+          cues: seqCues("slow_speed", 3),
+        },
+        {
+          audio_id: "sec-slow-translated",
+          section_index: 4,
+          section_type: "slow_translated",
+          title: "Slow Translated",
+          cues: seqCues("slow_translated", 4),
+        },
+      ],
+      cues: seqCues("natural_speed", 1),
+    };
+
+    const noSlowAudio: LessonAudio = {
+      ...seqAudio,
+      sections: seqAudio.sections.filter((s) => s.section_type !== "slow_speed"),
+    };
+
+    // The user's order, 2026-09-21: "Key Phrases, Natural, Slow, EN last, next
+    // lesson" — with hands-free OFF as well as ON. seqAudio's ARRAY puts
+    // translated right after natural_speed, so landing on slow_speed proves the
+    // button follows the sequence, not the array.
+    it("hands-free OFF: follows the sequence too (natural -> slow), not the sections array, from its start", () => {
+      const ctrl = createController({ audio: seqAudio });
+      expect(ctrl.activeSectionType).toBe("natural_speed");
+      expect(ctrl.hasNextSection).toBe(true);
+
+      ctrl.nextSectionAction();
+
+      expect(ctrl.activeSectionType).toBe("slow_speed");
+      expect(audioEl.src).toBe("/api/audio/sec-slow");
+      expect(audioEl.play).toHaveBeenCalled();
+      // fromStart: the swap lands at 0 after metadata, not a matching line.
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(audioEl.currentTime).toBe(0);
+    });
+
+    it.each([false, true])(
+      "an English VARIANT is the EN step: enabled, and ▶ hands off to the next lesson (hands-free %s)",
+      (handsFree) => {
+        const onHandsFreeEnd = vi.fn();
+        const ctrl = createController({ audio: seqAudio, onHandsFreeEnd });
+        ctrl.setHandsFree(handsFree);
+        ctrl.selectTrack("slow_translated");
+        audioEl.dispatchEvent(new Event("loadedmetadata"));
+        expect(ctrl.activeSectionType).toBe("slow_translated");
+        expect(ctrl.hasNextSection).toBe(true);
+
+        ctrl.nextSectionAction();
+
+        expect(onHandsFreeEnd).toHaveBeenCalledTimes(1);
+        expect(ctrl.activeSectionType).toBe("slow_translated");
+      },
+    );
+
+    it("hands-free OFF with no active section (legacy no-cues lesson): false and a no-op", () => {
+      const noCuesAudio: LessonAudio = { ...lessonAudio, cues: null };
+      const ctrl = createController({ audio: noCuesAudio });
+      expect(ctrl.activeSectionType).toBeNull();
+      expect(ctrl.hasNextSection).toBe(false);
+
+      const srcBefore = audioEl.src;
+      ctrl.nextSectionAction();
+      expect(audioEl.src).toBe(srcBefore);
+    });
+
+    it("hands-free ON mid-sequence: follows HANDS_FREE_SEQUENCE, not the sections order", () => {
+      // sections order puts TRANSLATED after natural_speed; the sequence goes
+      // slow_speed next — so this assertion discriminates the two orders.
+      const ctrl = createController({ audio: seqAudio });
+      ctrl.setHandsFree(true);
+      expect(ctrl.activeSectionType).toBe("natural_speed");
+      expect(ctrl.hasNextSection).toBe(true);
+
+      ctrl.nextSectionAction();
+
+      expect(ctrl.activeSectionType).toBe("slow_speed");
+      expect(audioEl.src).toBe("/api/audio/sec-slow");
+      expect(audioEl.play).toHaveBeenCalled();
+    });
+
+    it("hands-free ON: a pass the lesson lacks is SKIPPED, landing on the next pass it has", () => {
+      const ctrl = createController({ audio: noSlowAudio });
+      ctrl.setHandsFree(true);
+      expect(ctrl.activeSectionType).toBe("natural_speed");
+
+      ctrl.nextSectionAction();
+
+      expect(ctrl.activeSectionType).toBe("translated");
+      expect(audioEl.src).toBe("/api/audio/sec-translated");
+    });
+
+    it("hands-free ON on the LAST pass: the button stays ENABLED and completes the run — onHandsFreeEnd exactly once", () => {
+      const onHandsFreeEnd = vi.fn();
+      const mediaSession = makeFakeMediaSession();
+      const ctrl = createController({
+        audio: seqAudio,
+        onHandsFreeEnd,
+        mediaSession: mediaSession as unknown as MediaSession,
+      });
+      ctrl.setHandsFree(true);
+      ctrl.selectTrack("translated");
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(ctrl.activeSectionType).toBe("translated");
+      expect(ctrl.hasNextSection).toBe(true);
+
+      ctrl.nextSectionAction();
+
+      expect(onHandsFreeEnd).toHaveBeenCalledTimes(1);
+      expect(ctrl.activeSectionType).toBe("translated");
+      expect(ctrl.playing).toBe(false);
+      expect(mediaSession.playbackState).toBe("none");
+    });
+
+    it("cancels the repeat latch like the other nav actions — even with nothing to advance to", () => {
+      // From the EN step ▶ hands off rather than calling selectTrack, so
+      // selectTrack's own cancel cannot mask a missing "cancel first" here.
+      const ctrl = createController({ audio: seqAudio });
+      ctrl.selectTrack("slow_translated");
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      audioEl.currentTime = 0.3;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      ctrl.toggleRepeatLatch();
+      expect(ctrl.repeatLatched).toBe(true);
+
+      ctrl.nextSectionAction();
+
+      expect(ctrl.repeatLatched).toBe(false);
+    });
+
+    // "constructor" / "__proto__" guard the lookup's substrate: an object
+    // literal would resolve both through Object.prototype.
+    it.each(["ghost_section", "constructor", "__proto__"])(
+      "an active section outside the sequence (%s): disabled and a no-op",
+      (ghost) => {
+        // A cue manifest can name a section_type the sections array doesn't
+        // carry, and the controller seeds activeSectionType from the first cue —
+        // the section-order advance must not invent an index for it.
+        const ghostAudio: LessonAudio = {
+          ...lessonAudio,
+          sections: [
+            {
+              audio_id: "s2",
+              section_index: 1,
+              section_type: "natural_speed",
+              title: "Natural Speed",
+            },
+          ],
+          cues: [
+            makeCue({
+              index: 0,
+              start_ms: 0,
+              end_ms: 500,
+              section_index: 0,
+              section_type: ghost,
+              phrase_index: 0,
+              text: "Ghost",
+              ref: { kind: "line", target_index: 0 },
+            }),
+          ],
+        };
+        const ctrl = createController({ audio: ghostAudio });
+        expect(ctrl.activeSectionType).toBe(ghost);
+        expect(ctrl.hasNextSection).toBe(false);
+
+        const srcBefore = audioEl.src;
+        ctrl.nextSectionAction();
+
+        expect(audioEl.src).toBe(srcBefore);
+      },
+    );
+
+    it("hands-free ON with no active section (legacy no-cues lesson): a no-op", () => {
+      const onHandsFreeEnd = vi.fn();
+      const noCuesAudio: LessonAudio = { ...lessonAudio, cues: null };
+      const ctrl = createController({ audio: noCuesAudio, onHandsFreeEnd });
+      ctrl.setHandsFree(true);
+      expect(ctrl.activeSectionType).toBeNull();
+      expect(ctrl.hasNextSection).toBe(false);
+
+      const srcBefore = audioEl.src;
+      ctrl.nextSectionAction();
+
+      expect(onHandsFreeEnd).not.toHaveBeenCalled();
+      expect(audioEl.src).toBe(srcBefore);
     });
   });
 
