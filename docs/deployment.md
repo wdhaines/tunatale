@@ -775,7 +775,29 @@ than deleting and rebuilding.
 **When pruning is needed, it goes by LAST USE, not by age.** A lesson rendered
 long ago but still listened to must survive, and a lesson regenerated yesterday
 leaves its previous render unused from that day on. The data for this already
-exists: every listen is a `lesson_listens` row. Nothing prunes by it yet.
+exists: every listen is a `lesson_listens` row. Nothing prunes by it yet, but
+the report that a prune would act on does exist, and it is read-only:
+
+```bash
+ssh <os-login-name>@tunatale 'sudo docker exec -i tunatale-api-1 python - \
+    --db /data/tunatale_no.db --db /data/tunatale_sl.db --audio-dir /data/output/audio' \
+  < backend/scripts/report_audio_retention.py
+```
+
+It buckets lesson audio by days since the last listen or review. It also flags
+**orphaned** audio (the lesson row is gone, usually because a regenerate minted
+a new lesson id) and files no database references. Measured on prod,
+2026-09-22:
+
+| last use | lessons | MB |
+|---|---|---|
+| ≤ 30 days | 10 | 138.9 |
+| 31–90 days | 1 | 7.6 |
+| orphaned (lesson gone) | 6 | **103.4** |
+| unreferenced files | (10 files) | 8.6 |
+
+So about 40% of lesson audio is unreachable. If a prune is ever needed,
+orphaned audio is the first candidate, because no screen can play it.
 
 ### Headroom, measured 2026-09-22
 

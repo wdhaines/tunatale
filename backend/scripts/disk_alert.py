@@ -72,6 +72,7 @@ def format_message(
         "Where to look first, and the retention policy: docs/deployment.md, "
         "section 'Disk and log hygiene'.\n"
         "  sudo docker system df      # old images (deploy.sh prunes all but two)\n"
+        "  backend/scripts/report_audio_retention.py   # lesson audio by last use; see the doc for the command\n"
     )
     return subject, body
 
