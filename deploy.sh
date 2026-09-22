@@ -29,6 +29,18 @@ ssh_box() { ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=15 "${USER_AT}$
 
 die() { echo "deploy: $*" >&2; exit 1; }
 
+# Superseded TunaTale images, one per line, read from `docker images` output on
+# stdin (tunatale-al6). Keeps the tag just deployed and the last healthy one —
+# the rollback target. Anything older re-pulls from ghcr on a rollback, so it is
+# safe to delete; left alone, ~1 GB a week of old images was the box's only
+# unbounded disk growth that was not user data. Other repositories (caddy, a
+# different owner) never match.
+stale_images() {
+  local owner="$1" keep1="$2" keep2="${3:-}"
+  grep -E "^ghcr\.io/${owner}/tunatale-(api|web):[0-9a-f]{40}\$" \
+    | grep -vE ":(${keep1}${keep2:+|$keep2})\$" || true
+}
+
 # Fail with an answer rather than with "Permission denied (publickey)".
 # The box uses OS Login, whose POSIX username is derived from the Google
 # account (wdhaines@gmail.com -> wdhaines_gmail_com) and therefore does NOT
@@ -137,4 +149,11 @@ fi
 ssh_box "printf '%s\t%s\tfrom=%s\n' \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" '$TAG' '${PREVIOUS:-none}' >> $REMOTE_DIR/deploy-history.log"
 
 echo "==> deployed $TAG"
+
+# Only after health passes, and never fatal: a failed prune costs disk, not a deploy.
+STALE="$(ssh_box "sudo docker images --format '{{.Repository}}:{{.Tag}}'" | stale_images "$OWNER" "$TAG" "$PREVIOUS")"
+if [ -n "$STALE" ]; then
+  echo "==> pruning $(printf '%s\n' "$STALE" | wc -l | tr -d ' ') superseded images (keeping $TAG and ${PREVIOUS:-no previous})"
+  ssh_box "sudo docker rmi $(printf '%s ' $STALE) >/dev/null" || echo "deploy: image prune failed (harmless; disk only)" >&2
+fi
 ssh_box "sudo docker compose -f $REMOTE_DIR/docker-compose.yml ps --format '{{.Service}}\t{{.Image}}\t{{.Status}}'"
