@@ -2154,6 +2154,17 @@
             "title": "Kind",
             "type": "string"
           },
+          "lemma": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lemma"
+          },
           "produce_band": {
             "anyOf": [
               {

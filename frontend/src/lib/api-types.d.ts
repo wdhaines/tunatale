@@ -3076,6 +3076,8 @@ export interface components {
        * @enum {string}
        */
       kind: "create" | "word" | "kp";
+      /** Lemma */
+      lemma?: string | null;
       /** Produce Band */
       produce_band?: string | null;
       /** Produce Stability */

@@ -57,6 +57,12 @@ class ListenPreviewCandidate(BaseModel):
 
     kind: Literal["create", "word", "kp"]
     text: str
+    # The key the ignore list is matched on, set on CREATE rows only (bd
+    # tunatale-qfoa). NOT the same as `text`: that is the card headword, and the
+    # two differ whenever the lemma is re-keyed (snømenn/snøm), so an ignore sent
+    # with `text` is stored and changes nothing. Tracked rows get None — the
+    # ignore list is creation-only and goes inert once a card exists.
+    lemma: str | None = None
     item_id: int | None
     grade_class: Literal["create", "new", "learning", "due", "ahead"]
     rating: Literal["again", "hard", "good", "easy", "skip"]

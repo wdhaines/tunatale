@@ -2232,6 +2232,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             # `lemma` stays the key for the gloss lookup below, exactly as
             # mark_lesson_listened does it. bd tunatale-q5pl.
             "text": card_key_by_lemma.get(lemma, lemma),
+            "lemma": lemma,
             "item_id": None,
             "grade_class": "create",
             "rating": "good",

@@ -48,6 +48,7 @@ class TestListenPreviewContract:
         assert set(item_schema.get("properties", {})) == {
             "kind",
             "text",
+            "lemma",  # create rows' ignore key (tunatale-qfoa)
             "item_id",
             "grade_class",
             "rating",
