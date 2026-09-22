@@ -723,9 +723,14 @@
 		cursor: pointer;
 		transition: background 0.15s ease;
 	}
-	.ctrl-btn:hover {
-		background: var(--color-primary);
-		color: var(--color-on-primary);
+	/* Real hover devices only. A tap leaves :hover stuck on Android, and this
+	   paints exactly what .active paints, so a RELEASED Repeat kept looking
+	   engaged and the user's "turn it off" tap re-engaged it (tunatale-b2mn). */
+	@media (hover: hover) {
+		.ctrl-btn:hover {
+			background: var(--color-primary);
+			color: var(--color-on-primary);
+		}
 	}
 	/* Disabled Section ▶ at the last section: read-only surface, no pointer —
 	   beats the :hover rule above on the specificity tie (0,2,0 vs 0,1,1). */

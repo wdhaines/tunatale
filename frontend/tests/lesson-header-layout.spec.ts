@@ -1,3 +1,4 @@
+import { devices } from "@playwright/test";
 import { test, expect } from "./fixtures";
 import { backendAvailable, BACKEND } from "./helpers";
 
@@ -344,4 +345,56 @@ test("lesson card: Mark as Listened stays centered in the card", async ({ page, 
 		.locator(".listen-actions")
 		.evaluate((el) => getComputedStyle(el).justifyContent);
 	expect(justify).toBe("center");
+});
+
+/**
+ * tunatale-b2mn. On Android a tap leaves `:hover` stuck on the button, and
+ * `.ctrl-btn:hover` painted exactly what `.active` paints. So turning Repeat OFF
+ * left it looking ON; the user tapped again to turn it off, and that tap
+ * ENGAGED the loop and rewound — "a second tap repeats the sentence". The device
+ * trace showed every tap registering correctly (on/off/on/off/on, all
+ * `by=toggle`, one controller), so the fault is what the button SHOWS, and only
+ * a real touch browser has a sticky hover to show it.
+ */
+test.describe("Repeat on a touch screen", () => {
+	const PIXEL = devices["Pixel 7"];
+	test.use({
+		viewport: PIXEL.viewport,
+		userAgent: PIXEL.userAgent,
+		deviceScaleFactor: PIXEL.deviceScaleFactor,
+		isMobile: PIXEL.isMobile,
+		hasTouch: PIXEL.hasTouch,
+	});
+
+	test("released Repeat does not keep looking engaged after the tap", async ({ page, request }) => {
+		test.skip(!(await backendAvailable(request)), "Backend not available");
+		const cid = await curriculumId(request);
+		await stubFullAudio(page);
+		await page.goto(`/c/${cid}`);
+		// Proves the emulation took: with a real hover device there is no sticky
+		// hover, and this test would pass on the unfixed CSS.
+		expect(await page.evaluate(() => matchMedia("(hover: hover)").matches)).toBe(false);
+		await page.getByRole("button", { name: "Day 1" }).click();
+
+		const repeat = page.locator(".player-card .sentence-row button[aria-pressed]");
+		await expect(repeat).toBeVisible({ timeout: 15000 });
+		const paint = () =>
+			repeat.evaluate((el) => {
+				const s = getComputedStyle(el);
+				return `${s.backgroundColor} / ${s.color}`;
+			});
+		const idle = await paint();
+
+		// Polled, because background animates (0.15s transition): an immediate
+		// read lands mid-fade. Sticky hover never fades back, so the unfixed CSS
+		// still fails the final poll at its timeout.
+		await repeat.tap();
+		await expect(repeat).toHaveAttribute("aria-pressed", "true");
+		// Guard: engaged must look different from idle, or the check below is vacuous.
+		await expect.poll(paint).not.toBe(idle);
+
+		await repeat.tap();
+		await expect(repeat).toHaveAttribute("aria-pressed", "false");
+		await expect.poll(paint, { message: "released Repeat still paints as engaged", timeout: 2000 }).toBe(idle);
+	});
 });
