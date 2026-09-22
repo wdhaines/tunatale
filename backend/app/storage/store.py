@@ -78,6 +78,15 @@ class ContentStore:
             self._conn.row_factory = sqlite3.Row
             self._init_schema(self._conn)
         else:
+            if str(db_path).startswith("sqlite:"):
+                # Path() would treat the URL as a relative directory and create
+                # `sqlite:/.../x.db` beside the CWD: a silent throwaway store
+                # (tunatale-zjjo, twice). Refuse rather than strip, so the
+                # caller's bug surfaces.
+                raise ValueError(
+                    f"ContentStore wants a filesystem path, got a URL {db_path!r}; "
+                    "convert it with app.languages.resolve_db_path"
+                )
             path = Path(db_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             self._path = str(path)
