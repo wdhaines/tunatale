@@ -134,12 +134,11 @@ function backendServer(i: number) {
 			// database_url — so a developer whose .env sets DATABASE_URLS (real
 			// per-language DBs) would make this "isolated" backend open the REAL
 			// tunatale_sl.db/_no.db, and e2e specs (topic "ordering coffee") would
-			// pollute live data. The KEY MUST BE UPPERCASE to match .env's
-			// DATABASE_URLS: on case-sensitive Unix a lowercase `database_urls` is a
-			// DIFFERENT os.environ key, so load_dotenv(override=False) still injects
-			// the .env value and pydantic's case-insensitive read resolves to the
-			// real DBs (this silently wiped tunatale_sl.db twice — 2026-06-30,
-			// 2026-07-13). Every language key must be listed here to fully isolate.
+			// pollute live data (this silently wiped tunatale_sl.db twice —
+			// 2026-06-30, 2026-07-13). Every language key must be listed here to
+			// fully isolate. Key case no longer matters: since #187 there is no
+			// load_dotenv, and pydantic-settings reads the process env
+			// case-insensitively and lets it beat .env (measured 2026-09-22, fb7w).
 			DATABASE_URLS: `{"sl":"sqlite:///./tunatale-test-${i}.db","no":"sqlite:///./tunatale-test-no-${i}.db"}`,
 			// Startup DB-backup rotation would otherwise snapshot the throwaway
 			// test DB into the real ~/.tunatale/db-backups. 0 disables it for E2E.
@@ -147,15 +146,12 @@ function backendServer(i: number) {
 			// Add-time vocab media (POST /items, /listen) fetches image+audio when
 			// a Pixabay key is set. E2E seeds cards via those endpoints, so a real
 			// key in .env makes the suite hit Pixabay/Forvo live (slow, flaky).
-			// Empty it so seeding stays offline. load_dotenv(override=False) keeps
-			// this preset value; key is uppercase to match the .env's PIXABAY_API_KEY.
+			// Empty it so seeding stays offline; the process env beats .env.
 			PIXABAY_API_KEY: '',
 			// E2E doesn't test lemmatization; force the fast lowercase lemmatizer
 			// so a local `lemmatizer_type=classla` in .env doesn't make the
 			// backend pay classla's ~26s model load and blow the webServer timeout.
-			// Key MUST be lowercase to match the .env key: main.py's load_dotenv()
-			// loads the lowercase `lemmatizer_type` from .env, and on case-sensitive
-			// Unix an uppercase `LEMMATIZER_TYPE` is a *different* key that .env wins over.
+			// The process env beats .env in either key case (see DATABASE_URLS).
 			lemmatizer_type: 'lowercase',
 			// This backend's own frontend is on a port outside the default
 			// allowlist (:5173), so cors-lockdown.spec.ts has no ALLOWED case to
@@ -167,7 +163,7 @@ function backendServer(i: number) {
 			// Pin the target language to Slovene: the e2e curriculum/story flows are
 			// backed by Slovene LLM cassettes. A developer's .env with TARGET_LANGUAGE=no
 			// (running TT as Norwegian) would otherwise generate a Norwegian prompt with
-			// no cassette → 500. Uppercase matches the .env key so load_dotenv keeps it.
+			// no cassette → 500. The process env beats .env.
 			TARGET_LANGUAGE: 'sl',
 			// ⚠️ AUTH ON, deliberately — this suite runs the deployed shape.
 			//
