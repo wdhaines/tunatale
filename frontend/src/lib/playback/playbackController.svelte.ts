@@ -504,6 +504,8 @@ export function createPlaybackController(deps: Deps): PlaybackController {
         trace("action:previoustrack");
         if (handsFree) {
           prevCueAction();
+        } else if (sectionStepping()) {
+          prevSectionAction();
         } else {
           prevSection();
         }
@@ -516,6 +518,8 @@ export function createPlaybackController(deps: Deps): PlaybackController {
         trace("action:nexttrack");
         if (handsFree) {
           nextCueAction();
+        } else if (sectionStepping()) {
+          nextSectionAction();
         } else {
           nextSection();
         }
@@ -634,6 +638,36 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     const step = SEQUENCE_STEP.get(activeSectionType);
     if (step === undefined) return;
     advanceHandsFreePass(step);
+  }
+
+  // Section ◀ for the headset/car previoustrack (tunatale-y34g): the previous
+  // pass in HANDS_FREE_SEQUENCE this lesson has, from its start. On the first
+  // pass there is nowhere back to go, so it restarts that pass — a "previous"
+  // that silently does nothing is the bug being fixed. selectTrack keeps the
+  // play/pause state across the swap.
+  function prevSectionAction(): void {
+    cancelRepeatLatch("prevSectionAction");
+    const step = SEQUENCE_STEP.get(activeSectionType!)!;
+    const prev = HANDS_FREE_SEQUENCE.slice(0, step).findLast((t) =>
+      audioSections.some((s) => s.section_type === t),
+    );
+    if (prev === undefined) {
+      doSeek(0);
+      return;
+    }
+    selectTrack(prev, null, true);
+  }
+
+  // Whether headset next/previous step by PASS (tunatale-y34g). Only in track
+  // mode — every section carrying its own cues, the same test LessonPlayer uses
+  // to pick track mode — and only on a track in the sequence. A legacy
+  // full-track lesson also seeds activeSectionType, so checking that alone
+  // would swap it onto a cue-less section track; there, and on an
+  // out-of-sequence track, the cue-level section walk still works.
+  const trackMode =
+    audioSections.length > 0 && audioSections.every((s) => (s.cues?.length ?? 0) > 0);
+  function sectionStepping(): boolean {
+    return trackMode && hasNextSection;
   }
 
   // --- Ref-group cue stepping ---

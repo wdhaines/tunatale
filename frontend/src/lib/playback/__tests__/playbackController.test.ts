@@ -1874,9 +1874,10 @@ describe("playbackController", () => {
   // test that conflates them fails.
   //
   // The MediaSession `nexttrack` handler's split (nextSection when OFF,
-  // nextCueAction when ON) is already pinned by "nexttrack calls nextSection by
-  // default, nextCue when handsFree=true" above — the Section ▶ button is a
-  // NEW path, and the setActionHandler blocks must not change.
+  // nextCueAction when ON) is pinned for LEGACY full-track lessons by
+  // "nexttrack calls nextSection by default, nextCue when handsFree=true"
+  // above. In track mode, OFF now steps by pass like Section ▶ — see the y34g
+  // block at the end of this describe.
   describe("Section ▶ (nextSectionAction / hasNextSection)", () => {
     function seqCues(sectionType: string, sectionIndex: number): Cue[] {
       return [
@@ -2122,6 +2123,108 @@ describe("playbackController", () => {
 
       expect(onHandsFreeEnd).not.toHaveBeenCalled();
       expect(audioEl.src).toBe(srcBefore);
+    });
+    // tunatale-y34g. With hands-free OFF, a headset/car next/previous button
+    // called nextSection/prevSection, which step by cue section_index — and in
+    // track mode every per-track cue carries section_index 0, so both were
+    // silent no-ops. The user's call (2026-09-22): the buttons do what the
+    // on-screen Section ▶ does. Legacy full-track lessons keep the cue-level
+    // walk, which works there (the two "calls nextSection/prevSection by
+    // default" tests above pin it).
+    describe("headset next/previous with hands-free OFF (y34g)", () => {
+      function handlers(audio: LessonAudio, onHandsFreeEnd = vi.fn()) {
+        const mediaSession = makeFakeMediaSession();
+        const h: Record<string, () => void> = {};
+        mediaSession.setActionHandler = vi.fn((action: string, handler: any) => {
+          h[action] = handler;
+        }) as any;
+        const ctrl = createController({
+          audio,
+          onHandsFreeEnd,
+          mediaSession: mediaSession as unknown as MediaSession,
+        });
+        return { ctrl, next: () => h.nexttrack(), prev: () => h.previoustrack() };
+      }
+
+      function on(ctrl: ReturnType<typeof createController>, section: string) {
+        ctrl.selectTrack(section);
+        audioEl.dispatchEvent(new Event("loadedmetadata"));
+        expect(ctrl.activeSectionType).toBe(section);
+      }
+
+      it("next goes to the next pass in the user's order, like Section ▶", () => {
+        const { ctrl, next } = handlers(seqAudio);
+        on(ctrl, "natural_speed");
+        next();
+        // seqAudio's ARRAY puts translated next; the sequence says slow.
+        expect(ctrl.activeSectionType).toBe("slow_speed");
+      });
+
+      it("next from the EN step hands off to the next lesson, like Section ▶", () => {
+        const onHandsFreeEnd = vi.fn();
+        const { ctrl, next } = handlers(seqAudio, onHandsFreeEnd);
+        on(ctrl, "slow_translated");
+        next();
+        expect(onHandsFreeEnd).toHaveBeenCalledTimes(1);
+      });
+
+      it("previous goes to the previous pass in the user's order", () => {
+        const { ctrl, prev } = handlers(seqAudio);
+        on(ctrl, "slow_speed");
+        prev();
+        expect(ctrl.activeSectionType).toBe("natural_speed");
+      });
+
+      it("previous from any EN variant goes back to Slow", () => {
+        const { ctrl, prev } = handlers(seqAudio);
+        on(ctrl, "slow_translated");
+        prev();
+        expect(ctrl.activeSectionType).toBe("slow_speed");
+      });
+
+      it("previous skips a pass the lesson lacks", () => {
+        const { ctrl, prev } = handlers(noSlowAudio);
+        on(ctrl, "translated");
+        prev();
+        expect(ctrl.activeSectionType).toBe("natural_speed");
+      });
+
+      it("previous on the first pass restarts it rather than doing nothing", () => {
+        const { ctrl, prev } = handlers(seqAudio);
+        on(ctrl, "key_phrases");
+        audioEl.currentTime = 0.7;
+        audioEl.dispatchEvent(new Event("timeupdate"));
+        const srcBefore = audioEl.src;
+        prev();
+        expect(ctrl.activeSectionType).toBe("key_phrases");
+        expect(audioEl.src).toBe(srcBefore);
+        expect(audioEl.currentTime).toBeCloseTo(0, 3);
+      });
+
+      it("previous cancels the repeat latch, like every other navigation", () => {
+        const { ctrl, prev } = handlers(seqAudio);
+        on(ctrl, "key_phrases");
+        audioEl.currentTime = 0.3;
+        audioEl.dispatchEvent(new Event("timeupdate"));
+        ctrl.toggleRepeatLatch();
+        expect(ctrl.repeatLatched).toBe(true);
+        prev();
+        expect(ctrl.repeatLatched).toBe(false);
+      });
+
+      it("a track outside the sequence keeps the cue-level walk", () => {
+        const ghostTrack: LessonAudio = {
+          ...seqAudio,
+          cues: seqCues("ghost_section", 0),
+        };
+        const { ctrl, next, prev } = handlers(ghostTrack);
+        expect(ctrl.activeSectionType).toBe("ghost_section");
+        const srcBefore = audioEl.src;
+        next();
+        prev();
+        expect(audioEl.src).toBe(srcBefore);
+        expect(ctrl.activeSectionType).toBe("ghost_section");
+      });
     });
   });
 
