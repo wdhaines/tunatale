@@ -17,10 +17,13 @@ import pytest
 
 from app.generation.glossing import (
     build_gloss_prompt,
+    build_gloss_topup_prompt,
     dialogue_lines_from_story,
     ensure_dialogue_glosses,
     gloss_max_tokens,
+    gloss_topup_max_tokens,
     parse_gloss_array,
+    uncovered_surfaces,
 )
 from app.generation.story import StoryGenerator
 from app.llm.client import LLMError
@@ -66,6 +69,16 @@ _GLOSS_REPLY = json.dumps(
         {"word": "dan", "translation": "day"},
         {"word": "prosim", "translation": "please"},
         {"word": "kavo", "translation": "coffee"},
+    ]
+)
+
+# Same dialogue with "kavo" deliberately left out — the shape of the real
+# tunatale-grv3 gap (226 of 227 words glossed).
+_FIRST_PARTIAL = json.dumps(
+    [
+        {"word": "dober", "translation": "good"},
+        {"word": "dan", "translation": "day"},
+        {"word": "prosim", "translation": "please"},
     ]
 )
 
@@ -219,7 +232,16 @@ class TestGeneratorRunsTheGlossPass:
         assert [g["word"] for g in stored["dialogue_glosses"]] == ["dober", "dan", "prosim", "kavo"]
 
     async def test_base_key_reaches_verb_base_glosses(self, language):
-        reply = json.dumps([{"word": "prosim", "translation": "please", "base": "ask"}])
+        # Covers the whole dialogue so the top-up does not fire; the point of
+        # this test is the base key, not the coverage predicate.
+        reply = json.dumps(
+            [
+                {"word": "dober", "translation": "good"},
+                {"word": "dan", "translation": "day"},
+                {"word": "prosim", "translation": "please", "base": "ask"},
+                {"word": "kavo", "translation": "coffee"},
+            ]
+        )
         client = _two_call_client(_story(), gloss_reply=reply)
         lesson = await StoryGenerator(llm_client=client).generate(
             curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER
@@ -281,10 +303,13 @@ class TestGlossPassRetriesOnce:
     async def test_empty_then_good_retries_and_succeeds(self, language, caplog):
         story = _story()
         client = MagicMock()
-        client.complete = AsyncMock(side_effect=["[]", '[{"word":"a","translation":"b"}]'])
+        # The retry reply must COVER the dialogue: since tunatale-grv3 a
+        # partial reply triggers a top-up, and a mock with no third answer
+        # would test the exception path instead of the retry.
+        client.complete = AsyncMock(side_effect=["[]", _GLOSS_REPLY])
         await ensure_dialogue_glosses(story, client, language)
         assert client.complete.await_count == 2
-        assert story["dialogue_glosses"] == [{"word": "a", "translation": "b"}]
+        assert story["dialogue_glosses"] == json.loads(_GLOSS_REPLY)
         assert "retrying once" in caplog.text
 
     async def test_empty_twice_logs_and_degrades(self, language, caplog):
@@ -299,7 +324,7 @@ class TestGlossPassRetriesOnce:
     async def test_good_first_time_skips_retry(self, language):
         story = _story()
         client = MagicMock()
-        client.complete = AsyncMock(return_value='[{"word":"a","translation":"b"}]')
+        client.complete = AsyncMock(return_value=_GLOSS_REPLY)
         await ensure_dialogue_glosses(story, client, language)
         assert client.complete.await_count == 1
 
@@ -338,6 +363,226 @@ class TestGlossFailureDegrades:
         )
         assert lesson.title == "Ordering Coffee"
         assert "gloss pass" in caplog.text.lower()
+
+
+class TestUncoveredSurfaces:
+    """Decision 1's coverage predicate (tunatale-grv3).
+
+    The `language` fixture lemmatizes to lowercase, so the LEMMA branch of the
+    predicate is only reachable here, with a hand-built surface→lemma map.
+    """
+
+    def test_surface_covered_only_via_its_lemma_is_still_covered(self):
+        # `du`'s gloss covers `deg` — its LEMMA is `du` — so only våtdrakter
+        # is left: the exact 2026-09-15 session shape.
+        surface_lemma = {"våtdrakter": "våtdrakt", "deg": "du"}
+        glosses = [{"word": "du", "translation": "you"}]
+        assert uncovered_surfaces(surface_lemma, glosses) == ["våtdrakter"]
+
+    def test_a_gloss_keys_own_lemma_covers_another_surface(self):
+        surface_lemma = {"prisen": "pris", "pris": "pris"}
+        glosses = [{"word": "prisen", "translation": "the price"}]
+        assert uncovered_surfaces(surface_lemma, glosses) == []
+
+    def test_empty_translation_is_not_a_key(self):
+        surface_lemma = {"hei": "hei"}
+        glosses = [{"word": "hei", "translation": ""}]
+        assert uncovered_surfaces(surface_lemma, glosses) == ["hei"]
+
+    def test_lemma_fallback_is_accepted_as_a_key(self):
+        surface_lemma = {"hei": "hei"}
+        glosses = [{"lemma": "hei", "translation": "hi"}]
+        assert uncovered_surfaces(surface_lemma, glosses) == []
+
+    def test_gloss_keys_are_lowercased(self):
+        surface_lemma = {"hei": "hei"}
+        glosses = [{"word": "HEI", "translation": "hi"}]
+        assert uncovered_surfaces(surface_lemma, glosses) == []
+
+    def test_results_follow_insertion_order(self):
+        surface_lemma = {"a": "a", "b": "b", "c": "c"}
+        glosses = [{"word": "b", "translation": "bee"}]
+        assert uncovered_surfaces(surface_lemma, glosses) == ["a", "c"]
+
+
+class TestGlossTopUp:
+    """tunatale-grv3 — ONE targeted call for whatever the main pass left out."""
+
+    async def test_full_first_reply_skips_the_topup(self, language):
+        story = _story()
+        client = MagicMock()
+        client.complete = AsyncMock(return_value=_GLOSS_REPLY)
+        await ensure_dialogue_glosses(story, client, language)
+        assert client.complete.await_count == 1
+        assert [g["word"] for g in story["dialogue_glosses"]] == ["dober", "dan", "prosim", "kavo"]
+
+    async def test_partial_first_reply_fires_one_scoped_topup(self, language):
+        story = _story()
+        client = MagicMock()
+        client.complete = AsyncMock(
+            side_effect=[_FIRST_PARTIAL, json.dumps([{"word": "kavo", "translation": "coffee"}])]
+        )
+        await ensure_dialogue_glosses(story, client, language)
+        assert client.complete.await_count == 2
+        second_prompt = client.complete.await_args_list[1].args[0]
+        # Names the missing word, and carries ONLY the line that contains it.
+        assert "kavo" in second_prompt
+        assert "Prosim kavo." in second_prompt
+        assert "Dober dan!" not in second_prompt
+        glosses = story["dialogue_glosses"]
+        assert [g["word"] for g in glosses] == ["dober", "dan", "prosim", "kavo"]
+        assert next(g for g in glosses if g["word"] == "kavo")["translation"] == "coffee"
+
+    async def test_topup_never_overwrites_an_existing_translation(self, language):
+        story = _story()
+        client = MagicMock()
+        # kavo is missing; the top-up ALSO offers a conflicting gloss for prosim.
+        client.complete = AsyncMock(
+            side_effect=[
+                _FIRST_PARTIAL,
+                json.dumps(
+                    [
+                        {"word": "kavo", "translation": "coffee"},
+                        {"word": "prosim", "translation": "WRONG"},
+                    ]
+                ),
+            ]
+        )
+        await ensure_dialogue_glosses(story, client, language)
+        glosses = story["dialogue_glosses"]
+        assert [g["word"] for g in glosses] == ["dober", "dan", "prosim", "kavo"]
+        assert next(g for g in glosses if g["word"] == "prosim")["translation"] == "please"
+
+    async def test_topup_budget_leaves_room_for_reasoning(self, language):
+        """A 1-5 word top-up sized at len(words) * 24 came back TRUNCATED from
+        live Groq (recorded 2026-09-22 against the 256 floor): gpt-oss spends
+        completion tokens on reasoning before the JSON. cloze_quality.py
+        measured the same thing and settled on 1500."""
+        story = _story()
+        client = MagicMock()
+        client.complete = AsyncMock(
+            side_effect=[_FIRST_PARTIAL, json.dumps([{"word": "kavo", "translation": "coffee"}])]
+        )
+        await ensure_dialogue_glosses(story, client, language)
+        assert client.complete.await_args_list[1].kwargs["max_tokens"] >= 1500
+
+    def test_topup_budget_never_exceeds_the_request_reservation(self):
+        words = [f"w{i}" for i in range(400)]
+        lines = [" ".join(words)]
+        prompt = build_gloss_topup_prompt(words, lines, "X" * 16)
+        cap = gloss_topup_max_tokens(words, lines)
+        assert cap + len(prompt) // 3 + 128 <= 8000
+
+    async def test_a_word_returned_without_a_translation_is_topped_up(self, language):
+        """An entry with an EMPTY translation is not coverage (uncovered_surfaces
+        says so), so the top-up asks for that word — and its answer must be
+        merged, not rejected as an "existing key". parse_gloss_array keeps such
+        entries, and markup stripping can manufacture one ("<b></b>" -> "")."""
+        story = _story()
+        client = MagicMock()
+        first = json.dumps(
+            [
+                {"word": "dober", "translation": "good"},
+                {"word": "dan", "translation": "day"},
+                {"word": "prosim", "translation": "please"},
+                {"word": "kavo", "translation": ""},
+            ]
+        )
+        client.complete = AsyncMock(side_effect=[first, json.dumps([{"word": "kavo", "translation": "coffee"}])])
+        await ensure_dialogue_glosses(story, client, language)
+        assert client.complete.await_count == 2
+        assert "kavo" in client.complete.await_args_list[1].args[0]
+        kavo = [g["translation"] for g in story["dialogue_glosses"] if g["word"] == "kavo"]
+        assert "coffee" in kavo
+
+    async def test_a_translationless_topup_entry_does_not_block_a_later_one(self, language):
+        story = _story()
+        client = MagicMock()
+        client.complete = AsyncMock(
+            side_effect=[
+                _FIRST_PARTIAL,
+                json.dumps([{"word": "kavo", "translation": ""}, {"word": "kavo", "translation": "coffee"}]),
+            ]
+        )
+        await ensure_dialogue_glosses(story, client, language)
+        kavo = [g["translation"] for g in story["dialogue_glosses"] if g["word"] == "kavo"]
+        assert kavo == ["coffee"]
+
+    async def test_topup_raising_keeps_the_first_reply(self, language, caplog):
+        story = _story()
+        client = MagicMock()
+        client.complete = AsyncMock(side_effect=[_FIRST_PARTIAL, RuntimeError("top-up boom")])
+        await ensure_dialogue_glosses(story, client, language)
+        assert client.complete.await_count == 2
+        assert story["dialogue_glosses"] == json.loads(_FIRST_PARTIAL)
+        assert "Gloss top-up failed" in caplog.text
+
+    async def test_topup_returning_empty_names_the_word_unglossed(self, language, caplog):
+        story = _story()
+        client = MagicMock()
+        client.complete = AsyncMock(side_effect=[_FIRST_PARTIAL, "[]"])
+        await ensure_dialogue_glosses(story, client, language)
+        assert client.complete.await_count == 2
+        assert story["dialogue_glosses"] == json.loads(_FIRST_PARTIAL)
+        assert "Gloss top-up left 1 word(s) unglossed" in caplog.text
+        assert "kavo" in caplog.text
+
+    async def test_still_uncovered_after_topup_never_calls_a_third_time(self, language, caplog):
+        story = _story()
+        client = MagicMock()
+        # The top-up reply has a keyless entry and a key for a word we did not
+        # ask about — neither is merged, so kavo stays uncovered after 2 calls.
+        client.complete = AsyncMock(
+            side_effect=[
+                _FIRST_PARTIAL,
+                json.dumps([{"translation": "no key"}, {"word": "kafe", "translation": "coffee"}]),
+            ]
+        )
+        await ensure_dialogue_glosses(story, client, language)
+        assert client.complete.await_count == 2
+        assert story["dialogue_glosses"] == json.loads(_FIRST_PARTIAL)
+        assert "Gloss top-up left 1 word(s) unglossed" in caplog.text
+        assert "kavo" in caplog.text
+
+    async def test_empty_then_partial_retry_then_topup_is_three_calls(self, language):
+        """Retry and top-up are independent: empty → retry → partial → top-up."""
+        story = _story()
+        client = MagicMock()
+        partial_retry = json.dumps(
+            [
+                {"word": "dober", "translation": "good"},
+                {"word": "dan", "translation": "day"},
+            ]
+        )
+        topup = json.dumps(
+            [
+                {"word": "kavo", "translation": "coffee"},
+                {"word": "prosim", "translation": "please"},
+            ]
+        )
+        client.complete = AsyncMock(side_effect=["[]", partial_retry, topup])
+        await ensure_dialogue_glosses(story, client, language)
+        assert client.complete.await_count == 3
+        assert sorted(g["word"] for g in story["dialogue_glosses"]) == ["dan", "dober", "kavo", "prosim"]
+
+
+class TestMissingLogUsesTheCoveragePredicate:
+    """story.py's _missing_log must not name a surface the glosses cover."""
+
+    async def test_fully_glossed_story_logs_no_missing_warning(self, language, caplog):
+        """Covered via caplog, with glosses whose ``word`` equals every surface.
+
+        That is the surface branch of the predicate, end to end through
+        ``build_lesson_from_story``. The LEMMA branch needs a non-identity
+        lemma, which the lowercase test lemmatizer cannot produce, so it is
+        covered directly in TestUncoveredSurfaces instead.
+        """
+        client = _two_call_client(_story(), gloss_reply=_GLOSS_REPLY)
+        with caplog.at_level(logging.WARNING):
+            await StoryGenerator(llm_client=client).generate(
+                curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER
+            )
+        assert "LLM omitted" not in caplog.text
 
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"

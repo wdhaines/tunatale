@@ -7,7 +7,7 @@ import logging
 from collections.abc import Sequence
 from typing import NamedTuple
 
-from app.generation.glossing import ensure_dialogue_glosses
+from app.generation.glossing import dialogue_surface_lemmas, ensure_dialogue_glosses, uncovered_surfaces
 from app.generation.json_parsing import parse_json_object
 from app.generation.prompts import (
     _build_cefr_block,
@@ -31,9 +31,7 @@ from app.models.language import NARRATOR_VOICE, Language
 from app.models.lesson import KeyPhraseInfo, Lesson
 from app.models.strategy import ContentStrategy, ReviewPressure
 from app.srs.database import SRSDatabase
-from app.srs.lemmatizer import get_lemmatizer, lemmatize_surfaces_in_context
 from app.srs.review_selector import select_review_collocations
-from app.srs.tokenizer import tokenize
 
 logger = logging.getLogger(__name__)
 
@@ -402,14 +400,15 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
         kp_infos.append(KeyPhraseInfo(phrase=phrase, translation=translation))
 
     glosses = data.get("dialogue_glosses", [])
-    lemmatizer = get_lemmatizer(language.code)
 
     # Sentence-aware surface→lemma map (prevents POS-blind fallback
     # where single-word lemmatize miskeys e.g. "hotel" → as verb "hoteti"
-    # instead of noun "hotel").
-    surface_lemma: dict[str, str] = {}
-    # Collected in the SAME pass: a multi-word collocation has no entry in a
-    # token map, so the review meter falls back to a phrase search over this.
+    # instead of noun "hotel"). The loop lives in glossing.py on purpose: the
+    # top-up path in ensure_dialogue_glosses must count coverage with THE SAME
+    # map, so there is one copy, not two.
+    # dialogue_lines is collected separately — a multi-word collocation has no
+    # entry in a token map, so the review meter falls back to a phrase search
+    # over this list.
     dialogue_lines: list[str] = []
     for scene in scenes:
         for line in scene.get("lines", []):
@@ -417,13 +416,9 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
             if not text:
                 continue
             dialogue_lines.append(text)
-            surfaces = tokenize(text)
-            lemmas = lemmatize_surfaces_in_context(surfaces, text, lemmatizer, language.code)
-            for s, lem in zip(surfaces, lemmas, strict=True):
-                surface_lemma.setdefault(s.lower(), lem)
+    surface_lemma = dialogue_surface_lemmas(dialogue_lines, language.code)
 
     token_glosses: dict[str, str] = {}
-    glossed_surfaces: set[str] = set()
     for g in glosses:
         raw_key = g.get("word") or g.get("lemma", "")
         translation = g.get("translation", "")
@@ -431,7 +426,6 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
             # Keys are lowercase — every consumer looks up surface.lower()
             # or a lowercase lemma (transcript.py, api/srs.py).
             key = raw_key.lower()
-            glossed_surfaces.add(key)
             lemma = surface_lemma.get(key, key)
             # Surface key preserves the specific conjugated translation
             # (e.g. "boste" → "you will", "bom" → "I will").
@@ -456,7 +450,7 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
             verb_base_glosses[key] = base
             verb_base_glosses.setdefault(lemma, base)
 
-    missing = [s for s in surface_lemma if s not in glossed_surfaces]
+    missing = uncovered_surfaces(surface_lemma, glosses)
     if missing:
         _missing_log(missing, language.code)
 

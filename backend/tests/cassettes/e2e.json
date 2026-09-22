@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "recorded_at": "2026-09-16T17:13:50.394204+00:00",
+  "recorded_at": "2026-09-22T16:07:30.445835+00:00",
   "calls": [
     {
       "prompt_hash": "sha256:0c7754f646249150",
@@ -98,6 +98,13 @@
       "prompt_preview": "dan \u2014 in: Dober dan, kako se imate danes na ta lep son\u010den dan v mestu pravzaprav",
       "max_tokens": 50,
       "response": "day",
+      "provider": "groq"
+    },
+    {
+      "prompt_hash": "sha256:8e0f5c877ba2940a",
+      "prompt_preview": "Below are Slovene dialogue lines. The following words still need a gloss entry: ",
+      "max_tokens": 1620,
+      "response": "[{\"word\":\"takoj\",\"translation\":\"right away\"},{\"word\":\"vz am em\",\"translation\":\"I\u2019ll take\",\"base\":\"take\"},{\"word\":\"tako\",\"translation\":\"just as\"},{\"word\":\"bila\",\"translation\":\"was\"},{\"word\":\"vas\",\"translation\":\"you\"}]",
       "provider": "groq"
     }
   ]

@@ -26,6 +26,8 @@ import re
 
 from app.llm.call_sites import CallSite
 from app.models.language import Language
+from app.srs.lemmatizer import get_lemmatizer, lemmatize_surfaces_in_context
+from app.srs.tokenizer import tokenize
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +71,33 @@ proper names, and interjections). For each, give its lowercased surface form
 exactly as written and a concise English translation appropriate to how it is
 used in these lines. Conjugated and inflected forms get their specific
 translation, NOT the dictionary form (e.g. "boste" -> "you will", "sem" -> "I am").
+
+Every "word" value must be a SINGLE word. Do not emit phrases or multi-word
+entries — a phrase like "ses neste tirsdag" must appear only as its individual
+words. Whole-phrase meanings are carried elsewhere and are not wanted here.
+
+The "base" key is OPTIONAL and VERBS ONLY: the bare English dictionary form with
+no leading "to" (e.g. "show", not "to show"), used when a card fronts the
+infinitive. Non-verbs and any entry with no dictionary form must OMIT it entirely.
+
+Respond with ONLY a JSON array (no markdown fences, no prose):
+[{{"word": "lowercased_surface", "translation": "English", "base": "verbs only"}}, ...]
+
+Dialogue:
+{dialogue}
+"""
+
+_GLOSS_TOPUP_PROMPT = """\
+Below are {language_name} dialogue lines. The following words still need a gloss
+entry:
+
+{words}
+
+Give a gloss entry for EACH word listed above, and ONLY those words. For each,
+give its lowercased surface form exactly as written and a concise English
+translation appropriate to how it is used in the lines shown. Conjugated and
+inflected forms get their specific translation, NOT the dictionary form
+(e.g. "boste" -> "you will", "sem" -> "I am").
 
 Every "word" value must be a SINGLE word. Do not emit phrases or multi-word
 entries — a phrase like "ses neste tirsdag" must appear only as its individual
@@ -217,8 +246,66 @@ def dialogue_lines_from_story(data: dict) -> list[str]:
     return lines
 
 
+def dialogue_surface_lemmas(lines: list[str], language_code: str) -> dict[str, str]:
+    """The surface→lemma map for *lines*, keyed on the lowercased surface.
+
+    THE one copy of this loop, shared with ``build_lesson_from_story`` so the
+    coverage predicate and the transcript's lemma lookup can never disagree
+    (story.py used to inline it; the top-up path needs the same map). Each
+    surface keeps its first-seen lemma (``setdefault``) — the same rule the
+    story builder applies to its own map.
+    """
+    surface_lemma: dict[str, str] = {}
+    lemmatizer = get_lemmatizer(language_code)
+    for text in lines:
+        surfaces = tokenize(text)
+        lemmas = lemmatize_surfaces_in_context(surfaces, text, lemmatizer, language_code)
+        for s, lem in zip(surfaces, lemmas, strict=True):
+            surface_lemma.setdefault(s.lower(), lem)
+    return surface_lemma
+
+
+def uncovered_surfaces(surface_lemma: dict[str, str], glosses: list[dict]) -> list[str]:
+    """The dialogue surfaces with no usable gloss entry, in first-seen order.
+
+    A surface ``s`` (lemma ``L``) is COVERED iff ``s`` or ``L`` is a gloss key,
+    where the key set is what ``build_lesson_from_story`` puts in
+    ``token_glosses``: every gloss entry's lowercased ``word``/``lemma`` key
+    that has a truthy ``translation``, plus that key's own lemma. That mirrors
+    the transcript's resolution ``gloss_map.get(surface.lower()) or
+    gloss_map.get(lemma)`` (app/srs/transcript.py), so what this calls covered
+    and what a learner can hover are the same set. DB card translations are
+    deliberately NOT consulted — generation has no DB here.
+    """
+    keys: set[str] = set()
+    for g in glosses:
+        raw_key = g.get("word") or g.get("lemma", "")
+        if raw_key and g.get("translation"):
+            key = raw_key.lower()
+            keys.add(key)
+            keys.add(surface_lemma.get(key, key))
+    return [s for s in surface_lemma if s not in keys and surface_lemma[s] not in keys]
+
+
 def build_gloss_prompt(lines: list[str], language_name: str) -> str:
     return _GLOSS_PROMPT.format(language_name=language_name, dialogue="\n".join(lines))
+
+
+def build_gloss_topup_prompt(words: list[str], lines: list[str], language_name: str) -> str:
+    """Prompt asking for gloss entries for EXACTLY *words*.
+
+    Context is only the lines containing at least one of *words* (token
+    membership), so the model sees the sentences where the missing surfaces
+    actually appear and nothing else — the full dialogue would re-raise the
+    truncation risk this one-call top-up is sized to avoid.
+    """
+    wanted = set(words)
+    context_lines = [line for line in lines if wanted & {t.lower() for t in tokenize(line)}]
+    return _GLOSS_TOPUP_PROMPT.format(
+        language_name=language_name,
+        words="\n".join(f"- {w}" for w in words),
+        dialogue="\n".join(context_lines),
+    )
 
 
 def _unique_words(lines: list[str]) -> set[str]:
@@ -264,6 +351,41 @@ async def generate_dialogue_glosses(lines: list[str], llm, language: Language) -
     return parse_gloss_array(raw)
 
 
+# Completion tokens a reasoning model spends BEFORE the JSON. The top-up asks
+# for a handful of words, so a cap sized from the entries alone is almost all
+# reasoning headroom-free: at max(256, n * 24) a live 5-word top-up came back
+# TRUNCATED mid-entry (recorded 2026-09-22). cloze_quality.py::_MAX_TOKENS
+# measured the same failure (5 of 6 replies finish_reason=length at 120) and
+# settled on 1500; the main pass never shows it only because a whole dialogue's
+# n * 24 already dwarfs the reasoning.
+_TOPUP_REASONING_TOKENS = 1500
+
+
+def gloss_topup_max_tokens(words: list[str], lines: list[str]) -> int:
+    """Completion cap for the top-up: reasoning allowance plus the entries,
+    clamped to what the free-tier request reservation leaves after the prompt."""
+    prompt_chars = len(build_gloss_topup_prompt(words, lines, "X" * 16))
+    available = _GROQ_FREE_TIER_REQUEST_BUDGET - prompt_chars // _CHARS_PER_TOKEN - _GLOSS_MARGIN
+    return min(_TOPUP_REASONING_TOKENS + len(words) * _TOKENS_PER_ENTRY, available)
+
+
+async def generate_gloss_topup(words: list[str], lines: list[str], llm, language: Language) -> list[dict]:
+    """One LLM call toping up gloss entries for exactly *words*.
+
+    Sized by :func:`gloss_topup_max_tokens`; the context is filtered to the lines
+    that mention a missing word, so this call stays small by construction.
+    """
+    prompt = build_gloss_topup_prompt(words, lines, language.name)
+    raw = await llm.complete(
+        prompt,
+        system_prompt=_GLOSS_SYSTEM,
+        temperature=0.1,
+        max_tokens=gloss_topup_max_tokens(words, lines),
+        call_site=CallSite.GLOSSING,
+    )
+    return parse_gloss_array(raw)
+
+
 async def ensure_dialogue_glosses(data: dict, llm, language: Language) -> None:
     """Fill *data*'s ``dialogue_glosses`` in place, unless it already has them.
 
@@ -302,4 +424,44 @@ async def ensure_dialogue_glosses(data: dict, llm, language: Language) -> None:
                 "Gloss retry also returned no usable entries (%s); lesson loses hover glosses", language.code
             )
             return
+    # ONE targeted top-up for whatever the main pass left uncovered. A partial
+    # reply is a completion, not a miss — the original code only retried an
+    # EMPTY array, and 226-of-227 glossed then sat incomplete forever
+    # (tunatale-grv3). Never a loop: one call, then a warning for whatever is
+    # still missing, and the glosses already obtained are kept unchanged.
+    surface_lemma = dialogue_surface_lemmas(lines, language.code)
+    missing = uncovered_surfaces(surface_lemma, glosses)
+    if missing:
+        try:
+            topup = await generate_gloss_topup(missing, lines, llm, language)
+        except Exception as e:  # noqa: BLE001 — any failure degrades, never raises
+            topup = []
+            logger.warning("Gloss top-up failed (%s); glosses keep as-is: %s", language.code, e)
+        missing_set = set(missing)
+        # Only entries WITH a translation count as existing — the same rule
+        # uncovered_surfaces applies. An empty-translation entry is exactly what
+        # made its word "missing", so it must not also block the answer.
+        existing_keys = {
+            (g.get("word") or g.get("lemma", "")).lower()
+            for g in glosses
+            if (g.get("word") or g.get("lemma", "")) and g.get("translation")
+        }
+        for entry in topup:
+            raw = entry.get("word") or entry.get("lemma", "")
+            if not raw or not entry.get("translation"):
+                continue
+            key = raw.lower()
+            # Only the words we asked about, and never an existing key — the
+            # original translation wins over a top-up's differing one.
+            if key in missing_set and key not in existing_keys:
+                glosses.append(entry)
+                existing_keys.add(key)
+        still_missing = uncovered_surfaces(surface_lemma, glosses)
+        if still_missing:
+            logger.warning(
+                "Gloss top-up left %d word(s) unglossed (%s): %s",
+                len(still_missing),
+                language.code,
+                " ".join(sorted(still_missing)[:10]),
+            )
     data["dialogue_glosses"] = glosses
