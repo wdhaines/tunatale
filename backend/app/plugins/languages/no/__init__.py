@@ -16,6 +16,7 @@ from app.plugins.languages.no.norwegian_breakdown import (
     flat_syllables,
     slow_norwegian_word,
 )
+from app.plugins.languages.no.noun_gender import noun_gender
 from app.plugins.languages.no.phoneme_plan import create_phoneme_planner
 from app.plugins.languages.no.preprocessor import NorwegianPreprocessor
 from app.plugins.languages.no.syllabify import syllabify_norwegian_word
@@ -102,6 +103,7 @@ register(
         variant_separator=",",
         infinitive_marker="å",
         gender_articles={"Masc": "en", "Fem": "ei/en", "Neut": "et"},
+        noun_gender_fn=noun_gender,
         syllabifier_fn=syllabify_norwegian_word,
         planner_example=PlannerExample(
             language_code="no",

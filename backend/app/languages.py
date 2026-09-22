@@ -216,6 +216,12 @@ class LanguageConfig:
     # bare lemma. Display-only: the article never enters ``text``, which feeds
     # the card GUID.
     gender_articles: dict[str, str] | None = None
+    # Gender for a NOUN lemma when the lemmatizer supplied none: UD "Masc" /
+    # "Fem" / "Neut", or "" for unknown. Production's lookup-table lemmatizer
+    # tags no gender at all (tunatale-vvb6), so without this every noun minted
+    # there got a blank article. None (the default) means the language has no
+    # such lookup and a blank gender stays blank.
+    noun_gender_fn: Callable[[str], str] | None = None
     # Per-language authenticity rules injected into the story system prompt.
     # Loaded from the plugin's ``data/style.md`` at import time; empty string
     # when the language has no style file (``en``).
@@ -621,17 +627,26 @@ def get_infinitive_marker(code: str) -> str | None:
     return config.infinitive_marker if config else None
 
 
-def get_gender_article(code: str, gender: str) -> str:
+def get_gender_article(code: str, gender: str, *, lemma: str = "") -> str:
     """The indefinite article for a NOUN headword of *gender* in *code*, or
     ``""`` when the language has no such map.
 
+    A blank *gender* falls back to the language's ``noun_gender_fn`` on *lemma*
+    (tunatale-vvb6): production's table lemmatizer tags no gender. A tagger's
+    in-context gender, when present, always wins over the lemma lookup.
+
     Empty is the correct default: an unknown language, an unregistered gender,
-    or a blank gender all mean "no article", and never a guess. The caller gates
-    on ``upos == "NOUN"`` — verbs keep their ``infinitive_marker`` path.
+    or a gender nobody can tell all mean "no article", and never a guess. The
+    caller gates on ``upos == "NOUN"`` — verbs keep their ``infinitive_marker``
+    path.
     """
     discover()
     config = _CONFIGS.get(code)
-    if config is None or config.gender_articles is None or not gender:
+    if config is None or config.gender_articles is None:
+        return ""
+    if not gender and lemma and config.noun_gender_fn is not None:
+        gender = config.noun_gender_fn(lemma)
+    if not gender:
         return ""
     return config.gender_articles.get(gender, "")
 
