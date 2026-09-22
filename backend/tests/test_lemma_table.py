@@ -248,3 +248,25 @@ class TestCommittedNorwegianTable:
 
     def test_reuses_the_rows_the_laptop_cached(self, real):
         assert real.compatible_cache_versions == ("1.14.0+f2",)
+
+
+@pytest.mark.parametrize("suffix", ["", "-journal", "-wal", "-shm"])
+def test_every_file_a_table_build_writes_is_gitignored(suffix):
+    """tunatale-i3kd. The commit-gate test fingerprints the WORKING TREE, and in
+    CI the table does not exist yet, so a parallel worker builds it mid-run. The
+    ``<name>.<pid>.tmp`` staging file was ignored but SQLite's companions were
+    not — run 35753114899 failed on
+    ``?? .../stanza_lemmas.sqlite3.3286.tmp-journal``. Locally the table is
+    already built, which is why the flake never reproduced here."""
+    import subprocess
+
+    for extract in all_lemma_table_paths():
+        table = lemma_table.db_path_for(extract)
+        staged = table.with_name(f"{table.name}.3286.tmp{suffix}")
+        rel = staged.relative_to(Path(__file__).resolve().parents[2])
+        proc = subprocess.run(
+            ["git", "check-ignore", "-q", "--no-index", str(rel)],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True,
+        )
+        assert proc.returncode == 0, f"{rel} is not gitignored"
