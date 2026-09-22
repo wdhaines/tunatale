@@ -761,6 +761,97 @@ known account out for up to 30 minutes by failing on purpose.  That is the
 standard cost of account lockout, it is time-bounded, and it is preferred
 over leaving distributed guessing unthrottled.
 
+## Disk and log hygiene
+
+`tunatale-al6`. The disk alert email links here.
+
+### Retention decision (the user's, 2026-09-22)
+
+**Nothing the app generates is deleted.** Generated audio can be regenerated,
+but doing that costs Azure characters and about 50 minutes per lesson on the
+e2-micro. The disk has plenty of headroom, so keeping everything is cheaper
+than deleting and rebuilding.
+
+**When pruning is needed, it goes by LAST USE, not by age.** A lesson rendered
+long ago but still listened to must survive, and a lesson regenerated yesterday
+leaves its previous render unused from that day on. The data for this already
+exists: every listen is a `lesson_listens` row. Nothing prunes by it yet.
+
+### Headroom, measured 2026-09-22
+
+| | size | grows with |
+|---|---|---|
+| boot disk (pd-standard, one volume for everything) | 29 GB, **39% used**, 18 GB free | |
+| docker images | 3.5 GB across 19 tags, ~1 GB reclaimable | every deploy (now pruned, below) |
+| swapfile | 2.1 GB | fixed |
+| `/data/media` (card media) | 448 MB | cards added; Anki needs it, never prune |
+| `/data/.tunatale/tt_collection.media` | 698 MB | cards added; Anki's own store |
+| `/data/output` (lesson audio) | 247 MB | every render |
+| `/data/.tunatale/anki-backups` | 266 MB | rolling |
+| `/data/.tunatale/db-backups` | 93 MB | rolling |
+| `/data/.tunatale/tts-cache` | 97 MB | every render |
+| SQLite DBs | ~31 MB | slowly |
+
+At the current pace (a few lessons and a few dozen cards a week, so tens of MB
+a week), 18 GB free lasts years. The alert exists so that assumption is checked
+rather than trusted.
+
+### What rotates, and what does not need to
+
+- **Docker container logs:** `/etc/docker/daemon.json` sets the `local` driver
+  at 10 MB × 3 (§ Base hardening).
+- **`warnings.log`:** a `RotatingFileHandler` (`app/logging_sink.py`).
+- **`sync.log`, `llm_usage.log`, `azure_tts_usage.log`:** append-only and not
+  rotated, on purpose. Measured: 20 KB, 219 KB and 44 KB after four days of
+  real use, so about 20 MB a year combined. The two usage ledgers are cost
+  records that budgets read back, so rotating them would lose data. Revisit
+  only if the alert says otherwise.
+- **Docker images:** `deploy.sh` removes every TunaTale image except the tag
+  just deployed and the last healthy one (the rollback target) after health
+  passes. A rollback further back re-pulls from ghcr.
+
+### The disk alert
+
+An hourly systemd timer on the box runs `backend/scripts/disk_alert.py` on the
+host's own python3 (stdlib only) and emails through Gmail's submission port
+(GCE blocks outbound :25):
+
+- one email when `/` crosses **75%**
+- a reminder every 24 h while it stays above
+- one all-clear once it drops below 70% (the 5-point margin stops a disk that
+  hovers at the line from emailing every hour)
+- a failed send exits 1 and records nothing, so the next hour retries and
+  `systemctl --failed` shows it
+
+**1. Store the Gmail app password (once).** Run this in your own terminal. It
+prompts silently, and the password never touches argv, shell history or the
+process list:
+
+```zsh
+read -rs "PW?App password: " && echo && printf '%s' "${PW// /}" \
+  | ssh -i ~/.ssh/google_compute_engine <os-login-name>@tunatale \
+      'sudo install -d -m 700 -o root -g root /etc/tunatale && sudo sh -c "umask 077; cat > /etc/tunatale/smtp-password"'; \
+unset PW
+```
+
+Check it with `sudo stat -c "%U:%G %a %s bytes" /etc/tunatale/smtp-password`.
+You should see `root:root 600 16 bytes`. App passwords are under
+`https://myaccount.google.com/apppasswords`, which is no longer linked from the
+Security page, and they need 2-Step Verification on.
+
+**2. Install or update the timer** (rerun after any change to `disk_alert.py`):
+
+```bash
+TT_DEPLOY_USER=<os-login-name> TT_ALERT_EMAIL=<that gmail> ./install-disk-alert.sh --test
+```
+
+`--test` sends one email right away. **Installed and verified 2026-09-22:** the
+test email was sent and the timer is armed hourly.
+
+**Check it later:**
+`systemctl list-timers tunatale-disk-alert.timer` and
+`journalctl -u tunatale-disk-alert.service -n 20`.
+
 ## Backups and restore
 
 ### Why this section exists before the deployment does
