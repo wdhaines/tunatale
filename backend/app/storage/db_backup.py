@@ -15,6 +15,7 @@ self-guarding — never raises, so a backup hiccup can't block the server bootin
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from collections.abc import Iterable
 from datetime import date
@@ -126,10 +127,12 @@ def snapshot_before_migration(src: Path | str, backup_dir: Path, *, from_version
     migration, so this fires on a deploy that advances the schema, not on every
     boot. It differs from ``rotate_db_backups`` in the two ways that matter:
 
-    - **It never rotates.** The rolling daily snapshots keep 5 days; the one
-      snapshot that makes a schema rollback possible must outlive that window,
-      because you find out you need it long after the deploy. Nothing in this
-      module deletes these files (``_prune`` is scoped to date-shaped names).
+    - **It never rotates by AGE.** The rolling daily snapshots keep 5 days; the
+      one snapshot that makes a schema rollback possible must outlive that
+      window, because you find out you need it long after the deploy. It is
+      pruned by SCHEMA VERSION instead (``_prune_pre_migration``, tunatale-s3c5):
+      the newest ``PRE_MIGRATION_KEEP`` per DB survive however old they are, and
+      the snapshot just written always survives.
     - **It raises.** ``rotate_db_backups`` swallows every error so a backup
       hiccup can't block startup. Here the opposite is correct: failing to
       snapshot and then migrating anyway destroys the only copy of the
@@ -149,4 +152,35 @@ def snapshot_before_migration(src: Path | str, backup_dir: Path, *, from_version
         return dest
     _snapshot(src, dest)
     logger.info("pre-migration snapshot of schema v%d written to %s", from_version, dest)
+    _prune_pre_migration(backup_dir, src.stem, keep_path=dest)
     return dest
+
+
+# Newest N pre-migration snapshots kept per DB (user-approved 2026-09-22). Two
+# covers rolling back two schema versions; they were ~25 MB each for Norwegian
+# and had reached 12 files / 144 MB on dev with no bound at all.
+PRE_MIGRATION_KEEP = 2
+
+
+def _prune_pre_migration(backup_dir: Path, stem: str, *, keep_path: Path) -> None:
+    """Delete all but the newest ``PRE_MIGRATION_KEEP`` of ``{stem}.pre-v{N}.db``.
+
+    Ordered by N as an integer, never by name or mtime. ``keep_path`` (the
+    snapshot just written) always survives, even when a rollback left NEWER
+    versions behind. Unlike the snapshot itself this never raises: the
+    migration is already protected, and a failed delete costs only disk.
+    """
+    pattern = re.compile(rf"^{re.escape(stem)}\.pre-v(\d+)\.db$")
+    snapshots = sorted(
+        ((int(m.group(1)), p) for p in backup_dir.iterdir() if (m := pattern.match(p.name))),
+        reverse=True,
+    )
+    for _version, path in snapshots[PRE_MIGRATION_KEEP:]:
+        if path == keep_path:
+            continue
+        try:
+            path.unlink()
+        except OSError as exc:
+            logger.warning("pre-migration prune: could not delete %s: %s", path, exc)
+        else:
+            logger.info("pre-migration prune: deleted %s", path)

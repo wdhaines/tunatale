@@ -10,6 +10,7 @@ and a refusal to boot older code against a newer database.
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from collections import Counter
@@ -97,6 +98,86 @@ class TestSnapshotBeforeMigration:
 
         assert again == dest
         assert _marker(dest) == "original"
+
+    # tunatale-s3c5 (user-approved 2026-09-22): these snapshots grew without
+    # bound — 12 files / 144 MB on dev by v47, ~25 MB per Norwegian snapshot —
+    # on a prod disk that now alerts at 75%. Keep the newest 2 per DB BY SCHEMA
+    # VERSION (never by age: the whole point is to outlive the rolling window).
+
+    @staticmethod
+    def _seed(backup_dir: Path, stem: str, versions: list[int]) -> None:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        for v in versions:
+            (backup_dir / f"{stem}.pre-v{v}.db").write_text(f"v{v}")
+
+    def test_keeps_only_the_newest_two_snapshots_of_that_db(self, tmp_path: Path) -> None:
+        src = tmp_path / "tunatale_no.db"
+        _make_db(src, "norwegian", 46)
+        backup_dir = tmp_path / "pre-migration-backups"
+        self._seed(backup_dir, "tunatale_no", [42, 43, 44, 45])
+
+        snapshot_before_migration(src, backup_dir, from_version=46)
+
+        assert sorted(p.name for p in backup_dir.iterdir()) == ["tunatale_no.pre-v45.db", "tunatale_no.pre-v46.db"]
+
+    def test_orders_by_version_number_not_by_name(self, tmp_path: Path) -> None:
+        """pre-v9 sorts AFTER pre-v10 as a string; it is the older schema."""
+        src = tmp_path / "tunatale_no.db"
+        _make_db(src, "norwegian", 11)
+        backup_dir = tmp_path / "pre-migration-backups"
+        self._seed(backup_dir, "tunatale_no", [9, 10])
+
+        snapshot_before_migration(src, backup_dir, from_version=11)
+
+        assert sorted(p.name for p in backup_dir.iterdir()) == ["tunatale_no.pre-v10.db", "tunatale_no.pre-v11.db"]
+
+    def test_never_touches_another_databases_snapshots_or_other_files(self, tmp_path: Path) -> None:
+        src = tmp_path / "tunatale_no.db"
+        _make_db(src, "norwegian", 46)
+        backup_dir = tmp_path / "pre-migration-backups"
+        self._seed(backup_dir, "tunatale_no", [43, 44, 45])
+        self._seed(backup_dir, "tunatale_sl", [40, 41, 42, 43])
+        (backup_dir / "tunatale_no.pre-v40.db.keep-me").write_text("manual")
+        (backup_dir / "README.txt").write_text("notes")
+
+        snapshot_before_migration(src, backup_dir, from_version=46)
+
+        names = {p.name for p in backup_dir.iterdir()}
+        assert {f"tunatale_sl.pre-v{v}.db" for v in (40, 41, 42, 43)} <= names
+        assert {"tunatale_no.pre-v40.db.keep-me", "README.txt"} <= names
+        assert not {"tunatale_no.pre-v43.db", "tunatale_no.pre-v44.db"} & names
+
+    def test_the_snapshot_just_written_survives_newer_ones_left_by_a_rollback(self, tmp_path: Path) -> None:
+        """After an image rollback + schema restore, the dir can already hold
+        snapshots NEWER than the one being written. A plain "newest 2 by
+        version" would delete the snapshot this very call just made — the one
+        protecting the migration about to run."""
+        src = tmp_path / "tunatale_no.db"
+        _make_db(src, "norwegian", 46)
+        backup_dir = tmp_path / "pre-migration-backups"
+        self._seed(backup_dir, "tunatale_no", [47, 48])
+
+        dest = snapshot_before_migration(src, backup_dir, from_version=46)
+
+        assert dest.exists()
+        assert _marker(dest) == "norwegian"
+
+    def test_a_prune_failure_is_logged_not_raised(self, tmp_path: Path, caplog) -> None:
+        """The snapshot succeeded, so the migration is protected. Failing to
+        delete an OLD snapshot costs disk, never data, and must not block boot —
+        the inverse of the snapshot's own raise-on-failure rule."""
+        src = tmp_path / "tunatale_no.db"
+        _make_db(src, "norwegian", 46)
+        backup_dir = tmp_path / "pre-migration-backups"
+        self._seed(backup_dir, "tunatale_no", [44, 45])
+        (backup_dir / "tunatale_no.pre-v40.db").mkdir()  # unlink() on a directory raises
+
+        with caplog.at_level(logging.WARNING, logger="app.storage.db_backup"):
+            dest = snapshot_before_migration(src, backup_dir, from_version=46)
+
+        assert dest.exists()
+        assert not (backup_dir / "tunatale_no.pre-v44.db").exists()
+        assert "tunatale_no.pre-v40.db" in caplog.text
 
     def test_raises_rather_than_migrating_unprotected(self, tmp_path: Path) -> None:
         """Deliberately UNLIKE `rotate_db_backups`, which swallows everything.
