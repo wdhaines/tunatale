@@ -52,6 +52,20 @@
 	// would defeat the pending bucket entirely.
 	let confirmed = new SvelteSet<string>();
 
+	// Rows whose ignore request is in flight. The button is disabled while a
+	// key sits here so a double-click cannot double-submit; the handler ALSO
+	// early-returns on an in-flight key, because `disabled` only stops the
+	// native activation behavior — a synthetic click (or an Enter keypress
+	// racing a repaint) still reaches the listener, and that must not be the
+	// only thing standing between a double-click and two calls.
+	let ignoring = new SvelteSet<string>();
+	// A failed ignore is visible but harmless. Deliberately NOT the shared
+	// `error` state: that state's `{:else if error}` branch replaces the whole
+	// modal body with the message — right for a failed load or commit, wrong
+	// for one row's failed ignore, where the row stays and the rest of the
+	// modal keeps working.
+	let ignoreError = $state('');
+
 	let countdown = $state(10);
 	let countdownCancelled = $state(false);
 	// The total the countdown started from — drives the progress fill's width.
@@ -171,6 +185,46 @@
 	// never inflate the count.
 	let selectedCount = $derived(Object.values(ratings).filter((r) => r !== 'skip').length);
 
+	/**
+	 * The seeding rule, in exactly one place. Returns the rating a fresh row
+	 * starts with, or null when the row gets NO entry at all. Null is the
+	 * over-budget create row: for a create, absence from word_ratings means
+	 * the backend defaults to "good" and CREATES the card, so seeding a tail
+	 * row would create a card the budget does not cover. On the first load
+	 * this is applied to every row; on the post-ignore refetch it is applied
+	 * only to rows that are new, so the two paths cannot drift apart.
+	 */
+	function seededRatingFor(c: ListenPreviewCandidate): WordRating | null {
+		if (c.deferred_reason) return 'skip';
+		if (c.will_create === false) return null;
+		return 'good';
+	}
+
+	/**
+	 * Builds the ratings map for a fresh candidates list, merged with what the
+	 * user has already chosen. `onMount` calls it with an empty existing map
+	 * (pure seeding); the post-ignore refetch calls it with the live one.
+	 * Rule: keys present both before and after KEEP their existing rating;
+	 * keys new to the list get the same seed `onMount` applies; keys that
+	 * disappeared are dropped. Dropping a live row can promote a tail row to
+	 * live — only the server knows which — and the promoted row was absent
+	 * from `existing` (tail rows get no entry), so it lands on the ordinary
+	 * seed, exactly as if it had been live all along.
+	 */
+	function reconcileRatings(
+		cands: ListenPreviewCandidate[],
+		existing: Record<string, WordRating>,
+	): Record<string, WordRating> {
+		const rts: Record<string, WordRating> = {};
+		for (const c of cands) {
+			const seed = seededRatingFor(c);
+			if (seed === null) continue;
+			const key = candidateKey(c);
+			rts[key] = existing[key] ?? seed;
+		}
+		return rts;
+	}
+
 	onMount(async () => {
 		// Focus the overlay immediately so a real Escape keypress (which a
 		// browser always dispatches at document.activeElement) actually reaches
@@ -188,25 +242,11 @@
 			// One `deferred_reason` test rather than one per population: these
 			// rows invert the meaning of absence from word_ratings, and the
 			// inversion is stated once here and once in buildRatings. Adding a
-			// third category must not add a third pair of branches.
-			// Over-budget create
-			// rows get NO entry at all: for a create, absent from word_ratings
-			// means the backend defaults to "good" and CREATES the card, so
-			// seeding a tail row would create a card the budget does not cover.
-			const rts: Record<string, WordRating> = {};
-			for (const c of candidates) {
-				const key = candidateKey(c);
-				if (c.deferred_reason) {
-					rts[key] = 'skip';
-				} else if (c.will_create === false) {
-					// Tail rows (outside the shared introduction budget) get NO entry
-					// at all — over-budget create rows AND NEW-state rows alike.
-					continue;
-				} else {
-					rts[key] = 'good';
-				}
-			}
-			ratings = rts;
+			// third category must not add a third pair of branches. Over-budget
+			// create rows get NO entry at all (see `seededRatingFor`). The rule
+			// lives in ONE function because the post-ignore refetch seeds new
+			// rows the exact same way — see `reconcileRatings`.
+			ratings = reconcileRatings(preview.candidates, {});
 
 			// Start countdown only when the pref is not "off".
 			const prefValue = listenCountdownPref.value;
@@ -525,6 +565,43 @@
 			committing = false;
 		}
 	}
+
+	/**
+	 * "Ignore" on a create row. Sends the LEMMA, never `text` — the backend
+	 * matches ignored lemmas on `lemma`, the key that survives morphology
+	 * (`text: "snømenn"`, `lemma: "snøm"`), and an ignore sent with `text`
+	 * returns 200 and does nothing (`test_ignoring_by_the_rows_text_would_not_work`).
+	 * Then REFETCHES rather than hiding the row: `will_create` is a server-side
+	 * budget allocation, dropping a live row can promote a tail row to live,
+	 * and only the server knows which — so the client swaps in the new
+	 * candidates wholesale and `reconcileRatings` merges the user's existing
+	 * grades over the fresh seeds.
+	 */
+	// `lemma` and `lang` arrive already narrowed by the template's render guard
+	// (the button exists only when both are set), so there is no unreachable
+	// null check here for the coverage gate to flag.
+	async function ignoreCandidate(c: ListenPreviewCandidate, lemma: string, lang: string) {
+		// Ignoring is an interaction, like grading a row: it cancels the
+		// auto-commit countdown.
+		handleInteraction();
+		const key = candidateKey(c);
+		if (ignoring.has(key)) return;
+		ignoring.add(key);
+		ignoreError = '';
+		try {
+			await api.ignoreLemma(lemma, lang);
+			const preview = await api.getListenPreview(lessonId);
+			candidates = preview.candidates;
+			ratings = reconcileRatings(preview.candidates, ratings);
+		} catch (e) {
+			// Visible but harmless: the row stays, no refetch, and everything
+			// else in the modal keeps working (this is `ignoreError`, NOT the
+			// body-replacing `error`).
+			ignoreError = t('listenPreview.ignoreError', { text: c.text });
+		} finally {
+			ignoring.delete(key);
+		}
+	}
 </script>
 
 <div class="overlay" role="dialog" aria-modal="true" aria-label={t('listenPreview.ariaListenPreview')} tabindex="-1"
@@ -568,6 +645,9 @@
 			</div>
 
 			<div class="body">
+			{#if ignoreError}
+				<p class="error ignore-error" role="alert">{ignoreError}</p>
+			{/if}
 			{#if candidates.length === 0}
 				<p class="status">{t('listenPreview.noNewWords')}</p>
 			{:else}
@@ -631,6 +711,31 @@
 					</div>
 				{/snippet}
 
+				{#snippet ignoreControl(c: ListenPreviewCandidate)}
+					{@const key = candidateKey(c)}
+					<!-- An Ignore on a create row — junk the preview offers as a new
+					     word (a stray letter, a name) deserves a dismissal, not just a
+					     skip. Rendered only where it means something: `kind ===
+					     'create'` (a tracked row has a card; ignoring its lemma is what
+					     the transcript popover is for), a non-empty `c.lemma` (the key
+					     the ignore list is matched on), and a `languageCode` prop. It
+					     renders on over-budget tail rows too — junk can sit in the
+					     tail, and `will_create` says nothing about whether the word is
+					     worth creating at all. -->
+					{#if c.kind === 'create' && c.lemma && languageCode}
+						{@const lemma = c.lemma}
+						{@const lang = languageCode}
+						<button
+							type="button"
+							class="ignore"
+							data-candidate={key}
+							aria-label={t('listenPreview.ignoreFor', { text: c.text })}
+							disabled={ignoring.has(key)}
+							onclick={() => void ignoreCandidate(c, lemma, lang)}
+						>{t('listenPreview.ignore')}</button>
+					{/if}
+				{/snippet}
+
 				{#snippet candidateRow(c: ListenPreviewCandidate)}
 					{@const key = candidateKey(c)}
 					<li class="candidate">
@@ -654,6 +759,7 @@
 							{:else}
 								<span class="gloss empty" aria-label={t('listenPreview.noGloss')}>&mdash;</span>
 							{/if}
+							{@render ignoreControl(c)}
 						</div>
 
 						{@render dayTag(c)}
@@ -691,6 +797,7 @@
 							{:else}
 								<span class="gloss empty" aria-label={t('listenPreview.noGloss')}>&mdash;</span>
 							{/if}
+							{@render ignoreControl(c)}
 						</div>
 
 						{@render dayTag(c)}
@@ -885,6 +992,25 @@
 	.error {
 		color: var(--color-danger);
 		font-size: 0.9rem;
+	}
+	.ignore-error {
+		margin: 0 0 0.5rem;
+	}
+	.sub .ignore {
+		flex-shrink: 0;
+		margin-left: auto;
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		background: var(--color-surface-2);
+		color: var(--color-muted);
+		font-size: 0.66rem;
+		font-family: inherit;
+		padding: 0.1rem 0.4rem;
+		cursor: pointer;
+	}
+	.sub .ignore:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 	/* Option C: the countdown lives ON the Grade All button. The tick box is
 	   always mounted and held open by min-width (empty → `visibility: hidden`,

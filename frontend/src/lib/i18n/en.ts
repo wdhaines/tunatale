@@ -155,6 +155,9 @@ export const en = {
   "listenPreview.syncing": "Syncing...",
   "listenPreview.markListened": "Mark as listened",
   "listenPreview.markNListened": "Mark {count} as listened",
+  "listenPreview.ignore": "Ignore",
+  "listenPreview.ignoreFor": "Ignore {text}",
+  "listenPreview.ignoreError": "Couldn't ignore “{text}” — try again",
 
   // ClozeSentenceModal.svelte
   "clozeModal.ariaDialog": "Cloze sentence",
