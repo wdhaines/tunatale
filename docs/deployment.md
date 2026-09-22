@@ -502,6 +502,39 @@ minutes because Tailscale had stopped on the Mac, so the `tunatale` hostname
 no longer resolved; the containers had in fact come up, and only the history
 append was lost. If a deploy hangs, check `tailscale status` before the box.
 
+## Cutover log
+
+`tunatale-cx9`, the acceptance test for the whole deployment. Every check was
+run with Tailscale OFF, or read from the box's own records. Production went
+live 2026-09-18.
+
+| # | check | result | evidence |
+|---|---|---|---|
+| 1 | Log in; a logged-out deep link redirects to login, then lands on that lesson | PASS 2026-09-18 | the user, on the phone |
+| 2 | Stream a lesson; seek with the scrubber and the 10 s buttons (Range through Caddy) | PASS 2026-09-18 | the user, on the phone |
+| 3 | Service worker caches audio; a cached lesson reloads, plays and seeks in airplane mode | PASS 2026-09-18 | the user, on the phone |
+| 4 | Live LLM from the box, and a full render | PASS, with one gap, 2026-09-22 | see below |
+| 5 | Media on a card created on prod | PASS 2026-09-21 | collocations 3182 `bråk` and 3183 `kake`, minted on prod, each got `audio_tts` and a Pixabay image in prod's `media` table. `PRESTAGE_IMAGES fetched=17/16 failed=0` from the datacenter IP. |
+| 6 | Sync after the handover | PASS | 15 `PEER_SYNC_TIMING` lines in prod's `sync.log`, all completed |
+| — | Prod guard active (`TT_ENV=prod`, auth on, `LLM_MODE=live`) | PASS 2026-09-18 | `prod_profile_problems` against the box's real env returned none |
+
+**Step 4, and its gap.** Read from `llm_usage.log` and `azure_tts_usage.log`
+on the box. Live Groq calls from the box are proven hundreds of times over:
+`media_choose`, `media_query`, `prestage.cloze_*`, and `glossing` at
+2026-09-19 14:56-14:57 UTC while the review session "A Fishing Trip in
+Lofoten" was created. The render pipeline is proven too: 454 Azure TTS calls in
+that window and the session's 8 audio files rendered on prod (2026-09-21).
+**Not exercised on prod: the `story` generation call itself.** That session's
+story was pasted in (the ledger's only two `story` lines, 09-14 and 09-16,
+predate the cutover and came up with the transferred data). Accepted as
+closed by the user 2026-09-22. The story prompt uses the same client, key and
+egress as the calls above; its only extra risk is request size against Groq's
+free-tier limits, which do not depend on the host.
+
+⚠️ `llm_usage.log` travels with `data-transfer.sh`, so lines dated before a
+transfer describe the OTHER machine. Date-bound any "did the box do this"
+query to after the transfer, as this one was.
+
 ## Moving data between dev and prod
 
 `data-transfer.sh` moves TunaTale's whole state between this Mac and the box,
