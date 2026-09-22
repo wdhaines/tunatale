@@ -1591,6 +1591,10 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
             card_type="cloze" if is_func else "vocab",
             source_sentence=stored_sentence,
             source_sentence_translation=sentence_translations.get(sent, ""),
+            # From the lemma, not a tagged gender: _LessonWords keeps none, and
+            # prod's table lemmatizer tags none (tunatale-vvb6). Same answer on
+            # every host, which is what a shared deck needs.
+            article=get_gender_article(lesson.language_code, "", lemma=card_lemma) if upos_for_lemma == "NOUN" else "",
         )
         db.add_collocation(unit, language_code=lesson.language_code)
         if is_func:
@@ -2905,7 +2909,9 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
         lemma=headword,
         card_type=card_type,
         source_sentence=source_sentence,
-        article=get_gender_article(lang, gender) if upos == "NOUN" else "",
+        # The tagger's in-context gender wins; a blank one (prod's table
+        # lemmatizer) falls back to the lemma lookup (tunatale-vvb6).
+        article=get_gender_article(lang, gender, lemma=headword) if upos == "NOUN" else "",
     )
     return await _persist_new_card(
         db,
