@@ -87,7 +87,16 @@ class TestZeroCollateral:
 
 class TestOutOfScope:
     def test_the_boundary_shift_rule_was_measured_and_declined(self):
-        """``deltakere`` stays wrong ON PURPOSE, and this pins why.
+        """The boundary-shift rule stays declined; ``deltakere`` was fixed another way.
+
+        ⚠️ 2026-09-22 (tunatale-sxep): ``deltakere`` is now RIGHT, via a different
+        mechanism — ``-ere`` joined ``_INFLECTIONS`` (the plural of an ``-er``
+        agent noun), so the peel leaves ``deltak`` and the singular's own
+        ``del|tak`` seam applies. That was measured the way this docstring asks:
+        24 of the first 20000 wordlist words change, all ``-ere`` plurals plus
+        ``oppgradere``, every changed buildup improved or equivalent. The
+        boundary-shift rule below was NOT built, and the reasoning against it
+        still stands.
 
         The obvious fix for a misplaced boundary is to shift it onto the nearest
         lexicon syllable boundary when both halves remain content stems. Probed
@@ -100,4 +109,4 @@ class TestOutOfScope:
         If this test fails, someone built that rule — re-run the probe before
         believing it is an improvement.
         """
-        assert segment_compound("deltakere") == ["delt", "aker", "e"]
+        assert segment_compound("deltakere") == ["del", "tak", "ere"]

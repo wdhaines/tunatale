@@ -52,8 +52,11 @@ _ORACLE_TALLY = {
     "syll_unalignable": 0,
     "compared": 199,
     "fully_agree": 93,
-    "only_infl_disputed": 60,
-    "stem_disputed": 46,
+    # 2026-09-22 (tunatale-sxep): 60/46 -> 61/45. The "-ere" inflection moved
+    # exactly one word, deltakere, out of stem_disputed (delt+aker+e -> the
+    # lexicon's del|ta seam); diffed report output, nothing else changed.
+    "only_infl_disputed": 61,
+    "stem_disputed": 45,
 }
 
 

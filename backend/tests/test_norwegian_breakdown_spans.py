@@ -39,6 +39,8 @@ from app.plugins.languages.no.norwegian_breakdown import (
 
 _CORPUS_PHRASES: list[str] = [
     "jeg hadde",
+    "vi baserer prisen på antall deltakere",
+    "flyplassen i dag",
     "etterforskningsteamet",
     "etter",
     "finne",
@@ -589,6 +591,9 @@ class TestBreakdownSpansCorrectness:
         assert ("fly", "flyplassen", (0, 1)) in spans
         assert ("plassen", "flyplassen", (1, 3)) in spans
         assert ("ssen", "flyplassen", (2, 3)) in spans
+        # The whole-word rung (restored by tunatale-sxep) is cut from the same
+        # render, spanning every syllable.
+        assert ("flyplassen", "flyplassen", (0, 3)) in spans
 
     def test_source_word_for_non_compound_stem(self):
         """Single-stem word: non-bookend chunks carry source_word."""

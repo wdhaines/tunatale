@@ -32,6 +32,13 @@ _INFLECTIONS: frozenset[str] = frozenset(
         # entries: 47 words change, ALL of them -ende participles, zero
         # collateral — the same shape 95zt measured for the genitive.
         "ende",
+        # tunatale-sxep. The plural of an -er agent noun (deltaker -> deltakere).
+        # Without it "-e" peeled first and the base re-split at a wrong seam:
+        # delt|aker ("divided" + "field") instead of del|taker. Measured over
+        # the first 20000 wordlist entries: 24 words change, all -ere plurals
+        # plus the verb oppgradere, and every changed buildup improved or stayed
+        # equivalent (mottakere lost tta/mo, fotgjengere lost tgjeng/fo).
+        "ere",
     ]
 )
 
@@ -1026,8 +1033,12 @@ def build_norwegian_breakdown_spans(phrase: str) -> list[BreakdownChunk]:
         morphemes = segment_compound(core_word)
         if len(morphemes) >= 2:
             word_seq = _build_compound_sequence_spans(core_word, morphemes)
+            # Drop ONLY the opening bookend. The sequence has no trailing one: it
+            # closes on the whole WORD, which a phrase needs as much as a single
+            # word does. Popping that too meant no compound inside a multi-word
+            # phrase was ever said on its own (tunatale-sxep: "... delt ->
+            # antall deltakere").
             word_seq.pop(0)
-            word_seq.pop()
             breakdown.extend(word_seq)
         else:
             syllables = syllabify_morpheme(core_word)

@@ -894,6 +894,8 @@ def test_breakdown_empty():
 
 
 def test_breakdown_multi_word_with_compound():
+    # "flyplassen" after "fly": the compound closes on the whole word before the
+    # phrase grows (tunatale-sxep; this golden used to pin the dropped rung).
     assert build_norwegian_breakdown("på flyplassen") == [
         "på flyplassen",
         "plassen",
@@ -901,6 +903,7 @@ def test_breakdown_multi_word_with_compound():
         "pla",
         "plassen",
         "fly",
+        "flyplassen",
         "på",
         "på flyplassen",
     ]
@@ -942,3 +945,44 @@ def test_lexicon_pieces_are_not_geminate_respelled_in_a_multi_word_phrase():
     assert "hadd" not in chunks
     assert "ha" in chunks
     assert "dde" in chunks
+
+
+# -- tunatale-sxep: "deltakere" in the Key Phrases buildup -------------------
+
+
+def test_segment_compound_ere_plural_keeps_the_agent_noun_seam():
+    """``-ere`` (plural of an ``-er`` agent noun) is ONE inflection.
+
+    Without it the loop peeled ``-e``, and ``deltaker`` then split at the wrong
+    seam: ``delt`` ("divided") + ``aker`` ("field"). The singular was always right
+    (``-er`` peels, ``deltak`` -> ``del|tak``); only the plural went wrong.
+    Measured over the first 20000 wordlist entries: 24 words change, all ``-ere``
+    plurals plus ``oppgradere``, and every changed buildup improved or stayed
+    equivalent (``mottakere`` lost ``tta``/``mo``, ``fotgjengere`` lost
+    ``tgjeng``/``fo``).
+    """
+    assert segment_compound("deltakere") == ["del", "tak", "ere"]
+    assert segment_compound("mottakere") == ["mot", "tak", "ere"]
+    assert segment_compound("fotgjengere") == ["fot", "gjeng", "ere"]
+    # The singular is the control: unchanged.
+    assert segment_compound("deltaker") == ["del", "tak", "er"]
+
+
+def test_compound_inside_a_phrase_is_said_whole_before_it_joins():
+    """The multi-word branch dropped a compound's WHOLE-WORD rung.
+
+    ``_build_compound_sequence_spans`` opens with a bookend and CLOSES on the
+    whole word (it has no trailing bookend). The multi-word branch popped BOTH
+    ends as if both were bookends, so every compound in a multi-word phrase
+    went straight from its first part to the partial phrase and was never said
+    on its own. ``antall`` (simplex) is the control: it always had its rung.
+    """
+    steps = build_norwegian_breakdown("vi baserer prisen på antall deltakere")
+    i = steps.index("antall deltakere")
+    assert steps[1:i] == [
+        "takere", "re", "ke", "kere", "ta", "takere", "del", "deltakere",
+        "tall", "an", "antall",
+    ]  # fmt: skip
+    # A compound FIRST in the phrase closes on itself before the full phrase.
+    steps = build_norwegian_breakdown("flyplassen i dag")
+    assert steps[-2:] == ["flyplassen", "flyplassen i dag"]
