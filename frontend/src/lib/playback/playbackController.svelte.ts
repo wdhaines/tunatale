@@ -486,6 +486,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     try {
       ms.setActionHandler("seekbackward", () => {
         trace("action:seekbackward");
+        if (handsFree && replayCueAction()) return;
         doSeek(audioEl.currentTime - 10);
       });
     } catch {
@@ -494,6 +495,10 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     try {
       ms.setActionHandler("seekforward", () => {
         trace("action:seekforward");
+        if (handsFree && sectionStepping()) {
+          nextSectionAction();
+          return;
+        }
         doSeek(audioEl.currentTime + 10);
       });
     } catch {
@@ -690,6 +695,19 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     if (targetCue) {
       doSeek(targetCue.start_ms / 1000);
     }
+  }
+
+  // Car seek-back with hands-free ON (tunatale-l7yc): replay the current
+  // sentence from the start of its ref group. False when there is no current
+  // sentence, so the caller falls back to a plain -10s.
+  function replayCueAction(): boolean {
+    const groupIdx = findCurrentGroupIdx();
+    if (groupIdx < 0) return false;
+    cancelRepeatLatch("replayCue");
+    // refGroups is built from activeCues, so a group's first index always resolves.
+    const targetCue = findCueByIndex(activeCues!, refGroups[groupIdx][0])!;
+    doSeek(targetCue.start_ms / 1000);
+    return true;
   }
 
   function prevCueAction(): void {

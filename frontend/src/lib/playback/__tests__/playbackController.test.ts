@@ -1378,6 +1378,88 @@ describe("playbackController", () => {
       expect(audioEl.currentTime).toBe(40);
     });
 
+    // tunatale-l7yc. A car head unit has no scrub bar, and a blind ±10s jump
+    // lands mid-word (measured +9.35s / -10.6s with a ~0.6s stall). With
+    // hands-free ON — the car's mode — seek-back replays the current sentence.
+    it("seekbackward in hands-free replays the current sentence from its start", () => {
+      const mediaSession = makeFakeMediaSession();
+      let seekHandler: ((details: any) => void) | null = null;
+      mediaSession.setActionHandler = vi.fn((action: string, handler: any) => {
+        if (action === "seekbackward") seekHandler = handler;
+      }) as any;
+      const ctrl = createController({ mediaSession: mediaSession as unknown as MediaSession });
+      ctrl.setHandsFree(true);
+      // Cue 3 (section 1, line 1) starts at 2.5s.
+      audioEl.currentTime = 2.9;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(ctrl.currentCue?.index).toBe(3);
+      seekHandler!({});
+      expect(audioEl.currentTime).toBeCloseTo(2.5, 3);
+    });
+
+    it("seekbackward in hands-free replays a multi-cue group from its FIRST cue", () => {
+      const mediaSession = makeFakeMediaSession();
+      let seekHandler: ((details: any) => void) | null = null;
+      mediaSession.setActionHandler = vi.fn((action: string, handler: any) => {
+        if (action === "seekbackward") seekHandler = handler;
+      }) as any;
+      const ctrl = createController({ mediaSession: mediaSession as unknown as MediaSession });
+      ctrl.setHandsFree(true);
+      // Cues 0-1 share one ref group; stand in cue 1.
+      audioEl.currentTime = 1.0;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      expect(ctrl.currentCue?.index).toBe(1);
+      seekHandler!({});
+      expect(audioEl.currentTime).toBeCloseTo(0, 3);
+    });
+
+    it("seekbackward in hands-free cancels the repeat latch, like every navigation", () => {
+      const mediaSession = makeFakeMediaSession();
+      let seekHandler: ((details: any) => void) | null = null;
+      mediaSession.setActionHandler = vi.fn((action: string, handler: any) => {
+        if (action === "seekbackward") seekHandler = handler;
+      }) as any;
+      const ctrl = createController({ mediaSession: mediaSession as unknown as MediaSession });
+      ctrl.setHandsFree(true);
+      audioEl.currentTime = 2.9;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      ctrl.toggleRepeatLatch();
+      expect(ctrl.repeatLatched).toBe(true);
+      seekHandler!({});
+      expect(ctrl.repeatLatched).toBe(false);
+    });
+
+    it("seekbackward in hands-free with no current sentence falls back to -10s", () => {
+      const mediaSession = makeFakeMediaSession();
+      let seekHandler: ((details: any) => void) | null = null;
+      mediaSession.setActionHandler = vi.fn((action: string, handler: any) => {
+        if (action === "seekbackward") seekHandler = handler;
+      }) as any;
+      const ctrl = createController({
+        audio: { ...lessonAudio, cues: [] },
+        mediaSession: mediaSession as unknown as MediaSession,
+      });
+      ctrl.setHandsFree(true);
+      expect(ctrl.currentCue).toBeNull();
+      audioEl.currentTime = 30;
+      seekHandler!({});
+      expect(audioEl.currentTime).toBe(20);
+    });
+
+    it("seekforward in hands-free without pass stepping keeps +10s", () => {
+      // The default fixture is a legacy full-track lesson: no passes to step.
+      const mediaSession = makeFakeMediaSession();
+      let seekHandler: ((details: any) => void) | null = null;
+      mediaSession.setActionHandler = vi.fn((action: string, handler: any) => {
+        if (action === "seekforward") seekHandler = handler;
+      }) as any;
+      const ctrl = createController({ mediaSession: mediaSession as unknown as MediaSession });
+      ctrl.setHandsFree(true);
+      audioEl.currentTime = 30;
+      seekHandler!({});
+      expect(audioEl.currentTime).toBe(40);
+    });
+
     it("play handler calls audio.play", () => {
       const mediaSession = makeFakeMediaSession();
       let playHandler: (() => void) | null = null;
@@ -2224,6 +2306,57 @@ describe("playbackController", () => {
         prev();
         expect(audioEl.src).toBe(srcBefore);
         expect(ctrl.activeSectionType).toBe("ghost_section");
+      });
+    });
+
+    // tunatale-l7yc: in the car (hands-free ON) seek-forward skips to the next
+    // pass — next/previoustrack already step by sentence there, so the pass
+    // step needs a button of its own. Hands-free OFF keeps +10s.
+    describe("car seek-forward with hands-free ON (l7yc)", () => {
+      function seekForward(audio: LessonAudio, onHandsFreeEnd = vi.fn()) {
+        const mediaSession = makeFakeMediaSession();
+        const h: Record<string, (d?: unknown) => void> = {};
+        mediaSession.setActionHandler = vi.fn((action: string, handler: any) => {
+          h[action] = handler;
+        }) as any;
+        const ctrl = createController({
+          audio,
+          onHandsFreeEnd,
+          mediaSession: mediaSession as unknown as MediaSession,
+        });
+        return { ctrl, fwd: () => h.seekforward({}) };
+      }
+
+      function on(ctrl: ReturnType<typeof createController>, section: string) {
+        ctrl.selectTrack(section);
+        audioEl.dispatchEvent(new Event("loadedmetadata"));
+        expect(ctrl.activeSectionType).toBe(section);
+      }
+
+      it("skips to the next pass in the user's order", () => {
+        const { ctrl, fwd } = seekForward(seqAudio);
+        ctrl.setHandsFree(true);
+        on(ctrl, "natural_speed");
+        fwd();
+        expect(ctrl.activeSectionType).toBe("slow_speed");
+      });
+
+      it("from the EN step hands off to the next lesson", () => {
+        const onHandsFreeEnd = vi.fn();
+        const { ctrl, fwd } = seekForward(seqAudio, onHandsFreeEnd);
+        ctrl.setHandsFree(true);
+        on(ctrl, "slow_translated");
+        fwd();
+        expect(onHandsFreeEnd).toHaveBeenCalledTimes(1);
+      });
+
+      it("with hands-free OFF still jumps +10s and stays on the pass", () => {
+        const { ctrl, fwd } = seekForward(seqAudio);
+        on(ctrl, "natural_speed");
+        audioEl.currentTime = 5;
+        fwd();
+        expect(ctrl.activeSectionType).toBe("natural_speed");
+        expect(audioEl.currentTime).toBe(15);
       });
     });
   });
