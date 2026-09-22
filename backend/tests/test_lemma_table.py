@@ -211,8 +211,30 @@ class TestFactory:
 
 
 @pytest.fixture(scope="module")
-def real() -> TableLemmatizer:
-    return TableLemmatizer("no", get_lemma_table_path("no"))
+def real():
+    # Module scope instantiates BEFORE the function-tier autoclose fixture, so
+    # nothing else closes this connection (tunatale-zcgs: it was GC'd at an
+    # arbitrary later moment, warning inside whichever test ran next).
+    lemmatizer = TableLemmatizer("no", get_lemma_table_path("no"))
+    yield lemmatizer
+    lemmatizer.close()
+
+
+def test_close_releases_the_table_connection(tmp_path):
+    """tunatale-zcgs: LemmaTable held its connection for the object's lifetime
+    with no way to release it."""
+    db = tmp_path / "t.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+        "INSERT INTO meta VALUES ('source_version', '1'), ('source_id', 'x');"
+    )
+    conn.commit()
+    conn.close()
+    table = LemmaTable(db)
+    table.close()
+    with pytest.raises(sqlite3.ProgrammingError):
+        table._conn.execute("SELECT 1")
 
 
 @pytest.mark.skipif(

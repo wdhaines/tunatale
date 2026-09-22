@@ -10,6 +10,7 @@ import json as _json
 import re
 import sqlite3
 import time as _time
+from contextlib import closing
 from pathlib import Path
 from typing import NamedTuple
 
@@ -955,13 +956,14 @@ class OfflineWriter:
         csum = hashlib.sha1(data).hexdigest()
         mtime = int(_time.time())
         try:
-            mconn = sqlite3.connect(str(media_db))
-            mconn.execute(
-                "INSERT OR REPLACE INTO media (fname, csum, mtime, dirty) VALUES (?, ?, ?, 1)",
-                (filename, csum, mtime),
-            )
-            mconn.commit()
-            mconn.close()
+            # closing(): a failed INSERT must not leave the handle open until GC
+            # (tunatale-zcgs — close() used to run on the success line only).
+            with closing(sqlite3.connect(str(media_db))) as mconn:
+                mconn.execute(
+                    "INSERT OR REPLACE INTO media (fname, csum, mtime, dirty) VALUES (?, ?, ?, 1)",
+                    (filename, csum, mtime),
+                )
+                mconn.commit()
         except sqlite3.Error:
             pass  # non-fatal: Anki's Check Media will register the file on next open
 

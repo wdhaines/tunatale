@@ -154,6 +154,13 @@ class LemmaTable:
         self.source_version: str = meta["source_version"]
         self.source_id: str = meta["source_id"]
 
+    def close(self) -> None:
+        """Release the connection. The process-wide cached instance never needs
+        this; short-lived owners (tests, scripts) do, or the handle leaks until
+        GC and warns inside whatever runs next (tunatale-zcgs)."""
+        with self._lock:
+            self._conn.close()
+
     def readings(self, surface: str) -> list[Reading]:
         """Readings for *surface*: exact casing first, then lowercased. ``[]`` if unknown."""
         for key in dict.fromkeys((surface, surface.lower())):
@@ -194,6 +201,9 @@ class TableLemmatizer:
         self._cache_version = f"table-{self._table.source_version}-{self._table.source_id}"
         # Rows the real model cached under the version this table was built from.
         self.compatible_cache_versions: tuple[str, ...] = (f"{self._table.source_version}+{_ANALYSIS_SCHEMA_REV}",)
+
+    def close(self) -> None:
+        self._table.close()
 
     def readings(self, surface: str) -> list[Reading]:
         return self._table.readings(surface)
