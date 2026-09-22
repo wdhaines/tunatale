@@ -6,35 +6,31 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import anyio
-from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-load_dotenv()
-
-from fastapi import Depends, FastAPI, Request, Response  # noqa: E402
-from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
-from fastapi.responses import JSONResponse  # noqa: E402
-
-from app.api.health import STATUS_OK, check_health  # noqa: E402
-from app.api.models import HealthResponse, LanguagesResponse  # noqa: E402
-from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
-from app.audio.renderer import LessonRenderer  # noqa: E402
-from app.audio.tts_factory import get_tts_service  # noqa: E402
-from app.auth.database import AuthDatabase  # noqa: E402
-from app.config import clock_runtime_problems, prod_profile_problems, settings  # noqa: E402
-from app.generation.pipeline import LessonPipeline  # noqa: E402
-from app.generation.planner import CurriculumPlanner  # noqa: E402
-from app.generation.story import StoryGenerator  # noqa: E402
-from app.languages import get_language, get_phoneme_planner, get_preprocessor, get_tts_locale  # noqa: E402
-from app.llm.activity import ActivityLog  # noqa: E402
-from app.llm.cassette import CassetteLLMClient  # noqa: E402
-from app.llm.client import LLMClient, reasoning_params_for_model  # noqa: E402
-from app.llm.usage_ledger import UsageLedger  # noqa: E402
-from app.logging_sink import install_warning_file_handler, llm_failure_mirror  # noqa: E402
-from app.models.lesson import SectionType  # noqa: E402
-from app.srs.database import SRSDatabase  # noqa: E402
-from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for  # noqa: E402
-from app.storage.db_backup import rotate_db_backups  # noqa: E402
-from app.storage.store import ContentStore  # noqa: E402
+from app.api.health import STATUS_OK, check_health
+from app.api.models import HealthResponse, LanguagesResponse
+from app.audio.pause_calculator import NaturalPauseCalculator
+from app.audio.renderer import LessonRenderer
+from app.audio.tts_factory import get_tts_service
+from app.auth.database import AuthDatabase
+from app.config import clock_runtime_problems, prod_profile_problems, settings
+from app.generation.pipeline import LessonPipeline
+from app.generation.planner import CurriculumPlanner
+from app.generation.story import StoryGenerator
+from app.languages import get_language, get_phoneme_planner, get_preprocessor, get_tts_locale
+from app.llm.activity import ActivityLog
+from app.llm.cassette import CassetteLLMClient
+from app.llm.client import LLMClient, reasoning_params_for_model
+from app.llm.usage_ledger import UsageLedger
+from app.logging_sink import install_warning_file_handler, llm_failure_mirror
+from app.models.lesson import SectionType
+from app.srs.database import SRSDatabase
+from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for
+from app.storage.db_backup import rotate_db_backups
+from app.storage.store import ContentStore
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("app.audio.renderer").setLevel(logging.DEBUG)

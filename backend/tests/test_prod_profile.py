@@ -61,9 +61,11 @@ def _clean_settings(monkeypatch, tmp_path, **overrides) -> Settings:
         "AZURE_SPEECH_KEY",
         "AZURE_SPEECH_REGION",
         "GROQ_API_KEY",
-        # app/main.py calls load_dotenv() at import, so once any test in the
-        # worker has imported it, the dev .env's RELATIVE database URLs are in
-        # os.environ — green alone, red in the full gate, and green in CI (no .env).
+        # app/main.py used to call load_dotenv() at import, which put the dev
+        # .env's RELATIVE database URLs into os.environ — green alone, red in the
+        # full gate, green in CI (no .env). It no longer does (see
+        # test_main_env_isolation.py); clearing them still keeps a developer's
+        # shell exports out of this helper.
         "DATABASE_URL",
         "DATABASE_URLS",
         "AUTH_DATABASE_URL",
