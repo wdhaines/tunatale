@@ -320,6 +320,37 @@ class TestOfflineWriterStoreMediaFile:
 
         assert (media_dir / "test.mp3").read_bytes() == b"audio_data"
 
+    def test_store_media_file_closes_the_media_db_even_when_the_write_fails(self, tmp_path, monkeypatch):
+        """tunatale-zcgs: close() ran only on the success line, so a sqlite error
+        after connect left the handle open until GC -> an intermittent
+        ResourceWarning attributed to whatever test ran next."""
+        media_dir = tmp_path / "collection.media"
+        media_dir.mkdir()
+        media_db_path = tmp_path / "collection.media.db"
+        bad_conn = sqlite3.connect(str(media_db_path))
+        bad_conn.execute("CREATE TABLE media (fname TEXT PRIMARY KEY, broken TEXT)")
+        bad_conn.commit()
+        bad_conn.close()
+        opened: list[sqlite3.Connection] = []
+        connect = sqlite3.connect
+
+        def recording_connect(*args, **kwargs):
+            c = connect(*args, **kwargs)
+            opened.append(c)
+            return c
+
+        conn = _make_collection_conn()
+        writer = OfflineWriter(conn, media_dir=media_dir, media_db_path=media_db_path)
+        # A scoped context: monkeypatch.undo() would also undo the autouse
+        # fixtures' patches, which share this instance.
+        with monkeypatch.context() as m:
+            m.setattr(sqlite3, "connect", recording_connect)
+            writer.store_media_file("test.mp3", b"audio_data")
+
+        assert len(opened) == 1
+        with pytest.raises(sqlite3.ProgrammingError):
+            opened[0].execute("SELECT 1")
+
     def test_probes_db2_before_db_when_no_explicit_path(self, tmp_path):
         """Modern Anki uses collection.media.db2; writer must prefer it over .db."""
         media_dir = tmp_path / "collection.media"
