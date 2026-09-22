@@ -122,6 +122,19 @@ start() {
   # through), so $! is the server's pid. Backgrounding a `cd && ...` list
   # instead records a wrapper shell, and `stop` then leaves the server running.
   cd "$APP/backend"
+  # The lemmatizer must be the lemma table. This venv has no Stanza, so any
+  # other setting silently lowercases every word — which is what a lowercase
+  # `lemmatizer_type=` in the linked dev .env did on 2026-09-21, overriding
+  # LEMMATIZER_TYPE=table through app.main's old load_dotenv(). Checked through
+  # the same import the server does, before anything listens.
+  env TT_HOME="$DATA/.tunatale" LEMMATIZER_TYPE=table .venv/bin/python -c '
+import app.main  # noqa: F401 — the server imports this first
+from app.srs.lemma_table import TableLemmatizer
+from app.srs.lemmatizer import get_lemmatizer
+got = get_lemmatizer("no")
+if not isinstance(got, TableLemmatizer):
+    raise SystemExit(f"lemmatizer for no is {type(got).__name__}, not TableLemmatizer")
+' || die "the laptop instance would not use the lemma table — check lemmatizer_type in $REPO/backend/.env"
   env TT_HOME="$DATA/.tunatale" MEDIA_DIR="$DATA/media" AUDIO_DIR="$DATA/output/audio" \
     DATABASE_URL="sqlite:///$DATA/tunatale_sl.db" \
     DATABASE_URLS="{\"sl\": \"sqlite:///$DATA/tunatale_sl.db\", \"no\": \"sqlite:///$DATA/tunatale_no.db\"}" \
