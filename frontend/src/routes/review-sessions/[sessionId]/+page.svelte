@@ -610,7 +610,7 @@
 	   enrichment that is missing. Styling it as an error would teach the reader
 	   to dismiss the row, which is the opposite of what it is for. */
 	.gloss-notice {
-		color: var(--color-text-muted, #6b6b6b);
+		color: var(--color-muted);
 		margin: 0;
 		font-size: 0.85rem;
 	}

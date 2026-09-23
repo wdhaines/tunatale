@@ -319,6 +319,24 @@ describe("TunaTaleAPI", () => {
       expect(result.gloss_entry_count).toBe(237);
     });
 
+    it("reglossLesson POSTs to the lesson regloss path, not regenerate", async () => {
+      // The lesson twin of the session call above: regenerate (regenerateDay)
+      // replaces the dialogue and mints a new lesson id; regloss keeps the story
+      // and the id. Hitting the wrong one would silently destroy text the
+      // reader asked to have glossed.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockOk({ id: "l1", gloss_entry_count: 237, warnings: [] })),
+      );
+
+      const result = await api.reglossLesson("l1");
+
+      const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(`${BASE}/api/story/l1/regloss`);
+      expect(init.method).toBe("POST");
+      expect(result.gloss_entry_count).toBe(237);
+    });
+
     it("getReviewSessionPrompt GETs the prompt for manual paste", async () => {
       vi.stubGlobal(
         "fetch",

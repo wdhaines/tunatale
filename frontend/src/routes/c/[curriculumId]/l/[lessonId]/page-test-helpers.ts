@@ -33,6 +33,7 @@ export function createApiMock() {
     undoGrade: vi.fn(),
     fetchQueueStats: vi.fn(),
     regenerateDay: vi.fn(),
+    reglossLesson: vi.fn(),
     deleteCurriculumDay: vi.fn(),
     getRateLimit: vi.fn().mockResolvedValue(null),
     // Default RESOLVES to [] (not pending) so every other page test file keeps

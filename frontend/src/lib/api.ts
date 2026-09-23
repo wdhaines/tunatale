@@ -202,6 +202,11 @@ export interface LessonDetail {
    *  never "none landed". */
   review_requested?: string[];
   review_used?: string[];
+  // How many entries the gloss pass returned. NULLABLE, unlike the two above:
+  // a lesson stored before this field existed has never been measured, and
+  // reporting that as 0 would tell its reader the glosses are missing when
+  // nobody ever looked. The page keys its notice off `=== 0` for that reason.
+  gloss_entry_count?: number | null;
 }
 
 /** What the reading UI actually needs off a lesson.
@@ -824,6 +829,19 @@ export class TunaTaleAPI {
     id: string,
   ): Promise<{ id: string; gloss_entry_count: number; warnings: string[] }> {
     return this.request(`/api/review-sessions/${id}/regloss`, { method: "POST" });
+  }
+
+  /**
+   * Re-run the gloss pass over a stored lesson's story, keeping the dialogue
+   * and the lesson id — the lesson-page twin of `reglossReviewSession`.
+   *
+   * Distinct from Regenerate (regenerateDay), deliberately: a rewrite replaces
+   * the text, which is not what "my hover translations are missing" asks for.
+   */
+  async reglossLesson(
+    id: string,
+  ): Promise<{ id: string; gloss_entry_count: number; warnings: string[] }> {
+    return this.request(`/api/story/${id}/regloss`, { method: "POST" });
   }
 
   async renderReviewSession(id: string): Promise<LessonAudio> {

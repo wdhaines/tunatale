@@ -10,7 +10,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor, screen } from "@testing-library/svelte";
 
 const mockGoto = vi.fn();
-vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
+const mockInvalidateAll = vi.fn();
+vi.mock("$app/navigation", () => ({
+  goto: (...args: unknown[]) => mockGoto(...args),
+  invalidateAll: () => mockInvalidateAll(),
+}));
 
 vi.mock("$lib/api", async () => {
   const { createApiMock } = await import("./page-test-helpers");
@@ -35,6 +39,7 @@ const mockMarkAsListened = vi.mocked(api.markAsListened);
 const mockGetLessonAudio = vi.mocked(api.getLessonAudio);
 const mockGetTranscript = vi.mocked(api.getTranscript);
 const mockRegenerateDay = vi.mocked(api.regenerateDay);
+const mockReglossLesson = vi.mocked(api.reglossLesson);
 const mockGetStorySource = vi.mocked(api.getStorySource);
 const mockImportStory = vi.mocked(api.importStory);
 const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
@@ -736,5 +741,145 @@ describe("review coverage readout (bd tunatale-37xv)", () => {
     const el = getByTestId("review-coverage");
     expect(el.className).not.toMatch(/error|warn|danger|bad/i);
     expect(el.textContent ?? "").not.toMatch(/only|failed|missed|poor/i);
+  });
+});
+
+describe("a lesson that lost its glosses says so", () => {
+  // The gloss pass degrades silently by design — it keeps an expensive story
+  // rather than 502ing — so a lesson that ships with zero hover translations
+  // must say so on the page, not just in a log line.
+  //
+  // 0 and null are NOT the same and must not render the same: null/absent means
+  // a lesson stored before the count existed, and claiming its glosses are
+  // missing would be a fabrication about every old lesson in the store.
+
+  function withCount(n: number | null) {
+    return {
+      curriculum,
+      lesson: { ...lesson, gloss_entry_count: n },
+      audio: null,
+      transcript,
+    };
+  }
+
+  it("shows a notice when the count is a measured zero", () => {
+    const { getByText } = render(Page, { props: { data: withCount(0) } });
+    expect(getByText(/no hover translations/i)).toBeTruthy();
+  });
+
+  it("says nothing when the count was never measured", () => {
+    const { queryByText } = render(Page, { props: { data: withCount(null) } });
+    expect(queryByText(/no hover translations/i)).toBeNull();
+  });
+
+  it("says nothing when the glosses are present", () => {
+    const { queryByText } = render(Page, { props: { data: withCount(237) } });
+    expect(queryByText(/no hover translations/i)).toBeNull();
+  });
+
+  it("says nothing when the count field is absent entirely", () => {
+    // A lesson stored before the count existed carries no field at all — the
+    // page fixture's default. It must render exactly like null: no fabrication.
+    const { queryByText } = render(Page, {
+      props: { data: { curriculum, lesson, audio: null, transcript } },
+    });
+    expect(queryByText(/no hover translations/i)).toBeNull();
+  });
+});
+
+describe("repairing a lesson that lost its glosses", () => {
+  // The repair action appears only when there is something to repair — a
+  // measured zero. It must NOT appear for a lesson that was never measured
+  // (null/absent), because offering to "restore" glosses nobody established
+  // were missing invites a pointless LLM call on every pre-existing lesson.
+
+  function withCount(n: number | null) {
+    return {
+      curriculum,
+      lesson: { ...lesson, gloss_entry_count: n },
+      audio: null,
+      transcript,
+    };
+  }
+
+  it("offers the repair when the count is a measured zero", () => {
+    const { getByRole } = render(Page, { props: { data: withCount(0) } });
+    expect(getByRole("button", { name: /restore glosses/i })).toBeTruthy();
+  });
+
+  it("does not offer it when the count was never measured", () => {
+    const { queryByRole } = render(Page, { props: { data: withCount(null) } });
+    expect(queryByRole("button", { name: /restore glosses/i })).toBeNull();
+  });
+
+  it("does not offer it when the glosses are present", () => {
+    const { queryByRole } = render(Page, { props: { data: withCount(237) } });
+    expect(queryByRole("button", { name: /restore glosses/i })).toBeNull();
+  });
+
+  it("re-glosses THIS lesson, without rewriting its dialogue", async () => {
+    mockReglossLesson.mockResolvedValue({ id: "l1", gloss_entry_count: 237, warnings: [] });
+    const { getByRole } = render(Page, { props: { data: withCount(0) } });
+
+    await fireEvent.click(getByRole("button", { name: /restore glosses/i }));
+
+    expect(mockReglossLesson).toHaveBeenCalledWith("l1");
+    // The distinction that matters: a rewrite would replace the text the user
+    // already has, which is not what "my hovers are missing" asks for.
+    expect(mockRegenerateDay).not.toHaveBeenCalled();
+    // And the transcript is re-read so the newly glossed dialogue shows up.
+    await waitFor(() => expect(mockGetTranscript).toHaveBeenCalledWith("l1"));
+  });
+
+  it("shows the in-flight label and disables the button while re-glossing", async () => {
+    let release!: (value: { id: string; gloss_entry_count: number; warnings: string[] }) => void;
+    mockReglossLesson.mockReturnValue(
+      new Promise<{ id: string; gloss_entry_count: number; warnings: string[] }>((resolve) => {
+        release = resolve;
+      }),
+    );
+    mockGetTranscript.mockResolvedValue(transcript);
+    const { getByRole } = render(Page, { props: { data: withCount(0) } });
+
+    await fireEvent.click(getByRole("button", { name: /restore glosses/i }));
+
+    // In flight: the label swaps to "Restoring…" and the button locks.
+    await waitFor(() => expect(getByRole("button", { name: /restoring/i })).toBeTruthy());
+    expect((getByRole("button", { name: /restoring/i }) as HTMLButtonElement).disabled).toBe(true);
+
+    release({ id: "l1", gloss_entry_count: 237, warnings: [] });
+    // Back to idle ("Restore glosses", enabled) once the repair lands.
+    await waitFor(() => {
+      const button = getByRole("button", { name: /restore glosses/i }) as HTMLButtonElement;
+      expect(button).toBeTruthy();
+      expect(button.disabled).toBe(false);
+    });
+  });
+
+  it("survives the transcript refetch failing after a successful re-gloss", async () => {
+    // Two independent calls: the repair succeeded and is persisted server-side,
+    // so a failed refetch must not surface as a failed repair. The page keeps
+    // rendering with no transcript rather than throwing.
+    mockReglossLesson.mockResolvedValue({ id: "l1", gloss_entry_count: 237, warnings: [] });
+    mockGetTranscript.mockRejectedValue(new Error("transcript 500"));
+    const { getByRole, queryByText } = render(Page, { props: { data: withCount(0) } });
+
+    await fireEvent.click(getByRole("button", { name: /restore glosses/i }));
+
+    await waitFor(() => expect(mockReglossLesson).toHaveBeenCalledWith("l1"));
+    expect(queryByText("transcript 500")).toBeNull();
+  });
+
+  it("surfaces a failure instead of silently leaving the lesson unglossed", async () => {
+    // The whole epic is about a gloss loss that reported nothing. A repair that
+    // fails quietly would be the same bug wearing a button.
+    mockReglossLesson.mockRejectedValue(new Error("Groq is rate limited"));
+    const { getByRole, findByText } = render(Page, { props: { data: withCount(0) } });
+
+    await fireEvent.click(getByRole("button", { name: /restore glosses/i }));
+
+    expect(await findByText("Groq is rate limited")).toBeTruthy();
+    // Flag cleared → button back to its idle label, ready for a retry.
+    await waitFor(() => expect(getByRole("button", { name: /restore glosses/i })).toBeTruthy());
   });
 });

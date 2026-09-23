@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { api } from '$lib/api';
 	import type { LessonAudio, TranscriptData, ListenResponse, PeerSyncResult, DayProgress } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
@@ -68,6 +68,8 @@
 	// (navigate) or fails — NOT just for the brief regenerateDay request, so the
 	// button stays disabled while the background job runs.
 	let regenerating = $state(false);
+	// No confirm dialog: unlike a rewrite, regloss keeps the story (handleRegloss).
+	let reglossing = $state(false);
 	let syncStatus = $state('');
 	let error = $state('');
 	let confirmingDeleteDay = $state(false);
@@ -213,6 +215,36 @@
 	// rather than bad — a permanent "0 of 0" would read as a standing failure.
 	const reviewRequested = $derived(data.lesson.review_requested ?? []);
 	const reviewUsed = $derived(data.lesson.review_used ?? []);
+
+	/**
+	 * Re-run the gloss pass over this lesson's stored story.
+	 *
+	 * ⚠️ NOT Regenerate (`regenerateDay`). A rewrite replaces the dialogue (and
+	 * mints a NEW lesson id via the greedy pipeline), which is not what a reader
+	 * missing hover translations is asking for — they want the text they have,
+	 * glossed. The route keeps the story and replaces only `dialogue_glosses`,
+	 * keeping the id and the URL.
+	 *
+	 * No confirm dialog: unlike a rewrite this destroys nothing. The story, the
+	 * cards and any rendered audio all survive.
+	 */
+	async function handleRegloss() {
+		const lessonId = data.lesson.id;
+		reglossing = true;
+		error = '';
+		try {
+			await api.reglossLesson(lessonId);
+			transcriptLoading = true;
+			await invalidateAll();
+			const t = await api.getTranscript(lessonId).catch(() => null);
+			if (data.lesson.id === lessonId) transcript = t;
+		} catch (e) {
+			if (data.lesson.id === lessonId) error = e instanceof Error ? e.message : String(e);
+		} finally {
+			if (data.lesson.id === lessonId) reglossing = false;
+			if (data.lesson.id === lessonId) transcriptLoading = false;
+		}
+	}
 
 	async function handleRegenerate() {
 		const confirmed = await confirmDialog(t('lessonPage.confirmRegenerate', { position: dayPosition }));
@@ -441,6 +473,20 @@
 					{#if error}
 						<p class="error">{error}</p>
 					{/if}
+					<!-- The gloss pass degrades silently on purpose — it keeps a story that is
+					     already paid for rather than 502ing — so without this the only trace of
+					     a total loss is a log line on a terminal with no file sink.
+
+					     ⚠️ `=== 0` and NOT a falsy check: null means a lesson stored before the
+					     count existed, and telling its reader the glosses are missing would be a
+					     fabrication about every lesson in the store. Same measured-zero versus
+					     never-measured distinction the reused figure above already makes.
+
+					     Costs a row only in the failure case, so it does not undo the header
+					     compaction in 4293cd3. -->
+					{#if data.lesson.gloss_entry_count === 0}
+						<p class="gloss-notice">{t('lessonPage.glossNotice')}</p>
+					{/if}
 				</div>
 		{/snippet}
 		{#snippet headerBelow()}
@@ -479,6 +525,18 @@
 			<p class="review-coverage" data-testid="review-coverage">
 				{t('lessonPage.reusedCoverage', { used: reviewUsed.length, total: reviewRequested.length })}{#if reviewUsed.length > 0}: <span class="review-words">{reviewUsed.join(', ')}</span>{/if}
 			</p>
+		{/if}
+		<!-- Shown ONLY on a measured zero. `=== 0`, never falsiness: null means a
+		     lesson stored before the count existed, and offering to "restore"
+		     glosses nobody established were missing would put a pointless LLM call
+		     in front of every pre-existing lesson. -->
+		{#if data.lesson.gloss_entry_count === 0}
+			<div class="regen-row">
+				<button class="regen-btn" onclick={handleRegloss} disabled={reglossing}>
+					{reglossing ? t('lessonPage.restoring') : t('lessonPage.restoreGlosses')}
+				</button>
+				<span class="muted">{t('lessonPage.keepsDialogue')}</span>
+			</div>
 		{/if}
 		<div class="regen-row">
 			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
@@ -598,6 +656,14 @@
 	.error {
 		color: var(--color-danger);
 		margin: 0;
+	}
+	/* Muted, not danger-red: the lesson plays and reads fine, it is one
+	   enrichment that is missing. Styling it as an error would teach the reader
+	   to dismiss the row, which is the opposite of what it is for. */
+	.gloss-notice {
+		color: var(--color-muted);
+		margin: 0;
+		font-size: 0.85rem;
 	}
 	.sync-status {
 		color: var(--color-muted);

@@ -496,6 +496,12 @@ export const en = {
   "lessonPage.lessonTools": "Lesson tools",
   "lessonPage.reusedCoverage": "Reused {used} of {total} words you were forgetting",
   "lessonPage.regenHelpAria": "What does regenerate do?",
+  // Zero-gloss repair, mirroring the review-sessions page (tunatale-ngx3). The
+  // reviewSessions.* strings are entity-neutral, so identical wording is right.
+  "lessonPage.glossNotice": "No hover translations — the gloss pass came back empty.",
+  "lessonPage.restoreGlosses": "Restore glosses",
+  "lessonPage.restoring": "Restoring…",
+  "lessonPage.keepsDialogue": "Keeps the dialogue — only the hover translations are rebuilt.",
 
   // review-sessions/[sessionId]/+page.svelte
   "reviewSessions.january": "January",
