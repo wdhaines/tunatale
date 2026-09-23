@@ -6,6 +6,7 @@ from app.cards.field_map import NotetypeProfile
 from app.cards.vocab_notetype import TAGALOG_VOCAB
 from app.languages import LanguageConfig, PlannerExample, register
 from app.models.language import NARRATOR_VOICE, Language
+from app.plugins.languages.tl.phoneme_plan import create_phoneme_planner
 from app.plugins.languages.tl.preprocessor import TagalogPreprocessor
 from app.plugins.languages.tl.syllabify import syllabify_tagalog_word
 from app.plugins.languages.tl.verb_headword import verb_headword
@@ -49,6 +50,19 @@ register(
                 "male-2": "en-US-SamuelMultilingualNeural",
                 "female": "fil-PH-BlessicaNeural",
                 "male": "fil-PH-AngeloNeural",
+                # The key-phrase breakdown, outside the dialogue cast
+                # (tunatale-w4m7.16). The breakdown plays syllable fragments as
+                # IPA, and both fil-PH voices IGNORE IPA (byte-identical audio
+                # for "salamat" under its own IPA and under the IPA of
+                # "kumusta"). Multilingual voices honour it only unwrapped, read
+                # by their own front end, so the base language matters: es/it
+                # voices dropped ŋ, h or ʔ, and the German voices said all of
+                # them (fil-PH STT on pangalan, kahapon, abuloy). The user
+                # ranked Florian first by ear, 2026-09-23. Known quirks,
+                # measured: he says the tap ɾ as d (the planner writes r), he
+                # ignores a bare stress mark but honours vowel length, and he
+                # creaks on very short open syllables.
+                "key-phrases": "de-DE-FlorianMultilingualNeural",
             },
             # Per-voice loudness gains (dB) applied at assembly, target −20.0
             # LUFS: integrated loudness of the same 10 clips per voice
@@ -65,6 +79,10 @@ register(
                 "fil-PH-AngeloNeural": -0.6,
                 "en-US-EmmaMultilingualNeural": -1.9,
                 "en-US-SamuelMultilingualNeural": -0.1,
+                # 2026-09-23 on 10 Tagalog sentences (the wake lesson's key
+                # phrases plus three), same method; the controls reproduced the
+                # table within 0.5 dB (Blessica -21.3 vs -21.8, Emma -18.3 vs -18.1).
+                "de-DE-FlorianMultilingualNeural": 1.2,
                 "en-US-GuyNeural": -0.9,
             },
         ),
@@ -112,6 +130,11 @@ register(
         style_notes=_style_notes,
         function_words_path=_DATA / "function_words.json",
         numbers_path=_DATA / "numbers.json",
+        # Key-phrase fragments as IPA from Wiktionary's narrow readings, for the
+        # key-phrases voice (tunatale-w4m7.16; see tl/phoneme_plan.py).
+        phoneme_planner_factory=create_phoneme_planner,
+        # fil-PH ignores <phoneme>: the planned IPA must reach the voice unwrapped.
+        ipa_read_in_voice_locale=True,
         # Deliberately omitted until their owning beads ship:
         # - l2_scorer: Tagalog has no letters that distinguish it from English,
         #   and None is a LOUD condition at the call site (see get_l2_scorer's

@@ -612,3 +612,27 @@ class TestResolveDbPath:
         s = self._settings(database_urls={"no": "sqlite:////var/lib/tt_no.db"})
 
         assert resolve_db_path("no", s) == Path("/var/lib/tt_no.db")
+
+
+class TestKeyPhrasesVoice:
+    """tunatale-w4m7.16: a language may voice its key-phrase breakdown with a
+    voice outside the dialogue cast. Tagalog's fil-PH voices ignore IPA, so its
+    breakdown is spoken by a Multilingual voice that honours it."""
+
+    def test_tagalog_names_a_multilingual_key_phrases_voice(self):
+        voice = get_language("tl").tts_voice_map["key-phrases"]
+        # A voice from another locale must be Multilingual, or it would read
+        # the plain-text Tagalog in the section as its own language.
+        assert "Multilingual" in voice
+
+    def test_every_tagalog_map_voice_has_a_measured_gain(self):
+        lang = get_language("tl")
+        missing = set(lang.tts_voice_map.values()) - set(lang.tts_voice_gain_db)
+        assert not missing, f"voices without a measured gain: {missing}"
+
+    def test_the_key_phrases_role_is_not_offered_to_the_story_writer(self):
+        from app.generation.prompts import _l2_roles_line
+
+        line = _l2_roles_line(get_language("tl"))
+        assert line.startswith("- Use ONLY these 4 L2 voices")
+        assert "key-phrases" not in line

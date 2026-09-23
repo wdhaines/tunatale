@@ -45,27 +45,32 @@ from app.audio.slicer import build_slicers  # noqa: E402
 from app.audio.tts_factory import get_tts_service  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.generation.section_builder import build_key_phrases_section  # noqa: E402
-from app.languages import get_phoneme_planner, get_preprocessor, resolve_db_path  # noqa: E402
+from app.languages import get_language, get_phoneme_planner, get_preprocessor, resolve_db_path  # noqa: E402
 from app.models.lesson import Lesson  # noqa: E402
 from app.srs.database import SRSDatabase  # noqa: E402
 from app.storage.resync_key_phrases import _key_phrases_section, _voices  # noqa: E402
 from app.storage.store import ContentStore  # noqa: E402
 
 
-def _rebuild_section(lesson):
+def _rebuild_section(lesson, revoice: bool = False):
     found = _key_phrases_section(lesson)
     if found is None or not lesson.key_phrases:
         return None
     index, section = found
-    voice_map, narrator = _voices(section, lesson.language_code)
+    if revoice:
+        # Deliberately re-voice: today's registry map, key-phrases role included.
+        voice_map = dict(get_language(lesson.language_code).tts_voice_map)
+        narrator = voice_map.get("narrator", _voices(section, lesson.language_code)[1])
+    else:
+        voice_map, narrator = _voices(section, lesson.language_code)
     rebuilt = build_key_phrases_section(
         [{"phrase": kp.phrase, "translation": kp.translation} for kp in lesson.key_phrases],
         voice_map,
         narrator,
         lesson.language_code,
     )
-    before = [(p.text, p.source_word, p.syllable_span) for p in section.phrases]
-    after = [(p.text, p.source_word, p.syllable_span) for p in rebuilt.phrases]
+    before = [(p.text, p.source_word, p.syllable_span, p.voice_id) for p in section.phrases]
+    after = [(p.text, p.source_word, p.syllable_span, p.voice_id) for p in rebuilt.phrases]
     return index, rebuilt, before != after
 
 
@@ -79,6 +84,12 @@ async def main() -> int:
         help="Re-render even when the chunk text is already current. For repairing a "
         "lesson whose AUDIO is fine but whose stored cue manifest was written by a "
         "buggy version — text_changed cannot see that.",
+    )
+    ap.add_argument(
+        "--revoice",
+        action="store_true",
+        help="Rebuild with TODAY's voice map (e.g. a new key-phrases voice) instead of the voices "
+        "already in the stored section. Without it a rebuild never changes who speaks.",
     )
     ap.add_argument("--db", default=None, help="content DB path (default: the configured Norwegian DB)")
     ap.add_argument("--audio-dir", default=None)
@@ -134,7 +145,7 @@ async def main() -> int:
     for lesson_id, lesson, persist in _content():
         if lesson.language_code != code:
             continue
-        rebuilt = _rebuild_section(lesson)
+        rebuilt = _rebuild_section(lesson, revoice=args.revoice)
         if rebuilt is None:
             print(f"  --  {lesson_id[:52]:54} no KEY_PHRASES section; skipped")
             skipped += 1

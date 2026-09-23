@@ -1,6 +1,17 @@
-"""Tagalog syllabifier — onset-maximization with Tagalog phonotactics.
+"""Tagalog syllabifier — the pronunciation first, the spelling rules second.
 
-Tuned for the Pimsleur audio buildup, so the target is how a word is SAID in
+:func:`syllabify_tagalog_word` cuts a word where its Wiktionary reading puts
+the syllable boundaries (``app.plugins.languages.tl.pronunciation``), because
+the key-phrase breakdown plays each piece as that reading's IPA and a caption
+must name the syllable its audio says (tunatale-w4m7.16). ``siya`` is said in
+one syllable, ``[ˈʃa]``, and ``kailan`` in two, ``kai-lan``; the rules below
+split both by their written vowels.
+
+A word Wiktionary does not list, or whose reading cannot be laid onto the
+spelling (``mga`` is two syllables from one written vowel), falls back to
+:func:`syllabify_tagalog_spelling`, the rules that follow.
+
+The spelling rules are onset-maximization with Tagalog phonotactics, tuned for the Pimsleur audio buildup, so the target is how a word is SAID in
 chunks, not the Komisyon sa Wikang Filipino hyphenation convention. The two
 differ on loan clusters: KWF hyphenates ``prob-le-ma`` and onset maximization
 gives ``pro-ble-ma``, which is how the word is pronounced.
@@ -23,7 +34,10 @@ form, so it cannot insert the unwritten vowel.
 
 from __future__ import annotations
 
+import re
+
 from app.generation.syllabify import syllabify as _syllabify
+from app.plugins.languages.tl.pronunciation import resolve_reading
 
 _TL_VOWELS = frozenset("aeiou")
 
@@ -73,8 +87,26 @@ _TL_VALID_ONSETS = frozenset(
 _TL_INITIAL_ONLY_ONSETS = frozenset(["by", "dy", "ky", "ly", "my", "ny", "py", "sy", "ty"])
 
 
+# Leading and trailing characters that are not part of the word. The rules keep
+# them on the edge syllables (``libing?`` → ``li|bing?``), and the breakdown only
+# trusts a split whose pieces rejoin the lowercased word, so this must too.
+_EDGE = re.compile(r"^(\W*)(.*?)(\W*)$", re.DOTALL)
+
+
 def syllabify_tagalog_word(word: str) -> list[str]:
-    """Split a Tagalog word into syllables using Tagalog phonotactics."""
+    """Split a Tagalog word where its pronunciation does, else by the spelling rules."""
+    lead, core, trail = _EDGE.match(word.lower().strip()).groups()
+    reading = resolve_reading(core) if core else None
+    if reading is None:
+        return syllabify_tagalog_spelling(word)
+    pieces = list(reading.spelling)
+    pieces[0] = lead + pieces[0]
+    pieces[-1] = pieces[-1] + trail
+    return pieces
+
+
+def syllabify_tagalog_spelling(word: str) -> list[str]:
+    """Split a Tagalog word into syllables using Tagalog phonotactics alone."""
     return _syllabify(
         word,
         _TL_VOWELS,
