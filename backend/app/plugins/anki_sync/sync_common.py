@@ -90,6 +90,11 @@ class NoteRecord:
     article: str | None = ""
     extras: tuple[BackField, ...] | None = field(default_factory=tuple)
     is_cloze: bool = False
+    # Whether the note's notetype has an ``Image`` field. ``None`` when the
+    # collection carries no field metadata (minimal test collections): unknown,
+    # so nothing is concluded from it. False takes the word off the image-repair
+    # queue — a picture could never reach such a card (tunatale-w4m7.8).
+    image_field: bool | None = None
 
 
 @dataclass

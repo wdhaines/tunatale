@@ -840,6 +840,24 @@ class AnkiSync:
             clear_session_main_queue(self._db)
             build_and_freeze_main_queue(self._db)
 
+    def _mark_imageless_notetype(self, guid: str) -> None:
+        """Take a vocab word whose Anki notetype has no ``Image`` field off the
+        image-repair queue, by marking its image unavailable.
+
+        The repair queue (``list_production_cards_missing_images``) reads TT
+        alone and assumed every production card is picture-fronted, which holds
+        for TT's own notetypes. The Pimsleur notetype's production card is
+        English -> Tagalog with no Image field, so the pre-stage fetched pictures
+        for it and flagged them for a push that could not land (the first live
+        tl sync, 2026-09-23). Idempotent; runs on the reverse-import and on
+        every pull, which heals rows imported before this existed.
+        """
+        coll_id = self._db.get_collocation_id_by_guid(guid)
+        if coll_id is None or self._db.is_image_unavailable(coll_id):
+            return
+        if self._db.get_collocation_by_guid(guid).syntactic_unit.card_type == "vocab":
+            self._db.mark_image_unavailable(coll_id)
+
     def sync_pull(self, dry_run: bool = False) -> PullReport:
         """Pull Anki → TunaTale. Returns a PullReport summarising changes.
 
@@ -890,6 +908,8 @@ class AnkiSync:
                 guid = rec.anki_guid
             else:
                 guid = local_item.guid
+            if rec.image_field is False and not dry_run:
+                self._mark_imageless_notetype(guid)
             local_dirty_fields = self._db.get_dirty_fields(guid)
             dirty_set = {f for f in local_dirty_fields.split(",") if f}
 
@@ -1299,15 +1319,26 @@ class AnkiSync:
                     # matched, and minted a duplicate note (tunatale-keb0).
                     cloze_text_update = item.syntactic_unit.source_sentence or ""
             else:
-                if "text" in dirty_set:
-                    l2_field = self._writer.get_l2_field_for_note(anki_note_id)
-                    fields[l2_field] = item.syntactic_unit.text
-                if "translation" in dirty_set:
-                    fields["English"] = item.syntactic_unit.translation
-                if "source_sentence" in dirty_set:
+                # Each role's field comes from the note's OWN notetype, through its
+                # profile: TT's vocab names (English / Note / Image, the L2 in the
+                # ord-0 field) are wrong for an imported deck. On Pimsleur's
+                # Front/Back/Audio they put a text edit into the English side and
+                # aborted the sync on Image (tunatale-w4m7.8). A role the notetype
+                # has no field for is dropped, loudly, below.
+                by_role = self._writer.note_fields_by_role(anki_note_id, language_code=self._language_code)
+                if by_role is None:
+                    # Not in this collection: keep the flags, as update_note_fields'
+                    # False return does (tunatale-7p4f).
+                    report.write_noop += 1
+                    continue
+                if "text" in dirty_set and "text" in by_role:
+                    fields[by_role["text"]] = item.syntactic_unit.text
+                if "translation" in dirty_set and "translation" in by_role:
+                    fields[by_role["translation"]] = item.syntactic_unit.translation
+                if "source_sentence" in dirty_set and "source_sentence" in by_role:
                     # Vocab example sentence lives in the Anki "Note" field.
-                    fields["Note"] = item.syntactic_unit.source_sentence or ""
-                if "image" in dirty_set:
+                    fields[by_role["source_sentence"]] = item.syntactic_unit.source_sentence or ""
+                if "image" in dirty_set and "image" in by_role:
                     # A TT-side image swap or removal. Write the Anki note's Image
                     # field so the media-refresh collapse (which runs LATER in
                     # run_full_sync) sees the new file referenced and preserves it
@@ -1315,15 +1346,26 @@ class AnkiSync:
                     # collection.media alongside, same as the sentence-audio path
                     # above. Removal (no TT image) clears the field to "".
                     img = self._db.get_image_filename(coll_id)
-                    fields["Image"] = f'<img src="{img}">' if img else ""
+                    fields[by_role["image"]] = f'<img src="{img}">' if img else ""
                     if img and not dry_run:
                         _copy_tt_media_to_anki(self._writer, img)
+                unwritable = dirty_set & ({"text", "translation", "source_sentence", "image"} - by_role.keys())
+                if unwritable:
+                    _log.warning(
+                        "PUSH_FIELD_DROPPED nid=%d roles=%s — the note's notetype has no field for them",
+                        anki_note_id,
+                        ",".join(sorted(unwritable)),
+                    )
+                    if not fields and not dry_run:
+                        self._db.set_dirty_fields(guid, ",".join(sorted(dirty_set - unwritable)))
+                        report.stray_dropped += 1
             if not fields and cloze_text_update is None:
                 # A cloze note has no Image field and no bare L2 field, so stray
                 # "image"/"text" flags would never produce a field here and would
                 # pin dirty_fields across every future sync (the create/push cycle
                 # never clears them). Drop just those flags so the row goes clean.
-                stray = dirty_set & {"image", "text"}
+                # (A vocab note's unwritable roles were dropped just above.)
+                stray = dirty_set & {"image", "text"} if item.syntactic_unit.card_type == "cloze" else set()
                 if stray and not dry_run:
                     self._db.set_dirty_fields(guid, ",".join(sorted(dirty_set - stray)))
                     report.stray_dropped += 1
@@ -1835,6 +1877,8 @@ class AnkiSync:
                 continue
 
             self._db.upsert_by_guid(unit, self._language_code, directions, anki_note_id=rec.anki_note_id)
+            if rec.image_field is False:
+                self._mark_imageless_notetype(self._db.get_collocation_by_anki_note_id(rec.anki_note_id).guid)
             notes_created_from_anki += 1
 
         return CreateNewReport(

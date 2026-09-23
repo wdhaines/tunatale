@@ -21,6 +21,7 @@ from app.languages import card_surface_variants, get_deck_name, get_l2_css_class
 from app.media.importer import compute_sha256, copy_media_file
 from app.models.srs_item import Direction, DirectionState
 from app.models.syntactic_unit import BackField, SyntacticUnit
+from app.plugins.anki_sync.add_production_template import IMAGE_FIELD
 from app.plugins.anki_sync.safety import safe_open
 from app.plugins.anki_sync.sqlite_reader import (
     AnkiCard,
@@ -384,6 +385,10 @@ def import_seed(
 
             is_new = existing is None
             coll_id = db.upsert_by_guid(unit, language_code, directions, anki_note_id=note.id)
+            # A notetype with no Image field can never show a picture: keep the
+            # word off the image-repair queue (see AnkiSync._mark_imageless_notetype).
+            if note.field_names and IMAGE_FIELD not in note.field_names and not db.is_image_unavailable(coll_id):
+                db.mark_image_unavailable(coll_id)
 
             if is_new:
                 results["new_parents"] += 1
