@@ -10,10 +10,11 @@ import json as _json
 import re
 import sqlite3
 import time as _time
-from contextlib import closing
+from contextlib import closing, suppress
 from pathlib import Path
 from typing import NamedTuple
 
+from app.cards.field_map import get_profile
 from app.common.guid import compute_guid
 from app.plugins.anki_sync.add_production_template import IMAGE_FIELD, PRODUCTION_TEMPLATE
 from app.plugins.anki_sync.sqlite_reader import find_deck_id
@@ -171,17 +172,38 @@ class OfflineWriter:
             return [r["name"] for r in rows]
         return list(SLOVENE_VOCAB.field_names)
 
-    def get_l2_field_for_note(self, note_id: int) -> str:
-        """Return the ord-0 (sort/L2) field name for *note_id*'s own notetype.
+    def note_fields_by_role(self, note_id: int, *, language_code: str) -> dict[str, str] | None:
+        """The Anki field each TT-editable role of *note_id* lives in.
 
-        Unlike ``get_sort_field_name(model_name)``, this resolves the notetype
-        from the note itself — the caller doesn't need to know or thread through
-        which language/model a specific note belongs to.
+        Roles are TT's names for what ``sync_push`` writes back: ``text`` (the
+        L2), ``translation``, ``source_sentence`` and ``image``. A notetype with
+        a field-role profile (read for *language_code*) says where its L2 and
+        gloss live; one without keeps TT's own vocab layout (the L2 in the ord-0
+        field, then ``English``). A role whose field the notetype does not have
+        is LEFT OUT, so the caller can drop that edit instead of writing a
+        field that is not there.
+
+        This exists because ``sync_push`` used TT's vocab names on every note:
+        on the Pimsleur notetype (Front / Back / Audio) a text edit landed in
+        Front — the English — and an image or translation edit raised and
+        aborted the whole sync (tunatale-w4m7.8, the first live tl sync).
+        ``None`` when the note is not in this collection.
         """
         row = self._conn.execute("SELECT mid FROM notes WHERE id = ?", (note_id,)).fetchone()
         if row is None:
-            raise ValueError(f"Note {note_id} not found")
-        return self._field_names_for_mid(row["mid"])[0]
+            return None
+        field_names = self._field_names_for_mid(row["mid"])
+        name_row = None
+        with suppress(sqlite3.OperationalError):  # no notetypes table (legacy test collections): no profile
+            name_row = self._conn.execute("SELECT name FROM notetypes WHERE id = ?", (row["mid"],)).fetchone()
+        profile = get_profile(name_row["name"], language_code) if name_row is not None else None
+        wanted = {
+            "text": profile.l2 if profile else field_names[0],
+            "translation": profile.translation if profile else "English",
+            "source_sentence": "Note",
+            "image": IMAGE_FIELD,
+        }
+        return {role: name for role, name in wanted.items() if name in field_names}
 
     def update_note_fields(self, note_id: int, fields: dict[str, str]) -> bool:
         """Write *fields* into *note_id*. Returns whether anything was written.
@@ -192,8 +214,6 @@ class OfflineWriter:
         returning ``None`` either way let ``sync_push`` clear ``dirty_fields``
         and count a push for a write that never happened (tunatale-7p4f).
 
-        Contrast ``get_l2_field_for_note``, which raises for the same condition
-        because it has no useful answer to give.
         """
         row = self._conn.execute("SELECT flds, mid FROM notes WHERE id = ?", (note_id,)).fetchone()
         if row is None:

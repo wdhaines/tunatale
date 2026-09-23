@@ -329,3 +329,116 @@ async def test_same_tagalog_with_different_english_is_two_words_that_stay_put(ho
 def test_import_seed_keeps_same_tagalog_with_different_english_apart(homograph_db, tmp_path):
     db = _import_seed(homograph_db, tmp_path)
     assert db.get_collocation_by_anki_note_id(5004).guid != db.get_collocation_by_anki_note_id(5005).guid
+
+
+# ── pushing TT edits into a Pimsleur note (the first live tl sync, 2026-09-23) ─
+#
+# The second real sync died with `ValueError: Unknown field name 'Image' for
+# note 1721965665814`: the image-repair pre-stage had queued three imported
+# words as "production card missing its picture" and flagged them dirty, and
+# sync_push writes TT's OWN vocab field names (English / Note / Image, and the
+# note's ord-0 field for the L2 — which on Pimsleur is Front, the ENGLISH).
+# A Pimsleur note has Front / Back / Audio only.
+
+
+def _linked(tmp_path, pimsleur_db) -> tuple[SRSDatabase, str]:
+    db = _import_seed(pimsleur_db, tmp_path)
+    return db, db.get_collocation_by_anki_note_id(5001).guid
+
+
+def _push(db: SRSDatabase, pimsleur_db: Path):
+    from app.plugins.anki_sync.sync import AnkiSync, OfflineReader, OfflineWriter
+
+    conn = sqlite3.connect(str(pimsleur_db))
+    conn.row_factory = sqlite3.Row
+    try:
+        return AnkiSync(
+            db=db,
+            _reader=OfflineReader(conn, ROOT, language_code="tl"),
+            _writer=OfflineWriter(conn),
+            language_code="tl",
+        ).sync_push()
+    finally:
+        conn.close()
+
+
+def _fields(pimsleur_db: Path, nid: int) -> list[str]:
+    with sqlite3.connect(str(pimsleur_db)) as c:
+        return c.execute("SELECT flds FROM notes WHERE id = ?", (nid,)).fetchone()[0].split("\x1f")
+
+
+def test_an_image_flag_on_a_note_with_no_image_field_is_dropped_not_fatal(pimsleur_db, tmp_path):
+    db, guid = _linked(tmp_path, pimsleur_db)
+    before = _fields(pimsleur_db, 5001)
+    db.set_dirty_fields(guid, "image")
+    _push(db, pimsleur_db)
+    assert _fields(pimsleur_db, 5001) == before
+    assert db.get_dirty_fields(guid) == ""
+
+
+def test_a_translation_edit_lands_in_the_profiles_translation_field(pimsleur_db, tmp_path):
+    db, guid = _linked(tmp_path, pimsleur_db)
+    db.set_translation_dirty(guid, "to eat (a meal)")
+    _push(db, pimsleur_db)
+    front, back, _audio = _fields(pimsleur_db, 5001)
+    assert (front, back) == ("to eat (a meal)", "kumain<br>\n")
+
+
+def test_a_text_edit_lands_in_the_profiles_l2_field_not_the_first_field(pimsleur_db, tmp_path):
+    db, guid = _linked(tmp_path, pimsleur_db)
+    db.set_dirty_fields(guid, "text")
+    _push(db, pimsleur_db)
+    front, back, _audio = _fields(pimsleur_db, 5001)
+    assert (front, back) == ("to eat", "kumain")
+
+
+def test_an_imported_word_on_a_notetype_with_no_image_field_is_off_the_repair_queue(pimsleur_db, tmp_path):
+    db = _import_seed(pimsleur_db, tmp_path)
+    assert db.list_production_cards_missing_images(limit=50) == []
+
+
+async def test_a_reverse_imported_word_on_a_notetype_with_no_image_field_is_off_the_repair_queue(pimsleur_db):
+    db = await _reverse_import(pimsleur_db)
+    assert db.list_production_cards_missing_images(limit=50) == []
+
+
+def test_a_pull_takes_an_already_imported_word_off_the_repair_queue(pimsleur_db, tmp_path):
+    # The 608 live rows were imported BEFORE this fix: the pull must heal them.
+    from app.plugins.anki_sync.sync import AnkiSync, OfflineReader, OfflineWriter
+
+    db = _import_seed(pimsleur_db, tmp_path)
+    with db._get_conn() as c:
+        c.execute("UPDATE collocations SET image_unavailable_at = NULL")
+    assert db.list_production_cards_missing_images(limit=50) != []
+    conn = sqlite3.connect(str(pimsleur_db))
+    conn.row_factory = sqlite3.Row
+    try:
+        AnkiSync(
+            db=db,
+            _reader=OfflineReader(conn, ROOT, language_code="tl"),
+            _writer=OfflineWriter(conn),
+            language_code="tl",
+        ).sync_pull()
+    finally:
+        conn.close()
+    assert db.list_production_cards_missing_images(limit=50) == []
+
+
+def test_a_writable_and_an_unwritable_edit_together_write_one_and_clear_both(pimsleur_db, tmp_path):
+    db, guid = _linked(tmp_path, pimsleur_db)
+    db.set_translation_dirty(guid, "to dine")
+    db.add_dirty_field_by_id(db.get_collocation_id_by_guid(guid), "image")
+    report = _push(db, pimsleur_db)
+    assert _fields(pimsleur_db, 5001)[0] == "to dine"
+    assert db.get_dirty_fields(guid) == ""
+    assert report.notes_pushed == 1
+
+
+def test_an_edit_to_a_note_missing_from_the_collection_keeps_its_flag(pimsleur_db, tmp_path):
+    db, guid = _linked(tmp_path, pimsleur_db)
+    with sqlite3.connect(str(pimsleur_db)) as c:
+        c.execute("DELETE FROM notes WHERE id = 5001")
+    db.set_translation_dirty(guid, "to dine")
+    report = _push(db, pimsleur_db)
+    assert report.write_noop == 1
+    assert db.get_dirty_fields(guid) == "translation"

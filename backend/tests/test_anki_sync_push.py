@@ -428,14 +428,17 @@ class TestOfflineWriter:
         assert parts[0] == "snakker"  # L2 field (index 0) — would raise under the old Slovene roster
         assert parts[5] == "Jeg snakker norsk."  # Note field (index 5)
 
-    def test_get_l2_field_for_note_unknown_note_raises(self):
-        import pytest
-
+    def test_note_fields_by_role_unknown_note_is_none(self):
         conn = _make_anki_full_db()
         _seed_note_and_cards(conn)
-        writer = OfflineWriter(conn)
-        with pytest.raises(ValueError, match="Note 99999 not found"):
-            writer.get_l2_field_for_note(99999)
+        assert OfflineWriter(conn).note_fields_by_role(99999, language_code="sl") is None
+
+    def test_note_fields_by_role_without_a_profile_is_tts_vocab_layout(self):
+        # No notetypes/fields tables: the legacy Slovene roster, L2 in field 0.
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn)
+        roles = OfflineWriter(conn).note_fields_by_role(9001, language_code="sl")
+        assert roles == {"text": "Slovene", "translation": "English", "source_sentence": "Note", "image": "Image"}
 
     def test_suspend_sets_queue_minus_one_and_usn_minus_one(self):
         conn = _make_anki_full_db()
@@ -4322,3 +4325,45 @@ class TestUpdateClozeTextOnANonClozeNote:
         writer = OfflineWriter(conn)
         with pytest.raises(ValueError, match="no 'Text' field"):
             writer.update_cloze_text(9001, "{{c1::han}} kommer", language_code="no")
+
+
+def test_a_translation_edit_on_the_norwegian_deck_lands_in_its_english_translation_field(tmp_path):
+    # The 6000-words notetype has no "English" field — its gloss is
+    # "English translation" (field 4). sync_push used to write "English" into
+    # every vocab note and raise here (tunatale-w4m7.8 found the class).
+    import sqlite3
+
+    from app.plugins.anki_sync.import_seed import import_seed
+    from app.plugins.anki_sync.sync import AnkiSync, OfflineReader, OfflineWriter
+    from tests.conftest import build_norwegian_anki_db
+
+    col = build_norwegian_anki_db(tmp_path)
+    deck = "0. 6000 Most Frequent Norwegian Words [Part 1]"
+    db_path = str(tmp_path / "tunatale_no.db")
+    import_seed(
+        anki_collection_path=col,
+        anki_backup_dir=tmp_path / "bak",
+        anki_media_path=tmp_path / "fake_media",
+        deck_name=deck,
+        language_code="no",
+        tunatale_db_path=db_path,
+        media_dir=tmp_path / "media",
+        fallback_log_path=tmp_path / "fallback.log",
+    )
+    db = SRSDatabase(db_path)
+    guid = db.get_collocation_by_anki_note_id(3001).guid
+    db.set_translation_dirty(guid, "to exist")
+    conn = sqlite3.connect(str(col))
+    conn.row_factory = sqlite3.Row
+    try:
+        AnkiSync(
+            db=db,
+            _reader=OfflineReader(conn, deck, language_code="no"),
+            _writer=OfflineWriter(conn),
+            language_code="no",
+        ).sync_push()
+        flds = conn.execute("SELECT flds FROM notes WHERE id = 3001").fetchone()[0].split("\x1f")
+    finally:
+        conn.close()
+    assert flds == ["1", "være", "verb", "", "to exist"]
+    assert db.get_dirty_fields(guid) == ""

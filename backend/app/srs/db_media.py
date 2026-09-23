@@ -27,6 +27,11 @@ class DbMediaMixin:
         *not staged yet* (wait) from *cannot be pictured* (cloze) — this marker is
         that distinction. It also stops the pre-stage spending a live fetch on the
         same unpicturable word every pass.
+
+        Also written by the importers and the pull for a word whose Anki notetype
+        has no ``Image`` field (Pimsleur's genanki notetype): no picture could
+        ever reach its card, which is the same fact from a different cause
+        (tunatale-w4m7.8).
         """
         with self._get_conn() as conn:
             conn.execute(

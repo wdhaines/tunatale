@@ -11,6 +11,7 @@ import sqlite3
 from app.cards.field_map import get_profile
 from app.languages import get_l2_css_class, get_l2_scorer
 from app.models.syntactic_unit import BackField
+from app.plugins.anki_sync.add_production_template import IMAGE_FIELD
 from app.plugins.anki_sync.sqlite_reader import (
     extract_disambig_from_fields,
     extract_l2_from_fields,
@@ -216,6 +217,7 @@ class OfflineReader:
                     mod=note.mod,
                     cards=card_records,
                     is_cloze=is_cloze,
+                    image_field=IMAGE_FIELD in note.field_names if note.field_names else None,
                 )
             )
         return records

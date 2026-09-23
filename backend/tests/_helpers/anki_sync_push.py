@@ -37,9 +37,12 @@ class FakeWriter:
             raise self.cloze_text_raises
         return self.cloze_text_exists
 
-    def get_l2_field_for_note(self, note_id: int) -> str:
-        self.calls.append(("get_l2_field_for_note", note_id))
-        return "Slovene"
+    def note_fields_by_role(self, note_id: int, *, language_code: str) -> dict[str, str]:
+        """TT's own Slovene vocab layout (OfflineWriter's no-profile answer).
+
+        A read, so not recorded in ``calls`` (which tests treat as the writes),
+        the same as ``get_current_card_state``."""
+        return {"text": "Slovene", "translation": "English", "source_sentence": "Note", "image": "Image"}
 
     def suspend(self, card_ids: list[int]) -> None:
         self.calls.append(("suspend", list(card_ids)))
