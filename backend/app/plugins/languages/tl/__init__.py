@@ -9,6 +9,9 @@ from app.plugins.languages.tl.preprocessor import TagalogPreprocessor
 from app.plugins.languages.tl.syllabify import syllabify_tagalog_word
 from app.plugins.languages.tl.verb_headword import verb_headword
 
+_DATA = Path(__file__).parent / "data"
+_style_notes = (_DATA / "style.md").read_text(encoding="utf-8").strip()
+
 register(
     "tl",
     LanguageConfig(
@@ -78,15 +81,16 @@ register(
         ),
         wordfreq_lang="fil",
         syllabifier_fn=syllabify_tagalog_word,
-        lemma_table_path=Path(__file__).parent / "data" / "tagalog_lemmas.tsv.gz",
+        lemma_table_path=_DATA / "tagalog_lemmas.tsv.gz",
         lemmatizer_type="table",
         verb_headword_fn=verb_headword,
+        style_notes=_style_notes,
+        function_words_path=_DATA / "function_words.json",
+        numbers_path=_DATA / "numbers.json",
         # Deliberately omitted until their owning beads ship:
         # - l2_scorer: Tagalog has no letters that distinguish it from English,
         #   and None is a LOUD condition at the call site (see get_l2_scorer's
         #   docstring) — the deck-import bead uses a NotetypeProfile instead.
-        # - style_notes, function_words_path, numbers_path: the content bead
-        #   tunatale-w4m7.4 owns them.
         # - morphology_profile, a1_morphology: out of scope for w4m7.6 (their
         #   owning beads ship them).
     ),

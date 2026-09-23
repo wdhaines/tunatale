@@ -417,3 +417,20 @@ def test_golden_reporter_reads_rows_from_the_locked_test():
     # The self-headword check is a lookup on the surface alone: kita/sabi/namin
     # are NOT golden surfaces, so their presence changes nothing.
     assert "binigay" not in matches  # absent rows are misses, not half-matches
+
+
+# ── rule 6a: closed class wins the tie (orchestrator, w4m7.4) ─────────────────
+
+
+def test_a_function_word_defaults_to_its_closed_class_reading_over_a_noun_homograph():
+    # The first build's noun-first tie-break defaulted ako/siya/sa/ba/nga/na to
+    # NOUN, because Wiktionary lists a rare noun homograph for each.
+    nonverb = {"ako": {"NOUN", "PRON"}, "sa": {"ADP", "NOUN"}, "ba": {"NOUN", "PART"}, "na": {"ADJ", "ADV", "NOUN"}}
+    rows = assign_defaults({}, nonverb, set())
+    defaults = {s: u for s, u, _, d in rows if d == 1}
+    assert defaults == {"ako": "PRON", "sa": "ADP", "ba": "PART", "na": "ADV"}
+
+
+def test_a_linker_row_inherits_the_closed_class_default():
+    nonverb = {"ako": {"NOUN", "PRON"}}
+    assert ("akong", "PRON", "ako") in linker_rows(nonverb, set(nonverb))

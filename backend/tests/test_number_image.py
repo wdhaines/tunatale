@@ -27,7 +27,7 @@ from app.cards.number_image import (
 )
 from app.languages import get_numbers_path
 
-LANGS = ("no", "sl")
+LANGS = ("no", "sl", "tl")
 
 
 def _config(code: str) -> dict:
