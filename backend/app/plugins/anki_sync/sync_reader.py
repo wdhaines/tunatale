@@ -17,8 +17,7 @@ from app.plugins.anki_sync.sqlite_reader import (
     extract_translation,
     extract_via_profile,
     fetch_cards_for_notes,
-    fetch_notes_for_deck,
-    find_deck_id,
+    fetch_notes_for_deck_tree,
 )
 from app.plugins.anki_sync.sync_common import (
     CardRecord,
@@ -112,10 +111,9 @@ class OfflineReader:
         return {int(r[0]) for r in rows}
 
     def get_note_records(self) -> list[NoteRecord]:
-        deck_id = find_deck_id(self._conn, self._deck_name)
-        if deck_id is None:
-            return []
-        notes = fetch_notes_for_deck(self._conn, deck_id)
+        # The whole tree: a language's cards may live only in subdecks
+        # (tunatale-w4m7.8). A deck with no subdecks reads exactly as before.
+        notes = fetch_notes_for_deck_tree(self._conn, self._deck_name)
         if not notes:
             return []
 

@@ -87,27 +87,64 @@ def compute_due_at(queue: int, due_raw: int, col_crt: int, card_type: int = 0) -
     return due_at_rollover_utc(anki_today())
 
 
-def find_deck_id(conn: sqlite3.Connection, deck_name: str) -> int | None:
-    """Find deck id by name. Tries col.decks JSON (legacy) then decks table (modern)."""
+#: Anki's subdeck separator as users write it. The modern ``decks`` table stores
+#: the unit separator ``\x1f`` instead; :func:`_all_decks` normalizes to this.
+DECK_SEPARATOR = "::"
+
+
+def _all_decks(conn: sqlite3.Connection) -> list[tuple[int, str]]:
+    """Every ``(deck id, name)``, names in ``::`` form.
+
+    Tries the ``col.decks`` JSON (legacy) first, then the ``decks`` table
+    (modern), whose names separate subdecks with ``\x1f`` — normalized here so
+    a caller can match ``Parent::Child`` whichever format the collection uses.
+    """
+    decks: list[tuple[int, str]] = []
     row = conn.execute("SELECT decks FROM col").fetchone()
     if row:
         try:
             deck_data = json.loads(row[0])
             for did, info in deck_data.items():
-                if isinstance(info, dict) and info.get("name") == deck_name:
-                    return int(did)
+                if isinstance(info, dict) and isinstance(info.get("name"), str):
+                    decks.append((int(did), info["name"]))
         except json.JSONDecodeError, KeyError, ValueError, TypeError:
             pass
-
+    # Both sources, JSON first: an exact lookup keeps the precedence the old
+    # find_deck_id had (JSON, then the table).
     try:
         rows = conn.execute("SELECT id, name FROM decks").fetchall()
-        for r in rows:
-            if r[1] == deck_name:
-                return r[0]
+        decks.extend((r[0], r[1].replace("\x1f", DECK_SEPARATOR)) for r in rows)
     except sqlite3.OperationalError:
         pass
+    return decks
 
+
+def find_deck_id(conn: sqlite3.Connection, deck_name: str) -> int | None:
+    """Find deck id by exact name (``Parent::Child`` for a subdeck).
+
+    Tries col.decks JSON (legacy) then the decks table (modern). Exact: a
+    subdeck is NOT its parent. Use this to write INTO a deck; to read a
+    language's cards use :func:`find_deck_tree_ids`.
+    """
+    for did, name in _all_decks(conn):
+        if name == deck_name:
+            return did
     return None
+
+
+def find_deck_tree_ids(conn: sqlite3.Connection, deck_name: str) -> list[int]:
+    """*deck_name* and every descendant deck, as sorted unique ids.
+
+    A language's cards may live in subdecks only: the Pimsleur Tagalog deck
+    keeps all 1,218 cards in ``Level N::Lesson NN`` subdecks and none in the
+    parent (tunatale-w4m7.8). A descendant is a name that begins with
+    ``deck_name::``; a sibling that merely shares the prefix
+    (``deck_name Extra``) is not one. A missing deck has no tree (``[]``);
+    a deck with no subdecks is its own one-element tree, so a flat deck reads
+    exactly what an exact lookup did.
+    """
+    prefix = deck_name + DECK_SEPARATOR
+    return sorted({did for did, name in _all_decks(conn) if name == deck_name or name.startswith(prefix)})
 
 
 def _fetch_notetype_meta(conn: sqlite3.Connection) -> dict[int, tuple[str, tuple[str, ...]]]:
@@ -130,16 +167,30 @@ def _fetch_notetype_meta(conn: sqlite3.Connection) -> dict[int, tuple[str, tuple
     return {ntid: (name, tuple(names_by_ntid.get(ntid, ()))) for ntid, name in nt_rows}
 
 
+def fetch_notes_for_deck_tree(conn: sqlite3.Connection, deck_name: str) -> list[AnkiNote]:
+    """Fetch every note with a card anywhere in *deck_name*'s tree (see
+    :func:`find_deck_tree_ids`). ``[]`` when the deck does not exist."""
+    return _fetch_notes_for_deck_ids(conn, find_deck_tree_ids(conn, deck_name))
+
+
 def fetch_notes_for_deck(conn: sqlite3.Connection, deck_id: int) -> list[AnkiNote]:
-    """Fetch all notes that have at least one card in the given deck."""
+    """Fetch all notes that have at least one card in the given deck (exact)."""
+    return _fetch_notes_for_deck_ids(conn, [deck_id])
+
+
+def _fetch_notes_for_deck_ids(conn: sqlite3.Connection, deck_ids: list[int]) -> list[AnkiNote]:
+    """Notes with at least one card in any of *deck_ids*, each note once."""
+    if not deck_ids:
+        return []
+    placeholders = ",".join("?" * len(deck_ids))
     rows = conn.execute(
-        """
+        f"""
         SELECT DISTINCT n.id, n.guid, n.mid, n.mod, n.tags, n.flds
         FROM notes n
         JOIN cards c ON c.nid = n.id
-        WHERE c.did = ?
+        WHERE c.did IN ({placeholders})
         """,
-        (deck_id,),
+        deck_ids,
     ).fetchall()
     nt_meta = _fetch_notetype_meta(conn)
     notes = []
