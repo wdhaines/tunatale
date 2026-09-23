@@ -483,11 +483,26 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     } catch {
       trace("refused:pause");
     }
+    // The car's buttons (tunatale-l7yc, the user's call after the 2026-09-23
+    // drive): "sentences with seek and sections fast forward". The head unit's
+    // seek buttons send next/previoustrack; holding them sends
+    // seekforward/seekbackward. The mapping is deliberately the SAME with
+    // hands-free on or off — one that flips with the mode cannot be learned by
+    // feel while driving. No button jumps a blind ±10s: that landed mid-word
+    // (measured +9.35s / -10.6s with a ~0.6s stall), and seekto covers scrubbing
+    // wherever a scrub bar exists.
+    //
+    // Pass stepping is the Section ▶ path, so fast-forward from the EN step
+    // hands off to the next lesson. On a legacy full-track lesson or a track
+    // outside the sequence, the cue-level section walk does the stepping.
     try {
       ms.setActionHandler("seekbackward", () => {
         trace("action:seekbackward");
-        if (handsFree && replayCueAction()) return;
-        doSeek(audioEl.currentTime - 10);
+        if (sectionStepping()) {
+          prevSectionAction();
+        } else {
+          prevSection();
+        }
       });
     } catch {
       trace("refused:seekbackward");
@@ -495,11 +510,11 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     try {
       ms.setActionHandler("seekforward", () => {
         trace("action:seekforward");
-        if (handsFree && sectionStepping()) {
+        if (sectionStepping()) {
           nextSectionAction();
-          return;
+        } else {
+          nextSection();
         }
-        doSeek(audioEl.currentTime + 10);
       });
     } catch {
       trace("refused:seekforward");
@@ -507,13 +522,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     try {
       ms.setActionHandler("previoustrack", () => {
         trace("action:previoustrack");
-        if (handsFree) {
-          prevCueAction();
-        } else if (sectionStepping()) {
-          prevSectionAction();
-        } else {
-          prevSection();
-        }
+        prevCueAction();
       });
     } catch {
       trace("refused:previoustrack");
@@ -521,13 +530,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     try {
       ms.setActionHandler("nexttrack", () => {
         trace("action:nexttrack");
-        if (handsFree) {
-          nextCueAction();
-        } else if (sectionStepping()) {
-          nextSectionAction();
-        } else {
-          nextSection();
-        }
+        nextCueAction();
       });
     } catch {
       trace("refused:nexttrack");
@@ -645,11 +648,11 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     advanceHandsFreePass(step);
   }
 
-  // Section ◀ for the headset/car previoustrack (tunatale-y34g): the previous
-  // pass in HANDS_FREE_SEQUENCE this lesson has, from its start. On the first
-  // pass there is nowhere back to go, so it restarts that pass — a "previous"
-  // that silently does nothing is the bug being fixed. selectTrack keeps the
-  // play/pause state across the swap.
+  // Section ◀ for the headset/car rewind (tunatale-y34g, moved to seekbackward
+  // by l7yc): the previous pass in HANDS_FREE_SEQUENCE this lesson has, from
+  // its start. On the first pass there is nowhere back to go, so it restarts
+  // that pass — a "previous" that silently does nothing is the bug being
+  // fixed. selectTrack keeps the play/pause state across the swap.
   function prevSectionAction(): void {
     cancelRepeatLatch("prevSectionAction");
     const step = SEQUENCE_STEP.get(activeSectionType!)!;
@@ -663,8 +666,8 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     selectTrack(prev, null, true);
   }
 
-  // Whether headset next/previous step by PASS (tunatale-y34g). Only in track
-  // mode — every section carrying its own cues, the same test LessonPlayer uses
+  // Whether the car's fast-forward/rewind step by PASS (tunatale-l7yc). Only in
+  // track mode — every section carrying its own cues, the same test LessonPlayer uses
   // to pick track mode — and only on a track in the sequence. A legacy
   // full-track lesson also seeds activeSectionType, so checking that alone
   // would swap it onto a cue-less section track; there, and on an
@@ -695,19 +698,6 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     if (targetCue) {
       doSeek(targetCue.start_ms / 1000);
     }
-  }
-
-  // Car seek-back with hands-free ON (tunatale-l7yc): replay the current
-  // sentence from the start of its ref group. False when there is no current
-  // sentence, so the caller falls back to a plain -10s.
-  function replayCueAction(): boolean {
-    const groupIdx = findCurrentGroupIdx();
-    if (groupIdx < 0) return false;
-    cancelRepeatLatch("replayCue");
-    // refGroups is built from activeCues, so a group's first index always resolves.
-    const targetCue = findCueByIndex(activeCues!, refGroups[groupIdx][0])!;
-    doSeek(targetCue.start_ms / 1000);
-    return true;
   }
 
   function prevCueAction(): void {
