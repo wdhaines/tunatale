@@ -405,6 +405,29 @@ def get_lemmatizer(language_code: str) -> Lemmatizer:
 _ANALYSIS_SCHEMA_REV = "f2"
 
 
+#: Sentence punctuation a one-word card may carry (Pimsleur's "Kumusta?",
+#: "Salamat!"). Hyphens and apostrophes are part of words and stay.
+_HEADWORD_PUNCTUATION = '?!.,;:\u2026"\u00bf\u00a1'
+
+
+def headword_lemma(word: str, language_code: str) -> str:
+    """The lemma a single-word card imported from Anki is keyed on.
+
+    A language whose own engine is its lemma table (``get_lemmatizer_type ==
+    "table"``, i.e. Tagalog) is keyed on the root the table gives, with sentence
+    punctuation stripped first: Pimsleur's ``kumain`` must key on ``kain``, or
+    every card TT later mints for the same verb misses the imported one
+    (tunatale-w4m7.8). Every other language keeps ``word.lower()``, exactly as
+    the importers always did — no re-lemmatization of existing rows.
+    """
+    from app.languages import get_lemmatizer_type
+
+    if get_lemmatizer_type(language_code) != "table":
+        return word.lower()
+    bare = word.strip(_HEADWORD_PUNCTUATION) or word
+    return get_lemmatizer(language_code).lemmatize(bare, language_code)
+
+
 def model_version_for(lemmatizer: Lemmatizer) -> str:
     """Return a version string for keying the sentence-analysis cache.
 

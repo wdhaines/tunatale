@@ -86,7 +86,7 @@ def _field_names(profile) -> tuple[str, ...]:
 
 
 def _build(collection: SyntheticCollection) -> None:
-    profile = get_profile(NOTETYPE_NAME)
+    profile = get_profile(NOTETYPE_NAME, None)
     assert profile is not None, "the production template renders from a field-role profile"
     qfmt, afmt = build_production_template(profile)
     assert qfmt == "{{" + IMAGE_FIELD + "}}", "the production front must be the image alone"

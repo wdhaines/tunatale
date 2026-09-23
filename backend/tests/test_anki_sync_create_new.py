@@ -1441,6 +1441,7 @@ class TestReverseImportLayer22:
                         CardRecord(
                             anki_card_id=90010,
                             ord=0,
+                            direction=Direction.RECOGNITION,
                             queue=2,
                             reps=3,
                             lapses=0,
@@ -1497,6 +1498,7 @@ class TestReverseImportLayer22:
                         CardRecord(
                             anki_card_id=90020,
                             ord=0,
+                            direction=Direction.RECOGNITION,
                             queue=2,
                             reps=1,
                             lapses=0,
@@ -1544,6 +1546,7 @@ class TestReverseImportLayer22:
                         CardRecord(
                             anki_card_id=20020,
                             ord=0,
+                            direction=Direction.RECOGNITION,
                             queue=2,
                             reps=3,
                             lapses=0,
@@ -1584,6 +1587,7 @@ class TestReverseImportLayer22:
                         CardRecord(
                             anki_card_id=90020,
                             ord=0,
+                            direction=Direction.RECOGNITION,
                             queue=2,
                             reps=0,
                             lapses=0,
@@ -1626,6 +1630,7 @@ class TestReverseImportLayer22:
                         CardRecord(
                             anki_card_id=90010,
                             ord=0,
+                            direction=Direction.RECOGNITION,
                             queue=2,
                             reps=3,
                             lapses=0,
@@ -1662,6 +1667,7 @@ class TestReverseImportLayer22:
                         CardRecord(
                             anki_card_id=90030,
                             ord=0,
+                            direction=Direction.RECOGNITION,
                             queue=0,
                             reps=0,
                             lapses=0,
@@ -1706,6 +1712,7 @@ class TestReverseImportLayer22:
                         CardRecord(
                             anki_card_id=90050,
                             ord=0,
+                            direction=Direction.RECOGNITION,
                             queue=2,
                             reps=5,
                             lapses=0,
@@ -1718,6 +1725,7 @@ class TestReverseImportLayer22:
                         CardRecord(
                             anki_card_id=90051,
                             ord=1,
+                            direction=Direction.PRODUCTION,
                             queue=2,
                             reps=3,
                             lapses=1,
@@ -1730,6 +1738,7 @@ class TestReverseImportLayer22:
                         CardRecord(
                             anki_card_id=90052,
                             ord=2,
+                            direction=Direction.PRODUCTION,
                             queue=0,
                             reps=0,
                             lapses=0,

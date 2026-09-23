@@ -13,6 +13,13 @@ profile would risk a behavior change for no benefit. New languages whose deck
 uses a single, well-named notetype (e.g. Norwegian's 17-field
 "6000 Most Frequent Norwegian Words", where the L2 lives in "Norwegian word",
 not field 0) declare a profile and skip the heuristics entirely.
+
+A profile lives in one of two places. ``_PROFILES`` below holds the ones whose
+notetype name is specific enough to be global. A notetype with a GENERIC name
+belongs to the language that owns the deck (``LanguageConfig.notetype_profiles``):
+Pimsleur's ``Basic (and reversed card) (genanki)`` is what every genanki export
+is called, and a global profile under that name would capture another
+language's deck (tunatale-w4m7.8). ``get_profile`` consults the language first.
 """
 
 from __future__ import annotations
@@ -20,6 +27,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from app.models.srs_item import Direction
 from app.models.syntactic_unit import BackFieldTier
 
 
@@ -57,6 +65,12 @@ class NotetypeProfile:
     path. The imported Norwegian deck writes English POS names into ``Word
     class``; another deck will write something else, which is exactly why this
     is per-notetype data rather than logic.
+
+    ``recognition_ord`` is the template ord of the L2 → English card; every
+    other ord is production. Anki's stock notetypes and TT's own put
+    recognition first (0), but a deck is free not to: Pimsleur's Card 1 is
+    English → Tagalog, so its recognition card is ord 1. Read it from the
+    template text, never infer it from the field order.
     """
 
     l2: str  # field name holding the L2 (target-language) word
@@ -67,6 +81,11 @@ class NotetypeProfile:
     examples: str | None = None  # field name holding glossed example sentences
     inflections: str | None = None  # field name holding the inflection table
     disambig_upos: Mapping[str, str] = field(default_factory=dict)  # this deck's POS label → UPOS
+    recognition_ord: int = 0  # template ord of the L2 → English card
+
+    def direction_for_ord(self, ord_: int) -> Direction:
+        """The direction this notetype's template *ord_* reviews."""
+        return Direction.RECOGNITION if ord_ == self.recognition_ord else Direction.PRODUCTION
 
 
 _PROFILES: dict[str, NotetypeProfile] = {
@@ -123,13 +142,47 @@ _PROFILES: dict[str, NotetypeProfile] = {
 }
 
 
-def get_profile(notetype_name: str) -> NotetypeProfile | None:
-    """Return the field-role profile for *notetype_name*, or ``None``.
+#: The profile a notetype with none resolves directions through: recognition
+#: is ord 0, as on Anki's stock notetypes and TT's own vocab notetypes.
+_DEFAULT_PROFILE = NotetypeProfile(l2="", translation="")
+
+
+def _all_profiles() -> list[NotetypeProfile]:
+    """Every profile: the global ones, then each language's own."""
+    from app.languages import all_notetype_profiles
+
+    return [*_PROFILES.values(), *all_notetype_profiles()]
+
+
+def get_profile(notetype_name: str, language_code: str | None) -> NotetypeProfile | None:
+    """Return the field-role profile for *notetype_name* as read for *language_code*.
+
+    The language's own profiles win (see the module docstring); a global
+    profile is found under any language. ``language_code=None`` sees only the
+    global ones — for a caller that genuinely has no language, never as a
+    shortcut: a Tagalog note read without its language falls back to the
+    heuristics and, having no L2 scorer, raises.
 
     ``None`` means "no profile" — the caller falls back to the positional/HTML
     heuristics in ``sqlite_reader``.
     """
+    if language_code is not None:
+        from app.languages import get_notetype_profiles
+
+        scoped = get_notetype_profiles(language_code).get(notetype_name)
+        if scoped is not None:
+            return scoped
     return _PROFILES.get(notetype_name)
+
+
+def direction_for_ord(notetype_name: str, ord_: int, language_code: str | None) -> Direction:
+    """The direction card *ord_* of a *notetype_name* note reviews, read for *language_code*.
+
+    The ONE place TT turns an Anki template ord into a direction. It used to be
+    ``ord == 0 → RECOGNITION`` inline at three sites, which swaps every card of
+    a notetype whose Card 1 is production (Pimsleur, tunatale-w4m7.8).
+    """
+    return (get_profile(notetype_name, language_code) or _DEFAULT_PROFILE).direction_for_ord(ord_)
 
 
 def inflection_labels() -> frozenset[str]:
@@ -149,7 +202,7 @@ def inflection_labels() -> frozenset[str]:
     """
     return frozenset(
         spec.label
-        for profile in _PROFILES.values()
+        for profile in _all_profiles()
         if profile.inflections
         for spec in profile.back_fields
         if spec.field_name == profile.inflections
@@ -178,7 +231,7 @@ def upos_for_disambig(label: str) -> str | None:
     key = (label or "").strip().casefold()
     if not key:
         return None
-    for profile in _PROFILES.values():
+    for profile in _all_profiles():
         upos = profile.disambig_upos.get(key)
         if upos is not None:
             return upos

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from app.cards.field_map import NotetypeProfile
 from app.cards.vocab_notetype import TAGALOG_VOCAB
 from app.languages import LanguageConfig, PlannerExample, register
 from app.models.language import NARRATOR_VOICE, Language
@@ -73,6 +74,19 @@ register(
         # subdeck) but mints its own cards into a subdeck of their own: the
         # user's call, 2026-09-23 (tunatale-w4m7.8). Create it in Anki first.
         mint_deck_name="2. Pimsleur Tagalog::TunaTale",
+        # The Pimsleur deck's notetype (all 609 notes, measured 2026-09-23).
+        # Scoped to Tagalog because the name is what EVERY genanki export is
+        # called. Read from its template text: Card 1 (ord 0) is
+        # {{Front}} -> {{Back}}{{Audio}}, English -> Tagalog, so it is the
+        # PRODUCTION card and recognition is ord 1. Back ends in <br>, which
+        # extract_l2's tag strip removes (tunatale-w4m7.8).
+        notetype_profiles={
+            "Basic (and reversed card) (genanki)": NotetypeProfile(
+                l2="Back",
+                translation="Front",
+                recognition_ord=1,
+            ),
+        },
         vocab_notetype=TAGALOG_VOCAB,
         planner_example=PlannerExample(
             language_code="tl",

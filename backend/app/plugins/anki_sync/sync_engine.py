@@ -44,6 +44,7 @@ from app.srs.database import SRSDatabase
 from app.srs.direction_fields import SYNC_COMPARABLE_MODEL_FIELDS
 from app.srs.fsrs import is_day_level_last_review
 from app.srs.function_words import is_function_word, make_cloze_text, uncloze_text
+from app.srs.lemmatizer import headword_lemma
 from app.srs.queue_stats import resolve_bury_new, resolve_bury_review, resolve_learning_steps, resolve_relearning_steps
 
 # Logger name pinned to "app.anki.sync": BURY_TRACE assertions in
@@ -955,7 +956,9 @@ class AnkiSync:
                 if local_item.syntactic_unit.card_type == "cloze":
                     direction = Direction.PRODUCTION
                 else:
-                    direction = Direction.RECOGNITION if card_rec.ord == 0 else Direction.PRODUCTION
+                    # The reader resolved it from the notetype: ord 0 is not
+                    # always recognition (Pimsleur, tunatale-w4m7.8).
+                    direction = card_rec.direction
                 local_dir = local_item.directions.get(direction)
                 if local_dir is None:
                     continue
@@ -1792,7 +1795,7 @@ class AnkiSync:
                 # "Anki's field is blank".
                 article=rec.article or "",
                 extras=rec.extras or (),
-                lemma=rec.l2_text.lower() if word_count == 1 else None,
+                lemma=headword_lemma(rec.l2_text, self._language_code) if word_count == 1 else None,
                 source_sentence=rec.note,
                 source_sentence_translation=rec.sentence_translation,
                 card_type=card_type,
@@ -1801,10 +1804,7 @@ class AnkiSync:
             directions: dict[Direction, DirectionState] = {}
             cards_to_import = rec.cards[:1] if rec.is_cloze else rec.cards
             for card in cards_to_import:
-                if rec.is_cloze:
-                    direction = Direction.PRODUCTION
-                else:
-                    direction = Direction.RECOGNITION if card.ord == 0 else Direction.PRODUCTION
+                direction = Direction.PRODUCTION if rec.is_cloze else card.direction
 
                 state = _queue_to_state(card.queue, card.card_type, card.reps)
 

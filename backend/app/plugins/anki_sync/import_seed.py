@@ -37,6 +37,7 @@ from app.plugins.anki_sync.sqlite_reader import (
     list_media_refs,
 )
 from app.srs.database import SRSDatabase
+from app.srs.lemmatizer import headword_lemma
 
 
 def _refresh_media_for_collocation(
@@ -276,7 +277,9 @@ def import_seed(
         # lesson subdecks and none in the parent (tunatale-w4m7.8).
         notes = fetch_notes_for_deck_tree(ctx.conn, deck_name)
         note_ids = [n.id for n in notes]
-        cards = fetch_cards_for_notes(ctx.conn, note_ids, fallback_log_path=fallback_log_path)
+        cards = fetch_cards_for_notes(
+            ctx.conn, note_ids, fallback_log_path=fallback_log_path, language_code=language_code
+        )
 
     # Build lookup: note_id -> cards list
     card_map: dict[int, list[AnkiCard]] = {}
@@ -297,7 +300,7 @@ def import_seed(
             # state that can arise.
             article = ""
             extras: tuple[BackField, ...] = ()
-            profile_result = extract_via_profile(note, l2_css_class)
+            profile_result = extract_via_profile(note, l2_css_class, language_code)
             if profile_result is not None:
                 l2_text, translation, disambig, article, extras = profile_result
             else:
@@ -374,7 +377,7 @@ def import_seed(
                 extras=extras,
                 # Variant fronts keep lemma unset — matched via the reader's
                 # per-surface variant index, not a single lemma column.
-                lemma=l2_text.lower() if (word_count == 1 and not is_variant_front) else None,
+                lemma=headword_lemma(l2_text, language_code) if (word_count == 1 and not is_variant_front) else None,
             )
             note_cards = card_map.get(note.id, [])
             directions = _build_directions(note_cards)

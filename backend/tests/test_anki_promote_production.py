@@ -159,7 +159,7 @@ def _make_conn() -> sqlite3.Connection:
         conn.execute("INSERT INTO fields VALUES (?, ?, ?, X'')", (CLOZE_MID, ord_, name))
     conn.execute("INSERT INTO templates VALUES (?, 0, 'Cloze', 50, 0, X'')", (CLOZE_MID,))
 
-    profile = get_profile(SEED_NOTETYPE)
+    profile = get_profile(SEED_NOTETYPE, None)
     assert profile is not None
     add_production_template(conn, SEED_NOTETYPE, profile)
     conn.commit()

@@ -142,6 +142,7 @@ def test_promote_to_learning_dirty_cleared_by_push():
                     CardRecord(
                         anki_card_id=90010,
                         ord=0,
+                        direction=Direction.RECOGNITION,
                         queue=2,
                         reps=0,
                         lapses=0,
@@ -153,6 +154,7 @@ def test_promote_to_learning_dirty_cleared_by_push():
                     CardRecord(
                         anki_card_id=90011,
                         ord=1,
+                        direction=Direction.PRODUCTION,
                         queue=2,
                         reps=0,
                         lapses=0,
@@ -203,6 +205,7 @@ def test_untrack_suspend_dirty_cleared_by_push():
                     CardRecord(
                         anki_card_id=90010,
                         ord=0,
+                        direction=Direction.RECOGNITION,
                         queue=2,
                         reps=0,
                         lapses=0,
@@ -214,6 +217,7 @@ def test_untrack_suspend_dirty_cleared_by_push():
                     CardRecord(
                         anki_card_id=90011,
                         ord=1,
+                        direction=Direction.PRODUCTION,
                         queue=2,
                         reps=0,
                         lapses=0,
@@ -273,6 +277,7 @@ def test_known_direction_pushes_far_future_due_date():
                     CardRecord(
                         anki_card_id=90010,
                         ord=0,
+                        direction=Direction.RECOGNITION,
                         queue=2,
                         reps=0,
                         lapses=0,
@@ -338,6 +343,7 @@ def test_pull_syncs_note_field():
                     CardRecord(
                         anki_card_id=90010,
                         ord=0,
+                        direction=Direction.RECOGNITION,
                         queue=2,
                         reps=0,
                         lapses=0,
@@ -397,6 +403,7 @@ def test_sync_pull_state_not_clobbered_by_media_refresh():
                 CardRecord(
                     anki_card_id=90010,
                     ord=0,
+                    direction=Direction.RECOGNITION,
                     queue=2,
                     reps=0,
                     lapses=0,

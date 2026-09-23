@@ -205,7 +205,7 @@ class TestWarnIfRecognitionOnlyDeck:
         _add_notes(conn, VOCAB_MID, 1)
         assert _make_sync(conn).warn_if_recognition_only_deck() == pytest.approx(0.99)
 
-        profile = get_profile(SEED_NOTETYPE)
+        profile = get_profile(SEED_NOTETYPE, None)
         assert profile is not None
         add_production_template(conn, SEED_NOTETYPE, profile)
 
