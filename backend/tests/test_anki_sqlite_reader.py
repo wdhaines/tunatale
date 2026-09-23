@@ -206,14 +206,14 @@ class TestFetchCardsForNotes:
     def test_returns_ten_cards(self, fake_anki_db):
         conn = sqlite3.connect(str(fake_anki_db))
         conn.row_factory = sqlite3.Row
-        cards = fetch_cards_for_notes(conn, [1001, 1002, 1003, 1004, 1005])
+        cards = fetch_cards_for_notes(conn, [1001, 1002, 1003, 1004, 1005], language_code="sl")
         conn.close()
         assert len(cards) == 10
 
     def test_ord_zero_is_recognition(self, fake_anki_db):
         conn = sqlite3.connect(str(fake_anki_db))
         conn.row_factory = sqlite3.Row
-        cards = fetch_cards_for_notes(conn, [1001])
+        cards = fetch_cards_for_notes(conn, [1001], language_code="sl")
         conn.close()
         rec = next(c for c in cards if c.ord == 0)
         assert rec.direction == Direction.RECOGNITION
@@ -221,7 +221,7 @@ class TestFetchCardsForNotes:
     def test_ord_one_is_production(self, fake_anki_db):
         conn = sqlite3.connect(str(fake_anki_db))
         conn.row_factory = sqlite3.Row
-        cards = fetch_cards_for_notes(conn, [1001])
+        cards = fetch_cards_for_notes(conn, [1001], language_code="sl")
         conn.close()
         prod = next(c for c in cards if c.ord == 1)
         assert prod.direction == Direction.PRODUCTION
@@ -230,7 +230,7 @@ class TestFetchCardsForNotes:
         conn = sqlite3.connect(str(fake_anki_db))
         conn.row_factory = sqlite3.Row
         # note 1003 production card is suspended (queue=-1)
-        cards = fetch_cards_for_notes(conn, [1003])
+        cards = fetch_cards_for_notes(conn, [1003], language_code="sl")
         conn.close()
         prod = next(c for c in cards if c.ord == 1)
         assert prod.fsrs_state.state == SRSState.SUSPENDED
@@ -238,7 +238,7 @@ class TestFetchCardsForNotes:
     def test_fsrs_data_parsed_from_cards_data(self, fake_anki_db):
         conn = sqlite3.connect(str(fake_anki_db))
         conn.row_factory = sqlite3.Row
-        cards = fetch_cards_for_notes(conn, [1001])
+        cards = fetch_cards_for_notes(conn, [1001], language_code="sl")
         conn.close()
         rec = next(c for c in cards if c.ord == 0)
         assert rec.fsrs_state.stability == pytest.approx(10.5)
@@ -248,7 +248,7 @@ class TestFetchCardsForNotes:
         conn = sqlite3.connect(str(fake_anki_db))
         conn.row_factory = sqlite3.Row
         fallback_log = tmp_path / "fallback.log"
-        cards = fetch_cards_for_notes(conn, [1005], fallback_log_path=fallback_log)
+        cards = fetch_cards_for_notes(conn, [1005], fallback_log_path=fallback_log, language_code="sl")
         conn.close()
         assert all(c.fsrs_state.stability == pytest.approx(1.0) for c in cards)
         assert all(c.fsrs_state.difficulty == pytest.approx(5.0) for c in cards)
@@ -257,7 +257,7 @@ class TestFetchCardsForNotes:
     def test_empty_note_ids_returns_empty_list(self, fake_anki_db):
         conn = sqlite3.connect(str(fake_anki_db))
         conn.row_factory = sqlite3.Row
-        cards = fetch_cards_for_notes(conn, [])
+        cards = fetch_cards_for_notes(conn, [], language_code="sl")
         conn.close()
         assert cards == []
 
@@ -266,7 +266,7 @@ class TestParseFsrsData:
     def test_valid_json_parsed(self):
         state = parse_fsrs_data(
             card_id=99,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str=json.dumps({"s": 15.0, "d": 3.5}),
             queue=2,
             reps=4,
@@ -278,16 +278,20 @@ class TestParseFsrsData:
         assert state.direction == Direction.RECOGNITION
 
     def test_empty_data_falls_back(self):
-        state = parse_fsrs_data(card_id=99, ord=0, data_str="", queue=0, reps=0, lapses=0)
+        state = parse_fsrs_data(card_id=99, direction=Direction.RECOGNITION, data_str="", queue=0, reps=0, lapses=0)
         assert state.stability == pytest.approx(1.0)
         assert state.difficulty == pytest.approx(5.0)
 
     def test_malformed_json_falls_back(self):
-        state = parse_fsrs_data(card_id=99, ord=0, data_str="{bad json}", queue=0, reps=0, lapses=0)
+        state = parse_fsrs_data(
+            card_id=99, direction=Direction.RECOGNITION, data_str="{bad json}", queue=0, reps=0, lapses=0
+        )
         assert state.stability == pytest.approx(1.0)
 
     def test_missing_keys_fall_back(self):
-        state = parse_fsrs_data(card_id=99, ord=0, data_str=json.dumps({"x": 1}), queue=0, reps=0, lapses=0)
+        state = parse_fsrs_data(
+            card_id=99, direction=Direction.RECOGNITION, data_str=json.dumps({"x": 1}), queue=0, reps=0, lapses=0
+        )
         assert state.stability == pytest.approx(1.0)
 
 
@@ -318,7 +322,7 @@ class TestFsrsMemoryStatePresent:
     def test_suspended_queue_sets_state(self):
         state = parse_fsrs_data(
             card_id=99,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str=json.dumps({"s": 5.0, "d": 5.0}),
             queue=-1,
             reps=3,
@@ -328,13 +332,15 @@ class TestFsrsMemoryStatePresent:
 
     def test_fallback_appends_to_log(self, tmp_path):
         log = tmp_path / "fallback.log"
-        parse_fsrs_data(card_id=42, ord=0, data_str="", queue=0, reps=0, lapses=0, fallback_log_path=log)
+        parse_fsrs_data(
+            card_id=42, direction=Direction.RECOGNITION, data_str="", queue=0, reps=0, lapses=0, fallback_log_path=log
+        )
         assert "42" in log.read_text()
 
     def test_production_ord_sets_direction(self):
         state = parse_fsrs_data(
             card_id=99,
-            ord=1,
+            direction=Direction.PRODUCTION,
             data_str=json.dumps({"s": 5.0, "d": 5.0}),
             queue=2,
             reps=2,
@@ -358,7 +364,7 @@ class TestFsrsMemoryStatePresent:
         lrt_seconds = 1778446601  # 2026-05-10 20:56:41 UTC
         state = parse_fsrs_data(
             card_id=99,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str=json.dumps({"s": 0.04, "d": 5.0, "lrt": lrt_seconds}),
             queue=2,
             reps=5,
@@ -378,7 +384,7 @@ class TestFsrsMemoryStatePresent:
         """
         state = parse_fsrs_data(
             card_id=99,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str=json.dumps({"s": 5.0, "d": 5.0}),  # no lrt
             queue=2,
             reps=5,
@@ -403,7 +409,7 @@ class TestFsrsMemoryStatePresent:
         due_raw = 10
         state = parse_fsrs_data(
             card_id=1,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str=json.dumps({"s": 5.0, "d": 5.0}),
             queue=2,
             reps=3,
@@ -419,7 +425,7 @@ class TestFsrsMemoryStatePresent:
         due_raw = 1704067200 + 86400 * 5  # 5 days after col_crt epoch
         state = parse_fsrs_data(
             card_id=2,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str=json.dumps({"s": 5.0, "d": 5.0}),
             queue=1,
             reps=1,
@@ -434,7 +440,7 @@ class TestFsrsMemoryStatePresent:
         """queue=0 (new card): due_raw is a position, not a date — fall back to today at 04:00 UTC."""
         state = parse_fsrs_data(
             card_id=3,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str="",
             queue=0,
             reps=0,
@@ -450,7 +456,7 @@ class TestFsrsMemoryStatePresent:
         col_crt = 1704067200  # 2024-01-01
         state = parse_fsrs_data(
             card_id=10,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str=json.dumps({"s": 5.0, "d": 5.0}),
             queue=2,
             reps=3,
@@ -464,7 +470,7 @@ class TestFsrsMemoryStatePresent:
         """queue=-2 (user-buried) → SRSState.BURIED."""
         state = parse_fsrs_data(
             card_id=4,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str=json.dumps({"s": 5.0, "d": 5.0}),
             queue=-2,
             reps=4,
@@ -476,7 +482,7 @@ class TestFsrsMemoryStatePresent:
         """queue=-3 (sibling-buried) → SRSState.BURIED."""
         state = parse_fsrs_data(
             card_id=5,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str=json.dumps({"s": 5.0, "d": 5.0}),
             queue=-3,
             reps=4,
@@ -488,7 +494,7 @@ class TestFsrsMemoryStatePresent:
         """queue=1 (learning) → SRSState.LEARNING (not REVIEW)."""
         state = parse_fsrs_data(
             card_id=6,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str=json.dumps({"s": 5.0, "d": 5.0}),
             queue=1,
             reps=2,
@@ -502,7 +508,7 @@ class TestFsrsMemoryStatePresent:
         """queue=3 (day-learn / relearning) → SRSState.RELEARNING."""
         state = parse_fsrs_data(
             card_id=7,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str=json.dumps({"s": 5.0, "d": 5.0}),
             queue=3,
             reps=5,
@@ -519,7 +525,7 @@ class TestFsrsMemoryStatePresent:
         # review_col_day=4498 → 1st midnight in col_day 4498 = 2026-04-30
         state = parse_fsrs_data(
             card_id=1,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str=json.dumps({"s": 0.001, "d": 5.0}),
             queue=2,
             reps=4,
@@ -536,7 +542,7 @@ class TestFsrsMemoryStatePresent:
         # review_col_day=490 → 1st midnight in col_day 490 = 2015-05-10
         state = parse_fsrs_data(
             card_id=2,
-            ord=1,
+            direction=Direction.PRODUCTION,
             data_str=json.dumps({"s": 0.5, "d": 6.0}),
             queue=3,
             reps=5,
@@ -551,7 +557,7 @@ class TestFsrsMemoryStatePresent:
         """queue=0 (new): last_review is None."""
         state = parse_fsrs_data(
             card_id=3,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str="",
             queue=0,
             reps=0,
@@ -566,7 +572,7 @@ class TestFsrsMemoryStatePresent:
         """queue=1 (sub-day learning): last_review is None (no due/ivl formula)."""
         state = parse_fsrs_data(
             card_id=4,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str=json.dumps({"s": 5.0, "d": 5.0}),
             queue=1,
             reps=1,
@@ -582,7 +588,7 @@ class TestFsrsMemoryStatePresent:
         col_crt = 1388836800
         state = parse_fsrs_data(
             card_id=5,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str="",  # no JSON → fallback
             queue=2,
             reps=3,
@@ -603,7 +609,7 @@ class TestFsrsMemoryStatePresent:
         col_crt = 1388836800
         state = parse_fsrs_data(
             card_id=6,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str="",
             queue=2,
             reps=0,
@@ -625,7 +631,7 @@ class TestFsrsMemoryStatePresent:
         """
         ds = parse_fsrs_data(
             card_id=1,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str="{}",
             queue=2,
             reps=0,
@@ -645,7 +651,7 @@ class TestFsrsMemoryStatePresent:
         """Unknown queue values with reps>0 fall back to REVIEW."""
         state = parse_fsrs_data(
             card_id=7,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str="",
             queue=99,
             reps=5,
@@ -671,7 +677,7 @@ class TestFsrsMemoryStatePresent:
 
         state = parse_fsrs_data(
             card_id=100,
-            ord=0,
+            direction=Direction.RECOGNITION,
             data_str=json.dumps({"s": 10.0, "d": 4.0}),
             queue=2,
             reps=5,
@@ -1039,6 +1045,8 @@ class TestLeftAndDueAtFromCards:
         conn = sqlite3.connect(str(path))
         conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, crt INTEGER)")
         conn.execute("INSERT INTO col VALUES (1, 1704067200)")  # 2024-01-01 UTC
+        # Every real collection has notes; the reader joins them for the notetype.
+        conn.execute("CREATE TABLE notes (id INTEGER PRIMARY KEY, mid INTEGER)")
         conn.execute(
             """CREATE TABLE cards (
                 id INTEGER PRIMARY KEY,
@@ -1074,7 +1082,7 @@ class TestLeftAndDueAtFromCards:
             [(1, 1001, 12345, 0, 1, 1, 0, '{"s": 5.0, "d": 5.0}', due_ts, 0, 2002, 0)],
         )
         conn = sqlite3.connect(db_path)
-        cards = fetch_cards_for_notes(conn, [1001])
+        cards = fetch_cards_for_notes(conn, [1001], language_code="sl")
         conn.close()
         assert len(cards) == 1
         state = cards[0].fsrs_state
@@ -1095,7 +1103,7 @@ class TestLeftAndDueAtFromCards:
             [(2, 1002, 12345, 0, 3, 5, 1, '{"s": 3.0, "d": 6.0}', 5, 2, 1001, 0)],
         )
         conn = sqlite3.connect(db_path)
-        cards = fetch_cards_for_notes(conn, [1002])
+        cards = fetch_cards_for_notes(conn, [1002], language_code="sl")
         conn.close()
         assert len(cards) == 1
         state = cards[0].fsrs_state
@@ -1114,7 +1122,7 @@ class TestLeftAndDueAtFromCards:
             [(3, 1003, 12345, 0, 0, 0, 0, "", 0, 0, 0, 0)],
         )
         conn = sqlite3.connect(db_path)
-        cards = fetch_cards_for_notes(conn, [1003])
+        cards = fetch_cards_for_notes(conn, [1003], language_code="sl")
         conn.close()
         assert len(cards) == 1
         state = cards[0].fsrs_state
@@ -1128,7 +1136,7 @@ class TestLeftAndDueAtFromCards:
             [(4, 1004, 12345, 0, 2, 10, 1, '{"s": 100.0, "d": 3.0}', 50, 50, 0, 0)],
         )
         conn = sqlite3.connect(db_path)
-        cards = fetch_cards_for_notes(conn, [1004])
+        cards = fetch_cards_for_notes(conn, [1004], language_code="sl")
         conn.close()
         assert len(cards) == 1
         state = cards[0].fsrs_state
@@ -1154,7 +1162,7 @@ class TestLeftAndDueAtFromCards:
             [(5, 1005, 12345, 0, -2, 8, 1, '{"s": 50.0, "d": 4.0}', 50, 10, 0, 2)],
         )
         conn = sqlite3.connect(db_path)
-        cards = fetch_cards_for_notes(conn, [1005])
+        cards = fetch_cards_for_notes(conn, [1005], language_code="sl")
         conn.close()
         assert len(cards) == 1
         state = cards[0].fsrs_state
@@ -1201,7 +1209,7 @@ class TestNotetypeProfileExtraction:
         note = self._note(tmp_path)[0]
         # disambig comes from 'Word class' ('verb'); article from 'Article' (blank — verb).
         # extras is () — the minimal fixture carries none of the rich back fields.
-        assert extract_via_profile(note, "slovene") == ("være", "to be", "verb", "", ())
+        assert extract_via_profile(note, "slovene", "no") == ("være", "to be", "verb", "", ())
 
     def test_extract_via_profile_reads_article_for_nouns(self, tmp_path):
         from app.plugins.anki_sync.sqlite_reader import extract_via_profile
@@ -1215,13 +1223,13 @@ class TestNotetypeProfileExtraction:
             conn.close()
         noun = next(n for n in notes if "noun" in n.fields)
         # 'et løfte' (a promise) — article read from the 'Article' field by name
-        assert extract_via_profile(noun, "slovene") == ("løfte", "promise", "noun", "et", ())
+        assert extract_via_profile(noun, "slovene", "no") == ("løfte", "promise", "noun", "et", ())
 
     def test_extract_via_profile_returns_none_without_profile(self):
         from app.plugins.anki_sync.sqlite_reader import AnkiNote, extract_via_profile
 
         note = AnkiNote(id=1, anki_guid="g", mid=999, mod=0, tags=[], fields=["x"], notetype_name="Unprofiled")
-        assert extract_via_profile(note, "slovene") is None
+        assert extract_via_profile(note, "slovene", "no") is None
 
     def test_offline_reader_uses_profile_for_norwegian_notes(self, tmp_path):
         from app.plugins.anki_sync.sync import OfflineReader
@@ -1320,7 +1328,7 @@ class TestExtractBackFields:
                 "Dictionary entry": "<h2>være</h2>",
             }
         )
-        extras = extract_back_fields(note)
+        extras = extract_back_fields(note, "no")
         # Order follows the profile declaration; only non-empty fields appear.
         assert [(e.label, e.tier) for e in extras] == [
             ("IPA", "summary"),
@@ -1334,20 +1342,20 @@ class TestExtractBackFields:
         from app.plugins.anki_sync.sqlite_reader import extract_back_fields
 
         note = _full_norwegian_note({"Example sentences": "Hun er lærer [sound:x.mp3]"})
-        extras = extract_back_fields(note)
+        extras = extract_back_fields(note, "no")
         assert [e.label for e in extras] == ["Examples"]
         assert extras[0].html == "Hun er lærer"
 
     def test_empty_when_no_back_fields_present(self):
         from app.plugins.anki_sync.sqlite_reader import extract_back_fields
 
-        assert extract_back_fields(_full_norwegian_note({"Norwegian word": "være"})) == ()
+        assert extract_back_fields(_full_norwegian_note({"Norwegian word": "være"}), "no") == ()
 
     def test_empty_for_unprofiled_notetype(self):
         from app.plugins.anki_sync.sqlite_reader import AnkiNote, extract_back_fields
 
         note = AnkiNote(id=1, anki_guid="g", mid=999, mod=0, tags=[], fields=["x"], notetype_name="Unprofiled")
-        assert extract_back_fields(note) == ()
+        assert extract_back_fields(note, "no") == ()
 
     def test_extract_via_profile_includes_extras(self):
         from app.plugins.anki_sync.sqlite_reader import extract_via_profile
@@ -1355,7 +1363,7 @@ class TestExtractBackFields:
         note = _full_norwegian_note(
             {"Norwegian word": "være", "Word class": "verb", "English translation": "to be", "IPA": "/ˈʋæːɾə/"}
         )
-        l2, translation, disambig, article, extras = extract_via_profile(note, "slovene")
+        l2, translation, disambig, article, extras = extract_via_profile(note, "slovene", "no")
         assert (l2, translation, disambig, article) == ("være", "to be", "verb", "")
         assert [(e.label, e.html) for e in extras] == [("IPA", "/ˈʋæːɾə/")]
 

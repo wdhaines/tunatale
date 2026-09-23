@@ -16,12 +16,16 @@ left to protect is this file.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 import yaml
 
+from app.languages import _CONFIGS, discover
+
 COMPOSE = Path(__file__).resolve().parents[2] / "docker-compose.yml"
+PROD_ENV = Path(__file__).resolve().parents[1] / ".env.prod.example"
 
 
 @pytest.fixture(scope="module")
@@ -133,3 +137,25 @@ def test_every_database_the_api_opens_is_on_the_data_volume(services):
     urls = [env["DATABASE_URL"], env["AUTH_DATABASE_URL"], *yaml.safe_load(env["DATABASE_URLS"]).values()]
     for url in urls:
         assert url.startswith("sqlite:////data/"), url
+
+
+def test_every_language_with_a_deck_has_a_prod_database(services):
+    """DATABASE_URLS lists exactly the languages that have an Anki deck.
+
+    A language registered in the registry but absent from DATABASE_URLS is
+    silently outside the deployed box's backups and migrations, and the two
+    files checked here are where the api service reads the mapping from.
+    Deriving the expected set from the registry keeps this test from going
+    stale when a fourth language lands.
+    """
+    discover()
+    with_deck = {code for code, cfg in _CONFIGS.items() if cfg.deck_name}
+
+    compose_keys = set(yaml.safe_load(services["api"]["environment"]["DATABASE_URLS"]))
+    assert compose_keys == with_deck
+
+    prod_line = next(
+        line for line in PROD_ENV.read_text(encoding="utf-8").splitlines() if line.startswith("DATABASE_URLS=")
+    )
+    prod_keys = set(json.loads(prod_line.split("=", 1)[1]))
+    assert prod_keys == with_deck

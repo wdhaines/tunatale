@@ -299,6 +299,7 @@ async def run_full_sync(
     deck_name: str,
     model_name: str,
     sync_log_path: Path,
+    mint_deck_name: str | None = None,
     media_fn=None,
     media_dir: Path | None = None,
     dry_run: bool = False,
@@ -355,7 +356,9 @@ async def run_full_sync(
 
     with _phase(timings, "create_new"):
         create_report = await sync.sync_create_new(
-            deck_name=deck_name,
+            # Minting may target a subdeck of the deck every other phase reads
+            # (tunatale-w4m7.8); without one it is the read deck, as before.
+            deck_name=mint_deck_name or deck_name,
             model_name=model_name,
             dry_run=dry_run,
             _media_fn=media_fn,
@@ -542,6 +545,8 @@ def main(
             # the language threading lives there, not in a loop here.
             import asyncio
 
+            from app.languages import get_mint_deck_name
+
             # No getattr fallback: a settings object without target_language used to
             # sync silently as Slovene, which for a Norwegian deck means the wrong
             # vocab notetype AND the wrong L2 markup class. Settings always defines
@@ -561,6 +566,7 @@ def main(
                 _writer=writer,
                 _anki_col_ver=col_ver,
                 _anki_col_crt=col_crt,
+                language_code=language_code,
             )
             with _phase(timings, "resolve_model"):
                 model_name = _resolve_model_name(_s, language_code, ctx.conn, deck_name)
@@ -572,6 +578,7 @@ def main(
                     deck_name=deck_name,
                     model_name=model_name,
                     sync_log_path=_sync_log,
+                    mint_deck_name=get_mint_deck_name(language_code, default=deck_name),
                     media_fn=_media_fn,
                     media_dir=_media_dir,
                     dry_run=args.dry_run,

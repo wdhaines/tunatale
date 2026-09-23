@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.cards.field_map import get_profile
+from app.cards.field_map import direction_for_ord, get_profile
 from app.config import ANKI_ROLLOVER_HOUR
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import BackField
@@ -87,27 +87,64 @@ def compute_due_at(queue: int, due_raw: int, col_crt: int, card_type: int = 0) -
     return due_at_rollover_utc(anki_today())
 
 
-def find_deck_id(conn: sqlite3.Connection, deck_name: str) -> int | None:
-    """Find deck id by name. Tries col.decks JSON (legacy) then decks table (modern)."""
+#: Anki's subdeck separator as users write it. The modern ``decks`` table stores
+#: the unit separator ``\x1f`` instead; :func:`_all_decks` normalizes to this.
+DECK_SEPARATOR = "::"
+
+
+def _all_decks(conn: sqlite3.Connection) -> list[tuple[int, str]]:
+    """Every ``(deck id, name)``, names in ``::`` form.
+
+    Tries the ``col.decks`` JSON (legacy) first, then the ``decks`` table
+    (modern), whose names separate subdecks with ``\x1f`` — normalized here so
+    a caller can match ``Parent::Child`` whichever format the collection uses.
+    """
+    decks: list[tuple[int, str]] = []
     row = conn.execute("SELECT decks FROM col").fetchone()
     if row:
         try:
             deck_data = json.loads(row[0])
             for did, info in deck_data.items():
-                if isinstance(info, dict) and info.get("name") == deck_name:
-                    return int(did)
+                if isinstance(info, dict) and isinstance(info.get("name"), str):
+                    decks.append((int(did), info["name"]))
         except json.JSONDecodeError, KeyError, ValueError, TypeError:
             pass
-
+    # Both sources, JSON first: an exact lookup keeps the precedence the old
+    # find_deck_id had (JSON, then the table).
     try:
         rows = conn.execute("SELECT id, name FROM decks").fetchall()
-        for r in rows:
-            if r[1] == deck_name:
-                return r[0]
+        decks.extend((r[0], r[1].replace("\x1f", DECK_SEPARATOR)) for r in rows)
     except sqlite3.OperationalError:
         pass
+    return decks
 
+
+def find_deck_id(conn: sqlite3.Connection, deck_name: str) -> int | None:
+    """Find deck id by exact name (``Parent::Child`` for a subdeck).
+
+    Tries col.decks JSON (legacy) then the decks table (modern). Exact: a
+    subdeck is NOT its parent. Use this to write INTO a deck; to read a
+    language's cards use :func:`find_deck_tree_ids`.
+    """
+    for did, name in _all_decks(conn):
+        if name == deck_name:
+            return did
     return None
+
+
+def find_deck_tree_ids(conn: sqlite3.Connection, deck_name: str) -> list[int]:
+    """*deck_name* and every descendant deck, as sorted unique ids.
+
+    A language's cards may live in subdecks only: the Pimsleur Tagalog deck
+    keeps all 1,218 cards in ``Level N::Lesson NN`` subdecks and none in the
+    parent (tunatale-w4m7.8). A descendant is a name that begins with
+    ``deck_name::``; a sibling that merely shares the prefix
+    (``deck_name Extra``) is not one. A missing deck has no tree (``[]``);
+    a deck with no subdecks is its own one-element tree, so a flat deck reads
+    exactly what an exact lookup did.
+    """
+    prefix = deck_name + DECK_SEPARATOR
+    return sorted({did for did, name in _all_decks(conn) if name == deck_name or name.startswith(prefix)})
 
 
 def _fetch_notetype_meta(conn: sqlite3.Connection) -> dict[int, tuple[str, tuple[str, ...]]]:
@@ -130,16 +167,30 @@ def _fetch_notetype_meta(conn: sqlite3.Connection) -> dict[int, tuple[str, tuple
     return {ntid: (name, tuple(names_by_ntid.get(ntid, ()))) for ntid, name in nt_rows}
 
 
+def fetch_notes_for_deck_tree(conn: sqlite3.Connection, deck_name: str) -> list[AnkiNote]:
+    """Fetch every note with a card anywhere in *deck_name*'s tree (see
+    :func:`find_deck_tree_ids`). ``[]`` when the deck does not exist."""
+    return _fetch_notes_for_deck_ids(conn, find_deck_tree_ids(conn, deck_name))
+
+
 def fetch_notes_for_deck(conn: sqlite3.Connection, deck_id: int) -> list[AnkiNote]:
-    """Fetch all notes that have at least one card in the given deck."""
+    """Fetch all notes that have at least one card in the given deck (exact)."""
+    return _fetch_notes_for_deck_ids(conn, [deck_id])
+
+
+def _fetch_notes_for_deck_ids(conn: sqlite3.Connection, deck_ids: list[int]) -> list[AnkiNote]:
+    """Notes with at least one card in any of *deck_ids*, each note once."""
+    if not deck_ids:
+        return []
+    placeholders = ",".join("?" * len(deck_ids))
     rows = conn.execute(
-        """
+        f"""
         SELECT DISTINCT n.id, n.guid, n.mid, n.mod, n.tags, n.flds
         FROM notes n
         JOIN cards c ON c.nid = n.id
-        WHERE c.did = ?
+        WHERE c.did IN ({placeholders})
         """,
-        (deck_id,),
+        deck_ids,
     ).fetchall()
     nt_meta = _fetch_notetype_meta(conn)
     notes = []
@@ -185,18 +236,28 @@ def fetch_cards_for_notes(
     conn: sqlite3.Connection,
     note_ids: list[int],
     fallback_log_path: Path | None = None,
+    *,
+    language_code: str,
 ) -> list[AnkiCard]:
-    """Fetch all cards for the given note IDs, parsing FSRS state from cards.data."""
+    """Fetch all cards for the given note IDs, parsing FSRS state from cards.data.
+
+    Each card's direction comes from its note's notetype as read for
+    *language_code* (``field_map.direction_for_ord``) — not from ``ord == 0``,
+    which swaps every card of a notetype whose Card 1 is production.
+    """
     if not note_ids:
         return []
 
     col_row = conn.execute("SELECT crt FROM col LIMIT 1").fetchone()
     col_crt: int = int(col_row[0]) if col_row else 0
+    nt_meta = _fetch_notetype_meta(conn)
 
     placeholders = ",".join("?" * len(note_ids))
-    # Also select `left` and `type` columns for learning step tracking
+    # Also select `left` and `type` columns for learning step tracking, and the
+    # note's notetype, which decides what each ord means.
     rows = conn.execute(
-        f"SELECT id, nid, did, ord, queue, reps, lapses, data, due, ivl, IFNULL(left,0), type, mod FROM cards WHERE nid IN ({placeholders})",
+        "SELECT c.id, c.nid, c.did, c.ord, c.queue, c.reps, c.lapses, c.data, c.due, c.ivl, IFNULL(c.left,0),"
+        f" c.type, c.mod, n.mid FROM cards c LEFT JOIN notes n ON n.id = c.nid WHERE c.nid IN ({placeholders})",
         note_ids,
     ).fetchall()
     cards = []
@@ -216,9 +277,11 @@ def fetch_cards_for_notes(
             r[11] or 0,
             r[12] or 0,
         )
+        notetype_name = nt_meta.get(r[13], ("", ()))[0]
+        direction = direction_for_ord(notetype_name, ord_, language_code)
         fsrs = parse_fsrs_data(
             card_id=card_id,
-            ord=ord_,
+            direction=direction,
             data_str=data_str,
             queue=queue,
             reps=reps,
@@ -230,7 +293,6 @@ def fetch_cards_for_notes(
             left=left_val,
             card_type=card_type,
         )
-        direction = Direction.RECOGNITION if ord_ == 0 else Direction.PRODUCTION
         cards.append(
             AnkiCard(
                 id=card_id,
@@ -252,7 +314,7 @@ def fetch_cards_for_notes(
 
 def parse_fsrs_data(
     card_id: int,
-    ord: int,
+    direction: Direction,
     data_str: str,
     queue: int,
     reps: int,
@@ -266,7 +328,6 @@ def parse_fsrs_data(
 ) -> DirectionState:
     """Parse FSRS state from cards.data JSON. Falls back to NEW on missing/malformed data."""
 
-    direction = Direction.RECOGNITION if ord == 0 else Direction.PRODUCTION
     due_at = compute_due_at(queue, due_raw, col_crt, card_type=card_type)
 
     # Compute last_review for review/relearning queues
@@ -646,14 +707,14 @@ def sanitize_back_html(html: str) -> str:
     return cleaned.strip()
 
 
-def extract_back_fields(note: AnkiNote) -> tuple[BackField, ...]:
+def extract_back_fields(note: AnkiNote, language_code: str | None) -> tuple[BackField, ...]:
     """Return the profile-declared rich back-of-card fields present on *note*.
 
     Reads each declared field by name, sanitizes its HTML, and keeps it only
     when non-empty — so a card surfaces exactly the secondary info it actually
     carries. Empty for notes whose notetype has no profile or no ``back_fields``.
     """
-    profile = get_profile(note.notetype_name)
+    profile = get_profile(note.notetype_name, language_code)
     if profile is None:
         return ()
     by_name = dict(zip(note.field_names, note.fields, strict=False))
@@ -665,8 +726,11 @@ def extract_back_fields(note: AnkiNote) -> tuple[BackField, ...]:
     return tuple(result)
 
 
-def extract_via_profile(note: AnkiNote, l2_css_class: str) -> tuple[str, str, str, str, tuple[BackField, ...]] | None:
-    """Return ``(l2, translation, disambig, article, extras)`` via *note*'s profile.
+def extract_via_profile(
+    note: AnkiNote, l2_css_class: str, language_code: str | None
+) -> tuple[str, str, str, str, tuple[BackField, ...]] | None:
+    """Return ``(l2, translation, disambig, article, extras)`` via *note*'s profile,
+    as read for *language_code* (a language may own a profile; see ``get_profile``).
 
     Returns ``None`` when the note's notetype has no profile — the caller then
     falls back to the positional/HTML heuristics. Reads each role's field *by
@@ -677,7 +741,7 @@ def extract_via_profile(note: AnkiNote, l2_css_class: str) -> tuple[str, str, st
     are the rich back-of-card fields (IPA, inflections, dictionary entry…); ``()``
     when the profile declares none.
     """
-    profile = get_profile(note.notetype_name)
+    profile = get_profile(note.notetype_name, language_code)
     if profile is None:
         return None
     by_name = dict(zip(note.field_names, note.fields, strict=False))
@@ -686,4 +750,4 @@ def extract_via_profile(note: AnkiNote, l2_css_class: str) -> tuple[str, str, st
     # profile.disambig/article may be None (no such field) — dict.get(None, "") is "".
     disambig = by_name.get(profile.disambig, "").strip()
     article = by_name.get(profile.article, "").strip()
-    return l2, translation, disambig, article, extract_back_fields(note)
+    return l2, translation, disambig, article, extract_back_fields(note, language_code)

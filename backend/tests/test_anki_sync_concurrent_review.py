@@ -222,6 +222,7 @@ class TestAnkiGradeOnlyPullsNormally:
                     CardRecord(
                         anki_card_id=90010,
                         ord=0,
+                        direction=Direction.RECOGNITION,
                         queue=2,
                         reps=5,
                         lapses=0,
@@ -269,6 +270,7 @@ class TestTunaTaleNewerThanAnki:
                     CardRecord(
                         anki_card_id=90010,
                         ord=0,
+                        direction=Direction.RECOGNITION,
                         queue=2,
                         reps=5,
                         lapses=0,
@@ -496,6 +498,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                     CardRecord(
                         anki_card_id=90010,
                         ord=0,
+                        direction=Direction.RECOGNITION,
                         queue=-1,
                         reps=3,
                         lapses=0,
@@ -531,6 +534,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                     CardRecord(
                         anki_card_id=90010,
                         ord=0,
+                        direction=Direction.RECOGNITION,
                         queue=-2,
                         reps=3,
                         lapses=0,
@@ -566,6 +570,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                     CardRecord(
                         anki_card_id=90010,
                         ord=0,
+                        direction=Direction.RECOGNITION,
                         queue=1,
                         reps=1,
                         lapses=0,
@@ -601,6 +606,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                     CardRecord(
                         anki_card_id=90010,
                         ord=0,
+                        direction=Direction.RECOGNITION,
                         queue=3,
                         reps=5,
                         lapses=1,
@@ -636,6 +642,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                     CardRecord(
                         anki_card_id=90010,
                         ord=0,
+                        direction=Direction.RECOGNITION,
                         queue=0,
                         reps=0,
                         lapses=0,

@@ -34,7 +34,7 @@ DECK_ID = 17
 SEED_NOTETYPE = "6000 Most Frequent Norwegian Words"
 PROFILED_NOTETYPE = "TT Vocabulary"  # deliberately has no field_map profile
 
-SEED_PROFILE = get_profile(SEED_NOTETYPE)
+SEED_PROFILE = get_profile(SEED_NOTETYPE, None)
 assert SEED_PROFILE is not None, "the imported notetype must keep its field_map profile"
 
 # A representative slice of the real 17-field layout: every field the profile

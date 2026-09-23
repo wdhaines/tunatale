@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import NamedTuple
 
+from app.models.srs_item import Direction
 from app.models.syntactic_unit import BackField
 from app.plugins.anki_sync.sqlite_reader import extract_translation
 from app.srs.anki_mirror.rollover import local_today_rollover
@@ -69,6 +70,10 @@ class CardRecord:
     # Required to mirror Anki's queue=1 learning state. Without these, a graded
     # card resumes through the FSRS REVIEW branch and graduates prematurely.
     left: int | None = None
+    # What this card reviews, resolved by the reader from the note's notetype
+    # (``field_map.direction_for_ord``). Required, never derived from ``ord`` here:
+    # ord 0 is PRODUCTION on the Pimsleur notetype (tunatale-w4m7.8).
+    direction: Direction = field(kw_only=True)
 
 
 @dataclass

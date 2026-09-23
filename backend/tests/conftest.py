@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from app.models.srs_item import Direction
 from app.plugins.anki_sync.sync import CardRecord, NoteRecord
 
 pytest.register_assert_rewrite("tests.conftest")
@@ -260,6 +261,9 @@ def make_card_record(
         if due_date is None:
             due_date = date.today()
         due_at = datetime.combine(due_date, time(4, 0), tzinfo=UTC)
+    # The Slovene/Norwegian shape: ord 0 is recognition. A test of a notetype
+    # where it is not (Pimsleur) passes direction= explicitly.
+    overrides.setdefault("direction", Direction.RECOGNITION if ord == 0 else Direction.PRODUCTION)
     return CardRecord(
         anki_card_id=anki_card_id,
         ord=ord,

@@ -247,7 +247,10 @@ def run(
 
     Returns ``"created"``, ``"exists"``, or ``"dry-run"``.
     """
-    profile = get_profile(notetype_name)
+    # Global profiles only: this capability is for a recognition-only notetype
+    # with a specific name (Norwegian's). A language-scoped profile (Pimsleur's)
+    # names a notetype that already carries both cards.
+    profile = get_profile(notetype_name, None)
     if profile is None:
         raise ValueError(
             f"Notetype {notetype_name!r} has no field-role profile in app.cards.field_map — "

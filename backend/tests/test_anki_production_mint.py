@@ -130,7 +130,7 @@ def _make_conn(*, migrate: bool = True) -> sqlite3.Connection:
     )
 
     if migrate:
-        profile = get_profile(SEED_NOTETYPE)
+        profile = get_profile(SEED_NOTETYPE, None)
         assert profile is not None
         add_production_template(conn, SEED_NOTETYPE, profile)
     conn.commit()

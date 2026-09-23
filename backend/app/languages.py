@@ -13,7 +13,7 @@ from __future__ import annotations
 import enum
 import importlib
 import pkgutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -22,9 +22,10 @@ from app.audio.preprocessing.base import TextPreprocessor
 from app.models.language import Language
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from app.audio.alignment import CharAligner
+    from app.cards.field_map import NotetypeProfile
     from app.cards.vocab_notetype import VocabNotetype
     from app.config import Settings
     from app.models.breakdown import BreakdownChunk
@@ -171,6 +172,16 @@ class LanguageConfig:
     language: Language
     preprocessor_factory: type[TextPreprocessor] | None = None
     deck_name: str | None = None
+    #: The deck TT-MINTED notes go into, when it differs from ``deck_name``
+    #: (which TT reads, with all its subdecks). ``None`` (the default) mints into
+    #: the read deck, as every language did before. A subdeck is written
+    #: ``Parent::Child``; it must already exist in Anki, and minting fails loudly
+    #: if it does not (tunatale-w4m7.8). See ``get_mint_deck_name``.
+    mint_deck_name: str | None = None
+    #: Field-role profiles for notetypes whose names are too generic to be
+    #: global, keyed by notetype name. Consulted before the global ones in
+    #: ``app.cards.field_map``; see ``get_profile`` (tunatale-w4m7.8).
+    notetype_profiles: Mapping[str, NotetypeProfile] = field(default_factory=dict)
     vocab_notetype: VocabNotetype | None = None
     #: Scores how strongly a text looks like THIS language rather than English,
     #: for picking the L2 field out of an Anki note that carries no markup.
@@ -620,6 +631,32 @@ def get_variant_separator(code: str) -> str | None:
     discover()
     config = _CONFIGS.get(code)
     return config.variant_separator if config else None
+
+
+def get_mint_deck_name(code: str, *, default: str) -> str:
+    """The deck TT-minted notes for *code* go into.
+
+    The language's registered ``mint_deck_name`` when it has one, else *default*
+    (the deck the sync is reading). Unknown codes → *default*. Taking the read
+    deck as a parameter, not re-deriving it, keeps a per-request deck override
+    authoritative for languages that register no mint deck.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    return config.mint_deck_name if config is not None and config.mint_deck_name else default
+
+
+def get_notetype_profiles(code: str) -> Mapping[str, NotetypeProfile]:
+    """*code*'s own notetype profiles (``{}`` when it declares none, or is unknown)."""
+    discover()
+    config = _CONFIGS.get(code)
+    return config.notetype_profiles if config else {}
+
+
+def all_notetype_profiles() -> list[NotetypeProfile]:
+    """Every registered language's own notetype profiles, in registration order."""
+    discover()
+    return [p for c in _CONFIGS.values() for p in c.notetype_profiles.values()]
 
 
 def get_infinitive_marker(code: str) -> str | None:

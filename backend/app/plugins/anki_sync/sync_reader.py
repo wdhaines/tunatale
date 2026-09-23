@@ -17,8 +17,7 @@ from app.plugins.anki_sync.sqlite_reader import (
     extract_translation,
     extract_via_profile,
     fetch_cards_for_notes,
-    fetch_notes_for_deck,
-    find_deck_id,
+    fetch_notes_for_deck_tree,
 )
 from app.plugins.anki_sync.sync_common import (
     CardRecord,
@@ -37,6 +36,9 @@ class OfflineReader:
     def __init__(self, conn: sqlite3.Connection, deck_name: str, *, language_code: str) -> None:
         self._conn = conn
         self._deck_name = deck_name
+        # Decides which notetype profiles apply (a language may own one) and so
+        # what each card's ord means — see field_map.get_profile.
+        self._language_code = language_code
         # The L2 markup class the field parsers look for. Resolved once here (not
         # per note) and never a literal — a Slovene class read against a Norwegian
         # deck silently returns the English gloss as the L2. See get_l2_css_class.
@@ -69,7 +71,7 @@ class OfflineReader:
         if row is None:
             return ClozeMaterial("", "", None)
         name_row = self._conn.execute("SELECT name FROM notetypes WHERE id = ?", (row["mid"],)).fetchone()
-        profile = get_profile(name_row["name"]) if name_row is not None else None
+        profile = get_profile(name_row["name"], self._language_code) if name_row is not None else None
         if profile is None:
             return ClozeMaterial("", "", None)
 
@@ -112,15 +114,14 @@ class OfflineReader:
         return {int(r[0]) for r in rows}
 
     def get_note_records(self) -> list[NoteRecord]:
-        deck_id = find_deck_id(self._conn, self._deck_name)
-        if deck_id is None:
-            return []
-        notes = fetch_notes_for_deck(self._conn, deck_id)
+        # The whole tree: a language's cards may live only in subdecks
+        # (tunatale-w4m7.8). A deck with no subdecks reads exactly as before.
+        notes = fetch_notes_for_deck_tree(self._conn, self._deck_name)
         if not notes:
             return []
 
         note_ids = [n.id for n in notes]
-        cards = fetch_cards_for_notes(self._conn, note_ids)
+        cards = fetch_cards_for_notes(self._conn, note_ids, language_code=self._language_code)
 
         # Fetch last review timestamp from revlog for each card
         cid_list = [c.id for c in cards]
@@ -161,7 +162,7 @@ class OfflineReader:
                 article = None
                 extras: tuple[BackField, ...] | None = None
             else:
-                profile_result = extract_via_profile(note, self._l2_css_class)
+                profile_result = extract_via_profile(note, self._l2_css_class, self._language_code)
                 if profile_result is not None:
                     l2_text, translation, disambig_key, article, extras = profile_result
                 else:
@@ -175,6 +176,7 @@ class OfflineReader:
                 CardRecord(
                     anki_card_id=c.id,
                     ord=c.ord,
+                    direction=c.direction,
                     queue=c.queue,
                     reps=c.reps,
                     lapses=c.lapses,
