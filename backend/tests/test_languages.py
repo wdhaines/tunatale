@@ -114,6 +114,29 @@ class TestInfinitiveMarker:
         assert format_vocab_headword("foo", "VERB", "zz") == "foo"
 
 
+class TestVerbHeadwordFn:
+    """The registry's per-language verb-headword function (tunatale-w4m7.6).
+
+    ``format_vocab_headword`` passes a VERB lemma through it BEFORE the
+    infinitive-marker logic — it is how a root-keyed lemma table derives the
+    surface a card front shows (Tagalog roots → actor-focus infinitives).
+    """
+
+    def test_a_registered_fn_shapes_the_verb_front(self):
+        assert format_vocab_headword("kain", "VERB", "tl") == "kumain"
+
+    def test_the_fn_is_consulted_before_the_infinitive_marker(self, monkeypatch):
+        from app.languages import _CONFIGS
+
+        # A language that HAS a marker but gains a fn: the fn output, not the
+        # marker-prefixed lemma, is the front — pins the precedence order.
+        monkeypatch.setattr(_CONFIGS["no"], "verb_headword_fn", lambda lemma: f"[{lemma}]")
+        assert format_vocab_headword("lyve", "VERB", "no") == "[lyve]"
+
+    def test_a_non_verb_headword_still_ignores_the_fn(self):
+        assert format_vocab_headword("bahay", "NOUN", "tl") == "bahay"
+
+
 class TestKnownLanguageCodes:
     def test_returns_the_configured_codes(self):
         assert known_language_codes() == frozenset({"sl", "en", "no", "tl"})

@@ -84,6 +84,8 @@ frontend/test-results/
 backend/app/plugins/languages/no/data/nst_lexicon.sqlite3
 # Lemma-table build artifact, rebuilt from the committed stanza_lemmas.tsv.gz on first use (app.srs.lemma_table)
 backend/app/plugins/languages/no/data/stanza_lemmas.sqlite3
+# ...and Tagalog's: same shape, built from tagalog_lemmas.tsv.gz (kaikki-derived; see tl/data/ATTRIBUTION.md)
+backend/app/plugins/languages/tl/data/tagalog_lemmas.sqlite3
 # ...and its staging file WITH SQLite's companions (-journal/-wal/-shm): CI builds
 # the table mid-run, and an unignored journal moved the commit-gate test's tree
 # fingerprint (tunatale-i3kd, run 35753114899). Any language's table, not just no.
