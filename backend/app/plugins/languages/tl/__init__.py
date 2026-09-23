@@ -84,6 +84,13 @@ register(
             "Basic (and reversed card) (genanki)": NotetypeProfile(
                 l2="Back",
                 translation="Front",
+                # The English also keys the word: 5 Backs recur on two notes, 4
+                # of them with different English (linggo "week" / Linggo
+                # "Sunday", which the casefolded GUID would merge; kumain "eat" /
+                # "have eaten"). Keyed on Back alone they shared a guid and every
+                # sync re-imported one note over the other. Identical English
+                # (binili, twice) still collides, and GUID_COLLISION says so.
+                disambig="Front",
                 recognition_ord=1,
             ),
         },

@@ -270,3 +270,62 @@ def test_sync_pull_updates_the_direction_the_card_belongs_to(pimsleur_db, tmp_pa
     item = db.get_collocation_by_anki_note_id(5001)
     assert item.directions[Direction.PRODUCTION].stability == 77.0
     assert item.directions[Direction.RECOGNITION].stability == ORD1_STABILITY
+
+
+# ── same Tagalog, different English: separate words (measured 2026-09-23) ─────
+#
+# The live deck has 5 Back texts on two notes each. Four differ in English —
+# linggo "week" / Linggo "Sunday" (the GUID casefolds, so case alone does not
+# separate them), kumain "eat" / "have eaten", ngayon "now" / "today", bagyo
+# "storm" / "storm or typhoon". Keyed on the Tagalog alone, each pair shared
+# one TT guid, and the reverse-import re-imported the unlinked note on EVERY
+# sync, swapping which note's cards the word pointed at.
+
+
+@pytest.fixture
+def homograph_db(tmp_path):
+    path = build_pimsleur_anki_db(tmp_path)
+    with sqlite3.connect(str(path)) as c:
+        for nid, front, back in ((5004, "week", "linggo<br>"), (5005, "Sunday", "Linggo<br>")):
+            c.execute(
+                "INSERT INTO notes VALUES (?, ?, ?, 0, 0, '', ?, ?, 0, 0, '')",
+                (nid, f"pims_{nid}", MID, "\x1f".join([front, back, ""]), front),
+            )
+            for ord_ in (0, 1):
+                c.execute(
+                    "INSERT INTO cards VALUES (?, ?, ?, ?, 0, 0, 2, 2, 10, 21, 2500, 5, 0, 0, 0, 0, 0, ?)",
+                    (nid * 10 + ord_, nid, LESSON_DID, ord_, json.dumps({"s": 9.0, "d": 5.0})),
+                )
+    return path
+
+
+async def test_same_tagalog_with_different_english_is_two_words_that_stay_put(homograph_db):
+    from app.plugins.anki_sync.sync import AnkiSync, OfflineReader, OfflineWriter
+
+    db = SRSDatabase(":memory:")
+
+    async def reverse_import() -> int:
+        conn = sqlite3.connect(str(homograph_db))
+        conn.row_factory = sqlite3.Row
+        try:
+            report = await AnkiSync(
+                db=db,
+                _reader=OfflineReader(conn, ROOT, language_code="tl"),
+                _writer=OfflineWriter(conn),
+                language_code="tl",
+            ).sync_create_new(deck_name=f"{ROOT}::TunaTale", model_name="Tagalog Vocabulary")
+        finally:
+            conn.close()
+        return report.notes_created_from_anki
+
+    assert await reverse_import() == len(NOTES) + 2
+    week, sunday = db.get_collocation_by_anki_note_id(5004), db.get_collocation_by_anki_note_id(5005)
+    assert week.guid != sunday.guid
+    assert (week.syntactic_unit.translation, sunday.syntactic_unit.translation) == ("week", "Sunday")
+    # The next sync imports nothing: every note is linked to its own word.
+    assert await reverse_import() == 0
+
+
+def test_import_seed_keeps_same_tagalog_with_different_english_apart(homograph_db, tmp_path):
+    db = _import_seed(homograph_db, tmp_path)
+    assert db.get_collocation_by_anki_note_id(5004).guid != db.get_collocation_by_anki_note_id(5005).guid
