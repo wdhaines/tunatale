@@ -43,6 +43,7 @@ class VocabNotetype:
 
 SLOVENE_VOCAB = VocabNotetype(name="Slovene Vocabulary", l2_field="Slovene", l2_css_class="slovene")
 NORWEGIAN_VOCAB = VocabNotetype(name="Norwegian Vocabulary", l2_field="Norwegian", l2_css_class="norwegian")
+TAGALOG_VOCAB = VocabNotetype(name="Tagalog Vocabulary", l2_field="Tagalog", l2_css_class="tagalog")
 
 
 # ── Card templates + CSS (parametrised by the L2 field/class) ─────────────

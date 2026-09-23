@@ -34,10 +34,16 @@ class TestMatchesLanguageLiteral:
             "sl",
             "no",
             "nb",
+            "tl",
+            "FIL",
             "Slovene",
             "a Norwegian word",
+            "Tagalog",
+            "filipino",
+            "filipinos-PH",  # SUBSTRING semantics: "filipino" is a prefix; ruling 2026-09-22
             "sl-SI-PetraNeural",
             "nb-NO-PernilleNeural",
+            "fil-PH-BlessicaNeural",
         ],
     )
     def test_positive_matches(self, value):
@@ -59,6 +65,12 @@ class TestMatchesLanguageLiteral:
             "sludge",  # contains "sl" but is not an exact bare-code match
             "nope",  # not an exact "no" match
             "annotate",  # contains "no" as a substring, but bare-code rule is exact-only
+            "profile",  # contains "fil" as a substring, but bare-code rule is exact-only
+            "title",  # contains "tl" as a substring, but bare-code rule is exact-only
+            "filter",  # contains "fil" as a substring, but bare-code rule is exact-only
+            "utl",  # contains "tl" as a substring, but bare-code rule is exact-only
+            "fil-",  # not an exact "fil" bare-code match
+            "xfil-PH-Foo",  # no word boundary inside "xfil", and no Neural suffix
             "hello",
             "",
         ],

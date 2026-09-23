@@ -24,6 +24,7 @@ from app.languages import (
 from app.models.language import Language
 from app.plugins.languages.no.preprocessor import NorwegianPreprocessor
 from app.plugins.languages.sl.preprocessor import SlovenePreprocessor
+from app.plugins.languages.tl.preprocessor import TagalogPreprocessor
 
 
 class TestBreakdownAndMorphologyFlags:
@@ -115,7 +116,7 @@ class TestInfinitiveMarker:
 
 class TestKnownLanguageCodes:
     def test_returns_the_configured_codes(self):
-        assert known_language_codes() == frozenset({"sl", "en", "no"})
+        assert known_language_codes() == frozenset({"sl", "en", "no", "tl"})
 
     def test_is_a_frozenset(self):
         assert isinstance(known_language_codes(), frozenset)
@@ -431,6 +432,18 @@ class TestGetPreprocessor:
     def test_returns_norwegian_preprocessor_for_no(self):
         pp = get_preprocessor("no")
         assert isinstance(pp, NorwegianPreprocessor)
+
+    def test_returns_tagalog_preprocessor_for_tl(self):
+        pp = get_preprocessor("tl")
+        assert isinstance(pp, TagalogPreprocessor)
+
+    def test_tagalog_preprocessor_passes_through(self):
+        from app.models.lesson import SectionType
+
+        pp = get_preprocessor("tl")
+        text = "Magkano po ito?"
+        result = pp.preprocess(text, SectionType.NATURAL_SPEED)
+        assert result == text
 
     def test_raises_keyerror_for_unknown_code(self):
         with pytest.raises(KeyError, match="xyz"):
