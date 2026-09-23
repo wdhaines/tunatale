@@ -171,6 +171,12 @@ class LanguageConfig:
     language: Language
     preprocessor_factory: type[TextPreprocessor] | None = None
     deck_name: str | None = None
+    #: The deck TT-MINTED notes go into, when it differs from ``deck_name``
+    #: (which TT reads, with all its subdecks). ``None`` (the default) mints into
+    #: the read deck, as every language did before. A subdeck is written
+    #: ``Parent::Child``; it must already exist in Anki, and minting fails loudly
+    #: if it does not (tunatale-w4m7.8). See ``get_mint_deck_name``.
+    mint_deck_name: str | None = None
     vocab_notetype: VocabNotetype | None = None
     #: Scores how strongly a text looks like THIS language rather than English,
     #: for picking the L2 field out of an Anki note that carries no markup.
@@ -620,6 +626,19 @@ def get_variant_separator(code: str) -> str | None:
     discover()
     config = _CONFIGS.get(code)
     return config.variant_separator if config else None
+
+
+def get_mint_deck_name(code: str, *, default: str) -> str:
+    """The deck TT-minted notes for *code* go into.
+
+    The language's registered ``mint_deck_name`` when it has one, else *default*
+    (the deck the sync is reading). Unknown codes → *default*. Taking the read
+    deck as a parameter, not re-deriving it, keeps a per-request deck override
+    authoritative for languages that register no mint deck.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    return config.mint_deck_name if config is not None and config.mint_deck_name else default
 
 
 def get_infinitive_marker(code: str) -> str | None:

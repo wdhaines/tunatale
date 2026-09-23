@@ -69,6 +69,10 @@ register(
         ),
         preprocessor_factory=TagalogPreprocessor,
         deck_name="2. Pimsleur Tagalog",
+        # TT reads the whole Pimsleur tree (every card is in a Level::Lesson
+        # subdeck) but mints its own cards into a subdeck of their own: the
+        # user's call, 2026-09-23 (tunatale-w4m7.8). Create it in Anki first.
+        mint_deck_name="2. Pimsleur Tagalog::TunaTale",
         vocab_notetype=TAGALOG_VOCAB,
         planner_example=PlannerExample(
             language_code="tl",
