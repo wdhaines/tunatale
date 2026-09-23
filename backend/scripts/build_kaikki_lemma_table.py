@@ -130,6 +130,29 @@ UPOS_ORDER = (
     "PART",
 )
 
+# Rule 6a's tie-break between several NON-VERB readings of one headword, and the
+# UPOS a linker row inherits. CLOSED-CLASS FIRST, deliberately unlike UPOS_ORDER
+# (which only sorts the output file): Wiktionary lists a rare noun homograph for
+# many function words, and under the noun-first order the first build defaulted
+# ako, siya, sa, ba, nga and na to NOUN (measured 2026-09-23). ADV precedes
+# ADJ/NOUN so `na` is "already" and `bukas` is "tomorrow".
+DEFAULT_UPOS_ORDER = (
+    "PRON",
+    "DET",
+    "ADP",
+    "PART",
+    "CCONJ",
+    "SCONJ",
+    "AUX",
+    "NUM",
+    "ADV",
+    "ADJ",
+    "NOUN",
+    "PROPN",
+    "INTJ",
+    "VERB",
+)
+
 # ── the golden table (w4m7.5 spike; same literals as tests/test_tagalog_lemma_table.py) ──
 
 GOLDEN_VERBS_BY_ROOT = {
@@ -311,14 +334,14 @@ def _pick_default(
 ) -> tuple[str, str]:
     if surface in nonverb:
         # Rule 6a: the surface is itself a non-verb headword → that reading,
-        # tie-broken by UPOS_ORDER when several non-verb readings exist. An INTJ
+        # tie-broken by DEFAULT_UPOS_ORDER (closed class first). An INTJ
         # reading is excluded: an interjection (makita "let's see; we'll see",
         # penge "gimme") is a quoted verbal phrase, not an independent headword,
         # so where a surface also has a VERB reading, the verb wins — the golden
         # demands `makita` → `kita`. An INTJ-only surface still keeps its row.
         headword = [r for r in readings if r[0] in nonverb[surface] and r[0] != "INTJ"]
         if headword:
-            return min(headword, key=lambda r: UPOS_ORDER.index(r[0]))
+            return min(headword, key=lambda r: DEFAULT_UPOS_ORDER.index(r[0]))
     verb = [r for r in readings if r[0] == "VERB"]
     if verb:
         # Rule 6b: the root with the most forms, then alphabetical.
@@ -341,7 +364,7 @@ def linker_rows(nonverb: dict[str, set[str]], base_surfaces: set[str]) -> set[tu
     g_source: dict[str, tuple[str, str]] = {}
     ng_source: dict[str, tuple[str, str]] = {}
     for headword, uposes in sorted(nonverb.items()):
-        upos = min(uposes, key=UPOS_ORDER.index)  # the headword's default UPOS
+        upos = min(uposes, key=DEFAULT_UPOS_ORDER.index)  # the headword's default UPOS
         if headword.endswith("n"):
             g_source.setdefault(headword + "g", (headword, upos))
         elif headword[-1] in VOWELS:

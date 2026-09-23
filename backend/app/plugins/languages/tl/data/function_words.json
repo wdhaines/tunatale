@@ -1,0 +1,10 @@
+{
+  "_comment": "Tagalog function-word policy (tunatale-w4m7.4). Same POS-first shape as no.json / sl.json. The Tagalog lemma table (kaikki-derived, tunatale-w4m7.6) DOES supply UPOS, so 'pos' is live here, unlike Norwegian's lowercase era. PRON is deliberately NOT in 'pos': every 'ako'/'siya' would become a cloze, the same flood no.json avoids for 'jeg'. AUX is absent because Tagalog has no copula. 'include' names the genuine difficulties for an English speaker, whatever UPOS the table gives them (several default to a rare NOUN homograph in Wiktionary, e.g. si, ba, nga): the case MARKERS ang/ng/sa, the personal-name markers si/ni/kay and their plurals, the plural 'mga', the inversion marker 'ay', 'nang' (the ng/nang choice is the most common written error), and the second-position particles ba/pa/na/din/rin/lang/naman/nga. 'po'/'opo' are NOT clozed: they are a register choice the style guide governs, and a blank that 'po' answers teaches nothing. 'clozes_only_verbs' is empty: Tagalog has no person/number conjugation (the biti case in sl.json).",
+  "pos": ["ADP", "DET", "CCONJ", "SCONJ", "PART"],
+  "include": [
+    "ang", "ng", "sa", "si", "ni", "kay", "sina", "nina", "kina", "mga", "ay", "nang",
+    "ba", "pa", "na", "din", "rin", "lang", "naman", "nga"
+  ],
+  "exclude": ["po", "opo", "ho", "oho"],
+  "clozes_only_verbs": []
+}
