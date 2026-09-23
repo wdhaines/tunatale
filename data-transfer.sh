@@ -47,6 +47,7 @@ HELPER="$BACKEND/scripts/data_snapshot.py"
 SQLITE=(
   "tunatale_no.db|$BACKEND/tunatale_no.db|tunatale_no.db"
   "tunatale_sl.db|$BACKEND/tunatale_sl.db|tunatale_sl.db"
+  "tunatale_tl.db|$BACKEND/tunatale_tl.db|tunatale_tl.db"
   "tt_collection.anki2|$DEV_TT/tt_collection.anki2|.tunatale/tt_collection.anki2"
 )
 DIRS=(
@@ -194,7 +195,7 @@ to_prod() {
   # hid it — the "undo material" it then advertised did not exist. Now any
   # failure here stops the transfer before a single file is overwritten.
   ssh_box "sudo sh -c 'set -e; mkdir -p \"$bk\"; cd \"$VOL\"; n=0
-    for f in tunatale_no.db* tunatale_sl.db* .tunatale/tt_collection.anki2* .tunatale/tt_collection.media.db2* .tunatale/*_usage.log; do
+    for f in tunatale_no.db* tunatale_sl.db* tunatale_tl.db* .tunatale/tt_collection.anki2* .tunatale/tt_collection.media.db2* .tunatale/*_usage.log; do
       if [ -e \"\$f\" ]; then cp -a --parents \"\$f\" \"$bk/\"; n=\$((n+1)); fi
     done; echo \"    saved \$n files\"'" || die "could not save prod's current state — nothing was overwritten"
 
@@ -214,7 +215,7 @@ to_prod() {
   for e in "${FILES[@]}"; do
     [ -f "$(field "$e" 2)" ] && "${RSYNC_REMOTE[@]}" "$(field "$e" 2)" "${USER_AT}${HOST}:$VOL/$(field "$e" 3)"
   done
-  ssh_box "sudo chown -R $OWNER '$VOL/tunatale_no.db' '$VOL/tunatale_sl.db' '$VOL/media' '$VOL/output' '$VOL/.tunatale'"
+  ssh_box "sudo chown -R $OWNER '$VOL/tunatale_no.db' '$VOL/tunatale_sl.db' '$VOL/tunatale_tl.db' '$VOL/media' '$VOL/output' '$VOL/.tunatale'"
 
   echo "==> verifying (before the app touches anything)"
   prod_stats "$stage/dest.json" live
