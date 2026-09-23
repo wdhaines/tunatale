@@ -112,6 +112,19 @@ def _settings_overrides(monkeypatch, tmp_path):
     # Same trap, one provider along: the Azure TTS character ledger would
     # otherwise append to the real ~/.tunatale/azure_tts_usage.log.
     monkeypatch.setattr(settings, "azure_tts_usage_ledger_path", tmp_path / "azure_tts_usage.log")
+    # The remaining ~/.tunatale paths, found by the property test in
+    # test_settings_isolation.py rather than by an incident. The warning log was
+    # the costly one: every lifespan-booting test installs the (process-global)
+    # file handler at settings.warning_log, so a full gate pushed ~1K fixture
+    # warnings into the real log and its rotation deleted the only evidence of a
+    # production gloss failure (tunatale-0c2t). The TTS and alignment caches are
+    # content-addressed, so a fake clip written there by a test would be reused
+    # by the next REAL render of the same key.
+    monkeypatch.setattr(settings, "warning_log", tmp_path / "logs" / "warnings.log")
+    monkeypatch.setattr(settings, "client_log", tmp_path / "logs" / "client.log")
+    monkeypatch.setattr(settings, "anki_fallback_log", tmp_path / "logs" / "anki-fallback.log")
+    monkeypatch.setattr(settings, "tts_cache_dir", tmp_path / "tts-cache")
+    monkeypatch.setattr(settings, "audio_alignment_cache_dir", tmp_path / "alignment-cache")
     # Add-time vocab media (POST /items, /listen, base cards) reads this key to
     # decide whether to fetch image+audio. A developer's real ``.env`` key would
     # otherwise make card-creating endpoint tests hit Pixabay/Forvo live. Pin

@@ -143,6 +143,14 @@ function backendServer(i: number) {
 			// Startup DB-backup rotation would otherwise snapshot the throwaway
 			// test DB into the real ~/.tunatale/db-backups. 0 disables it for E2E.
 			DB_BACKUP_KEEP_DAYS: '0',
+			// This backend's lifespan installs a WARNING file sink at settings.warning_log,
+			// which defaults into the REAL ~/.tunatale/logs — so every E2E run appended
+			// fixture warnings to the user's log and rotated real ones out (measured
+			// 2026-09-22: +11 lines from one standalone run; tunatale-0c2t). Client error
+			// reports land in client_log the same way. Relative to this backend's cwd;
+			// *.log is gitignored.
+			WARNING_LOG: `./e2e-warnings-${i}.log`,
+			CLIENT_LOG: `./e2e-client-${i}.log`,
 			// Add-time vocab media (POST /items, /listen) fetches image+audio when
 			// a Pixabay key is set. E2E seeds cards via those endpoints, so a real
 			// key in .env makes the suite hit Pixabay/Forvo live (slow, flaky).
