@@ -55,10 +55,10 @@ from _checker_lib import (
 ALLOWLIST_PATH = Path("tests/language_literals_allowlist.txt")
 APP_DIR = Path("app")
 
-_BARE_CODES = {"sl", "no", "nb"}
-_NAME_SUBSTRINGS = ("slovene", "slovenian", "norwegian")
+_BARE_CODES = {"sl", "no", "nb", "tl", "fil"}
+_NAME_SUBSTRINGS = ("slovene", "slovenian", "norwegian", "tagalog", "filipino")
 _ENGINE_SUBSTRINGS = ("classla", "stanza")
-_VOICE_RE = re.compile(r"\b[a-z]{2}-[A-Z]{2}-[A-Za-z]+Neural\b")
+_VOICE_RE = re.compile(r"\b[a-z]{2,3}-[A-Z]{2}-[A-Za-z]+Neural\b")
 
 
 # ── Matching ─────────────────────────────────────────────────────────────────
@@ -68,12 +68,12 @@ def _matches_language_literal(value: str) -> bool:
     """True if *value* looks like a hardcoded language literal.
 
     Matches (any of):
-    1. Exact bare code, case-insensitive: ``"sl"``, ``"no"``, ``"NB"``
+    1. Exact bare code, case-insensitive: ``"sl"``, ``"no"``, ``"tl"``, ``"FIL"``
        (after ``.strip()``).
     2. Name substring (case-insensitive): ``slovene``, ``slovenian``,
-       ``norwegian``.
+       ``norwegian``, ``tagalog``, ``filipino``.
     3. Engine substring (case-insensitive): ``classla``, ``stanza``.
-    4. TTS voice id regex: e.g. ``sl-SI-PetraNeural``.
+    4. TTS voice id regex: e.g. ``sl-SI-PetraNeural``, ``fil-PH-BlessicaNeural``.
     """
     if value.strip().lower() in _BARE_CODES:
         return True

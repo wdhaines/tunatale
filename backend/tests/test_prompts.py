@@ -142,15 +142,15 @@ def test_build_story_system_prompt_slovene_warns_against_croatian_chars():
 
 def test_build_story_system_prompt_unregistered_language_uses_fallback():
     """Languages without a registered plugin should use the generic fallback."""
-    tl = Language(
-        code="tl",
-        name="Tagalog",
-        native_name="Tagalog",
+    lang = Language(
+        code="zz",
+        name="Testlang",
+        native_name="Testlang",
         script="latin",
         tts_voice_map={},
     )
-    prompt = build_story_system_prompt(tl)
-    assert "Tagalog" in prompt
+    prompt = build_story_system_prompt(lang)
+    assert "Testlang" in prompt
     assert "native speaker" in prompt.lower() or "authentic" in prompt.lower()
 
 
@@ -222,12 +222,12 @@ def test_norwegian_prompt_names_all_eight_roles_from_the_map():
 def test_story_prompt_derives_roles_from_the_voice_map():
     """The role list comes from the map, not a constant: a two-role map
     advertises exactly those two."""
-    tl = Language(
-        code="tl",
-        name="Tagalog",
-        native_name="Tagalog",
+    lang = Language(
+        code="zz",
+        name="Testlang",
+        native_name="Testlang",
         script="latin",
         tts_voice_map={"narrator": "en-US-GuyNeural", "female-1": "v-f", "male-1": "v-m"},
     )
-    prompt = build_story_system_prompt(tl)
+    prompt = build_story_system_prompt(lang)
     assert "- Use ONLY these 2 L2 voices: female-1, male-1" in prompt
