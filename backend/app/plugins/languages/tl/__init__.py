@@ -4,6 +4,7 @@ from app.cards.vocab_notetype import TAGALOG_VOCAB
 from app.languages import LanguageConfig, PlannerExample, register
 from app.models.language import NARRATOR_VOICE, Language
 from app.plugins.languages.tl.preprocessor import TagalogPreprocessor
+from app.plugins.languages.tl.syllabify import syllabify_tagalog_word
 
 register(
     "tl",
@@ -53,13 +54,14 @@ register(
             story_guidance="A morning at a Quezon City palengke; friendly haggling with a fruit vendor.",
         ),
         wordfreq_lang="fil",
+        syllabifier_fn=syllabify_tagalog_word,
         # Deliberately omitted until their owning beads ship:
         # - l2_scorer: Tagalog has no letters that distinguish it from English,
         #   and None is a LOUD condition at the call site (see get_l2_scorer's
         #   docstring) — the deck-import bead uses a NotetypeProfile instead.
         # - style_notes, function_words_path, numbers_path: the content bead
         #   tunatale-w4m7.4 owns them.
-        # - syllabifier_fn, morphology_profile, a1_morphology, lemma_table_path,
-        #   lemmatizer_type (stays at the default): other beads own these.
+        # - morphology_profile, a1_morphology, lemma_table_path, lemmatizer_type
+        #   (stays at the default): other beads own these.
     ),
 )

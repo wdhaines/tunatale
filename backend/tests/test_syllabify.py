@@ -5,6 +5,7 @@ import pytest
 from app.generation.syllabify import syllabify_word
 from app.plugins.languages.no.syllabify import syllabify_norwegian_word
 from app.plugins.languages.sl.syllabify import syllabify_slovene_word
+from app.plugins.languages.tl.syllabify import syllabify_tagalog_word
 
 # --- Edge cases ---
 
@@ -144,3 +145,86 @@ def test_syllabify_word_unknown_code_falls_back_to_default():
     from app.generation.syllabify import default_syllabifier
 
     assert syllabify_word("prosim", "xx") == default_syllabifier("prosim")
+
+
+# --- Tagalog ---
+#
+# Golden table measured by the orchestrator (tunatale-w4m7.7). The target is
+# how a word is SAID in chunks for the audio buildup, not KWF hyphenation:
+# ``problema`` is ``pro|ble|ma`` here, where KWF hyphenates ``prob-le-ma``.
+
+
+@pytest.mark.parametrize(
+    "word, expected",
+    [
+        # Plain CV(C) structure
+        ("ako", ["a", "ko"]),
+        ("salamat", ["sa", "la", "mat"]),
+        ("magandang", ["ma", "gan", "dang"]),
+        ("kumusta", ["ku", "mus", "ta"]),
+        ("magkano", ["mag", "ka", "no"]),
+        ("bantay", ["ban", "tay"]),
+        ("hinahanap", ["hi", "na", "ha", "nap"]),
+        ("katagal", ["ka", "ta", "gal"]),
+        # Vowel hiatus: the unwritten glottal stop separates adjacent vowels
+        ("kain", ["ka", "in"]),
+        ("kumain", ["ku", "ma", "in"]),
+        ("kakain", ["ka", "ka", "in"]),
+        ("paano", ["pa", "a", "no"]),
+        ("maalat", ["ma", "a", "lat"]),
+        ("nasaan", ["na", "sa", "an"]),
+        ("kaibigan", ["ka", "i", "bi", "gan"]),
+        ("nakakaintindi", ["na", "ka", "ka", "in", "tin", "di"]),
+        # y and w are consonants: codas and onsets, never nuclei
+        ("bahay", ["ba", "hay"]),
+        ("ikaw", ["i", "kaw"]),
+        ("siya", ["si", "ya"]),
+        ("kailan", ["ka", "i", "lan"]),
+        ("baywang", ["bay", "wang"]),
+        ("aywan", ["ay", "wan"]),
+        ("diyos", ["di", "yos"]),
+        ("kuwarto", ["ku", "war", "to"]),
+        # ng is ONE consonant: an onset between vowels, a coda before a consonant
+        ("ngayon", ["nga", "yon"]),
+        ("pangalan", ["pa", "nga", "lan"]),
+        ("sangkap", ["sang", "kap"]),
+        ("mangga", ["mang", "ga"]),
+        ("pinggan", ["ping", "gan"]),
+        ("tanghali", ["tang", "ha", "li"]),
+        ("anghel", ["ang", "hel"]),
+        # One written vowel is one syllable, even though mga is said /maˈŋa/
+        ("mga", ["mga"]),
+        ("ng", ["ng"]),
+        # Loan onsets are valid anywhere
+        ("trabaho", ["tra", "ba", "ho"]),
+        ("prutas", ["pru", "tas"]),
+        ("problema", ["pro", "ble", "ma"]),
+        ("tsinelas", ["tsi", "ne", "las"]),
+        ("kwarto", ["kwar", "to"]),
+        ("pwede", ["pwe", "de"]),
+        ("eskwela", ["es", "kwe", "la"]),
+        ("sentro", ["sen", "tro"]),
+        ("sombrero", ["som", "bre", "ro"]),
+        ("restawran", ["res", "taw", "ran"]),
+        # Consonant + y opens a word but splits medially
+        ("syudad", ["syu", "dad"]),
+        ("dyip", ["dyip"]),
+        ("kanyang", ["kan", "yang"]),
+        ("istasyon", ["is", "tas", "yon"]),
+    ],
+)
+def test_tagalog_syllabification(word, expected):
+    result = syllabify_tagalog_word(word)
+    assert result == expected, f"{word}: expected {expected}, got {result}"
+    assert "".join(result) == word
+
+
+def test_tagalog_case_lowercased():
+    assert syllabify_tagalog_word("Magandang") == ["ma", "gan", "dang"]
+
+
+def test_syllabify_word_routes_tagalog():
+    """The registry wires tl to its own syllabifier, not the default: the
+    default splits ``pangalan`` as ``pan|ga|lan`` because it knows nothing
+    about ``ng``."""
+    assert syllabify_word("pangalan", "tl") == ["pa", "nga", "lan"]
