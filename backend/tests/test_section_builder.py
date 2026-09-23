@@ -133,6 +133,16 @@ def test_key_phrases_uses_female_1_only():
         assert phrase.voice_id == _VOICE_MAP["female-1"]
 
 
+def test_key_phrases_use_a_dedicated_key_phrases_voice_when_the_map_names_one():
+    """tunatale-w4m7.16: Tagalog's breakdown is voiced outside the dialogue cast,
+    by a voice that honours IPA. Every L2 line of the section, not just the
+    fragments, so one voice says the whole drill."""
+    voices = {**_VOICE_MAP, "key-phrases": "de-DE-FlorianMultilingualNeural"}
+    section = build_key_phrases_section(_KEY_PHRASES, voices, NARRATOR_VOICE, L2_CODE)
+    l2_voices = {p.voice_id for p in section.phrases if p.language_code == L2_CODE}
+    assert l2_voices == {"de-DE-FlorianMultilingualNeural"}
+
+
 def test_key_phrases_narrator_uses_english():
     """Narrator phrases should have narrator voice and role='narrator'."""
     section = build_key_phrases_section(_KEY_PHRASES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)

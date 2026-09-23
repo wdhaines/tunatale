@@ -288,6 +288,14 @@ class LanguageConfig:
     # languages with no planner — callers pass ``phonemes=None`` to TTS.
     # See ``get_phoneme_planner``.
     phoneme_planner_factory: Callable[[], PhonemePlanner] | None = None
+    # True when this language's TTS locale IGNORES ``<phoneme>`` IPA, so an
+    # IPA-bearing utterance must be spoken without the ``<lang>`` wrapper and
+    # read by the voice's own front end. Measured for fil-PH (tunatale-w4m7.16):
+    # "salamat" byte-identical under its own IPA and under the IPA of "kumusta";
+    # a Multilingual voice wrapped in fil-PH ignored the IPA too, and unwrapped
+    # said "kumusta". False keeps the wrapper, which is right where the locale's
+    # front end honours IPA (nb-NO). See ``get_ipa_read_in_voice_locale``.
+    ipa_read_in_voice_locale: bool = False
     # Gzipped lemma table that reproduces this language's lemmatizer model without
     # PyTorch (``surface, upos, lemma, is_default`` rows; see
     # ``app.srs.lemma_table``). Served when ``settings.lemmatizer_type == "table"``
@@ -457,6 +465,17 @@ def get_tts_locale(code: str) -> str | None:
     Raises ``KeyError`` for an unknown code, like every other accessor here.
     """
     return get_language(code).tts_locale
+
+
+def get_ipa_read_in_voice_locale(code: str) -> bool:
+    """Does *code*'s TTS locale ignore IPA, so IPA must go out unwrapped?
+
+    ``False`` for an unknown code: keeping the wrapper is the pre-existing
+    behaviour for every language, and the flag is an opt-in per plugin.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    return config.ipa_read_in_voice_locale if config else False
 
 
 def get_tts_voice_gain_db(code: str, voice_id: str) -> float:

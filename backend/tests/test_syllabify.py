@@ -5,7 +5,7 @@ import pytest
 from app.generation.syllabify import syllabify_word
 from app.plugins.languages.no.syllabify import syllabify_norwegian_word
 from app.plugins.languages.sl.syllabify import syllabify_slovene_word
-from app.plugins.languages.tl.syllabify import syllabify_tagalog_word
+from app.plugins.languages.tl.syllabify import syllabify_tagalog_spelling, syllabify_tagalog_word
 
 # --- Edge cases ---
 
@@ -213,14 +213,44 @@ def test_syllabify_word_unknown_code_falls_back_to_default():
         ("istasyon", ["is", "tas", "yon"]),
     ],
 )
-def test_tagalog_syllabification(word, expected):
-    result = syllabify_tagalog_word(word)
+def test_tagalog_spelling_rules(word, expected):
+    """The spelling rules alone: the fallback for a word Wiktionary does not list."""
+    result = syllabify_tagalog_spelling(word)
     assert result == expected, f"{word}: expected {expected}, got {result}"
     assert "".join(result) == word
 
 
 def test_tagalog_case_lowercased():
-    assert syllabify_tagalog_word("Magandang") == ["ma", "gan", "dang"]
+    assert syllabify_tagalog_spelling("Magandang") == ["ma", "gan", "dang"]
+
+
+@pytest.mark.parametrize(
+    ("word", "expected"),
+    [
+        # Where the pronunciation disagrees with the spelling rules, it wins
+        # (tunatale-w4m7.16; the user heard ka-i-lan and si-ya as wrong).
+        ("kailan", ["kai", "lan"]),
+        ("siya", ["siya"]),
+        ("istasyon", ["is", "ta", "syon"]),
+        ("magluto", ["mag", "lu", "to"]),  # the rules split the mag- prefix: ma|glu|to
+        # Where they agree, nothing moves.
+        ("pangalan", ["pa", "nga", "lan"]),
+        ("salamat", ["sa", "la", "mat"]),
+        # No reading: the spelling rules.
+        ("nakikiramay", ["na", "ki", "ki", "ra", "may"]),
+        ("mga", ["mga"]),  # listed, but two syllables from one written vowel
+    ],
+)
+def test_tagalog_syllables_come_from_the_pronunciation_first(word, expected):
+    assert syllabify_tagalog_word(word) == expected
+
+
+def test_tagalog_pronunciation_split_keeps_case_folding_and_punctuation():
+    # The breakdown checks "".join(pieces) == word.lower() before trusting a
+    # split, so edge punctuation must ride on the edge syllables, as the rules do.
+    assert syllabify_tagalog_word("Kailan?") == ["kai", "lan?"]
+    assert syllabify_tagalog_word('"Siya,') == ['"siya,']
+    assert syllabify_tagalog_word("¿kailan") == ["¿kai", "lan"]
 
 
 def test_syllabify_word_routes_tagalog():

@@ -101,7 +101,11 @@ def _generic_breakdown_spans(phrase: str, words: list[str], language_code: str) 
                 if i < n - 1:
                     chunks.append(BreakdownChunk("".join(syls[i:]), source, (i, n) if lossless else None))
         else:
-            chunks.append(BreakdownChunk(word, None, None))
+            # A one-syllable word is its own whole-word span. It is not sliced
+            # (nothing to cut), but a planner that voices whole words as IPA
+            # (Tagalog's ``ng`` = "nang") is only asked about chunks that say
+            # which word they are (tunatale-w4m7.16).
+            chunks.append(BreakdownChunk(word, word if lossless else None, (0, 1) if lossless else None))
 
         if word_index < len(words) - 1:
             partial = " ".join(words[word_index:])
@@ -151,8 +155,12 @@ def build_key_phrases_section(
     2. Narrator translation
     3. L2 phrase repeat (female-1)
     4. Word breakdown steps (female-1)
+
+    A map that names a ``key-phrases`` voice gets that voice for every L2 line
+    instead of female-1 (tunatale-w4m7.16: Tagalog's fil-PH voices ignore IPA,
+    so its breakdown is spoken by a Multilingual voice that honours it).
     """
-    female_1_voice = l2_voice_map.get("female-1", narrator_voice)
+    female_1_voice = l2_voice_map.get("key-phrases") or l2_voice_map.get("female-1", narrator_voice)
     phrases: list[Phrase] = [
         Phrase(
             text=SECTION_TITLES[SectionType.KEY_PHRASES], voice_id=narrator_voice, language_code="en", role="narrator"

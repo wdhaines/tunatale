@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import tempfile
 import time
 from collections.abc import Mapping
@@ -20,7 +21,7 @@ from app.audio.ports import TTSService
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.slicer import ChunkSlicer, SliceSpec
 from app.audio.transcode import encode_audio_stream
-from app.languages import PhonemePlanner, get_tts_voice_gain_db
+from app.languages import PhonemePlanner, get_ipa_read_in_voice_locale, get_tts_voice_gain_db
 from app.models.lesson import Lesson, Phrase, Section
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,14 @@ logger = logging.getLogger(__name__)
 # nor the locale is an attribute of the text, and both change the audio. See
 # _synth.
 _MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None, str | None]
+
+# Leading/trailing characters that are not part of a word ("bing?" -> "bing").
+_WORD_EDGES = re.compile(r"^\W+|\W+$")
+
+
+def _bare_word(text: str) -> str:
+    return _WORD_EDGES.sub("", text.lower())
+
 
 _SAMPLE_DTYPE = "float32"
 _WAV_SUBTYPE = "PCM_16"
@@ -347,7 +356,10 @@ class LessonRenderer:
             )
             if result is None:
                 return None
-            return {phrase.text.lower(): result}
+            # Keyed by the bare word: the adapter looks up word TOKENS, so a
+            # chunk stored with its punctuation ("bing?") would otherwise match
+            # nothing and silently play as text (tunatale-w4m7.16).
+            return {_bare_word(phrase.text): result}
 
         ipa_indices: set[int] = set()
         phoneme_maps: list[Mapping[str, str] | None] = []
@@ -363,8 +375,14 @@ class LessonRenderer:
         # Norwegian. Same discriminator ``_phrase_phonemes`` already uses.
         target_locale = self._tts_locales.get(language_code)
 
-        def _phrase_locale(phrase: Phrase) -> str | None:
-            return target_locale if phrase.language_code == language_code else None
+        # A locale whose front end ignores IPA would swallow it: an IPA-bearing
+        # utterance in such a language is read by the voice's own front end.
+        ipa_unwrapped = get_ipa_read_in_voice_locale(language_code)
+
+        def _phrase_locale(phrase: Phrase, phonemes: Mapping[str, str] | None) -> str | None:
+            if phrase.language_code != language_code or (phonemes and ipa_unwrapped):
+                return None
+            return target_locale
 
         async def _synth(
             phrase_idx: int,
@@ -425,7 +443,14 @@ class LessonRenderer:
         phrase_files = list(
             await asyncio.gather(
                 *[
-                    _synth(i, text, phrase.voice_id, phrase.rate, phonemes=ph_map, speak_locale=_phrase_locale(phrase))
+                    _synth(
+                        i,
+                        text,
+                        phrase.voice_id,
+                        phrase.rate,
+                        phonemes=ph_map,
+                        speak_locale=_phrase_locale(phrase, ph_map),
+                    )
                     for i, (text, phrase, ph_map) in enumerate(
                         zip(processed_texts, section.phrases, phoneme_maps, strict=True)
                     )

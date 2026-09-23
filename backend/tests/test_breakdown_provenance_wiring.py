@@ -35,6 +35,8 @@ class TestBuildWordBreakdownSpans:
             ("busstasjon", "no"),
             ("prosim", "sl"),
             ("dober dan", "sl"),
+            ("magdadala ako ng abuloy", "tl"),
+            ("kailan ang libing?", "tl"),
         ],
     )
     def test_text_sequence_matches_the_plain_breakdown(self, phrase, code):
@@ -61,6 +63,20 @@ class TestBuildWordBreakdownSpans:
 
     def test_empty_phrase(self):
         assert build_word_breakdown_spans("", "no") == []
+
+    def test_a_one_syllable_word_inside_a_phrase_carries_its_own_provenance(self):
+        """tunatale-w4m7.16: the Tagalog planner gives whole words IPA, and the
+        renderer only asks it about chunks with provenance. ``ng`` said as text
+        by the key-phrase voice is not "nang"."""
+        chunks = build_word_breakdown_spans("magdadala ako ng abuloy", "tl")
+        ng = next(c for c in chunks if c.text == "ng")
+        assert (ng.source_word, ng.span) == ("ng", (0, 1))
+
+    def test_a_one_syllable_phrase_bookend_stays_bare(self):
+        # The bookends are the PHRASE, not a word of it, even when the phrase
+        # is one word long.
+        chunks = build_word_breakdown_spans("Po!", "tl")
+        assert [(c.text, c.source_word, c.span) for c in chunks] == [("Po!", None, None), ("Po!", None, None)]
 
 
 class TestRegistryWiring:
