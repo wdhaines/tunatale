@@ -44,13 +44,26 @@ export function createListenActions(opts: ListenActionsOptions) {
     }
   }
 
-  async function onPreviewDone(result: ListenResponse | { status: "cancelled" }) {
+  async function onPreviewDone(result: ListenResponse | { status: "cancelled"; ignored: number }) {
     const id = opts.contentId;
     showPreview = false;
     // `in` narrows the union properly; a plain `result.status === 'cancelled'`
     // check does not, because ListenResponse.status is `string` (not a literal),
     // so TS cannot exclude that arm from the negative branch.
-    if (!("created" in result)) return;
+    if (!("created" in result)) {
+      // A cancel undoes nothing server-side: an Ignore tapped in the preview is
+      // already committed, so the transcript read mode renders is stale until
+      // re-read (bd tunatale-69ou). A plain cancel stays a no-op.
+      if (result.ignored > 0) {
+        try {
+          const t = await api.getTranscript(id);
+          if (opts.contentId === id) opts.setTranscript(t);
+        } catch (e) {
+          if (opts.contentId === id) opts.setError(e instanceof Error ? e.message : String(e));
+        }
+      }
+      return;
+    }
     listenResult = result;
     try {
       await listenedStore.refresh();

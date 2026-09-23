@@ -366,3 +366,66 @@ describe("ListenPreviewModal — Ignore on CREATE rows", () => {
     });
   });
 });
+
+// An ignore is committed server-side the moment it is tapped, so cancelling
+// the modal does not undo it. The cancel result reports how many ignores
+// landed, so the page knows its transcript is stale and re-reads it
+// (bd tunatale-69ou — read mode kept the old state until a refresh).
+describe("ListenPreviewModal — cancel reports the ignores that landed", () => {
+  const cancelBtn = (container: HTMLElement) =>
+    container.querySelector<HTMLButtonElement>(".footer button.cancel")!;
+
+  it("a cancel after a successful ignore reports it", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [createCandidate("snømenn", { willCreate: true, lemma: "snøm" })],
+    });
+    mockIgnoreLemma.mockResolvedValue({ status: "ok" });
+    const onDone = vi.fn();
+
+    const { getByText, container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", languageCode: "no", onDone },
+    });
+    await waitFor(() => getByText("snømenn"));
+    await fireEvent.click(ignoreBtn(container, "create:snømenn")!);
+    await waitFor(() => expect(mockGetListenPreview).toHaveBeenCalledTimes(2));
+
+    await fireEvent.click(cancelBtn(container));
+
+    expect(onDone).toHaveBeenCalledWith({ status: "cancelled", ignored: 1 });
+  });
+
+  it("a FAILED ignore is not counted", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [createCandidate("snømenn", { willCreate: true, lemma: "snøm" })],
+    });
+    mockIgnoreLemma.mockRejectedValue(new Error("ignore boom"));
+    const onDone = vi.fn();
+
+    const { getByText, container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", languageCode: "no", onDone },
+    });
+    await waitFor(() => getByText("snømenn"));
+    await fireEvent.click(ignoreBtn(container, "create:snømenn")!);
+    await waitFor(() => expect(getByText(/couldn't ignore/i)).toBeTruthy());
+
+    await fireEvent.click(cancelBtn(container));
+
+    expect(onDone).toHaveBeenCalledWith({ status: "cancelled", ignored: 0 });
+  });
+
+  it("a plain cancel reports zero (control)", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [createCandidate("snømenn", { willCreate: true, lemma: "snøm" })],
+    });
+    const onDone = vi.fn();
+
+    const { getByText, container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", languageCode: "no", onDone },
+    });
+    await waitFor(() => getByText("snømenn"));
+
+    await fireEvent.click(cancelBtn(container));
+
+    expect(onDone).toHaveBeenCalledWith({ status: "cancelled", ignored: 0 });
+  });
+});

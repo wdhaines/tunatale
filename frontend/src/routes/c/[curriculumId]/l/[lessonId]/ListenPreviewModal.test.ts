@@ -1256,7 +1256,7 @@ describe("ListenPreviewModal", () => {
     await vi.advanceTimersByTimeAsync(10_000);
 
     expect(onDone).toHaveBeenCalledTimes(1);
-    expect(onDone).toHaveBeenCalledWith({ status: "cancelled" });
+    expect(onDone).toHaveBeenCalledWith({ status: "cancelled", ignored: 0 });
     expect(mockMarkAsListened).not.toHaveBeenCalled();
   });
 
@@ -1295,7 +1295,7 @@ describe("ListenPreviewModal", () => {
     await fireEvent.keyDown(document.activeElement as Element, { key: "Escape" });
 
     await waitFor(() => {
-      expect(onDone).toHaveBeenCalledWith({ status: "cancelled" });
+      expect(onDone).toHaveBeenCalledWith({ status: "cancelled", ignored: 0 });
       expect(mockMarkAsListened).not.toHaveBeenCalled();
     });
   });

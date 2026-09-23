@@ -21,7 +21,7 @@
 	}: {
 		lessonId: string;
 		languageCode?: string;
-		onDone: (result: ListenResponse | { status: 'cancelled' }) => void;
+		onDone: (result: ListenResponse | { status: 'cancelled'; ignored: number }) => void;
 	} = $props();
 
 	let candidates = $state<ListenPreviewCandidate[]>([]);
@@ -65,6 +65,10 @@
 	// for one row's failed ignore, where the row stays and the rest of the
 	// modal keeps working.
 	let ignoreError = $state('');
+	// Ignores that landed server-side. Cancelling does not undo them, so the
+	// cancel result reports the count: the page's transcript is stale when it is
+	// non-zero (bd tunatale-69ou). Plain `let`: nothing renders it.
+	let ignoredCount = 0;
 
 	let countdown = $state(10);
 	let countdownCancelled = $state(false);
@@ -160,7 +164,7 @@
 	function cancel() {
 		cancelCountdown();
 		committing = true;
-		onDone({ status: 'cancelled' });
+		onDone({ status: 'cancelled', ignored: ignoredCount });
 	}
 
 	function cancelOnKeydown(e: KeyboardEvent) {
@@ -590,6 +594,7 @@
 		ignoreError = '';
 		try {
 			await api.ignoreLemma(lemma, lang);
+			ignoredCount += 1;
 			const preview = await api.getListenPreview(lessonId);
 			candidates = preview.candidates;
 			ratings = reconcileRatings(preview.candidates, ratings);
