@@ -158,6 +158,10 @@ export const en = {
   "listenPreview.ignore": "Ignore",
   "listenPreview.ignoreFor": "Ignore {text}",
   "listenPreview.ignoreError": "Couldn't ignore “{text}” — try again",
+  "listenPreview.ignored": "Ignored “{text}”",
+  "listenPreview.undo": "Undo",
+  "listenPreview.undoFor": "Undo ignore of {text}",
+  "listenPreview.undoError": "Couldn't undo ignore of “{text}” — try again",
 
   // ClozeSentenceModal.svelte
   "clozeModal.ariaDialog": "Cloze sentence",

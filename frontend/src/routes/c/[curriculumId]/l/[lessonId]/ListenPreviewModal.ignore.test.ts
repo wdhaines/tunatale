@@ -24,6 +24,7 @@ vi.mock("$lib/api", () => ({
     markAsListened: vi.fn(),
     getListens: vi.fn(),
     ignoreLemma: vi.fn(),
+    unignoreLemma: vi.fn(),
   },
 }));
 
@@ -37,6 +38,7 @@ vi.mock("$lib/stores/listened.svelte", async () => {
 const mockGetListenPreview = vi.mocked(api.getListenPreview);
 const mockMarkAsListened = vi.mocked(api.markAsListened);
 const mockIgnoreLemma = vi.mocked(api.ignoreLemma);
+const mockUnignoreLemma = vi.mocked(api.unignoreLemma);
 
 const listenResult = {
   status: "ok",
@@ -427,5 +429,277 @@ describe("ListenPreviewModal — cancel reports the ignores that landed", () => 
     await fireEvent.click(cancelBtn(container));
 
     expect(onDone).toHaveBeenCalledWith({ status: "cancelled", ignored: 0 });
+  });
+});
+
+// Ignoring is committed server-side the moment it is tapped, so the modal
+// offers a timed UNDO instead of a rollback: `unignoreLemma` brings the lemma
+// back the same way `ignoreLemma` took it away (bd tunatale-4p88). The bar is
+// a live region that replaces itself on a second ignore (only the latest is
+// undoable) and dismisses itself after 5 s. The 5 s timer MUST be a plain
+// `setTimeout` — `SvelteDate` binds the real clock at module evaluation, so
+// fake timers could not reach it, and the auto-dismiss test below would decay
+// into a vacuous green.
+describe("ListenPreviewModal — the Ignore Undo bar", () => {
+  const undoBarEl = (container: HTMLElement) => container.querySelector(".undo-bar");
+  const undoBtn = (container: HTMLElement) =>
+    container.querySelector<HTMLButtonElement>(".undo-bar button.undo");
+  const cancelBtn = (container: HTMLElement) =>
+    container.querySelector<HTMLButtonElement>(".footer button.cancel")!;
+
+  it("shows the undo bar after a successful ignore, naming the word", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [createCandidate("snømenn", { willCreate: true, lemma: "snøm" })],
+    });
+    mockIgnoreLemma.mockResolvedValue({ status: "ok" });
+
+    const { getByText, container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", languageCode: "no", onDone: vi.fn() },
+    });
+
+    await waitFor(() => getByText("snømenn"));
+    await fireEvent.click(ignoreBtn(container, "create:snømenn")!);
+
+    await waitFor(() => expect(undoBarEl(container)).not.toBeNull());
+    // The bar is a status live region, so it names the word in its text.
+    expect(getByText("Ignored “snømenn”")).toBeTruthy();
+    // …and the Undo button carries an aria-label naming what it would bring back.
+    expect(undoBtn(container)!.getAttribute("aria-label")).toBe("Undo ignore of snømenn");
+  });
+
+  it("a failed ignore shows the error and NO undo bar", async () => {
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [createCandidate("snømenn", { willCreate: true, lemma: "snøm" })],
+    });
+    mockIgnoreLemma.mockRejectedValue(new Error("ignore boom"));
+
+    const { getByText, container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", languageCode: "no", onDone: vi.fn() },
+    });
+
+    await waitFor(() => getByText("snømenn"));
+    await fireEvent.click(ignoreBtn(container, "create:snømenn")!);
+
+    await waitFor(() => expect(getByText(/couldn't ignore/i)).toBeTruthy());
+    // Nothing was ignored, so there is nothing to undo — the bar must not appear.
+    expect(undoBarEl(container)).toBeNull();
+  });
+
+  it("Undo sends the LEMMA, refetches, and the row comes back", async () => {
+    mockGetListenPreview
+      // First preview: snømenn is the junk the user ignores.
+      .mockResolvedValueOnce({
+        candidates: [createCandidate("snømenn", { willCreate: true, lemma: "snøm" })],
+      })
+      // Post-ignore (the server dropped snømenn).
+      .mockResolvedValueOnce({
+        candidates: [createCandidate("kake", { willCreate: true, lemma: null })],
+      })
+      // Post-undo (it is back).
+      .mockResolvedValueOnce({
+        candidates: [createCandidate("snømenn", { willCreate: true, lemma: "snøm" })],
+      });
+    mockIgnoreLemma.mockResolvedValue({ status: "ok" });
+    mockUnignoreLemma.mockResolvedValue({ status: "ok" });
+
+    const { getByText, queryByText, container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", languageCode: "no", onDone: vi.fn() },
+    });
+
+    await waitFor(() => getByText("snømenn"));
+    await fireEvent.click(ignoreBtn(container, "create:snømenn")!);
+    await waitFor(() => expect(queryByText("snømenn")).toBeNull());
+
+    await fireEvent.click(undoBtn(container)!);
+
+    await waitFor(() => {
+      expect(mockUnignoreLemma).toHaveBeenCalledTimes(1);
+    });
+    // Same lemma-vs-text contract as the ignore: the backend matches on
+    // `lemma` (`text: "snømenn"`, `lemma: "snøm"`).
+    expect(mockUnignoreLemma).toHaveBeenCalledWith("snøm", "no");
+    expect(mockUnignoreLemma).not.toHaveBeenCalledWith("snømenn", "no");
+    // The undo REFETCHED like an ignore does — the returned row is the
+    // server's reply, not a locally unhidden one.
+    expect(mockGetListenPreview).toHaveBeenCalledTimes(3);
+    await waitFor(() => getByText("snømenn"));
+    // The bar is gone: this undo was consumed.
+    expect(undoBarEl(container)).toBeNull();
+  });
+
+  it("a cancel after ignore-then-undo reports ignored: 0", async () => {
+    mockGetListenPreview
+      .mockResolvedValueOnce({
+        candidates: [createCandidate("snømenn", { willCreate: true, lemma: "snøm" })],
+      })
+      .mockResolvedValueOnce({
+        candidates: [],
+      })
+      .mockResolvedValueOnce({
+        candidates: [createCandidate("snømenn", { willCreate: true, lemma: "snøm" })],
+      });
+    mockIgnoreLemma.mockResolvedValue({ status: "ok" });
+    mockUnignoreLemma.mockResolvedValue({ status: "ok" });
+    const onDone = vi.fn();
+
+    const { getByText, container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", languageCode: "no", onDone },
+    });
+
+    await waitFor(() => getByText("snømenn"));
+    await fireEvent.click(ignoreBtn(container, "create:snømenn")!);
+    await waitFor(() => expect(mockGetListenPreview).toHaveBeenCalledTimes(2));
+    await fireEvent.click(undoBtn(container)!);
+    await waitFor(() => expect(mockUnignoreLemma).toHaveBeenCalledTimes(1));
+
+    await fireEvent.click(cancelBtn(container));
+
+    // The undo UNDID the one ignore that landed, so the page's transcript is
+    // NOT stale — the count the cancel reports is the thing the page acts on.
+    expect(onDone).toHaveBeenCalledWith({ status: "cancelled", ignored: 0 });
+  });
+
+  it("the undo bar auto-dismisses exactly 5 seconds after the ignore", async () => {
+    vi.useFakeTimers();
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [createCandidate("snømenn", { willCreate: true, lemma: "snøm" })],
+    });
+    mockIgnoreLemma.mockResolvedValue({ status: "ok" });
+
+    const { container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", languageCode: "no", onDone: vi.fn() },
+    });
+    // Flush the onMount fetch; the ignore flies on microtasks below.
+    await vi.advanceTimersByTimeAsync(0);
+
+    await fireEvent.click(ignoreBtn(container, "create:snømenn")!);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(undoBarEl(container)).not.toBeNull();
+
+    // Still offering the undo at 4999 ms…
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(undoBarEl(container)).not.toBeNull();
+
+    // …gone at 5000 (UNDO_MS = 5000).
+    await vi.advanceTimersByTimeAsync(1);
+    expect(undoBarEl(container)).toBeNull();
+  });
+
+  it("a second ignore replaces the bar and Undo only undoes the latest", async () => {
+    mockGetListenPreview
+      .mockResolvedValueOnce({
+        candidates: [
+          createCandidate("snømenn", { willCreate: true, lemma: "snøm" }),
+          createCandidate("brød", { willCreate: true, lemma: "brød" }),
+        ],
+      })
+      // Post-ignore of snømenn.
+      .mockResolvedValueOnce({
+        candidates: [createCandidate("brød", { willCreate: true, lemma: "brød" })],
+      })
+      // Post-ignore of brød.
+      .mockResolvedValueOnce({
+        candidates: [],
+      })
+      // Post-undo of brød.
+      .mockResolvedValueOnce({
+        candidates: [createCandidate("brød", { willCreate: true, lemma: "brød" })],
+      });
+    mockIgnoreLemma.mockResolvedValue({ status: "ok" });
+    mockUnignoreLemma.mockResolvedValue({ status: "ok" });
+
+    const { getByText, queryByText, container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", languageCode: "no", onDone: vi.fn() },
+    });
+
+    await waitFor(() => getByText("snømenn"));
+    await fireEvent.click(ignoreBtn(container, "create:snømenn")!);
+    await waitFor(() => expect(queryByText("snømenn")).toBeNull());
+    expect(getByText("Ignored “snømenn”")).toBeTruthy();
+
+    await fireEvent.click(ignoreBtn(container, "create:brød")!);
+    await waitFor(() => expect(queryByText("brød")).toBeNull());
+    // The bar was REPLACED, not stacked: only the latest ignore is named.
+    await waitFor(() => expect(getByText("Ignored “brød”")).toBeTruthy());
+    expect(container.querySelectorAll(".undo-bar")).toHaveLength(1);
+
+    await fireEvent.click(undoBtn(container)!);
+    await waitFor(() => {
+      expect(mockUnignoreLemma).toHaveBeenCalledTimes(1);
+    });
+    // Only the SECOND ignore is undoable — the first never got an undo.
+    expect(mockUnignoreLemma).toHaveBeenCalledWith("brød", "no");
+    expect(mockUnignoreLemma).not.toHaveBeenCalledWith("snøm", "no");
+    // snømenn stays absent (never undone); brød came back via the refetch.
+    expect(queryByText("snømenn")).toBeNull();
+    await waitFor(() => getByText("brød"));
+  });
+
+  it("a failed Undo is visible, the row stays ignored, and the bar comes back", async () => {
+    mockGetListenPreview
+      .mockResolvedValueOnce({
+        candidates: [createCandidate("snømenn", { willCreate: true, lemma: "snøm" })],
+      })
+      .mockResolvedValueOnce({
+        candidates: [createCandidate("kake", { willCreate: true, lemma: null })],
+      });
+    mockIgnoreLemma.mockResolvedValue({ status: "ok" });
+    mockUnignoreLemma.mockRejectedValue(new Error("undo boom"));
+    const onDone = vi.fn();
+
+    const { getByText, queryByText, container } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", languageCode: "no", onDone },
+    });
+
+    await waitFor(() => getByText("snømenn"));
+    await fireEvent.click(ignoreBtn(container, "create:snømenn")!);
+    await waitFor(() => expect(queryByText("snømenn")).toBeNull());
+
+    await fireEvent.click(undoBtn(container)!);
+
+    // The failure is a visible, non-destructive error — like `ignoreError`,
+    // NOT the body-replacing `error`.
+    await waitFor(() => expect(getByText(/couldn't undo/i)).toBeTruthy());
+    expect(mockUnignoreLemma).toHaveBeenCalledTimes(1);
+    // The undo failed BEFORE the refetch — the server was never re-read.
+    expect(mockGetListenPreview).toHaveBeenCalledTimes(2);
+    // The row is still ignored, so the word is still absent…
+    expect(queryByText("snømenn")).toBeNull();
+    // …and the bar is back, still offering the undo.
+    await waitFor(() => expect(undoBarEl(container)).not.toBeNull());
+
+    // The ignore still counts as landed — an undone attempt is not an un-ignore.
+    await fireEvent.click(cancelBtn(container));
+    expect(onDone).toHaveBeenCalledWith({ status: "cancelled", ignored: 1 });
+  });
+
+  it("unmounting the modal clears the undo timer — nothing fires after destroy", async () => {
+    vi.useFakeTimers();
+    mockGetListenPreview.mockResolvedValue({
+      candidates: [createCandidate("snømenn", { willCreate: true, lemma: "snøm" })],
+    });
+    mockIgnoreLemma.mockResolvedValue({ status: "ok" });
+
+    const { container, unmount } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", languageCode: "no", onDone: vi.fn() },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await fireEvent.click(ignoreBtn(container, "create:snømenn")!);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(undoBarEl(container)).not.toBeNull();
+    // The armed 5-second timer is the only pending timer.
+    expect(vi.getTimerCount()).toBe(1);
+
+    unmount();
+    // onDestroy cleared the pending dismissal, so no timer survives…
+    expect(vi.getTimerCount()).toBe(0);
+
+    // …and advancing past the dismissal point changes nothing — without the
+    // clear, this would fire on a dead component and write to $state after
+    // destroy.
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
