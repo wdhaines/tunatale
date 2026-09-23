@@ -371,8 +371,17 @@ class AnkiSync:
         _writer=None,
         _anki_col_ver: int | None = None,
         _anki_col_crt: int | None = None,
+        language_code: str | None = None,
     ) -> None:
         self._db = db
+        # The language THIS reconcile is for. peer_sync hands main() a
+        # per-language settings copy, but this module's `settings` is the
+        # process-global one, whose target_language is the .env default: on an
+        # instance defaulting to Norwegian, a Slovene or Tagalog sync keyed its
+        # reverse-imported notes, guids and media as Norwegian (w4m7.8 finding,
+        # pinned by test_anki_sync_language_scope.py). None keeps the global,
+        # for callers that sync a single configured language.
+        self._language_code = language_code if language_code is not None else settings.target_language
         self._anki_col_ver = _anki_col_ver
         self._anki_col_crt = _anki_col_crt
         if _reader is not None:
@@ -866,7 +875,7 @@ class AnkiSync:
             if local_item is None:
                 # Fallback: row was never linked (e.g., imported before anki_note_id
                 # column was populated). Validate guid before trusting it.
-                expected_guid = compute_guid(rec.l2_text, settings.target_language, rec.disambig_key)
+                expected_guid = compute_guid(rec.l2_text, self._language_code, rec.disambig_key)
                 if rec.anki_guid != expected_guid:
                     report.skipped_unknown_guid += 1
                     continue
@@ -1324,7 +1333,7 @@ class AnkiSync:
                     # never landed.
                     try:
                         wrote = self._writer.update_cloze_text(
-                            anki_note_id, cloze_text_update, language_code=settings.target_language
+                            anki_note_id, cloze_text_update, language_code=self._language_code
                         )
                     except DuplicateNoteError as exc:
                         # Another note already holds this sentence. Keep the flag
@@ -1622,7 +1631,7 @@ class AnkiSync:
                             coll_id,
                             uncloze_text(cloze_text),
                             item.syntactic_unit.text,
-                            voice=get_tts_voice(settings.target_language),
+                            voice=get_tts_voice(self._language_code),
                         )
                         sentence_audio = self._db.get_sentence_audio_filename(coll_id)
                     except Exception:
@@ -1649,7 +1658,7 @@ class AnkiSync:
                         cloze_text,
                         back_extra=back_extra,
                         tags=["tunatale", "cloze"],
-                        language_code=settings.target_language,
+                        language_code=self._language_code,
                     )
                     created += 1
                 except DuplicateNoteError as exc:
@@ -1693,7 +1702,7 @@ class AnkiSync:
                 _copy_tt_media_to_anki(self._writer, existing_audio)
                 audio_tag = f"[sound:{existing_audio}]"
             elif media is not None and media.audio_bytes is not None:
-                prefix = settings.target_language if media.audio_source == "forvo" else "tts"
+                prefix = self._language_code if media.audio_source == "forvo" else "tts"
                 audio_filename = f"{_safe_stem(word, prefix)}.mp3"
                 self._writer.store_media_file(audio_filename, media.audio_bytes)
                 audio_tag = f"[sound:{audio_filename}]"
@@ -1742,7 +1751,7 @@ class AnkiSync:
 
             try:
                 note_id = self._writer.create_note(
-                    deck_name, model_name, fields, ["tunatale"], language_code=settings.target_language
+                    deck_name, model_name, fields, ["tunatale"], language_code=self._language_code
                 )
                 created += 1
             except DuplicateNoteError as exc:
@@ -1825,7 +1834,7 @@ class AnkiSync:
             if not directions:
                 continue
 
-            self._db.upsert_by_guid(unit, settings.target_language, directions, anki_note_id=rec.anki_note_id)
+            self._db.upsert_by_guid(unit, self._language_code, directions, anki_note_id=rec.anki_note_id)
             notes_created_from_anki += 1
 
         return CreateNewReport(
@@ -1925,8 +1934,8 @@ class AnkiSync:
             # The picture is DRAWN by `prestage_production_images`, never here —
             # this phase makes no network call and now makes no drawing either,
             # so its contract is unchanged: it mints from what is already staged.
-            is_number = number_value(unit.text, settings.target_language) is not None
-            if not is_number and is_function_word(unit.text, settings.target_language, upos=material.upos):
+            is_number = number_value(unit.text, self._language_code) is not None
+            if not is_number and is_function_word(unit.text, self._language_code, upos=material.upos):
                 # Closed-class words route to a cloze without spending a fetch: a
                 # picture of "foran" is noise, and minting a card with a meaningless
                 # image is the failure mode this whole router exists to avoid. The
@@ -2034,7 +2043,7 @@ class AnkiSync:
             unit.text,
             material.examples,
             material.inflections,
-            variants=card_surface_variants(settings.target_language, unit.text),
+            variants=card_surface_variants(self._language_code, unit.text),
         )
         if choice is None:
             # The LLM tier. `choose_cloze_sentence`'s docstring has always ended
@@ -2047,7 +2056,7 @@ class AnkiSync:
             # `Example sentences` is 98.7% populated, so preferring the cache
             # would swap almost the whole deck for model output — a far larger
             # change than the one this is for.
-            cached = self._db.get_cached_cloze_sentence(unit.text, settings.target_language)
+            cached = self._db.get_cached_cloze_sentence(unit.text, self._language_code)
             if cached is not None and re.search(rf"\b{re.escape(unit.text)}\b", cached.sentence, re.IGNORECASE):
                 # The boundary check is not redundant with the generator's. A
                 # cached row can predate a prompt change, and a cloze whose
@@ -2112,7 +2121,7 @@ class AnkiSync:
             source_sentence=make_cloze_text(choice.surface, choice.sentence),
             source_sentence_translation=choice.gloss,
         )
-        self._db.add_collocation(cloze_unit, language_code=settings.target_language)
+        self._db.add_collocation(cloze_unit, language_code=self._language_code)
         # Record WHICH word this cloze covers. The rows stay separate — sync maps
         # one Anki note to one collocation — but every reader now resolves the
         # word rather than whichever of the two the lemma index happened to
@@ -2123,7 +2132,7 @@ class AnkiSync:
         # returns whether it created the row, not which row: on the idempotent
         # second pass there is no new id to return but the link still has to hold.
         cloze_id = self._db.get_collocation_id_by_guid(
-            compute_guid(cloze_unit.text, settings.target_language, cloze_unit.disambig_key or "")
+            compute_guid(cloze_unit.text, self._language_code, cloze_unit.disambig_key or "")
         )
         self._db.set_base_collocation_id(cloze_id, cand.collocation_id)
         report.clozed += 1

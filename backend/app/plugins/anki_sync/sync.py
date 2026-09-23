@@ -566,6 +566,7 @@ def main(
                 _writer=writer,
                 _anki_col_ver=col_ver,
                 _anki_col_crt=col_crt,
+                language_code=language_code,
             )
             with _phase(timings, "resolve_model"):
                 model_name = _resolve_model_name(_s, language_code, ctx.conn, deck_name)
