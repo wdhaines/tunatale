@@ -1442,3 +1442,75 @@ class TestAudioErrorMapping:
 
         assert response.status_code == 503
         assert "Azure TTS synthesis failed" in response.json()["detail"]
+
+
+class TestAudioUrlsWithoutALanguageHeader:
+    """An ``<audio src>`` or a download link cannot send ``X-TT-Language``, so
+    the request resolves to the DEFAULT language's store. The first Tagalog
+    lesson on the live instance (2026-09-23) rendered fine, and its section
+    tracks then 404'd from the player because the default store was another
+    language's. Audio ids are UUIDs, unique across languages, so a miss in the
+    request's store is looked up in the others.
+
+    Here the default is ``sl`` and the audio lives in ``no`` — the same shape.
+    """
+
+    @pytest.fixture
+    def two_language_app(self, monkeypatch):
+        from app.config import settings as _settings
+        from app.languages import get_language
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        monkeypatch.setattr(_settings, "target_language", "sl")
+        dbs = {"sl": SRSDatabase(":memory:"), "no": SRSDatabase(":memory:")}
+        stores = {"sl": ContentStore(":memory:"), "no": ContentStore(":memory:")}
+        app.state.srs_dbs = dbs
+        app.state.content_stores = stores
+        app.state.languages = {"sl": get_language("sl"), "no": get_language("no")}
+        app.state.srs_db = dbs["sl"]
+        app.state.content_store = stores["sl"]
+        app.state.language = get_language("sl")
+        try:
+            yield stores
+        finally:
+            for db in dbs.values():
+                db.close()
+            for attr in ("srs_dbs", "content_stores", "languages", "srs_db", "content_store", "language"):
+                if hasattr(app.state, attr):
+                    delattr(app.state, attr)
+
+    def _norwegian_lesson_with_audio(self, stores, tmp_path) -> None:
+        no = stores["no"]
+        no.save_curriculum("c-no", Curriculum(id="c-no", topic="en tur i fjellet", language_code="no", cefr_level="A2"))
+        no.save_lesson("lesson-no", "c-no", 3, _make_mock_lesson_with_sections())
+        (tmp_path / "full.opus").write_bytes(b"OggS-full")
+        (tmp_path / "sec.opus").write_bytes(b"OggS-sec")
+        no.save_audio_file("full-no", "lesson-no", str(tmp_path / "full.opus"))
+        no.save_audio_file(
+            "sec-no", "lesson-no", str(tmp_path / "sec.opus"), section_index=0, section_type="key_phrases"
+        )
+
+    async def test_a_track_in_another_languages_store_is_served(self, two_language_app, tmp_path):
+        self._norwegian_lesson_with_audio(two_language_app, tmp_path)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/sec-no")
+        assert response.status_code == 200
+        assert response.content == b"OggS-sec"
+        # The filename's topic and day come from the store that HAS the row.
+        cd = response.headers["content-disposition"]
+        assert "en_tur_i_fjellet" in cd.lower()
+        assert "Day03" in cd
+
+    async def test_the_zip_for_a_lesson_in_another_languages_store_is_served(self, two_language_app, tmp_path):
+        self._norwegian_lesson_with_audio(two_language_app, tmp_path)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/lesson/lesson-no/zip")
+        assert response.status_code == 200
+        assert "en_tur_i_fjellet_Day03" in response.headers["content-disposition"]
+
+    async def test_an_id_in_no_store_still_404s(self, two_language_app, tmp_path):
+        self._norwegian_lesson_with_audio(two_language_app, tmp_path)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            assert (await client.get("/api/audio/never-rendered")).status_code == 404
+            assert (await client.get("/api/audio/lesson/never-rendered/zip")).status_code == 404

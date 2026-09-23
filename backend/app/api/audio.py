@@ -21,6 +21,20 @@ from app.models.lesson import SectionType
 router = APIRouter(prefix="/api/audio", tags=["audio"])
 
 
+def _stores_to_search(request: Request) -> list:
+    """The request's content store first, then every other language's.
+
+    An ``<audio src>`` or a download link cannot send ``X-TT-Language``, so it
+    always resolves to the DEFAULT language's store — and a lesson in any other
+    language 404'd from the player (the first Tagalog lesson, 2026-09-23).
+    Audio ids are UUIDs and lesson ids carry a random suffix, so a hit in
+    another language's store is the right row, not a collision.
+    """
+    first = request.state.content_store
+    others = getattr(request.app.state, "content_stores", None) or {}
+    return [first] + [s for s in others.values() if s is not first]
+
+
 def _sanitize_filename(name: str) -> str:
     """Strip filesystem-illegal characters and collapse whitespace to underscores."""
     name = re.sub(r'[/\\:*?"<>|]', "", name)
@@ -138,8 +152,11 @@ async def get_lesson_audio(lesson_id: str, request: Request):
 )
 async def download_lesson_zip(lesson_id: str, request: Request):
     """Return a ZIP of all section WAVs for a lesson with context-rich filenames."""
-    store = request.state.content_store
-    rows = store.list_audio_files_for_lesson(lesson_id)
+    rows: list[dict] = []
+    for store in _stores_to_search(request):
+        rows = store.list_audio_files_for_lesson(lesson_id)
+        if rows:
+            break
     full_row = next((r for r in rows if r["section_index"] is None), None)
     section_rows = [r for r in rows if r["section_index"] is not None]
 
@@ -187,9 +204,11 @@ async def download_lesson_zip(lesson_id: str, request: Request):
     responses={200: {"content": {"application/octet-stream": {}}}},
 )
 async def get_audio(audio_id: str, request: Request):
-    store = request.state.content_store
-    row = store.get_audio_file_row(audio_id)
-    if row is None:
+    for store in _stores_to_search(request):
+        row = store.get_audio_file_row(audio_id)
+        if row is not None:
+            break
+    else:
         raise HTTPException(status_code=404, detail="Audio not found")
 
     # Resolved, not taken literally: the recorded string may name another
