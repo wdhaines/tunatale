@@ -57,12 +57,13 @@ register(
                 # "kumusta"). Multilingual voices honour it only unwrapped, read
                 # by their own front end, so the base language matters: es/it
                 # voices dropped ŋ, h or ʔ, and the German voices said all of
-                # them (fil-PH STT on pangalan, kahapon, abuloy). The user
-                # ranked Florian first by ear, 2026-09-23. Known quirks,
-                # measured: he says the tap ɾ as d (the planner writes r), he
-                # ignores a bare stress mark but honours vowel length, and he
-                # creaks on very short open syllables.
-                "key-phrases": "de-DE-FlorianMultilingualNeural",
+                # them (fil-PH STT on pangalan, kahapon, abuloy). The user chose
+                # Seraphina by ear, 2026-09-23. Florian ranked first before the
+                # creak on short open syllables was found (0-75 ms voiced at
+                # ~100 Hz on "sa"/"ka"/"ma"; Seraphina 210-258 ms at 165-177 Hz,
+                # every variant). Seraphina's renders vary call to call, so a
+                # sound-merge check on her cannot compare single-render hashes.
+                "key-phrases": "de-DE-SeraphinaMultilingualNeural",
             },
             # Per-voice loudness gains (dB) applied at assembly, target −20.0
             # LUFS: integrated loudness of the same 10 clips per voice
@@ -79,10 +80,11 @@ register(
                 "fil-PH-AngeloNeural": -0.6,
                 "en-US-EmmaMultilingualNeural": -1.9,
                 "en-US-SamuelMultilingualNeural": -0.1,
-                # 2026-09-23 on 10 Tagalog sentences (the wake lesson's key
-                # phrases plus three), same method; the controls reproduced the
-                # table within 0.5 dB (Blessica -21.3 vs -21.8, Emma -18.3 vs -18.1).
-                "de-DE-FlorianMultilingualNeural": 1.2,
+                # The key-phrases voice, 2026-09-23 on 10 Tagalog sentences (the
+                # wake lesson's key phrases plus three), same method: -21.84 LUFS.
+                # The controls reproduced the table within 0.5 dB (Blessica -21.3
+                # vs -21.8, Emma -18.3 vs -18.1).
+                "de-DE-SeraphinaMultilingualNeural": 1.8,
                 "en-US-GuyNeural": -0.9,
             },
         ),
