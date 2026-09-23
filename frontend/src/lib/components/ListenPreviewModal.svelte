@@ -69,6 +69,61 @@
 	// cancel result reports the count: the page's transcript is stale when it is
 	// non-zero (bd tunatale-69ou). Plain `let`: nothing renders it.
 	let ignoredCount = 0;
+	// The 5-second "Ignored …" undo bar (bd tunatale-4p88). An ignore is
+	// committed server-side the moment it lands, so the bar — not a rollback —
+	// is the undo, and only the LATEST ignore is undoable: a second ignore
+	// replaces the bar and restarts its timer.
+	//
+	// ⚠️ The 5 s timer MUST be a plain `setTimeout`, never `SvelteDate`:
+	// SvelteDate binds the real clock at module evaluation, so fake timers
+	// cannot reach it and the auto-dismiss test would decay into a vacuous
+	// green. `undoBar` is $state (the template renders it); the handle is a
+	// plain `let` (only handlers and the callback touch it).
+	let undoBar = $state<{ text: string; lemma: string; lang: string } | null>(null);
+	let undoTimer: ReturnType<typeof setTimeout> | null = null;
+	const UNDO_MS = 5000;
+
+	function clearUndoTimer() {
+		if (undoTimer !== null) {
+			clearTimeout(undoTimer);
+			undoTimer = null;
+		}
+	}
+
+	function showUndoBar(text: string, lemma: string, lang: string) {
+		clearUndoTimer();
+		undoBar = { text, lemma, lang };
+		undoTimer = setTimeout(() => {
+			undoBar = null;
+			undoTimer = null;
+		}, UNDO_MS);
+	}
+
+	async function undoIgnore(target: { text: string; lemma: string; lang: string }) {
+		// Undoing is an interaction, like ignoring and grading: it cancels the
+		// auto-commit countdown.
+		handleInteraction();
+		// Hide the bar immediately — the Undo button unmounts, so a second
+		// click cannot double-submit while the request is in flight.
+		clearUndoTimer();
+		undoBar = null;
+		try {
+			await api.unignoreLemma(target.lemma, target.lang);
+			ignoredCount -= 1;
+			// Same contract as `ignoreCandidate`: the server decides what the
+			// new list is, so refetch and merge the user's grades over the
+			// fresh seeds.
+			const preview = await api.getListenPreview(lessonId);
+			candidates = preview.candidates;
+			ratings = reconcileRatings(preview.candidates, ratings);
+		} catch (e) {
+			// The ignore is still in effect, so the bar comes back (restarting
+			// its 5-second window) beside a visible, non-destructive error —
+			// the `ignoreError` idiom, NOT the body-replacing `error`.
+			showUndoBar(target.text, target.lemma, target.lang);
+			ignoreError = t('listenPreview.undoError', { text: target.text });
+		}
+	}
 
 	let countdown = $state(10);
 	let countdownCancelled = $state(false);
@@ -160,6 +215,9 @@
 	// ticking on a dead component and auto-commits a listen for a lesson the
 	// user has left. Clears the timer only — no $state writes after destroy.
 	onDestroy(clearCountdownTimer);
+	// The same for the undo bar: a pending 5-second dismissal must not fire on
+	// a dead component and write to `undoBar` after destroy.
+	onDestroy(clearUndoTimer);
 
 	function cancel() {
 		cancelCountdown();
@@ -595,6 +653,8 @@
 		try {
 			await api.ignoreLemma(lemma, lang);
 			ignoredCount += 1;
+			// The ignore is committed server-side; the 5-second bar is the undo.
+			showUndoBar(c.text, lemma, lang);
 			const preview = await api.getListenPreview(lessonId);
 			candidates = preview.candidates;
 			ratings = reconcileRatings(preview.candidates, ratings);
@@ -716,17 +776,22 @@
 					</div>
 				{/snippet}
 
-				{#snippet ignoreControl(c: ListenPreviewCandidate)}
+				{#snippet ignoreLink(c: ListenPreviewCandidate)}
 					{@const key = candidateKey(c)}
-					<!-- An Ignore on a create row — junk the preview offers as a new
-					     word (a stray letter, a name) deserves a dismissal, not just a
-					     skip. Rendered only where it means something: `kind ===
-					     'create'` (a tracked row has a card; ignoring its lemma is what
-					     the transcript popover is for), a non-empty `c.lemma` (the key
-					     the ignore list is matched on), and a `languageCode` prop. It
-					     renders on over-budget tail rows too — junk can sit in the
-					     tail, and `will_create` says nothing about whether the word is
-					     worth creating at all. -->
+					<!-- The quiet "Ignore" link on a create row — junk the preview
+					     offers as a new word (a stray letter, a name) deserves a
+					     dismissal, not just a skip. Plain underlined text, no pill —
+					     the row's real control is the grade, and Ignore is the rare
+					     second action (bd tunatale-4p88). A grid item of the row in
+					     column 2 (the Due column), row 2 — the gloss's line —
+					     baseline-aligned with the gloss. Rendered only where it
+					     means something: `kind === 'create'` (a tracked row has a
+					     card; ignoring its lemma is what the transcript popover is
+					     for), a non-empty `c.lemma` (the key the ignore list is
+					     matched on), and a `languageCode` prop. It renders on
+					     over-budget tail rows too — junk can sit in the tail, and
+					     `will_create` says nothing about whether the word is worth
+					     creating at all. -->
 					{#if c.kind === 'create' && c.lemma && languageCode}
 						{@const lemma = c.lemma}
 						{@const lang = languageCode}
@@ -764,10 +829,11 @@
 							{:else}
 								<span class="gloss empty" aria-label={t('listenPreview.noGloss')}>&mdash;</span>
 							{/if}
-							{@render ignoreControl(c)}
 						</div>
 
 						{@render dayTag(c)}
+
+						{@render ignoreLink(c)}
 
 						{@render gradeControl(c)}
 					</li>
@@ -802,10 +868,11 @@
 							{:else}
 								<span class="gloss empty" aria-label={t('listenPreview.noGloss')}>&mdash;</span>
 							{/if}
-							{@render ignoreControl(c)}
 						</div>
 
 						{@render dayTag(c)}
+
+						{@render ignoreLink(c)}
 
 						{@render gradeControl(c)}
 					</li>
@@ -910,6 +977,22 @@
 			</div>
 		{/if}
 
+		{#if undoBar}
+			{@const undo = undoBar}
+			<!-- A live region: the ignore is committed server-side the moment it
+			     lands, so this 5-second bar is the whole undo — and its text and
+			     the Undo button both name what the undo would bring back. -->
+			<div class="undo-bar" role="status">
+				<span class="undo-text">{t('listenPreview.ignored', { text: undo.text })}</span>
+				<button
+					type="button"
+					class="undo"
+					aria-label={t('listenPreview.undoFor', { text: undo.text })}
+					onclick={() => void undoIgnore(undo)}
+				>{t('listenPreview.undo')}</button>
+			</div>
+		{/if}
+
 		<div class="footer">
 			<button onclick={cancel} type="button" class="cancel">{t('listenPreview.cancel')}</button>
 			<button onclick={() => { handleInteraction(); doCommit(); }} disabled={loading || committing || !!error}>
@@ -1001,21 +1084,59 @@
 	.ignore-error {
 		margin: 0 0 0.5rem;
 	}
-	.sub .ignore {
-		flex-shrink: 0;
-		margin-left: auto;
-		border: 1px solid var(--color-border);
-		border-radius: 4px;
-		background: var(--color-surface-2);
-		color: var(--color-muted);
-		font-size: 0.66rem;
+	/* The quiet Ignore link (tunatale-4p88): a grid item of the row in column 2
+	   (the Due column), row 2 — the GLOSS's line — aligned on the gloss's
+	   baseline and pulled `justify-self: start`, so its left edge sits on the
+	   same column edge as the pill one row above. Plain underlined text: no
+	   border, no background, no pill. `align-self: baseline` on `.sub` and
+	   this link puts both on the gloss's line; on a row without a link nothing
+	   occupies this cell and row 2 is untouched, so the pill sits identically
+	   with and without a link. */
+	.ignore {
+		grid-column: 2;
+		grid-row: 2;
+		justify-self: start;
+		align-self: baseline;
+		background: none;
+		border: none;
+		padding: 0;
+		margin: 0;
 		font-family: inherit;
-		padding: 0.1rem 0.4rem;
+		font-size: 0.66rem;
+		line-height: 1.25;
+		color: var(--color-muted);
+		text-decoration: underline;
+		text-underline-offset: 2px;
 		cursor: pointer;
 	}
-	.sub .ignore:disabled {
+	.ignore:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+	/* The 5-second undo bar (tunatale-4p88). A direct flex child of `.modal`
+	   between the body and the footer; a live region, so the "Ignored …" text
+	   is announced when it appears and again when it replaces itself. */
+	.undo-bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		padding: 0.4rem 0.5rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-surface-2);
+		font-size: 0.8rem;
+		color: var(--color-text);
+	}
+	.undo-bar .undo {
+		padding: 0.25rem 0.5rem;
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--color-primary);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		cursor: pointer;
 	}
 	/* Option C: the countdown lives ON the Grade All button. The tick box is
 	   always mounted and held open by min-width (empty → `visibility: hidden`,
@@ -1124,7 +1245,13 @@
 		   for its content, never to make it elastic. Keep both arms in step:
 		   the container-query arm below carries the same value. */
 		grid-template-columns: minmax(0, 1fr) 3.5rem 11rem;
-		gap: 0.1rem 0.35rem;
+		/* Row gap 0.3rem, not 0.1rem (tunatale-4p88): the due pill now sits on
+		   the word's baseline in row 1, and its mastery-rail stack (7px of
+		   bottom padding) hung 2.4px into row 2, onto the Ignore link beneath
+		   it. Measured at 390px: pill bottom 274.5 vs link top 272.0. The gap
+		   applies to every row alike, so rows with and without a link keep
+		   identical geometry. */
+		gap: 0.3rem 0.35rem;
 		padding: 0.35rem 0.15rem;
 	}
 	.list-head {
@@ -1155,6 +1282,9 @@
 	.text {
 		grid-column: 1;
 		grid-row: 1;
+		/* Baseline-aligned with `.day-cell`: the pill sits on the word's
+		   baseline, whatever the pill's own height (tunatale-4p88). */
+		align-self: baseline;
 		font-size: 0.85rem;
 		line-height: 1.25;
 		hyphens: auto;
@@ -1167,6 +1297,9 @@
 		grid-row: 2;
 		display: flex;
 		align-items: baseline;
+		/* Baseline-aligned with the Ignore link in this same row: the gloss and
+		   the link share one baseline (tunatale-4p88). */
+		align-self: baseline;
 		gap: 0.25rem;
 		min-width: 0;
 	}
@@ -1238,11 +1371,16 @@
 	   is this wrapper and the tag is two levels down — the placement has to
 	   live here or the tag falls back to auto-placement and lands in the wrong
 	   column. `justify-self: start` still sizes the cell to the tag, so the
-	   tag's own left edge is unchanged (what the layout spec measures). */
+	   tag's own left edge is unchanged (what the layout spec measures).
+	   `grid-row: 1` + `align-self: baseline` is the user-chosen alignment
+	   (option B, tunatale-4p88): the pill sits on the WORD's baseline, NOT
+	   centred across both rows — the Ignore link occupies row 2 of this
+	   column, and a pill centred across rows 1-2 would sit higher on linked
+	   rows than on unlinked ones. */
 	.day-cell {
 		grid-column: 2;
-		grid-row: 1 / 3;
-		align-self: center;
+		grid-row: 1;
+		align-self: baseline;
 		justify-self: start;
 	}
 	/* Mirrors WordSpan's `.word-due { font-weight: bold }` — in the dialogue

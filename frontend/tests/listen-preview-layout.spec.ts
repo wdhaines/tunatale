@@ -1109,3 +1109,129 @@ test("listen preview: expanding well recognized group keeps modal and footer in 
 
 	expect(failures, failures.join("\n")).toEqual([]);
 });
+
+/**
+ * The Ignore control is now a quiet underlined link, a grid item in the Due
+ * column's ROW 2 — the gloss's line — while the due pill pins to ROW 1 on the
+ * word's baseline (user's option-B alignment, bd tunatale-4p88). The user
+ * flagged alignment as the whole point: a first mockup centred the pill and
+ * link as one pair across rows 1–2, so linked rows sat the pill higher than
+ * unlinked ones.
+ *
+ * This measures the resulting contract at 390px:
+ *  - the link's left edge equals the pill's left edge (both `justify-self:
+ *    start` against the SAME fixed column track; if either drifted, justify
+ *    boxes would disagree with the header);
+ *  - the pill's vertical offset from its row's WORD is identical with and
+ *    without a link, to 0.5px (the pill's row-1 baseline group cannot know
+ *    whether the link exists, but "cannot know" is what we measure, not what
+ *    we trust);
+ *  - the link sits on the gloss's line: its vertical centre is within 1px of
+ *    the gloss's (baseline-aligned siblings, different font sizes);
+ *  - the link overlaps neither the gloss nor the grade control.
+ *
+ * Only single-line words are compared: a wrapped word has a taller line box,
+ * so its baseline-to-top offset differs for a reason that has nothing to do
+ * with this feature. "dober dan" is given a tracked card (409-tolerant, like
+ * the key-phrase test) so a live UNLINKED row (the kp row) coexists with the
+ * linked create rows — otherwise the with/without comparison has only one
+ * population and passes vacuously.
+ */
+test("listen preview: the Ignore link sits under the pill and on the gloss's baseline", async ({
+	page,
+	request,
+}) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+	const id = await curriculumId(request);
+
+	const created = await request.post(`${BACKEND}/api/srs/items`, {
+		data: { text: "dober dan", translation: "good day", language_code: "sl", word_count: 2 },
+	});
+	if (!created.ok() && created.status() !== 409)
+		throw new Error(`seeding the key phrase card failed: ${created.status()} ${await created.text()}`);
+
+	await page.setViewportSize(PHONE);
+	const modal = await openPreview(page, id);
+
+	const report = await modal.evaluate((m) => {
+		const rect = (r: Element, sel: string) => r.querySelector(sel)?.getBoundingClientRect() ?? null;
+		const rows = [...m.querySelectorAll(".candidate")]
+			// A closed <details> row measures 0×0; only VISIBLE rows carry
+			// real geometry worth comparing.
+			.filter((r) => {
+				const b = r.getBoundingClientRect();
+				return b.width > 0 && b.height > 0;
+			})
+			.map((r) => ({
+				text: rect(r, ".text"),
+				pill: rect(r, ".tag.day"),
+				gloss: rect(r, ".gloss"),
+				link: rect(r, "button.ignore"),
+				grade: rect(r, ".grade"),
+			}))
+			.filter((mm) => mm.text && mm.pill && mm.gloss && mm.grade)
+			// Single-line words only (see the comment above the test).
+			.filter((mm) => mm.text!.height < 30);
+
+		const linked = rows.filter((mm) => mm.link !== null);
+		const unlinked = rows.filter((mm) => mm.link === null);
+
+		const pillOffsets = rows.map((mm) => mm.pill!.top - mm.text!.top);
+		const linkPillLeftDev = linked.map((mm) => Math.abs(mm.link!.left - mm.pill!.left));
+		const linkGlossCentreDev = linked.map((mm) => {
+			const lc = mm.link!.top + mm.link!.height / 2;
+			const gc = mm.gloss!.top + mm.gloss!.height / 2;
+			return Math.abs(lc - gc);
+		});
+
+		// The link lives in column 2 and the gloss in column 1, so on this
+		// fixture the gloss overlap check is a near-empty formality — asserted
+		// anyway, because "different columns" is a layout property, not a
+		// promise, and this is the only tier that can see it.
+		//
+		// The PILL overlap is the one that discriminates (orchestrator audit,
+		// 2026-09-23). Restoring the old `.day-cell { grid-row: 1 / 3; align-self:
+		// center }` left every other assertion here green — the pill offset is
+		// the same on every row either way — while the centred pill sat ON TOP of
+		// the link in row 2. Only "the link clears the pill" sees that.
+		const overlaps = linked.some((mm) => {
+			const a = mm.link!;
+			const over = (b: DOMRect) =>
+				a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+			return over(mm.gloss!) || over(mm.grade!) || over(mm.pill!);
+		});
+
+		return {
+			singleLineLinked: linked.length,
+			singleLineUnlinked: unlinked.length,
+			pillOffsetRange: Math.max(...pillOffsets) - Math.min(...pillOffsets),
+			pillOffsetMin: Math.min(...pillOffsets),
+			pillOffsetMax: Math.max(...pillOffsets),
+			linkPillLeftDev: Math.max(...linkPillLeftDev),
+			linkGlossCentreDev: Math.max(...linkGlossCentreDev),
+			overlaps,
+		};
+	});
+
+	// Vacuity guards: with no linked row this proves nothing, and with no
+	// unlinked row the pill-offset comparison has one population.
+	expect(report.singleLineLinked, "no single-line row carries an Ignore link").toBeGreaterThan(0);
+	expect(report.singleLineUnlinked, "no single-line row lacks an Ignore link").toBeGreaterThan(0);
+
+	// Pill ↔ word: identical offset across linked AND unlinked rows.
+	expect(
+		report.pillOffsetRange,
+		`pill moves ${report.pillOffsetMin.toFixed(2)}–${report.pillOffsetMax.toFixed(2)}px below its word — with a link present it must not budge`,
+	).toBeLessThanOrEqual(0.5);
+	// Link ↔ pill: same left edge, the Due column's start.
+	expect(
+		report.linkPillLeftDev,
+		`link left drifts up to ${report.linkPillLeftDev.toFixed(2)}px from the pill's left edge`,
+	).toBeLessThanOrEqual(0.5);
+	// Link ↔ gloss: on the gloss's line.
+	expect(
+		report.linkGlossCentreDev,
+		`link centre drifts up to ${report.linkGlossCentreDev.toFixed(2)}px from the gloss's centre`,
+	).toBeLessThanOrEqual(1);
+	expect(report.overlaps, "the Ignore link overlaps the gloss, the grade control, or the due pill").toBe(false);
+});
