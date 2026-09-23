@@ -209,6 +209,16 @@ class TestFactory:
         assert get_lemma_table_path("en") is None
         assert isinstance(get_lemmatizer("en"), LowercaseLemmatizer)
 
+    def test_engine_table_without_a_table_path_falls_back_to_lowercase(self, monkeypatch):
+        # tl's OWN engine is "table" (its lemma table IS its model). Under a
+        # laptop's opt-in setting, a missing shipped table must stay lowercase,
+        # never fall through to a heavy model — mirrors the "table"-setting branch.
+        from app.languages import _CONFIGS
+
+        monkeypatch.setattr(settings, "lemmatizer_type", "stanza")
+        monkeypatch.setattr(_CONFIGS["tl"], "lemma_table_path", None)
+        assert isinstance(get_lemmatizer("tl"), LowercaseLemmatizer)
+
 
 @pytest.fixture(scope="module")
 def real():

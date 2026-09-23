@@ -210,6 +210,13 @@ class LanguageConfig:
     # the user's Anki collection). None (the default) means the language has no
     # such marker and a verb's headword is just its bare lemma.
     infinitive_marker: str | None = None
+    # Function mapping a VERB lemma to the form a TT vocab card FRONT shows,
+    # consulted before ``infinitive_marker``. For a language whose lemma table
+    # keys verbs by ROOT (the actor-focus infinitive is derived at mint time),
+    # this is where the card front's surface form comes from. ``None`` (the
+    # default) means a verb's headword is the lemma + ``infinitive_marker``
+    # treatment (or the bare lemma when there is no marker).
+    verb_headword_fn: Callable[[str], str] | None = None
     # Gender → indefinite-article map for NOUN headwords when minting a TT vocab
     # card ("Masc" → "en morder", like the imported deck fronts). None (the
     # default) means the language has no articles and a noun's headword is its
@@ -654,10 +661,17 @@ def get_gender_article(code: str, gender: str, *, lemma: str = "") -> str:
 def format_vocab_headword(lemma: str, upos: str | None, code: str) -> str:
     """Format *lemma* as it should appear on a TT-minted vocab card front.
 
-    Prepends the language's infinitive marker (see ``get_infinitive_marker``)
-    when *upos* is ``"VERB"`` and the language has one registered; otherwise
-    returns *lemma* unchanged.
+    A VERB lemma is passed through the language's registered
+    ``verb_headword_fn`` when it has one (a root-keyed lemma table derives the
+    front's surface form from the root at mint time) — before the
+    ``infinitive_marker`` logic. Otherwise the marker (see
+    ``get_infinitive_marker``) is prepended when *upos* is ``"VERB"`` and the
+    language has one registered; otherwise returns *lemma* unchanged.
     """
+    discover()
+    config = _CONFIGS.get(code)
+    if upos == "VERB" and config is not None and config.verb_headword_fn is not None:
+        return config.verb_headword_fn(lemma)
     marker = get_infinitive_marker(code) if upos == "VERB" else None
     return f"{marker} {lemma}" if marker else lemma
 

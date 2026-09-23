@@ -1,0 +1,8 @@
+# Hand override: root<TAB>infinitive for the actor-focus infinitive a Tagalog
+# verb card fronts (app/plugins/languages/tl/verb_headword.py).
+#
+# ONE row: `kita	makita`. `kita` is a homograph root — `makita` ("to see") and
+# `kumita` ("to earn") both start from it, and no frequency rule can tell them
+# apart, so the ambiguity is resolved by hand here. The measured rule scored
+# 40/41 against the golden display table with this one fix.
+kita	makita

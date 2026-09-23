@@ -312,7 +312,10 @@ def get_lemmatizer(language_code: str) -> Lemmatizer:
     """Return a cached lemmatizer for *language_code*.
 
     The engine is a **property of the language** (``app.languages.get_lemmatizer_type``):
-    ``classla`` for Slovene, ``stanza`` for Norwegian, ``lowercase`` otherwise.
+    ``classla`` for Slovene, ``stanza`` for Norwegian, ``table`` for Tagalog —
+    a language whose OWN engine is the torch-free table is served from it under
+    any non-``lowercase`` setting, because it has no model to prefer —
+    ``lowercase`` otherwise.
     ``settings.lemmatizer_type == "table"`` builds the language's torch-free lemma
     table instead (production; see ``app.srs.lemma_table``).
     ``settings.lemmatizer_type == "lowercase"`` (the default, and the test/CI pin)
@@ -342,6 +345,17 @@ def get_lemmatizer(language_code: str) -> Lemmatizer:
     # reproduces its real model (app.srs.lemma_table). Languages without a table
     # stay lowercase — never the heavy model, which this setting exists to avoid.
     if settings.lemmatizer_type == "table":
+        from app.languages import get_lemma_table_path
+        from app.srs.lemma_table import TableLemmatizer
+
+        table_path = get_lemma_table_path(language_code)
+        return TableLemmatizer(language_code, table_path) if table_path else LowercaseLemmatizer()
+
+    # A language whose OWN engine is "table" has no sentence model to prefer, so
+    # it is served from its table under any non-lowercase setting (production's
+    # "table" and a laptop's opt-in value alike). Without a table path →
+    # LowercaseLemmatizer, mirroring the "table"-setting branch above.
+    if get_lemmatizer_type(language_code) == "table":
         from app.languages import get_lemma_table_path
         from app.srs.lemma_table import TableLemmatizer
 
