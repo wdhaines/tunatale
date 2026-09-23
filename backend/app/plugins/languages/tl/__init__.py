@@ -17,27 +17,47 @@ register(
             tts_locale="fil-PH",
             tts_voice_map={
                 "narrator": NARRATOR_VOICE,
-                # PROVISIONAL: Blessica and Angelo are Azure's only two standard
-                # fil-PH voices. Emma and Florian are Multilingual voices whose
-                # SecondaryLocaleList includes fil-PH (orchestrator-verified from
-                # the Azure voice list 2026-09-22). The voice-cast bead
-                # (tunatale-w4m7.3) measures and may replace them.
+                # Azure serves fil-PH with exactly two standard voices, Blessica
+                # and Angelo, so the second woman and second man are Multilingual
+                # voices under a <lang xml:lang="fil-PH"> wrapper. Chosen by
+                # measurement on 2026-09-22 (tunatale-w4m7.3), 10 Tagalog A1
+                # sentences, WER first and pitch distance second (the order the
+                # user set for the nb cast; see tunatale-rag.6):
+                #   fil-PH STT WER: 3 errors are shared by EVERY voice, natives
+                #   included (isang kilo -> 1kg, istasyon -> estasyon): the
+                #   transcriber, not the voice. Voice-specific errors: 0 for
+                #   Emma, Samuel, Florian, Lola, Arabella; 1 for Lewis, Shimmer,
+                #   Jorge; 3 for Alloy, Derek, Dustin.
+                #   Median F0 (Praat), measured on the Tagalog clips themselves:
+                #     Blessica 210.2 | Emma 170.7 (d39.5)
+                #     Angelo   117.6 | Samuel 141.0 (d23.4) | Florian 129.3 (d11.7)
+                # Florian had been the provisional male-2. At 11.7 Hz he is under
+                # the 13.7 Hz minimum gap of the nb cast, the same near-duplicate
+                # defect that retired William there. ⚠️ The nb pitch map does not
+                # transfer across languages (Dustin 160.0 Hz on Norwegian, 136.5
+                # on Tagalog), so measure on this language's text.
                 "female-1": "fil-PH-BlessicaNeural",
                 "female-2": "en-US-EmmaMultilingualNeural",
                 "male-1": "fil-PH-AngeloNeural",
-                "male-2": "de-DE-FlorianMultilingualNeural",
+                "male-2": "en-US-SamuelMultilingualNeural",
                 "female": "fil-PH-BlessicaNeural",
                 "male": "fil-PH-AngeloNeural",
             },
             # Per-voice loudness gains (dB) applied at assembly, target −20.0
-            # LUFS. The narrator gain is copied from the sl/no plugins:
+            # LUFS: integrated loudness of the same 10 clips per voice
+            # (ffmpeg ebur128), 2026-09-22. Control: Emma measures -18.1 here,
+            # the same -1.9 dB gain the sl table measured on Slovene text.
+            # Blessica's +1.8 keeps her true peak (-5.3 dBFS) well under the
+            # renderer's -1.0 dBFS clamp.
             # en-US-GuyNeural is the shared narrator; the gain is resolved per
-            # language (get_tts_voice_gain_db takes a code), so the same
-            # measured value has to appear in every plugin table. Measured
-            # 2026-09-13 at -19.08 LUFS mean.
-            # ⚠️ The fil-PH and Multilingual gains are UNMEASURED until
-            # tunatale-w4m7.3 — only the narrator is pinned here.
+            # language (get_tts_voice_gain_db takes a code), so the same measured
+            # value has to appear in every plugin table. Measured 2026-09-13 at
+            # -19.08 LUFS mean.
             tts_voice_gain_db={
+                "fil-PH-BlessicaNeural": 1.8,
+                "fil-PH-AngeloNeural": -0.6,
+                "en-US-EmmaMultilingualNeural": -1.9,
+                "en-US-SamuelMultilingualNeural": -0.1,
                 "en-US-GuyNeural": -0.9,
             },
         ),
