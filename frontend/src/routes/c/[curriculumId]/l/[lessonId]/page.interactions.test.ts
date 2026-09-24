@@ -1114,6 +1114,84 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
     });
 
+    it("unknown FUNCTION word grades PRODUCTION: its base card is a production-only cloze", async () => {
+      // Live 2026-09-24: "Start learning" on Tagalog "ba" created the cloze, then
+      // graded recognition — a direction the cloze does not have — and 500'd.
+      const t = makeTranscriptWithWord({ active_state: "unknown" });
+      mockCreateBaseCard.mockResolvedValue({
+        id: 7,
+        was_created: true,
+        item: {
+          id: 7,
+          text: "ba",
+          translation: "question particle",
+          state: "new",
+          due_at: "",
+          stability: 1,
+          difficulty: 5,
+          reps: 0,
+          lapses: 0,
+          last_review: null,
+          language_code: "tl",
+          card_type: "cloze",
+          directions: {
+            recognition: null,
+            production: {
+              state: "new",
+              due_at: "",
+              stability: 1,
+              difficulty: 5,
+              reps: 0,
+              lapses: 0,
+              last_review: null,
+              anki_card_id: null,
+            },
+          },
+        },
+      });
+      mockSubmitDrill.mockResolvedValue({ new_due_at: "", new_state: "learning" });
+      mockGetTranscript.mockResolvedValue(t);
+
+      const { findByRole } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript: t } },
+      });
+
+      await fireEvent.click(await findByRole("button", { name: "Start learning" }));
+
+      await waitFor(() => {
+        expect(mockSubmitDrill).toHaveBeenCalledWith(7, "production", "good");
+      });
+      expect(mockSubmitDrill).not.toHaveBeenCalledWith(7, "recognition", "good");
+    });
+
+    it.each(["production", "recognition"] as const)(
+      "carded but unstarted word offers Start learning and grades its %s direction",
+      async (direction) => {
+        // Live 2026-09-24: Tagalog "ang" already had an unstarted cloze, so the
+        // popover offered no button at all and the word could not be learned.
+        const t = makeTranscriptWithWord({
+          active_state: "new",
+          active_direction: direction,
+          is_due: false,
+          srs_item_id: 42,
+          recognition_reviewable: false,
+        });
+        mockSubmitDrill.mockResolvedValue({ new_due_at: "", new_state: "learning" });
+        mockGetTranscript.mockResolvedValue(t);
+
+        const { findByRole } = render(Page, {
+          props: { data: { curriculum, lesson, audio, transcript: t } },
+        });
+
+        await fireEvent.click(await findByRole("button", { name: "Start learning" }));
+
+        await waitFor(() => {
+          expect(mockSubmitDrill).toHaveBeenCalledWith(42, direction, "good");
+        });
+        expect(mockCreateBaseCard).not.toHaveBeenCalled();
+      },
+    );
+
     it("due word with active direction calls submitDrill with 'good'", async () => {
       const t = makeTranscriptWithWord({
         active_state: "learning",

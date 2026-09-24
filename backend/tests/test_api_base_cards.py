@@ -92,6 +92,39 @@ class TestCreateBaseCard:
         assert coll.syntactic_unit.translation == "show"
         assert coll.syntactic_unit.card_type == "vocab"
 
+    async def test_verb_regloss_asks_about_the_card_front_in_its_sentence(self, api_app_state, monkeypatch):
+        """The re-gloss prompt names the headword the card shows, plus the sentence.
+
+        Live 2026-09-24: "pagpunta" became a "pumunta" card glossed "point". The
+        prompt was the bare root "punta (VERB)" with no sentence, and "punta" is
+        also a Spanish loan meaning "point" — the model picked that sense. The
+        card front is "pumunta", so that is the word to gloss, in context.
+        """
+        _stub_verb(monkeypatch, "pagpunta", "punta")
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = "go"
+        app.state.llm = mock_llm
+        sentence = "Salamat sa pagpunta ninyo."
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "pagpunta",
+                    "lemma": "punta",
+                    "sentence": sentence,
+                    "language_code": "tl",
+                    "translation": "going",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["item"]["text"] == "pumunta"
+        prompt = mock_llm.complete.await_args.kwargs["prompt"]
+        assert prompt.startswith("pumunta (VERB)")
+        assert sentence in prompt
+        assert resp.json()["item"]["translation"] == "go"
+
     async def test_verb_base_card_keeps_gloss_when_llm_returns_empty(self, api_app_state, monkeypatch):
         """LLM failure/empty → keep the caller-provided gloss (fail-soft)."""
         _stub_verb(monkeypatch, "pokazem", "pokazati")

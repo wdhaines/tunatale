@@ -126,6 +126,13 @@
 		!gotItApplies && Boolean(word.recognition_reviewable) && word.srs_item_id != null
 	);
 
+	// A card that exists but was never started (e.g. a sync-minted cloze) is not
+	// due, so without this it gets no button and cannot be started from here.
+	// Mirrors the branch in readingActions.onWordClick.
+	const startsCardedWord = $derived(
+		word.active_state === 'new' && word.active_direction != null && word.srs_item_id != null
+	);
+
 	// Grade-button label mirrors what the old direct click did (the "cycle"):
 	// unknown → create a base card; due+tracked → grade Good; not-due but readable
 	// → review ahead; otherwise the click was a no-op, so no button.
@@ -140,7 +147,9 @@
 						? 'Got it ✓'
 						: readAheadApplies
 							? 'Review ✓'
-							: null
+							: startsCardedWord
+								? 'Start learning'
+								: null
 	);
 
 	// Style the read-ahead grade subtler than the due "Got it ✓" so the user can

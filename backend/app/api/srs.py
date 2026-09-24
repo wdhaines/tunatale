@@ -2880,18 +2880,6 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
         source_sentence = body.sentence
         card_type = "vocab"
 
-    # Verb base cards: the transcript gloss is the *conjugated* in-context meaning
-    # ("pokazem" → "I will show"). classla gives us the lemma + POS, but the
-    # English base meaning is a translation only the LLM can produce — re-gloss to
-    # the bare dictionary form ("show") to match the existing verb cards.
-    translation = body.translation
-    if upos == "VERB":
-        llm_client = getattr(request.app.state, "llm", None)
-        if llm_client is not None:
-            gloss = await generate_word_gloss(llm_client, surface=body.surface, lemma=lemma, source_lang=lang, pos=upos)
-            if gloss:
-                translation = gloss
-
     # Stanza can return a truncated fragment as the lemma (`trøtt` → `trø`). When
     # the fragment fails the language's plausibility check, front the card with the
     # surface as it appeared — the headword stays a real word, never a skipped card.
@@ -2899,9 +2887,27 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     headword = lemma
     if card_type == "vocab" and lemma_plausible is not None and not lemma_plausible(body.surface, lemma):
         headword = body.surface.casefold()
+    front = format_vocab_headword(headword, upos, lang) if card_type == "vocab" else lemma
+
+    # Verb base cards: the transcript gloss is the *conjugated* in-context meaning
+    # ("pokazem" → "I will show"). classla gives us the lemma + POS, but the
+    # English base meaning is a translation only the LLM can produce — re-gloss to
+    # the bare dictionary form ("show") to match the existing verb cards.
+    # Gloss the card FRONT, in its sentence, not the bare lemma: a Tagalog lemma
+    # is a root ("punta"), which is also a Spanish loan meaning "point", and that
+    # is the sense the model picked for a "pumunta" card (live, 2026-09-24).
+    translation = body.translation
+    if upos == "VERB":
+        llm_client = getattr(request.app.state, "llm", None)
+        if llm_client is not None:
+            gloss = await generate_word_gloss(
+                llm_client, surface=body.surface, lemma=front, source_lang=lang, pos=upos, sentence=body.sentence
+            )
+            if gloss:
+                translation = gloss
 
     unit = SyntacticUnit(
-        text=format_vocab_headword(headword, upos, lang) if card_type == "vocab" else lemma,
+        text=front,
         translation=translation,
         word_count=1,
         difficulty=1,

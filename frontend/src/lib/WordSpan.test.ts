@@ -70,12 +70,32 @@ describe("WordSpan", () => {
       expect(getByRole("button", { name: "Got it ✓" })).toBeTruthy();
     });
 
-    it("shows no grade button for a tracked word that is not due (the old click no-op)", () => {
-      const word = makeWordToken({ is_due: false, active_direction: "production", srs_item_id: 7 });
+    it("shows no grade button for a started tracked word that is not due (the old click no-op)", () => {
+      const word = makeWordToken({
+        active_state: "learning",
+        is_due: false,
+        active_direction: "production",
+        srs_item_id: 7,
+      });
       const { queryByRole } = render(WordSpan, {
         props: { word, onWordClick: vi.fn() },
       });
       expect(queryByRole("button", { name: /got it|start learning/i })).toBeNull();
+    });
+
+    it("offers Start learning for a tracked word that was never started", () => {
+      // An unstarted card (e.g. a sync-minted Tagalog cloze) is never due, so
+      // without this it had no button and could not be started from the reader.
+      const word = makeWordToken({
+        active_state: "new",
+        is_due: false,
+        active_direction: "production",
+        srs_item_id: 7,
+      });
+      const { getByRole } = render(WordSpan, {
+        props: { word, onWordClick: vi.fn() },
+      });
+      expect(getByRole("button", { name: "Start learning" })).toBeTruthy();
     });
 
     it("shows no grade button for a due word missing active_direction", () => {
