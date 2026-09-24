@@ -87,7 +87,7 @@ class _StubRendererFactory:
     def __init__(self, fail_message: str) -> None:
         self.fail_message = fail_message
 
-    def __call__(self, **kwargs):
+    def __call__(self, *args, **kwargs):
         class _StubRenderer:
             pause_calculator = object()
 
@@ -109,12 +109,10 @@ def _run_dry_run(store: ContentStore, audio_dir: Path, monkeypatch, capsys) -> s
     monkeypatch.setattr(rename_mod, "get_tts_service", lambda **kw: object())
     monkeypatch.setattr(
         rename_mod,
-        "LessonRenderer",
+        "build_lesson_renderer",
         _StubRendererFactory("dry-run must never reach the renderer"),
     )
     monkeypatch.setattr(rename_mod, "build_slicers", lambda codes, tts, settings: [])
-    monkeypatch.setattr(rename_mod, "get_preprocessor", lambda code: object())
-    monkeypatch.setattr(rename_mod, "get_phoneme_planner", lambda code: None)
 
     monkeypatch.setattr(
         sys,
@@ -190,10 +188,8 @@ def _run_go(store: ContentStore, audio_dir: Path, monkeypatch, capsys) -> str:
 
     fake = _make_fake_renderer()
     monkeypatch.setattr(rename_mod, "get_tts_service", lambda **kw: _CountingTTS())
-    monkeypatch.setattr(rename_mod, "LessonRenderer", lambda **kw: fake)
+    monkeypatch.setattr(rename_mod, "build_lesson_renderer", lambda *a, **kw: fake)
     monkeypatch.setattr(rename_mod, "build_slicers", lambda codes, tts, settings: [])
-    monkeypatch.setattr(rename_mod, "get_preprocessor", lambda code: object())
-    monkeypatch.setattr(rename_mod, "get_phoneme_planner", lambda code: None)
     monkeypatch.setattr(
         sys,
         "argv",

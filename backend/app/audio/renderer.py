@@ -7,9 +7,10 @@ import logging
 import re
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import soundfile as sf
@@ -21,8 +22,18 @@ from app.audio.ports import TTSService
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.slicer import ChunkSlicer, SliceSpec
 from app.audio.transcode import encode_audio_stream
-from app.languages import PhonemePlanner, get_ipa_read_in_voice_locale, get_tts_voice_gain_db
+from app.languages import (
+    PhonemePlanner,
+    get_ipa_read_in_voice_locale,
+    get_phoneme_planner,
+    get_preprocessor,
+    get_tts_locale,
+    get_tts_voice_gain_db,
+)
 from app.models.lesson import Lesson, Phrase, Section
+
+if TYPE_CHECKING:
+    from app.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -708,3 +719,36 @@ class LessonRenderer:
         )
 
         return cues
+
+
+def build_lesson_renderer(
+    tts: TTSService,
+    language_codes: Iterable[str],
+    settings: Settings,
+    *,
+    slicers: dict[str, ChunkSlicer] | None = None,
+) -> LessonRenderer:
+    """The ONE way to build a renderer: the app and every re-render script.
+
+    Each language gets its preprocessor, its phoneme planner and its SSML
+    locale from the registry. A hand-built renderer drops whatever keyword it
+    forgets, and the constructor's defaults are silent: an omitted locale means
+    "declare nothing", so a script re-render of the Tagalog key phrases sent
+    "ng abuloy" to a German voice as German and it spelled "ng" out (live,
+    2026-09-24). ``tests/test_build_lesson_renderer.py`` fails any other
+    constructor call under ``app/`` or ``scripts/``.
+
+    *slicers* is the scripts' opt-in; the app renders without them (see
+    ``main.py``).
+    """
+    codes = list(language_codes)
+    return LessonRenderer(
+        tts=tts,
+        preprocessors={code: get_preprocessor(code) for code in codes},
+        pause_calculator=NaturalPauseCalculator(),
+        delivery_codec=settings.audio_delivery_codec,
+        delivery_bitrate=settings.audio_delivery_bitrate,
+        slicers=slicers,
+        phoneme_planners={code: planner for code in codes if (planner := get_phoneme_planner(code)) is not None},
+        tts_locales={code: locale for code in codes if (locale := get_tts_locale(code)) is not None},
+    )

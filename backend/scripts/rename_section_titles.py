@@ -47,14 +47,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
 from app.audio.render_service import reassemble_lesson_audio  # noqa: E402
-from app.audio.renderer import LessonRenderer  # noqa: E402
+from app.audio.renderer import build_lesson_renderer  # noqa: E402
 from app.audio.slicer import build_slicers  # noqa: E402
 from app.audio.tts_factory import get_tts_service  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.generation.section_builder import SECTION_TITLES  # noqa: E402
-from app.languages import get_phoneme_planner, get_preprocessor, resolve_db_path  # noqa: E402
+from app.languages import resolve_db_path  # noqa: E402
 from app.models.lesson import SectionType  # noqa: E402
 from app.storage.store import ContentStore  # noqa: E402
 
@@ -150,17 +149,7 @@ async def main() -> int:
 
     store = ContentStore(db_path)
     tts = get_tts_service(cache_dir=settings.tts_cache_dir)
-    preprocessors = {code: get_preprocessor(code)}
-    planner = get_phoneme_planner(code)
-    renderer = LessonRenderer(
-        tts=tts,
-        preprocessors=preprocessors,
-        pause_calculator=NaturalPauseCalculator(),
-        delivery_codec=settings.audio_delivery_codec,
-        delivery_bitrate=settings.audio_delivery_bitrate,
-        slicers=build_slicers([code], tts, settings),
-        phoneme_planners={code: planner} if planner is not None else {},
-    )
+    renderer = build_lesson_renderer(tts, [code], settings, slicers=build_slicers([code], tts, settings))
 
     converted = skipped = failed = 0
     for lesson_id, _curriculum_id, _day, lesson in list(store.list_lessons()):

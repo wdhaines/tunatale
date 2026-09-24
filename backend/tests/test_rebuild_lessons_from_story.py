@@ -124,15 +124,17 @@ def _stub_renderer(monkeypatch, captured: dict | None = None):
     """Neutralise everything the script builds but this test does not exercise."""
     monkeypatch.setattr(rebuild_mod, "get_tts_service", lambda **kw: object())
     monkeypatch.setattr(rebuild_mod, "build_slicers", lambda codes, tts, settings: {})
-    monkeypatch.setattr(rebuild_mod, "get_preprocessor", lambda code: object())
-    monkeypatch.setattr(rebuild_mod, "get_phoneme_planner", lambda code: None)
+    real_builder = rebuild_mod.build_lesson_renderer
 
-    def factory(**kwargs):
+    def factory(tts, codes, settings, **kwargs):
+        # The REAL builder, so a claim about what the renderer is given is a
+        # claim about the renderer this script builds; the script itself gets a
+        # methodless stub, so reaching it would raise.
         if captured is not None:
-            captured.update(kwargs)
+            captured["renderer"] = real_builder(tts, codes, settings, **kwargs)
         return object()
 
-    monkeypatch.setattr(rebuild_mod, "LessonRenderer", factory)
+    monkeypatch.setattr(rebuild_mod, "build_lesson_renderer", factory)
 
 
 def _run(store: ContentStore, monkeypatch, capsys, *args: str, captured: dict | None = None) -> tuple[int, str]:
@@ -263,7 +265,7 @@ class TestGo:
 
         _run(store, monkeypatch, capsys, "--go", captured=captured)
 
-        assert captured["tts_locales"] == {_LANG: get_tts_locale(_LANG)}
+        assert captured["renderer"]._tts_locales == {_LANG: get_tts_locale(_LANG)}
 
     def test_a_second_run_reports_already_current(self, tmp_path, monkeypatch, capsys):
         """Idempotence, on the honest signal: the rebuilt blob is byte-identical.

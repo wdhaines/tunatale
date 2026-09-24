@@ -38,14 +38,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
 from app.audio.render_service import reassemble_lesson_audio  # noqa: E402
-from app.audio.renderer import LessonRenderer  # noqa: E402
+from app.audio.renderer import build_lesson_renderer  # noqa: E402
 from app.audio.slicer import build_slicers  # noqa: E402
 from app.audio.tts_factory import get_tts_service  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.generation.section_builder import build_key_phrases_section  # noqa: E402
-from app.languages import get_language, get_phoneme_planner, get_preprocessor, resolve_db_path  # noqa: E402
+from app.languages import get_language, resolve_db_path  # noqa: E402
 from app.models.lesson import Lesson  # noqa: E402
 from app.srs.database import SRSDatabase  # noqa: E402
 from app.storage.resync_key_phrases import _key_phrases_section, _voices  # noqa: E402
@@ -107,18 +106,8 @@ async def main() -> int:
 
     store = ContentStore(db_path)
     srs_db = SRSDatabase(db_path)
-    preprocessors = {code: get_preprocessor(code)}
     tts = get_tts_service(cache_dir=settings.tts_cache_dir)
-    planner = get_phoneme_planner(code)
-    renderer = LessonRenderer(
-        tts=tts,
-        preprocessors=preprocessors,
-        pause_calculator=NaturalPauseCalculator(),
-        delivery_codec=settings.audio_delivery_codec,
-        delivery_bitrate=settings.audio_delivery_bitrate,
-        slicers=build_slicers([code], tts, settings),
-        phoneme_planners={code: planner} if planner is not None else {},
-    )
+    renderer = build_lesson_renderer(tts, [code], settings, slicers=build_slicers([code], tts, settings))
 
     from app.api.generation import annotate_chunk_upos_for_lesson
 
