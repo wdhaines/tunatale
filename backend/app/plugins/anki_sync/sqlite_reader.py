@@ -653,6 +653,10 @@ def extract_l2_from_fields(
         # Nothing to choose between; no scorer needed, and demanding one here
         # would turn "this note is empty" into a crash.
         return ""
+    if len(scorable) == 1:
+        # One candidate is not a choice either: a scorer could only pick this
+        # field, so a language without one (Tagalog) still reads it.
+        return scorable[0]
     if l2_scorer is None:
         msg = (
             "No L2 scorer for this language: cannot identify the target-language "

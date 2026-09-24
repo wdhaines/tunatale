@@ -1642,6 +1642,10 @@ class AnkiSync:
         image_ok = 0
         image_no_results = 0
         image_failed = 0
+        no_notetype = 0
+        # The mint notetype's L2 (sort) field, resolved at the first vocab item.
+        # "" means the notetype is not in the collection.
+        mint_l2_field: str | None = None
 
         for guid, item, coll_id in items:
             if item.syntactic_unit.card_type == "cloze":
@@ -1724,6 +1728,28 @@ class AnkiSync:
             audio_tag = ""
             image_tag = ""
 
+            # A language can be synced before its mint notetype exists in Anki
+            # (Tagalog, until tunatale-w4m7.15 creates "Tagalog Vocabulary"). That
+            # used to raise out of the whole sync, after the clozes ahead of it had
+            # already been written. HOLD the word instead — it stays unlinked, so
+            # the first sync after the notetype exists mints it — and do it before
+            # the media fetch, which would otherwise buy nothing on every sync.
+            if mint_l2_field is None:
+                try:
+                    mint_l2_field = self._writer.get_sort_field_name(model_name)
+                except ValueError:
+                    mint_l2_field = ""
+            if not mint_l2_field:
+                no_notetype += 1
+                _log.warning(
+                    "MINT_NO_NOTETYPE text=%r cid=%d — notetype %r is not in the collection; "
+                    "held unlinked until it exists (tunatale-w4m7.15)",
+                    word,
+                    coll_id,
+                    model_name,
+                )
+                continue
+
             # Reuse media already generated at card-creation time — the add-time
             # paths (POST /items, /listen, base/key-phrase) now fetch image+audio
             # inline (app.cards.media.vocab_media), so a card is complete in TT
@@ -1783,9 +1809,8 @@ class AnkiSync:
 
             # The L2 word lives in the mint notetype's sort field (ord 0) — "Slovene"
             # for Slovene Vocabulary, "Norwegian" for Norwegian Vocabulary.
-            l2_field = self._writer.get_sort_field_name(model_name)
             fields = {
-                l2_field: word,
+                mint_l2_field: word,
                 "English": english,
                 "Audio": audio_tag,
                 "Image": image_tag,
@@ -1890,6 +1915,7 @@ class AnkiSync:
             image_ok=image_ok,
             image_no_results=image_no_results,
             image_failed=image_failed,
+            no_notetype=no_notetype,
         )
 
     async def promote_production_cards(

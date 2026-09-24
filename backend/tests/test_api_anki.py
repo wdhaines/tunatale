@@ -179,6 +179,22 @@ class TestPeerSync:
         assert response.status_code == 500
         assert "Sync failed" in response.json()["detail"]
 
+    async def test_unexpected_failure_is_logged_with_its_traceback(self, fake_driver, caplog):
+        """The 500's reason reached only the UI toast, so two failed Tagalog syncs
+        (2026-09-23) left no byte in api.log, sync.log or warnings.log. The
+        traceback belongs in the server log too."""
+        from app.config import settings
+
+        settings.tt_collection_path.mkdir(parents=True, exist_ok=True)
+
+        with caplog.at_level("ERROR", logger="app.api.anki"):
+            response = await _post_peer_sync()
+
+        assert response.status_code == 500
+        failed = [r for r in caplog.records if r.name == "app.api.anki" and "PEER_SYNC_FAILED" in r.message]
+        assert len(failed) == 1
+        assert failed[0].exc_info is not None
+
 
 # ── _build_media_fn (shared media generator) ──────────────────────────────────
 

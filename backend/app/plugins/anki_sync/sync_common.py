@@ -154,6 +154,8 @@ class CreateNewReport:
     image_ok: int = 0
     image_no_results: int = 0
     image_failed: int = 0
+    #: Vocab words held unlinked because the mint notetype is not in the collection.
+    no_notetype: int = 0
 
 
 class ClozeMaterial(NamedTuple):
