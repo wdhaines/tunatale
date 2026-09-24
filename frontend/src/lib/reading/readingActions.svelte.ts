@@ -86,8 +86,13 @@ export function createReadingActions(opts: ReadingActionsOptions) {
           language_code: opts.languageCode,
           translation: word.translation ?? "",
         });
-        await api.submitDrill(created.id, "recognition", "good");
-        undoable = { itemId: created.id, direction: "recognition" };
+        // A function word's base card is a production-only cloze: there is no
+        // recognition card to grade, and grading one 500s (Tagalog "ba", live
+        // 2026-09-24). Grade the direction the new card actually has.
+        const direction =
+          created.item.directions?.recognition === null ? "production" : "recognition";
+        await api.submitDrill(created.id, direction, "good");
+        undoable = { itemId: created.id, direction };
       } else if (word.is_due && word.active_direction && word.srs_item_id != null) {
         const direction = word.active_direction as "recognition" | "production";
         await api.submitDrill(word.srs_item_id, direction, "good");
@@ -99,6 +104,14 @@ export function createReadingActions(opts: ReadingActionsOptions) {
         // graduates (that would silently grade the wrong card).
         await api.submitDrill(word.srs_item_id, "recognition", "good");
         undoable = { itemId: word.srs_item_id, direction: "recognition" };
+      } else if (word.active_state === "new" && word.active_direction && word.srs_item_id != null) {
+        // A card that exists but was never started (a sync-minted cloze such as
+        // Tagalog "ang") is not due, so none of the branches above apply. Same
+        // one-tap introduction as an untracked word; last, so a due or
+        // review-ahead grade always wins.
+        const direction = word.active_direction as "recognition" | "production";
+        await api.submitDrill(word.srs_item_id, direction, "good");
+        undoable = { itemId: word.srs_item_id, direction };
       } else {
         return;
       }
