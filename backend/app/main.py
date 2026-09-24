@@ -12,15 +12,14 @@ from fastapi.responses import JSONResponse
 
 from app.api.health import STATUS_OK, check_health
 from app.api.models import HealthResponse, LanguagesResponse
-from app.audio.pause_calculator import NaturalPauseCalculator
-from app.audio.renderer import LessonRenderer
+from app.audio.renderer import build_lesson_renderer
 from app.audio.tts_factory import get_tts_service
 from app.auth.database import AuthDatabase
 from app.config import clock_runtime_problems, prod_profile_problems, settings
 from app.generation.pipeline import LessonPipeline
 from app.generation.planner import CurriculumPlanner
 from app.generation.story import StoryGenerator
-from app.languages import get_language, get_phoneme_planner, get_preprocessor, get_tts_locale
+from app.languages import get_language
 from app.llm.activity import ActivityLog
 from app.llm.cassette import CassetteLLMClient
 from app.llm.client import LLMClient, reasoning_params_for_model
@@ -198,7 +197,6 @@ async def lifespan(app: FastAPI):
     app.state.llm = llm
     app.state.curriculum_planner = CurriculumPlanner(llm)
     app.state.story_generator = StoryGenerator(llm)
-    preprocessors = {code: get_preprocessor(code) for code in db_map}
     tts = get_tts_service(cache_dir=settings.tts_cache_dir)
     # NOT WIRED, deliberately (tunatale-k318.4). The audio slicer cut breakdown
     # chunks out of one whole-word render; the lexicon <phoneme> path replaced it
@@ -215,21 +213,10 @@ async def lifespan(app: FastAPI):
     # one but whose database was never built degrades inside the planner (one
     # warning, then plain synthesis), because the database is a build artifact
     # and a fresh clone must still render.
-    phoneme_planners = {code: planner for code in db_map if (planner := get_phoneme_planner(code)) is not None}
-    if phoneme_planners:
-        logger.info("Lexicon pronunciation enabled for: %s", ", ".join(sorted(phoneme_planners)))
-    app.state.renderer = LessonRenderer(
-        tts=tts,
-        preprocessors=preprocessors,
-        pause_calculator=NaturalPauseCalculator(),
-        delivery_codec=settings.audio_delivery_codec,
-        delivery_bitrate=settings.audio_delivery_bitrate,
-        phoneme_planners=phoneme_planners,
-        # Only languages whose plugin declares one; a language that does not
-        # renders exactly as before. Needed because a voice map may name a voice
-        # from another locale (sl-SI has two native voices for four roles).
-        tts_locales={code: locale for code in db_map if (locale := get_tts_locale(code)) is not None},
-    )
+    app.state.renderer = build_lesson_renderer(tts, db_map, settings)
+    # Empty for a language with no pronunciation lexicon.
+    if app.state.renderer._phoneme_planners:
+        logger.info("Lexicon pronunciation enabled for: %s", ", ".join(sorted(app.state.renderer._phoneme_planners)))
     # A setting since Deploy P0.1, so a container can put audio on its data
     # volume. The default reproduces the former `_BACKEND_DIR / "output/audio"`.
     app.state.audio_dir = settings.audio_dir

@@ -25,12 +25,11 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-from app.audio.pause_calculator import NaturalPauseCalculator
-from app.audio.renderer import LessonRenderer
+from app.audio.renderer import LessonRenderer, build_lesson_renderer
 from app.audio.transcode import CODEC_EXT
 from app.audio.tts_factory import get_tts_service
 from app.config import settings
-from app.languages import get_preprocessor, get_tts_locale, get_tts_voice
+from app.languages import get_tts_voice
 from app.models.lesson import Phrase, Section, SectionType
 from app.plugins.languages.no.breakdown_preview import format_breakdown_preview
 from app.plugins.languages.no.norwegian_breakdown import (
@@ -73,14 +72,7 @@ def build_preview_sections(word: str, voice_id: str) -> tuple[Section, Section]:
 
 
 def _build_renderer() -> LessonRenderer:
-    return LessonRenderer(
-        tts=get_tts_service(),
-        preprocessors={_LANGUAGE_CODE: get_preprocessor(_LANGUAGE_CODE)},
-        pause_calculator=NaturalPauseCalculator(),
-        delivery_codec=settings.audio_delivery_codec,
-        delivery_bitrate=settings.audio_delivery_bitrate,
-        tts_locales={_LANGUAGE_CODE: locale} if (locale := get_tts_locale(_LANGUAGE_CODE)) else None,
-    )
+    return build_lesson_renderer(get_tts_service(), [_LANGUAGE_CODE], settings)
 
 
 async def render_word_previews(words: list[str], out_dir: Path) -> dict[str, list[Path]]:

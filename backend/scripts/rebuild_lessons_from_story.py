@@ -68,18 +68,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.audio.pause_calculator import NaturalPauseCalculator  # noqa: E402
 from app.audio.render_service import reassemble_lesson_audio  # noqa: E402
-from app.audio.renderer import LessonRenderer  # noqa: E402
+from app.audio.renderer import build_lesson_renderer  # noqa: E402
 from app.audio.slicer import build_slicers  # noqa: E402
 from app.audio.tts_factory import get_tts_service  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.generation.story import build_lesson_from_story  # noqa: E402
 from app.languages import (  # noqa: E402
     get_language,
-    get_phoneme_planner,
-    get_preprocessor,
-    get_tts_locale,
     resolve_db_path,
 )
 from app.models.lesson import Lesson  # noqa: E402
@@ -161,23 +157,7 @@ async def main() -> int:
 
     store = ContentStore(db_path)
     tts = get_tts_service(cache_dir=settings.tts_cache_dir)
-    planner = get_phoneme_planner(code)
-    locale = get_tts_locale(code)
-    renderer = LessonRenderer(
-        tts=tts,
-        preprocessors={code: get_preprocessor(code)},
-        pause_calculator=NaturalPauseCalculator(),
-        delivery_codec=settings.audio_delivery_codec,
-        delivery_bitrate=settings.audio_delivery_bitrate,
-        slicers=build_slicers([code], tts, settings),
-        phoneme_planners={code: planner} if planner is not None else {},
-        # Without this a Multilingual voice is handed the line with no language
-        # declared and guesses — measured getting it wrong on a real sentence
-        # (tunatale-rag.4). The whole point of the rebuild is to put such a
-        # voice into these lessons, so the seam has to be wired HERE too, not
-        # only in main.py.
-        tts_locales={code: locale} if locale is not None else None,
-    )
+    renderer = build_lesson_renderer(tts, [code], settings, slicers=build_slicers([code], tts, settings))
 
     rebuilt_count = skipped = failed = 0
     for lesson_id, curriculum_id, day, stored in _latest_lessons(store):
