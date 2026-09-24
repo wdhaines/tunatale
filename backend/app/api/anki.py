@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from app.api.models import PeerSyncResponse
@@ -9,6 +11,8 @@ from app.cards.media.pipeline import fetch_card_media
 from app.cards.media.query_llm import generate_image_query
 
 router = APIRouter(prefix="/api/anki", tags=["anki"])
+
+_log = logging.getLogger(__name__)
 
 
 def _build_media_fn(llm, db):
@@ -77,6 +81,9 @@ async def trigger_peer_sync(request: Request, background_tasks: BackgroundTasks,
         # Surface the real failure to the UI instead of a bare "Internal Server
         # Error". An unhandled exception here (e.g. a sqlite IntegrityError mid-
         # reconcile) otherwise reaches the user as an opaque 500 with no reason.
+        # Log it too: the detail reaches only the UI, so two failed Tagalog syncs
+        # (2026-09-23) left no trace in any server log.
+        _log.exception("PEER_SYNC_FAILED language=%s", language_code)
         raise HTTPException(status_code=500, detail=f"Sync failed: {type(e).__name__}: {e}") from e
 
     # Pre-stage the NEXT sync's production images off the critical path. Promotion

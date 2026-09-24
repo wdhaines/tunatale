@@ -442,3 +442,94 @@ def test_an_edit_to_a_note_missing_from_the_collection_keeps_its_flag(pimsleur_d
     report = _push(db, pimsleur_db)
     assert report.write_noop == 1
     assert db.get_dirty_fields(guid) == "translation"
+
+
+# ── a Tagalog sync must survive its own cloze notes and a missing mint notetype ──
+#
+# 2026-09-23, both on the live laptop instance. The first Tagalog sync after a
+# lesson minted two clozes (for `ng`, `ang`) and then died on the next word: the
+# mint notetype, "Tagalog Vocabulary", was not in the collection yet
+# (tunatale-w4m7.15). Nothing rolls back, so the clozes stayed and were uploaded
+# — and every later Tagalog sync then died BEFORE writing anything, because the
+# reader could not tell which field of a TT cloze is the Tagalog one: Tagalog
+# has no L2 scorer, and a cloze carries no L2 markup class.
+
+CLOZE_MID = 1_600_000_000_002
+MINT_DID = 13
+# The measured fields of one of those two live notes.
+CLOZE_TEXT = "Oo, sasama ako. Magdadala ako {{c1::ng}} abuloy."
+CLOZE_BACK_EXTRA = '<i>of</i><br><br><span class="st">Yes, I\'ll come along. I will bring a contribution.</span>'
+
+
+def _add_tunatale_cloze(db_path: Path) -> None:
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, '{}')", (MINT_DID, f"{ROOT}\x1fTunaTale"))
+        conn.execute("INSERT INTO notetypes VALUES (?, 'Cloze', 0, 0, NULL)", (CLOZE_MID,))
+        for ord_, name in enumerate(["Text", "Back Extra"]):
+            conn.execute("INSERT INTO fields VALUES (?, ?, ?, NULL)", (CLOZE_MID, ord_, name))
+        conn.execute(
+            "INSERT INTO notes VALUES (6001, 'tt_cloze', ?, 0, 0, ' tunatale cloze ', ?, ?, 0, 0, '')",
+            (CLOZE_MID, f"{CLOZE_TEXT}\x1f{CLOZE_BACK_EXTRA}", CLOZE_TEXT),
+        )
+        conn.execute(
+            "INSERT INTO cards VALUES (60010, 6001, ?, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, '')", (MINT_DID,)
+        )
+
+
+def test_the_reader_takes_a_tagalog_clozes_l2_from_its_text_field(pimsleur_db):
+    """The Cloze notetype puts the sentence in Text by construction, so there is
+    nothing to guess and no scorer is needed. This is what every later Tagalog
+    sync died on."""
+    from app.plugins.anki_sync.sync_reader import OfflineReader
+
+    _add_tunatale_cloze(pimsleur_db)
+    with sqlite3.connect(str(pimsleur_db)) as conn:
+        conn.row_factory = sqlite3.Row
+        records = OfflineReader(conn, ROOT, language_code="tl").get_note_records()
+    rec = next(r for r in records if r.anki_note_id == 6001)
+    assert rec.is_cloze
+    assert rec.l2_text == CLOZE_TEXT
+    # The Pimsleur notes still read through their profile, beside the cloze.
+    assert next(r for r in records if r.anki_note_id == 5001).l2_text == "kumain"
+
+
+async def test_a_missing_mint_notetype_skips_the_word_instead_of_aborting_the_sync(pimsleur_db, caplog):
+    """The Pimsleur fixture has no "Tagalog Vocabulary" notetype — exactly the
+    live collection. The TT-added word is held back LOUDLY and stays unlinked,
+    so the first sync after the notetype exists mints it; the rest of the sync
+    carries on (the reverse-import pass after the mint loop still runs)."""
+    from app.models.syntactic_unit import SyntacticUnit
+    from app.plugins.anki_sync.sync import AnkiSync, OfflineReader, OfflineWriter
+
+    db = SRSDatabase(":memory:")
+    db.add_collocation(
+        SyntacticUnit(text="abuloy", translation="contribution", word_count=1, difficulty=1, source="user")
+    )
+    media_calls: list[str] = []
+
+    async def media_fn(word, *_args, **_kwargs):
+        media_calls.append(word)
+
+    conn = sqlite3.connect(str(pimsleur_db))
+    conn.row_factory = sqlite3.Row
+    try:
+        with caplog.at_level("WARNING"):
+            report = await AnkiSync(
+                db=db,
+                _reader=OfflineReader(conn, ROOT, language_code="tl"),
+                _writer=OfflineWriter(conn),
+                language_code="tl",
+            ).sync_create_new(deck_name=ROOT, model_name="Tagalog Vocabulary", _media_fn=media_fn)
+    finally:
+        conn.close()
+
+    assert report.created == 0
+    assert report.no_notetype == 1
+    assert report.notes_created_from_anki == len(NOTES)
+    # Skipped BEFORE the media fetch: a vendor call per word per sync would buy nothing.
+    assert media_calls == []
+    assert [i for _, i, _ in db.list_items_without_anki_note()][0].syntactic_unit.text == "abuloy"
+    assert any(
+        "MINT_NO_NOTETYPE" in r.message and "abuloy" in r.message and "Tagalog Vocabulary" in r.message
+        for r in caplog.records
+    )

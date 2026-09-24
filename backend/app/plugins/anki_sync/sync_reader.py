@@ -158,7 +158,11 @@ class OfflineReader:
                 translation = extract_cloze_translation(back_extra)
                 sentence_translation = extract_cloze_sentence_translation(back_extra)
                 note_text = extract_cloze_note(back_extra)
-                l2_text = extract_l2_from_fields(note.fields, self._l2_css_class, self._l2_scorer)
+                # The Cloze notetype puts the sentence in Text (fields[0]) by
+                # construction; Back Extra is the English and the answer. Scoring
+                # both demanded an L2 scorer, which Tagalog does not have, so a
+                # Tagalog sync died on TT's own clozes (2026-09-23).
+                l2_text = extract_l2_from_fields(note.fields[:1], self._l2_css_class, self._l2_scorer)
                 disambig_key = ""
                 article = None
                 extras: tuple[BackField, ...] | None = None

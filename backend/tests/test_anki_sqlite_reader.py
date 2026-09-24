@@ -1402,6 +1402,12 @@ class TestL2ScorerIsPerLanguage:
         here would turn 'this note is empty' into a crash."""
         assert extract_l2_from_fields(["", "  ", "<div></div>"], "norwegian", None) == ""
 
+    def test_no_scorer_needed_when_only_one_field_has_text(self):
+        """One candidate is not a choice, so a language without a scorer still
+        reads it — and a scorer could only have picked the same field."""
+        assert extract_l2_from_fields(["Kumain ka na ba?", "", "<br>"], "tagalog", None) == "Kumain ka na ba?"
+        assert extract_l2_from_fields(["snøm", "", "<br>"], "norwegian", _NO_SCORER) == "snøm"
+
     def test_score_is_density_not_a_raw_count(self):
         """The deeper defect: a raw count is length-biased, so a sentence always
         beats a headword by simply containing more letters. With counting, the
