@@ -115,7 +115,16 @@ start() {
       die "port $port is in use by pid $(lsof -tiTCP:"$port" -sTCP:LISTEN | head -1) — ./switch.sh stop, or find what holds it"
     fi
   done
-  echo "==> starting the laptop instance (sync ${SYNC_ENABLED:-false})"
+  # Only languages whose plugin exists in THIS checkout. The instance runs
+  # prod's pinned commit, not this repo's, and its lifespan raises KeyError on
+  # a DATABASE_URLS code it has no plugin for: listing ceb here before that
+  # commit had the plugin would have kept the instance from booting (2026-09-25).
+  local code dburls=""
+  for code in sl no tl ceb; do
+    [ -d "$APP/backend/app/plugins/languages/$code" ] || continue
+    dburls="${dburls:+$dburls, }\"$code\": \"sqlite:///$DATA/tunatale_$code.db\""
+  done
+  echo "==> starting the laptop instance (sync ${SYNC_ENABLED:-false}; languages: ${dburls//\"/})"
   # Half a start is worse than none: if anything below dies, take down what did start.
   trap 'stop >/dev/null 2>&1 || true' ERR EXIT
   # Each server is the backgrounded command ITSELF (env and nohup exec
@@ -137,7 +146,7 @@ if not isinstance(got, TableLemmatizer):
 ' || die "the laptop instance would not use the lemma table — check lemmatizer_type in $REPO/backend/.env"
   env TT_HOME="$DATA/.tunatale" MEDIA_DIR="$DATA/media" AUDIO_DIR="$DATA/output/audio" \
     DATABASE_URL="sqlite:///$DATA/tunatale_sl.db" \
-    DATABASE_URLS="{\"sl\": \"sqlite:///$DATA/tunatale_sl.db\", \"no\": \"sqlite:///$DATA/tunatale_no.db\", \"tl\": \"sqlite:///$DATA/tunatale_tl.db\", \"ceb\": \"sqlite:///$DATA/tunatale_ceb.db\"}" \
+    DATABASE_URLS="{$dburls}" \
     AUTH_DATABASE_URL="sqlite:///$DATA/auth.db" LEMMATIZER_TYPE=table \
     SYNC_ENABLED="${SYNC_ENABLED:-false}" PARKED_AT="${PARKED_AT:-}" \
     nohup .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port "$API_PORT" \
