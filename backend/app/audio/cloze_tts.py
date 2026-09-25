@@ -67,7 +67,10 @@ async def synthesize_cloze_audios(
             collocation_id=collocation_id,
             kind="audio_tts_sentence",
             filename=sentence_filename,
-            path=str(sentence_path),
+            # Relative media/<filename>, like every other writer (vocab_media
+            # builds f"media/{filename}") — an absolute path never matches Anki
+            # media names (tunatale-zyw9).
+            path=f"media/{sentence_filename}",
             # anki_filename must equal the filename Anki references in the cloze
             # Back Extra ([sound:tts_sentence_…]). The sync's refresh_media
             # reconciliation matches rows by anki_filename; an empty value never
@@ -98,7 +101,7 @@ async def synthesize_cloze_audios(
             collocation_id=collocation_id,
             kind="audio_tts",
             filename=word_filename,
-            path=str(word_path),
+            path=f"media/{word_filename}",
             anki_filename=word_filename,
             sha256=sha,
             size_bytes=size_bytes,

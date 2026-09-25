@@ -150,6 +150,33 @@ async def test_forvo_audio_prefix_follows_target_language(media_dir, monkeypatch
     assert (media_dir / "no_snakke.mp3").read_bytes() == b"AUD"
 
 
+async def test_forvo_audio_prefix_follows_passed_language_code(media_dir, monkeypatch) -> None:
+    """tunatale-w4m7.12: an explicit language_code names the Forvo file, not the
+    process-global default — a Slovene card minted on a Norwegian-default
+    instance must be sl_*.mp3, not no_*.mp3."""
+    monkeypatch.setattr(vocab_media.settings, "target_language", "no")
+    db = _FakeDB()
+
+    async def _query(*_a, **_k):
+        return "q"
+
+    async def _fetch(*_a, **_k):
+        return MediaResult(audio_bytes=b"AUD", audio_source="forvo")
+
+    out = await vocab_media.generate_vocab_media(
+        db,
+        7,
+        "govoriti",
+        "to speak",
+        llm=object(),
+        pixabay_key="k",
+        language_code="sl",
+        _query_fn=_query,
+        _fetch_fn=_fetch,
+    )
+    assert out["audio"] == "sl_govoriti.mp3"
+
+
 async def test_tts_audio_prefix(media_dir) -> None:
     """Non-Forvo audio is stored under the tts_ prefix / audio_tts kind."""
     db = _FakeDB()

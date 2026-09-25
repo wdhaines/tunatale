@@ -25,6 +25,7 @@ from app.generation.section_builder import (
     build_slow_translated_section,
     build_translated_section,
 )
+from app.languages import get_story_text_normalizer
 from app.llm.call_sites import CallSite
 from app.models.curriculum import CurriculumDay
 from app.models.language import NARRATOR_VOICE, Language
@@ -368,9 +369,33 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
     import passes nothing — recording what a hand-pasted prompt requested is
     tunatale-g4c9's job.
     """
+    title = data.get("title", "Lesson")
+
+    # Normalize the story's TARGET-LANGUAGE text once, before anything reads
+    # `data` (tunatale-w4m7.11): Tagalog's affix-hyphen cleanup turns the LLM's
+    # `mag‑kape` (often U+2011) into standard `magkape`. Applied on a DEEP COPY
+    # so the caller's dict is never mutated. Only scenes[*].lines[*].text,
+    # key_phrases[*].phrase and dialogue_glosses[*].word/.lemma are touched —
+    # never translation/title/base or any English.
+    normalizer = get_story_text_normalizer(language.code)
+    if normalizer is not None:
+        data = copy.deepcopy(data)
+        # Same shape assumptions as the reads below: scenes, lines and glosses
+        # are dicts; a key phrase may not be (it is skipped with a warning).
+        for scene in data.get("scenes", []):
+            for line in scene.get("lines", []):
+                if "text" in line:
+                    line["text"] = normalizer(line["text"])
+        for kp in data.get("key_phrases", []):
+            if isinstance(kp, dict) and "phrase" in kp:
+                kp["phrase"] = normalizer(kp["phrase"])
+        for gloss in data.get("dialogue_glosses", []):
+            for field in ("word", "lemma"):
+                if field in gloss:
+                    gloss[field] = normalizer(gloss[field])
+
     key_phrases = data.get("key_phrases", [])
     scenes = data.get("scenes", [])
-    title = data.get("title", "Lesson")
 
     if not key_phrases and not scenes:
         raise StoryGenerationError("LLM response missing 'key_phrases' and 'scenes'")

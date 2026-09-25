@@ -198,6 +198,11 @@ class LanguageConfig:
     # Slowed-word function for the slow-speed section (Norwegian morpheme pauses).
     # ``None`` when the language has no slow-word specialisation.
     slow_word_fn: Callable[[str], str] | None = None
+    # Story-text normalizer applied ONCE to the target-language fields of a
+    # generated story, before any downstream processing (tunatale-w4m7.11:
+    # Tagalog's affix-hyphen cleanup — ``mag‑kape`` → ``magkape``). ``None``
+    # when the language has no such normalizer — every language but Tagalog.
+    story_text_normalizer: Callable[[str], str] | None = None
     # Predicate: does this L2 surface carry a definite-article suffix? Used to stop
     # a generated card's gloss contradicting its headword (`morder` glossed "the
     # murderer"). ``None`` for languages that do not mark definiteness by suffix —
@@ -601,6 +606,17 @@ def get_slow_word(code: str) -> Callable[[str], str] | None:
     discover()
     config = _CONFIGS.get(code)
     return config.slow_word_fn if config else None
+
+
+def get_story_text_normalizer(code: str) -> Callable[[str], str] | None:
+    """Return the story-text normalizer for *code*, or ``None``.
+
+    ``None`` means the language has no story-text normalizer, and
+    ``build_lesson_from_story`` applies nothing. Unknown codes → ``None``.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    return config.story_text_normalizer if config else None
 
 
 def get_definite_form_checker(code: str) -> Callable[[str], bool] | None:

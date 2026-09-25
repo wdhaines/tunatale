@@ -332,6 +332,44 @@ def test_backfill_unclozes_hint_payload_before_tts(monkeypatch, db_path):
     assert db2.get_sentence_audio_filename(coll_id) == "tts_sentence_87afd8f533341d9c.mp3"
 
 
+def test_inserted_sentence_media_row_path_is_relative(monkeypatch, db_path):
+    """tunatale-zyw9: the inserted audio_tts_sentence row stores a RELATIVE
+    media/<filename> path, like every other writer, not the absolute path of
+    the synthesized file (an absolute path never matches Anki media names)."""
+    import app.audio.cloze_tts as cloze_tts_mod
+
+    async def _fake_tts(text, voice="sl-SI-PetraNeural"):
+        return b"fake-mp3"
+
+    monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", _fake_tts)
+
+    from app.srs.database import SRSDatabase
+
+    db = SRSDatabase(db_path)
+    _seed_cloze_row(db, "vsak", "Odprto je vsak dan")
+
+    result = backfill_cloze_tts(db_path=db_path, dry_run=False)
+    assert result["synthesized"] >= 1
+
+    db2 = SRSDatabase(db_path)
+    coll_id = db2.get_collocation_by_lemma_with_id("vsak")[0]
+    filename = db2.get_sentence_audio_filename(coll_id)
+    assert filename is not None
+    row = db2.find_media_by_anki_filename(filename, collocation_id=coll_id)
+    assert row is not None
+    assert row["path"] == f"media/{filename}"
+    assert not row["path"].startswith("/")
+
+    # The word clip's audio_tts row, written by the same function, too.
+    import sqlite3
+
+    with sqlite3.connect(db_path.removeprefix("sqlite:///")) as conn:
+        rows = conn.execute("SELECT kind, filename, path FROM media WHERE collocation_id = ?", (coll_id,)).fetchall()
+    assert {kind for kind, _, _ in rows} == {"audio_tts", "audio_tts_sentence"}
+    for _kind, fname, path in rows:
+        assert path == f"media/{fname}"
+
+
 def test_backfill_clean_text_untouched(monkeypatch, db_path):
     """B3: clean text without cloze markup passes through unchanged."""
     import app.audio.cloze_tts as cloze_tts_mod
