@@ -51,7 +51,7 @@ services:
       MEDIA_DIR: /data/media
       AUDIO_DIR: /data/output/audio
       DATABASE_URL: sqlite:////data/tunatale_sl.db
-      DATABASE_URLS: '{"sl": "sqlite:////data/tunatale_sl.db", "no": "sqlite:////data/tunatale_no.db", "tl": "sqlite:////data/tunatale_tl.db"}'
+      DATABASE_URLS: '{"sl": "sqlite:////data/tunatale_sl.db", "no": "sqlite:////data/tunatale_no.db", "tl": "sqlite:////data/tunatale_tl.db", "ceb": "sqlite:////data/tunatale_ceb.db"}'
       # The default ./auth.db resolves inside the container and was deleted by the
       # first redeploy after an account existed (2026-09-18). The prod guard now
       # refuses any relative SQLite path.

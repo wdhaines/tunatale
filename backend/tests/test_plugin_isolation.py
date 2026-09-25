@@ -54,6 +54,7 @@ def test_sl_only_direct_import(isolated_app: Path) -> None:
     """(a) sl-only tree: importing the plugin first must not crash."""
     _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "no")
     _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "tl")
+    _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "ceb")
 
     result = _run_isolated(
         isolated_app,
@@ -69,6 +70,7 @@ def test_no_only_direct_import(isolated_app: Path) -> None:
     """(b) no-only tree: importing the plugin first must not crash."""
     _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "sl")
     _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "tl")
+    _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "ceb")
 
     result = _run_isolated(
         isolated_app,
@@ -84,6 +86,7 @@ def test_tl_only_direct_import(isolated_app: Path) -> None:
     """(b') tl-only tree: importing the plugin first must not crash."""
     _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "sl")
     _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "no")
+    _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "ceb")
 
     result = _run_isolated(
         isolated_app,
@@ -95,11 +98,33 @@ def test_tl_only_direct_import(isolated_app: Path) -> None:
     assert result.stdout.strip() == str(["en", "tl"])
 
 
+def test_ceb_only_direct_import(isolated_app: Path) -> None:
+    """(b'') ceb-only tree: importing the plugin first must not crash.
+
+    The 3-letter code is the new thing here: "ceb" is the first language code
+    in the registry that is not two letters, and every plugin dir in this suite
+    is named after its code.
+    """
+    _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "sl")
+    _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "no")
+    _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "tl")
+
+    result = _run_isolated(
+        isolated_app,
+        "import app.plugins.languages.ceb; "
+        "from app.languages import known_language_codes; "
+        "print(sorted(known_language_codes()))",
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert result.stdout.strip() == str(["ceb", "en"])
+
+
 def test_zero_plugins_hard_fail(isolated_app: Path) -> None:
     """(c) zero-plugin tree: discover() must raise RuntimeError."""
     _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "sl")
     _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "no")
     _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "tl")
+    _remove_if_exists(isolated_app / "app" / "plugins" / "languages" / "ceb")
 
     result = _run_isolated(
         isolated_app,

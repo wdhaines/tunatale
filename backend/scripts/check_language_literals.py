@@ -56,9 +56,24 @@ ALLOWLIST_PATH = Path("tests/language_literals_allowlist.txt")
 APP_DIR = Path("app")
 
 _BARE_CODES = {"sl", "no", "nb", "tl", "fil", "ceb"}
-_NAME_SUBSTRINGS = ("slovene", "slovenian", "norwegian", "tagalog", "filipino", "cebuano", "visayan")
+_NAME_SUBSTRINGS = (
+    "slovene",
+    "slovenian",
+    "norwegian",
+    "tagalog",
+    "filipino",
+    "cebuano",
+    "visayan",
+    "bisaya",
+    "binisaya",
+)
 _ENGINE_SUBSTRINGS = ("classla", "stanza")
-_VOICE_RE = re.compile(r"\b[a-z]{2,3}-[A-Z]{2}-[A-Za-z]+Neural\b")
+# A voice id is <2-3 lowercase letters>-<2 uppercase letters>-<Name><suffix>.
+# The suffix is what makes it a voice id rather than a vendor or model name:
+# "gemini-2.5-flash-tts" and "GoogleGemini" are neither, while
+# "ceb-PH-KoreGemini" is. Gemini-TTS ids mirror Azure's <locale>-<Name>Neural
+# on purpose so the locale still slices off the id for every voice invariant.
+_VOICE_RE = re.compile(r"\b[a-z]{2,3}-[A-Z]{2}-[A-Za-z]+(?:Neural|Gemini)\b")
 
 
 # ── Matching ─────────────────────────────────────────────────────────────────
@@ -71,9 +86,12 @@ def _matches_language_literal(value: str) -> bool:
     1. Exact bare code, case-insensitive: ``"sl"``, ``"no"``, ``"tl"``, ``"FIL"``
        (after ``.strip()``).
     2. Name substring (case-insensitive): ``slovene``, ``slovenian``,
-       ``norwegian``, ``tagalog``, ``filipino``.
+       ``norwegian``, ``tagalog``, ``filipino``, ``cebuano``, ``visayan``,
+       ``bisaya``, ``binisaya`` (Cebuano's native name; ``bisaya`` does not
+       occur inside it).
     3. Engine substring (case-insensitive): ``classla``, ``stanza``.
-    4. TTS voice id regex: e.g. ``sl-SI-PetraNeural``, ``fil-PH-BlessicaNeural``.
+    4. TTS voice id regex: e.g. ``sl-SI-PetraNeural``, ``fil-PH-BlessicaNeural``,
+       ``ceb-PH-KoreGemini``.
     """
     if value.strip().lower() in _BARE_CODES:
         return True

@@ -14,7 +14,7 @@ NARRATOR_VOICE = "en-US-GuyNeural"
 class Language:
     """Language configuration including ISO code, display names, script, and TTS voice map."""
 
-    code: str  # ISO 639-1 code, e.g. "sl"
+    code: str  # ISO 639 code: 639-1 where one exists ("sl", "no", "tl"), else 639-3 ("ceb")
     name: str  # English name, e.g. "Slovene"
     native_name: str  # Native name, e.g. "slovenščina"
     script: str  # Writing system, e.g. "latin"

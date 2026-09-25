@@ -47,6 +47,20 @@ class TestMatchesLanguageLiteral:
             "ceb",  # Cebuano, registered ahead of its plugin (tunatale-w4m7.2)
             "Cebuano",
             "Visayan",
+            "bisaya",  # the deck is "3. Bisaya"; core must not hardcode it
+            "Binisaya",  # the native name; "bisaya" is not a substring of it
+            # ── The Gemini voice family (tunatale-u8nz.3) ──
+            # Same id shape as <locale>-<Name>Neural, so the locale still slices
+            # off the id and the registry-wide voice invariants hold unchanged.
+            "ceb-PH-KoreGemini",
+            "ceb-PH-AoedeGemini",
+            # Shape, not registry: zh has no plugin, and the id is still exactly
+            # the shape the gate exists to catch.
+            "zh-CN-XiaoxiaoNeural",
+            "de-DE-SeraphinaMultilingualNeural",
+            # A voice id EMBEDDED IN PROSE is still a voice id. The checker runs
+            # on whole string literals, so the id must match mid-sentence too.
+            "use ceb-PH-KoreGemini for the narrator",
         ],
     )
     def test_positive_matches(self, value):
@@ -76,6 +90,16 @@ class TestMatchesLanguageLiteral:
             "cebu",  # the city/island, not the bare code "ceb"
             "receb",  # contains "ceb" as a substring, but bare-code rule is exact-only
             "xfil-PH-Foo",  # no word boundary inside "xfil", and no Neural suffix
+            # ── Gemini near-misses: the shape is <loc>-<REGION>-<Name><suffix>,
+            # and EVERY segment is load-bearing (tunatale-u8nz.3) ──
+            "ceb-PH-Kore",  # locale + region + name, but NO suffix
+            "Kore-Gemini",  # name + suffix, but no locale/region prefix
+            "GoogleGemini",  # vendor + model, concatenated: no hyphen at all
+            # A model id is hyphens and lowercase the whole way down. The
+            # {2,3}-letter locale bound must not swallow part of a longer token
+            # and then find a region-looking tail.
+            "gemini-2.5-flash-preview-tts-multilingual",
+            "bisque",  # shares the "bis" opening, is not "bisaya"
             "hello",
             "",
         ],

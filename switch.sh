@@ -137,7 +137,7 @@ if not isinstance(got, TableLemmatizer):
 ' || die "the laptop instance would not use the lemma table — check lemmatizer_type in $REPO/backend/.env"
   env TT_HOME="$DATA/.tunatale" MEDIA_DIR="$DATA/media" AUDIO_DIR="$DATA/output/audio" \
     DATABASE_URL="sqlite:///$DATA/tunatale_sl.db" \
-    DATABASE_URLS="{\"sl\": \"sqlite:///$DATA/tunatale_sl.db\", \"no\": \"sqlite:///$DATA/tunatale_no.db\", \"tl\": \"sqlite:///$DATA/tunatale_tl.db\"}" \
+    DATABASE_URLS="{\"sl\": \"sqlite:///$DATA/tunatale_sl.db\", \"no\": \"sqlite:///$DATA/tunatale_no.db\", \"tl\": \"sqlite:///$DATA/tunatale_tl.db\", \"ceb\": \"sqlite:///$DATA/tunatale_ceb.db\"}" \
     AUTH_DATABASE_URL="sqlite:///$DATA/auth.db" LEMMATIZER_TYPE=table \
     SYNC_ENABLED="${SYNC_ENABLED:-false}" PARKED_AT="${PARKED_AT:-}" \
     nohup .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port "$API_PORT" \
