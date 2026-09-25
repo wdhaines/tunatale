@@ -227,13 +227,19 @@ def test_chars_per_month_limit_resolves_from_settings_when_a_ledger_is_present(m
 
 
 def test_get_tts_service_wires_a_ledger(tmp_path):
-    """Production's only builder constructs the ledger for the Azure adapter."""
+    """Production's only builder constructs the ledger for the Azure adapter.
+
+    Reached through the router since tunatale-u8nz.2: the factory returns a
+    ``RoutingTTSService`` over two adapters, and the ledger is a per-provider
+    fact that belongs on the Azure one. The claim is unchanged, the path to it
+    is one hop longer.
+    """
     from app.audio.tts_factory import get_tts_service
 
     svc = get_tts_service(cache_dir=tmp_path / "cache")
 
-    assert isinstance(svc, AzureTTSService)
-    assert svc._ledger is not None
+    assert isinstance(svc._azure, AzureTTSService)
+    assert svc._azure._ledger is not None
 
 
 @respx.mock

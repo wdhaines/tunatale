@@ -688,19 +688,24 @@ class TestCebuanoRegistration:
         assert get_language("ceb").tts_voice_map == {
             "narrator": NARRATOR_VOICE,
             "female-1": "ceb-PH-KoreGemini",
-            "female-2": "ceb-PH-AoedeGemini",
+            "female-2": "ceb-PH-DespinaGemini",
             "male-1": "ceb-PH-CharonGemini",
-            "male-2": "ceb-PH-PuckGemini",
+            "male-2": "ceb-PH-OrusGemini",
             "female": "ceb-PH-KoreGemini",
             "male": "ceb-PH-CharonGemini",
         }
 
-    def test_only_the_narrator_gain_is_measured(self):
-        # The narrator gain is the one value copied across every plugin table
-        # (get_tts_voice_gain_db resolves per language code). Every Gemini
-        # voice is UNMEASURED until tunatale-u8nz.2 picks the cast by pitch, so
-        # a gain appearing here before then would be a fabricated number.
-        assert get_language("ceb").tts_voice_gain_db == {"en-US-GuyNeural": -0.9}
+    def test_every_cast_voice_has_its_measured_gain(self):
+        # Integrated loudness of the 8-sentence Cebuano sample set per voice
+        # (ffmpeg ebur128, target -20.0 LUFS), 2026-09-25, tunatale-u8nz.2.
+        # The narrator gain is the one value copied across every plugin table.
+        assert get_language("ceb").tts_voice_gain_db == {
+            "ceb-PH-KoreGemini": -6.0,
+            "ceb-PH-DespinaGemini": -5.6,
+            "ceb-PH-CharonGemini": -3.1,
+            "ceb-PH-OrusGemini": -5.0,
+            "en-US-GuyNeural": -0.9,
+        }
 
     def test_deck_and_mint_deck_names(self):
         assert get_deck_name("ceb") == "3. Bisaya"

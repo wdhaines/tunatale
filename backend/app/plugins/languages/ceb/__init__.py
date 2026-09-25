@@ -18,31 +18,43 @@ register(
                 "narrator": NARRATOR_VOICE,
                 # Gemini-TTS voices (the user's decision, 2026-09-25,
                 # tunatale-u8nz.1), rendered through Cloud TTS with
-                # languageCode=ceb-PH. The id shape <locale>-<Name>Gemini
-                # mirrors Azure's <locale>-<Name>Neural on purpose, so the
-                # registry-wide voice invariants (the locale sliced off the id)
-                # hold unchanged. NO adapter renders these ids yet — that is
-                # tunatale-u8nz.2, and until it ships a render attempt fails
-                # loudly at Azure rather than silently producing English.
-                # ⚠️ The cast is PROVISIONAL: Kore and Charon were heard in the
-                # voice samples; Aoede and Puck are UNMEASURED placeholders, and
-                # u8nz.2 picks the cast by pitch the way the tl cast was picked.
+                # languageCode=ceb-PH by app/audio/gemini_tts.py. The id shape
+                # <locale>-<Name>Gemini mirrors Azure's <locale>-<Name>Neural on
+                # purpose, so the registry-wide voice invariants (the locale
+                # sliced off the id) hold unchanged, and the router dispatches
+                # on the suffix.
+                # Cast picked by PITCH DISTANCE, the tl/nb method (tunatale-u8nz.2,
+                # 2026-09-25): median F0 (Praat) of the 8-sentence Cebuano sample
+                # set, gemini-2.5-flash-tts, rate 1.0:
+                #   F: Leda 215.1 | Kore 209.4 | Aoede 206.5 | Despina 185.5
+                #   M: Orus 139.2 | Iapetus 128.5 | Puck 109.2 | Charon 107.2
+                # Kore and Charon stay (the user heard them in the voice samples).
+                # The provisional second voices were near-duplicates of them,
+                # Aoede at 2.9 Hz from Kore and Puck at 2.0 Hz from Charon, far
+                # under the nb cast's 13.7 Hz minimum gap. Despina (23.9 Hz from
+                # Kore) and Orus (32.0 Hz from Charon) are the widest pairs.
+                # ⚠️ Renders vary per call, so these are one render's numbers;
+                # gaps of 24-32 Hz are robust to that, a 3 Hz one was not.
                 "female-1": "ceb-PH-KoreGemini",
-                "female-2": "ceb-PH-AoedeGemini",
+                "female-2": "ceb-PH-DespinaGemini",
                 "male-1": "ceb-PH-CharonGemini",
-                "male-2": "ceb-PH-PuckGemini",
+                "male-2": "ceb-PH-OrusGemini",
                 "female": "ceb-PH-KoreGemini",
                 "male": "ceb-PH-CharonGemini",
             },
             # Per-voice loudness gains (dB) applied at assembly, target −20.0
-            # LUFS. The narrator gain is copied from the sl/no plugins:
+            # LUFS: integrated loudness of the same 8 Cebuano sentences per
+            # voice (ffmpeg ebur128), 2026-09-25. Gemini renders run loud
+            # (-14.0 to -18.7 LUFS), so every gain is a cut.
             # en-US-GuyNeural is the shared narrator; the gain is resolved per
             # language (get_tts_voice_gain_db takes a code), so the same
             # measured value has to appear in every plugin table. Measured
             # 2026-09-13 at -19.08 LUFS mean.
-            # ⚠️ The Gemini gains are UNMEASURED until tunatale-u8nz.2 — only
-            # the narrator is pinned here.
             tts_voice_gain_db={
+                "ceb-PH-KoreGemini": -6.0,
+                "ceb-PH-DespinaGemini": -5.6,
+                "ceb-PH-CharonGemini": -3.1,
+                "ceb-PH-OrusGemini": -5.0,
                 "en-US-GuyNeural": -0.9,
             },
         ),

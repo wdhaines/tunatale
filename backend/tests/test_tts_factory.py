@@ -1,33 +1,57 @@
-"""TTS adapter construction — Azure Speech, the only provider.
+"""TTS adapter construction — two providers behind one router.
 
-The explicit switch between Azure and Edge is gone (``tunatale-i69`` retired
-the unofficial Edge adapter). ``get_tts_service`` always builds the Azure
-adapter and wires the character ledger. There is deliberately no fallback path
-here: see AzureTTSService._require_credentials for why an automatic swap is a
-regression rather than resilience.
+There is deliberately still no fallback path here. The router picks an
+adapter from the voice id; it does not try the other one when the first
+fails, and ``AzureTTSService._require_credentials`` explains why an automatic
+swap would be a regression rather than resilience.
 """
 
 from __future__ import annotations
 
 from app.audio.azure_tts import AzureTTSService
+from app.audio.char_ledger import AzureCharacterLedger
+from app.audio.gemini_tts import GeminiTTSService
 from app.audio.ports import TTSService
 from app.audio.tts_factory import get_tts_service
+from app.audio.tts_router import RoutingTTSService
 
 
-def test_default_provider_is_azure():
-    """The factory returns the Azure adapter — it is the only provider."""
-    assert isinstance(get_tts_service(), AzureTTSService)
+def test_the_factory_returns_the_router_over_both_adapters():
+    """One service, two providers, chosen by voice id — not a provider switch."""
+    svc = get_tts_service()
+
+    assert isinstance(svc, RoutingTTSService)
+    assert isinstance(svc._azure, AzureTTSService)
+    assert isinstance(svc._gemini, GeminiTTSService)
 
 
-def test_both_providers_satisfy_the_port():
-    """The returned adapter is interchangeable behind TTSService.
+def test_the_router_satisfies_the_port():
+    """The returned service is interchangeable behind TTSService.
 
     This is what lets renderer.py and slicer.py stay ignorant of the adapter.
     """
     assert isinstance(get_tts_service(), TTSService)
 
 
-def test_cache_dir_reaches_either_adapter(tmp_path):
-    """The file-cache contract reaches the adapter."""
-    svc = get_tts_service(cache_dir=tmp_path / "cache")
-    assert svc._cache_dir == tmp_path / "cache"
+def test_the_character_ledger_stays_on_azure():
+    """The ledger counts Azure spend, which is a per-provider fact.
+
+    A Gemini clip is not billed through that ledger, and attaching the Azure
+    ledger to the Gemini adapter would be counting characters against the
+    wrong provider's ceiling.
+    """
+    svc = get_tts_service()
+
+    assert isinstance(svc._azure._ledger, AzureCharacterLedger)
+    assert getattr(svc._gemini, "_ledger", None) is None
+
+
+def test_the_cache_dir_reaches_both_adapters(tmp_path):
+    """One shared cache directory, two key spaces inside it."""
+    cache = tmp_path / "cache"
+
+    svc = get_tts_service(cache_dir=cache)
+
+    assert svc._cache_dir == cache
+    assert svc._azure._cache_dir == cache
+    assert svc._gemini._cache_dir == cache
