@@ -9,6 +9,7 @@ one of our own functions. That is why this file needs no
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -70,6 +71,41 @@ def _recording_sleep() -> tuple[list[float], object]:
         sleeps.append(delay)
 
     return sleeps, fake_sleep
+
+
+class _FakeClock:
+    """The injected ``now``/``sleep`` pair, as one object.
+
+    ``sleep`` is the ONLY thing that advances time, so every timestamp a test
+    records off it is exact and the test costs no wall-clock — the same
+    strategy the pacing test below uses, wrapped so the retry ladder can read
+    the same clock the transport does.
+
+    The ``asyncio.sleep(0)`` comes BEFORE the advance, and that ordering is
+    load-bearing. Two properties depend on it:
+
+    - Without any yield, a task that never blocks runs its whole retry ladder
+      without handing the loop to its siblings, so a cohort of callers never
+      contends for the request lock and a cooldown test measures nothing.
+    - The yield must come first. Advancing the clock and then suspending lets
+      one caller's twenty-second wait elapse as a single instantaneous jump
+      that carries the clock past the quota window before the waiter the lock
+      just released has run a single step. That erases precisely the overlap
+      the cooldown exists to fix. Suspending first models a sleep as what it
+      is — a window in which OTHER callers make progress.
+    """
+
+    def __init__(self, start: float = 0.0):
+        self.t = start
+        self.slept: list[float] = []
+
+    def now(self) -> float:
+        return self.t
+
+    async def sleep(self, delay: float) -> None:
+        self.slept.append(delay)
+        await asyncio.sleep(0)
+        self.t += delay
 
 
 def _retry_sleeps(sleeps: list[float], min_delay: float) -> list[float]:
@@ -383,18 +419,31 @@ def test_the_retry_ladder_is_six_attempts():
 @respx.mock
 async def test_two_429s_wait_twenty_seconds_each_then_succeed(tmp_path):
     """429 waits a flat 20.0s: the quota is per-minute, so a doubling ladder
-    would climb straight past the window it is waiting for."""
-    route = respx.post(SYNTHESIS_URL).mock(side_effect=[httpx.Response(429), httpx.Response(429), _ok()])
-    sleeps, fake_sleep = _recording_sleep()
+    would climb straight past the window it is waiting for.
 
-    await _svc(min_delay=0.5, sleep=fake_sleep).synthesize(TEXT, VOICE, tmp_path / "o.mp3")
+    The wait is a COOLDOWN now, taken inside the request lock and shared with
+    every queued caller, so what carries the twenty seconds is the gap between
+    request STARTS rather than a sleep owned by the retry loop. On a fake clock
+    the two waits are exact: 0.0, 20.0, 40.0.
+    """
+    clock = _FakeClock()
+    starts: list[float] = []
+    queued = [httpx.Response(429), httpx.Response(429), _ok()]
+
+    def next_response(request):
+        starts.append(clock.now())
+        return queued.pop(0)
+
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=next_response)
+
+    await _svc(min_delay=0.5, sleep=clock.sleep, now=clock.now).synthesize(TEXT, VOICE, tmp_path / "o.mp3")
 
     assert route.call_count == 3
-    assert [s for s in sleeps if s == 20.0] == [20.0, 20.0]
-    # Pacing is paid per attempt on top of the ladder, exactly as the sibling
-    # does: a throttled request that freed its slot instantly is what turns a
-    # burst into a cascade.
-    assert [s for s in sleeps if s == 0.5] == [0.5, 0.5, 0.5]
+    assert starts == [0.0, 20.0, 40.0], f"the two 20s cooldown waits did not arrive, starts were {starts}"
+    # Pacing is still paid per attempt on top of the cooldown, exactly as the
+    # sibling does: a throttled request that freed its slot instantly is what
+    # turns a burst into a cascade.
+    assert [s for s in clock.slept if s == 0.5] == [0.5, 0.5, 0.5]
     assert (tmp_path / "o.mp3").read_bytes() == b"ID3-audio"
 
 
@@ -494,6 +543,42 @@ async def test_consecutive_request_starts_are_at_least_min_delay_apart(tmp_path)
     gaps = [starts[i + 1] - starts[i] for i in range(len(starts) - 1)]
     assert len(starts) == 4, "no request reached the transport — the test proves nothing"
     assert gaps == [0.75, 0.75, 0.75], f"starts were {starts}, gaps {gaps}"
+
+
+@respx.mock
+async def test_one_429_pauses_the_whole_cohort_not_only_the_caller_that_hit_it(tmp_path):
+    """A 429 is a fact about the per-MINUTE quota, not about one request, so
+    the wait belongs to every queued caller.
+
+    Sleeping the twenty seconds outside the request lock let each queued caller
+    fire in turn and be refused: measured on the live instance, 33 of 136
+    requests were 429s, all logged as "attempt 1". The cooldown is taken INSIDE
+    the lock, so the second caller waits out the same window the first is
+    already waiting for instead of spending it finding out.
+
+    The side effect is a server whose quota is exhausted until clock time 20.0,
+    so a caller that ignores the cooldown is COUNTED rather than merely failed.
+    The assertion is that count, not the presence of a success: three callers
+    that all eventually succeed is also what today's code does.
+    """
+    clock = _FakeClock()
+    throttled: list[float] = []
+
+    def quota_exhausted(request):
+        if clock.now() < 20.0:
+            throttled.append(clock.now())
+            return httpx.Response(429)
+        return _ok()
+
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=quota_exhausted)
+    svc = _svc(min_delay=2.0, sleep=clock.sleep, now=clock.now)
+
+    await asyncio.gather(*(svc.synthesize(f"line {i}", VOICE, tmp_path / f"{i}.mp3") for i in range(3)))
+
+    assert len(throttled) == 1, f"the cohort spent {len(throttled)} requests being refused, at {throttled}"
+    assert route.call_count == 4
+    for i in range(3):
+        assert (tmp_path / f"{i}.mp3").read_bytes() == b"ID3-audio", f"caller {i} did not get audio"
 
 
 # ------------------------------------------------------------------
