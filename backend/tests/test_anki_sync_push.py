@@ -203,6 +203,30 @@ def _seed_note_and_cards(
     conn.commit()
 
 
+def _seed_vocab_notetype(conn: sqlite3.Connection, *, mid: int = 1) -> None:
+    """Give *mid* TT's Slovene Vocabulary field roster, as a real collection would.
+
+    A note's fields come from its notetype's ``fields`` rows; there is no
+    default roster to fall back on (tunatale-w4m7.2), so a writer test that
+    edits a note by field name must seed them.
+    """
+    from app.cards.vocab_notetype import SLOVENE_VOCAB
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS notetypes "
+        "(id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS fields (ntid INTEGER, ord INTEGER, name TEXT, config BLOB, PRIMARY KEY (ntid, ord))"
+    )
+    conn.execute("INSERT INTO notetypes VALUES (?, ?, 0, 0, x'')", (mid, SLOVENE_VOCAB.name))
+    conn.executemany(
+        "INSERT INTO fields VALUES (?, ?, ?, x'')",
+        [(mid, i, name) for i, name in enumerate(SLOVENE_VOCAB.field_names)],
+    )
+    conn.commit()
+
+
 class TestBuildClozeBackExtra:
     def test_build_cloze_back_extra_with_note(self):
         """All three parts present: translation, sentence_translation, note."""
@@ -351,6 +375,7 @@ class TestOfflineWriter:
 
     def test_update_note_fields_replaces_named_field_and_bumps_usn(self):
         conn = _make_anki_full_db()
+        _seed_vocab_notetype(conn)
         _seed_note_and_cards(conn)
         conn.execute("UPDATE col SET usn = 7")
         conn.commit()
@@ -366,8 +391,14 @@ class TestOfflineWriter:
         col = conn.execute("SELECT usn FROM col").fetchone()
         assert col["usn"] == 7  # anchor preserved (Layer 61); the note row pushes via its own usn=-1
 
-    def test_update_note_fields_with_notetypes_table_no_match(self):
-        """notetypes table exists but note's mid has no matching row → falls through to Slovene_VOCAB_FIELD_NAMES."""
+    def test_update_note_fields_with_notetypes_table_no_match_raises(self):
+        """The note's mid has no ``fields`` rows: raise, never guess a roster.
+
+        This used to fall back to the Slovene Vocabulary field names, which
+        would write a Tagalog or Norwegian note by Slovene field positions
+        (tunatale-w4m7.2).
+        """
+
         conn = _make_anki_full_db()
         conn.execute(
             "CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)"
@@ -378,10 +409,17 @@ class TestOfflineWriter:
         conn.execute("INSERT INTO fields VALUES (100, 0, 'Text', x''), (100, 1, 'Back Extra', x'')")
         _seed_note_and_cards(conn, mid=999, flds=("banka", "bank", "", "", "", "", ""))
         writer = OfflineWriter(conn)
-        # "English" is from Slovene Vocabulary, not Cloze
-        writer.update_note_fields(9001, {"English": "bank (financial)"})
-        row = conn.execute("SELECT flds FROM notes WHERE id=9001").fetchone()
-        assert row["flds"].split("\x1f")[1] == "bank (financial)"
+        with pytest.raises(ValueError, match="no fields for notetype 999"):
+            writer.update_note_fields(9001, {"English": "bank (financial)"})
+        row = conn.execute("SELECT flds, usn FROM notes WHERE id=9001").fetchone()
+        assert row["flds"].split("\x1f")[1] == "bank"  # untouched
+        assert row["usn"] == 0
+
+    def test_update_note_fields_without_a_fields_table_raises(self):
+        conn = _make_anki_full_db()
+        _seed_note_and_cards(conn)
+        with pytest.raises(ValueError, match="no fields for notetype 1"):
+            OfflineWriter(conn).update_note_fields(9001, {"English": "bank (financial)"})
 
     def test_update_note_fields_with_cloze_notetype(self):
         """Cloze notetype path: update Back Extra via update_note_fields."""
@@ -434,8 +472,9 @@ class TestOfflineWriter:
         assert OfflineWriter(conn).note_fields_by_role(99999, language_code="sl") is None
 
     def test_note_fields_by_role_without_a_profile_is_tts_vocab_layout(self):
-        # No notetypes/fields tables: the legacy Slovene roster, L2 in field 0.
+        # TT's own vocab notetype has no field-role profile: L2 in field 0, then English.
         conn = _make_anki_full_db()
+        _seed_vocab_notetype(conn)
         _seed_note_and_cards(conn)
         roles = OfflineWriter(conn).note_fields_by_role(9001, language_code="sl")
         assert roles == {"text": "Slovene", "translation": "English", "source_sentence": "Note", "image": "Image"}
@@ -496,6 +535,7 @@ class TestOfflineWriter:
         import pytest
 
         conn = _make_anki_full_db()
+        _seed_vocab_notetype(conn)
         _seed_note_and_cards(conn)
         writer = OfflineWriter(conn)
         with pytest.raises(ValueError, match="Unknown field"):
@@ -838,6 +878,7 @@ class TestSyncPush:
         assert db.get_dirty_fields(new_guid) == "text"
 
         anki_conn = _make_anki_full_db()
+        _seed_vocab_notetype(anki_conn)
         _seed_note_and_cards(anki_conn, note_id=note_id)
         anki_conn.execute("UPDATE col SET usn = 7")
         anki_conn.commit()
@@ -4321,6 +4362,7 @@ class TestUpdateClozeTextOnANonClozeNote:
         notetype it was handed — which for a vocab note is the L2 word.
         """
         conn = _make_anki_full_db()
+        _seed_vocab_notetype(conn)
         _seed_note_and_cards(conn)
         writer = OfflineWriter(conn)
         with pytest.raises(ValueError, match="no 'Text' field"):
