@@ -11,7 +11,9 @@ from app.languages import (
     get_deck_name,
     get_infinitive_marker,
     get_language,
+    get_mint_deck_name,
     get_morphology_profile,
+    get_planner_example,
     get_preprocessor,
     get_syllabifier,
     get_tts_locale,
@@ -21,7 +23,8 @@ from app.languages import (
     known_language_codes,
     resolve_language_context,
 )
-from app.models.language import Language
+from app.models.language import NARRATOR_VOICE, Language
+from app.plugins.languages.ceb.preprocessor import CebuanoPreprocessor
 from app.plugins.languages.no.preprocessor import NorwegianPreprocessor
 from app.plugins.languages.sl.preprocessor import SlovenePreprocessor
 from app.plugins.languages.tl.preprocessor import TagalogPreprocessor
@@ -139,7 +142,14 @@ class TestVerbHeadwordFn:
 
 class TestKnownLanguageCodes:
     def test_returns_the_configured_codes(self):
-        assert known_language_codes() == frozenset({"sl", "en", "no", "tl"})
+        assert known_language_codes() == frozenset({"sl", "en", "no", "tl", "ceb"})
+
+    def test_the_sorted_roster_is_pinned(self):
+        # Stated as a SORTED LIST rather than a set so the registry roster is
+        # readable in one line. "ceb" is TT's first 3-letter code (ISO 639-3;
+        # 639-1 has no Cebuano), and it sorts FIRST — which is the whole reason
+        # the planner-example guard below exists.
+        assert sorted(known_language_codes()) == ["ceb", "en", "no", "sl", "tl"]
 
     def test_is_a_frozenset(self):
         assert isinstance(known_language_codes(), frozenset)
@@ -241,6 +251,14 @@ class TestGetLanguage:
         assert lang.code == "no"
         assert lang.name == "Norwegian"
         assert lang.native_name == "norsk"
+
+    def test_returns_cebuano_for_ceb(self):
+        lang = get_language("ceb")
+        assert isinstance(lang, Language)
+        assert lang.code == "ceb"
+        assert lang.name == "Cebuano"
+        assert lang.native_name == "Binisaya"
+        assert lang.script == "latin"
 
     def test_raises_keyerror_for_unknown_code(self):
         with pytest.raises(KeyError, match="xyz"):
@@ -388,7 +406,7 @@ class TestGetLanguage:
         assert "en-AU-WilliamMultilingualNeural" not in set(voices.values())
         assert "en-AU-WilliamMultilingualNeural" in get_language("no").tts_voice_gain_db
 
-    @pytest.mark.parametrize("code,locale", [("sl", "sl-SI"), ("no", "nb-NO"), ("en", "en-US")])
+    @pytest.mark.parametrize("code,locale", [("sl", "sl-SI"), ("no", "nb-NO"), ("en", "en-US"), ("ceb", "ceb-PH")])
     def test_tts_locale_is_declared_per_language(self, code, locale):
         assert get_tts_locale(code) == locale
 
@@ -460,11 +478,23 @@ class TestGetPreprocessor:
         pp = get_preprocessor("tl")
         assert isinstance(pp, TagalogPreprocessor)
 
+    def test_returns_cebuano_preprocessor_for_ceb(self):
+        pp = get_preprocessor("ceb")
+        assert isinstance(pp, CebuanoPreprocessor)
+
     def test_tagalog_preprocessor_passes_through(self):
         from app.models.lesson import SectionType
 
         pp = get_preprocessor("tl")
         text = "Magkano po ito?"
+        result = pp.preprocess(text, SectionType.NATURAL_SPEED)
+        assert result == text
+
+    def test_cebuano_preprocessor_passes_through(self):
+        from app.models.lesson import SectionType
+
+        pp = get_preprocessor("ceb")
+        text = "Pila ka imong kaon?"
         result = pp.preprocess(text, SectionType.NATURAL_SPEED)
         assert result == text
 
@@ -530,6 +560,12 @@ class TestGetVocabNotetype:
 
     def test_returns_none_for_unknown_code(self):
         assert get_vocab_notetype("xyz") is None
+
+    def test_returns_cebuano_vocab_for_ceb(self):
+        from app.cards.vocab_notetype import CEBUANO_VOCAB
+
+        assert get_vocab_notetype("ceb") is CEBUANO_VOCAB
+        assert get_vocab_notetype("ceb").name == "Cebuano Vocabulary"
 
 
 class TestGetSyllabifier:
@@ -636,3 +672,89 @@ class TestKeyPhrasesVoice:
         line = _l2_roles_line(get_language("tl"))
         assert line.startswith("- Use ONLY these 4 L2 voices")
         assert "key-phrases" not in line
+
+
+class TestCebuanoRegistration:
+    """tunatale-u8nz.3 — the ``ceb`` skeleton, pinned value by value.
+
+    Registration is inert at runtime (``app/main.py`` builds everything from
+    ``DATABASE_URLS`` and no Cebuano db is configured anywhere), so nothing
+    downstream exercises these fields. That is exactly why they are asserted
+    here rather than left to be discovered: a skeleton nobody checks is a
+    skeleton nobody finishes.
+    """
+
+    def test_voice_map_is_the_declared_gemini_cast(self):
+        assert get_language("ceb").tts_voice_map == {
+            "narrator": NARRATOR_VOICE,
+            "female-1": "ceb-PH-KoreGemini",
+            "female-2": "ceb-PH-AoedeGemini",
+            "male-1": "ceb-PH-CharonGemini",
+            "male-2": "ceb-PH-PuckGemini",
+            "female": "ceb-PH-KoreGemini",
+            "male": "ceb-PH-CharonGemini",
+        }
+
+    def test_only_the_narrator_gain_is_measured(self):
+        # The narrator gain is the one value copied across every plugin table
+        # (get_tts_voice_gain_db resolves per language code). Every Gemini
+        # voice is UNMEASURED until tunatale-u8nz.2 picks the cast by pitch, so
+        # a gain appearing here before then would be a fabricated number.
+        assert get_language("ceb").tts_voice_gain_db == {"en-US-GuyNeural": -0.9}
+
+    def test_deck_and_mint_deck_names(self):
+        assert get_deck_name("ceb") == "3. Bisaya"
+        assert get_mint_deck_name("ceb", default="ignored") == "3. Bisaya::TunaTale"
+
+    def test_the_facets_later_beads_own_are_left_unset(self):
+        """Absent, not defaulted to something plausible.
+
+        Each of these is deliberately omitted in the plugin with a comment
+        naming the bead that owns it; setting one here would quietly take the
+        capability the owning bead is meant to decide.
+        """
+        from app.languages import _CONFIGS
+
+        config = _CONFIGS["ceb"]
+        assert config.planner_example is None
+        assert config.wordfreq_lang is None
+        assert config.syllabifier_fn is None
+        assert config.lemma_table_path is None
+        assert config.lemmatizer_type == "lowercase"  # the shared default, not a choice
+        assert config.l2_scorer is None
+        assert config.notetype_profiles == {}
+        assert config.style_notes == ""
+        assert config.function_words_path is None
+        assert config.numbers_path is None
+        assert config.phoneme_planner_factory is None
+
+
+class TestPlannerExampleIsNeverTheLowestSortingLanguage:
+    """Why these four rows are pinned together, in one test.
+
+    ``get_planner_example`` shows the planner a worked day written in a
+    language OTHER than the target, and it picks the lowest-sorting language
+    that supplies an example. ``ceb`` sorts before every other registered code
+    — so the day a future bead gives it a ``planner_example`` would replace the
+    example shown to EVERY other language at once, and Tagalog, a close
+    relative, would be shown Cebuano. That is precisely the contamination the
+    selector exists to prevent, and it would be invisible: every other test
+    here would still pass, because each only checks that the example is not the
+    target.
+
+    So the guard is the concrete mapping, asserted per target. If a future bead
+    adds a Cebuano planner example, this test is what says it changed everyone
+    else's prompt.
+    """
+
+    @pytest.mark.parametrize(
+        "target,expected_example_language",
+        [
+            ("ceb", "no"),
+            ("tl", "no"),
+            ("sl", "no"),
+            ("no", "sl"),
+        ],
+    )
+    def test_the_selected_example_language(self, target, expected_example_language):
+        assert get_planner_example(target).language_code == expected_example_language
