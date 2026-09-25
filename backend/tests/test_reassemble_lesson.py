@@ -291,7 +291,7 @@ def _make_fake_renderer(kp_seconds: float = 1.5, rate: int = 48000):
         def __init__(self) -> None:
             self.sections_rendered: list[int] = []
 
-        async def render(self, lesson, output_path, section_paths=None):
+        async def render(self, lesson, output_path, section_paths=None, *, on_progress=None):
             raise AssertionError(
                 "reassemble_lesson_audio called renderer.render(), which re-renders "
                 "the WHOLE lesson and overwrites the existing section files"
@@ -1333,7 +1333,7 @@ def _reroot_rows_to_basenames(store: ContentStore, lesson_id: str) -> None:
 class _WritingRenderer:
     """Minimal renderer for render_lesson_audio: writes bytes, needs no ffmpeg."""
 
-    async def render(self, lesson, output_path, section_paths=None):
+    async def render(self, lesson, output_path, section_paths=None, *, on_progress=None):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"full")
         for sp in section_paths or []:

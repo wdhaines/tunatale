@@ -53,7 +53,7 @@ class FakeRenderer:
     def __init__(self):
         self.calls: list[dict] = []
 
-    async def render(self, lesson, full_path, section_paths=None):
+    async def render(self, lesson, full_path, section_paths=None, *, on_progress=None):
         self.calls.append(
             {
                 "lesson": lesson,
@@ -1227,7 +1227,7 @@ class TestRenderEdgeCases:
         """_render handles exceptions from render_lesson_audio."""
 
         class FailingRenderer:
-            async def render(self, lesson, full_path, section_paths=None):
+            async def render(self, lesson, full_path, section_paths=None, *, on_progress=None):
                 raise RuntimeError("TTS engine offline")
 
         pipeline._renderer = FailingRenderer()
@@ -1641,7 +1641,7 @@ class TestPipelineTaggedBeforeSaved:
                 )
 
         class _FakeRenderer:
-            async def render(self, lesson, full_path, section_paths=None):
+            async def render(self, lesson, full_path, section_paths=None, *, on_progress=None):
                 full_path.parent.mkdir(parents=True, exist_ok=True)
                 full_path.write_bytes(b"audio")
                 return []
@@ -1698,3 +1698,116 @@ class TestPipelineTaggedBeforeSaved:
             "the pipeline reached storage untagged — annotation ran after the save; "
             f"got {[(p.text, p.upos) for p in sporet]}"
         )
+
+
+class TestPipelineRenderProgress:
+    """tunatale-hbnd: a Cebuano render is minutes of throttled TTS, so the card
+    shows a percentage instead of "Rendering audio".
+
+    The renderer is injected (never patched), reports a couple of counts and then
+    blocks on an Event, so the assertions read the status mid-render rather than
+    racing it.
+    """
+
+    @staticmethod
+    def _seed(pipeline, cid: str) -> None:
+        store = sl_store(pipeline)
+        store.save_curriculum(
+            cid,
+            Curriculum(
+                id=cid,
+                topic="t",
+                language_code="sl",
+                cefr_level="A2",
+                days=[CurriculumDay(day=1, title="D1", focus="f", collocations=["c"], learning_objective="lo")],
+            ),
+        )
+        store.save_lesson(
+            "lid",
+            cid,
+            1,
+            Lesson(
+                title="Day One",
+                language_code="sl",
+                sections=[Section(section_type=SectionType.KEY_PHRASES, phrases=[])],
+            ),
+        )
+
+    def _rendering_pipeline(self, pipeline, *, render):
+        class _ProgressRenderer:
+            async def render(self, lesson, full_path, section_paths=None, *, on_progress=None):
+                on_progress(171, 171)
+                on_progress(3, 171)
+                on_progress(116, 171)
+                render["started"].set()
+                await render["release"].wait()
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+                full_path.write_bytes(b"audio")
+                return []
+
+        render["renderer"] = _ProgressRenderer()
+        pipeline._renderer = render["renderer"]
+
+    async def test_status_reports_clip_counts_while_rendering_then_clears_them(self, pipeline):
+        cid = "cur-progress"
+        self._seed(pipeline, cid)
+        render = {"started": asyncio.Event(), "release": asyncio.Event()}
+        self._rendering_pipeline(pipeline, render=render)
+
+        pipeline.start()
+        pipeline.enqueue("sl", cid, 1, "render")
+        await asyncio.wait_for(render["started"].wait(), 5.0)
+
+        day = pipeline.status_for("sl", cid)["days"][0]
+        assert day["state"] == "rendering"
+        assert (day["clips_done"], day["clips_total"]) == (116, 171)
+        # Seconds since the render began, so no rate yet — and None is the
+        # honest reading, not a missing one.
+        assert day["eta_seconds"] is None
+
+        render["release"].set()
+        await wait_for_job(pipeline, "sl", cid, 1, "ready")
+
+        day = pipeline.status_for("sl", cid)["days"][0]
+        assert day["state"] == "ready"
+        assert (day["clips_done"], day["clips_total"], day["eta_seconds"]) == (None, None, None)
+
+    async def test_counts_are_cleared_when_the_render_fails(self, pipeline):
+        """A failed render must not leave a progress bar frozen at 116/171."""
+        cid = "cur-failed"
+        self._seed(pipeline, cid)
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class _FailingRenderer:
+            async def render(self, lesson, full_path, section_paths=None, *, on_progress=None):
+                on_progress(4, 171)
+                started.set()
+                await release.wait()
+                msg = "TTS engine offline"
+                raise RuntimeError(msg)
+
+        pipeline._renderer = _FailingRenderer()
+
+        pipeline.start()
+        pipeline.enqueue("sl", cid, 1, "render")
+        await asyncio.wait_for(started.wait(), 5.0)
+
+        day = pipeline.status_for("sl", cid)["days"][0]
+        assert (day["clips_done"], day["clips_total"]) == (4, 171)
+
+        release.set()
+        await wait_for_job(pipeline, "sl", cid, 1, "failed")
+
+        day = pipeline.status_for("sl", cid)["days"][0]
+        assert day["state"] == "failed"
+        assert (day["clips_done"], day["clips_total"], day["eta_seconds"]) == (None, None, None)
+
+    async def test_a_day_with_no_render_reports_no_counts(self, pipeline):
+        """The three fields are None for every non-rendering state."""
+        cid = "cur-plain"
+        self._seed(pipeline, cid)
+        pipeline.enqueue("sl", cid, 1, "render")
+        day = pipeline.status_for("sl", cid)["days"][0]
+        assert day["state"] == "queued"
+        assert (day["clips_done"], day["clips_total"], day["eta_seconds"]) == (None, None, None)

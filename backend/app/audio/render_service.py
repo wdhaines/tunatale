@@ -314,6 +314,7 @@ async def render_lesson_audio(
     audio_dir: Path,
     lesson_id: str,
     lesson,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> dict:
     """Render audio for a lesson and persist the results.
 
@@ -325,9 +326,14 @@ async def render_lesson_audio(
     A caller that arrives while another render holds the gate WAITS (the event
     loop stays free, so the API keeps answering) rather than being refused: a
     refusal would trade a slow box for a lesson with no audio.
+
+    *on_progress* is handed straight to ``renderer.render`` (tunatale-hbnd), so a
+    caller watching a long render reads clip counts instead of a spinner. It is
+    NOT called while the gate above is held by another render: a queued render
+    has not started, and there is nothing to count yet.
     """
     async with _render_gate():
-        return await _render_lesson_audio(store, renderer, audio_dir, lesson_id, lesson)
+        return await _render_lesson_audio(store, renderer, audio_dir, lesson_id, lesson, on_progress)
 
 
 async def _render_lesson_audio(
@@ -336,6 +342,7 @@ async def _render_lesson_audio(
     audio_dir: Path,
     lesson_id: str,
     lesson,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> dict:
     """The render itself. Split out so the gate above is a single statement and
     ``async with`` releases it on every path, success or failure."""
@@ -352,7 +359,7 @@ async def _render_lesson_audio(
     section_paths = [audio_dir / f"{sid}.{ext}" for sid in section_ids]
 
     cues = await _with_render_retries(
-        lambda: renderer.render(lesson, full_path, section_paths=section_paths),
+        lambda: renderer.render(lesson, full_path, section_paths=section_paths, on_progress=on_progress),
         f"lesson {lesson_id!r}",
     )
     cues_json = json.dumps([asdict(c) for c in cues], ensure_ascii=False)

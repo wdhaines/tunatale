@@ -47,7 +47,7 @@ class FakeRenderer:
     def __init__(self):
         self.calls = []
 
-    async def render(self, lesson, full_path, section_paths=None):
+    async def render(self, lesson, full_path, section_paths=None, *, on_progress=None):
         self.calls.append({"lesson": lesson, "full_path": full_path, "section_paths": section_paths})
         from app.audio.cues import Cue
 
@@ -159,7 +159,20 @@ class TestPipelineStatusEndpoint:
         assert set(data.keys()) == {"active", "days"}
         assert set(PipelineStatusResponse.model_fields) == {"active", "days"}
 
-        day_keys = {"day", "position", "state", "lesson_id", "has_audio", "error", "retryable", "detail"}
+        day_keys = {
+            "day",
+            "position",
+            "state",
+            "lesson_id",
+            "has_audio",
+            "error",
+            "retryable",
+            "detail",
+            # tunatale-hbnd: render progress, null on any day not rendering.
+            "clips_done",
+            "clips_total",
+            "eta_seconds",
+        }
         assert set(data["days"][0].keys()) == day_keys
         assert set(PipelineDayStatus.model_fields) == day_keys
 
