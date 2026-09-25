@@ -58,14 +58,19 @@
 			};
 			if (lastSearch) params.search = lastSearch;
 			if (stateFilter) params.state = stateFilter;
-			const [data, stats] = await Promise.all([
-				api.listSRSItems(params),
-				api.fetchQueueStats().catch(() => null),
-			]);
+			// The badge must not hold the list back: awaiting both together let a
+			// 5s queue-stats response delay an 11ms item list, so a card's new
+			// image stayed invisible after the image modal closed (tunatale-o8ik).
+			api.fetchQueueStats().then(
+				(stats) => {
+					if (seq === fetchSeq) queueStats = stats;
+				},
+				() => {}
+			);
+			const data = await api.listSRSItems(params);
 			if (seq !== fetchSeq) return;
 			items = data.items;
 			total = data.total;
-			if (stats) queueStats = stats;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
