@@ -55,8 +55,8 @@ from _checker_lib import (
 ALLOWLIST_PATH = Path("tests/language_literals_allowlist.txt")
 APP_DIR = Path("app")
 
-_BARE_CODES = {"sl", "no", "nb", "tl", "fil"}
-_NAME_SUBSTRINGS = ("slovene", "slovenian", "norwegian", "tagalog", "filipino")
+_BARE_CODES = {"sl", "no", "nb", "tl", "fil", "ceb"}
+_NAME_SUBSTRINGS = ("slovene", "slovenian", "norwegian", "tagalog", "filipino", "cebuano", "visayan")
 _ENGINE_SUBSTRINGS = ("classla", "stanza")
 _VOICE_RE = re.compile(r"\b[a-z]{2,3}-[A-Z]{2}-[A-Za-z]+Neural\b")
 

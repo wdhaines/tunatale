@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from app.languages import get_function_words_path, get_language, get_numbers_path, get_style_notes
+from app.languages import get_function_words_path, get_language, get_numbers_path, get_style_notes, known_language_codes
 
 
 def test_sl_style_notes_non_empty() -> None:
@@ -74,15 +74,20 @@ def test_every_language_with_function_words_also_ships_numbers() -> None:
     them). Shipping the closed-class file without the number file is therefore
     the exact configuration that produced tunatale-elrj, and it would be silent.
     """
-    for code in ("sl", "no"):
-        assert get_function_words_path(code) is not None, code
+    # Derived from the registry, not a literal list: tunatale-w4m7.2 found this
+    # loop pinned to ("sl", "no") while Tagalog shipped both files unchecked.
+    with_function_words = sorted(c for c in known_language_codes() if get_function_words_path(c) is not None)
+    assert {"sl", "no", "tl"} <= set(with_function_words)
+    for code in with_function_words:
         assert get_numbers_path(code) is not None, code
 
 
 def test_number_vocabulary_lives_in_the_plugin_dir() -> None:
-    for code in ("sl", "no"):
+    with_numbers = sorted(c for c in known_language_codes() if get_numbers_path(c) is not None)
+    assert {"sl", "no", "tl"} <= set(with_numbers)
+    for code in with_numbers:
         path = get_numbers_path(code)
-        assert path is not None and path.exists(), code
+        assert path.exists(), code
         assert path.parent.name == "data"
         assert path.parent.parent.name == code
 

@@ -319,10 +319,6 @@ _DEFAULT_A1_PREFIXES: tuple[str, ...] = (
 )
 
 
-def _default_is_a1_morphology_feature(feature: str) -> bool:
-    return any(feature.startswith(p) for p in _DEFAULT_A1_PREFIXES)
-
-
 def _default_ud_feats_to_tt_feature(analysis: TokenAnalysis) -> str | None:
     """Map Universal Dependencies POS + morphological features to a TT feature string.
 
@@ -367,35 +363,39 @@ def _default_ud_feats_to_tt_feature(analysis: TokenAnalysis) -> str | None:
 def ud_feats_to_tt_feature(analysis: TokenAnalysis, language_code: str) -> str | None:
     """Map a UD analysis to a TT feature string for *language_code*.
 
-    Routes through the language's registered ``A1Morphology.to_feature``; falls
-    back to the default mapping when the language registers no bundle (so an
-    unregistered language keeps today's Slovene-shaped behaviour).
+    Routes through the language's registered ``A1Morphology.to_feature``. A
+    language that registers no bundle (Tagalog, and any new language until it
+    ships one) gets ``None``: no morphology, rather than Slovene-shaped case
+    features that mean nothing in that language (tunatale-w4m7.2).
     """
     bundle = get_a1_morphology(language_code)
     if bundle is not None:
         return bundle.to_feature(analysis)
-    return _default_ud_feats_to_tt_feature(analysis)
+    return None
 
 
 def is_a1_morphology_feature(feature: str, language_code: str) -> bool:
     """Return whether *feature* is an A1 morphology feature for *language_code*.
 
-    Consults the language's ``a1_prefixes`` whitelist; falls back to the default
-    vocabulary when the language registers no bundle. A feature from one
+    Consults the language's ``a1_prefixes`` whitelist; ``False`` when the
+    language registers no bundle (no A1 morphology at all). A feature from one
     language's vocabulary never validates under another's (the whitelists are
     per-language, not a merged union).
     """
     bundle = get_a1_morphology(language_code)
     if bundle is not None:
         return any(feature.startswith(p) for p in bundle.a1_prefixes)
-    return _default_is_a1_morphology_feature(feature)
+    return False
 
 
 def format_morphology_hint(lemma: str, feature: str, language_code: str) -> str:
     """Return a human-readable grammar hint for *language_code*.
 
     Routes through the language's ``A1Morphology.format_hint``; falls back to the
-    default (Slovene-shaped) rendering when the language registers no bundle.
+    default rendering when the language registers no bundle. Unlike the two
+    dispatchers above this fallback is kept: a bundle-less language never
+    produces a feature to render, and migrations.py renders historic rows whose
+    language_code may be blank.
     """
     bundle = get_a1_morphology(language_code)
     if bundle is not None:

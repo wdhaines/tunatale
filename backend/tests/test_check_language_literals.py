@@ -44,6 +44,9 @@ class TestMatchesLanguageLiteral:
             "sl-SI-PetraNeural",
             "nb-NO-PernilleNeural",
             "fil-PH-BlessicaNeural",
+            "ceb",  # Cebuano, registered ahead of its plugin (tunatale-w4m7.2)
+            "Cebuano",
+            "Visayan",
         ],
     )
     def test_positive_matches(self, value):
@@ -70,6 +73,8 @@ class TestMatchesLanguageLiteral:
             "filter",  # contains "fil" as a substring, but bare-code rule is exact-only
             "utl",  # contains "tl" as a substring, but bare-code rule is exact-only
             "fil-",  # not an exact "fil" bare-code match
+            "cebu",  # the city/island, not the bare code "ceb"
+            "receb",  # contains "ceb" as a substring, but bare-code rule is exact-only
             "xfil-PH-Foo",  # no word boundary inside "xfil", and no Neural suffix
             "hello",
             "",

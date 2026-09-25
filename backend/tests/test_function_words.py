@@ -459,6 +459,26 @@ class TestFormatMorphologyHint:
         assert format_morphology_hint("vodo", "noun:acc:sg", "en") == "vodo, accusative singular"
 
 
+class TestLanguageWithoutA1Bundle:
+    """tunatale-w4m7.2: a language that registers no A1 bundle (Tagalog today,
+    Cebuano next) gets NO morphology features, not Slovene-shaped ones.
+    Hint formatting keeps the default renderer on purpose: migrations.py
+    renders historic rows whose language_code may be blank."""
+
+    def test_no_feature_extracted(self):
+        from app.srs.function_words import ud_feats_to_tt_feature
+        from app.srs.lemmatizer import TokenAnalysis
+
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="VERB", number="Sing", person="1"), "tl") is None
+        assert ud_feats_to_tt_feature(TokenAnalysis(upos="VERB", number="Sing", person="1"), "zz") is None
+
+    def test_no_feature_is_a1(self):
+        from app.srs.function_words import is_a1_morphology_feature
+
+        assert is_a1_morphology_feature("verb:1sg", "tl") is False
+        assert is_a1_morphology_feature("noun:acc:sg", "zz") is False
+
+
 class TestIsA1MorphologyFeature:
     def test_a1_verb_prefix_true(self):
         from app.srs.function_words import is_a1_morphology_feature
@@ -504,12 +524,6 @@ class TestIsA1MorphologyFeature:
         from app.srs.function_words import is_a1_morphology_feature
 
         assert is_a1_morphology_feature("xyz:foo", "sl") is False
-
-    def test_unknown_language_falls_back_to_default(self):
-        from app.srs.function_words import is_a1_morphology_feature
-
-        assert is_a1_morphology_feature("verb:1sg", "zz") is True
-        assert is_a1_morphology_feature("noun:loc:sg", "en") is True
 
     def test_norwegian_features_validate_under_no(self):
         from app.srs.function_words import is_a1_morphology_feature
@@ -635,9 +649,6 @@ class TestUdFeatsToTtFeature:
 
     def test_empty_upos_returns_none(self):
         assert ud_feats_to_tt_feature(TokenAnalysis(upos=""), "sl") is None
-
-    def test_unknown_language_falls_back_to_default(self):
-        assert ud_feats_to_tt_feature(TokenAnalysis(upos="VERB", number="Sing", person="1"), "zz") == "verb:1sg"
 
 
 class TestUdFeatsToTtFeatureNorwegian:
