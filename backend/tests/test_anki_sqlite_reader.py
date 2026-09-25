@@ -766,11 +766,13 @@ class TestL2MarkupIsPerLanguage:
     def test_registry_resolves_a_distinct_class_per_wired_language(self):
         """Guards the drain itself: if some language ever shares another's L2
         class, the fast path would cross-match and this whole scheme breaks."""
-        from app.languages import get_vocab_notetype
+        from app.languages import get_vocab_notetype, known_language_codes
 
-        classes = [v.l2_css_class for code in ("sl", "no") if (v := get_vocab_notetype(code)) is not None]
-        assert len(classes) == 2
-        assert len(set(classes)) == 2
+        # Every registered language, not a literal pair (tunatale-w4m7.2): a
+        # third language that reuses a class must fail here.
+        classes = [v.l2_css_class for code in known_language_codes() if (v := get_vocab_notetype(code)) is not None]
+        assert len(classes) >= 2
+        assert len(set(classes)) == len(classes)
 
 
 class TestExtractL2FromFields:

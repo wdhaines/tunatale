@@ -158,19 +158,19 @@ class OfflineWriter:
 
         The ``fields`` table is authoritative — this works for any notetype
         (Slovene/Norwegian Vocabulary, Cloze's ["Text", "Back Extra"], …) without
-        hardcoding. Falls back to the legacy Slovene Vocabulary roster when the
-        notetype/fields tables are absent (some unit-test fixtures) or the mid has
-        no field rows.
+        hardcoding. Raises ``ValueError`` when the mid has no field rows (or the
+        collection has no ``fields`` table): Anki never produces a note like
+        that, and the old fallback — the Slovene Vocabulary roster — would have
+        written any other language's note by Slovene field positions
+        (tunatale-w4m7.2).
         """
-        from app.cards.vocab_notetype import SLOVENE_VOCAB
-
         try:
             rows = self._conn.execute("SELECT name FROM fields WHERE ntid = ? ORDER BY ord", (mid,)).fetchall()
         except sqlite3.OperationalError:
             rows = []
-        if rows:
-            return [r["name"] for r in rows]
-        return list(SLOVENE_VOCAB.field_names)
+        if not rows:
+            raise ValueError(f"no fields for notetype {mid} in this collection")
+        return [r["name"] for r in rows]
 
     def note_fields_by_role(self, note_id: int, *, language_code: str) -> dict[str, str] | None:
         """The Anki field each TT-editable role of *note_id* lives in.
