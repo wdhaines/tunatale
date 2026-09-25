@@ -1,0 +1,38 @@
+{
+  "_comment": [
+    "Cardinal number words and the quantity each names, for the counting-picture",
+    "production card (see app/cards/number_image.py and tl/numbers.json, whose",
+    "rules this file follows). tunatale-u8nz.4, 2026-09-25.",
+    "",
+    "Like Tagalog, Cebuano uses TWO number systems (data/style.md): native for",
+    "counting things and people, Spanish-derived for clock time and prices. A",
+    "counting picture carries one production per quantity (`values` must be",
+    "injective after `exclude`), and counting is the NATIVE context.",
+    "",
+    "`exclude`:",
+    "  usa      — 'one' AND the indefinite article (usa ka bata = a child), the",
+    "             same reasoning as tl `isa` and no `en`.",
+    "  the Spanish-derived words — their context is a clock face or a price.",
+    "",
+    "Teens are multi-word (napulo'g usa = 11) and so are not single tokens; they",
+    "are omitted rather than listed in a form no headword takes.",
+    "ORCHESTRATOR-DRAFTED, not native-checked (tunatale-u8nz.9)."
+  ],
+  "values": {
+    "usa": 1, "duha": 2, "tulo": 3, "upat": 4, "lima": 5, "unom": 6, "pito": 7,
+    "walo": 8, "siyam": 9, "napulo": 10,
+    "kawhaan": 20, "katloan": 30, "kap-atan": 40, "kalim-an": 50, "kan-uman": 60,
+    "kapitoan": 70, "kawaloan": 80, "kasiyaman": 90, "gatos": 100, "libo": 1000,
+    "sero": 0, "uno": 1, "dos": 2, "tres": 3, "kwatro": 4, "singko": 5, "sais": 6,
+    "siyete": 7, "otso": 8, "nuwebe": 9, "dyis": 10, "diyes": 10, "onse": 11,
+    "dose": 12, "trese": 13, "katorse": 14, "kinse": 15, "baynte": 20,
+    "traynta": 30, "kwarenta": 40, "singkwenta": 50, "sisenta": 60, "setenta": 70,
+    "otsenta": 80, "nobenta": 90, "siyento": 100, "mil": 1000
+  },
+  "exclude": [
+    "usa", "sero", "uno", "dos", "tres", "kwatro", "singko", "sais", "siyete",
+    "otso", "nuwebe", "dyis", "diyes", "onse", "dose", "trese", "katorse", "kinse",
+    "baynte", "traynta", "kwarenta", "singkwenta", "sisenta", "setenta", "otsenta",
+    "nobenta", "siyento", "mil"
+  ]
+}

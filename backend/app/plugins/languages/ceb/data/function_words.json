@@ -1,0 +1,10 @@
+{
+  "_comment": "Cebuano function-word policy (tunatale-u8nz.4, 2026-09-25). Same POS-first shape as tl/no/sl, but Cebuano has no lemma table yet (lemmatizer_type is the shared 'lowercase', which emits no UPOS), so 'pos' is inert today and 'include' is the whole policy. 'include' names the genuine difficulties for an English speaker: the case markers ang/sa/og, 'ug' (and), the personal-name markers si/ni/kang, the plural 'mga', the linker 'nga', and the second-position particles ba/pa/na/pud/sad/lang/ra/man/gyud/diay/kaha/unta. Tagalog's 'ng' and 'po' are deliberately absent: they are NOT Cebuano, and the style guide treats them as contamination. ORCHESTRATOR-DRAFTED, not native-checked (tunatale-u8nz.9).",
+  "pos": ["ADP", "DET", "CCONJ", "SCONJ", "PART"],
+  "include": [
+    "ang", "sa", "og", "ug", "si", "ni", "kang", "mga", "nga",
+    "ba", "pa", "na", "pud", "sad", "lang", "ra", "man", "gyud", "diay", "kaha", "unta"
+  ],
+  "exclude": [],
+  "clozes_only_verbs": []
+}

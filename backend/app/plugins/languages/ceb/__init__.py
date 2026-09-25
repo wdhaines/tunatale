@@ -1,9 +1,14 @@
 """Cebuano language plugin."""
 
+from pathlib import Path
+
 from app.cards.vocab_notetype import CEBUANO_VOCAB
 from app.languages import LanguageConfig, register
 from app.models.language import NARRATOR_VOICE, Language
 from app.plugins.languages.ceb.preprocessor import CebuanoPreprocessor
+
+_DATA = Path(__file__).parent / "data"
+_style_notes = (_DATA / "style.md").read_text(encoding="utf-8").strip()
 
 register(
     "ceb",
@@ -62,6 +67,12 @@ register(
         deck_name="3. Bisaya",
         mint_deck_name="3. Bisaya::TunaTale",
         vocab_notetype=CEBUANO_VOCAB,
+        # The style guide's first job is keeping Tagalog OUT: close kin, and
+        # dominant in training data (tunatale-u8nz.4). All three data files are
+        # orchestrator-drafted and not yet native-checked (tunatale-u8nz.9).
+        style_notes=_style_notes,
+        function_words_path=_DATA / "function_words.json",
+        numbers_path=_DATA / "numbers.json",
         # Deliberately omitted until their owning beads ship:
         # - planner_example: get_planner_example picks the LOWEST-SORTING other
         #   language that supplies one, and "ceb" sorts before every other
@@ -72,7 +83,7 @@ register(
         # - wordfreq_lang: wordfreq has no "ceb" (tunatale-u8nz.6).
         # - syllabifier_fn, lemma_table_path, lemmatizer_type (stays at the
         #   shared "lowercase" default): tunatale-u8nz.6 and tunatale-u8nz.5.
-        # - l2_scorer, notetype_profiles, style_notes, function_words_path,
-        #   numbers_path, phoneme_planner_factory: later Cebuano beads.
+        # - l2_scorer, notetype_profiles, phoneme_planner_factory: later
+        #   Cebuano beads.
     ),
 )

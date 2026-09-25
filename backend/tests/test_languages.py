@@ -728,10 +728,50 @@ class TestCebuanoRegistration:
         assert config.lemmatizer_type == "lowercase"  # the shared default, not a choice
         assert config.l2_scorer is None
         assert config.notetype_profiles == {}
-        assert config.style_notes == ""
-        assert config.function_words_path is None
-        assert config.numbers_path is None
         assert config.phoneme_planner_factory is None
+
+    def test_the_style_guide_guards_against_tagalog(self):
+        """Tagalog is the drift risk: close kin, and dominant in training data.
+
+        The guide must name the leaks AND their Cebuano counterparts, and state
+        the verb-affix rule with the bare-root error the 2026-09-22 Groq probe
+        actually produced (tunatale-u8nz.4)."""
+        from app.languages import get_style_notes
+
+        notes = get_style_notes("ceb")
+        for tagalog, cebuano in (('"hindi"', '"dili"'), ('"ano"', '"unsa"'), ('"magkano"', '"pila"')):
+            assert f"{tagalog} → {cebuano}" in notes
+        assert 'No "po" or "opo"' in notes
+        assert '"Palit ko og isda" is an error' in notes
+        assert "Mopalit ko og isda" in notes
+
+    def test_the_story_prompt_carries_the_style_guide(self):
+        from app.generation.prompts import build_story_system_prompt
+
+        assert "Cebuano (Bisaya) Authenticity Rules" in build_story_system_prompt(get_language("ceb"))
+
+    def test_function_words_are_the_cebuano_markers_and_particles(self):
+        from app.srs.function_words import is_function_word
+
+        for word in ("ang", "sa", "og", "ug", "si", "ni", "kang", "mga", "nga", "ba", "pud", "sad", "man", "gyud"):
+            assert is_function_word(word, "ceb", upos=None) is True, word
+        # Tagalog's markers are not Cebuano function words, and content words never are.
+        for word in ("ng", "po", "isda", "balay"):
+            assert is_function_word(word, "ceb", upos=None) is False, word
+
+    @pytest.mark.parametrize(("word", "value"), [("duha", 2), ("napulo", 10), ("kawhaan", 20), ("gatos", 100)])
+    def test_native_numbers_resolve(self, word, value):
+        from app.cards.number_image import number_value
+
+        assert number_value(word, "ceb") == value
+
+    @pytest.mark.parametrize("word", ["usa", "baynte", "singko", "alas"])
+    def test_usa_and_the_spanish_numbers_do_not_resolve(self, word):
+        """usa is 'one' AND the article ('usa ka bata' = a child), like tl isa.
+        Spanish-derived numbers belong to clocks and prices, not a counting heap."""
+        from app.cards.number_image import number_value
+
+        assert number_value(word, "ceb") is None
 
 
 class TestPlannerExampleIsNeverTheLowestSortingLanguage:

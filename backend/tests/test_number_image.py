@@ -25,9 +25,11 @@ from app.cards.number_image import (
     number_value,
     render_count_svg,
 )
-from app.languages import get_numbers_path
+from app.languages import get_numbers_path, known_language_codes
 
-LANGS = ("no", "sl", "tl")
+# Derived from the registry: a pinned tuple silently skipped every language
+# added after it (tunatale-w4m7.2 found the same shape elsewhere).
+LANGS = tuple(sorted(c for c in known_language_codes() if get_numbers_path(c) is not None))
 
 
 def _config(code: str) -> dict:
