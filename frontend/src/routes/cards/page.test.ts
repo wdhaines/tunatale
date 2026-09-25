@@ -773,6 +773,43 @@ describe("cards/+page.svelte", () => {
     expect(await findByText(/39 review/)).toBeTruthy();
   });
 
+  it("renders rows while fetchQueueStats is still pending", async () => {
+    // tunatale-o8ik: a 5038ms queue-stats response held back an items list
+    // that had arrived in 11ms, because both were awaited together — so a
+    // card's new image stayed invisible for five seconds after the image modal
+    // closed. The list must not wait on the badge.
+    mockFetchQueueStats.mockReturnValue(new Promise(() => {}));
+    mockList.mockResolvedValue({
+      items: [makeSRSItemDetail({ id: 1, text: "zdravo" })],
+      total: 1,
+    });
+    const { findByText } = render(CardsPage);
+    expect(await findByText("zdravo")).toBeTruthy();
+  });
+
+  it("a stats response for a superseded load is dropped", async () => {
+    let resolveStale!: (v: Awaited<ReturnType<typeof api.fetchQueueStats>>) => void;
+    const stats = (n: number) => ({
+      new: n,
+      learning: 0,
+      review: 0,
+      daily_new_cap: 20,
+      cap_source: "default" as const,
+      fsrs_source: "default" as const,
+    });
+    mockFetchQueueStats
+      .mockReturnValueOnce(new Promise((r) => (resolveStale = r)))
+      .mockResolvedValue(stats(7));
+    const { findByText, getByTitle, queryByText } = render(CardsPage);
+    await findByText(/0 total/);
+    await fireEvent.click(getByTitle("Refresh"));
+    expect(await findByText(/7 new/)).toBeTruthy();
+    resolveStale(stats(99));
+    await flushMicrotasks();
+    expect(queryByText(/99 new/)).toBeNull();
+    expect(await findByText(/7 new/)).toBeTruthy();
+  });
+
   it("renders without stats line when fetchQueueStats rejects", async () => {
     mockFetchQueueStats.mockRejectedValue(new Error("AnkiConnect down"));
     const { findByText, queryByText } = render(CardsPage);
