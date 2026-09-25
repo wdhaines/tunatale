@@ -410,12 +410,22 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     // `playing = false` below: selectTrack captures wasPlayingBeforeSwap =
     // playing to decide whether to resume after the swap; if it ran after that
     // assignment the resume would be lost and the next pass would load and sit
-    // silent (looking exactly like "hands-free doesn't work"). Anything other
-    // than "no-advance" (a plain track ending outside the sequence) is fully
-    // handled by the helper and returns from here.
+    // silent (looking exactly like "hands-free doesn't work"). A pass of the
+    // sequence is fully handled by the helper and returns from here.
+    //
+    // An English VARIANT (slow_translated & co. — on the EN step but not a pass
+    // of the sequence) cycles back to the start of the sequence instead: the
+    // user's call, 2026-09-23 (tunatale-hkz8.2), "back to the start of the same
+    // lesson's key phrases" rather than the next lesson or a dead stop. Same
+    // ordering constraint as above, so it sits in the same block. Anything
+    // else falls through to the plain end-of-track state.
     if (handsFree && activeSectionType !== null) {
       const step = (HANDS_FREE_SEQUENCE as readonly string[]).indexOf(activeSectionType);
-      if (advanceHandsFreePass(step) !== "no-advance") return;
+      if (step !== -1) {
+        advanceHandsFreePass(step);
+        return;
+      }
+      if (SEQUENCE_STEP.has(activeSectionType) && restartHandsFreeSequence()) return;
     }
     playing = false;
     if (mediaSession) mediaSession.playbackState = "none";
@@ -894,38 +904,40 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // restarts, so the pass would repeat forever with no escape but the
   // transport.
   //
-  // Returns:
-  //  - "advanced": a later pass was loaded and play() called.
-  //  - "completed": in-sequence with nothing left to play — the run is
-  //    COMPLETE, reported after the state below is settled so a handler that
-  //    navigates cannot observe a half-updated controller.
-  //  - "no-advance": the active section is outside the sequence (a plain track
-  //    ending) — silent here, the caller falls through to the plain end-of-
-  //    track state.
+  // Reaching the end (nothing left to play) makes the run COMPLETE: the state
+  // below is settled BEFORE onHandsFreeEnd, so a handler that navigates cannot
+  // observe a half-updated controller.
   //
-  // `idx` is the current position in HANDS_FREE_SEQUENCE, -1 for none. The
-  // caller resolves it: `ended` by exact membership (an English variant is not
-  // a hands-free pass), the button by SEQUENCE_STEP (it is the EN step).
-  function advanceHandsFreePass(idx: number): "advanced" | "completed" | "no-advance" {
-    const next =
-      idx === -1
-        ? undefined
-        : HANDS_FREE_SEQUENCE.slice(idx + 1).find((t) =>
-            audioSections.some((s) => s.section_type === t),
-          );
+  // `idx` is the current position in HANDS_FREE_SEQUENCE. The caller resolves
+  // it: `ended` by exact membership (an English variant is not a hands-free
+  // pass — it has its own cycle-back, restartHandsFreeSequence), the button by
+  // SEQUENCE_STEP (every variant is the EN step).
+  function advanceHandsFreePass(idx: number): void {
+    const next = HANDS_FREE_SEQUENCE.slice(idx + 1).find((t) =>
+      audioSections.some((s) => s.section_type === t),
+    );
     if (next !== undefined) {
       selectTrack(next, null, true);
       void audioEl.play();
-      return "advanced";
+      return;
     }
-    if (idx !== -1) {
-      playing = false;
-      if (mediaSession) mediaSession.playbackState = "none";
-      updatePositionState();
-      deps.onHandsFreeEnd?.();
-      return "completed";
-    }
-    return "no-advance";
+    playing = false;
+    if (mediaSession) mediaSession.playbackState = "none";
+    updatePositionState();
+    deps.onHandsFreeEnd?.();
+  }
+
+  // Back to the FIRST pass this lesson has (key_phrases, when it exists), from
+  // its beginning — the English-variant cycle-back on `ended`. Found over the
+  // sections the lesson actually has, for the same reason as the advance above:
+  // selectTrack no-ops on a missing section. Returns false when the lesson has
+  // no pass at all, so the caller falls through to the plain end-of-track state.
+  function restartHandsFreeSequence(): boolean {
+    const first = HANDS_FREE_SEQUENCE.find((t) => audioSections.some((s) => s.section_type === t));
+    if (first === undefined) return false;
+    selectTrack(first, null, true);
+    void audioEl.play();
+    return true;
   }
 
   // --- Public API ---

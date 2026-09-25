@@ -1713,15 +1713,99 @@ describe("playbackController", () => {
       expect(audioEl.play).toHaveBeenCalled();
     });
 
-    it("hands-free ON on a section NOT in the sequence: ended does not advance", () => {
+    // The user's call, 2026-09-23 (tunatale-hkz8.2): with hands-free ON, an
+    // English VARIANT track (not a pass of the sequence) that plays to its end
+    // cycles back to the start of the same lesson's key phrases — not the next
+    // lesson, and not a dead stop. `translated`, the sequence's own EN pass,
+    // still hands off to the next lesson (tested below).
+    it.each(["slow_translated", "en_translated", "slow_en_translated"])(
+      "hands-free ON: %s ending cycles back to the same lesson's key phrases",
+      (variant) => {
+        const audio: LessonAudio = {
+          ...hfAudio,
+          sections: hfAudio.sections.map((s) =>
+            s.section_type === "slow_translated" ? { ...s, section_type: variant } : s,
+          ),
+        };
+        const ctrl = createController({ audio });
+        ctrl.setHandsFree(true);
+        ctrl.selectTrack(variant);
+        expect(ctrl.activeSectionType).toBe(variant);
+        vi.mocked(audioEl.play).mockClear();
+        audioEl.dispatchEvent(new Event("ended"));
+        expect(ctrl.activeSectionType).toBe("key_phrases");
+        expect(audioEl.src).toBe("/api/audio/sec-key");
+        expect(audioEl.play).toHaveBeenCalled();
+      },
+    );
+
+    it("the cycle-back starts at the BEGINNING of the key phrases (applied seek is 0)", () => {
       const ctrl = createController({ audio: hfAudio });
       ctrl.setHandsFree(true);
       ctrl.selectTrack("slow_translated");
-      expect(ctrl.activeSectionType).toBe("slow_translated");
+      audioEl.currentTime = 0.8;
+      audioEl.dispatchEvent(new Event("timeupdate"));
+      audioEl.dispatchEvent(new Event("ended"));
+      audioEl.dispatchEvent(new Event("loadedmetadata"));
+      expect(ctrl.activeSectionType).toBe("key_phrases");
+      expect(audioEl.currentTime).toBe(0);
+    });
+
+    it("a lesson with no key phrases cycles back to its FIRST pass instead", () => {
+      const noKey: LessonAudio = {
+        ...hfAudio,
+        sections: hfAudio.sections.filter((s) => s.section_type !== "key_phrases"),
+      };
+      const ctrl = createController({ audio: noKey });
+      ctrl.setHandsFree(true);
+      ctrl.selectTrack("slow_translated");
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(ctrl.activeSectionType).toBe("natural_speed");
+      expect(audioEl.src).toBe("/api/audio/sec-natural");
+    });
+
+    it("a lesson with NO pass at all: the variant just stops (nothing to cycle to)", () => {
+      const onlyVariant: LessonAudio = {
+        ...hfAudio,
+        sections: hfAudio.sections.filter((s) => s.section_type === "slow_translated"),
+      };
+      const onHandsFreeEnd = vi.fn();
+      const ctrl = createController({ audio: onlyVariant, onHandsFreeEnd });
+      ctrl.setHandsFree(true);
+      ctrl.selectTrack("slow_translated");
       vi.mocked(audioEl.play).mockClear();
       audioEl.dispatchEvent(new Event("ended"));
       expect(ctrl.activeSectionType).toBe("slow_translated");
       expect(audioEl.play).not.toHaveBeenCalled();
+      expect(ctrl.playing).toBe(false);
+      expect(onHandsFreeEnd).not.toHaveBeenCalled();
+    });
+
+    it("after cycling back, the run continues and the LAST pass still hands off", () => {
+      // The loop re-enters the ordinary sequence rather than trapping the
+      // listener in this lesson forever.
+      const onHandsFreeEnd = vi.fn();
+      const ctrl = createController({ audio: hfAudio, onHandsFreeEnd });
+      ctrl.setHandsFree(true);
+      ctrl.selectTrack("slow_translated");
+      audioEl.dispatchEvent(new Event("ended")); // -> key_phrases
+      audioEl.dispatchEvent(new Event("ended")); // -> natural_speed
+      audioEl.dispatchEvent(new Event("ended")); // -> slow_speed
+      audioEl.dispatchEvent(new Event("ended")); // -> translated
+      expect(ctrl.activeSectionType).toBe("translated");
+      expect(onHandsFreeEnd).not.toHaveBeenCalled();
+      audioEl.dispatchEvent(new Event("ended")); // sequence exhausted
+      expect(onHandsFreeEnd).toHaveBeenCalledTimes(1);
+    });
+
+    it("hands-free OFF: an English variant ending just stops, as any track does", () => {
+      const ctrl = createController({ audio: hfAudio });
+      ctrl.selectTrack("slow_translated");
+      vi.mocked(audioEl.play).mockClear();
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(ctrl.activeSectionType).toBe("slow_translated");
+      expect(audioEl.play).not.toHaveBeenCalled();
+      expect(ctrl.playing).toBe(false);
     });
 
     it("a pass the lesson does not have is SKIPPED, not replayed as a silent loop", () => {
@@ -1791,7 +1875,8 @@ describe("playbackController", () => {
 
     it("a section OUTSIDE the sequence does not call onHandsFreeEnd", () => {
       // slow_translated is not a pass of the sequence, so its end is not the
-      // sequence ending — advancing the lesson off it would be a surprise.
+      // sequence ending — it cycles back within the lesson (tunatale-hkz8.2)
+      // instead of handing off to the next one.
       const onHandsFreeEnd = vi.fn();
       const ctrl = createController({ audio: hfAudio, onHandsFreeEnd });
       ctrl.setHandsFree(true);
