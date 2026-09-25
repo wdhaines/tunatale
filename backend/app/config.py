@@ -254,6 +254,28 @@ class Settings(BaseSettings):
     # page, which says nothing about the boundary. Rather than guess, it is a
     # knob; defaults to UTC.
     azure_tts_quota_reset_tz: str = "UTC"
+    # The OTHER provider, served by Google Cloud Text-to-Speech (tunatale-u8nz.2).
+    # Selected by voice id, never by fallback — see app/audio/tts_router.py.
+    # Its voices are the Gemini family, and they authenticate with an OAuth
+    # access token minted from a SERVICE ACCOUNT; an API key is rejected for
+    # them outright (403 aiplatform.endpoints.predict).
+    #
+    # This is a path, not the key file's contents, and it is a setting rather
+    # than an env var google-auth reads for itself because Pydantic loads .env
+    # into settings and NOT into os.environ — so google-auth's own
+    # GOOGLE_APPLICATION_CREDENTIALS lookup would never see the value. Empty
+    # means "use google-auth's own default discovery" (workload identity,
+    # metadata server, gcloud), which is why the default is empty and not a
+    # path: a missing .env must still boot the app.
+    google_application_credentials: str = ""
+    # Sent as voice.model_name. The Flash model is the one measured against
+    # this endpoint; the Pro tier costs more per character and is not bought.
+    gemini_tts_model: str = "gemini-2.5-flash-tts"
+    # Seconds between request STARTS for this provider. Ten times the Azure
+    # pacing (tts_min_request_delay_s, 0.2s), and for a different reason: this project
+    # quota 429s after ~30 fast requests, and 429 waits a flat 20s because the
+    # quota refills per minute. See app/audio/gemini_tts.py.
+    gemini_tts_min_delay: float = 2.0
     # Global lemmatizer gate: "lowercase" (default) forces the deterministic
     # lowercase engine for EVERY language (the CI/test pin, and how a deployment
     # disables the heavy PyTorch pipelines). Any other value ("classla", "stanza",
