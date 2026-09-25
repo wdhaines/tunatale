@@ -113,13 +113,39 @@ class TestPerRequestIsolation:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             assert await self._texts(client) == {"voda"}
 
-    async def test_unknown_language_falls_back_to_default(self, two_language_app, monkeypatch):
+    async def test_unknown_language_is_refused_not_served_as_the_default(self, two_language_app):
+        """An unconfigured code is a 400, never a silent read of another language's DB."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/srs/items", headers={"X-TT-Language": "de"})
+        assert resp.status_code == 400
+        # Exact text: this runs before auth, so it must not enumerate the
+        # configured languages (/api/languages, auth-gated, is where those live).
+        assert resp.json() == {"detail": "Unknown language 'de': not configured on this server"}
+
+    async def test_unknown_language_write_lands_nowhere(self, two_language_app):
+        """The dangerous half of the old fallback: a write meant for a missing DB
+        must not land in the default language's DB."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items",
+                headers={"X-TT-Language": "de"},
+                json={"text": "Hund", "translation": "dog", "language_code": "de", "word_count": 1},
+            )
+            assert resp.status_code == 400
+            assert await self._texts(client, {"X-TT-Language": "sl"}) == {"voda"}
+            assert await self._texts(client, {"X-TT-Language": "no"}) == {"vann"}
+
+    async def test_languages_endpoint_answers_an_unknown_header_with_the_default(self, two_language_app, monkeypatch):
+        """/api/languages is exempt: it is how a client holding a stale stored code
+        learns the configured set and heals itself (languageStore.init). Refusing
+        it too would strand that client on the stale code."""
         from app.config import settings
 
         monkeypatch.setattr(settings, "target_language", "no")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            # "de" isn't configured → falls back to target_language (no).
-            assert await self._texts(client, {"X-TT-Language": "de"}) == {"vann"}
+            resp = await client.get("/api/languages", headers={"X-TT-Language": "de"})
+        assert resp.status_code == 200
+        assert resp.json()["active"] == "no"
 
     async def test_languages_endpoint_lists_configured_languages(self, two_language_app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

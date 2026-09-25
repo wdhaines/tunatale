@@ -300,17 +300,30 @@ async def _resolve_language_state(request, call_next):
 
     The active language is the ``X-TT-Language`` header, defaulting to
     ``settings.target_language``. When the app has per-language maps
-    (``srs_dbs``), the request is served from the matching connection (unknown
-    codes fall back to the default language); otherwise — single-language tests
-    that only set the singular ``app.state.srs_db`` — it falls back to those.
-    Routes read ``request.state.{srs_db,content_store,language}`` so isolation is
-    which connection serves the request, not a per-query filter.
+    (``srs_dbs``), the request is served from the matching connection; otherwise
+    — single-language tests that only set the singular ``app.state.srs_db`` — it
+    falls back to those. Routes read ``request.state.{srs_db,content_store,language}``
+    so isolation is which connection serves the request, not a per-query filter.
+
+    An unconfigured code is refused with a 400 rather than served as the default:
+    that fallback silently read and wrote the default language's DB (e.g. a
+    client selecting a language whose DB this deployment does not have yet).
+    ``/api/languages`` alone is exempt and answers with the default, because it
+    is how a client holding a stale stored code learns the configured set and
+    heals itself — refusing it too would strand that client.
     """
     code = request.headers.get("x-tt-language") or settings.target_language
     state = request.app.state
     srs_dbs = getattr(state, "srs_dbs", None)
     if srs_dbs is not None:
         if code not in srs_dbs:
+            if request.url.path != "/api/languages":
+                # No configured list in the body: this runs before auth, and
+                # /api/languages (auth-gated) is where a client learns the set.
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": f"Unknown language {code!r}: not configured on this server"},
+                )
             code = settings.target_language
         request.state.srs_db = srs_dbs[code]
         request.state.content_store = state.content_stores[code]
