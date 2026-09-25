@@ -53,6 +53,38 @@ def build_word_breakdown(phrase_text: str, language_code: str | None = None) -> 
     return [c.text for c in build_word_breakdown_spans(phrase_text, language_code)]
 
 
+# Sentence punctuation, stripped off each word before it is syllabified.
+#
+# These chunks are SLICED from one whole-word render of ``source_word``, so a
+# word that arrives carrying its sentence punctuation has that punctuation in
+# its AUDIO: the learner hears "bong?" and "lubong?" said as questions in the
+# middle of a sentence that is not one (tunatale-w4m7.19). The losslessness
+# check never caught it, because it compares the fragments against the word
+# they were built from and BOTH sides carried the "?" — there was nothing for
+# it to disagree with.
+#
+# The bookends and the multi-word partials keep the phrase exactly as given: a
+# partial is the tail of the question and belongs to it.
+#
+# "'" and "-" are deliberately NOT in the set, and that is the whole subtlety
+# of this constant. In Cebuano and Tagalog the hyphen marks a glottal stop
+# (kanus-a, pag-anhi) and the apostrophe is a contraction (napulo'g). Both are
+# part of the word rather than punctuation on it, and dropping either would
+# change what the learner hears, not merely how it is cut up.
+_SENTENCE_PUNCTUATION = '?!.,;:…"“”'
+
+
+def _strip_sentence_punctuation(word: str) -> str:
+    """*word* without its leading and trailing sentence punctuation.
+
+    A token that is nothing BUT punctuation is left as it is: there is no word
+    under it to render, and returning ``""`` would put an empty chunk into a
+    buildup that is spoken aloud.
+    """
+    stripped = word.strip(_SENTENCE_PUNCTUATION)
+    return stripped or word
+
+
 def _generic_breakdown_spans(phrase: str, words: list[str], language_code: str) -> list[BreakdownChunk]:
     """Generic breakdown with spans for languages without a registered spans function.
 
@@ -61,6 +93,13 @@ def _generic_breakdown_spans(phrase: str, words: list[str], language_code: str) 
     renderer can slice them from a single whole-word render. Single-syllable
     words and multi-word partials get ``None`` provenance; multi-syllable
     words get per-syllable spans guarded by a losslessness check.
+
+    Each word is stripped of its sentence punctuation first
+    (:func:`_strip_sentence_punctuation`), and the STRIPPED word is what the
+    fragments, the ``source_word`` and the losslessness check all see — the
+    render is sliced out of that same string, so a fragment cannot spell the
+    word one way and the audio pronounce it another. ``phrase`` is untouched:
+    the bookends and the partials speak it as the lesson wrote it.
     """
 
     def _syls(word: str) -> tuple[list[str], bool]:
@@ -70,7 +109,7 @@ def _generic_breakdown_spans(phrase: str, words: list[str], language_code: str) 
     chunks: list[BreakdownChunk] = [BreakdownChunk(phrase, None, None)]
 
     if len(words) == 1:
-        word = words[0]
+        word = _strip_sentence_punctuation(words[0])
         syls, lossless = _syls(word)
         if len(syls) <= 1:
             chunks.append(BreakdownChunk(phrase, None, None))
@@ -90,7 +129,7 @@ def _generic_breakdown_spans(phrase: str, words: list[str], language_code: str) 
         return chunks
 
     for word_index in range(len(words) - 1, -1, -1):
-        word = words[word_index]
+        word = _strip_sentence_punctuation(words[word_index])
         syls, lossless = _syls(word)
         source = word if lossless else None
         n = len(syls)

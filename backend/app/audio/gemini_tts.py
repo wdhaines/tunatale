@@ -28,6 +28,7 @@ import hashlib
 import logging
 import re
 import shutil
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,10 @@ MAX_RETRIES = 6
 # (tunatale-u8nz measured arrival after ~30 fast requests) is not a burst to
 # ride out, and a render that needs more patience than this should be paced,
 # not retried harder.
+#
+# It is a COOLDOWN rather than this caller's backoff: it is set on a 429 and
+# read by every request that follows, inside the request lock. See
+# _do_synthesize.
 RATE_LIMIT_DELAY = 20.0
 
 _SYNTHESIS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize"
@@ -180,6 +185,7 @@ class GeminiTTSService:
         min_delay: float | None = None,
         timeout: float = 60.0,
         sleep: Callable[[float], Awaitable[None]] | None = None,
+        now: Callable[[], float] | None = None,
     ) -> None:
         if model is None or min_delay is None:
             from app.config import settings
@@ -195,6 +201,18 @@ class GeminiTTSService:
         # different clock, not by patching asyncio.sleep (which would be a
         # mock_allowlist.txt entry for what is really a tuning knob).
         self._sleep = sleep if sleep is not None else asyncio.sleep
+        # Injected for the same reason `sleep` is: the cooldown is a real code
+        # path a test should pin by feeding it a different clock, not by
+        # patching time.monotonic() process-wide, which reaches every other
+        # clock in the process for the length of the test. Monotonic, not
+        # time.time: a wall-clock step backwards must not shorten a wait the
+        # provider has already told us to sit out.
+        self._now = now if now is not None else time.monotonic
+        # The per-minute quota is exhausted for a WINDOW, not for a request, so
+        # the refusal is remembered here rather than in the caller that hit it.
+        # 0.0 means "no cooldown outstanding" and reads as such against any
+        # monotonic clock.
+        self._cooldown_until: float = 0.0
         # One request in flight at a time, held across the request AND its
         # pacing sleep, as the sibling does with its semaphore. The renderer
         # gathers sections concurrently; without this, pacing held only within
@@ -329,7 +347,13 @@ class GeminiTTSService:
                     logger.warning(
                         "Gemini TTS 429 (throttled) — headers=%r body=%r", dict(exc.response.headers), exc.response.text
                     )
-                delay = RATE_LIMIT_DELAY if status == _THROTTLED else 2**attempt
+                    # No wait of its own: the cooldown the request lock holds IS
+                    # the wait, and it is shared with every caller queued behind
+                    # this one. Retrying at once costs nothing and buys nothing —
+                    # this caller simply joins the queue for the same window
+                    # rather than holding a private timer alongside it.
+                    continue
+                delay = 2**attempt
             except (httpx.TransportError, OSError) as exc:
                 last_error = exc
                 delay = 2**attempt
@@ -356,11 +380,26 @@ class GeminiTTSService:
         # so there is nothing to pace for and raising immediately is the whole
         # point of it.
         async with self._request_lock:
+            # The quota is per-MINUTE, so a 429 is a statement about a WINDOW,
+            # not about the one request that happened to trip it. The wait lives
+            # here, inside the lock, so that every caller queued behind the one
+            # that was refused waits out that same window instead of spending it
+            # arriving at the same refusal one after another. Sleeping it in the
+            # retry loop instead released the lock first, which is how a single
+            # exhausted minute turned 33 of 136 requests into 429s, every one of
+            # them logged as "attempt 1" because none of them had ever retried.
+            cooldown = self._cooldown_until - self._now()
+            if cooldown > 0:
+                await self._sleep(cooldown)
             try:
                 async with httpx.AsyncClient(timeout=self._timeout) as http:
                     response = await http.post(_SYNTHESIS_URL, headers=headers, json=body)
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == _THROTTLED:
+                    # Recorded under the lock, so the next caller to reach it
+                    # reads a cooldown that is already in force.
+                    self._cooldown_until = self._now() + RATE_LIMIT_DELAY
                 if not _is_fatal(exc.response.status_code):
                     await self._sleep(self._min_delay)
                 raise
