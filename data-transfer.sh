@@ -231,6 +231,15 @@ to_prod() {
 
 to_dev() {
   local stage="$DEV_TT/transfer/$TS" out="$VOL/transfer-out/$TS" bk="$DEV_TT/transfer-backups/$TS" e
+  # Every source database must exist BEFORE the api stops: the snapshot below
+  # dies on a missing one, and dying after `compose stop api` leaves prod down.
+  # A language's DB appears on prod only once prod runs a commit that has its
+  # plugin (a new language lands in SQLITE before that deploy, e.g. ceb).
+  echo "==> checking every prod database exists (nothing is stopped yet)"
+  for e in "${SQLITE[@]}"; do
+    ssh_box "sudo test -e '$VOL/$(field "$e" 3)'" \
+      || die "prod has no $(field "$e" 3) — deploy a commit that creates it first; nothing was stopped"
+  done
   echo "==> stopping the prod api (freezes the source)"; compose stop api
   echo "==> snapshotting prod databases"
   for e in "${SQLITE[@]}"; do
