@@ -171,9 +171,9 @@ async def generate_vocab_media(
         return stored
 
     if media.audio_bytes is not None:
-        # Forvo audio gets the active language's code as filename prefix (matches
+        # Forvo audio gets the card language code as filename prefix (matches
         # the sync fetch path in sync_engine); TTS audio uses "tts".
-        prefix = settings.target_language if media.audio_source == "forvo" else "tts"
+        prefix = language_code if media.audio_source == "forvo" else "tts"
         audio_filename = f"{safe_stem(word, prefix)}.mp3"
         store_tt_media(db, coll_id, f"audio_{media.audio_source or 'tts'}", audio_filename, media.audio_bytes)
         stored["audio"] = audio_filename

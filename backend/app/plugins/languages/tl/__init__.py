@@ -6,6 +6,7 @@ from app.cards.field_map import NotetypeProfile
 from app.cards.vocab_notetype import TAGALOG_VOCAB
 from app.languages import LanguageConfig, PlannerExample, register
 from app.models.language import NARRATOR_VOICE, Language
+from app.plugins.languages.tl.hyphenation import normalize_affix_hyphens
 from app.plugins.languages.tl.phoneme_plan import create_phoneme_planner
 from app.plugins.languages.tl.preprocessor import TagalogPreprocessor
 from app.plugins.languages.tl.syllabify import syllabify_tagalog_word
@@ -129,6 +130,9 @@ register(
         lemma_table_path=_DATA / "tagalog_lemmas.tsv.gz",
         lemmatizer_type="table",
         verb_headword_fn=verb_headword,
+        # The LLM writes `mag‑kape` (often U+2011) for standard `magkape`;
+        # hyphenate only before a vowel or a capital letter (tunatale-w4m7.11).
+        story_text_normalizer=normalize_affix_hyphens,
         style_notes=_style_notes,
         function_words_path=_DATA / "function_words.json",
         numbers_path=_DATA / "numbers.json",
