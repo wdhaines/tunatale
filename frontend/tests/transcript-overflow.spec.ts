@@ -1,6 +1,6 @@
 import { devices } from "@playwright/test";
 import { test, expect } from "./fixtures";
-import { backendAvailable, BACKEND } from "./helpers";
+import { backendAvailable, BACKEND, trackApiRequests } from "./helpers";
 
 /**
  * The lesson page must not overflow horizontally in Read mode.
@@ -334,6 +334,7 @@ test.describe("coarse pointer (touch phone)", () => {
 
 	await page.addInitScript(() => localStorage.setItem("lessonMode", "read"));
 
+		const api = trackApiRequests(page);
 		await page.goto(`/c/${curriculumId}/l/${lessonId}`);
 		// Proves the emulation actually took. If this ever reads `false` the whole
 		// test is measuring desktop CSS again and F-12 has silently returned.
@@ -346,6 +347,16 @@ test.describe("coarse pointer (touch phone)", () => {
 
 
 		await expect(page.locator(".tt-wrap").first()).toBeVisible({ timeout: 15000 });
+		// The presses below go to raw coordinates, so the layout must be final
+		// before any box is taken. The first word rendering is not that point:
+		// the page's own later fetches still move the transcript. The one that
+		// did (tunatale-1l26.11, CI trace of run 34777976750): the lesson
+		// review-queue response lands, the "Check your work — review N words"
+		// line appears above the transcript, and every word drops ~25px. A press
+		// aimed from a box taken before that lands between two lines and nothing
+		// opens — "popover never opened for word 16". Reproduced locally 2/2 by
+		// holding that response until after the box was taken.
+		await api.settled();
 
 		// Words nearest the right margin are the ones whose popovers must clamp.
 		// Sweeping several keeps the result independent of where the dialogue
