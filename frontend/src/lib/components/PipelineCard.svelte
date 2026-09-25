@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-	import type { PipelineStatus } from '$lib/api';
+	import type { PipelineDayState, PipelineStatus } from '$lib/api';
 	import { t } from '$lib/i18n/i18n.svelte';
 
 	interface Props {
@@ -12,6 +12,31 @@
 	let { status, curriculumId, onRefresh = () => {} }: Props = $props();
 
 	let retrying = $state<number | null>(null);
+
+	/**
+	 * A day being rendered is minutes of throttled TTS, so "Rendering audio"
+	 * with no number is the whole complaint (tunatale-hbnd). The backend knows
+	 * the clip plan within milliseconds of the first request, so the counts are
+	 * a real percentage rather than a guess. `false` for anything else: a
+	 * finished day has no percentage left to report, and a queued one has no
+	 * plan.
+	 */
+	function renderProgress(day: PipelineDayState): { done: number; total: number; percent: number } | null {
+		if (day.state !== 'rendering' || !day.clips_total || day.clips_total <= 0) return null;
+		const done = day.clips_done ?? 0;
+		// Floor, so a render that is 170/171 reads 99% and not 100% — a
+		// finished-looking bar on unfinished work is worse than no bar.
+		return { done, total: day.clips_total, percent: Math.floor((100 * done) / day.clips_total) };
+	}
+
+	/** Null rather than a number whenever the backend has no honest estimate. */
+	function etaText(seconds: number | null | undefined): string | null {
+		if (seconds === null || seconds === undefined) return null;
+		if (seconds < 60) return t('pipelineCard.etaUnderMinute');
+		// Ceil, for the same reason the percentage floors: "2 min left" while
+		// three are still to go is a promise the render cannot keep.
+		return t('pipelineCard.etaMinutes', { minutes: Math.ceil(seconds / 60) });
+	}
 
 	async function handleRetry(day: number) {
 		retrying = day;
@@ -30,10 +55,27 @@
 	<div class="pipeline-card card">
 		<h3 class="pipeline-heading">{t('pipelineCard.pipeline')}</h3>
 		{#each status.days as d (d.day)}
+			{@const progress = renderProgress(d)}
+			{@const eta = etaText(d.eta_seconds)}
 			<div class="pipeline-row">
 				<span class="day-label">{t('pipelineCard.day', { position: d.position })}</span>
 				<span class="state-badge state-{d.state}">{d.state}</span>
-				<span class="detail-line">{d.detail ?? ''}</span>
+				<span class="detail">
+					<span class="detail-line">{d.detail ?? ''}</span>
+					{#if progress}
+						<span class="render-progress">
+							<progress class="render-bar" value={progress.done} max={progress.total}></progress>
+							<span class="render-progress-text">
+								{t('pipelineCard.renderProgress', {
+									percent: progress.percent,
+									done: progress.done,
+									total: progress.total,
+								})}
+							</span>
+							{#if eta}<span class="render-eta">{eta}</span>{/if}
+						</span>
+					{/if}
+				</span>
 				<span class="actions">
 					{#if d.state === 'ready' && d.lesson_id}
 						<a href="/c/{curriculumId}/l/{d.lesson_id}" class="listen-link">{t('pipelineCard.listen')}</a>
@@ -103,13 +145,36 @@
 		background: color-mix(in srgb, var(--color-danger) 14%, transparent);
 		color: var(--color-danger);
 	}
-	.detail-line {
+	.detail {
+		display: flex;
 		flex: 1;
+		flex-direction: column;
+		gap: 0.15rem;
+		min-width: 0;
+	}
+	.detail-line {
 		color: var(--color-muted);
 		font-size: 0.8rem;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.render-progress {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.75rem;
+		color: var(--color-muted);
+	}
+	.render-bar {
+		flex: 1;
+		height: 0.3rem;
+		min-width: 4rem;
+		accent-color: var(--color-accent);
+	}
+	.render-eta {
+		color: var(--color-accent);
+		font-weight: 600;
 	}
 	.actions {
 		display: flex;

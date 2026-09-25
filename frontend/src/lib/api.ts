@@ -589,6 +589,15 @@ export interface PipelineDayState {
   error: string | null;
   retryable: boolean | null;
   detail: string | null;
+  /**
+   * Render progress. All three are null unless `state` is "rendering" — a
+   * queued day has no plan yet, a finished one has nothing left to wait for.
+   * @see PipelineDayStatus in the generated types
+   */
+  clips_done?: number | null;
+  clips_total?: number | null;
+  /** Seconds left, or null while the estimate would be noise. */
+  eta_seconds?: number | null;
 }
 
 export interface PipelineStatus {

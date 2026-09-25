@@ -2691,6 +2691,28 @@
       "PipelineDayStatus": {
         "description": "One element of PipelineStatusResponse.days (``LessonPipeline.status_for``).",
         "properties": {
+          "clips_done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clips Done"
+          },
+          "clips_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clips Total"
+          },
           "day": {
             "title": "Day",
             "type": "integer"
@@ -2716,6 +2738,17 @@
               }
             ],
             "title": "Error"
+          },
+          "eta_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eta Seconds"
           },
           "has_audio": {
             "title": "Has Audio",

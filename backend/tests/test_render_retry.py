@@ -197,7 +197,7 @@ async def test_render_lesson_audio_retries_a_throttled_lesson(tmp_path, monkeypa
     attempts = 0
 
     class OnceThrottledRenderer:
-        async def render(self, lesson, output_path, section_paths=None):
+        async def render(self, lesson, output_path, section_paths=None, *, on_progress=None):
             nonlocal attempts
             attempts += 1
             if attempts == 1:

@@ -48,7 +48,7 @@ def _make_mock_lesson_with_sections() -> Lesson:
     )
 
 
-def _fake_render(lesson, full_path, section_paths=None):
+def _fake_render(lesson, full_path, section_paths=None, *, on_progress=None):
     """Fake renderer.render: writes minimal audio bytes and returns mock cues."""
     full_path.write_bytes(b"audio")
     if section_paths:
@@ -1422,7 +1422,7 @@ class TestAudioErrorMapping:
     async def test_renderer_runtime_error_returns_503(self, tmp_path):
         from app.storage.store import ContentStore
 
-        async def failing_render(lesson, full_path, section_paths=None):
+        async def failing_render(lesson, full_path, section_paths=None, *, on_progress=None):
             raise RuntimeError("Azure TTS synthesis failed after 3 attempts")
 
         mock_renderer = AsyncMock()

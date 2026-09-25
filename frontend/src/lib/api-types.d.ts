@@ -3343,12 +3343,18 @@ export interface components {
      * @description One element of PipelineStatusResponse.days (``LessonPipeline.status_for``).
      */
     PipelineDayStatus: {
+      /** Clips Done */
+      clips_done?: number | null;
+      /** Clips Total */
+      clips_total?: number | null;
       /** Day */
       day: number;
       /** Detail */
       detail: string | null;
       /** Error */
       error: string | null;
+      /** Eta Seconds */
+      eta_seconds?: number | null;
       /** Has Audio */
       has_audio: boolean;
       /** Lesson Id */

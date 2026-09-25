@@ -10,6 +10,7 @@ from collections.abc import Callable
 
 from app.audio.render_service import render_lesson_audio
 from app.generation.publishing import CurriculumDayTarget, publish_lesson
+from app.generation.render_progress import RenderProgress
 from app.generation.story import StoryGenerationError
 from app.llm.activity import ActivityLog
 from app.llm.client import LLMError
@@ -58,6 +59,11 @@ class LessonPipeline:
 
         self._queue: asyncio.Queue[tuple[str, str, int]] = asyncio.Queue()
         self._jobs: dict[tuple[str, str, int], dict] = {}
+        # job key -> the rate projection for a render in flight. Separate from
+        # the record because it is state, not status: status_for reads it to
+        # answer "how long left", and the entry goes when the day leaves
+        # `rendering` (tunatale-hbnd).
+        self._render_progress: dict[tuple[str, str, int], RenderProgress] = {}
         self._worker_task: asyncio.Task | None = None
 
     # ── Public API ─────────────────────────────────────────────────────────
@@ -163,6 +169,7 @@ class LessonPipeline:
                             "error": record.get("error"),
                             "retryable": record.get("retryable"),
                             "detail": record.get("detail"),
+                            **self._render_counters(key, record),
                         }
                     )
                 else:
@@ -180,9 +187,33 @@ class LessonPipeline:
                                 "error": None,
                                 "retryable": None,
                                 "detail": None,
+                                # Nothing is being rendered, so there is no
+                                # percentage to report — not a zero one.
+                                "clips_done": None,
+                                "clips_total": None,
+                                "eta_seconds": None,
                             }
                         )
         return {"active": active, "days": days_list}
+
+    def _render_counters(self, key: tuple[str, str, int], record: dict) -> dict:
+        """The three render-progress fields for one day, as ``status_for`` reports them.
+
+        All three are ``None`` unless the day is ``rendering``: a queued day has
+        no plan yet and a finished one has nothing left to wait for, so a
+        percentage there would be a lie rather than a zero. The ETA is recomputed
+        at status time — the render is a multi-minute coroutine, so anything a
+        caller cached on its last poll is stale by the time it is read
+        (tunatale-hbnd).
+        """
+        if record["state"] != "rendering":
+            return {"clips_done": None, "clips_total": None, "eta_seconds": None}
+        progress = self._render_progress.get(key)
+        return {
+            "clips_done": record.get("clips_done"),
+            "clips_total": record.get("clips_total"),
+            "eta_seconds": progress.eta_seconds(time.time()) if progress is not None else None,
+        }
 
     def retry(self, language_code: str, curriculum_id: str, day: int) -> str:
         store = self._content_stores[language_code]
@@ -408,6 +439,20 @@ class LessonPipeline:
         record["updated_at"] = time.time()
         self._activity_log.record_pipeline(curriculum_id, day, "rendering", "Rendering audio")
 
+        # A Cebuano render is minutes of throttled TTS, and "Rendering audio" is
+        # not a progress report (tunatale-hbnd). The renderer knows the whole
+        # clip plan within milliseconds of the first request, so the counts
+        # below go from nothing to a real percentage, and the rate projection
+        # turns them into an ETA once there is enough of a sample.
+        key = (language_code, curriculum_id, day)
+        progress = RenderProgress(started_at=time.time())
+        self._render_progress[key] = progress
+
+        def on_progress(done: int, total: int) -> None:
+            progress.update(done, total, time.time())
+            record["clips_done"] = done
+            record["clips_total"] = total
+
         try:
             result = await render_lesson_audio(
                 store=store,
@@ -415,12 +460,14 @@ class LessonPipeline:
                 audio_dir=self._audio_dir,
                 lesson_id=lesson_id,
                 lesson=lesson,
+                on_progress=on_progress,
             )
         except Exception as e:
             record["state"] = "failed"
             record["error"] = str(e)
             record["retryable"] = True
             record["updated_at"] = time.time()
+            self._clear_render_progress(key, record)
             self._activity_log.record_pipeline(curriculum_id, day, "failed", str(e))
             return
 
@@ -428,6 +475,18 @@ class LessonPipeline:
         record["detail"] = None
         record["error"] = None
         record["updated_at"] = time.time()
+        self._clear_render_progress(key, record)
         self._activity_log.record_pipeline(
             curriculum_id, day, "ready", f"Audio rendered ({len(result.get('sections', []))} sections)"
         )
+
+    def _clear_render_progress(self, key: tuple[str, str, int], record: dict) -> None:
+        """Drop the clip counts and the rate the moment the day leaves ``rendering``.
+
+        Both exits of a render go through here, and the failed one matters most:
+        a bar frozen at 116/171 on a day whose audio was never written is a
+        claim about work that did not happen.
+        """
+        self._render_progress.pop(key, None)
+        record["clips_done"] = None
+        record["clips_total"] = None

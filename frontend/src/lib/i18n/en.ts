@@ -228,6 +228,9 @@ export const en = {
   "pipelineCard.day": "Day {position}",
   "pipelineCard.listen": "Listen →",
   "pipelineCard.retry": "Retry",
+  "pipelineCard.renderProgress": "{percent}% · {done}/{total}",
+  "pipelineCard.etaUnderMinute": "under a minute left",
+  "pipelineCard.etaMinutes": "about {minutes} min left",
 
   // LessonSourcePanel.svelte
   "lessonSourcePanel.editSource": "Edit Source",

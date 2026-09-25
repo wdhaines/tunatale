@@ -7,7 +7,7 @@ import logging
 import re
 import tempfile
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -41,6 +41,57 @@ logger = logging.getLogger(__name__)
 # nor the locale is an attribute of the text, and both change the audio. See
 # _synth.
 _MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None, str | None]
+
+
+def _report_nowhere(done: int, total: int) -> None:
+    """The reporter a render nobody is watching gets.
+
+    A real function rather than a ``None`` every caller has to test, so the
+    counting path carries no ``None`` checks — and so a tally cannot be built
+    in a state where reporting is undefined.
+    """
+
+
+@dataclass
+class _ClipTally:
+    """Render-scoped ``(done, total)`` clip counter, and who to tell about it.
+
+    Shared by every section of one render because the memo they write into is:
+    a section that discovers a new clip raises ``total`` for the whole render,
+    and a finished task raises ``done`` for it. ``total`` is complete within
+    milliseconds of the first request, so a caller can paint a real percentage
+    from the first update rather than an indeterminate bar (tunatale-hbnd).
+
+    Nothing is counted unless :attr:`watching`: a render that asked for no
+    progress pays nothing per clip for progress nobody will read.
+    """
+
+    on_progress: Callable[[int, int], None] = _report_nowhere
+    done: int = 0
+    total: int = 0
+
+    @property
+    def watching(self) -> bool:
+        """Whether a caller asked for progress, i.e. this is not the no-op."""
+        return self.on_progress is not _report_nowhere
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        """Count a memo task, but only if it actually produced a clip.
+
+        A failed task and a cancelled one are both absent from the output, and
+        a render that raises reports neither: a progress bar that reaches 100%
+        on a lesson that was never written is worse than no bar. ``cancelled()``
+        is tested first because ``exception()`` RAISES on a cancelled task.
+        """
+        if task.cancelled() or task.exception() is not None:
+            return
+        self.done += 1
+        self.report()
+
+    def report(self) -> None:
+        """Publish the counts. Unconditional — the reporter is always callable."""
+        self.on_progress(self.done, self.total)
+
 
 # Leading/trailing characters that are not part of a word ("bing?" -> "bing").
 _WORD_EDGES = re.compile(r"^\W+|\W+$")
@@ -323,6 +374,7 @@ class LessonRenderer:
         language_code: str,
         synth_memo: dict[_MemoKey, tuple[Path, asyncio.Task]],
         memo_lock: asyncio.Lock,
+        tally: _ClipTally | None = None,
     ) -> tuple[_Audio, list[tuple[int, int, int]]]:
         """Render a single section to an audio buffer (no boundary silence).
 
@@ -337,12 +389,17 @@ class LessonRenderer:
                 translated and en_translated sections) is synthesized once and
                 its audio file reused, not re-spoken.
             memo_lock: Guards ``synth_memo`` while sections render concurrently.
+            tally: Render-scoped clip counter to feed. ``None`` (the default,
+                and what :meth:`render_section` passes) means nobody is watching,
+                so the counting calls are skipped entirely.
 
         Returns:
             Tuple of (Audio buffer, per-phrase timing).
             Timing entries are (phrase_index, start_frame, end_frame) relative
             to the section start, in frames (not ms).
         """
+        if tally is None:
+            tally = _ClipTally()
         if language_code not in self._preprocessors:
             raise ValueError(
                 f"No preprocessor configured for language {language_code!r}; renderer has {sorted(self._preprocessors)}"
@@ -432,6 +489,14 @@ class LessonRenderer:
                     )
                     entry = (canonical, task)
                     synth_memo[key] = entry
+                    # Under the lock, so a task that finishes the instant it is
+                    # created cannot report ``done`` before its own clip is in
+                    # ``total`` — the callback runs from the event loop, never
+                    # from here, so the counter needs no lock of its own.
+                    if tally.watching:
+                        task.add_done_callback(tally._on_task_done)
+                        tally.total += 1
+                        tally.report()
             canonical, task = entry
             try:
                 await task
@@ -557,6 +622,8 @@ class LessonRenderer:
         lesson: Lesson,
         output_path: Path,
         section_paths: list[Path] | None = None,
+        *,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> list[Cue]:
         """Render *lesson* to *output_path* as a valid WAV file.
 
@@ -569,6 +636,13 @@ class LessonRenderer:
             output_path: Destination file path for the full lesson (written as WAV).
             section_paths: Optional list of paths for per-section output WAVs.
                            Must have same length as lesson.sections if provided.
+            on_progress: Called as ``(done, total)`` over DISTINCT clips, both
+                counts only ever rising: once per new synthesis memo entry, and
+                once more when a clip's task finishes. ``total`` is final within
+                milliseconds of the first request (every section gathers all of
+                its phrases at once), so the first ``total`` a caller sees is the
+                whole plan. Failed and cancelled clips never count as done.
+                ``None`` (the default) reports nothing and renders identically.
 
         Returns:
             Timing manifest (list of Cue objects) for the rendered lesson.
@@ -600,9 +674,10 @@ class LessonRenderer:
             t0 = time.perf_counter()
             synth_memo: dict[_MemoKey, tuple[Path, asyncio.Task]] = {}
             memo_lock = asyncio.Lock()
+            tally = _ClipTally(on_progress=on_progress or _report_nowhere)
             section_tasks = [
                 asyncio.ensure_future(
-                    self._render_section(section, tmp, i, lesson.language_code, synth_memo, memo_lock)
+                    self._render_section(section, tmp, i, lesson.language_code, synth_memo, memo_lock, tally)
                 )
                 for i, section in enumerate(lesson.sections)
             ]

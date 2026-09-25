@@ -57,7 +57,7 @@ class _RecordingRenderer:
         self.started = asyncio.Event()
         self._hold = hold
 
-    async def render(self, lesson, full_path, section_paths=None):
+    async def render(self, lesson, full_path, section_paths=None, *, on_progress=None):
         self.active += 1
         self.peak = max(self.peak, self.active)
         self.started.set()
@@ -75,7 +75,7 @@ class _RecordingRenderer:
 
 
 class _FailingRenderer:
-    async def render(self, lesson, full_path, section_paths=None):
+    async def render(self, lesson, full_path, section_paths=None, *, on_progress=None):
         msg = "ffmpeg died"
         raise RuntimeError(msg)
 

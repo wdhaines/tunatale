@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import PipelineCard from "./PipelineCard.svelte";
-import type { PipelineStatus } from "$lib/api";
+import type { PipelineDayState, PipelineStatus } from "$lib/api";
 
 vi.mock("$lib/api", () => ({
   api: { retryPipelineDay: vi.fn() },
@@ -58,6 +58,23 @@ const DAYS_PARTIAL: PipelineStatus = {
 };
 
 const EMPTY: PipelineStatus = { active: false, days: [] };
+
+// tunatale-hbnd: a Cebuano render is minutes of throttled TTS, so a rendering
+// day reports clips and (once there is enough of a sample) an ETA.
+const RENDERING: PipelineDayState = {
+  day: 1,
+  position: 1,
+  state: "rendering",
+  lesson_id: "l1",
+  has_audio: false,
+  error: null,
+  retryable: true,
+  detail: "Rendering audio",
+};
+
+function oneDay(overrides: Partial<PipelineDayState>): PipelineStatus {
+  return { active: true, days: [{ ...RENDERING, ...overrides }] };
+}
 
 describe("PipelineCard", () => {
   it("renders nothing when days array is empty", () => {
@@ -163,5 +180,68 @@ describe("PipelineCard", () => {
     await vi.waitFor(() => {
       expect(mockRetry).toHaveBeenCalledWith("cid-1", 3);
     });
+  });
+});
+
+describe("PipelineCard render progress", () => {
+  it("shows the clip percentage and counts, and no ETA when none is known", () => {
+    const { container, getByText, queryByText } = render(PipelineCard, {
+      props: {
+        status: oneDay({ clips_done: 116, clips_total: 171, eta_seconds: null }),
+        curriculumId: "cid-1",
+      },
+    });
+    expect(getByText("67% · 116/171")).toBeTruthy();
+    expect(queryByText(/left/)).toBeNull();
+    const bar = container.querySelector("progress");
+    expect(bar?.getAttribute("value")).toBe("116");
+    expect(bar?.getAttribute("max")).toBe("171");
+  });
+
+  it("rounds the percentage DOWN, so 170/171 never reads 100%", () => {
+    const { getByText } = render(PipelineCard, {
+      props: { status: oneDay({ clips_done: 170, clips_total: 171 }), curriculumId: "cid-1" },
+    });
+    expect(getByText("99% · 170/171")).toBeTruthy();
+  });
+
+  it("says 'under a minute left' below a minute", () => {
+    const { getByText } = render(PipelineCard, {
+      props: {
+        status: oneDay({ clips_done: 116, clips_total: 171, eta_seconds: 26 }),
+        curriculumId: "cid-1",
+      },
+    });
+    expect(getByText("under a minute left")).toBeTruthy();
+  });
+
+  it("rounds minutes UP, so 125 s reads as 3 min rather than 2", () => {
+    const { getByText } = render(PipelineCard, {
+      props: {
+        status: oneDay({ clips_done: 116, clips_total: 171, eta_seconds: 125 }),
+        curriculumId: "cid-1",
+      },
+    });
+    expect(getByText("about 3 min left")).toBeTruthy();
+  });
+
+  it("shows nothing for a day that is not rendering", () => {
+    const { container, queryByText } = render(PipelineCard, {
+      props: {
+        status: oneDay({ state: "ready", clips_done: 116, clips_total: 171, eta_seconds: 26 }),
+        curriculumId: "cid-1",
+      },
+    });
+    expect(container.querySelector("progress")).toBeNull();
+    expect(queryByText(/116\/171/)).toBeNull();
+    expect(queryByText(/left/)).toBeNull();
+  });
+
+  it("shows nothing while rendering with no clip total — today's card, unchanged", () => {
+    const { container, queryByText } = render(PipelineCard, {
+      props: { status: oneDay({ clips_done: null, clips_total: null }), curriculumId: "cid-1" },
+    });
+    expect(container.querySelector("progress")).toBeNull();
+    expect(queryByText(/%/)).toBeNull();
   });
 });

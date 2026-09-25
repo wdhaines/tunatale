@@ -1261,6 +1261,13 @@ class PipelineDayStatus(BaseModel):
     error: str | None
     retryable: bool | None
     detail: str | None
+    # Render progress (tunatale-hbnd). All three are None unless ``state`` is
+    # "rendering": a queued day has no plan yet and a finished one has nothing
+    # left to wait for. Defaults, not ``| None`` alone, so a caller that builds
+    # this model by hand is not forced to state a field it has no reading for.
+    clips_done: int | None = None
+    clips_total: int | None = None
+    eta_seconds: int | None = None
 
 
 class PipelineStatusResponse(BaseModel):
