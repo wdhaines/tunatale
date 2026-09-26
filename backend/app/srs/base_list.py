@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from app.srs.database import SRSDatabase
 
 SOURCE = "base-list"
-MINTABLE = frozenset({"dictionary", "variant", "usage", "reviewed"})
+MINTABLE = frozenset({"dictionary", "variant", "usage", "reviewed", "accepted"})
 BACK_BASE = 1_000_000
 _ORD = {Direction.RECOGNITION: 0, Direction.PRODUCTION: 1}
 

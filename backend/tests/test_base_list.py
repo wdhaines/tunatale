@@ -96,3 +96,11 @@ def test_a_card_that_predates_the_list_keeps_its_place():
     db.set_anki_ids(iring.guid, 7, {Direction.RECOGNITION: 70, Direction.PRODUCTION: 71})
     bl.mint_base_words(db, _words()[:2], language_code="ceb", list_name="FF 625")
     assert bl.back_positions(db, _words(), language_code="ceb") == []
+
+
+def test_a_row_the_user_accepted_mints():
+    """The 72 unconfirmed Cebuano rows were accepted on 2026-09-26; the decision
+    lives in the data file as status "accepted", not in a flag someone must repeat."""
+    words = bl.load_base_list(["category\tenglish\tcebuano\tstatus\n", "location\thotel\thotel\taccepted\n"])
+    plan = bl.plan_base_list(words, have=frozenset(), function_word=lambda w: False)
+    assert [w.text for w in plan.to_add] == ["hotel"]

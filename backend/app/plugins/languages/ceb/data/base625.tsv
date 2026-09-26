@@ -3,6 +3,7 @@
 # status: dictionary = headword with a compatible gloss; variant = listed as an alternative form (spelling kept because it is the common one);
 #   usage = no headword, but used >= 5 times in the dictionary's example sentences; reviewed = headword whose gloss wording differs, meaning checked by hand;
 #   unconfirmed = the dictionary cannot confirm it (mostly loanwords the extract lacks). NOT minted unless the user accepts it.
+#   accepted = was unconfirmed; accepted by the user on 2026-09-26 (76 rows; the other 4 were already cards).
 # Words dropped: multi-word entries (train station, son, daughter...), grammar labels, senses Cebuano shares one word for, and pink/adult (dictionary disagrees).
 category	english	cebuano	status
 animal	dog	iro	dictionary
@@ -20,8 +21,8 @@ transportation	plane	ayroplano	reviewed
 transportation	car	awto	dictionary
 transportation	truck	trak	dictionary
 transportation	bicycle	bisikleta	dictionary
-transportation	bus	bus	unconfirmed
-transportation	boat	baroto	unconfirmed
+transportation	bus	bus	accepted
+transportation	boat	baroto	accepted
 transportation	ship	barko	dictionary
 transportation	tire	ligid	dictionary
 transportation	gasoline	gasolina	dictionary
@@ -33,48 +34,48 @@ location	house	balay	dictionary
 location	street; road	dalan	dictionary
 location	airport	tugpahanan	dictionary
 location	bridge	taytayan	dictionary
-location	hotel	hotel	unconfirmed
-location	restaurant	restawran	unconfirmed
+location	hotel	hotel	accepted
+location	restaurant	restawran	accepted
 location	farm; field	uma	dictionary
-location	court	korte	unconfirmed
+location	court	korte	accepted
 location	school	eskwelahan	variant
 location	office	opisina	dictionary
-location	room	kwarto	unconfirmed
+location	room	kwarto	accepted
 location	town	lungsod	dictionary
 location	university	unibersidad	dictionary
-location	bar	bar	unconfirmed
-location	park	parke	unconfirmed
-location	camp	kampo	unconfirmed
+location	bar	bar	accepted
+location	park	parke	accepted
+location	camp	kampo	accepted
 location	store; shop	tindahan	dictionary
-location	theater	teatro	unconfirmed
-location	library	librarya	unconfirmed
+location	theater	teatro	accepted
+location	library	librarya	accepted
 location	hospital	ospital	dictionary
 location	church	simbahan	dictionary
 location	market	merkado	dictionary
 location	country	nasod	dictionary
-location	building	bilding	unconfirmed
+location	building	bilding	accepted
 location	ground; earth; soil	yuta	dictionary
 location	outer space	kawanangan	dictionary
 location	bank	bangko	dictionary
 location	place; location	lugar	usage
 clothing	hat	kalo	dictionary
-clothing	dress	bestida	unconfirmed
+clothing	dress	bestida	accepted
 clothing	skirt	sayal	variant
 clothing	clothes; shirt	sinina	dictionary
-clothing	T-shirt	kamiseta	unconfirmed
+clothing	T-shirt	kamiseta	accepted
 clothing	pants	karsones	dictionary
 clothing	shoes	sapatos	dictionary
 clothing	pocket	bulsa	dictionary
-clothing	jacket; coat	dyaket	unconfirmed
+clothing	jacket; coat	dyaket	accepted
 clothing	stain	mansa	dictionary
 color	red	pula	dictionary
 color	green	berde	dictionary
 color	blue	asul	dictionary
 color	yellow	dalag	dictionary
-color	orange	kahel	unconfirmed
+color	orange	kahel	accepted
 color	black	itom	dictionary
 color	white	puti	dictionary
-color	gray	abuhon	unconfirmed
+color	gray	abuhon	accepted
 color	color	kolor	dictionary
 people	mother	inahan	dictionary
 people	father	amahan	dictionary
@@ -89,7 +90,7 @@ people	grandmother	lola	dictionary
 people	husband	bana	dictionary
 people	wife	asawa	dictionary
 people	king	hari	dictionary
-people	queen	reyna	unconfirmed
+people	queen	reyna	accepted
 people	president	presidente	dictionary
 people	neighbor	silingan	reviewed
 people	child	bata	dictionary
@@ -104,21 +105,21 @@ job	lawyer	abogado	dictionary
 job	doctor	doktor	dictionary
 job	patient	pasyente	dictionary
 job	waiter	weyter	dictionary
-job	secretary	sekretarya	unconfirmed
+job	secretary	sekretarya	accepted
 job	priest	pari	dictionary
-job	police	pulis	unconfirmed
+job	police	pulis	accepted
 job	soldier	sundalo	dictionary
 job	author; writer	magsusulat	dictionary
 job	manager	manedyer	reviewed
-job	actor	aktor	unconfirmed
+job	actor	aktor	accepted
 job	job; work	trabaho	dictionary
-society	religion	relihiyon	unconfirmed
+society	religion	relihiyon	accepted
 society	sky; heaven	langit	dictionary
 society	hell	impyerno	dictionary
 society	death	kamatayon	dictionary
 society	medicine	tambal	dictionary
 society	money	kwarta	variant
-society	dollar	dolyar	unconfirmed
+society	dollar	dolyar	accepted
 society	marriage	kaminyoon	dictionary
 society	wedding	kasal	dictionary
 society	relationship	relasyon	dictionary
@@ -133,26 +134,26 @@ society	magazine	magasin	dictionary
 society	newspaper	mantalaan	dictionary
 society	poison	hilo	dictionary
 society	gun	pusil	dictionary
-society	sport	isport	unconfirmed
+society	sport	isport	accepted
 society	race (contest)	lumba	dictionary
 society	exercise	ehersisyo	dictionary
 society	ball	bola	dictionary
 society	game; play	dula	dictionary
 society	price	presyo	dictionary
-society	contract	kontrata	unconfirmed
-society	drug	droga	unconfirmed
-society	sign	karatula	unconfirmed
-society	science	siyensya	unconfirmed
+society	contract	kontrata	accepted
+society	drug	droga	accepted
+society	sign	karatula	accepted
+society	science	siyensya	accepted
 society	God	Diyos	dictionary
-art	band	banda	unconfirmed
+art	band	banda	accepted
 art	song; sing	kanta	dictionary
-art	musical instrument	instrumento	unconfirmed
-art	music	musika	unconfirmed
+art	musical instrument	instrumento	accepted
+art	music	musika	accepted
 art	movie	sine	dictionary
-art	art	arte	unconfirmed
+art	art	arte	accepted
 beverage	coffee	kape	dictionary
 beverage	tea	tsa	dictionary
-beverage	wine	bino	unconfirmed
+beverage	wine	bino	accepted
 beverage	beer	serbesa	dictionary
 beverage	juice	duga	dictionary
 beverage	water	tubig	dictionary
@@ -164,10 +165,10 @@ food	bread	pan	dictionary
 food	soup	sabaw	dictionary
 food	cake	keyk	dictionary
 food	chicken	manok	dictionary
-food	meat	karne	unconfirmed
+food	meat	karne	accepted
 food	apple	mansanas	dictionary
 food	banana	saging	dictionary
-food	lemon	limon	unconfirmed
+food	lemon	limon	accepted
 food	corn	mais	dictionary
 food	rice (uncooked)	bugas	dictionary
 food	cooked rice	kan-on	dictionary
@@ -200,28 +201,28 @@ home	soap	sabon	dictionary
 home	book	libro	dictionary
 home	page	panid	dictionary
 home	key	yawe	variant
-home	paint	pintura	unconfirmed
+home	paint	pintura	accepted
 home	letter; write	sulat	dictionary
 home	wall	bungbong	dictionary
 home	paper	papel	dictionary
 home	floor	salog	dictionary
 home	ceiling	kisame	variant
 home	roof	atop	dictionary
-home	lock	kandado	unconfirmed
+home	lock	kandado	accepted
 home	telephone	telepono	dictionary
 home	garden	tanaman	dictionary
-home	yard	nataran	unconfirmed
+home	yard	nataran	accepted
 home	needle	dagom	dictionary
 home	box	kahon	dictionary
 home	gift	regalo	dictionary
 home	ring	singsing	dictionary
 home	tool	himan	dictionary
-electronics	clock	orasan	unconfirmed
-electronics	lamp	lampara	unconfirmed
+electronics	clock	orasan	accepted
+electronics	lamp	lampara	accepted
 electronics	electric fan	bentilador	dictionary
 electronics	cell phone	selpon	dictionary
 electronics	computer	kompyuter	dictionary
-electronics	camera	kamera	unconfirmed
+electronics	camera	kamera	accepted
 electronics	television	telebisyon	dictionary
 electronics	radio	radyo	dictionary
 body	head	ulo	dictionary
@@ -250,7 +251,7 @@ body	knee	tuhod	dictionary
 body	sweat	singot	dictionary
 body	sick; pain; disease	sakit	dictionary
 body	bone	bukog	dictionary
-body	voice; sound	tingog	unconfirmed
+body	voice; sound	tingog	accepted
 body	skin	panit	dictionary
 body	body	lawas	dictionary
 nature	sea	dagat	dictionary
@@ -277,39 +278,39 @@ nature	sand	balas	dictionary
 nature	beach	baybayon	reviewed
 nature	wave	balod	dictionary
 nature	fire	kalayo	dictionary
-nature	ice	yelo	unconfirmed
+nature	ice	yelo	accepted
 nature	island	pulo	dictionary
 nature	hill	bungtod	dictionary
-nature	heat	kainit	unconfirmed
-nature	nature	kinaiyahan	unconfirmed
-material	drinking glass	baso	unconfirmed
-material	metal	metal	unconfirmed
-material	plastic	plastik	unconfirmed
+nature	heat	kainit	accepted
+nature	nature	kinaiyahan	accepted
+material	drinking glass	baso	accepted
+material	metal	metal	accepted
+material	plastic	plastik	accepted
 material	stone	bato	dictionary
 material	diamond	diyamante	dictionary
 material	mud; clay	lapok	dictionary
 material	dust	abog	dictionary
 material	gold	bulawan	dictionary
-material	copper	tumbaga	unconfirmed
+material	copper	tumbaga	accepted
 material	silver	pilak	dictionary
-measure	meter	metro	unconfirmed
-measure	kilogram	kilo	unconfirmed
+measure	meter	metro	accepted
+measure	kilogram	kilo	accepted
 measure	inch	pulgada	dictionary
-measure	pound	libra	unconfirmed
+measure	pound	libra	accepted
 measure	half	tunga	dictionary
 measure	circle	lingin	dictionary
-measure	square	kwadrado	unconfirmed
-measure	temperature	temperatura	unconfirmed
+measure	square	kwadrado	accepted
+measure	temperature	temperatura	accepted
 measure	date	petsa	dictionary
-measure	weight	gibug-aton	unconfirmed
-measure	edge	ngilit	unconfirmed
+measure	weight	gibug-aton	accepted
+measure	edge	ngilit	accepted
 measure	corner	eskina	dictionary
 misc	map	mapa	dictionary
-misc	dot	tuldok	unconfirmed
+misc	dot	tuldok	accepted
 misc	light	kahayag	dictionary
 misc	yes	oo	dictionary
 misc	no; not	dili	reviewed
-misc	piece	piraso	unconfirmed
+misc	piece	piraso	accepted
 misc	wound; injury	samad	dictionary
 misc	hole	lungag	dictionary
 misc	image; picture	hulagway	reviewed
@@ -327,7 +328,7 @@ direction	north	amihanan	dictionary
 direction	south	habagatan	dictionary
 direction	east	sidlakan	dictionary
 direction	west	kasadpan	dictionary
-direction	direction	direksyon	unconfirmed
+direction	direction	direksyon	accepted
 season	dry season; summer	ting-init	dictionary
 season	cold season; winter	tingtugnaw	dictionary
 number	one	usa	reviewed
@@ -344,17 +345,17 @@ number	twenty	kawhaan	variant
 number	thirty	katloan	dictionary
 number	forty	kap-atan	dictionary
 number	fifty	kalim-an	dictionary
-number	sixty	kan-uman	unconfirmed
+number	sixty	kan-uman	accepted
 number	seventy	kapitoan	dictionary
 number	eighty	kawaloan	dictionary
 number	ninety	kasiyaman	dictionary
 number	hundred	gatos	dictionary
 number	thousand	libo	dictionary
-number	million	milyon	unconfirmed
+number	million	milyon	accepted
 number	first	una	dictionary
 number	second (ordinal)	ikaduha	dictionary
 number	third	ikatulo	dictionary
-number	number	numero	unconfirmed
+number	number	numero	accepted
 month	January	Enero	dictionary
 month	February	Pebrero	dictionary
 month	March	Marso	dictionary
@@ -438,12 +439,12 @@ verb	call	tawag	dictionary
 verb	turn	liko	dictionary
 verb	build	tukod	dictionary
 verb	grow	tubo	dictionary
-verb	draw	drowing	unconfirmed
-verb	feed	pakaon	unconfirmed
+verb	draw	drowing	accepted
+verb	feed	pakaon	accepted
 verb	catch	dakop	dictionary
 verb	throw	labay	dictionary
 verb	clean	limpyo	dictionary
-verb	search; look for	pangita	unconfirmed
+verb	search; look for	pangita	accepted
 verb	fall	hulog	dictionary
 verb	push	tulod	dictionary
 verb	pull	bira	dictionary
@@ -472,23 +473,23 @@ adjective	good	maayo	dictionary
 adjective	bad	daotan	dictionary
 adjective	wet	basa	dictionary
 adjective	dry	uga	dictionary
-adjective	healthy	himsog	unconfirmed
-adjective	noisy; loud	saba	unconfirmed
+adjective	healthy	himsog	accepted
+adjective	noisy; loud	saba	accepted
 adjective	quiet	hilom	dictionary
 adjective	happy	malipayon	dictionary
-adjective	sad	masulub-on	unconfirmed
+adjective	sad	masulub-on	accepted
 adjective	beautiful	nindot	variant
-adjective	ugly	pangit	unconfirmed
+adjective	ugly	pangit	accepted
 adjective	deaf	bungol	dictionary
-adjective	blind	buta	unconfirmed
+adjective	blind	buta	accepted
 adjective	kind; nice	buotan	dictionary
 adjective	rich	dato	reviewed
-adjective	poor	kabus	unconfirmed
+adjective	poor	kabus	accepted
 adjective	thick	baga	dictionary
 adjective	thin	nipis	dictionary
 adjective	expensive	mahal	dictionary
 adjective	cheap	barato	dictionary
-adjective	flat	patag	unconfirmed
+adjective	flat	patag	accepted
 adjective	tight	hugot	dictionary
 adjective	loose	luag	dictionary
 adjective	soft	humok	dictionary
@@ -504,10 +505,10 @@ adjective	light (weight)	gaan	dictionary
 adjective	dark	ngitngit	dictionary
 adjective	bright	hayag	dictionary
 adjective	famous	bantogan	reviewed
-pronoun	I	ako	unconfirmed
+pronoun	I	ako	accepted
 pronoun	you	ikaw	reviewed
-pronoun	he; she	siya	unconfirmed
+pronoun	he; she	siya	accepted
 pronoun	this (near me)	kini	dictionary
-pronoun	we (not you)	kami	unconfirmed
+pronoun	we (not you)	kami	accepted
 pronoun	you (plural)	kamo	reviewed
-pronoun	they	sila	unconfirmed
+pronoun	they	sila	accepted
