@@ -375,6 +375,18 @@ class Settings(BaseSettings):
     # per language, so a users table inside one of them would exist once per
     # language and disagree with itself. Sits alongside them by default.
     auth_database_url: str = "sqlite:///./auth.db"
+    # Multi-user (tunatale-3k8). With auth on, ONE account owns the flat DBs
+    # above and every other account gets its own files — see
+    # app.storage.user_dbs. Empty = the first account ever created is the owner,
+    # which is the single-user deployment's only account; a later one is never
+    # the owner by accident. Name it here to make a different account the owner.
+    # With auth off there is no identity, and the flat DBs serve everyone.
+    owner_email: str = ""
+    # Where non-owner accounts' decks live: <dir>/<user id>/tunatale_<code>.db.
+    # None = a `users` directory beside the owner's DBs, which puts it on the
+    # data volume wherever those are (the container's /data, the laptop
+    # instance's ~/TunaTaleLive/data) with no extra setting to forget.
+    user_data_dir: Path | None = None
     # Default lifetime of a login session, read by
     # app.auth.database.AuthDatabase.create_session. P1.2 rotates the token on
     # login rather than extending an existing session.

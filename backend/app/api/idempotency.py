@@ -49,7 +49,7 @@ class _Entry:
         self.created = created
 
 
-def _registry(app) -> dict[tuple[str, str, str], _Entry]:
+def _registry(app) -> dict[tuple[str, int | None, str, str], _Entry]:
     """The per-process key registry, created lazily on ``app.state``.
 
     Lazy rather than lifespan-initialised because the tests set ``app.state.*``
@@ -63,7 +63,7 @@ def _registry(app) -> dict[tuple[str, str, str], _Entry]:
     return registry
 
 
-def _evict_expired(registry: dict[tuple[str, str, str], _Entry], now: float) -> None:
+def _evict_expired(registry: dict[tuple[str, int | None, str, str], _Entry], now: float) -> None:
     """Drop finished entries past the TTL. In-flight entries are never evicted:
     a key whose work is still running is exactly the one a retry needs."""
     for key, entry in list(registry.items()):
@@ -71,7 +71,9 @@ def _evict_expired(registry: dict[tuple[str, str, str], _Entry], now: float) -> 
             del registry[key]
 
 
-def _forget_if_it_failed(registry: dict[tuple[str, str, str], _Entry], key: tuple[str, str, str], task) -> None:
+def _forget_if_it_failed(
+    registry: dict[tuple[str, int | None, str, str], _Entry], key: tuple[str, int | None, str, str], task
+) -> None:
     # `task.exception()` itself raises on a cancelled task, so cancellation is
     # short-circuited first. Both outcomes mean the same thing here: nothing was
     # produced, so the key must not be held.
@@ -105,7 +107,9 @@ async def once(
     now = time.monotonic()
     _evict_expired(registry, now)
 
-    registry_key = (scope, getattr(request.state, "language_code", ""), key)
+    # The user is part of the key (tunatale-3k8): the key is client-chosen, and
+    # two accounts' replays must never answer with each other's result.
+    registry_key = (scope, getattr(request.state, "user_id", None), getattr(request.state, "language_code", ""), key)
     entry = registry.get(registry_key)
     if entry is None:
         task = asyncio.create_task(work())

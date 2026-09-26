@@ -704,6 +704,28 @@ There is deliberately no `activate-user`. Re-enabling an account somebody
 disabled should take more thought than pressing ↑ and Enter; do it from a
 Python shell against `AuthDatabase.set_active`.
 
+### A second learner
+
+Identity picks the data (`app.storage.user_dbs`). One account is the **owner**:
+`OWNER_EMAIL` if set, otherwise the first account ever created. The owner keeps
+the flat per-language DBs, so nothing of theirs moves. Every other account is
+served from `<data>/users/<id>/tunatale_<code>.db`, sees only the languages it
+has a file for, and never gets Anki sync, the admin tools or lesson generation
+(403). With the gate off there is no identity, and the flat DBs serve everyone.
+
+A new account starts with no languages. To give it a copy of the owner's deck
+(same cards, never studied, no lessons; the rules are in
+`app.srs.user_deck_seed`), run on the live side under its env:
+
+```bash
+uv run python scripts/seed_user_deck.py --language ceb --email them@example.com          # dry run
+uv run python scripts/seed_user_deck.py --language ceb --email them@example.com --apply
+```
+
+⚠️ `data-transfer.sh` and the off-box backup do not carry `users/` yet
+(`tunatale-98zf.4`). Until they do, do not switch sides with a second learner
+on the instance you are leaving.
+
 ### ⚠️ Never pass a password in argv
 
 There is no `--password` flag and adding one would be a security bug — argv is

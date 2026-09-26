@@ -15,6 +15,7 @@ from app.api.models import HealthResponse, LanguagesResponse
 from app.audio.renderer import build_lesson_renderer
 from app.audio.tts_factory import get_tts_service
 from app.auth.database import AuthDatabase
+from app.auth.session import COOKIE_NAME, get_session_user
 from app.config import clock_runtime_problems, prod_profile_problems, settings
 from app.generation.pipeline import LessonPipeline
 from app.generation.planner import CurriculumPlanner
@@ -30,6 +31,7 @@ from app.srs.database import SRSDatabase
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for
 from app.storage.db_backup import rotate_db_backups
 from app.storage.store import ContentStore
+from app.storage.user_dbs import UserDatabases, owner_user_id, user_data_root
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("app.audio.renderer").setLevel(logging.DEBUG)
@@ -94,6 +96,11 @@ def _language_db_map() -> dict[str, str]:
     if settings.database_urls:
         return dict(settings.database_urls)
     return {settings.target_language: settings.database_url}
+
+
+def _user_data_root(db_map: dict[str, str]) -> Path:
+    """Where non-owner accounts' decks live — beside the first configured DB by default."""
+    return user_data_root(next(iter(db_map.values())), settings.user_data_dir)
 
 
 def _assert_prod_profile() -> None:
@@ -183,6 +190,15 @@ async def lifespan(app: FastAPI):
     # first-request surprise instead of a startup one. Not per-language: see
     # settings.auth_database_url.
     app.state.auth_db = AuthDatabase(settings.auth_database_url)
+    # Every OTHER account's decks (tunatale-3k8). Opened lazily per request,
+    # never at startup, and backed up on first open rather than here.
+    app.state.user_dbs = UserDatabases(
+        _user_data_root(db_map),
+        list(db_map),
+        backup_dir=settings.db_backup_dir,
+        backup_keep_days=settings.db_backup_keep_days,
+        migration_backup_dir=settings.migration_backup_dir,
+    )
 
     app.state.srs_dbs = srs_dbs
     app.state.content_stores = content_stores
@@ -294,9 +310,26 @@ def cors_kwargs() -> dict:
 app.add_middleware(CORSMiddleware, **cors_kwargs())
 
 
+def _session_user(request):
+    """The request's logged-in user, or None. Same lookup as ``require_user``."""
+    token = request.cookies.get(COOKIE_NAME)
+    if token is None:
+        return None
+    return get_session_user(getattr(request.app.state, "auth_db", None), token)
+
+
+def _unknown_language(code: str) -> JSONResponse:
+    # No configured list in the body: this runs before auth, and
+    # /api/languages (auth-gated) is where a client learns the set.
+    return JSONResponse(
+        status_code=400,
+        content={"detail": f"Unknown language {code!r}: not configured on this server"},
+    )
+
+
 @app.middleware("http")
 async def _resolve_language_state(request, call_next):
-    """Bind the request's language connection set onto ``request.state``.
+    """Bind the request's connection set onto ``request.state``, by user AND language.
 
     The active language is the ``X-TT-Language`` header, defaulting to
     ``settings.target_language``. When the app has per-language maps
@@ -305,6 +338,13 @@ async def _resolve_language_state(request, call_next):
     falls back to those. Routes read ``request.state.{srs_db,content_store,language}``
     so isolation is which connection serves the request, not a per-query filter.
 
+    WHOSE connection is the session's (tunatale-3k8). With auth off, or for the
+    owner, it is the flat per-language DBs above. Any other account is served
+    from its own files (``app.storage.user_dbs``), may select only the languages
+    it has a deck for, and defaults to the first of them. An anonymous request
+    under auth binds nothing at all: every data route 401s in ``require_user``,
+    and binding the owner's DBs to it would make a forgotten dependency a leak.
+
     An unconfigured code is refused with a 400 rather than served as the default:
     that fallback silently read and wrote the default language's DB (e.g. a
     client selecting a language whose DB this deployment does not have yet).
@@ -312,18 +352,25 @@ async def _resolve_language_state(request, call_next):
     is how a client holding a stale stored code learns the configured set and
     heals itself — refusing it too would strand that client.
     """
-    code = request.headers.get("x-tt-language") or settings.target_language
+    requested = request.headers.get("x-tt-language")
     state = request.app.state
+    user = _session_user(request) if settings.auth_enabled else None
+    request.state.user_id = None if user is None else user.id
+    request.state.srs_db = request.state.content_store = request.state.language = None
+    if settings.auth_enabled and user is None:
+        request.state.is_owner = False
+        request.state.language_code = requested or settings.target_language
+        return await call_next(request)
+    if user is not None and user.id != owner_user_id(getattr(state, "auth_db", None), settings.owner_email):
+        return await _serve_from_user_files(request, call_next, user.id, requested)
+
+    request.state.is_owner = True
+    code = requested or settings.target_language
     srs_dbs = getattr(state, "srs_dbs", None)
     if srs_dbs is not None:
         if code not in srs_dbs:
             if request.url.path != "/api/languages":
-                # No configured list in the body: this runs before auth, and
-                # /api/languages (auth-gated) is where a client learns the set.
-                return JSONResponse(
-                    status_code=400,
-                    content={"detail": f"Unknown language {code!r}: not configured on this server"},
-                )
+                return _unknown_language(code)
             code = settings.target_language
         request.state.srs_db = srs_dbs[code]
         request.state.content_store = state.content_stores[code]
@@ -332,6 +379,26 @@ async def _resolve_language_state(request, call_next):
         request.state.srs_db = getattr(state, "srs_db", None)
         request.state.content_store = getattr(state, "content_store", None)
         request.state.language = getattr(state, "language", None)
+    request.state.language_code = code
+    return await call_next(request)
+
+
+async def _serve_from_user_files(request, call_next, user_id: int, requested: str | None):
+    """The non-owner half of ``_resolve_language_state``."""
+    request.state.is_owner = False
+    user_dbs = getattr(request.app.state, "user_dbs", None)
+    codes = [] if user_dbs is None else user_dbs.languages_for(user_id)
+    request.state.user_languages = codes
+    code = requested or (codes[0] if codes else "")
+    if code not in codes:
+        if request.url.path != "/api/languages":
+            if not codes:
+                return JSONResponse(status_code=400, content={"detail": "No language is set up for this account yet"})
+            return _unknown_language(code)
+        code = codes[0] if codes else ""
+    if code:
+        request.state.srs_db, request.state.content_store = user_dbs.get(user_id, code)
+        request.state.language = get_language(code)
     request.state.language_code = code
     return await call_next(request)
 
@@ -363,7 +430,7 @@ from app.api import client_log as client_log_api  # noqa: E402
 from app.api import llm as llm_api  # noqa: E402
 from app.api import review_sessions as review_sessions_api  # noqa: E402
 from app.api import srs_images as srs_images_api  # noqa: E402
-from app.auth.dependencies import require_user  # noqa: E402
+from app.auth.dependencies import require_owner, require_owner_for_writes, require_user  # noqa: E402
 
 
 def _anki_sync_importable() -> bool:
@@ -381,21 +448,27 @@ def _anki_sync_importable() -> bool:
         return False
 
 
-app.include_router(curriculum.router, dependencies=[Depends(require_user)])
-app.include_router(generation.router, dependencies=[Depends(require_user)])
+# Who may do what beyond "logged in" (tunatale-3k8): OWNER = process-global
+# state that is the owner's by construction (Anki sync, admin); LESSON_WRITES =
+# anything that can reach the language-keyed LessonPipeline. Order matters —
+# require_user first, so an anonymous caller is told 401 rather than 403.
+OWNER = [Depends(require_user), Depends(require_owner)]
+LESSON_WRITES = [Depends(require_user), Depends(require_owner_for_writes)]
+app.include_router(curriculum.router, dependencies=LESSON_WRITES)
+app.include_router(generation.router, dependencies=LESSON_WRITES)
 app.include_router(srs.router, dependencies=[Depends(require_user)])
 app.include_router(srs_images_api.router, dependencies=[Depends(require_user)])
-app.include_router(audio.router, dependencies=[Depends(require_user)])
-app.include_router(review_sessions_api.router, dependencies=[Depends(require_user)])
+app.include_router(audio.router, dependencies=LESSON_WRITES)
+app.include_router(review_sessions_api.router, dependencies=LESSON_WRITES)
 if settings.sync_enabled and _anki_sync_importable():
-    app.include_router(anki.router, dependencies=[Depends(require_user)])
-app.include_router(admin.router, dependencies=[Depends(require_user)])
+    app.include_router(anki.router, dependencies=OWNER)
+app.include_router(admin.router, dependencies=OWNER)
 # Authenticated like every other write path: it appends browser-supplied text to
 # a file on disk. It is ALSO off by default (settings.client_log_enabled) — auth
 # says who may write, the flag says whether the channel exists at all, and a
 # debug channel wants both.
 app.include_router(client_log_api.router, dependencies=[Depends(require_user)])
-app.include_router(llm_api.router, dependencies=[Depends(require_user)])
+app.include_router(llm_api.router, dependencies=LESSON_WRITES)
 app.include_router(auth_api.router)  # NO router-level dependency — login/logout are unauthenticated
 
 
@@ -442,6 +515,15 @@ async def languages(request: Request):
     return one entry. ``active`` is the language the X-TT-Language header resolved
     to for this request.
     """
+    if not request.state.is_owner:
+        # Only the languages this account has a deck for, and never sync: the
+        # one sync there is belongs to the owner (require_owner).
+        codes = getattr(request.state, "user_languages", [])
+        return {
+            "languages": [{"code": code, "name": get_language(code).name} for code in codes],
+            "active": request.state.language_code,
+            "sync_available": False,
+        }
     langs = getattr(request.app.state, "languages", None)
     if langs is None:
         # Single-language test fallback: the singular app.state.language.
