@@ -54,6 +54,21 @@ def owner_user_id(auth_db: AuthDatabase | None, owner_email: str) -> int | None:
     return min((u.id for u in users), default=None)
 
 
+def pipeline_user_id(state) -> int | None:
+    """Whose stores a request's LessonPipeline work uses: None = the owner's flat DBs.
+
+    ``state`` is ``request.state`` as ``main._resolve_language_state`` bound it.
+    Fails CLOSED: a request that is not the owner's and carries no account id
+    raises, rather than returning None and generating into the owner's store.
+    """
+    if getattr(state, "is_owner", False):
+        return None
+    user_id = getattr(state, "user_id", None)
+    if user_id is None:
+        raise RuntimeError("lesson work for a request with no account")
+    return user_id
+
+
 def user_data_root(owner_db_url: str, override: Path | None) -> Path:
     """Where non-owner accounts' decks live: ``override``, else beside the owner's DB.
 

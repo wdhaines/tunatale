@@ -205,7 +205,7 @@ class TestPipelineRetryEndpoint:
         app.state.srs_db = store
         app.state.pipeline = pipeline
 
-        pipeline.enqueue("sl", "cur-1", 1, "generate")
+        pipeline.enqueue("sl", "cur-1", 1, "generate", user_id=None)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/curriculum/cur-1/pipeline/retry", json={"day": 1})
@@ -223,10 +223,10 @@ class TestPipelineRetryEndpoint:
         app.state.pipeline = pipeline
 
         pipeline.start()
-        pipeline.enqueue("sl", "cur-1", 1, "generate")
+        pipeline.enqueue("sl", "cur-1", 1, "generate", user_id=None)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            record = pipeline._jobs.get(("sl", "cur-1", 1))
+            record = pipeline._jobs.get((None, "sl", "cur-1", 1))
             if record and record["state"] == "failed":
                 break
             await asyncio.sleep(0.05)
@@ -268,7 +268,7 @@ class TestPipelineRegenerateEndpoint:
         app.state.srs_db = store
         app.state.pipeline = pipeline
 
-        pipeline.enqueue("sl", "cur-1", 1, "generate")
+        pipeline.enqueue("sl", "cur-1", 1, "generate", user_id=None)
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/curriculum/cur-1/pipeline/regenerate", json={"day": 1})
