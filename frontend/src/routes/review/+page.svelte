@@ -9,6 +9,7 @@
 	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 	import { syncStore } from '$lib/stores/sync.svelte';
+	import { languageStore } from '$lib/stores/language.svelte';
 	import { t } from '$lib/i18n/i18n.svelte';
 
 	type QueueItem = { item: ReviewQueueItem; direction: 'recognition' | 'production' };
@@ -191,7 +192,9 @@
 				{#if stats.cap_source !== 'cache'}
 					<span class="source"> ({stats.cap_source})</span>
 				{/if}
-				{#if stats.fsrs_source !== 'cache'}
+				<!-- A deck with no Anki sync runs on FSRS defaults by design (a second
+				     learner's, tunatale-98zf.1): the marker is only news on a synced deck. -->
+				{#if stats.fsrs_source !== 'cache' && languageStore.syncAvailable}
 					<span class="source">{t('review.fsrsDefaults')}</span>
 				{/if}
 			</p>
