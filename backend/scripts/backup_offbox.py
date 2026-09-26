@@ -24,6 +24,12 @@ never in the repo. An unattended job's error message is its only user interface,
 so ``MissingSecret`` prints the exact ``security add-generic-password``
 invocation that fixes it.
 
+**Which data.** While ``switch.sh`` has learning on the laptop instance
+(``~/TunaTaleLive/live.env`` says ``SYNC_ENABLED=true``), ``backup`` ships THAT
+instance's data — every language DB, accounts, learner decks, media, audio —
+and refuses a source outside it. Otherwise it ships the dev tree, as always.
+The LaunchAgent needs no change for this: it runs here either way.
+
 Requires restic installed (``brew install restic``), nothing else.
 
     uv run python scripts/backup_offbox.py init --bucket my-bucket
@@ -68,6 +74,9 @@ _MARKER = ".tt-offbox-staging"
 # desktop notification, nothing can silently switch a file off.
 FAILURE_MARKER = Path("~/.tunatale/BACKUP-FAILED.txt").expanduser()
 LOG_HINT = "~/.tunatale/logs/backup.log (when run by the LaunchAgent)"
+# switch.sh's laptop instance (tunatale-qyw0). While learning runs there, ITS
+# data is the live copy, and the dev tree this script defaults to is not.
+LIVE_ROOT = Path(os.environ.get("TT_LIVE_ROOT") or "~/TunaTaleLive").expanduser()
 
 
 class MissingSecret(Exception):
@@ -391,19 +400,64 @@ def _cmd_restore(args, env) -> int:
     return 0 if _run(["restic", "restore", "latest", "--target", str(target)], env=env).returncode == 0 else 1
 
 
+def laptop_is_live(root: Path) -> bool:
+    """switch.sh's own test (``laptop_live``): the last handover gave the laptop
+    instance the AnkiWeb sync, so its data is the live copy."""
+    try:
+        lines = (root / "live.env").read_text().splitlines()
+    except FileNotFoundError:
+        return False
+    return "SYNC_ENABLED=true" in (line.strip() for line in lines)
+
+
+def _live_sources(args, data: Path) -> tuple[list[Path], Path, Path, Path, Path] | str:
+    """The laptop instance's sources, or the reason to refuse.
+
+    The LaunchAgent runs in the dev checkout with the dev .env, so every default
+    below would otherwise name the DEV tree — which stopped being the source of
+    truth when switch.sh moved learning to the laptop (tunatale-98zf.6). Each
+    language DB the instance has is shipped, not the dev .env's language list:
+    that list had no ``ceb`` while the live instance did. A source given
+    explicitly must sit under the live data too, or a hand-run backup could
+    still ship the dev copy and report success. The desktop Anki collection is
+    the same file whichever side is live, so it is exempt.
+    """
+    given = [*(args.db or []), args.media_src, args.output_src, args.auth_db, args.users_dir]
+    for path in (p.expanduser().resolve() for p in given if p is not None):
+        if not path.is_relative_to(data.resolve()):
+            return f"learning is on the laptop instance ({LIVE_ROOT}), and {path} is outside its data ({data})"
+    db_paths = [Path(p) for p in args.db] if args.db else sorted(data.glob("tunatale_*.db"))
+    if not db_paths:
+        return f"learning is on the laptop instance, but {data} holds no tunatale_*.db"
+    return (
+        db_paths,
+        (args.media_src or data / "media").expanduser(),
+        (args.output_src or data / "output").expanduser(),
+        args.auth_db or data / "auth.db",
+        args.users_dir or data / "users",
+    )
+
+
 def _cmd_backup(args, env) -> int:
-    db_paths = [Path(p) for p in (args.db or _default_db_paths())]
-    media = args.media_src.expanduser()
-    output = args.output_src.expanduser()
+    if laptop_is_live(LIVE_ROOT):
+        live = _live_sources(args, LIVE_ROOT / "data")
+        if isinstance(live, str):
+            return _fail(f"refusing: {live}", notify=args.notify)
+        db_paths, media, output, auth_db, users_dir = live
+        print(f"learning is on the laptop instance: backing up {LIVE_ROOT / 'data'}")
+    else:
+        db_paths = [Path(p) for p in (args.db or _default_db_paths())]
+        media = (args.media_src or _BACKEND_DIR / "media").expanduser()
+        output = (args.output_src or _BACKEND_DIR / "output").expanduser()
+        # Accounts only where there are accounts to lose; learner decks beside the
+        # first DB, where the app puts them (app.storage.user_dbs).
+        auth_db = args.auth_db or (
+            Path(settings.auth_database_url.removeprefix("sqlite:///")) if settings.auth_enabled else None
+        )
+        users_dir = args.users_dir or user_data_root(str(db_paths[0]), settings.user_data_dir)
     staging = args.staging.expanduser()
     skip_anki = args.no_anki_collection
     anki_collection = (args.anki_collection or settings.anki_collection_path).expanduser()
-    # Accounts only where there are accounts to lose; learner decks beside the
-    # first DB, where the app puts them (app.storage.user_dbs).
-    auth_db = args.auth_db or (
-        Path(settings.auth_database_url.removeprefix("sqlite:///")) if settings.auth_enabled else None
-    )
-    users_dir = args.users_dir or user_data_root(str(db_paths[0]), settings.user_data_dir)
 
     # Validate EVERY source before staging, before anything reaches restic.
     # Restic treats a vanished path as a warning and exits 3 having backed up
@@ -490,13 +544,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="language DB to back up (repeatable; default: every configured language)",
     )
     p_backup.add_argument(
-        "--media-src", type=Path, default=_BACKEND_DIR / "media", help="media tree to upload (default: backend/media)"
+        "--media-src",
+        type=Path,
+        default=None,
+        help="media tree to upload (default: backend/media, or the live laptop instance's)",
     )
     p_backup.add_argument(
         "--output-src",
         type=Path,
-        default=_BACKEND_DIR / "output",
-        help="output tree to upload (default: backend/output)",
+        default=None,
+        help="output tree to upload (default: backend/output, or the live laptop instance's)",
     )
     p_backup.add_argument(
         "--staging",

@@ -124,6 +124,10 @@ def _no_writes_to_the_real_home(tmp_path_factory, monkeypatch):
     home = tmp_path_factory.mktemp("fake-home")
     monkeypatch.setattr("backup_offbox.FAILURE_MARKER", home / "BACKUP-FAILED.txt")
     monkeypatch.setattr("backup_offbox.DEFAULT_STAGING", home / "offbox-staging")
+    # The Mac this runs on may have a LIVE laptop instance (~/TunaTaleLive), and
+    # a live instance changes what `backup` defaults to (tunatale-98zf.6). Every
+    # test starts with none; TestLiveLaptopInstance builds its own.
+    monkeypatch.setattr("backup_offbox.LIVE_ROOT", home / "TunaTaleLive")
 
 
 @pytest.fixture
@@ -1185,3 +1189,91 @@ class TestBackupCommandIdentity:
         monkeypatch.setattr("backup_offbox._run", run)
         assert main(self._argv(tmp_path, "--auth-db", str(tmp_path / "gone.db"))) != 0
         assert not any("backup" in c for c in run.argvs)
+
+
+class TestLiveLaptopInstance:
+    """While learning is on the laptop instance, the off-box copy is of ITS data (tunatale-98zf.6).
+
+    The LaunchAgent runs in the dev checkout with the dev .env, so before this
+    every default resolved to the dev tree, and none of the live DBs, accounts
+    or learner decks under ~/TunaTaleLive/data went off-box.
+    """
+
+    def _live(self, tmp_path: Path, monkeypatch, sync: str = "true") -> Path:
+        root = tmp_path / "TunaTaleLive"
+        data = root / "data"
+        for rel in ("tunatale_no.db", "tunatale_ceb.db", "auth.db", "users/2/tunatale_ceb.db"):
+            (data / rel).parent.mkdir(parents=True, exist_ok=True)
+            _make_db(data / rel)
+        (data / "media").mkdir()
+        (data / "output").mkdir()
+        (root / "live.env").write_text(f"SYNC_ENABLED={sync}\n")
+        monkeypatch.setattr("backup_offbox.LIVE_ROOT", root)
+        return data
+
+    def _argv(self, tmp_path: Path, *extra: str) -> list[str]:
+        return ["backup", "--bucket", "b", "--staging", str(tmp_path / "staging"), "--no-anki-collection", *extra]
+
+    def test_defaults_resolve_to_the_live_data(self, tmp_path, secrets, monkeypatch, capsys):
+        data = self._live(tmp_path, monkeypatch)
+        run = FakeRun(0)
+        monkeypatch.setattr("backup_offbox._run", run)
+
+        assert main(self._argv(tmp_path)) == 0
+
+        backup_cmd = next(c for c in run.argvs if "backup" in c)
+        assert str(data / "media") in backup_cmd
+        assert str(data / "output") in backup_cmd
+        staged = {p.name.split(".")[0] for p in (tmp_path / "staging").glob("tunatale_*.db")}
+        assert staged == {"tunatale_ceb", "tunatale_no"}, "every live language DB, ceb included"
+        assert list((tmp_path / "staging/identity").glob("auth.*.db"))
+        assert (tmp_path / "staging/identity/users/2").is_dir()
+        assert "the accounts DB and 1 learner deck(s)" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("flag", ["--db", "--media-src", "--output-src", "--auth-db", "--users-dir"])
+    def test_a_source_outside_the_live_data_is_refused(self, tmp_path, secrets, monkeypatch, capsys, flag):
+        self._live(tmp_path, monkeypatch)
+        stray = tmp_path / "dev" / "tunatale_no.db"
+        stray.parent.mkdir()
+        _make_db(stray)
+        run = FakeRun(0)
+        monkeypatch.setattr("backup_offbox._run", run)
+
+        assert main(self._argv(tmp_path, flag, str(stray))) != 0
+
+        assert not any("backup" in c for c in run.argvs), "nothing may upload"
+        assert "learning is on the laptop instance" in capsys.readouterr().out
+
+    def test_an_explicit_db_under_the_live_data_is_taken_as_given(self, tmp_path, secrets, monkeypatch):
+        data = self._live(tmp_path, monkeypatch)
+        monkeypatch.setattr("backup_offbox._run", FakeRun(0))
+
+        assert main(self._argv(tmp_path, "--db", str(data / "tunatale_no.db"))) == 0
+
+        staged = {p.name.split(".")[0] for p in (tmp_path / "staging").glob("tunatale_*.db")}
+        assert staged == {"tunatale_no"}
+
+    def test_a_live_instance_with_no_language_db_is_refused(self, tmp_path, secrets, monkeypatch):
+        data = self._live(tmp_path, monkeypatch)
+        for db in data.glob("tunatale_*.db"):
+            db.unlink()
+        run = FakeRun(0)
+        monkeypatch.setattr("backup_offbox._run", run)
+
+        assert main(self._argv(tmp_path)) != 0
+        assert not any("backup" in c for c in run.argvs)
+
+    def test_a_parked_laptop_instance_leaves_the_dev_defaults_alone(self, tmp_path, secrets, monkeypatch):
+        """SYNC_ENABLED=false in live.env means the last handover gave the sync
+        to prod — the laptop instance is not live, and explicit sources are
+        taken as given, exactly as before."""
+        self._live(tmp_path, monkeypatch, sync="false")
+        src = tmp_path / "elsewhere.db"
+        _make_db(src)
+        media, output = tmp_path / "m", tmp_path / "o"
+        media.mkdir()
+        output.mkdir()
+        monkeypatch.setattr("backup_offbox._run", FakeRun(0))
+
+        argv = self._argv(tmp_path, "--db", str(src), "--media-src", str(media), "--output-src", str(output))
+        assert main(argv) == 0
