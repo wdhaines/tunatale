@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -49,6 +50,7 @@ from app.config import settings
 from app.languages import resolve_db_path
 from app.plugins.anki_sync.safety import snapshot_collection
 from app.storage.db_backup import _DATE_GLOB, _SIDECAR_SUFFIXES, _snapshot
+from app.storage.user_dbs import user_data_root
 
 SERVICE_B2 = "tunatale-b2"
 ACCOUNT_KEY_ID = "key-id"
@@ -329,6 +331,46 @@ def _fail(message: str, *, notify: bool) -> int:
     return 1
 
 
+def stage_identity(
+    auth_db: Path | None, users_dir: Path | None, staging: Path | str, today: str | None = None
+) -> list[Path]:
+    """Fresh snapshots of the accounts DB and every learner's decks, under ``staging/identity``.
+
+    They go together for the reason data-transfer.sh moves them together
+    (tunatale-98zf.4): a learner's decks sit in ``users/<id>/``, named by the
+    account id in the accounts DB, so a restore of one without the other hands
+    a deck to whoever holds that id. Their own subtree, because every learner's
+    Cebuano deck is ``tunatale_ceb.db`` and would collide with the owner's in
+    the flat ``{stem}.{DATE}.db`` namespace ``stage_db_snapshots`` sweeps.
+
+    The subtree mirrors today and is rebuilt whole each run (inside a staging
+    directory ``_claim_staging`` has already fenced). A named accounts DB that
+    is missing raises, like every other source here; an absent ``users_dir``
+    means there are no other learners, which is not an error.
+    """
+    day = today or date.today().isoformat()
+    staging = Path(staging)
+    _claim_staging(staging)
+    root = staging / "identity"
+    if root.exists():
+        shutil.rmtree(root)
+    root.mkdir()
+    written: list[Path] = []
+    if auth_db is not None:
+        if not auth_db.exists():
+            raise FileNotFoundError(f"accounts database missing: {auth_db}")
+        dest = root / f"auth.{day}.db"
+        _snapshot(auth_db, dest)
+        written.append(dest)
+    if users_dir is not None and users_dir.is_dir():
+        for src in sorted(users_dir.glob("*/tunatale_*.db")):
+            dest = root / "users" / src.parent.name / f"{src.stem}.{day}.db"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            _snapshot(src, dest)
+            written.append(dest)
+    return written
+
+
 # ── subcommands ───────────────────────────────────────────────────────────────
 
 
@@ -356,6 +398,12 @@ def _cmd_backup(args, env) -> int:
     staging = args.staging.expanduser()
     skip_anki = args.no_anki_collection
     anki_collection = (args.anki_collection or settings.anki_collection_path).expanduser()
+    # Accounts only where there are accounts to lose; learner decks beside the
+    # first DB, where the app puts them (app.storage.user_dbs).
+    auth_db = args.auth_db or (
+        Path(settings.auth_database_url.removeprefix("sqlite:///")) if settings.auth_enabled else None
+    )
+    users_dir = args.users_dir or user_data_root(str(db_paths[0]), settings.user_data_dir)
 
     # Validate EVERY source before staging, before anything reaches restic.
     # Restic treats a vanished path as a warning and exits 3 having backed up
@@ -364,6 +412,8 @@ def _cmd_backup(args, env) -> int:
     sources = [*db_paths, media, output]
     if not skip_anki:
         sources.append(anki_collection)
+    if auth_db is not None:
+        sources.append(auth_db)
     missing = [str(p) for p in sources if not p.exists()]
     if missing:
         return _fail(f"missing sources (refusing to upload a partial set): {', '.join(missing)}", notify=args.notify)
@@ -371,12 +421,17 @@ def _cmd_backup(args, env) -> int:
     try:
         snapshots = stage_db_snapshots(db_paths, staging)
         collection_dest = None if skip_anki else stage_anki_collection(anki_collection, staging)
+        identity = stage_identity(auth_db, users_dir, staging)
     except (OSError, RuntimeError, ValueError, sqlite3.DatabaseError) as exc:
         # Same banner as every other failure: an operator scanning a log should
         # not have to tell a refusal apart from a traceback.
         return _fail(f"cannot stage a DB or Anki snapshot: {exc}", notify=args.notify)
 
     print(f"staged {len(snapshots)} fresh DB snapshot(s) to {staging}")
+    decks = sum(1 for p in identity if p.parent.parent.name == "users")
+    print(
+        f"staged {'the accounts DB' if auth_db is not None else 'no accounts DB (auth off)'} and {decks} learner deck(s)"
+    )
     if collection_dest is not None:
         print(f"staged Anki collection to {collection_dest}")
     else:
@@ -459,6 +514,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-anki-collection",
         action="store_true",
         help="skip the Anki collection entirely (for a deployment with no Anki)",
+    )
+    p_backup.add_argument(
+        "--auth-db", type=Path, default=None, help="accounts DB (default: AUTH_DATABASE_URL, when auth is on)"
+    )
+    p_backup.add_argument(
+        "--users-dir",
+        type=Path,
+        default=None,
+        help="learners' decks (default: USER_DATA_DIR, else users/ beside the first DB)",
     )
     p_backup.add_argument(
         "--notify",

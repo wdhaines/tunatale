@@ -50,6 +50,7 @@ from backup_offbox import (  # noqa: E402
     restic_env,
     stage_anki_collection,
     stage_db_snapshots,
+    stage_identity,
 )
 
 
@@ -1090,3 +1091,97 @@ class TestMissingConfiguration:
         rc = main(["snapshots", "--bucket", "b"])
         assert rc != 0
         assert "security add-generic-password" in capsys.readouterr().err
+
+
+class TestStageIdentity:
+    """Accounts and learner decks ship together, in their own subtree (tunatale-98zf.4)."""
+
+    def _world(self, tmp_path: Path) -> tuple[Path, Path]:
+        auth = tmp_path / "auth.db"
+        _make_db(auth)
+        for rel in ("users/2/tunatale_ceb.db", "users/7/tunatale_no.db"):
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            _make_db(tmp_path / rel)
+        return auth, tmp_path / "users"
+
+    def test_stages_accounts_and_every_learner_deck_without_collisions(self, tmp_path):
+        auth, users = self._world(tmp_path)
+        staging = tmp_path / "staging"
+        written = stage_identity(auth, users, staging, today="2026-09-26")
+        rel = sorted(str(p.relative_to(staging)) for p in written)
+        assert rel == [
+            "identity/auth.2026-09-26.db",
+            "identity/users/2/tunatale_ceb.2026-09-26.db",
+            "identity/users/7/tunatale_no.2026-09-26.db",
+        ]
+        con = sqlite3.connect(staging / "identity/users/2/tunatale_ceb.2026-09-26.db")
+        assert con.execute("SELECT COUNT(*) FROM t").fetchone()[0] == 3
+
+    def test_the_subtree_mirrors_today(self, tmp_path):
+        auth, users = self._world(tmp_path)
+        staging = tmp_path / "staging"
+        stage_identity(auth, users, staging, today="2026-09-25")
+        stage_identity(auth, users, staging, today="2026-09-26")
+        names = sorted(p.name for p in (staging / "identity").rglob("*.db"))
+        assert all("2026-09-26" in n for n in names) and len(names) == 3
+
+    def test_a_named_accounts_db_that_is_missing_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError, match="accounts database missing"):
+            stage_identity(tmp_path / "nope.db", None, tmp_path / "staging")
+
+    def test_no_accounts_and_no_learners_stages_nothing(self, tmp_path):
+        assert stage_identity(None, tmp_path / "absent", tmp_path / "staging") == []
+
+    def test_refuses_an_unowned_staging_directory(self, tmp_path):
+        staging = tmp_path / "staging"
+        staging.mkdir()
+        (staging / "precious.txt").write_text("x")
+        with pytest.raises(RuntimeError, match="refusing"):
+            stage_identity(None, None, staging)
+        assert (staging / "precious.txt").exists()
+
+
+class TestBackupCommandIdentity:
+    def _argv(self, tmp_path: Path, *extra: str) -> list[str]:
+        src = tmp_path / "data" / "tunatale_ceb.db"
+        src.parent.mkdir(parents=True, exist_ok=True)
+        _make_db(src)
+        (tmp_path / "media").mkdir(exist_ok=True)
+        (tmp_path / "output").mkdir(exist_ok=True)
+        return [
+            "backup", "--bucket", "b", "--db", str(src),
+            "--media-src", str(tmp_path / "media"), "--output-src", str(tmp_path / "output"),
+            "--staging", str(tmp_path / "staging"), "--no-anki-collection", *extra,
+        ]  # fmt: skip
+
+    def test_learner_decks_beside_the_first_db_ship_by_default(self, tmp_path, secrets, monkeypatch, capsys):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "user_data_dir", None)
+        monkeypatch.setattr(settings, "auth_enabled", False)
+        monkeypatch.setattr("backup_offbox._run", FakeRun(0))
+        argv = self._argv(tmp_path)
+        deck = tmp_path / "data/users/2/tunatale_ceb.db"
+        deck.parent.mkdir(parents=True)
+        _make_db(deck)
+        assert main(argv) == 0
+        assert (tmp_path / "staging/identity/users/2").is_dir()
+        assert "no accounts DB (auth off) and 1 learner deck(s)" in capsys.readouterr().out
+
+    def test_with_auth_on_the_accounts_db_ships(self, tmp_path, secrets, monkeypatch, capsys):
+        from app.config import settings
+
+        auth = tmp_path / "auth.db"
+        _make_db(auth)
+        monkeypatch.setattr(settings, "auth_enabled", True)
+        monkeypatch.setattr(settings, "auth_database_url", f"sqlite:///{auth}")
+        monkeypatch.setattr("backup_offbox._run", FakeRun(0))
+        assert main(self._argv(tmp_path)) == 0
+        assert list((tmp_path / "staging/identity").glob("auth.*.db"))
+        assert "the accounts DB and 0 learner deck(s)" in capsys.readouterr().out
+
+    def test_a_missing_accounts_db_is_refused_before_anything_uploads(self, tmp_path, secrets, monkeypatch):
+        run = FakeRun(0)
+        monkeypatch.setattr("backup_offbox._run", run)
+        assert main(self._argv(tmp_path, "--auth-db", str(tmp_path / "gone.db"))) != 0
+        assert not any("backup" in c for c in run.argvs)

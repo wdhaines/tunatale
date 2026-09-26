@@ -20,8 +20,10 @@
 # transfer can be undone. Row counts of every table, and file counts/bytes of
 # every directory, are compared source vs destination; a mismatch exits 1.
 #
-# NOT transferred: auth.db (production only), logs, the AnkiWeb password file,
-# and the Mac's backup directories. See docs/deployment.md § "Moving data".
+# NOT transferred: logs, the AnkiWeb password file, and the Mac's backup
+# directories. Accounts (auth.db) and every non-owner learner's decks (users/)
+# move only in laptop-root mode, as one unit — see IDENTITY below. See
+# docs/deployment.md § "Moving data".
 #
 # Normally the laptop side is the dev checkout (backend/*.db, ~/.tunatale).
 # switch.sh points it at the separate live instance instead (tunatale-qyw0):
@@ -94,6 +96,18 @@ if [ -n "${TT_LAPTOP_ROOT:-}" ]; then
   DEV_TT="$TT_LAPTOP_ROOT/.tunatale"
 fi
 
+# IDENTITY = the accounts DB plus every non-owner learner's decks
+# (users/<id>/tunatale_<code>.db, tunatale-98zf.4). They move TOGETHER or not at
+# all: a deck's directory is named by the account's id in auth.db, so a deck
+# landing beside a different auth.db belongs to whoever holds that id there.
+# Laptop-root mode only, where both sides are real deployments with real
+# accounts; the dev checkout's auth.db is a throwaway and must never overwrite
+# prod's. Like any transfer it is a handover: the destination's accounts and
+# learner decks are REPLACED by the source's (the old ones are saved first).
+IDENTITY=""
+[ -n "${TT_LAPTOP_ROOT:-}" ] && IDENTITY=1
+USER_DB_RE='^users/[0-9]+/tunatale_[a-z]+\.db$'
+
 die() { echo "data-transfer: $*" >&2; exit 1; }
 ssh_box() { ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=15 "${USER_AT}${HOST}" "$@"; }
 compose() { ssh_box "cd $REMOTE_DIR && sudo docker compose $*"; }
@@ -107,6 +121,24 @@ preflight() {
   VOL="$(ssh_box "sudo docker volume inspect $VOLUME -f '{{.Mountpoint}}'")" || die "no volume $VOLUME on $HOST"
   OWNER="$(ssh_box "sudo stat -c %u:%g '$VOL'")"
   scp -q -i "$SSH_KEY" -o BatchMode=yes "$HELPER" "${USER_AT}${HOST}:$REMOTE_DIR/data_snapshot.py"
+}
+
+# The per-user decks on one side, one users/<id>/tunatale_<code>.db per line.
+local_user_dbs() { [ -d "$TT_LAPTOP_ROOT/users" ] || return 0; (cd "$TT_LAPTOP_ROOT" && find users -type f -name 'tunatale_*.db' | sort); }
+prod_user_dbs() { ssh_box "sudo sh -c 'cd \"$VOL\" && if [ -d users ]; then find users -type f -name \"tunatale_*.db\" | sort; fi'"; }
+
+# Appends auth.db and each listed per-user deck to SQLITE, so every existing
+# step — snapshot, copy, row-count verification — covers them unchanged.
+add_identity() {  # $1 = newline-separated users/... paths
+  local f
+  SQLITE+=("auth.db|$TT_LAPTOP_ROOT/auth.db|auth.db")
+  USER_DBS=()
+  for f in $1; do
+    [[ "$f" =~ $USER_DB_RE ]] || die "unexpected per-user file: $f — refusing to move it"
+    SQLITE+=("$f|$TT_LAPTOP_ROOT/$f|$f")
+    USER_DBS+=("$f")
+  done
+  echo "    identity: auth.db + ${#USER_DBS[@]} learner deck(s)"
 }
 
 dev_server_running() { pgrep -f "$LOCAL_SERVER_PATTERN" >/dev/null 2>&1; }
@@ -175,6 +207,7 @@ wait_healthy() {
 
 status() {
   local work; work="$(mktemp -d)"
+  [ -n "$IDENTITY" ] && add_identity "$(local_user_dbs)"
   echo "==> counting dev (this Mac)"; dev_stats "$work/dev.json" live
   echo "==> counting prod ($HOST)";    prod_stats "$work/prod.json" live
   echo "==> dev vs prod (MISMATCH lines are what a transfer would change)"
@@ -182,7 +215,13 @@ status() {
 }
 
 to_prod() {
-  local stage="$DEV_TT/transfer/$TS" bk="$VOL/transfer-backups/$TS" e
+  local stage="$DEV_TT/transfer/$TS" bk="$VOL/transfer-backups/$TS" e ident_files="" ident_own=""
+  if [ -n "$IDENTITY" ]; then
+    add_identity "$(local_user_dbs)"
+    ident_files="auth.db* users"
+    ident_own="'$VOL/auth.db'"
+    [ "${#USER_DBS[@]}" -gt 0 ] && ident_own="$ident_own '$VOL/users'"
+  fi
   echo "==> snapshotting dev databases into $stage"
   for e in "${SQLITE[@]}" "${SQLITE_UP[@]}"; do
     (cd "$BACKEND" && uv run --quiet python "$HELPER" snapshot "$(field "$e" 2)" "$stage/$(field "$e" 1)")
@@ -196,12 +235,16 @@ to_prod() {
   # hid it — the "undo material" it then advertised did not exist. Now any
   # failure here stops the transfer before a single file is overwritten.
   ssh_box "sudo sh -c 'set -e; mkdir -p \"$bk\"; cd \"$VOL\"; n=0
-    for f in tunatale_no.db* tunatale_sl.db* tunatale_tl.db* tunatale_ceb.db* .tunatale/tt_collection.anki2* .tunatale/tt_collection.media.db2* .tunatale/*_usage.log; do
+    for f in tunatale_no.db* tunatale_sl.db* tunatale_tl.db* tunatale_ceb.db* .tunatale/tt_collection.anki2* .tunatale/tt_collection.media.db2* .tunatale/*_usage.log $ident_files; do
       if [ -e \"\$f\" ]; then cp -a --parents \"\$f\" \"$bk/\"; n=\$((n+1)); fi
     done; echo \"    saved \$n files\"'" || die "could not save prod's current state — nothing was overwritten"
 
   echo "==> copying databases"
+  # Prod's learner decks were saved above; the source's set replaces them whole,
+  # so a deck the source no longer has does not linger beside the new auth.db.
+  [ -n "$IDENTITY" ] && ssh_box "sudo rm -rf '$VOL/users'"
   for e in "${SQLITE[@]}" "${SQLITE_UP[@]}"; do
+    case "$(field "$e" 3)" in users/*) ssh_box "sudo mkdir -p '$VOL/$(dirname "$(field "$e" 3)")'" ;; esac
     ssh_box "sudo rm -f '$VOL/$(field "$e" 3)-wal' '$VOL/$(field "$e" 3)-shm'"
     "${RSYNC_REMOTE[@]}" "$stage/$(field "$e" 1)" "${USER_AT}${HOST}:$VOL/$(field "$e" 3)"
   done
@@ -216,7 +259,7 @@ to_prod() {
   for e in "${FILES[@]}"; do
     [ -f "$(field "$e" 2)" ] && "${RSYNC_REMOTE[@]}" "$(field "$e" 2)" "${USER_AT}${HOST}:$VOL/$(field "$e" 3)"
   done
-  ssh_box "sudo chown -R $OWNER '$VOL/tunatale_no.db' '$VOL/tunatale_sl.db' '$VOL/tunatale_tl.db' '$VOL/tunatale_ceb.db' '$VOL/media' '$VOL/output' '$VOL/.tunatale'"
+  ssh_box "sudo chown -R $OWNER '$VOL/tunatale_no.db' '$VOL/tunatale_sl.db' '$VOL/tunatale_tl.db' '$VOL/tunatale_ceb.db' '$VOL/media' '$VOL/output' '$VOL/.tunatale' $ident_own"
 
   echo "==> verifying (before the app touches anything)"
   prod_stats "$stage/dest.json" live
@@ -231,6 +274,7 @@ to_prod() {
 
 to_dev() {
   local stage="$DEV_TT/transfer/$TS" out="$VOL/transfer-out/$TS" bk="$DEV_TT/transfer-backups/$TS" e
+  [ -n "$IDENTITY" ] && add_identity "$(prod_user_dbs)"
   # Every source database must exist BEFORE the api stops: the snapshot below
   # dies on a missing one, and dying after `compose stop api` leaves prod down.
   # A language's DB appears on prod only once prod runs a commit that has its
@@ -254,12 +298,20 @@ to_dev() {
   echo "==> saving dev's current state to $bk"
   mkdir -p "$bk"
   for e in "${SQLITE[@]}" "${FILES[@]}"; do
+    # Learner decks are saved as a tree below: flat, every one of them would
+    # land on the same basename as the owner's deck for that language.
+    case "$(field "$e" 3)" in users/*) continue ;; esac
     local f; f="$(field "$e" 2)"
     for g in "$f" "$f-wal" "$f-shm"; do [ -e "$g" ] && cp -p "$g" "$bk/"; done
   done
+  if [ -n "$IDENTITY" ] && [ -d "$TT_LAPTOP_ROOT/users" ]; then
+    cp -Rp "$TT_LAPTOP_ROOT/users" "$bk/users"
+    rm -rf "$TT_LAPTOP_ROOT/users"
+  fi
 
   echo "==> copying databases"
   for e in "${SQLITE[@]}"; do
+    mkdir -p "$(dirname "$(field "$e" 2)")"
     rm -f "$(field "$e" 2)-wal" "$(field "$e" 2)-shm"
     "${RSYNC_REMOTE[@]}" "${USER_AT}${HOST}:$out/$(field "$e" 1)" "$(field "$e" 2)"
   done
