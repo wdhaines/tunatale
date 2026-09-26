@@ -31,6 +31,7 @@ vi.mock("$lib/api", () => ({
     probeRateLimit: vi.fn(),
     getAuthStatus: vi.fn().mockResolvedValue({ auth_enabled: false }),
     getMe: vi.fn(),
+    login: vi.fn(),
     logout: vi.fn(),
     getLanguages: vi.fn().mockResolvedValue({ languages: [], active: "sl" }),
     getLlmHealth: vi.fn().mockResolvedValue({
@@ -422,6 +423,42 @@ describe("root +layout.svelte — the session guard", () => {
     await waitFor(() => expect(mockFetchQueueStats).toHaveBeenCalled());
     expect(mockGetLanguages).toHaveBeenCalled();
     expect(mockGoto).not.toHaveBeenCalled();
+  });
+
+  it("boots the data stores after a login that happens without a reload", async () => {
+    // The login page signs in and navigates client-side, so this layout never
+    // remounts. Before this, nothing after the login ever read /api/languages:
+    // a learner with no Anki sync still saw the Sync button (the store's
+    // fail-open default) until a hard refresh.
+    mockGetAuthStatus.mockResolvedValue({ auth_enabled: true });
+    mockGetMe.mockRejectedValue(new Error("GET /api/auth/me: "));
+    mockGetLanguages.mockResolvedValue({ languages: [], active: "ceb", sync_available: false });
+    const { queryByText } = renderLayout();
+    await waitFor(() => expect(mockGoto).toHaveBeenCalledWith("/login"));
+    expect(mockGetLanguages).not.toHaveBeenCalled();
+
+    vi.mocked(api.login).mockResolvedValue({ email: "learner@example.com" });
+    await authStore.login("learner@example.com", "pw");
+
+    await waitFor(() => expect(mockGetLanguages).toHaveBeenCalled());
+    await waitFor(() => expect(queryByText("Sync with AnkiWeb")).toBeNull());
+    expect(mockFetchQueueStats).toHaveBeenCalled();
+  });
+
+  it("re-reads the languages when a different account signs in", async () => {
+    mockGetAuthStatus.mockResolvedValue({ auth_enabled: true });
+    mockGetMe.mockResolvedValue({ email: "owner@example.com" });
+    mockGetLanguages.mockResolvedValue({ languages: [], active: "sl", sync_available: true });
+    const { findByText, queryByText } = renderLayout();
+    await findByText("Sync with AnkiWeb");
+
+    await authStore.logout();
+    mockGetLanguages.mockResolvedValue({ languages: [], active: "ceb", sync_available: false });
+    vi.mocked(api.login).mockResolvedValue({ email: "learner@example.com" });
+    await authStore.login("learner@example.com", "pw");
+
+    await waitFor(() => expect(queryByText("Sync with AnkiWeb")).toBeNull());
+    expect(mockGetLanguages).toHaveBeenCalledTimes(2);
   });
 
   it("boots the data stores when the deployment has no login at all", async () => {

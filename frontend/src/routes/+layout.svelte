@@ -124,18 +124,40 @@
 	 * otherwise render an empty shell to someone who is not logged in, with
 	 * nothing to 401 and nothing to trigger the redirect.
 	 */
+	// Set once THIS mount has asked who is signed in. `authStore` is a module
+	// singleton, so its `ready` can be left over from an earlier mount.
+	let authChecked = $state(false);
 	async function boot(): Promise<void> {
 		await authStore.init();
-		if (authStore.requiresLogin) {
-			await authStore.redirectToLogin();
-			return;
-		}
+		authChecked = true;
+		if (authStore.requiresLogin) await authStore.redirectToLogin();
+		// Otherwise the effect below starts the session.
+	}
+
+	/**
+	 * Load everything that belongs to WHO is signed in. Idempotent per account.
+	 *
+	 * Not only from `boot`: the login page signs in and navigates client-side,
+	 * so this layout never remounts, and before this ran on the effect below
+	 * nothing after a login ever read /api/languages — a learner with no Anki
+	 * sync kept the Sync button (the store's fail-open default) until a hard
+	 * refresh. Keyed by the account, so a different person signing in on the
+	 * same tab gets their own languages rather than the last person's.
+	 */
+	let sessionFor: string | null | undefined = undefined;
+	function startSession(): void {
+		if (sessionFor === authStore.email) return;
+		sessionFor = authStore.email;
 		languageStore.init();
 		queueStatsStore.refresh();
 		llmHealthStore.refresh();
 		listenedStore.hydrate();
-		healthTimer = setInterval(() => llmHealthStore.refresh(), 60000);
+		if (healthTimer === undefined) healthTimer = setInterval(() => llmHealthStore.refresh(), 60000);
 	}
+
+	$effect(() => {
+		if (authChecked && !authStore.requiresLogin) startSession();
+	});
 
 	$effect(() => {
 		const onFocus = () => {

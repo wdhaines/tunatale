@@ -39,7 +39,9 @@ vi.mock("$app/stores", () => ({
 }));
 
 vi.mock("$lib/api", () => ({
+  LANGUAGE_STORAGE_KEY: "tt-language",
   api: {
+    getLanguages: vi.fn(),
     fetchQueueStats: vi.fn(),
     fetchReviewQueue: vi.fn(),
     fetchLessonReviewQueue: vi.fn(),
@@ -409,6 +411,40 @@ describe("review/+page.svelte", () => {
     });
     const { findByText } = render(ReviewPage);
     expect(await findByText(/FSRS: defaults/)).toBeTruthy();
+  });
+
+  it("hides FSRS: defaults on a deck with no Anki sync, where defaults are the design", async () => {
+    // A second learner's deck never syncs, so its FSRS parameters are the
+    // defaults on purpose (tunatale-98zf.1) — the marker would be noise there.
+    const { languageStore } = await import("$lib/stores/language.svelte");
+    vi.mocked(api.getLanguages).mockResolvedValue({
+      languages: [],
+      active: "ceb",
+      sync_available: false,
+    });
+    await languageStore.init();
+    try {
+      mockFetchQueueStats.mockResolvedValue({
+        new: 5,
+        learning: 2,
+        review: 3,
+        daily_new_cap: 30,
+        cap_source: "cache",
+        fsrs_source: "default",
+        daily_review_cap: 100,
+        review_cap_source: "default",
+      });
+      const { queryByText, findByText } = render(ReviewPage);
+      await findByText("5");
+      expect(queryByText(/FSRS:/)).toBeFalsy();
+    } finally {
+      vi.mocked(api.getLanguages).mockResolvedValue({
+        languages: [],
+        active: "sl",
+        sync_available: true,
+      });
+      await languageStore.init();
+    }
   });
 
   it("does not show FSRS marker when fsrs_source is cache", async () => {
