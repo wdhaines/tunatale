@@ -63,9 +63,27 @@ class TestRegistryStructure:
         assert day_scoped == {"last_unbury_day", "learning_cutoff", "session_main_queue"}
 
     def test_max_age_keys(self):
-        """4 keys have max_age_days=30."""
+        """11 keys have max_age_days=30 — every deck-config key a resolver ages out.
+
+        Was 4 until tunatale-98zf.5: seven more resolvers enforced the same
+        30-day expiry without declaring it here. The resolvers now read it from
+        the registry, so this set IS the enforced set.
+        """
         max_age_keys = {k for k, spec in REGISTRY.items() if spec.max_age_days is not None}
-        assert max_age_keys == {"fsrs_params", "learn_steps", "relearn_steps", "maximum_review_interval"}
+        assert max_age_keys == {
+            "fsrs_params",
+            "learn_steps",
+            "relearn_steps",
+            "maximum_review_interval",
+            "daily_new_cap",
+            "daily_review_cap",
+            "new_spread",
+            "new_card_sort_order",
+            "new_card_gather_priority",
+            "bury_new",
+            "bury_review",
+        }
+        assert {REGISTRY[k].max_age_days for k in max_age_keys} == {30}
 
     def test_logic_version_only_on_session_main_queue(self):
         """Only session_main_queue has logic_version (=1)."""
