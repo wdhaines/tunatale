@@ -243,7 +243,7 @@ async def _drive_lesson_route(handler: str) -> LessonPipeline:
     resp = await _post(url, body)
     assert resp.status_code == 201
 
-    record = pipeline._jobs[("sl", "c1", 1)]
+    record = pipeline._jobs[(None, "sl", "c1", 1)]
     assert record["kind"] == "render"
     assert record["state"] == "queued"
     return pipeline
@@ -417,7 +417,7 @@ def test_invalidate_audio_without_a_prior_write_is_a_no_op():
     store = ContentStore(":memory:")
     _seed_curriculum(store)
     lesson_id = store.save_lesson("l1", "c1", 1, _lesson())
-    target = publishing.CurriculumDayTarget(store, "sl", "c1", 1, None)
+    target = publishing.CurriculumDayTarget(store, "sl", "c1", 1, None, user_id=None)
 
     target.invalidate_audio(lesson_id or "l1")
 
@@ -448,7 +448,7 @@ async def test_a_regenerate_deletes_the_superseded_lesson_audio_rows():
 
     await publishing.publish_lesson(
         _lesson(),
-        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None),
+        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None, user_id=None),
         srs_db=None,
         lemmatizer_kwargs={},
         replace=True,
@@ -471,7 +471,7 @@ async def test_a_regenerate_unlinks_the_superseded_lesson_audio_files(tmp_path, 
 
     await publishing.publish_lesson(
         _lesson(),
-        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None),
+        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None, user_id=None),
         srs_db=None,
         lemmatizer_kwargs={},
         replace=True,
@@ -494,7 +494,7 @@ async def test_a_regenerate_keeps_the_superseded_lesson_row():
 
     await publishing.publish_lesson(
         _lesson(),
-        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None),
+        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None, user_id=None),
         srs_db=None,
         lemmatizer_kwargs={},
         replace=True,
@@ -520,7 +520,7 @@ async def test_a_first_generate_deletes_no_audio(tmp_path, monkeypatch):
 
     await publishing.publish_lesson(
         _lesson(),
-        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None),
+        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None, user_id=None),
         srs_db=None,
         lemmatizer_kwargs={},
         replace=False,
@@ -541,7 +541,7 @@ async def test_a_regenerate_tolerates_an_already_missing_audio_file(tmp_path, mo
 
     await publishing.publish_lesson(
         _lesson(),
-        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None),
+        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None, user_id=None),
         srs_db=None,
         lemmatizer_kwargs={},
         replace=True,
@@ -561,7 +561,7 @@ async def test_invalidate_audio_guards_against_the_captured_superseded_id():
     store = ContentStore(":memory:")
     _seed_curriculum(store)
     _seed_day_lesson_with_audio(store, "l-superseded", [_Path("/audio/old-full.opus")])
-    target = publishing.CurriculumDayTarget(store, "sl", "c1", 1, None)
+    target = publishing.CurriculumDayTarget(store, "sl", "c1", 1, None, user_id=None)
     target.write(_lesson())  # captures "l-superseded" as the superseded id
 
     target.invalidate_audio("l-superseded")  # the captured id itself
@@ -580,7 +580,7 @@ async def test_a_replace_publish_with_nothing_to_supersede_deletes_nothing():
 
     lesson_id = await publishing.publish_lesson(
         _lesson(),
-        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None),
+        target=publishing.CurriculumDayTarget(store, "sl", "c1", 1, None, user_id=None),
         srs_db=None,
         lemmatizer_kwargs={},
         replace=True,

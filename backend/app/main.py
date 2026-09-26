@@ -246,6 +246,7 @@ async def lifespan(app: FastAPI):
         srs_dbs=srs_dbs,
         activity_log=activity_log,
         llm_client=real_client,
+        user_dbs=app.state.user_dbs,
     )
     app.state.pipeline = pipeline
     if settings.pipeline_autostart:

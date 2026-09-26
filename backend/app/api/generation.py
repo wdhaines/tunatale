@@ -31,6 +31,7 @@ from app.llm.client import LLMError, LLMQuotaExceededError
 from app.models.lesson import Lesson
 from app.models.strategy import ContentStrategy
 from app.storage.lesson_io import export_lesson, validate_story
+from app.storage.user_dbs import pipeline_user_id
 
 _logger = logging.getLogger(__name__)
 
@@ -118,6 +119,7 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
             curriculum_id=body.curriculum_id,
             day=body.day,
             pipeline=getattr(request.app.state, "pipeline", None),
+            user_id=pipeline_user_id(request.state),
         ),
         srs_db=srs_db,
         lemmatizer_kwargs=_injected_lemmatizer(request),
@@ -185,6 +187,7 @@ async def import_story(body: ImportLessonRequest, request: Request):
             curriculum_id=body.curriculum_id,
             day=body.day,
             pipeline=getattr(request.app.state, "pipeline", None),
+            user_id=pipeline_user_id(request.state),
         ),
         srs_db=srs_db,
         lemmatizer_kwargs=_injected_lemmatizer(request),

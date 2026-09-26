@@ -215,6 +215,38 @@ class TestOwnerOnlySurfaces:
         assert resp.status_code == 200
         assert resp.json() == []
 
+    async def test_a_learners_pipeline_status_reconciles_their_own_curriculum(self, world, monkeypatch):
+        """GET /pipeline is a read a learner already reaches, and it ENQUEUES:
+        reconcile queues generation for every day with no lesson. Its jobs must
+        be the learner's, against the learner's store (tunatale-98zf.3)."""
+        from app.generation.pipeline import LessonPipeline
+        from app.llm.activity import ActivityLog
+        from app.models.curriculum import Curriculum, CurriculumDay
+
+        pipeline = LessonPipeline(
+            story_generator=None,
+            renderer=None,
+            audio_dir=world["tmp"],
+            content_stores=app.state.content_stores,
+            languages=app.state.languages,
+            srs_dbs=app.state.srs_dbs,
+            activity_log=ActivityLog(maxlen=10),
+            llm_client=None,
+            user_dbs=world["user_dbs"],
+        )
+        monkeypatch.setattr(app.state, "pipeline", pipeline, raising=False)
+        _, learner_store = world["user_dbs"].get(world["learner"].id, "no")
+        day = CurriculumDay(day=1, title="Dag 1", focus="f", collocations=["hei"], learning_objective="lo")
+        learner_store.save_curriculum(
+            "cur-1", Curriculum(id="cur-1", topic="t", language_code="no", cefr_level="A1", days=[day])
+        )
+
+        async with _client(world["auth_db"], world["learner"].id) as learner:
+            resp = await learner.get("/api/curriculum/cur-1/pipeline")
+
+        assert resp.status_code == 200, resp.text
+        assert list(pipeline._jobs) == [(world["learner"].id, "no", "cur-1", 1)]
+
     async def test_lesson_audio_never_falls_back_to_the_owners_stores(self, world, monkeypatch):
         """The owner-side fallback searches every language's store for an id; a
         non-owner must search only their own."""

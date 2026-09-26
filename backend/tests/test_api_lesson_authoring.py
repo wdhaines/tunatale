@@ -146,8 +146,8 @@ class TestLessonAuthoringEndpoints:
             assert set(section.keys()) == {"type", "phrase_count"}
             assert set(StorySection.model_fields) == {"type", "phrase_count"}
         # Verify pipeline enqueued a render job
-        assert pipeline._jobs[("sl", "c1", 1)]["state"] == "queued"
-        assert pipeline._jobs[("sl", "c1", 1)]["kind"] == "render"
+        assert pipeline._jobs[(None, "sl", "c1", 1)]["state"] == "queued"
+        assert pipeline._jobs[(None, "sl", "c1", 1)]["kind"] == "render"
         app.state.srs_db.close()
         del app.state.srs_db
 

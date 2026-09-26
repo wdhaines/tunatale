@@ -19,11 +19,25 @@ from app.storage.store import ContentStore
 logger = logging.getLogger(__name__)
 
 
+# (user_id, language_code, curriculum_id, day); user_id None = the owner.
+JobKey = tuple[int | None, str, str, int]
+
+
 class LessonPipeline:
     """Single-worker background queue that generates stories and renders audio.
 
     Idempotent enqueue (no-ops if a job for the same key is already active).
     Failure-stickiness: reconcile() skips previously-failed jobs.
+
+    WHOSE stores a job reads and writes is its ``user_id``: ``None`` is the
+    owner's flat per-language stores (``content_stores`` / ``srs_dbs``), any
+    other id that account's own files through ``user_dbs``
+    (``app.storage.user_dbs``). It is part of every job key and a REQUIRED
+    keyword on every public method, so a caller that forgets it is a
+    ``TypeError`` rather than a lesson generated into the owner's store
+    (tunatale-98zf.3). One worker still serves every account: generation shares
+    one Groq budget and rendering one TTS throttle, so a second worker would
+    only contend for them.
     """
 
     def __init__(
@@ -42,6 +56,7 @@ class LessonPipeline:
         max_wait_s: float = 90.0,
         lemmatizer: object | None = None,
         model_version: str | None = None,
+        user_dbs=None,
     ) -> None:
         self._story_generator = story_generator
         self._renderer = renderer
@@ -49,6 +64,7 @@ class LessonPipeline:
         self._content_stores = content_stores
         self._languages = languages
         self._srs_dbs = srs_dbs
+        self._user_dbs = user_dbs
         self._activity_log = activity_log
         self._llm_client = llm_client
         self._sleep = sleep or asyncio.sleep
@@ -57,13 +73,13 @@ class LessonPipeline:
         self._lemmatizer = lemmatizer
         self._model_version = model_version
 
-        self._queue: asyncio.Queue[tuple[str, str, int]] = asyncio.Queue()
-        self._jobs: dict[tuple[str, str, int], dict] = {}
+        self._queue: asyncio.Queue[JobKey] = asyncio.Queue()
+        self._jobs: dict[JobKey, dict] = {}
         # job key -> the rate projection for a render in flight. Separate from
         # the record because it is state, not status: status_for reads it to
         # answer "how long left", and the entry goes when the day leaves
         # `rendering` (tunatale-hbnd).
-        self._render_progress: dict[tuple[str, str, int], RenderProgress] = {}
+        self._render_progress: dict[JobKey, RenderProgress] = {}
         self._worker_task: asyncio.Task | None = None
 
     # ── Public API ─────────────────────────────────────────────────────────
@@ -89,8 +105,10 @@ class LessonPipeline:
         kind: str,
         force: bool = False,
         strategy: str = "WIDER",
+        *,
+        user_id: int | None,
     ) -> None:
-        key = (language_code, curriculum_id, day)
+        key = (user_id, language_code, curriculum_id, day)
         existing = self._jobs.get(key)
         if existing and existing["state"] not in ("failed", "ready"):
             return
@@ -100,6 +118,7 @@ class LessonPipeline:
             "curriculum_id": curriculum_id,
             "day": day,
             "language_code": language_code,
+            "user_id": user_id,
             "kind": kind,
             "force": force,
             "strategy": strategy,
@@ -115,15 +134,31 @@ class LessonPipeline:
         self._activity_log.record_pipeline(curriculum_id, day, "queued", f"{kind} queued for day {day}")
         self._queue.put_nowait(key)
 
-    def reconcile(self, language_code: str, curriculum_id: str) -> None:
-        store = self._content_stores[language_code]
+    def _stores(self, user_id: int | None, language_code: str) -> tuple[ContentStore | None, object | None]:
+        """(content store, srs db) for ``user_id``'s deck in ``language_code``; (None, None) if it has none."""
+        if user_id is None:
+            return self._content_stores.get(language_code), self._srs_dbs.get(language_code)
+        opened = None if self._user_dbs is None else self._user_dbs.get(user_id, language_code)
+        if opened is None:
+            return None, None
+        srs_db, store = opened
+        return store, srs_db
+
+    def _store_or_raise(self, user_id: int | None, language_code: str) -> ContentStore:
+        store, _ = self._stores(user_id, language_code)
+        if store is None:
+            raise KeyError(f"this account has no deck for {language_code!r}")
+        return store
+
+    def reconcile(self, language_code: str, curriculum_id: str, *, user_id: int | None) -> None:
+        store = self._store_or_raise(user_id, language_code)
         curriculum = store.get_curriculum(curriculum_id)
         if curriculum is None:
             return
         manual = curriculum.metadata.get("generation_mode", "auto") == "manual"
         for curriculum_day in sorted(curriculum.days, key=lambda d: d.day):
             day = curriculum_day.day
-            key = (language_code, curriculum_id, day)
+            key = (user_id, language_code, curriculum_id, day)
             existing = self._jobs.get(key)
             # Failure stickiness: do NOT re-enqueue failed jobs.
             if existing and existing["state"] == "failed":
@@ -131,15 +166,15 @@ class LessonPipeline:
             lesson_result = store.get_latest_lesson_by_day(curriculum_id, day)
             if lesson_result is None:
                 if not manual:
-                    self.enqueue(language_code, curriculum_id, day, "generate")
+                    self.enqueue(language_code, curriculum_id, day, "generate", user_id=user_id)
             else:
                 lesson_id, lesson = lesson_result
                 audio_rows = store.list_audio_files_for_lesson(lesson_id)
                 if not audio_rows:
-                    self.enqueue(language_code, curriculum_id, day, "render")
+                    self.enqueue(language_code, curriculum_id, day, "render", user_id=user_id)
 
-    def status_for(self, language_code: str, curriculum_id: str) -> dict:
-        store = self._content_stores.get(language_code)
+    def status_for(self, language_code: str, curriculum_id: str, *, user_id: int | None) -> dict:
+        store, _ = self._stores(user_id, language_code)
         curriculum = store.get_curriculum(curriculum_id) if store else None
         days_list: list[dict] = []
         active = False
@@ -149,7 +184,7 @@ class LessonPipeline:
             positions = curriculum.day_positions()
             for curriculum_day in sorted(curriculum.days, key=lambda d: d.day):
                 day = curriculum_day.day
-                key = (language_code, curriculum_id, day)
+                key = (user_id, language_code, curriculum_id, day)
                 record = self._jobs.get(key)
                 if record:
                     if record["state"] in ("queued", "generating", "rendering"):
@@ -196,7 +231,7 @@ class LessonPipeline:
                         )
         return {"active": active, "days": days_list}
 
-    def _render_counters(self, key: tuple[str, str, int], record: dict) -> dict:
+    def _render_counters(self, key: JobKey, record: dict) -> dict:
         """The three render-progress fields for one day, as ``status_for`` reports them.
 
         All three are ``None`` unless the day is ``rendering``: a queued day has
@@ -215,12 +250,12 @@ class LessonPipeline:
             "eta_seconds": progress.eta_seconds(time.time()) if progress is not None else None,
         }
 
-    def retry(self, language_code: str, curriculum_id: str, day: int) -> str:
-        store = self._content_stores[language_code]
+    def retry(self, language_code: str, curriculum_id: str, day: int, *, user_id: int | None) -> str:
+        store = self._store_or_raise(user_id, language_code)
         curriculum = store.get_curriculum(curriculum_id)
         if curriculum is None or day not in {d.day for d in curriculum.days}:
             raise KeyError(f"Day {day} not found in curriculum {curriculum_id}")
-        key = (language_code, curriculum_id, day)
+        key = (user_id, language_code, curriculum_id, day)
         record = self._jobs.get(key)
         if record and record["state"] in ("queued", "generating", "rendering"):
             raise RuntimeError(f"Day {day} is currently active ({record['state']})")
@@ -234,21 +269,23 @@ class LessonPipeline:
                 return "ready"
             # Lesson exists, only audio is missing — a render is enough.
             # Re-generating here would burn LLM quota for no reason.
-            self.enqueue(language_code, curriculum_id, day, "render")
+            self.enqueue(language_code, curriculum_id, day, "render", user_id=user_id)
             return "queued"
-        self.enqueue(language_code, curriculum_id, day, "generate")
+        self.enqueue(language_code, curriculum_id, day, "generate", user_id=user_id)
         return "queued"
 
-    def regenerate(self, language_code: str, curriculum_id: str, day: int, strategy: str = "WIDER") -> str:
-        store = self._content_stores[language_code]
+    def regenerate(
+        self, language_code: str, curriculum_id: str, day: int, strategy: str = "WIDER", *, user_id: int | None
+    ) -> str:
+        store = self._store_or_raise(user_id, language_code)
         curriculum = store.get_curriculum(curriculum_id)
         if curriculum is None or day not in {d.day for d in curriculum.days}:
             raise KeyError(f"Day {day} not found in curriculum {curriculum_id}")
-        key = (language_code, curriculum_id, day)
+        key = (user_id, language_code, curriculum_id, day)
         record = self._jobs.get(key)
         if record and record["state"] in ("queued", "generating", "rendering"):
             raise RuntimeError(f"Day {day} is currently active ({record['state']})")
-        self.enqueue(language_code, curriculum_id, day, "generate", force=True, strategy=strategy)
+        self.enqueue(language_code, curriculum_id, day, "generate", force=True, strategy=strategy, user_id=user_id)
         return "queued"
 
     # ── Internal worker ────────────────────────────────────────────────────
@@ -278,28 +315,22 @@ class LessonPipeline:
             finally:
                 self._queue.task_done()
 
-    async def _process_job(self, key: tuple[str, str, int]) -> None:
-        language_code, curriculum_id, day = key
+    async def _process_job(self, key: JobKey) -> None:
+        user_id, language_code, curriculum_id, day = key
         record = self._jobs.get(key)
         if record is None:
             return
 
         kind = record["kind"]
-        store = self._content_stores[language_code]
+        store, srs_db = self._stores(user_id, language_code)
 
         if kind == "generate":
-            await self._generate(record, store, language_code, curriculum_id, day)
+            await self._generate(record, store, srs_db, key)
         elif kind == "render":
-            await self._render(record, store, language_code, curriculum_id, day)
+            await self._render(record, store, key)
 
-    async def _generate(
-        self,
-        record: dict,
-        store: ContentStore,
-        language_code: str,
-        curriculum_id: str,
-        day: int,
-    ) -> None:
+    async def _generate(self, record: dict, store: ContentStore, srs_db, key: JobKey) -> None:
+        user_id, language_code, curriculum_id, day = key
         curriculum = store.get_curriculum(curriculum_id)
         if curriculum is None:
             record["state"] = "failed"
@@ -338,7 +369,7 @@ class LessonPipeline:
                     language=language,
                     strategy=ContentStrategy[record["strategy"]],
                     cefr_level=curriculum.cefr_level,
-                    srs_db=self._srs_dbs.get(language_code),
+                    srs_db=srs_db,
                     review_pressure=curriculum.review_pressure(),
                     content_store=store,
                     curriculum_id=curriculum_id,
@@ -382,7 +413,6 @@ class LessonPipeline:
             # Tag BEFORE saving, write, prewarm and render scheduling all live in
             # publish_lesson; its module docstring explains why the ordering is
             # load-bearing.
-            srs_db = self._srs_dbs.get(language_code)
             upos_kwargs: dict[str, object] = {}
             if self._lemmatizer is not None:
                 upos_kwargs["lemmatizer"] = self._lemmatizer
@@ -395,6 +425,7 @@ class LessonPipeline:
                     curriculum_id=curriculum_id,
                     day=day,
                     pipeline=self,
+                    user_id=user_id,
                 ),
                 srs_db=srs_db,
                 lemmatizer_kwargs=upos_kwargs,
@@ -404,17 +435,11 @@ class LessonPipeline:
             record["lesson_id"] = lesson_id
 
             # Transition to render step
-            await self._render(record, store, language_code, curriculum_id, day)
+            await self._render(record, store, key)
             return
 
-    async def _render(
-        self,
-        record: dict,
-        store: ContentStore,
-        language_code: str,
-        curriculum_id: str,
-        day: int,
-    ) -> None:
+    async def _render(self, record: dict, store: ContentStore, key: JobKey) -> None:
+        _, _, curriculum_id, day = key
         lesson_id = record.get("lesson_id")
         if lesson_id is None:
             lesson_result = store.get_latest_lesson_by_day(curriculum_id, day)
@@ -446,7 +471,6 @@ class LessonPipeline:
         # clip plan within milliseconds of the first request, so the counts
         # below go from nothing to a real percentage, and the rate projection
         # turns them into an ETA once there is enough of a sample.
-        key = (language_code, curriculum_id, day)
         progress = RenderProgress(started_at=time.time())
         self._render_progress[key] = progress
 
@@ -482,7 +506,7 @@ class LessonPipeline:
             curriculum_id, day, "ready", f"Audio rendered ({len(result.get('sections', []))} sections)"
         )
 
-    def _clear_render_progress(self, key: tuple[str, str, int], record: dict) -> None:
+    def _clear_render_progress(self, key: JobKey, record: dict) -> None:
         """Drop the clip counts and the rate the moment the day leaves ``rendering``.
 
         Both exits of a render go through here, and the failed one matters most:

@@ -43,6 +43,7 @@ from app.llm.client import LLMError, LLMQuotaExceededError
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.srs.planner_snapshot import build_learner_snapshot
 from app.storage.plan_io import export_plan, get_planner_state, import_plan, mint_curriculum_id
+from app.storage.user_dbs import pipeline_user_id
 
 router = APIRouter(prefix="/api/curriculum")
 # No router-level ``tags=``: the pipeline routes below share this prefix and
@@ -224,7 +225,13 @@ async def plan_commit(curriculum_id: str, request: Request):
     pipeline = getattr(request.app.state, "pipeline", None)
     if pipeline is not None and curriculum.metadata.get("generation_mode", "auto") != "manual":
         for day_entry in days:
-            pipeline.enqueue(request.state.language_code, curriculum_id, day_entry.day, "generate")
+            pipeline.enqueue(
+                request.state.language_code,
+                curriculum_id,
+                day_entry.day,
+                "generate",
+                user_id=pipeline_user_id(request.state),
+            )
 
     return {"id": curriculum_id, "days": len(curriculum.days)}
 
@@ -434,8 +441,9 @@ async def pipeline_status(curriculum_id: str, request: Request):
     store = request.state.content_store
     _get_curriculum_or_404(store, curriculum_id)
 
-    pipeline.reconcile(language_code, curriculum_id)
-    return pipeline.status_for(language_code, curriculum_id)
+    user_id = pipeline_user_id(request.state)
+    pipeline.reconcile(language_code, curriculum_id, user_id=user_id)
+    return pipeline.status_for(language_code, curriculum_id, user_id=user_id)
 
 
 @router.post("/{curriculum_id}/pipeline/retry", status_code=200, response_model=StatusResponse, tags=["pipeline"])
@@ -446,7 +454,7 @@ async def pipeline_retry(curriculum_id: str, body: PipelineRetryRequest, request
 
     language_code = request.state.language_code
     try:
-        status = pipeline.retry(language_code, curriculum_id, body.day)
+        status = pipeline.retry(language_code, curriculum_id, body.day, user_id=pipeline_user_id(request.state))
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Day {body.day} not found in curriculum") from None
     except RuntimeError as e:
@@ -462,7 +470,9 @@ async def pipeline_regenerate(curriculum_id: str, body: PipelineRegenerateReques
 
     language_code = request.state.language_code
     try:
-        status = pipeline.regenerate(language_code, curriculum_id, body.day, strategy=body.strategy)
+        status = pipeline.regenerate(
+            language_code, curriculum_id, body.day, strategy=body.strategy, user_id=pipeline_user_id(request.state)
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Day {body.day} not found in curriculum") from None
     except RuntimeError as e:

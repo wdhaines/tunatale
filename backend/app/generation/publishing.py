@@ -108,8 +108,13 @@ async def publish_lesson(
 class CurriculumDayTarget:
     """A lesson written into a curriculum day; the pipeline renders it."""
 
-    def __init__(self, store, language_code: str, curriculum_id: str, day: int, pipeline) -> None:
+    def __init__(
+        self, store, language_code: str, curriculum_id: str, day: int, pipeline, *, user_id: int | None
+    ) -> None:
         self._store = store
+        # Whose store ``store`` is — the pipeline's render must land in the same
+        # one (None = the owner's; see LessonPipeline).
+        self._user_id = user_id
         self._language_code = language_code
         self._curriculum_id = curriculum_id
         self._day = day
@@ -146,7 +151,7 @@ class CurriculumDayTarget:
     async def schedule_render(self, content_id: str, lesson: Lesson) -> None:
         pipeline = self._pipeline
         if pipeline is not None:
-            pipeline.enqueue(self._language_code, self._curriculum_id, self._day, "render")
+            pipeline.enqueue(self._language_code, self._curriculum_id, self._day, "render", user_id=self._user_id)
 
 
 class ReviewSessionTarget:
