@@ -923,17 +923,16 @@ class LessonTranscriptResponse(BaseModel):
 # nullable on the item (``flat_src`` is None for single-template notes) though
 # they are not on the direction.
 #
-# Every route takes ``response_model_exclude_unset=True`` because
-# ``_direction_to_dict`` OMITS ``left`` when it is None; a plain
-# ``response_model=`` would ADD ``"left": null`` to every payload that today
-# omits the key. Same for ``untrack_item``'s short branch, which omits ``item``.
+# ``_direction_to_dict`` OMITS ``left`` when it is None; the field uses
+# ``exclude_if=lambda v: v is None`` to omit the key from the payload.
+# Same for ``untrack_item``'s short branch, which omits ``item``.
 
 
 class DirectionStateResponse(BaseModel):
     """One direction of an SRS item; serves the 8 ``_item_to_dict`` endpoints.
 
-    ``left`` is omitted when None (``srs.py::_direction_to_dict``), so it must
-    ride on ``response_model_exclude_unset`` — never a plain ``response_model``.
+    ``left`` is omitted when None (``srs.py::_direction_to_dict``); the field
+    uses ``exclude_if=lambda v: v is None`` to omit the key from the payload.
     """
 
     state: str  # ds.state.value
@@ -945,7 +944,7 @@ class DirectionStateResponse(BaseModel):
     last_review: str | None
     last_review_time_ms: int
     anki_card_id: int | None
-    left: int | None = None  # omitted when None
+    left: int | None = Field(default=None, exclude_if=lambda v: v is None)  # omitted when None
 
 
 class ItemExtra(BaseModel):
@@ -1011,21 +1010,20 @@ class UntrackItemResponse(BaseModel):
     """Response of POST /api/srs/items/{item_id}/untrack.
 
     Two branches — ``{"action": "deleted"}`` and ``{"action": "suspended",
-    "item": ...}``. ``item`` is optional and left unset on the deleted branch,
-    which is why the route uses ``response_model_exclude_unset``.
+    "item": ...}``. ``item`` is optional and left unset on the deleted branch;
+    the field uses ``exclude_if=lambda v: v is None`` to omit the key.
     """
 
     action: str
-    item: SrsItemResponse | None = None
+    item: SrsItemResponse | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 # ── Batch 6b: the due/new envelopes ─────────────────────────────────────────
 #
 # get_due_collocations / get_new_collocations serialize through the same
 # ``srs.py::_item_to_dict`` / ``_direction_to_dict`` as 6a, so their element
-# model is SrsItemResponse unchanged — only the envelopes are new. Both routes
-# take ``response_model_exclude_unset=True`` because the nested
-# DirectionStateResponse omits ``left`` when None (same trap as 6a).
+# model is SrsItemResponse unchanged — only the envelopes are new. The nested
+# DirectionStateResponse omits ``left`` when None via its field's ``exclude_if``.
 
 
 class DueCollocationsResponse(BaseModel):
@@ -1049,11 +1047,10 @@ class NewCollocationsResponse(BaseModel):
 # ``pending_rating`` onto each entry after the serializer returns, which is the
 # ONLY difference between the two element shapes.
 #
-# Both routes need ``response_model_exclude_unset=True``: the nested
-# DirectionStateResponse omits ``left`` when None (same trap as 6a/6b), and a
-# plain ``response_model=`` would ADD ``"left": null`` back. Pinned by the
-# nested-direction key-set assertions in ``test_api_srs.py::
-# TestReviewQueueResponseShape`` and ``test_api_lesson_review_queue.py``.
+# The nested DirectionStateResponse omits ``left`` when None via its field's
+# ``exclude_if``; no route-level flag is needed. Pinned by the nested-direction
+# key-set assertions in ``test_api_srs.py::TestReviewQueueResponseShape`` and
+# ``test_api_lesson_review_queue.py``.
 
 
 class QueueItemResponse(SrsItemResponse):
@@ -1301,12 +1298,11 @@ class ImageCandidatesResponse(BaseModel):
 # get_lesson and get_lesson_by_day serialize through the same
 # ``_serializers.serialize_lesson``, so they share ONE model — the brief
 # explicitly forbids two near-duplicates. ``day`` is conditionally present
-# (only get_lesson passes it), so both routes need
-# ``response_model_exclude_unset``. render_audio's cues nest ``ref`` whose
-# ``target_index`` is omitted on narration cues — same exclude_unset reason.
-# create_base_card and create_inflection_cloze share the ``_persist_new_card``
-# tail, which nests the batch-6a SrsItemResponse (already exclude_unset-bound
-# for the DirectionStateResponse ``left`` key).
+# (only get_lesson passes it); the field uses ``exclude_if=lambda v: v is None``
+# to omit the key. render_audio's cues nest ``ref`` whose ``target_index`` is
+# omitted on narration cues via its field's ``exclude_if``. create_base_card
+# and create_inflection_cloze share the ``_persist_new_card`` tail, which nests
+# the batch-6a SrsItemResponse (whose ``left`` field uses ``exclude_if``).
 
 
 class LessonKeyPhrase(BaseModel):
@@ -1336,7 +1332,8 @@ class LessonResponse(BaseModel):
     """Response of GET /api/story/{lesson_id} and
     GET /api/curriculum/{curriculum_id}/days/{day}/lesson
     (``_serializers.serialize_lesson``). ``day`` is omitted by the by-day
-    route (serialized without one), so it rides on ``response_model_exclude_unset``.
+    route (serialized without one); the field uses ``exclude_if=lambda v: v is None``
+    to omit the key.
     """
 
     id: str
@@ -1349,17 +1346,15 @@ class LessonResponse(BaseModel):
     review_requested: list[str] = []
     review_used: list[str] = []
     gloss_entry_count: int | None = None
-    day: int | None = None  # omitted when unset
+    day: int | None = Field(default=None, exclude_if=lambda v: v is None)  # omitted when unset
 
 
 class ReviewSessionResponse(LessonResponse):
     """Response of GET /api/review-sessions/{session_id}.
 
     A lesson read plus a date, MINUS the ``day`` it has no right to.
-    ``serialize_lesson`` leaves that key out for a session, but the inherited
-    ``day: int | None = None`` would still serialize as ``null`` — so the ROUTE
-    must set ``response_model_exclude_unset=True``. That is a route setting, not
-    something this model can enforce, which is why the route carries the warning.
+    ``serialize_lesson`` leaves that key out for a session; the inherited
+    ``day`` field uses ``exclude_if=lambda v: v is None`` to omit the key.
     """
 
     session_date: str
@@ -1421,12 +1416,12 @@ class RenderCueRef(BaseModel):
     """Non-null value of RenderSectionCue.ref.
 
     ``target_index`` is omitted on narration cues (built as ``{"kind":
-    "narration"}`` in ``cues.py``), so it rides on
-    ``response_model_exclude_unset``.
+    "narration"}`` in ``cues.py``); the field uses ``exclude_if=lambda v: v is None``
+    to omit the key.
     """
 
     kind: Literal["line", "key_phrase", "narration"]
-    target_index: int | None = None  # omitted when unset
+    target_index: int | None = Field(default=None, exclude_if=lambda v: v is None)  # omitted when unset
 
 
 class RenderSectionCue(BaseModel):
@@ -1564,10 +1559,8 @@ class DrillFeedbackResponse(BaseModel):
 
     ``left`` is CONDITIONAL: ``drill_feedback`` appends it only when the new
     direction has a learning-step counter, so a REVIEW-state result omits the
-    key entirely. The route therefore carries
-    ``response_model_exclude_unset=True`` — without it FastAPI would put
-    ``"left": null`` back into the omitting branch, rewriting the payload in
-    the ADD direction. Both branches are pinned in
+    key entirely. The field uses ``exclude_if=lambda v: v is None`` to omit the key.
+    Both branches are pinned in
     ``test_api_srs_directions.py::test_feedback_response_keys_match_model_both_branches``.
     """
 
@@ -1575,7 +1568,7 @@ class DrillFeedbackResponse(BaseModel):
     direction: str
     new_due_at: str
     new_state: str
-    left: int | None = None
+    left: int | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class ClientLogRequest(BaseModel):

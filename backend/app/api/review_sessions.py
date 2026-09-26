@@ -560,11 +560,6 @@ async def list_review_sessions(request: Request):
     "/{session_id}",
     status_code=200,
     response_model=ReviewSessionResponse,
-    # ⚠️ REQUIRED, not decoration. LessonResponse declares `day: int | None = None`,
-    # so without this a session read reports "day": null — a session asserting a
-    # position in a sequence it has none of. serialize_lesson leaves the key out
-    # entirely for a session; exclude_unset is what keeps it out of the payload.
-    response_model_exclude_unset=True,
 )
 async def get_review_session(session_id: str, request: Request):
     """One session's body, shaped like a lesson minus the field it has no right to.
@@ -585,9 +580,6 @@ async def get_review_session(session_id: str, request: Request):
     "/{session_id}/render",
     status_code=200,
     response_model=RenderAudioResponse,
-    # cues[].ref omits target_index on narration cues — a plain response_model
-    # would re-add "target_index": null to every narration ref.
-    response_model_exclude_unset=True,
 )
 async def render_review_session(session_id: str, request: Request):
     """Render a session's audio through the ordinary audio pipeline.

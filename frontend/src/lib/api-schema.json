@@ -682,7 +682,7 @@
         "type": "object"
       },
       "DirectionStateResponse": {
-        "description": "One direction of an SRS item; serves the 8 ``_item_to_dict`` endpoints.\n\n``left`` is omitted when None (``srs.py::_direction_to_dict``), so it must\nride on ``response_model_exclude_unset`` \u2014 never a plain ``response_model``.",
+        "description": "One direction of an SRS item; serves the 8 ``_item_to_dict`` endpoints.\n\n``left`` is omitted when None (``srs.py::_direction_to_dict``); the field\nuses ``exclude_if=lambda v: v is None`` to omit the key from the payload.",
         "properties": {
           "anki_card_id": {
             "anyOf": [
@@ -761,7 +761,7 @@
         "type": "object"
       },
       "DrillFeedbackResponse": {
-        "description": "Response of POST /api/srs/items/{id}/direction/{direction}/feedback.\n\n``left`` is CONDITIONAL: ``drill_feedback`` appends it only when the new\ndirection has a learning-step counter, so a REVIEW-state result omits the\nkey entirely. The route therefore carries\n``response_model_exclude_unset=True`` \u2014 without it FastAPI would put\n``\"left\": null`` back into the omitting branch, rewriting the payload in\nthe ADD direction. Both branches are pinned in\n``test_api_srs_directions.py::test_feedback_response_keys_match_model_both_branches``.",
+        "description": "Response of POST /api/srs/items/{id}/direction/{direction}/feedback.\n\n``left`` is CONDITIONAL: ``drill_feedback`` appends it only when the new\ndirection has a learning-step counter, so a REVIEW-state result omits the\nkey entirely. The field uses ``exclude_if=lambda v: v is None`` to omit the key.\nBoth branches are pinned in\n``test_api_srs_directions.py::test_feedback_response_keys_match_model_both_branches``.",
         "properties": {
           "direction": {
             "title": "Direction",
@@ -1879,7 +1879,7 @@
         "type": "object"
       },
       "LessonResponse": {
-        "description": "Response of GET /api/story/{lesson_id} and\nGET /api/curriculum/{curriculum_id}/days/{day}/lesson\n(``_serializers.serialize_lesson``). ``day`` is omitted by the by-day\nroute (serialized without one), so it rides on ``response_model_exclude_unset``.",
+        "description": "Response of GET /api/story/{lesson_id} and\nGET /api/curriculum/{curriculum_id}/days/{day}/lesson\n(``_serializers.serialize_lesson``). ``day`` is omitted by the by-day\nroute (serialized without one); the field uses ``exclude_if=lambda v: v is None``\nto omit the key.",
         "properties": {
           "day": {
             "anyOf": [
@@ -3702,7 +3702,7 @@
         "type": "object"
       },
       "RenderCueRef": {
-        "description": "Non-null value of RenderSectionCue.ref.\n\n``target_index`` is omitted on narration cues (built as ``{\"kind\":\n\"narration\"}`` in ``cues.py``), so it rides on\n``response_model_exclude_unset``.",
+        "description": "Non-null value of RenderSectionCue.ref.\n\n``target_index`` is omitted on narration cues (built as ``{\"kind\":\n\"narration\"}`` in ``cues.py``); the field uses ``exclude_if=lambda v: v is None``\nto omit the key.",
         "properties": {
           "kind": {
             "enum": [
@@ -3859,7 +3859,7 @@
         "type": "object"
       },
       "ReviewSessionResponse": {
-        "description": "Response of GET /api/review-sessions/{session_id}.\n\nA lesson read plus a date, MINUS the ``day`` it has no right to.\n``serialize_lesson`` leaves that key out for a session, but the inherited\n``day: int | None = None`` would still serialize as ``null`` \u2014 so the ROUTE\nmust set ``response_model_exclude_unset=True``. That is a route setting, not\nsomething this model can enforce, which is why the route carries the warning.",
+        "description": "Response of GET /api/review-sessions/{session_id}.\n\nA lesson read plus a date, MINUS the ``day`` it has no right to.\n``serialize_lesson`` leaves that key out for a session; the inherited\n``day`` field uses ``exclude_if=lambda v: v is None`` to omit the key.",
         "properties": {
           "day": {
             "anyOf": [
@@ -4879,7 +4879,7 @@
         "type": "object"
       },
       "UntrackItemResponse": {
-        "description": "Response of POST /api/srs/items/{item_id}/untrack.\n\nTwo branches \u2014 ``{\"action\": \"deleted\"}`` and ``{\"action\": \"suspended\",\n\"item\": ...}``. ``item`` is optional and left unset on the deleted branch,\nwhich is why the route uses ``response_model_exclude_unset``.",
+        "description": "Response of POST /api/srs/items/{item_id}/untrack.\n\nTwo branches \u2014 ``{\"action\": \"deleted\"}`` and ``{\"action\": \"suspended\",\n\"item\": ...}``. ``item`` is optional and left unset on the deleted branch;\nthe field uses ``exclude_if=lambda v: v is None`` to omit the key.",
         "properties": {
           "action": {
             "title": "Action",

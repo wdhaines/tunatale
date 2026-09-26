@@ -2440,8 +2440,8 @@ export interface components {
      * DirectionStateResponse
      * @description One direction of an SRS item; serves the 8 ``_item_to_dict`` endpoints.
      *
-     *     ``left`` is omitted when None (``srs.py::_direction_to_dict``), so it must
-     *     ride on ``response_model_exclude_unset`` — never a plain ``response_model``.
+     *     ``left`` is omitted when None (``srs.py::_direction_to_dict``); the field
+     *     uses ``exclude_if=lambda v: v is None`` to omit the key from the payload.
      */
     DirectionStateResponse: {
       /** Anki Card Id */
@@ -2471,10 +2471,8 @@ export interface components {
      *
      *     ``left`` is CONDITIONAL: ``drill_feedback`` appends it only when the new
      *     direction has a learning-step counter, so a REVIEW-state result omits the
-     *     key entirely. The route therefore carries
-     *     ``response_model_exclude_unset=True`` — without it FastAPI would put
-     *     ``"left": null`` back into the omitting branch, rewriting the payload in
-     *     the ADD direction. Both branches are pinned in
+     *     key entirely. The field uses ``exclude_if=lambda v: v is None`` to omit the key.
+     *     Both branches are pinned in
      *     ``test_api_srs_directions.py::test_feedback_response_keys_match_model_both_branches``.
      */
     DrillFeedbackResponse: {
@@ -2958,7 +2956,8 @@ export interface components {
      * @description Response of GET /api/story/{lesson_id} and
      *     GET /api/curriculum/{curriculum_id}/days/{day}/lesson
      *     (``_serializers.serialize_lesson``). ``day`` is omitted by the by-day
-     *     route (serialized without one), so it rides on ``response_model_exclude_unset``.
+     *     route (serialized without one); the field uses ``exclude_if=lambda v: v is None``
+     *     to omit the key.
      */
     LessonResponse: {
       /** Day */
@@ -3721,8 +3720,8 @@ export interface components {
      * @description Non-null value of RenderSectionCue.ref.
      *
      *     ``target_index`` is omitted on narration cues (built as ``{"kind":
-     *     "narration"}`` in ``cues.py``), so it rides on
-     *     ``response_model_exclude_unset``.
+     *     "narration"}`` in ``cues.py``); the field uses ``exclude_if=lambda v: v is None``
+     *     to omit the key.
      */
     RenderCueRef: {
       /**
@@ -3791,10 +3790,8 @@ export interface components {
      * @description Response of GET /api/review-sessions/{session_id}.
      *
      *     A lesson read plus a date, MINUS the ``day`` it has no right to.
-     *     ``serialize_lesson`` leaves that key out for a session, but the inherited
-     *     ``day: int | None = None`` would still serialize as ``null`` — so the ROUTE
-     *     must set ``response_model_exclude_unset=True``. That is a route setting, not
-     *     something this model can enforce, which is why the route carries the warning.
+     *     ``serialize_lesson`` leaves that key out for a session; the inherited
+     *     ``day`` field uses ``exclude_if=lambda v: v is None`` to omit the key.
      */
     ReviewSessionResponse: {
       /** Day */
@@ -4205,8 +4202,8 @@ export interface components {
      * @description Response of POST /api/srs/items/{item_id}/untrack.
      *
      *     Two branches — ``{"action": "deleted"}`` and ``{"action": "suspended",
-     *     "item": ...}``. ``item`` is optional and left unset on the deleted branch,
-     *     which is why the route uses ``response_model_exclude_unset``.
+     *     "item": ...}``. ``item`` is optional and left unset on the deleted branch;
+     *     the field uses ``exclude_if=lambda v: v is None`` to omit the key.
      */
     UntrackItemResponse: {
       /** Action */
