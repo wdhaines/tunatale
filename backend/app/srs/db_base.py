@@ -198,7 +198,20 @@ class SRSDatabaseBase:
     def __exit__(self, *_) -> None:
         self.close()
 
-    def __init__(self, db_path: str = ":memory:", *, pre_migration_backup_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        db_path: str = ":memory:",
+        *,
+        pre_migration_backup_dir: Path | None = None,
+        anki_config_expires: bool = True,
+    ) -> None:
+        # Whether mirrored Anki deck config ages out (cache_registry
+        # max_age_days). True for a deck that syncs: sync_pull re-stamps every
+        # config row, so an old row means sync is broken. False for a deck that
+        # can NEVER sync (another account's, app.storage.user_dbs): nothing
+        # would ever re-stamp it, so its seeded config is authoritative instead
+        # of silently reverting to defaults after 30 days (tunatale-98zf.5).
+        self.anki_config_expires = anki_config_expires
         # Where to park a snapshot of the schema a pending migration is about to
         # leave behind. Supplied by app.main's lifespan from settings; None
         # everywhere else (tests, CLI one-offs), which skips the snapshot.

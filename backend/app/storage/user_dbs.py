@@ -126,6 +126,8 @@ class UserDatabases:
             migration_dir = (
                 None if self._migration_backup_dir is None else self._migration_backup_dir / "users" / per_user
             )
-            opened = (SRSDatabase(str(path), pre_migration_backup_dir=migration_dir), ContentStore(str(path)))
+            # Never syncs, so its deck config must not age out (tunatale-98zf.5).
+            srs_db = SRSDatabase(str(path), pre_migration_backup_dir=migration_dir, anki_config_expires=False)
+            opened = (srs_db, ContentStore(str(path)))
             self._open[key] = opened
             return opened
