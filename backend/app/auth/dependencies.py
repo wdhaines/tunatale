@@ -50,10 +50,10 @@ async def require_owner_for_writes(request: Request) -> None:
     """``require_owner`` for everything but reads.
 
     For the lesson surfaces. Another account reads its own (empty) lesson store
-    — that is how its pages render their empty states — but generation runs
-    through the background ``LessonPipeline``, which is keyed by language alone
-    and writes the OWNER's stores. Until it is keyed by user, lesson writes are
-    the owner's.
+    — that is how its pages render their empty states. Lesson writes stay the
+    owner's even though ``LessonPipeline`` jobs now carry the account and land in
+    its own files (tunatale-98zf.3): opening generation to every account is the
+    owner's call (it shares one Groq budget), and is the last step of that bead.
     """
     if request.method in ("GET", "HEAD"):
         return

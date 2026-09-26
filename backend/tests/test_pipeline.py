@@ -166,7 +166,7 @@ def sl_store(pipeline):
 
 async def wait_for_job(pipeline, lc, cid, day, state, timeout=5.0):
     deadline = time.monotonic() + timeout
-    key = (lc, cid, day)
+    key = (None, lc, cid, day)
     while time.monotonic() < deadline:
         record = pipeline._jobs.get(key)
         if record and record["state"] == state:
@@ -195,7 +195,7 @@ class TestPipelineHappyPath:
         store.save_curriculum(cid, curriculum)
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "generate")
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
         record = await wait_for_job(pipeline, "sl", cid, 1, "ready")
 
         assert record["state"] == "ready"
@@ -241,7 +241,7 @@ class TestPipelineHappyPath:
         )
 
         pipeline.start()
-        pipeline.enqueue("no", cid, 1, "generate")
+        pipeline.enqueue("no", cid, 1, "generate", user_id=None)
         await wait_for_job(pipeline, "no", cid, 1, "ready")
 
         assert fake_generator.calls[0]["srs_db"] is no_sentinel
@@ -270,7 +270,7 @@ class TestPipelineHappyPath:
         )
 
         pipeline.start()
-        pipeline.enqueue("no", cid, 1, "generate")
+        pipeline.enqueue("no", cid, 1, "generate", user_id=None)
         await wait_for_job(pipeline, "no", cid, 1, "ready")
 
         assert fake_generator.calls[0]["content_store"] is store
@@ -299,7 +299,7 @@ class TestPipelineHappyPath:
         )
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "generate")
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
         await wait_for_job(pipeline, "sl", cid, 1, "ready")
 
         assert fake_generator.calls[0]["review_pressure"] is ReviewPressure.INSISTENT
@@ -326,7 +326,7 @@ class TestPipelineHappyPath:
         store.save_lesson("lesson-1", cid, 1, lesson)
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "render")
+        pipeline.enqueue("sl", cid, 1, "render", user_id=None)
         record = await wait_for_job(pipeline, "sl", cid, 1, "ready")
 
         assert record["state"] == "ready"
@@ -334,7 +334,7 @@ class TestPipelineHappyPath:
         # The resolved lesson id is stamped on the record so status_for
         # reports lesson_id + has_audio for ready render-only jobs.
         assert record["lesson_id"] == "lesson-1"
-        status = pipeline.status_for("sl", cid)
+        status = pipeline.status_for("sl", cid, user_id=None)
         assert status["days"][0]["lesson_id"] == "lesson-1"
         assert status["days"][0]["has_audio"] is True
 
@@ -355,10 +355,10 @@ class TestPipelineHappyPath:
         store.save_curriculum(cid, curriculum)
 
         pipeline.start()
-        pipeline.reconcile("sl", cid)
+        pipeline.reconcile("sl", cid, user_id=None)
 
-        rec1 = pipeline._jobs.get(("sl", cid, 1))
-        rec2 = pipeline._jobs.get(("sl", cid, 2))
+        rec1 = pipeline._jobs.get((None, "sl", cid, 1))
+        rec2 = pipeline._jobs.get((None, "sl", cid, 2))
         assert rec1 is not None
         assert rec2 is not None
         assert rec1["kind"] == "generate"
@@ -391,8 +391,8 @@ class TestPipelineHappyPath:
         audio_path.write_bytes(b"audio")
         store.save_audio_file("audio-1", "lesson-1", str(audio_path))
 
-        pipeline.reconcile("sl", cid)
-        assert ("sl", cid, 1) not in pipeline._jobs
+        pipeline.reconcile("sl", cid, user_id=None)
+        assert (None, "sl", cid, 1) not in pipeline._jobs
 
 
 class TestRateLimitBackoff:
@@ -415,13 +415,13 @@ class TestRateLimitBackoff:
         fake_llm.last_429 = {"at": time.time(), "retry_after_s": 15.0}
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "generate")
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
         await wait_for_job(pipeline, "sl", cid, 1, "ready")
 
         assert len(sleep_recorder.calls) >= 1
         assert sleep_recorder.calls[0] >= 15.0
         assert len(fake_generator.calls) == 2
-        record = pipeline._jobs.get(("sl", cid, 1))
+        record = pipeline._jobs.get((None, "sl", cid, 1))
         assert record["state"] == "ready"
 
     async def test_rate_limit_exhausted(self, pipeline, fake_generator, fake_llm, sleep_recorder):
@@ -444,10 +444,10 @@ class TestRateLimitBackoff:
         fake_llm.last_429 = {"at": time.time(), "retry_after_s": 15.0}
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "generate")
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
         await wait_for_job(pipeline, "sl", cid, 1, "failed")
 
-        record = pipeline._jobs.get(("sl", cid, 1))
+        record = pipeline._jobs.get((None, "sl", cid, 1))
         assert record["state"] == "failed"
         assert record["retryable"] is True
 
@@ -469,11 +469,11 @@ class TestRateLimitBackoff:
         fake_generator.raise_error = StoryGenerationError("Malformed JSON from LLM")
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "generate")
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
         await wait_for_job(pipeline, "sl", cid, 1, "failed")
 
         assert len(sleep_recorder.calls) == 0
-        record = pipeline._jobs.get(("sl", cid, 1))
+        record = pipeline._jobs.get((None, "sl", cid, 1))
         assert record["state"] == "failed"
         assert "Malformed" in record["error"]
 
@@ -508,12 +508,12 @@ class TestLLMErrorHandling:
         fake_llm.last_429 = {"at": time.time() + 1000, "retry_after_s": 37.0}
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "generate")
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
         await wait_for_job(pipeline, "sl", cid, 1, "ready")
 
         assert len(sleep_recorder.calls) >= 1
         assert len(fake_generator.calls) == 2
-        assert pipeline._jobs[("sl", cid, 1)]["state"] == "ready"
+        assert pipeline._jobs[(None, "sl", cid, 1)]["state"] == "ready"
 
     async def test_llm_error_non_rate_limit_fails_immediately(self, pipeline, fake_generator, sleep_recorder):
         """A non-429 LLMError (e.g. HTTP 401) → failed(retryable), no backoff sleep,
@@ -534,11 +534,11 @@ class TestLLMErrorHandling:
         fake_generator.raise_error = LLMError("Groq returned HTTP 401")
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "generate")
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
         await wait_for_job(pipeline, "sl", cid, 1, "failed")
 
         assert len(sleep_recorder.calls) == 0
-        record = pipeline._jobs[("sl", cid, 1)]
+        record = pipeline._jobs[(None, "sl", cid, 1)]
         assert record["retryable"] is True
         assert "401" in record["error"]
 
@@ -564,14 +564,14 @@ class TestFailureStickiness:
         fake_llm.last_429 = {"at": time.time(), "retry_after_s": 15.0}
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "generate")
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
         await wait_for_job(pipeline, "sl", cid, 1, "failed")
 
-        record = pipeline._jobs.get(("sl", cid, 1))
+        record = pipeline._jobs.get((None, "sl", cid, 1))
         assert record["state"] == "failed"
 
-        pipeline.reconcile("sl", cid)
-        record2 = pipeline._jobs.get(("sl", cid, 1))
+        pipeline.reconcile("sl", cid, user_id=None)
+        record2 = pipeline._jobs.get((None, "sl", cid, 1))
         assert record2["state"] == "failed"
 
     async def test_retry_resets_failed_job(self, pipeline, fake_generator, fake_llm):
@@ -594,12 +594,12 @@ class TestFailureStickiness:
         fake_llm.last_429 = {"at": time.time(), "retry_after_s": 15.0}
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "generate")
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
         await wait_for_job(pipeline, "sl", cid, 1, "failed")
 
-        status = pipeline.retry("sl", cid, 1)
+        status = pipeline.retry("sl", cid, 1, user_id=None)
         assert status == "queued"
-        record = pipeline._jobs.get(("sl", cid, 1))
+        record = pipeline._jobs.get((None, "sl", cid, 1))
         assert record["state"] == "queued"
 
     async def test_retry_ready_day_returns_ready(self, pipeline):
@@ -626,9 +626,9 @@ class TestFailureStickiness:
         audio_path.write_bytes(b"audio")
         store.save_audio_file("a-1", "lesson-1", str(audio_path))
 
-        status = pipeline.retry("sl", cid, 1)
+        status = pipeline.retry("sl", cid, 1, user_id=None)
         assert status == "ready"
-        assert ("sl", cid, 1) not in pipeline._jobs
+        assert (None, "sl", cid, 1) not in pipeline._jobs
 
 
 class TestRegenerate:
@@ -657,9 +657,9 @@ class TestRegenerate:
         store.save_audio_file("a-1", "old-id", str(audio_path))
 
         pipeline.start()
-        status = pipeline.regenerate("sl", cid, 1)
+        status = pipeline.regenerate("sl", cid, 1, user_id=None)
         assert status == "queued"
-        record = pipeline._jobs.get(("sl", cid, 1))
+        record = pipeline._jobs.get((None, "sl", cid, 1))
         assert record["force"] is True
 
         await wait_for_job(pipeline, "sl", cid, 1, "ready")
@@ -685,7 +685,7 @@ class TestRegenerate:
         store.save_curriculum(cid, curriculum)
 
         pipeline.start()
-        status = pipeline.regenerate("sl", cid, 1, strategy="DEEPER")
+        status = pipeline.regenerate("sl", cid, 1, strategy="DEEPER", user_id=None)
         assert status == "queued"
 
         await wait_for_job(pipeline, "sl", cid, 1, "ready")
@@ -706,16 +706,16 @@ class TestRegenerate:
         )
         store.save_curriculum(cid, curriculum)
 
-        pipeline.enqueue("sl", cid, 1, "generate")
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
         with pytest.raises(RuntimeError):
-            pipeline.regenerate("sl", cid, 1)
+            pipeline.regenerate("sl", cid, 1, user_id=None)
 
 
 class Test404And409:
     async def test_retry_404(self, pipeline):
         """retry() on a day not in the curriculum raises KeyError."""
         with pytest.raises(KeyError):
-            pipeline.retry("sl", "nonexistent", 1)
+            pipeline.retry("sl", "nonexistent", 1, user_id=None)
 
     async def test_retry_409_for_active(self, pipeline):
         """retry() on a currently active job raises RuntimeError."""
@@ -731,9 +731,9 @@ class Test404And409:
             ],
         )
         store.save_curriculum(cid, curriculum)
-        pipeline.enqueue("sl", cid, 1, "generate")
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
         with pytest.raises(RuntimeError):
-            pipeline.retry("sl", cid, 1)
+            pipeline.retry("sl", cid, 1, user_id=None)
 
 
 class TestPerLanguageRouting:
@@ -758,7 +758,7 @@ class TestPerLanguageRouting:
 
         pipeline.start()
         for code in ("sl", "no"):
-            pipeline.enqueue(code, cid, 1, "generate")
+            pipeline.enqueue(code, cid, 1, "generate", user_id=None)
             await wait_for_job(pipeline, code, cid, 1, "ready")
 
         assert sl_store.get_latest_lesson_by_day(cid, 1) is not None
@@ -791,9 +791,9 @@ class TestEnqueueGuard:
             ),
         )
 
-        pipeline.enqueue("sl", cid, 1, "generate")
-        pipeline.enqueue("sl", cid, 1, "generate")
-        record = pipeline._jobs.get(("sl", cid, 1))
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
+        record = pipeline._jobs.get((None, "sl", cid, 1))
         assert record["state"] == "queued"
         assert record["kind"] == "generate"
 
@@ -812,7 +812,7 @@ class TestEnqueueGuard:
             ),
         )
 
-        pipeline._jobs[("sl", cid, 1)] = {
+        pipeline._jobs[(None, "sl", cid, 1)] = {
             "state": "ready",
             "kind": "generate",
             "force": False,
@@ -820,14 +820,14 @@ class TestEnqueueGuard:
             "attempts": 0,
             "updated_at": 0,
         }
-        pipeline.enqueue("sl", cid, 1, "generate", force=False)
-        assert pipeline._jobs[("sl", cid, 1)]["state"] == "ready"
+        pipeline.enqueue("sl", cid, 1, "generate", force=False, user_id=None)
+        assert pipeline._jobs[(None, "sl", cid, 1)]["state"] == "ready"
 
 
 class TestReconcileEdgeCases:
     async def test_reconcile_no_curriculum(self, pipeline):
         """reconcile() silently returns when curriculum does not exist."""
-        pipeline.reconcile("sl", "nonexistent")
+        pipeline.reconcile("sl", "nonexistent", user_id=None)
         assert len(pipeline._jobs) == 0
 
     async def test_reconcile_enqueues_render_for_existing_lesson_without_audio(self, pipeline):
@@ -849,8 +849,8 @@ class TestReconcileEdgeCases:
         )
         store.save_lesson("lesson-1", cid, 1, lesson)
 
-        pipeline.reconcile("sl", cid)
-        record = pipeline._jobs.get(("sl", cid, 1))
+        pipeline.reconcile("sl", cid, user_id=None)
+        record = pipeline._jobs.get((None, "sl", cid, 1))
         assert record is not None
         assert record["kind"] == "render"
 
@@ -858,7 +858,7 @@ class TestReconcileEdgeCases:
 class TestStatusFor:
     async def test_status_for_empty(self, pipeline):
         """status_for returns active=False with empty days for missing curriculum."""
-        result = pipeline.status_for("sl", "nonexistent")
+        result = pipeline.status_for("sl", "nonexistent", user_id=None)
         assert result == {"active": False, "days": []}
 
     async def test_status_for_with_job_record(self, pipeline):
@@ -875,7 +875,7 @@ class TestStatusFor:
                 days=[CurriculumDay(day=1, title="D1", focus="f", collocations=["c"], learning_objective="lo")],
             ),
         )
-        pipeline._jobs[("sl", cid, 1)] = {
+        pipeline._jobs[(None, "sl", cid, 1)] = {
             "state": "failed",
             "kind": "generate",
             "force": False,
@@ -886,7 +886,7 @@ class TestStatusFor:
             "retryable": True,
             "detail": "test detail",
         }
-        result = pipeline.status_for("sl", cid)
+        result = pipeline.status_for("sl", cid, user_id=None)
         assert result["active"] is False
         assert result["days"][0]["state"] == "failed"
         assert result["days"][0]["error"] == "test error"
@@ -905,7 +905,7 @@ class TestStatusFor:
                 days=[CurriculumDay(day=1, title="D1", focus="f", collocations=["c"], learning_objective="lo")],
             ),
         )
-        pipeline._jobs[("sl", cid, 1)] = {
+        pipeline._jobs[(None, "sl", cid, 1)] = {
             "state": "queued",
             "kind": "generate",
             "force": False,
@@ -913,7 +913,7 @@ class TestStatusFor:
             "attempts": 0,
             "updated_at": 0,
         }
-        result = pipeline.status_for("sl", cid)
+        result = pipeline.status_for("sl", cid, user_id=None)
         assert result["active"] is True
 
     async def test_status_for_lesson_without_record(self, pipeline):
@@ -935,7 +935,7 @@ class TestStatusFor:
         )
         store.save_lesson("lesson-1", cid, 1, lesson)
 
-        result = pipeline.status_for("sl", cid)
+        result = pipeline.status_for("sl", cid, user_id=None)
         assert result["days"][0]["state"] == "ready"
 
     async def test_status_for_lesson_with_record_and_lesson_id(self, pipeline):
@@ -956,7 +956,7 @@ class TestStatusFor:
             title="Done", language_code="sl", sections=[Section(section_type=SectionType.KEY_PHRASES, phrases=[])]
         )
         store.save_lesson("lid", cid, 1, lesson)
-        pipeline._jobs[("sl", cid, 1)] = {
+        pipeline._jobs[(None, "sl", cid, 1)] = {
             "state": "ready",
             "kind": "generate",
             "force": False,
@@ -964,7 +964,7 @@ class TestStatusFor:
             "attempts": 0,
             "updated_at": 0,
         }
-        result = pipeline.status_for("sl", cid)
+        result = pipeline.status_for("sl", cid, user_id=None)
         assert result["days"][0]["lesson_id"] == "lid"
         assert result["days"][0]["has_audio"] is False
 
@@ -985,7 +985,7 @@ class TestStatusFor:
                 ],
             ),
         )
-        pipeline._jobs[("sl", cid, 1)] = {
+        pipeline._jobs[(None, "sl", cid, 1)] = {
             "state": "ready",
             "kind": "generate",
             "force": False,
@@ -993,7 +993,7 @@ class TestStatusFor:
             "attempts": 0,
             "updated_at": 0,
         }
-        result = pipeline.status_for("sl", cid)
+        result = pipeline.status_for("sl", cid, user_id=None)
         # day 1 has a record, day 2 has neither record nor lesson → only day 1 appears
         assert len(result["days"]) == 1
         assert result["days"][0]["day"] == 1
@@ -1017,7 +1017,7 @@ class TestStatusFor:
         )
         # Day 2 has no record and no lesson → skipped; days 1 and 5 are positions 1 and 3.
         for day in (1, 5):
-            pipeline._jobs[("sl", cid, day)] = {
+            pipeline._jobs[(None, "sl", cid, day)] = {
                 "state": "ready",
                 "kind": "generate",
                 "force": False,
@@ -1025,7 +1025,7 @@ class TestStatusFor:
                 "attempts": 0,
                 "updated_at": 0,
             }
-        result = pipeline.status_for("sl", cid)
+        result = pipeline.status_for("sl", cid, user_id=None)
         assert [(d["day"], d["position"]) for d in result["days"]] == [(1, 1), (5, 3)]
 
 
@@ -1051,7 +1051,7 @@ class TestRetryEdgeCases:
         audio_path = pipeline._audio_dir / "audio.wav"
         audio_path.write_bytes(b"audio")
         store.save_audio_file("a-1", "lesson-1", str(audio_path))
-        pipeline._jobs[("sl", cid, 1)] = {
+        pipeline._jobs[(None, "sl", cid, 1)] = {
             "state": "failed",
             "kind": "generate",
             "force": False,
@@ -1060,15 +1060,15 @@ class TestRetryEdgeCases:
             "updated_at": 0,
         }
 
-        status = pipeline.retry("sl", cid, 1)
+        status = pipeline.retry("sl", cid, 1, user_id=None)
         assert status == "ready"
-        assert ("sl", cid, 1) not in pipeline._jobs
+        assert (None, "sl", cid, 1) not in pipeline._jobs
 
 
 class TestGenerateEdgeCases:
     async def test_generate_curriculum_not_found(self, pipeline, fake_generator):
         """_generate marks job failed when curriculum is missing."""
-        pipeline._jobs[("sl", "no-cur", 1)] = {
+        pipeline._jobs[(None, "sl", "no-cur", 1)] = {
             "state": "generating",
             "kind": "generate",
             "curriculum_id": "no-cur",
@@ -1083,7 +1083,7 @@ class TestGenerateEdgeCases:
             "retryable": None,
         }
         pipeline.start()
-        queue_key = ("sl", "no-cur", 1)
+        queue_key = (None, "sl", "no-cur", 1)
         pipeline._queue.put_nowait(queue_key)
         await wait_for_job(pipeline, "sl", "no-cur", 1, "failed")
 
@@ -1106,7 +1106,7 @@ class TestGenerateEdgeCases:
                 days=[CurriculumDay(day=1, title="D1", focus="f", collocations=["c"], learning_objective="lo")],
             ),
         )
-        pipeline._jobs[("sl", cid, 99)] = {
+        pipeline._jobs[(None, "sl", cid, 99)] = {
             "state": "generating",
             "kind": "generate",
             "curriculum_id": cid,
@@ -1121,7 +1121,7 @@ class TestGenerateEdgeCases:
             "retryable": None,
         }
         pipeline.start()
-        queue_key = ("sl", cid, 99)
+        queue_key = (None, "sl", cid, 99)
         pipeline._queue.put_nowait(queue_key)
         await wait_for_job(pipeline, "sl", cid, 99, "failed")
 
@@ -1155,9 +1155,9 @@ class TestRetryEdgeCases2:
         )
         store.save_lesson("lid", cid, 1, lesson)
 
-        status = pipeline.retry("sl", cid, 1)
+        status = pipeline.retry("sl", cid, 1, user_id=None)
         assert status == "queued"
-        assert pipeline._jobs[("sl", cid, 1)]["kind"] == "render"
+        assert pipeline._jobs[(None, "sl", cid, 1)]["kind"] == "render"
 
 
 class TestRateLimitWithTokens:
@@ -1182,7 +1182,7 @@ class TestRateLimitWithTokens:
         fake_llm.last_rate_limits = {"captured_at": time.time() + 100, "tokens_reset_s": 30}
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "generate")
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
         await wait_for_job(pipeline, "sl", cid, 1, "ready")
 
     async def test_rate_limit_with_none_tokens(self, pipeline, fake_generator, fake_llm, sleep_recorder):
@@ -1206,7 +1206,7 @@ class TestRateLimitWithTokens:
         fake_llm.last_rate_limits = {"captured_at": None, "tokens_reset_s": None}
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "generate")
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
         await wait_for_job(pipeline, "sl", cid, 1, "ready")
 
 
@@ -1227,9 +1227,9 @@ class TestRenderEdgeCases:
         )
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "render")
+        pipeline.enqueue("sl", cid, 1, "render", user_id=None)
         await wait_for_job(pipeline, "sl", cid, 1, "failed")
-        record = pipeline._jobs.get(("sl", cid, 1))
+        record = pipeline._jobs.get((None, "sl", cid, 1))
         assert "No lesson found" in record["error"]
 
     async def test_render_lesson_id_not_in_store(self, pipeline, fake_renderer):
@@ -1246,7 +1246,7 @@ class TestRenderEdgeCases:
                 days=[CurriculumDay(day=1, title="D1", focus="f", collocations=["c"], learning_objective="lo")],
             ),
         )
-        pipeline._jobs[("sl", cid, 1)] = {
+        pipeline._jobs[(None, "sl", cid, 1)] = {
             "state": "queued",
             "kind": "render",
             "curriculum_id": cid,
@@ -1261,9 +1261,9 @@ class TestRenderEdgeCases:
             "retryable": None,
         }
         pipeline.start()
-        pipeline._queue.put_nowait(("sl", cid, 1))
+        pipeline._queue.put_nowait((None, "sl", cid, 1))
         await wait_for_job(pipeline, "sl", cid, 1, "failed")
-        record = pipeline._jobs.get(("sl", cid, 1))
+        record = pipeline._jobs.get((None, "sl", cid, 1))
         assert "not found" in record["error"]
 
     async def test_render_raises_exception(self, pipeline):
@@ -1292,7 +1292,7 @@ class TestRenderEdgeCases:
             sections=[Section(section_type=SectionType.KEY_PHRASES, phrases=[])],
         )
         store.save_lesson("lid", cid, 1, lesson)
-        pipeline._jobs[("sl", cid, 1)] = {
+        pipeline._jobs[(None, "sl", cid, 1)] = {
             "state": "queued",
             "kind": "render",
             "curriculum_id": cid,
@@ -1307,7 +1307,7 @@ class TestRenderEdgeCases:
             "retryable": None,
         }
         pipeline.start()
-        pipeline._queue.put_nowait(("sl", cid, 1))
+        pipeline._queue.put_nowait((None, "sl", cid, 1))
         await wait_for_job(pipeline, "sl", cid, 1, "failed")
 
 
@@ -1367,14 +1367,14 @@ class TestWorkerEdgeCases:
             max_attempts=2,
         )
         pipeline.start()
-        pipeline.enqueue("sl", "cur-1", 1, "generate")
+        pipeline.enqueue("sl", "cur-1", 1, "generate", user_id=None)
         await _asyncio.sleep(0.05)
         await pipeline.shutdown()
         assert pipeline._worker_task is None
 
     async def test_process_job_no_record_is_noop(self, pipeline):
         """_process_job with a key not in _jobs silently returns."""
-        pipeline._queue.put_nowait(("sl", "no-such", 1))
+        pipeline._queue.put_nowait((None, "sl", "no-such", 1))
 
         pipeline.start()
         await asyncio.sleep(0.2)
@@ -1395,7 +1395,7 @@ class TestWorkerEdgeCases:
                 days=[CurriculumDay(day=1, title="D1", focus="f", collocations=["c"], learning_objective="lo")],
             ),
         )
-        pipeline._jobs[("sl", cid, 1)] = {
+        pipeline._jobs[(None, "sl", cid, 1)] = {
             "state": "queued",
             "kind": "unknown",
             "curriculum_id": cid,
@@ -1410,7 +1410,7 @@ class TestWorkerEdgeCases:
             "retryable": None,
         }
         pipeline.start()
-        pipeline._queue.put_nowait(("sl", cid, 1))
+        pipeline._queue.put_nowait((None, "sl", cid, 1))
         await asyncio.sleep(0.2)
         await pipeline.shutdown()
 
@@ -1434,9 +1434,9 @@ class TestWorkerEdgeCases:
 
         pipeline._render = crash
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "render")
+        pipeline.enqueue("sl", cid, 1, "render", user_id=None)
         await wait_for_job(pipeline, "sl", cid, 1, "failed")
-        record = pipeline._jobs.get(("sl", cid, 1))
+        record = pipeline._jobs.get((None, "sl", cid, 1))
         assert "Unexpected pipeline error" in record["error"]
         assert record["retryable"] is True
 
@@ -1461,7 +1461,7 @@ class TestWorkerEdgeCases:
 
         pipeline._process_job = crash_and_delete
         pipeline.start()
-        pipeline._queue.put_nowait(("sl", cid, 1))
+        pipeline._queue.put_nowait((None, "sl", cid, 1))
         await asyncio.sleep(0.2)
         await pipeline.shutdown()
 
@@ -1487,7 +1487,7 @@ class TestPrewarm:
             ),
         )
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "generate")
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
         await wait_for_job(pipeline, "sl", cid, 1, "ready")
         srs_db.close()
 
@@ -1510,12 +1510,12 @@ class TestWorkerSurvival:
         store.save_curriculum(cid, curriculum)
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "generate")
+        pipeline.enqueue("sl", cid, 1, "generate", user_id=None)
         await wait_for_job(pipeline, "sl", cid, 1, "ready")
 
-        pipeline.enqueue("sl", cid, 2, "generate")
+        pipeline.enqueue("sl", cid, 2, "generate", user_id=None)
         await wait_for_job(pipeline, "sl", cid, 2, "ready")
-        record2 = pipeline._jobs.get(("sl", cid, 2))
+        record2 = pipeline._jobs.get((None, "sl", cid, 2))
         assert record2["state"] == "ready"
 
     async def test_shutdown_cancels_cleanly(self, pipeline):
@@ -1545,11 +1545,11 @@ class TestReconcileManualMode:
         )
         store.save_curriculum(cid, curriculum)
 
-        pipeline.reconcile("sl", cid)
+        pipeline.reconcile("sl", cid, user_id=None)
 
         # No generate jobs enqueued for either day
-        assert ("sl", cid, 1) not in pipeline._jobs
-        assert ("sl", cid, 2) not in pipeline._jobs
+        assert (None, "sl", cid, 1) not in pipeline._jobs
+        assert (None, "sl", cid, 2) not in pipeline._jobs
 
     async def test_manual_mode_still_renders_lesson_without_audio(self, pipeline):
         """reconcile in manual mode still enqueues render for a lesson missing audio."""
@@ -1573,9 +1573,9 @@ class TestReconcileManualMode:
         )
         store.save_lesson("lesson-1", cid, 1, lesson)
 
-        pipeline.reconcile("sl", cid)
+        pipeline.reconcile("sl", cid, user_id=None)
 
-        record = pipeline._jobs.get(("sl", cid, 1))
+        record = pipeline._jobs.get((None, "sl", cid, 1))
         assert record is not None
         assert record["kind"] == "render"
 
@@ -1594,9 +1594,9 @@ class TestReconcileManualMode:
         )
         store.save_curriculum(cid, curriculum)
 
-        pipeline.reconcile("sl", cid)
+        pipeline.reconcile("sl", cid, user_id=None)
 
-        record = pipeline._jobs.get(("sl", cid, 1))
+        record = pipeline._jobs.get((None, "sl", cid, 1))
         assert record is not None
         assert record["kind"] == "generate"
 
@@ -1616,9 +1616,9 @@ class TestReconcileManualMode:
         )
         store.save_curriculum(cid, curriculum)
 
-        pipeline.reconcile("sl", cid)
+        pipeline.reconcile("sl", cid, user_id=None)
 
-        record = pipeline._jobs.get(("sl", cid, 1))
+        record = pipeline._jobs.get((None, "sl", cid, 1))
         assert record is not None
         assert record["kind"] == "generate"
 
@@ -1728,7 +1728,7 @@ class TestPipelineTaggedBeforeSaved:
         )
 
         pipeline.start()
-        pipeline.enqueue("no", cid, 1, "generate")
+        pipeline.enqueue("no", cid, 1, "generate", user_id=None)
         record = await wait_for_job(pipeline, "no", cid, 1, "ready")
 
         assert record["state"] == "ready"
@@ -1798,10 +1798,10 @@ class TestPipelineRenderProgress:
         self._rendering_pipeline(pipeline, render=render)
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "render")
+        pipeline.enqueue("sl", cid, 1, "render", user_id=None)
         await asyncio.wait_for(render["started"].wait(), 5.0)
 
-        day = pipeline.status_for("sl", cid)["days"][0]
+        day = pipeline.status_for("sl", cid, user_id=None)["days"][0]
         assert day["state"] == "rendering"
         assert (day["clips_done"], day["clips_total"]) == (116, 171)
         # Seconds since the render began, so no rate yet — and None is the
@@ -1811,7 +1811,7 @@ class TestPipelineRenderProgress:
         render["release"].set()
         await wait_for_job(pipeline, "sl", cid, 1, "ready")
 
-        day = pipeline.status_for("sl", cid)["days"][0]
+        day = pipeline.status_for("sl", cid, user_id=None)["days"][0]
         assert day["state"] == "ready"
         assert (day["clips_done"], day["clips_total"], day["eta_seconds"]) == (None, None, None)
 
@@ -1833,16 +1833,16 @@ class TestPipelineRenderProgress:
         pipeline._renderer = _FailingRenderer()
 
         pipeline.start()
-        pipeline.enqueue("sl", cid, 1, "render")
+        pipeline.enqueue("sl", cid, 1, "render", user_id=None)
         await asyncio.wait_for(started.wait(), 5.0)
 
-        day = pipeline.status_for("sl", cid)["days"][0]
+        day = pipeline.status_for("sl", cid, user_id=None)["days"][0]
         assert (day["clips_done"], day["clips_total"]) == (4, 171)
 
         release.set()
         await wait_for_job(pipeline, "sl", cid, 1, "failed")
 
-        day = pipeline.status_for("sl", cid)["days"][0]
+        day = pipeline.status_for("sl", cid, user_id=None)["days"][0]
         assert day["state"] == "failed"
         assert (day["clips_done"], day["clips_total"], day["eta_seconds"]) == (None, None, None)
 
@@ -1850,7 +1850,155 @@ class TestPipelineRenderProgress:
         """The three fields are None for every non-rendering state."""
         cid = "cur-plain"
         self._seed(pipeline, cid)
-        pipeline.enqueue("sl", cid, 1, "render")
-        day = pipeline.status_for("sl", cid)["days"][0]
+        pipeline.enqueue("sl", cid, 1, "render", user_id=None)
+        day = pipeline.status_for("sl", cid, user_id=None)["days"][0]
         assert day["state"] == "queued"
         assert (day["clips_done"], day["clips_total"], day["eta_seconds"]) == (None, None, None)
+
+
+# ── Per-user scope (tunatale-98zf.3) ─────────────────────────────────────────
+
+
+class TestPerUserScope:
+    """A job carries WHOSE stores it uses; another account's work never touches the owner's.
+
+    File-backed stores throughout: the owner-side oracle is that the owner's
+    database FILE is byte-identical after a learner's generation, which an
+    in-memory store cannot show.
+    """
+
+    @pytest.fixture
+    def world(self, fake_generator, fake_renderer, fake_llm, activity_log, sleep_recorder, tmp_path):
+        from app.srs.database import SRSDatabase
+        from app.storage.user_dbs import UserDatabases
+
+        owner_path = tmp_path / "tunatale_no.db"
+        owner_store = ContentStore(str(owner_path))
+        owner_srs = SRSDatabase(str(owner_path))
+        learner_path = tmp_path / "users" / "2" / "tunatale_no.db"
+        SRSDatabase(str(learner_path))  # a learner HAS a language exactly when its file exists
+        user_dbs = UserDatabases(tmp_path / "users", ["no"])
+        pipeline = LessonPipeline(
+            story_generator=fake_generator,
+            renderer=fake_renderer,
+            audio_dir=tmp_path / "audio",
+            content_stores={"no": owner_store},
+            languages={"no": get_language("no")},
+            srs_dbs={"no": owner_srs},
+            activity_log=activity_log,
+            llm_client=fake_llm,
+            sleep=sleep_recorder,
+            user_dbs=user_dbs,
+        )
+        learner_srs, learner_store = user_dbs.get(2, "no")
+        return pipeline, owner_path, owner_store, owner_srs, learner_store, learner_srs
+
+    @staticmethod
+    def _curriculum() -> Curriculum:
+        return Curriculum(
+            id="cur-1",
+            topic="t",
+            language_code="no",
+            cefr_level="A2",
+            days=[CurriculumDay(day=1, title="Day 1", focus="f", collocations=["hei"], learning_objective="lo")],
+        )
+
+    async def _wait(self, pipeline, key, state="ready"):
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            record = pipeline._jobs.get(key)
+            if record and record["state"] == state:
+                return record
+            await asyncio.sleep(0.01)
+        pytest.fail(f"{key} never reached {state}: {pipeline._jobs.get(key)}")
+
+    async def test_a_learners_lesson_lands_in_their_file_and_the_owners_is_untouched(self, world, fake_generator):
+        pipeline, owner_path, owner_store, _, learner_store, learner_srs = world
+        learner_store.save_curriculum("cur-1", self._curriculum())
+        owner_before = owner_path.read_bytes()
+
+        pipeline.start()
+        pipeline.enqueue("no", "cur-1", 1, "generate", user_id=2)
+        record = await self._wait(pipeline, (2, "no", "cur-1", 1))
+        await pipeline.shutdown()
+
+        assert learner_store.get_latest_lesson_by_day("cur-1", 1)[0] == record["lesson_id"]
+        assert learner_store.list_audio_files_for_lesson(record["lesson_id"])
+        assert fake_generator.calls[0]["srs_db"] is learner_srs
+        assert fake_generator.calls[0]["content_store"] is learner_store
+        assert owner_store.get_latest_lesson_by_day("cur-1", 1) is None
+        assert owner_path.read_bytes() == owner_before
+
+    async def test_the_same_curriculum_id_is_two_jobs_for_two_accounts(self, world):
+        pipeline, _, owner_store, _, learner_store, _ = world
+        owner_store.save_curriculum("cur-1", self._curriculum())
+        learner_store.save_curriculum("cur-1", self._curriculum())
+
+        pipeline.start()
+        pipeline.enqueue("no", "cur-1", 1, "generate", user_id=None)
+        pipeline.enqueue("no", "cur-1", 1, "generate", user_id=2)
+        owner_rec = await self._wait(pipeline, (None, "no", "cur-1", 1))
+        learner_rec = await self._wait(pipeline, (2, "no", "cur-1", 1))
+        await pipeline.shutdown()
+
+        assert owner_store.get_latest_lesson_by_day("cur-1", 1)[0] == owner_rec["lesson_id"]
+        assert learner_store.get_latest_lesson_by_day("cur-1", 1)[0] == learner_rec["lesson_id"]
+        assert pipeline.status_for("no", "cur-1", user_id=2)["days"][0]["lesson_id"] == learner_rec["lesson_id"]
+
+    async def test_reconcile_and_status_read_the_learners_store(self, world):
+        pipeline, _, _, _, learner_store, _ = world
+        learner_store.save_curriculum("cur-1", self._curriculum())
+
+        pipeline.reconcile("no", "cur-1", user_id=2)
+
+        assert pipeline._jobs[(2, "no", "cur-1", 1)]["kind"] == "generate"
+        assert (None, "no", "cur-1", 1) not in pipeline._jobs
+        assert pipeline.status_for("no", "cur-1", user_id=None) == {"active": False, "days": []}
+
+    async def test_an_account_with_no_deck_is_refused_not_served_the_owners(self, world):
+        pipeline, _, owner_store, _, _, _ = world
+        owner_store.save_curriculum("cur-1", self._curriculum())
+
+        for call in (
+            lambda: pipeline.reconcile("no", "cur-1", user_id=3),
+            lambda: pipeline.retry("no", "cur-1", 1, user_id=3),
+            lambda: pipeline.regenerate("no", "cur-1", 1, user_id=3),
+        ):
+            with pytest.raises(KeyError):
+                call()
+        assert pipeline.status_for("no", "cur-1", user_id=3) == {"active": False, "days": []}
+        assert pipeline._jobs == {}
+
+    def test_a_pipeline_without_user_dbs_serves_no_account(self, pipeline):
+        sl_store(pipeline).save_curriculum("cur-1", self._curriculum())
+        assert pipeline.status_for("sl", "cur-1", user_id=2) == {"active": False, "days": []}
+
+    def test_the_scope_is_a_required_keyword(self, pipeline):
+        with pytest.raises(TypeError):
+            pipeline.enqueue("sl", "cur-1", 1, "generate")
+
+
+class TestPipelineUserId:
+    """``pipeline_user_id``: which stores a request's lesson work may use."""
+
+    def test_the_owner_is_none(self):
+        from types import SimpleNamespace
+
+        from app.storage.user_dbs import pipeline_user_id
+
+        assert pipeline_user_id(SimpleNamespace(is_owner=True, user_id=1)) is None
+
+    def test_anyone_else_is_their_account(self):
+        from types import SimpleNamespace
+
+        from app.storage.user_dbs import pipeline_user_id
+
+        assert pipeline_user_id(SimpleNamespace(is_owner=False, user_id=2)) == 2
+
+    def test_no_owner_flag_and_no_account_fails_closed(self):
+        from types import SimpleNamespace
+
+        from app.storage.user_dbs import pipeline_user_id
+
+        with pytest.raises(RuntimeError):
+            pipeline_user_id(SimpleNamespace())

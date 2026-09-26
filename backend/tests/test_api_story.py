@@ -450,8 +450,8 @@ class TestStoryEndpoints:
         assert curriculum is not None
         assert curriculum.days[0].title == "Day 1"
         # Verify pipeline enqueued a render job
-        assert pipeline._jobs[("sl", "test-curriculum-id", 1)]["state"] == "queued"
-        assert pipeline._jobs[("sl", "test-curriculum-id", 1)]["kind"] == "render"
+        assert pipeline._jobs[(None, "sl", "test-curriculum-id", 1)]["state"] == "queued"
+        assert pipeline._jobs[(None, "sl", "test-curriculum-id", 1)]["kind"] == "render"
         app.state.srs_db.close()
 
     async def test_generate_story_no_srs_db_still_succeeds(self, monkeypatch):

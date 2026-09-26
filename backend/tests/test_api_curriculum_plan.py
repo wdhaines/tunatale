@@ -433,8 +433,8 @@ class TestPlanCommit:
         assert planner_state["proposed"] is None
         assert planner_state["chat"] == [{"role": "event", "content": "Committed days 3-4."}]
 
-        assert pipeline._jobs[("sl", "trip", 3)]["state"] == "queued"
-        assert pipeline._jobs[("sl", "trip", 4)]["state"] == "queued"
+        assert pipeline._jobs[(None, "sl", "trip", 3)]["state"] == "queued"
+        assert pipeline._jobs[(None, "sl", "trip", 4)]["state"] == "queued"
 
     async def test_commit_single_day_event_message(self):
         proposed = {"start_day": 1, "days": [asdict(_day(1))]}
@@ -1134,7 +1134,7 @@ class TestPlanCommitManualMode:
             resp = await client.post("/api/curriculum/trip/plan/commit", json={})
 
         assert resp.status_code == 200
-        assert pipeline._jobs[("sl", "trip", 1)]["state"] == "queued"
+        assert pipeline._jobs[(None, "sl", "trip", 1)]["state"] == "queued"
 
     async def test_absent_key_commit_enqueues(self, tmp_path):
         """plan_commit with no generation_mode key enqueues (default = auto)."""
@@ -1161,4 +1161,4 @@ class TestPlanCommitManualMode:
             resp = await client.post("/api/curriculum/trip/plan/commit", json={})
 
         assert resp.status_code == 200
-        assert pipeline._jobs[("sl", "trip", 1)]["state"] == "queued"
+        assert pipeline._jobs[(None, "sl", "trip", 1)]["state"] == "queued"
