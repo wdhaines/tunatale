@@ -6,7 +6,7 @@ mark/restore, promote-to-learning, suspend. Anki-parity danger zone —
 see .claude/rules/anki-queue-parity.md before changing anything here.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
@@ -365,6 +365,73 @@ class DbDirectionsMixin:
             anki_id = self._get_anki_card_id_for_direction(row_id, direction)
             self.append_manual_revlog(row_id, direction, anki_card_id=anki_id)
 
+    def seed_review_state(
+        self,
+        row_id: int,
+        direction: Direction,
+        *,
+        stability: float,
+        difficulty: float,
+        due_in_days: int,
+        now: datetime | None = None,
+    ) -> bool:
+        """Start a never-studied card as a REVIEW card with a seeded memory state.
+
+        For starter cards whose knowledge was earned in a related language
+        (``app.srs.cognate_seed``). Nothing was studied, so nothing is counted as
+        studied: ``reps`` stays 0, ``introduced_at`` stays NULL (a seeded card
+        must not charge today's new-card quota), and no revlog row is written —
+        a fabricated review would be trained on by Anki's FSRS optimizer as a
+        real answer.
+
+        The card is due ``due_in_days`` Anki days from today, and ``last_review``
+        is the review that schedule implies: one interval earlier, where the
+        interval is what Anki will store (``ivl = max(1, round(stability))``, the
+        force path's). It is not a claim that a review happened; it is the
+        reference point FSRS measures elapsed time from, and without it both apps
+        misread the card. TT's retrievability returns ``desired_retention`` for a
+        card with no ``last_review``, and Anki's ``next_states`` treats a card
+        with no ``lrt`` as answered moments ago and applies SHORT-TERM stability
+        to its first real grade (``tests/anki_oracle/synthetic_collection.py``
+        records the latter).
+
+        That review is stamped at ``now``'s time of day, whole days back, so it
+        sits inside the intended Anki day in every zone and is never midnight
+        UTC, which TT reads as a day-level marker while Anki's ``lrt`` is exact.
+
+        ``dirty_fsrs`` + ``fsrs_force_next`` route it through ``sync_push``'s force
+        path: ``set_due_date`` (queue 2), ``cards.data`` s/d/lrt/dr, and the
+        ``ivl``; the same sync's pull reads it back through ``lrt``. Pinned end to
+        end by ``tests/test_seed_review_state.py``.
+
+        Raises ``ValueError`` unless ``1 <= due_in_days < ivl``: due today would
+        land in a queue already built, and due at or past the interval dates the
+        implied review today or later. Refuses — returns False and writes nothing
+        — unless the direction is NEW with no reps and no ``last_review`` (never
+        overwrite real history), and is already minted (``anki_card_id`` set: the
+        push skips an unlinked direction, so a seed there would sit diverged
+        until some later sync).
+        """
+        ivl = max(1, round(stability))
+        if not 1 <= due_in_days < ivl:
+            raise ValueError(f"due_in_days={due_in_days} must be at least 1 and less than the {ivl}-day interval")
+        now = now if now is not None else datetime.now(UTC)
+        due_at = due_at_rollover_utc(anki_today(now) + timedelta(days=due_in_days))
+        last_review = now - timedelta(days=ivl - due_in_days)
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "UPDATE collocation_directions SET state = 'review', stability = ?, fsrs_difficulty = ?,"
+                " due_at = ?, last_review = ?, dirty_fsrs = 1, fsrs_force_next = 1"
+                " WHERE collocation_id = ? AND direction = ? AND state = 'new' AND reps = 0"
+                " AND last_review IS NULL AND anki_card_id IS NOT NULL",
+                (stability, difficulty, due_at.isoformat(), last_review.isoformat(), row_id, direction.value),
+            )
+            if cursor.rowcount == 0:
+                return False
+            conn.execute("UPDATE collocations SET updated_at = datetime('now') WHERE id = ?", (row_id,))
+            self._commit(conn)
+        return True
+
     def add_production_direction(self, collocation_id: int, *, anki_card_id: int, anki_due: int) -> bool:
         """Give an existing collocation a production direction for a just-minted card.
 
@@ -445,7 +512,8 @@ class DbDirectionsMixin:
         """Suspend or unsuspend a collocation.
 
         Suspending sets SUSPENDED. Unsuspending restores REVIEW for directions
-        with reps>0 and marks dirty_fsrs=1 so the next push syncs to Anki.
+        with a schedule (reps>0, or a seeded ``last_review``) and marks
+        dirty_fsrs=1 so the next push syncs to Anki.
         """
         if suspended:
             self.set_state_by_id(row_id, SRSState.SUSPENDED, direction=direction)
@@ -455,12 +523,14 @@ class DbDirectionsMixin:
         with self._get_conn() as conn:
             for d in dirs_to_restore:
                 row = conn.execute(
-                    "SELECT reps FROM collocation_directions WHERE collocation_id = ? AND direction = ?",
+                    "SELECT reps, last_review FROM collocation_directions WHERE collocation_id = ? AND direction = ?",
                     (row_id, d.value),
                 ).fetchone()
                 if row is None:
                     continue
-                restored = SRSState.REVIEW if row["reps"] > 0 else SRSState.NEW
+                # last_review without reps is a seeded starter card (seed_review_state).
+                has_schedule = row["reps"] > 0 or row["last_review"] is not None
+                restored = SRSState.REVIEW if has_schedule else SRSState.NEW
                 conn.execute(
                     "UPDATE collocation_directions SET state = ?, dirty_fsrs = 1"
                     " WHERE collocation_id = ? AND direction = ?",
