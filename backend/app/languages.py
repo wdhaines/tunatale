@@ -301,6 +301,18 @@ class LanguageConfig:
     # said "kumusta". False keeps the wrapper, which is right where the locale's
     # front end honours IPA (nb-NO). See ``get_ipa_read_in_voice_locale``.
     ipa_read_in_voice_locale: bool = False
+    # True when a MULTI-word key phrase (a drill step) should reach its voice as
+    # a per-word IPA map rather than as plain text. Measured by the user's ear on
+    # 2026-09-25: plain Gemini said "ilubong ugma" as "ilubong uglak", and in a
+    # blind A/B of that phrase "ugma" was wrong 2 of 3 times plain and 2 of 2
+    # right once the reading was supplied.
+    #
+    # Per-language, because the CHANNEL is the adapter's: Azure honours
+    # ``<phoneme>`` per token, so a per-word map there would re-speak every word
+    # of a drill nobody has listened to. Dialogue stays plain for everyone — this
+    # is about a key phrase, and phrase IPA on a full sentence is untested. See
+    # ``get_ipa_for_drill_phrases``.
+    ipa_for_drill_phrases: bool = False
     # Gzipped lemma table that reproduces this language's lemmatizer model without
     # PyTorch (``surface, upos, lemma, is_default`` rows; see
     # ``app.srs.lemma_table``). Served when ``settings.lemmatizer_type == "table"``
@@ -510,6 +522,19 @@ def get_ipa_read_in_voice_locale(code: str) -> bool:
     discover()
     config = _CONFIGS.get(code)
     return config.ipa_read_in_voice_locale if config else False
+
+
+def get_ipa_for_drill_phrases(code: str) -> bool:
+    """Do *code*'s multi-word key phrases reach the voice as a per-word IPA map?
+
+    ``False`` for an unknown code: plain synthesis is what every language does
+    today, and the flag is an opt-in per plugin. Read it through this rather
+    than off ``LanguageConfig`` so a call site cannot accidentally pin one
+    language's channel to another's.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    return config.ipa_for_drill_phrases if config else False
 
 
 def get_tts_voice_gain_db(code: str, voice_id: str) -> float:

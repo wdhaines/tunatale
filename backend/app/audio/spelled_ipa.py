@@ -41,7 +41,8 @@ class SpelledPhonemePlanner:
     Implements :class:`app.languages.PhonemePlanner`. A whole word is NOT
     special: unlike the lexicon-backed planners there is nothing to look the
     word up in, so a span covering all of its syllables is planned like any
-    other, and only a refusal returns ``None``.
+    other, and only a refusal returns ``None``. :meth:`plan_word` is that span
+    written out for the caller that has a whole word and no span.
     """
 
     def __init__(
@@ -116,3 +117,20 @@ class SpelledPhonemePlanner:
             return override
         spelled = "".join(self._spell(p) for p in pieces[start:stop])
         return "ˈ" + spelled if stop - start == 1 else spelled
+
+    def plan_word(self, word: str) -> str | None:
+        """The IPA of the WHOLE *word*, or ``None`` for plain synthesis.
+
+        :meth:`plan_chunk` needs a span, and a caller holding a whole word has
+        none to pass — a breakdown chunk knows which syllables of its source word
+        it is, and a multi-word drill step does not. So this is the same span,
+        ``(0, every syllable)``, filled in from the same strip and the same
+        split :meth:`plan_chunk` will do: a word planned through different
+        letters than its own chunks are would give two readings of one word.
+
+        Nothing new is decided here. A whole word was never special for this
+        class (unlike the lexicon-backed planners there is nothing to look it up
+        in), so the whole-word overrides apply as they always did, and an empty
+        or all-punctuation word refuses exactly as an empty span does.
+        """
+        return self.plan_chunk(word, (0, len(self._syllabify(_bare(word)))))

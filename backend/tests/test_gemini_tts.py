@@ -544,6 +544,94 @@ async def test_a_single_token_with_two_phoneme_entries_warns_about_the_second(tm
     assert "prompt" not in bodies[0]["input"]
 
 
+# A MULTI-word drill step, and the phrase the user heard as "ilubong uglak".
+# Plain Gemini got "ugma" wrong in 2 of 3 blind renders; told the reading, 2 of
+# 2 right and not stiff (their A/B, 2026-09-25). A second instruction is needed
+# because "say only this one syllable or word" is a lie about two words.
+_PHRASE = "ilubong ugma"
+_PHRASE_IPAS = {"ilubong": "ʔiluboŋ", "ugma": "ʔuɡma"}
+_PHRASE_PROMPT = (
+    "Say exactly this Cebuano phrase, once, with nothing before or after it. "
+    "Pronounce it exactly as the IPA /ʔiluboŋ ʔuɡma/."
+)
+
+
+@respx.mock
+async def test_a_phrase_is_spoken_from_the_ipa_of_its_words(tmp_path, caplog):
+    """The mirror of the single-token path, and the row this adapter lacked.
+
+    The words are joined into ONE reading, because the model is told one thing
+    to say rather than one thing per word. And it must not warn: the mapping is
+    honoured, and a warning here would be logged on every drill step of every
+    Cebuano lesson.
+    """
+    bodies: list[dict] = []
+
+    async def _record(request):
+        bodies.append(json.loads(request.content))
+        return _ok()
+
+    respx.post(SYNTHESIS_URL).mock(side_effect=_record)
+
+    with caplog.at_level(logging.WARNING):
+        await _svc().synthesize(_PHRASE, VOICE, tmp_path / "1.mp3", phonemes=_PHRASE_IPAS)
+
+    assert bodies[0]["input"]["prompt"] == _PHRASE_PROMPT
+    assert _warnings(caplog) == []
+
+
+@respx.mock
+async def test_a_phrase_whose_map_does_not_cover_its_words_degrades_to_the_warning(tmp_path, caplog):
+    """The counts disagree, so there is no reading to give.
+
+    A half-filled map is not a phrase IPA with a missing word — it is a map
+    whose alignment to the text is unknown, and speaking it would replace one
+    word's reading with another's. A phrase REPEATING a word lands here for
+    free: "ko ang ko" is three tokens and the map has collapsed to two.
+    """
+    respx.post(SYNTHESIS_URL).mock(return_value=_ok())
+    bodies: list[dict] = []
+
+    async def _record(request):
+        bodies.append(json.loads(request.content))
+        return _ok()
+
+    respx.post(SYNTHESIS_URL).mock(side_effect=_record)
+
+    with caplog.at_level(logging.WARNING):
+        await _svc(cache_dir=tmp_path).synthesize(_PHRASE, VOICE, tmp_path / "1.mp3", phonemes={"ilubong": "ʔiluboŋ"})
+        await _svc(cache_dir=tmp_path).synthesize(
+            "ko ang ko", VOICE, tmp_path / "2.mp3", phonemes={"ko": "ko", "ang": "ˈʔaŋ"}
+        )
+
+    assert len(_warnings(caplog)) == 2
+    assert "prompt" not in bodies[0]["input"]
+    assert "prompt" not in bodies[1]["input"]
+    # Today's key, unprompted: the fallback is exactly the render that was
+    # heard and rejected, not a different one.
+    assert (tmp_path / "7e03c60410f5ccb6.mp3").exists()
+
+
+@respx.mock
+async def test_a_prompted_phrase_gets_its_own_cache_file_and_never_the_plain_one(tmp_path):
+    """The digests, pinned — and the plain one is the clip this replaces.
+
+    feb482c2706b423c is the keyed render of "ilubong ugma"; 7e03c60410f5ccb6 is
+    the bare-text render of the SAME words, which is the audio the user heard
+    as "uglak". A phrase render served from it would be this change doing
+    nothing at all, silently, for as long as the cache held.
+    """
+    respx.post(SYNTHESIS_URL).mock(return_value=_ok())
+    with_ipa = tmp_path / "ipa"
+    plain = tmp_path / "plain"
+
+    await _svc(cache_dir=with_ipa).synthesize(_PHRASE, VOICE, tmp_path / "1.mp3", phonemes=_PHRASE_IPAS)
+    await _svc(cache_dir=plain).synthesize(_PHRASE, VOICE, tmp_path / "2.mp3")
+
+    assert (with_ipa / "feb482c2706b423c.mp3").exists()
+    assert (plain / "7e03c60410f5ccb6.mp3").exists()
+
+
 @respx.mock
 async def test_speak_locale_is_ignored_silently(tmp_path, caplog):
     """The voice's own languageCode is explicit, so there is nothing to

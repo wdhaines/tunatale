@@ -22,15 +22,17 @@ from app.audio.ports import TTSService
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.slicer import ChunkSlicer, SliceSpec
 from app.audio.transcode import encode_audio_stream
+from app.generation.section_builder import _SENTENCE_PUNCTUATION
 from app.languages import (
     PhonemePlanner,
+    get_ipa_for_drill_phrases,
     get_ipa_read_in_voice_locale,
     get_phoneme_planner,
     get_preprocessor,
     get_tts_locale,
     get_tts_voice_gain_db,
 )
-from app.models.lesson import Lesson, Phrase, Section
+from app.models.lesson import Lesson, Phrase, Section, SectionType
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -418,7 +420,7 @@ class LessonRenderer:
             if phrase.language_code != language_code:
                 return None
             if phrase.source_word is None or phrase.syllable_span is None:
-                return None
+                return _drill_phrase_phonemes(phrase)
             result = planner.plan_chunk(
                 phrase.source_word, phrase.syllable_span, upos=phrase.upos or None, chunk_text=phrase.text
             )
@@ -428,6 +430,50 @@ class LessonRenderer:
             # chunk stored with its punctuation ("bing?") would otherwise match
             # nothing and silently play as text (tunatale-w4m7.16).
             return {_bare_word(phrase.text): result}
+
+        def _drill_phrase_phonemes(phrase: Phrase) -> Mapping[str, str] | None:
+            """Per-word IPA for a whole multi-word DRILL step, or ``None``.
+
+            The path above plans a chunk of a word, and a key phrase is not one:
+            it arrives with no ``source_word`` and no ``syllable_span``, so the
+            whole step used to fall through to plain text. A Cebuano drill
+            phrase rendered as plain text was heard as "ilubong uglak" rather
+            than "ilubong ugma" (the user's blind A/B, 2026-09-25: "ugma" wrong
+            2 of 3 plain, 2 of 2 right once the reading was given).
+
+            Four conditions, each a refusal rather than a guess:
+
+            * a KEY_PHRASES section — dialogue is a full sentence, and phrase IPA
+              on one is untested, so it stays plain for every language;
+            * a language that asked for this (``get_ipa_for_drill_phrases``) —
+              the channel is the adapter's, and another language's Azure voice
+              would wrap every word of the step in ``<phoneme>``;
+            * a planner that can read a WHOLE word (``plan_word``) — a
+              lexicon-backed planner has no such method, and is never asked for
+              one, only skipped;
+            * at least two words — a lone word is the other path's business, and
+              the adapter's own instruction for a single word names a "syllable
+              or word", which a phrase must not be asked to say about itself.
+
+            One word the planner cannot read refuses the WHOLE map rather than
+            leaving a gap: a half-read phrase is a phrase whose words were
+            aligned to the wrong readings, and a wrong reading is worse than the
+            plain render this replaces.
+            """
+            if section.section_type != SectionType.KEY_PHRASES:
+                return None
+            if not get_ipa_for_drill_phrases(language_code):
+                return None
+            plan_word = getattr(planner, "plan_word", None)
+            if plan_word is None:
+                return None
+            words = phrase.text.strip(_SENTENCE_PUNCTUATION).split()
+            if len(words) < 2:
+                return None
+            planned = [(word, plan_word(word)) for word in words]
+            if any(ipa is None for _, ipa in planned):
+                return None
+            return {_bare_word(word): ipa for word, ipa in planned}
 
         ipa_indices: set[int] = set()
         phoneme_maps: list[Mapping[str, str] | None] = []

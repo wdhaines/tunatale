@@ -68,6 +68,12 @@ _AUDIO_ENCODING = "MP3"
 # The model's output is nondeterministic, so a reworded instruction cannot be
 # told apart from yesterday's audio by anything else: bump this on ANY change to
 # the sentence, or the cache keeps serving what the old words produced.
+#
+# The PHRASE instruction (``_phrase_ipa_prompt``, added 2026-09-25) is the one
+# addition that does NOT bump it, and deliberately: a phrase is only prompted by
+# a map with two or more entries, and such a map never reached this key before —
+# there was no instruction to key. Every key already in the cache is a
+# single-fragment one, and bumping would throw all of it away for nothing.
 PROMPT_VERSION = 1
 
 # cloud-platform, not the narrower speech scope: the token is minted for the
@@ -210,6 +216,40 @@ def _single_token_ipa(text: str, phonemes: Mapping[str, str]) -> str | None:
     return next(iter(phonemes.values()))
 
 
+def _phrase_ipa_prompt(name: str, ipa: str) -> str:
+    """The instruction for a whole PHRASE. *name* carries its own trailing space.
+
+    A second sentence rather than a parameter of :func:`_ipa_prompt`, because
+    "say only this one syllable or word" is a false statement about two words,
+    and this is a request to be exact. Measured by the user's ear on 2026-09-25:
+    blind A/B of "ilubong ugma" was wrong 2 of 3 plain and 2 of 2 right with the
+    phrase reading, and not stiff.
+    """
+    return (
+        f"Say exactly this {name}phrase, once, with nothing before or after it. "
+        f"Pronounce it exactly as the IPA /{ipa}/."
+    )
+
+
+def _phrase_ipa(text: str, phonemes: Mapping[str, str]) -> str | None:
+    """The one IPA a PHRASE instruction can carry, or ``None`` when the shape does not fit.
+
+    The mirror of :func:`_single_token_ipa`, and its other half: a map holding
+    one entry per TOKEN is read as the whole phrase's reading, in word order.
+
+    The count is the discriminator, which refuses a phrase REPEATING a word for
+    free — the map is keyed by word, so "ko ang ko" is three tokens over two
+    entries, and the step stays plain rather than being rendered from a reading
+    with a word missing from it. The same refusal covers a half-filled map for
+    the same reason. Values are taken BY POSITION, as in the single-token path,
+    never by looking their key up in *text*.
+    """
+    tokens = text.strip(_SENTENCE_PUNCTUATION).split()
+    if len(tokens) < 2 or len(phonemes) != len(tokens):
+        return None
+    return " ".join(phonemes.values())
+
+
 class GeminiTTSService:
     """Google Cloud TTS adapter for ``<locale>-<Name>Gemini`` voices.
 
@@ -288,19 +328,24 @@ class GeminiTTSService:
             output_path: Destination file path for the synthesized audio.
             rate: Speech rate adjustment as a percentage string (e.g.
                 ``"-20%"``), mapped to the provider's multiplier.
-            phonemes: Per-token IPA. A SINGLE token with one entry is spoken
+            phonemes: Per-token IPA. A mapping of one entry per TOKEN is spoken
                 from it, via an ``input.prompt`` instruction (there is no
-                ``<phoneme>`` markup for Gemini voices). Any other non-empty
-                mapping logs one warning and changes neither the request nor the
-                cache key.
+                ``<phoneme>`` markup for Gemini voices): a lone token gets the
+                single-fragment sentence, two or more get the phrase one. Any
+                other non-empty mapping logs one warning and changes neither the
+                request nor the cache key.
             speak_locale: Accepted and IGNORED, silently. The voice's own
                 ``languageCode`` is explicit, so there is nothing to override.
         """
         language_code, name = _parse_voice_id(voice_id)
         speaking_rate = _speaking_rate(rate)
         ipa: str | None = None
+        phrase = False
         if phonemes:
             ipa = _single_token_ipa(text, phonemes)
+            if ipa is None:
+                ipa = _phrase_ipa(text, phonemes)
+                phrase = ipa is not None
             if ipa is None:
                 self._warn_phonemes_unsupported()
 
@@ -312,7 +357,7 @@ class GeminiTTSService:
                 logger.debug("Gemini TTS cache hit for %r", text[:40])
                 return
 
-        audio = await self._synthesize_with_retry(text, language_code, name, speaking_rate, ipa)
+        audio = await self._synthesize_with_retry(text, language_code, name, speaking_rate, ipa, phrase)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(audio)
@@ -370,7 +415,13 @@ class GeminiTTSService:
         return self._cache_dir / f"{digest}.mp3"  # type: ignore[operator]
 
     def _request_body(
-        self, text: str, language_code: str, name: str, speaking_rate: float, ipa: str | None = None
+        self,
+        text: str,
+        language_code: str,
+        name: str,
+        speaking_rate: float,
+        ipa: str | None = None,
+        phrase: bool = False,
     ) -> dict:
         """The JSON body, exactly as the endpoint is measured to accept it.
 
@@ -378,11 +429,17 @@ class GeminiTTSService:
         carries base64 MP3 in ``audioContent``. ``prompt`` rides inside
         ``input``, and is omitted entirely when there is no IPA to speak — the
         field is not in the request at all for a plain render.
+
+        *phrase* picks which of the two instructions carries the IPA, and it is
+        the CALLER's measurement of the shape rather than a re-derivation here:
+        the same count that decided the reading decides the sentence, and asking
+        twice is asking to disagree.
         """
         request_input: dict[str, str] = {"text": text}
         if ipa is not None:
             language_name = language_name_for_tts_locale(language_code)
-            request_input["prompt"] = _ipa_prompt(f"{language_name} " if language_name else "", ipa)
+            build_prompt = _phrase_ipa_prompt if phrase else _ipa_prompt
+            request_input["prompt"] = build_prompt(f"{language_name} " if language_name else "", ipa)
         return {
             "input": request_input,
             "voice": {"languageCode": language_code, "name": name, "model_name": self._model},
@@ -390,12 +447,18 @@ class GeminiTTSService:
         }
 
     async def _synthesize_with_retry(
-        self, text: str, language_code: str, name: str, speaking_rate: float, ipa: str | None = None
+        self,
+        text: str,
+        language_code: str,
+        name: str,
+        speaking_rate: float,
+        ipa: str | None = None,
+        phrase: bool = False,
     ) -> bytes:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
-                return await self._do_synthesize(text, language_code, name, speaking_rate, ipa)
+                return await self._do_synthesize(text, language_code, name, speaking_rate, ipa, phrase)
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code
                 if _is_fatal(status):
@@ -431,7 +494,13 @@ class GeminiTTSService:
         raise TTSExhausted(f"Gemini TTS synthesis failed after {MAX_RETRIES} attempts") from last_error
 
     async def _do_synthesize(
-        self, text: str, language_code: str, name: str, speaking_rate: float, ipa: str | None = None
+        self,
+        text: str,
+        language_code: str,
+        name: str,
+        speaking_rate: float,
+        ipa: str | None = None,
+        phrase: bool = False,
     ) -> bytes:
         token = await self._token_provider()
         headers = {
@@ -439,7 +508,7 @@ class GeminiTTSService:
             "Content-Type": "application/json",
             "User-Agent": "tunatale",
         }
-        body = self._request_body(text, language_code, name, speaking_rate, ipa)
+        body = self._request_body(text, language_code, name, speaking_rate, ipa, phrase)
         # The pacing delay is paid on EVERY attempt — success or failure — so
         # that consecutive request STARTS are at least min_delay apart. A
         # throttled request that exits instantly is what turns a burst into a

@@ -126,3 +126,37 @@ def test_a_word_without_an_override_is_still_spelled(planner):
     """Control: the override table is an exception list, not a lookup that
     replaces the letter rules."""
     assert planner.plan_chunk("sa", (0, 1)) == "ˈsa"
+
+
+# ---------------------------------------------------------------------------
+# plan_word: the WHOLE word, for a multi-word drill step
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("word", "expected"),
+    [
+        # "ilubong ugma", the phrase the user heard as "ilubong uglak" — the row
+        # this method exists for. A vowel-initial first syllable opens on a
+        # glottal stop; more than one syllable carries no stress mark.
+        ("ilubong", "ʔiluboŋ"),
+        ("ugma", "ʔuɡma"),
+        # One syllable: the lone-syllable stress mark, and the glottal onset.
+        ("ang", "ˈʔaŋ"),
+        # The lesson's punctuation is stripped, and a consonant-initial word has
+        # no glottal onset to write.
+        ("lubong?", "luboŋ"),
+        # The override still applies: it is keyed on a span covering the whole
+        # word, which is exactly what this is.
+        ("mga", "maˈŋa"),
+    ],
+)
+def test_a_whole_word_is_read_off_its_spelling(planner, word, expected):
+    assert planner.plan_word(word) == expected
+
+
+@pytest.mark.parametrize("word", ["", "?"], ids=["empty", "all_punctuation"])
+def test_a_word_with_nothing_to_read_gets_no_ipa(planner, word):
+    """Nothing to spell: an empty or all-punctuation word is plain text, and a
+    caller that treated it as an empty reading would speak a silence."""
+    assert planner.plan_word(word) is None
