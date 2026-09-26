@@ -42,6 +42,15 @@ DICTIONARY = cs.Dictionary(
             _entry("asawa", "spouse; wife; husband"),
             _entry("tulo", "three"),
             _entry("mahal", "expensive"),
+            # Near-cognate DECOYS measured in the first live dry run (2026-09-26):
+            # a spelling one edit away sharing ONE word with a long gloss.
+            _entry("kainom", "a person whom one is having a drink with"),
+            _entry("agaw", "a cousin", "to take away from someone's possession; to usurp"),
+            _entry("haya", "a wake; a period after a person's death"),
+            _entry("paliya", "Momordica charantia, a vine in the family Cucurbitaceae; bitter melon"),
+            _entry("taas", "long; tall; high"),
+            _entry("kakita", "able to see"),
+            _entry("iningles", "English (language)"),
             "",
             json.dumps({"lang_code": "ceb", "senses": []}),  # a headless row is skipped
         ]
@@ -66,6 +75,15 @@ class TestGloss:
     def test_a_shared_content_word_does(self):
         assert cs.glosses_compatible("the house", ["house; home"])
 
+    def test_one_and_two_letter_fragments_are_not_words(self):
+        assert not cs.glosses_compatible("that’s why", ["a person's death"])
+
+    def test_equivalent_glosses_allow_one_extra_word_either_way(self):
+        assert cs.glosses_equivalent("to see", ["able to see"])
+        assert cs.glosses_equivalent("American (f)", ["American woman"])
+        assert not cs.glosses_equivalent("whom", ["a person whom one is having a drink with"])
+        assert not cs.glosses_equivalent("(f)", ["f"])
+
     def test_plurals_match_their_singular(self):
         assert cs.glosses_compatible("houses", ["house"])
 
@@ -83,6 +101,29 @@ class TestClassify:
         m = DICTIONARY.classify(_word("Amerikana", "coat"))
         assert m.relation is cs.Relation.FALSE_FRIEND
         assert m.target_glosses == ("American woman",)
+
+    @pytest.mark.parametrize(
+        ("text", "gloss"),
+        [
+            ("Kanino?", "Whom?"),  # kainom: "a person WHOM one is having a drink with"
+            ("agad", "right away"),  # agaw: "to take AWAY from someone's possession"
+            ("kaya", "therefore / that’s why"),  # haya: only the "s" of "that’s" and "person's"
+            ("pamilya", "family"),  # paliya: "a vine in the FAMILY Cucurbitaceae"
+        ],
+    )
+    def test_a_near_cognate_needs_the_gloss_not_one_shared_word(self, text, gloss):
+        """A near-cognate's spelling is weak evidence, so its meaning must be
+        near-identical: some gloss segment equal to the translation, give or take
+        one word. The loose shared-word test let eight coincidences through."""
+        assert DICTIONARY.classify(_word(text, gloss)).relation is cs.Relation.UNRELATED
+
+    @pytest.mark.parametrize(
+        ("text", "gloss", "target"),
+        [("mataas", "high", "taas"), ("makita", "to see", "kakita"), ("Ingles", "English", "iningles")],
+    )
+    def test_a_segment_of_the_gloss_is_enough(self, text, gloss, target):
+        m = DICTIONARY.classify(_word(text, gloss))
+        assert (m.relation, m.target_text) == (cs.Relation.NEAR_COGNATE, target)
 
     def test_two_edits_in_five_letters_is_too_far(self):
         """tatlo/tulo both mean three, but the learner cannot tell that from chance."""

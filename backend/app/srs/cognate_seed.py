@@ -16,7 +16,9 @@ The pipeline, and what each step decides
    language with a compatible English gloss.
 
    - same spelling, compatible gloss → ``COGNATE``
-   - a similar spelling (``near_cognate_distance``), compatible gloss → ``NEAR_COGNATE``
+   - a similar spelling (``near_cognate_distance``) and an EQUIVALENT gloss
+     (``glosses_equivalent``, stricter, because the spelling is weaker evidence)
+     → ``NEAR_COGNATE``
    - same spelling, NO compatible gloss → ``FALSE_FRIEND``: a warning, never minted
    - nothing → ``UNRELATED``: not a starter card
 
@@ -82,7 +84,11 @@ _GLOSS_STOPWORDS = frozenset(
         "my", "his", "her", "their", "our", "you", "i", "he", "she", "we", "they",
     }
 )  # fmt: skip
-_WORD = re.compile(r"[a-z]+")
+# Three letters or more: "that’s" and "person's" both leave a bare "s" behind,
+# and two glosses sharing it matched kaya with haya ("a wake").
+_WORD = re.compile(r"[a-z]{3,}")
+_PARENTHETICAL = re.compile(r"\([^)]*\)")
+_SEGMENT_SPLIT = re.compile(r"[;,]")
 
 
 class Relation(Enum):
@@ -151,6 +157,29 @@ def glosses_compatible(translation: str, glosses: Iterable[str]) -> bool:
     return any(wanted & gloss_tokens(g) for g in glosses)
 
 
+def glosses_equivalent(translation: str, glosses: Iterable[str]) -> bool:
+    """True when some gloss SEGMENT means what *translation* says, give or take a word.
+
+    The near-cognate test. A spelling one edit away is weak evidence on its own,
+    so one shared word is not enough: the first live dry run (2026-09-26) matched
+    agad "right away" with agaw "to take AWAY from someone's possession", and
+    Kanino? "Whom?" with kainom "a person WHOM one is having a drink with" — 8 of
+    30 near-cognates were coincidences like these. A segment is a ``;``/``,``
+    piece of a gloss with its parentheticals removed ("English (language)" →
+    "English"); it must hold the same content words as the translation, or one
+    more or one fewer ("to see" ~ "able to see").
+    """
+    wanted = gloss_tokens(_PARENTHETICAL.sub(" ", translation))
+    if not wanted:
+        return False
+    for gloss in glosses:
+        for segment in _SEGMENT_SPLIT.split(_PARENTHETICAL.sub(" ", gloss)):
+            small, big = sorted((wanted, gloss_tokens(segment)), key=len)
+            if small and small <= big and len(big) - len(small) <= 1:
+                return True
+    return False
+
+
 def load_dictionary(lines: Iterable[str]) -> dict[str, tuple[str, ...]]:
     """Normalised headword → every English gloss, from kaikki.org JSONL lines."""
     out: dict[str, list[str]] = {}
@@ -207,7 +236,11 @@ class Dictionary:
             return Match(word, Relation.FALSE_FRIEND, text, glosses)
         limit = near_cognate_distance(text)
         candidates = {w for tok in gloss_tokens(word.translation) for w in self._by_token.get(tok, ())}
-        scored = sorted((d, w) for w in candidates if 0 < (d := edit_distance(text, w)) <= limit)
+        scored = sorted(
+            (d, w)
+            for w in candidates
+            if 0 < (d := edit_distance(text, w)) <= limit and glosses_equivalent(word.translation, self.entries[w])
+        )
         if scored:
             _, best = scored[0]
             return Match(word, Relation.NEAR_COGNATE, best, self.entries[best])
