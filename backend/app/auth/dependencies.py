@@ -29,3 +29,32 @@ async def require_user(request: Request) -> User | None:
         raise HTTPException(status_code=401)
 
     return user
+
+
+async def require_owner(request: Request) -> None:
+    """Refuse (403) anyone but the deployment's owner — see app.storage.user_dbs.
+
+    For what is process-global and therefore the OWNER's by construction: Anki
+    sync (one collection path, one AnkiWeb login — ``run_full_sync`` driven by
+    another account would push that account's reviews into the owner's Anki)
+    and the admin tools. ``is_owner`` is bound by main.py's
+    ``_resolve_language_state`` on every request, True whenever auth is off;
+    its absence fails CLOSED. Listed AFTER ``require_user`` on a router, so an
+    anonymous caller still gets the 401 that says "log in".
+    """
+    if not getattr(request.state, "is_owner", False):
+        raise HTTPException(status_code=403, detail="Only this deployment's owner can do that")
+
+
+async def require_owner_for_writes(request: Request) -> None:
+    """``require_owner`` for everything but reads.
+
+    For the lesson surfaces. Another account reads its own (empty) lesson store
+    — that is how its pages render their empty states — but generation runs
+    through the background ``LessonPipeline``, which is keyed by language alone
+    and writes the OWNER's stores. Until it is keyed by user, lesson writes are
+    the owner's.
+    """
+    if request.method in ("GET", "HEAD"):
+        return
+    await require_owner(request)

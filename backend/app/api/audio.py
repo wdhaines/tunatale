@@ -31,6 +31,11 @@ def _stores_to_search(request: Request) -> list:
     another language's store is the right row, not a collision.
     """
     first = request.state.content_store
+    if not request.state.is_owner:
+        # app.state.content_stores are the OWNER's (tunatale-3k8). Another
+        # account's lesson ids would never match there, but a guessed or leaked
+        # one would serve the owner's audio to them.
+        return [first]
     others = getattr(request.app.state, "content_stores", None) or {}
     return [first] + [s for s in others.values() if s is not first]
 
