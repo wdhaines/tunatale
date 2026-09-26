@@ -192,3 +192,50 @@ def test_a_whole_word_override_wins_only_for_the_whole_word():
     assert p.plan_chunk("abcd", (0, 2)) == "XYZ"
     assert p.plan_chunk("abcd", (0, 1)) == "ˈʔab"
     assert p.plan_chunk("abce", (0, 2)) == "ʔabce"
+
+
+# ---------------------------------------------------------------------------
+# plan_word: the whole word, with no span for the caller to compute
+# ---------------------------------------------------------------------------
+
+
+def test_a_whole_word_is_a_span_over_every_syllable_of_it():
+    """``plan_word`` is ``plan_chunk`` with the span filled in — the same span,
+    off the same strip and split, so a whole word can never be planned through
+    different letters than a caller spelling it out by hand would get."""
+    planner = _planner("a", "ko")
+    assert planner.plan_word("ako") == planner.plan_chunk("ako", (0, 2)) == "ʔako"
+    # The pieces are counted off the STRIPPED word, so a caption's punctuation
+    # does not change the span — or the reading.
+    assert planner.plan_word('"ako?"') == "ʔako"
+    assert planner.plan_word("(ako)") == "ʔako"
+    # A consonant-initial word: no glottal onset to write, and still one span
+    # over both pieces.
+    consonant = _planner("ny", "ko")
+    assert consonant.plan_word("nyko") == consonant.plan_chunk("nyko", (0, 2)) == "njko"
+
+
+def test_a_whole_word_with_nothing_in_it_gets_no_ipa():
+    # No syllables at all, and one empty piece: both refuse, as they must —
+    # a word with nothing to spell is plain text, not a silence.
+    assert _planner().plan_word("ako") is None
+    assert _planner("").plan_word("ako") is None
+    # An empty word and an all-punctuation one, against a syllabifier that
+    # reflects its INPUT (the stub above returns its fixed pieces whatever it is
+    # given, so it cannot show this): both strip to nothing, and a caller must
+    # get the refusal rather than an empty reading to hand a voice.
+    planner = SpelledPhonemePlanner(letter_ipa=_LETTER, digraph_ipa=_DIGRAPH, syllabify=list)
+    assert planner.plan_word("") is None
+    assert planner.plan_word("?") is None
+
+
+def test_a_whole_word_override_is_reachable_through_plan_word():
+    p = SpelledPhonemePlanner(
+        letter_ipa={c: c for c in "abcdefghijklmnopqrstuvwxyz"},
+        digraph_ipa={},
+        syllabify=lambda w: [w[:2], w[2:]] if len(w) > 2 else [w],
+        whole_word_ipa={"abcd": "XYZ"},
+    )
+    # The override is keyed on a span covering the whole word, so a caller with
+    # no span to pass still reaches it.
+    assert p.plan_word("abcd") == "XYZ"

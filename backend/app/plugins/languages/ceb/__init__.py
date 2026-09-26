@@ -80,6 +80,14 @@ register(
         # planner not built on a pronunciation lexicon: the reading comes off
         # the spelling, in core, with only the letter table here.
         phoneme_planner_factory=create_phoneme_planner,
+        # Multi-word drill steps get a per-word IPA map too, and only here
+        # (brief-ceb-phrase-ipa, 2026-09-25): plain Gemini said "ilubong ugma"
+        # as "ilubong uglak", and in the user's blind A/B the reading fixed it
+        # (2 of 2 right, 2 of 3 wrong without). Deliberately NOT a default — the
+        # channel is the adapter's, and Tagalog's drill runs on Azure, where a
+        # per-word map would wrap every word in <phoneme> and change audio
+        # nobody has listened to.
+        ipa_for_drill_phrases=True,
         # Deliberately omitted until their owning beads ship:
         # - planner_example: get_planner_example picks the LOWEST-SORTING other
         #   language that supplies one, and "ceb" sorts before every other
