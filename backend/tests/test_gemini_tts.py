@@ -23,7 +23,7 @@ import pytest
 import respx
 
 from app.audio import gemini_tts
-from app.audio.gemini_tts import GeminiTTSService
+from app.audio.gemini_tts import GeminiTTSService, resolve_ipa
 from app.audio.ports import TTSExhausted
 
 SYNTHESIS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize"
@@ -1137,3 +1137,32 @@ async def test_the_rate_edges_are_accepted_and_carry_no_float_noise(tmp_path, ra
     sent = json.loads(route.calls.last.request.content)["audioConfig"]["speakingRate"]
     assert sent == speaking_rate
     assert repr(sent) == repr(speaking_rate)
+
+
+# ---------------------------------------------------------------------------
+# resolve_ipa — the ``(ipa, phrase)`` decision on its own, because a caller that
+# only needs to know what the cache key would be (the render-cost report) must
+# be able to derive it WITHOUT synthesizing. Same two numbers synthesize()
+# computes, so a key it predicts is the key a render writes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "phonemes", "expected"),
+    [
+        # One entry, one token: the single-fragment instruction, phrase=False.
+        ("buntag", {"buntag": "ˈbuntag"}, ("ˈbuntag", False)),
+        # One entry per TOKEN: the whole phrase's reading, in word order.
+        ("maayong buntag", {"maayong": "maˈʔaːjoŋ", "buntag": "ˈbuntag"}, ("maˈʔaːjoŋ ˈbuntag", True)),
+        # No mapping at all, and an empty one: a plain render either way, and
+        # the ipa=None that is the OTHER half of the warning's condition.
+        ("x", None, (None, False)),
+        ("x", {}, (None, False)),
+        # A non-empty mapping whose SHAPE fits neither instruction: still
+        # (None, False), which is the pair that makes synthesize() warn.
+        ("x", {"a": "a", "b": "b"}, (None, False)),
+    ],
+    ids=["single-token", "phrase", "no-mapping", "empty-mapping", "unsupported-shape"],
+)
+def test_resolve_ipa(text, phonemes, expected):
+    assert resolve_ipa(text, phonemes) == expected

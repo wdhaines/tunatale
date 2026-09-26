@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Literal
 
 from app.audio.ports import TTSService
 
@@ -30,6 +31,25 @@ from app.audio.ports import TTSService
 # scripts/check_language_literals.py.
 _GEMINI_SUFFIX = "Gemini"
 _AZURE_SUFFIX = "Neural"
+
+
+def provider_for(voice_id: str) -> Literal["azure", "gemini"]:
+    """Which provider owns *voice_id*, or a ``ValueError`` naming it.
+
+    The whole routing rule, as a public function, because not every caller wants
+    an adapter and only wants to know whose bill a voice lands on — the
+    render-cost report prices each provider in its own unit and must split the
+    keys before it can price either. The match stays exact and case-sensitive
+    and the refusal stays the same one :meth:`RoutingTTSService._adapter_for`
+    raises: two copies of one rule would be one rule too many.
+    """
+    if voice_id.endswith(_GEMINI_SUFFIX):
+        return "gemini"
+    if voice_id.endswith(_AZURE_SUFFIX):
+        return "azure"
+    raise ValueError(
+        f"{voice_id!r} names no known TTS provider: a voice id must end in {_GEMINI_SUFFIX!r} or {_AZURE_SUFFIX!r}"
+    )
 
 
 class RoutingTTSService:
@@ -88,12 +108,9 @@ class RoutingTTSService:
 
         The match is exact and case-sensitive, and it is the whole routing
         rule: an id matching neither suffix is a registry bug, and raising
-        here is what keeps it from becoming a billed request.
+        here is what keeps it from becoming a billed request. :func:`provider_for`
+        IS that rule, asked for its answer rather than for the adapter.
         """
-        if voice_id.endswith(_GEMINI_SUFFIX):
+        if provider_for(voice_id) == "gemini":
             return self._gemini
-        if voice_id.endswith(_AZURE_SUFFIX):
-            return self._azure
-        raise ValueError(
-            f"{voice_id!r} names no known TTS provider: a voice id must end in {_GEMINI_SUFFIX!r} or {_AZURE_SUFFIX!r}"
-        )
+        return self._azure

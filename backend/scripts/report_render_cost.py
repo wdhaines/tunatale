@@ -13,6 +13,24 @@ reports: distinct key count, TTS-cache hits, cache misses, and the summed
 request the render would actually send to Azure, and a hit bills nothing. It
 then prints the monthly-allowance context (500,000 chars/month on the F0 tier).
 
+A render can be spoken by either provider, and each key is routed to the one
+that owns its voice id before anything is counted (see
+``tts_router.provider_for``), so the two never share a leg and the figures above
+are Azure's alone. Gemini keys are priced differently and deliberately
+LOOSELY: this provider has no billable-body unit to sum, because it has no SSML
+at all — the request is text plus an optional prompt, and Cloud TTS bills the
+AUDIO that comes back, measured in audio tokens. So those legs are an ESTIMATE,
+``_GEMINI_CHARS_PER_SECOND`` of synthesized characters per second of audio
+(measured on Cebuano) times ``_GEMINI_AUDIO_TOKENS_PER_SECOND`` tokens per
+second, divided by the speaking rate, priced at
+``_GEMINI_USD_PER_MILLION_AUDIO_TOKENS`` — three named constants, because the
+honest thing about this number is that it is derived, and a reader is entitled
+to see the derivation and disagree with a term. Hit-vs-miss is NOT estimated:
+it is the same ``.exists()`` against the same shared cache directory, for both
+providers, so ``--cache-dir <empty dir>`` still gives the true cold price and the
+differing numbers between the two providers are the providers', not this
+script's.
+
 The two legs mirror ``LessonRenderer._render_section`` exactly — this script
 WIRES the renderer's existing functions, it does not re-derive their rules:
 
@@ -54,14 +72,17 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.audio import gemini_tts  # noqa: E402
 from app.audio.azure_tts import AzureTTSService  # noqa: E402
+from app.audio.gemini_tts import GeminiTTSService, resolve_ipa  # noqa: E402
 from app.audio.preprocessing.base import TextPreprocessor  # noqa: E402
 from app.audio.slicer import PARENT_RATE, alignment_installed  # noqa: E402
+from app.audio.tts_router import provider_for  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.languages import (  # noqa: E402
     PhonemePlanner,
@@ -77,6 +98,23 @@ from app.storage.store import ContentStore  # noqa: E402
 # The Azure F0 tier's monthly allowance. Both the report's share line and the
 # reader's "is this affordable" judgement hang off this one literal.
 _MONTHLY_ALLOWANCE = 500_000
+
+# ---------------------------------------------------------------------------
+# The Gemini estimate's three constants, and why this unit and not a billable
+# body (see the module docstring). Each is a MEASURED or PUBLISHED number, not a
+# fitted curve, and they are named so a reader can disagree with one of them
+# without having to find it in an expression.
+#
+# _GEMINI_CHARS_PER_SECOND is speaking RATE — characters of Cebuano audio per
+# second at speakingRate 1.0, measured on real renders rather than assumed from
+# a language. It is the only measured number here and the only one worth
+# re-measuring: it moves the whole estimate proportionally, and the pace it was
+# measured at is Cebuano, so a different language's rate estimate is as wrong as
+# this one is for a different voice.
+# ---------------------------------------------------------------------------
+_GEMINI_CHARS_PER_SECOND = 11.0
+_GEMINI_AUDIO_TOKENS_PER_SECOND = 25.0
+_GEMINI_USD_PER_MILLION_AUDIO_TOKENS = 10.0  # gemini-2.5-flash-tts on Cloud TTS
 
 # The renderer's dedupe key: (processed text, voice, rate, sorted phoneme
 # mapping, speak locale) — renderer.py::_synth. Neither the mapping nor the
@@ -102,11 +140,43 @@ class LegStats:
 
 
 @dataclass(frozen=True)
+class GeminiLegStats:
+    """One cost leg's Gemini keys, in the units that provider bills in.
+
+    Azure reports the exact billable characters of each request. Gemini has no
+    such unit to report, so this leg reports the two numbers the estimate is
+    built from — the synthesized characters of the misses, and the audio tokens
+    those characters predict — and the dollars follow from the second. ``chars``
+    sums over MISSES only, and it is the count the token estimate is derived
+    from, so it is reported rather than recomputed by a reader.
+    """
+
+    distinct: int
+    hits: int
+    misses: int
+    chars: int
+    audio_tokens: float
+
+    @classmethod
+    def empty(cls) -> GeminiLegStats:
+        return cls(distinct=0, hits=0, misses=0, chars=0, audio_tokens=0.0)
+
+
+@dataclass(frozen=True)
 class RenderCost:
-    """Both cost legs of a render, and their sum."""
+    """Both cost legs of a render, and their sum.
+
+    The four Azure legs are the Azure-billable ones: keys are routed to a
+    provider before they are counted, and a Gemini voice contributes to
+    ``gemini_phrase``/``gemini_slicer`` and never to the ``*_chars`` above. The
+    Gemini legs default to empty, so an all-Azure caller names only the two it
+    has.
+    """
 
     phrase: LegStats
     slicer: LegStats
+    gemini_phrase: GeminiLegStats = field(default_factory=GeminiLegStats.empty)
+    gemini_slicer: GeminiLegStats = field(default_factory=GeminiLegStats.empty)
 
     @property
     def distinct(self) -> int:
@@ -123,6 +193,37 @@ class RenderCost:
     @property
     def billable_chars(self) -> int:
         return self.phrase.billable_chars + self.slicer.billable_chars
+
+    @property
+    def gemini_distinct(self) -> int:
+        return self.gemini_phrase.distinct + self.gemini_slicer.distinct
+
+    @property
+    def gemini_hits(self) -> int:
+        return self.gemini_phrase.hits + self.gemini_slicer.hits
+
+    @property
+    def gemini_misses(self) -> int:
+        return self.gemini_phrase.misses + self.gemini_slicer.misses
+
+    @property
+    def gemini_chars(self) -> int:
+        return self.gemini_phrase.chars + self.gemini_slicer.chars
+
+    @property
+    def gemini_audio_tokens(self) -> float:
+        """Both Gemini legs' estimated tokens, unrounded.
+
+        The rounding happens where the number is PRINTED; anything that
+        accumulates over legs must not round between them, or a many-leg render
+        would drift by a token per leg.
+        """
+        return self.gemini_phrase.audio_tokens + self.gemini_slicer.audio_tokens
+
+    @property
+    def gemini_usd(self) -> float:
+        """The same tokens priced, at the published per-million rate."""
+        return self.gemini_audio_tokens / 1_000_000 * _GEMINI_USD_PER_MILLION_AUDIO_TOKENS
 
 
 def _phrase_phonemes(
@@ -200,8 +301,14 @@ def price_lessons(
     would actually send.
     """
     tts = AzureTTSService(cache_dir=cache_dir)
+    # One adapter for the whole scope, for the same reason as the Azure one: the
+    # cache directory is the whole address space, and this one is only ever
+    # asked where a file IS, never to synthesize.
+    gemini = GeminiTTSService(cache_dir=cache_dir)
     phrase_keys: dict[_MemoKey, _SynthValue] = {}
+    gemini_phrase_keys: dict[_MemoKey, _SynthValue] = {}
     slicer_keys: dict[tuple[str, str], _SynthValue] = {}
+    gemini_slicer_keys: dict[tuple[str, str], _SynthValue] = {}
 
     for lesson in lessons:
         for section in lesson.sections:
@@ -224,7 +331,14 @@ def price_lessons(
                 speak_locale = target_locale if phrase.language_code == language_code else None
                 # Rule 4: dedupe by the 5-tuple, render-scoped (here: whole scope).
                 key = _memo_key(text, phrase.voice_id, phrase.rate, ph_map, speak_locale)
-                phrase_keys.setdefault(key, (text, phrase.voice_id, phrase.rate, ph_map, speak_locale))
+                # The 5-tuple is the same dedupe key for BOTH providers — it is
+                # the renderer's, and the renderer is what chooses the adapter.
+                # Only the PRICING splits, by the voice id's own suffix: a Gemini
+                # key billed as Azure characters would be wrong by two
+                # multipliers at once, and would also move the Azure allowance
+                # line for a request Azure never receives.
+                leg = gemini_phrase_keys if provider_for(phrase.voice_id) == "gemini" else phrase_keys
+                leg.setdefault(key, (text, phrase.voice_id, phrase.rate, ph_map, speak_locale))
 
                 # Rule 5: the slicer is a second, MUTUALLY EXCLUSIVE cost source.
                 # _apply_slicing skips every phrase with planned phonemes.
@@ -241,9 +355,14 @@ def price_lessons(
                         syllables = syllabify_fn(phrase.source_word)
                         if syllables is None or len(syllables) < 2:
                             continue
-                    # Dedupe by (source_word, voice_id), the slicer's _words memo.
+                    # Dedupe by (source_word, voice_id), the slicer's _words memo
+                    # — the renderer's key, and split by provider for the same
+                    # reason the phrase leg is: the parent word is rendered by
+                    # whichever adapter owns its voice, so its rate and its
+                    # currency are that provider's.
                     skey = (phrase.source_word, phrase.voice_id)
-                    slicer_keys.setdefault(
+                    leg = gemini_slicer_keys if provider_for(phrase.voice_id) == "gemini" else slicer_keys
+                    leg.setdefault(
                         skey,
                         (phrase.source_word, phrase.voice_id, parent_rate, None, target_locale),
                     )
@@ -251,6 +370,8 @@ def price_lessons(
     return RenderCost(
         phrase=_leg_stats(phrase_keys, tts),
         slicer=_leg_stats(slicer_keys, tts),
+        gemini_phrase=_gemini_leg_stats(gemini_phrase_keys, gemini),
+        gemini_slicer=_gemini_leg_stats(gemini_slicer_keys, gemini),
     )
 
 
@@ -270,6 +391,47 @@ def _leg_stats(keys: Mapping[object, _SynthValue], tts: AzureTTSService) -> LegS
             misses += 1
             billable += len(AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale))
     return LegStats(distinct=len(keys), hits=hits, misses=misses, billable_chars=billable)
+
+
+def _gemini_leg_stats(keys: Mapping[object, _SynthValue], gemini: GeminiTTSService) -> GeminiLegStats:
+    """Hit/miss, miss characters and estimated audio tokens for one Gemini leg.
+
+    A hit is ``GeminiTTSService._cache_path(...).exists()`` — the adapter's OWN
+    key, which is the only address space that decides hit-vs-miss — and only
+    misses cost anything. The IPA is the adapter's too (``resolve_ipa``), because
+    it is part of the file's name and a plain file cannot answer a prompt.
+
+    ``speak_locale`` is NOT in this key and that is the adapter's own shape, not
+    an omission: this provider accepts the argument and ignores it, so a locale
+    cannot change the file. Passing it would invent a request the render never
+    makes and split one file into two.
+    """
+    hits = misses = chars = 0
+    audio_tokens = 0.0
+    # Two renderer keys that differ only in what this provider ignores (the
+    # locale, or a mapping that resolves to the same IPA) are ONE file and one
+    # request, so the leg dedupes again on the adapter's own key.
+    files: set[Path] = set()
+    for text, voice_id, rate, phonemes, _speak_locale in keys.values():
+        ipa, _phrase = resolve_ipa(text, phonemes)
+        path = gemini._cache_path(text, voice_id, rate, ipa)
+        if path in files:
+            continue
+        files.add(path)
+        if path.exists():
+            hits += 1
+            continue
+        misses += 1
+        chars += len(text)
+        # The SENTENCE is what the provider bills, never the IPA that rides a
+        # prompt alongside it. Text length becomes AUDIO SECONDS through the
+        # measured speaking rate, and seconds become tokens through the token
+        # rate; a rate above 1.0 buys fewer seconds for the same characters, so
+        # the speaking rate divides.
+        audio_tokens += (
+            len(text) / _GEMINI_CHARS_PER_SECOND / gemini_tts._speaking_rate(rate) * _GEMINI_AUDIO_TOKENS_PER_SECOND
+        )
+    return GeminiLegStats(distinct=len(files), hits=hits, misses=misses, chars=chars, audio_tokens=audio_tokens)
 
 
 def _select_lessons(store: ContentStore, code: str, lesson_ids: list[str] | None) -> list[Lesson]:
@@ -318,6 +480,23 @@ def _print_report(lessons: list[Lesson], cache_dir: Path, cost: RenderCost) -> N
     print(f"TOTAL\tdistinct={cost.distinct}\thits={cost.hits}\tmisses={cost.misses}\tbillable={cost.billable_chars}")
     share = cost.billable_chars / _MONTHLY_ALLOWANCE * 100.0
     print(f"monthly_allowance\t{_MONTHLY_ALLOWANCE}\tshare={share:.1f}%")
+    # The Gemini block is CONDITIONAL, and that is the whole design: an
+    # all-Azure report's output is byte-identical to what this script always
+    # printed, so a reader (or a diff) sees no change at all until a Gemini voice
+    # is in scope. A Gemini voice's request is in neither the Azure lines above
+    # nor the F0 share, so a reader who saw only those would read a Cebuano
+    # render as free.
+    if cost.gemini_distinct:
+        for label, leg in (("gemini_phrase_leg", cost.gemini_phrase), ("gemini_slicer_leg", cost.gemini_slicer)):
+            print(
+                f"{label}\tdistinct={leg.distinct}\thits={leg.hits}\tmisses={leg.misses}"
+                f"\tchars={leg.chars}\taudio_tokens={round(leg.audio_tokens)}"
+            )
+        print(
+            f"gemini_TOTAL\tdistinct={cost.gemini_distinct}\thits={cost.gemini_hits}"
+            f"\tmisses={cost.gemini_misses}\tchars={cost.gemini_chars}"
+            f"\taudio_tokens={round(cost.gemini_audio_tokens)}\tusd={cost.gemini_usd:.4f}"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

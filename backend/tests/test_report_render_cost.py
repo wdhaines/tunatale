@@ -26,12 +26,14 @@ from pathlib import Path
 import pytest
 
 from app.audio.azure_tts import AzureTTSService
+from app.audio.gemini_tts import GeminiTTSService
 from app.audio.slicer import PARENT_RATE
 from app.config import settings
 from app.languages import resolve_db_path
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.storage.store import ContentStore
 from scripts.report_render_cost import (
+    GeminiLegStats,
     LegStats,
     RenderCost,
     _memo_key,
@@ -44,6 +46,7 @@ from scripts.report_render_cost import (
 FINN = "nb-NO-FinnNeural"  # the language's native voice; nb-NO is its own locale
 EMMA = "en-US-EmmaMultilingualNeural"  # a Multilingual voice: speak_locale matters here
 TARGET_LOCALE = "nb-NO"  # get_tts_locale("no"), verified live 2026-09-15
+KORE = "ceb-PH-KoreGemini"  # the Gemini voice; routed by suffix, not by this test
 
 
 # ---------------------------------------------------------------------------
@@ -543,3 +546,286 @@ def test_main_prices_named_foreign_lesson_with_note(capsys, tmp_path: Path) -> N
     assert rc == 0
     assert "note: en-lesson is 'en', not 'no'; pricing it anyway" in captured.err
     assert "scope\ttitle: An English lesson" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Gemini keys (brief-u8nz.12). The stubs above are reused AS IS — only the
+# language code and the voice ids change — because the property under test is
+# that the same five rules produce a different UNIT for a different provider,
+# not that a second code path exists.
+#
+# Every number below is the brief's own oracle. They are NOT derivable by reading
+# the script: chars=14 is len("Maayong buntag"), and 350/11 is that length at
+# 11 chars/sec and 25 tokens/sec — the estimate's inputs, asserted as a value so
+# a change to any of the three constants fails here rather than silently
+# re-pricing every Cebuano render in the world.
+# ---------------------------------------------------------------------------
+
+
+class FixedIPAPlanner:
+    """A planner returning one fixed reading, as ``RecordingPlanner`` does.
+
+    Copied from ``RecordingPlanner`` rather than imported: it returns a DIFFERENT
+    reading, and the point of the shared shape is that no test needs to know how
+    ``plan_chunk`` is reached.
+    """
+
+    def plan_chunk(self, source_word, syllable_span, upos=None, chunk_text=None):
+        return "ˈbuntag"
+
+
+def _ceb_phrase(text: str, **kwargs) -> Phrase:
+    return Phrase(text, KORE, "ceb", **kwargs)
+
+
+def _price_ceb(
+    lessons: list[Lesson],
+    *,
+    planner=None,
+    cache_dir: Path,
+    syllabify_fn=None,
+    slicer_enabled: bool = False,
+) -> RenderCost:
+    """price_lessons on a Cebuano scope. Same injected resolvers as ``_price``."""
+    return price_lessons(
+        lessons,
+        language_code="ceb",
+        preprocessor=_PASS_THROUGH,
+        planner=planner,
+        target_locale="ceb-PH",
+        syllabify_fn=syllabify_fn,
+        slicer_enabled=slicer_enabled,
+        parent_rate=PARENT_RATE,
+        cache_dir=cache_dir,
+    )
+
+
+def _ceb_lesson(*phrases: Phrase) -> Lesson:
+    return Lesson(title="A Cebuano lesson", language_code="ceb", sections=[_natural(*phrases)])
+
+
+def test_a_gemini_key_is_priced_in_its_own_unit_and_leaves_azure_at_zero(tmp_path: Path) -> None:
+    """Oracle 1. The discriminator: 14 Azure characters would be a wrong answer
+    here, and so would the SAME 14 in the Gemini leg at the wrong magnitude."""
+    cost = _price_ceb([_ceb_lesson(_ceb_phrase("Maayong buntag"))], cache_dir=tmp_path / "cache")
+
+    assert cost.gemini_phrase.distinct == 1
+    assert cost.gemini_phrase.misses == 1
+    assert cost.gemini_phrase.chars == 14  # len("Maayong buntag"), NOT a billable body
+    assert cost.gemini_phrase.audio_tokens == pytest.approx(350 / 11)  # 14/11 * 25 at rate 1.0
+    assert cost.gemini_slicer.distinct == 0
+    # Nothing reached Azure, so the Azure legs are empty and the F0 allowance
+    # line reads share=0.0% for a render that costs real money at the other
+    # provider. That is why the Gemini block is printed separately.
+    assert cost.phrase == LegStats.empty()
+    assert cost.slicer == LegStats.empty()
+    assert cost.billable_chars == 0
+
+
+def test_the_gemini_estimate_follows_the_speaking_rate(tmp_path: Path) -> None:
+    """Oracle 2. Same 14 characters, spoken 20% slower, so MORE audio and more
+    tokens: 14/11/0.8*25 = 437.5/11. A rate-blind estimate reports both as equal."""
+    cost = _price_ceb([_ceb_lesson(_ceb_phrase("Maayong buntag", rate="-20%"))], cache_dir=tmp_path / "cache")
+
+    assert cost.gemini_phrase.chars == 14  # chars is the TEXT, unaffected by rate
+    assert cost.gemini_phrase.audio_tokens == pytest.approx(437.5 / 11)
+    assert cost.gemini_phrase.audio_tokens > 350 / 11
+
+
+def test_the_two_providers_are_counted_in_separate_legs(tmp_path: Path) -> None:
+    """Oracle 3. An English narrator line beside a Cebuano one, one provider
+    each: the Azure leg is unchanged at its own measured billable (42) and the
+    Gemini leg is untouched by its presence."""
+    cost = _price_ceb(
+        [
+            _ceb_lesson(
+                _ceb_phrase("Maayong buntag"),
+                Phrase("Good morning", EMMA, "en"),  # narrator: no <lang> wrapper
+            )
+        ],
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert cost.phrase.distinct == 1
+    assert cost.phrase.misses == 1
+    assert cost.phrase.billable_chars == 42
+    assert cost.phrase.billable_chars == len(AzureTTSService._billable_body("Good morning", EMMA, "+0%", None, None))
+    # Identical to Oracle 1: the Azure leg did not absorb the Cebuano key.
+    assert cost.gemini_phrase.chars == 14
+    assert cost.gemini_phrase.audio_tokens == pytest.approx(350 / 11)
+
+
+def test_a_gemini_cache_hit_costs_nothing(tmp_path: Path) -> None:
+    """Oracle 4. The file exists at the ADAPTER's own path, so it is a hit and
+    the leg reports zero everything — the request that would be sent is not
+    sent, exactly as in the Azure leg."""
+    cache_dir = tmp_path / "cache"
+    lesson = _ceb_lesson(_ceb_phrase("Maayong buntag"))
+
+    cold = _price_ceb([lesson], cache_dir=cache_dir)
+    assert cold.gemini_phrase.misses == 1
+
+    gemini = GeminiTTSService(cache_dir=cache_dir)
+    cached = gemini._cache_path("Maayong buntag", KORE, "+0%", None)
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    cached.write_bytes(b"x")
+
+    warm = _price_ceb([lesson], cache_dir=cache_dir)
+    assert warm.gemini_phrase.distinct == 1
+    assert warm.gemini_phrase.hits == 1
+    assert warm.gemini_phrase.misses == 0
+    assert warm.gemini_phrase.chars == 0
+    assert warm.gemini_phrase.audio_tokens == 0
+
+
+def test_a_gemini_key_is_not_served_by_an_azure_cache_file(tmp_path: Path) -> None:
+    """Oracle 5. The two adapters share one directory, so the provider
+    discrimination has to be INSIDE the file name. A Gemini voice priced against
+    Azure's address space would report a hit here, and the render would then
+    send a request the report said it would not."""
+    cache_dir = tmp_path / "cache"
+    azure = AzureTTSService(cache_dir=cache_dir)
+    cached = azure._cache_path("Maayong buntag", KORE, "+0%", None, "ceb-PH")
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    cached.write_bytes(b"x")
+
+    cost = _price_ceb([_ceb_lesson(_ceb_phrase("Maayong buntag"))], cache_dir=cache_dir)
+    assert cost.gemini_phrase.hits == 0
+    assert cost.gemini_phrase.misses == 1
+
+
+def test_a_gemini_slicer_parent_is_priced_in_the_gemini_slicer_leg(tmp_path: Path) -> None:
+    """A parent word is rendered by the adapter that owns its voice, so a
+    Cebuano parent's render is a Gemini request — and it is at the slicer's
+    PARENT_RATE, not the chunk's, which is what makes the two legs' rates differ.
+
+    The gate is the control: with slicing off the same phrase has no parent at
+    all, so a leg that counted it anyway would be wrong twice over.
+    """
+    cache_dir = tmp_path / "cache"
+    phrase = _ceb_phrase("buntag", source_word="buntag", syllable_span=(0, 2))
+    off = _price_ceb([_ceb_lesson(phrase)], cache_dir=cache_dir)
+    assert off.gemini_slicer == GeminiLegStats.empty()
+
+    on = _price_ceb(
+        [_ceb_lesson(phrase)],
+        cache_dir=cache_dir,
+        syllabify_fn=lambda word: ["bun", "tag"],
+        slicer_enabled=True,
+    )
+    assert on.gemini_slicer.distinct == 1
+    assert on.gemini_slicer.misses == 1
+    assert on.gemini_slicer.chars == len("buntag")  # the WHOLE parent word
+    # 6/11/0.6*25 at PARENT_RATE (-40% -> 0.6). A chunk-rate estimate would say
+    # 6/11*25 instead, under-reporting a slower render by 40%.
+    assert on.gemini_slicer.audio_tokens == pytest.approx(6 / 11 / 0.6 * 25)
+    # The chunk's own synthesis is priced too, in the Gemini PHRASE leg — the
+    # two are additional requests, not alternatives (the same shape the Azure
+    # legs have).
+    assert on.gemini_phrase.distinct == 1
+    assert on.gemini_phrase.chars == len("buntag")
+    assert on.phrase.distinct == 0
+    assert on.billable_chars == 0
+
+
+def test_a_gemini_phrase_with_planned_phonemes_is_a_hit_only_with_its_ipa(tmp_path: Path) -> None:
+    """Oracle 6. The IPA is part of the Gemini cache key — the fragment was
+    rendered FROM a prompt, and a file named for the bare text would be a
+    different request. So a file touched at ipa=None is a MISS and the same
+    file touched at the planned IPA is a HIT.
+
+    This is the case that makes the leg's hit test a function of the planner at
+    all: without the IPA in the key, planning a reading would silently change
+    which cached audio a render reuses.
+    """
+    cache_dir = tmp_path / "cache"
+    lesson = _ceb_lesson(_ceb_phrase("buntag", source_word="buntag", syllable_span=(0, 1)))
+    gemini = GeminiTTSService(cache_dir=cache_dir)
+
+    # Warm the PLAIN key: a file at ipa=None. The planned reading is a different
+    # request, so this must not be mistaken for it.
+    plain = gemini._cache_path("buntag", KORE, "+0%", None)
+    plain.parent.mkdir(parents=True, exist_ok=True)
+    plain.write_bytes(b"x")
+    still_missed = _price_ceb([lesson], planner=FixedIPAPlanner(), cache_dir=cache_dir)
+    assert still_missed.gemini_phrase.misses == 1
+    assert still_missed.gemini_phrase.hits == 0
+
+    # Now the key the render would actually write.
+    prompted = gemini._cache_path("buntag", KORE, "+0%", "ˈbuntag")
+    prompted.parent.mkdir(parents=True, exist_ok=True)
+    prompted.write_bytes(b"x")
+    hit = _price_ceb([lesson], planner=FixedIPAPlanner(), cache_dir=cache_dir)
+    assert hit.gemini_phrase.hits == 1
+    assert hit.gemini_phrase.misses == 0
+    assert hit.gemini_phrase.chars == 0
+    assert hit.gemini_phrase.audio_tokens == 0
+
+
+def test_a_gemini_voice_id_naming_no_provider_raises(tmp_path: Path) -> None:
+    """Oracle 8. An unroutable id is a registry bug and must be refused by the
+    report too — a cost report that priced it would be the last place the bug
+    surfaced, after the money."""
+    lesson = _ceb_lesson(Phrase("Maayong buntag", "xx-XX-FooBar", "ceb"))
+    with pytest.raises(ValueError, match="xx-XX-FooBar"):
+        _price_ceb([lesson], cache_dir=tmp_path / "cache")
+
+
+def test_identical_gemini_phrases_dedupe_to_one_key(tmp_path: Path) -> None:
+    """Oracle 7. Two Cebuano phrases with the same 5-tuple are one cache file
+    and one request, in this leg exactly as in the Azure ones."""
+    cost = _price_ceb(
+        [
+            _ceb_lesson(_ceb_phrase("Maayong buntag")),
+            Lesson(title="Another", language_code="ceb", sections=[_natural(_ceb_phrase("Maayong buntag"))]),
+        ],
+        cache_dir=tmp_path / "cache",
+    )
+    assert cost.gemini_phrase.distinct == 1
+    assert cost.gemini_phrase.misses == 1
+    assert cost.gemini_phrase.chars == 14
+
+
+def test_gemini_keys_differing_only_in_locale_are_one_request(tmp_path: Path) -> None:
+    """Two renderer keys that differ only in ``speak_locale`` (one phrase tagged
+    Cebuano, one not) are two 5-tuples but ONE Gemini file, because this adapter
+    ignores the locale. Counting them twice would price a request never sent."""
+    cost = _price_ceb(
+        [_ceb_lesson(_ceb_phrase("Maayong buntag"), Phrase("Maayong buntag", KORE, "en"))],
+        cache_dir=tmp_path / "cache",
+    )
+    assert cost.gemini_phrase.distinct == 1
+    assert cost.gemini_phrase.misses == 1
+    assert cost.gemini_phrase.chars == 14
+
+
+def test_print_report_appends_the_gemini_block(capsys, tmp_path: Path) -> None:
+    """Oracle 9. The exact line, including the rounding of 350/11 to 32 and the
+    dollars from the UNROUNDED tokens (31.818.. -> 0.0003)."""
+    lesson = _ceb_lesson(_ceb_phrase("Maayong buntag"))
+    cost = _price_ceb([lesson], cache_dir=tmp_path / "cache")
+    _print_report([lesson], tmp_path / "cache", cost)
+    out = capsys.readouterr().out
+
+    assert "gemini_phrase_leg\tdistinct=1\thits=0\tmisses=1\tchars=14\taudio_tokens=32" in out
+    assert "gemini_slicer_leg\tdistinct=0\thits=0\tmisses=0\tchars=0\taudio_tokens=0" in out
+    assert "gemini_TOTAL\tdistinct=1\thits=0\tmisses=1\tchars=14\taudio_tokens=32\tusd=0.0003" in out
+    # Azure's own lines are still there, and still report nothing: a Cebuano
+    # render's Azure cost really is zero.
+    assert "TOTAL\tdistinct=0\thits=0\tmisses=0\tbillable=0" in out
+    assert "monthly_allowance\t500000\tshare=0.0%" in out
+    # The block comes AFTER the allowance line, so the F0 story is told first.
+    assert out.index("monthly_allowance") < out.index("gemini_TOTAL")
+
+
+def test_print_report_says_nothing_about_gemini_when_there_is_none(capsys, tmp_path: Path) -> None:
+    """Oracle 10, and the byte-identity requirement: an all-Azure report must
+    not gain a single character. A 'gemini: 0' line on a Norwegian render is
+    noise a reader has to learn to ignore."""
+    lesson = _lesson([_natural(_phrase("Hei"))])
+    cost = _price([lesson], cache_dir=tmp_path / "cache")
+    _print_report([lesson], tmp_path / "cache", cost)
+    out = capsys.readouterr().out
+
+    assert "gemini" not in out
+    assert out.splitlines()[-1] == "monthly_allowance\t500000\tshare=0.0%"

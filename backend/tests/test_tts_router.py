@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from app.audio.ports import TTSService
-from app.audio.tts_router import RoutingTTSService
+from app.audio.tts_router import RoutingTTSService, provider_for
 
 GEMINI_VOICE = "ceb-PH-KoreGemini"
 NEURAL_VOICE = "nb-NO-FinnNeural"
@@ -174,3 +174,32 @@ def test_no_cache_dir_is_none():
     router, _, _ = _router()
 
     assert router._cache_dir is None
+
+
+# ---------------------------------------------------------------------------
+# provider_for — the suffix rule on its own, because a caller outside the
+# dispatch path (the render-cost report) needs to know which provider owns a
+# voice id WITHOUT holding the two adapters. The rule is the same one
+# ``_adapter_for`` applies, and the same ValueError for an id matching neither.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("voice_id", "expected"),
+    [(GEMINI_VOICE, "gemini"), (NEURAL_VOICE, "azure")],
+    ids=["gemini-suffix", "neural-suffix"],
+)
+def test_provider_for_names_the_provider_an_id_belongs_to(voice_id, expected):
+    assert provider_for(voice_id) == expected
+
+
+@pytest.mark.parametrize(
+    "voice_id",
+    ["en-US-Guy", "ceb-PH-Koregemini"],
+    ids=["no-suffix", "lowercase-suffix"],
+)
+def test_provider_for_refuses_an_id_naming_no_provider(voice_id):
+    """Same refusal, same message, as the dispatch itself: the id is a registry
+    bug and must not become a billed request whichever way it is asked."""
+    with pytest.raises(ValueError, match=voice_id):
+        provider_for(voice_id)

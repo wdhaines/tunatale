@@ -250,6 +250,31 @@ def _phrase_ipa(text: str, phonemes: Mapping[str, str]) -> str | None:
     return " ".join(phonemes.values())
 
 
+def resolve_ipa(text: str, phonemes: Mapping[str, str] | None) -> tuple[str | None, bool]:
+    """The ``(ipa, phrase)`` a synthesis of *text* would carry, without rendering.
+
+    Public because a caller that only needs the cache key — the render-cost
+    report, which must decide hit-vs-miss for a file it will never write — has
+    to derive the same IPA this adapter would, and asking the request path for
+    it would mean sending it. *phrase* is the flag that picks the instruction,
+    and it is reported rather than kept: the two IPA functions already return
+    ``None`` for a shape that does not fit, and a caller holding the IPA cannot
+    tell which of the two produced it.
+
+    ``(None, False)`` is the "plain render" answer and covers every shape that
+    fits neither instruction, an absent or empty mapping included. Deciding
+    whether that is worth a warning stays with :meth:`GeminiTTSService.synthesize`:
+    only a caller that was actually handed a mapping knows the caller expected one.
+    """
+    if not phonemes:
+        return None, False
+    ipa = _single_token_ipa(text, phonemes)
+    if ipa is not None:
+        return ipa, False
+    ipa = _phrase_ipa(text, phonemes)
+    return ipa, ipa is not None
+
+
 class GeminiTTSService:
     """Google Cloud TTS adapter for ``<locale>-<Name>Gemini`` voices.
 
@@ -339,15 +364,11 @@ class GeminiTTSService:
         """
         language_code, name = _parse_voice_id(voice_id)
         speaking_rate = _speaking_rate(rate)
-        ipa: str | None = None
-        phrase = False
-        if phonemes:
-            ipa = _single_token_ipa(text, phonemes)
-            if ipa is None:
-                ipa = _phrase_ipa(text, phonemes)
-                phrase = ipa is not None
-            if ipa is None:
-                self._warn_phonemes_unsupported()
+        ipa, phrase = resolve_ipa(text, phonemes)
+        # A mapping we could not use is announced here and not inside
+        # resolve_ipa, which is also called by callers that never render.
+        if phonemes and ipa is None:
+            self._warn_phonemes_unsupported()
 
         if self._cache_dir is not None:
             cached = self._cache_path(text, voice_id, rate, ipa)
