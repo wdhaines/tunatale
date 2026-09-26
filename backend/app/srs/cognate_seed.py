@@ -51,6 +51,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -72,6 +73,11 @@ MIN_SOURCE_STABILITY = 21.0
 MAX_SEED_STABILITY = 60.0
 DEFAULT_PER_DAY = 10
 DEFAULT_DIFFICULTY = 5.0
+# How often an accepted word with no headword must appear in the dictionary's own
+# example sentences to count as attested. The extract lacks headwords for some of
+# the commonest Cebuano words (pero, lang, mga, ni, ka) while its examples use
+# them 71, 191, 341, 133 and 300 times; pamilya, the rarest accepted, 14.
+MIN_USAGE = 5
 
 _KNOWN_STATES = frozenset({SRSState.REVIEW, SRSState.KNOWN})
 
@@ -158,7 +164,7 @@ def glosses_compatible(translation: str, glosses: Iterable[str]) -> bool:
     return any(wanted & gloss_tokens(g) for g in glosses)
 
 
-def glosses_equivalent(translation: str, glosses: Iterable[str]) -> bool:
+def glosses_equivalent(translation: str, glosses: Iterable[str], *, slack: int = 1) -> bool:
     """True when some gloss SEGMENT means what *translation* says, give or take a word.
 
     The near-cognate test. A spelling one edit away is weak evidence on its own,
@@ -176,7 +182,7 @@ def glosses_equivalent(translation: str, glosses: Iterable[str]) -> bool:
     for gloss in glosses:
         for segment in _SEGMENT_SPLIT.split(_PARENTHETICAL.sub(" ", gloss)):
             small, big = sorted((wanted, gloss_tokens(segment)), key=len)
-            if small and small <= big and len(big) - len(small) <= 1:
+            if small and small <= big and len(big) - len(small) <= slack:
                 return True
     return False
 
@@ -194,6 +200,32 @@ def load_dictionary(lines: Iterable[str]) -> dict[str, tuple[str, ...]]:
         glosses = [g for sense in entry.get("senses", []) for g in sense.get("glosses", [])]
         out.setdefault(normalize(word), []).extend(glosses)
     return {w: tuple(gs) for w, gs in out.items()}
+
+
+def load_usage(lines: Iterable[str]) -> Counter[str]:
+    """How often each word occurs in the example sentences of kaikki.org JSONL lines."""
+    usage: Counter[str] = Counter()
+    for line in lines:
+        if not line.strip():
+            continue
+        for sense in json.loads(line).get("senses", []):
+            for example in sense.get("examples", []):
+                usage.update(re.findall(r"[a-zñ'-]+", example.get("text", "").casefold()))
+    return usage
+
+
+def parse_accept(spec: str) -> dict[str, str]:
+    """``"sige,puwede?,syete=siyete"`` → normalised source word → target spelling.
+
+    A bare word keeps its spelling; ``source=target`` names a different one.
+    """
+    out: dict[str, str] = {}
+    for item in spec.split(","):
+        if not item.strip():
+            continue
+        source, _, target = item.partition("=")
+        out[normalize(source)] = target.strip() or normalize(source)
+    return out
 
 
 def edit_distance(a: str, b: str) -> int:
@@ -220,8 +252,9 @@ def near_cognate_distance(word: str) -> int:
 class Dictionary:
     """A target-language dictionary with a gloss index for near-cognate search."""
 
-    def __init__(self, entries: dict[str, tuple[str, ...]]):
+    def __init__(self, entries: dict[str, tuple[str, ...]], usage: Counter[str] | None = None):
         self.entries = entries
+        self.usage = usage if usage is not None else Counter()
         self._by_token: dict[str, set[str]] = {}
         for word, glosses in entries.items():
             for g in glosses:
@@ -231,20 +264,49 @@ class Dictionary:
     def classify(self, word: KnownWord) -> Match:
         text = normalize(word.text)
         glosses = self.entries.get(text)
+        same = Match(word, Relation.COGNATE, word.text.strip().strip(_EDGE_PUNCT), glosses or ())
+        if glosses is not None and glosses_compatible(word.translation, glosses):
+            return same
+        # A same-spelling false friend may still have its real twin one letter
+        # away: Tagalog gabi "night" is Cebuano gabii, while Cebuano gabi is taro.
+        # Slack 0 there: the spelling already means something else in the
+        # target, so its neighbour must mean EXACTLY the translation. With one
+        # word of slack Ano? "What?" reached ani via "what is gained".
+        near = self._near_cognate(word, text, slack=0 if glosses is not None else 1)
+        if near is not None:
+            return near
         if glosses is not None:
-            relation = Relation.COGNATE if glosses_compatible(word.translation, glosses) else Relation.FALSE_FRIEND
-            return Match(word, relation, word.text.strip().strip(_EDGE_PUNCT), glosses)
+            return Match(word, Relation.FALSE_FRIEND, same.target_text, glosses)
+        return Match(word, Relation.UNRELATED, None)
+
+    def _near_cognate(self, word: KnownWord, text: str, *, slack: int) -> Match | None:
         limit = near_cognate_distance(text)
         candidates = {w for tok in gloss_tokens(word.translation) for w in self._by_token.get(tok, ())}
         scored = sorted(
             (d, w)
             for w in candidates
-            if 0 < (d := edit_distance(text, w)) <= limit and glosses_equivalent(word.translation, self.entries[w])
+            if 0 < (d := edit_distance(text, w)) <= limit
+            and glosses_equivalent(word.translation, self.entries[w], slack=slack)
         )
-        if scored:
-            _, best = scored[0]
-            return Match(word, Relation.NEAR_COGNATE, best, self.entries[best])
-        return Match(word, Relation.UNRELATED, None)
+        if not scored:
+            return None
+        _, best = scored[0]
+        return Match(word, Relation.NEAR_COGNATE, best, self.entries[best])
+
+
+def _apply_acceptance(match: Match, target: str | None, dictionary: Dictionary) -> Match:
+    word = match.word
+    if target is None:
+        return match
+    source = normalize(word.text)
+    if normalize(target) != source:
+        return Match(word, Relation.NEAR_COGNATE, target, dictionary.entries.get(normalize(target), ()))
+    # An accepted same spelling wins over anything the automatic tests found,
+    # a near-cognate included (mainit, accepted as itself, must not ALSO mint
+    # init), as long as the dictionary attests the word at all.
+    if source in dictionary.entries or dictionary.usage[source] >= MIN_USAGE:
+        return Match(word, Relation.COGNATE, word.text.strip().strip(_EDGE_PUNCT), match.target_glosses)
+    return match
 
 
 def seed_for(relation: Relation, direction: Direction, known: KnownDirection | None) -> tuple[float, float] | None:
@@ -314,6 +376,7 @@ class Plan:
     false_friends: list[Match] = field(default_factory=list)
     duplicates: list[Match] = field(default_factory=list)
     unrelated: int = 0
+    rejected: int = 0
     unplaced: int = 0
     already_started: int = 0
 
@@ -323,28 +386,35 @@ def plan(
     dictionary: Dictionary,
     *,
     per_day: int = DEFAULT_PER_DAY,
-    accept: frozenset[str] = frozenset(),
+    accept: Mapping[str, str] | None = None,
+    reject: frozenset[str] = frozenset(),
     started: frozenset[str] = frozenset(),
     occupied: Counter[int] | None = None,
 ) -> Plan:
     """Classify every known single word and schedule the cognates.
 
-    *accept* holds normalised source words a person has reviewed and judged to
-    mean the same thing, though the gloss test said otherwise ("all right" /
-    "OK"). It turns only a FALSE_FRIEND into a COGNATE: the dictionary must
-    still hold the spelling, so acceptance never invents a target word.
+    *accept* (``parse_accept``) holds source words a person has reviewed and
+    judged to mean the same thing, though the automatic tests said otherwise.
+    A same-spelling entry turns a FALSE_FRIEND into a COGNATE ("all right" /
+    "OK"), or an UNRELATED word the dictionary has no headword for but uses at
+    least ``MIN_USAGE`` times in its examples — so it still needs the dictionary's
+    evidence. A ``source=target`` pair is the person's own word for a spelling
+    the dictionary lacks entirely (syete=siyete) and becomes a NEAR_COGNATE.
     *started* holds normalised target words whose card already has a schedule
     (``started_texts``); they are left out and counted, so a later batch never
     re-plans an earlier one. A card that is minted but still NEW is NOT started:
     the second ``--apply`` of a batch has to find it again to seed it.
-    *occupied* is passed to ``schedule``.
+    *reject* holds normalised source words a person has ruled out; they are
+    never starters, whatever matched. *occupied* is passed to ``schedule``.
     """
     out = Plan()
     kept: list[Match] = []
     for word in words:
+        if normalize(word.text) in reject:
+            out.rejected += 1
+            continue
         match = dictionary.classify(word)
-        if match.relation is Relation.FALSE_FRIEND and normalize(word.text) in accept:
-            match = Match(word, Relation.COGNATE, match.target_text, match.target_glosses)
+        match = _apply_acceptance(match, (accept or {}).get(normalize(word.text)), dictionary)
         if match.relation is Relation.FALSE_FRIEND:
             out.false_friends.append(match)
         elif match.relation is Relation.UNRELATED:

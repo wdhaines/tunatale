@@ -38,6 +38,7 @@ DICTIONARY = cs.Dictionary(
             _entry("tubig", "water"),
             _entry("balay", "house; home"),
             _entry("gabii", "night; evening"),
+            _entry("gabi", "taro (Colocasia esculenta)"),
             _entry("Amerikana", "American woman"),
             _entry("asawa", "spouse; wife; husband"),
             _entry("tulo", "three"),
@@ -322,14 +323,14 @@ class TestASecondBatch:
 
     def test_an_accepted_false_friend_becomes_a_cognate(self):
         words = [_word("Amerikana", "coat"), _word("kumain", "to eat")]
-        p = cs.plan(words, DICTIONARY, accept=frozenset({"amerikana", "kumain"}))
+        p = cs.plan(words, DICTIONARY, accept=cs.parse_accept("Amerikana,kumain"))
         assert [(st.match.target_text, st.match.relation) for st in p.starters] == [("Amerikana", cs.Relation.COGNATE)]
         assert p.false_friends == []
         # Accepting a word the dictionary lacks does not invent a Cebuano word.
         assert p.unrelated == 1
 
     def test_without_acceptance_it_stays_a_false_friend(self):
-        p = cs.plan([_word("Amerikana", "coat")], DICTIONARY, accept=frozenset({"tubig"}))
+        p = cs.plan([_word("Amerikana", "coat")], DICTIONARY, accept=cs.parse_accept("tubig"))
         assert [m.word.text for m in p.false_friends] == ["Amerikana"]
 
     def test_words_already_started_are_left_out_and_counted(self):
@@ -357,3 +358,79 @@ class TestASecondBatch:
         assert cs.review_load(db, now=now) == Counter({3: 1})
         # asawa is minted but NOT started: the batch's second --apply must find it to seed it.
         assert cs.started_texts(db) == frozenset({"tubig"})
+
+
+class TestBatchThree:
+    """The dialogue check (2026-09-26) found real cognates the first two batches
+    could not reach. gabi "night": Cebuano ALSO has gabi (taro), so the search
+    stopped at "false friend" one letter short of gabii "night". pero, lang,
+    mga, ni, ka and pamilya: the extract has no headword for them, though its
+    own example sentences use them hundreds of times (pero 71, mga 341)."""
+
+    USAGE_DICTIONARY = cs.Dictionary(
+        cs.load_dictionary([_entry("tubig", "water")]),
+        usage=cs.load_usage(
+            [
+                json.dumps({"word": "x", "senses": [{"examples": [{"text": "Pero wala, pero oo. Pero lang."}]}]}),
+                json.dumps({"word": "y", "senses": [{"examples": [{"text": "PERO pero, pero!"}]}, {}]}),
+                "",
+            ]
+        ),
+    )
+
+    def test_a_false_friend_with_a_near_cognate_is_the_near_cognate(self):
+        m = DICTIONARY.classify(_word("gabi", "night"))
+        assert (m.relation, m.target_text) == (cs.Relation.NEAR_COGNATE, "gabii")
+
+    def test_a_false_friend_with_no_near_cognate_stays_one(self):
+        assert DICTIONARY.classify(_word("baka", "maybe")).relation is cs.Relation.UNRELATED
+        assert DICTIONARY.classify(_word("Amerikana", "coat")).relation is cs.Relation.FALSE_FRIEND
+
+    def test_usage_counts_words_in_example_sentences(self):
+        assert self.USAGE_DICTIONARY.usage["pero"] == 6
+        assert self.USAGE_DICTIONARY.usage["lang"] == 1
+
+    def test_an_accepted_word_used_often_enough_is_a_cognate(self):
+        p = cs.plan(
+            [_word("Pero", "but"), _word("lang", "only")], self.USAGE_DICTIONARY, accept=cs.parse_accept("pero,lang")
+        )
+        assert [(st.match.target_text, st.match.relation) for st in p.starters] == [("Pero", cs.Relation.COGNATE)]
+        # lang is used once here: below MIN_USAGE, so it stays out.
+        assert p.unrelated == 1
+
+    def test_an_accepted_pair_names_the_target_spelling(self):
+        """siyete has no dictionary evidence at all; the user vouched for it."""
+        p = cs.plan([_word("syete", "seven", rec=163.0, prod=67.7)], DICTIONARY, accept=cs.parse_accept("syete=siyete"))
+        [st] = p.starters
+        assert (st.match.target_text, st.match.relation) == ("siyete", cs.Relation.NEAR_COGNATE)
+        assert set(st.seeds) == {REC}
+
+    def test_parse_accept(self):
+        assert cs.parse_accept(" Sige , puwede?,syete=Siyete,, ") == {
+            "sige": "sige",
+            "puwede": "puwede",
+            "syete": "Siyete",
+        }
+        assert cs.parse_accept("") == {}
+
+
+class TestBatchThreeLiveDryRun:
+    """What the batch-3 dry run on live data turned up before any write."""
+
+    def test_a_false_friends_neighbour_needs_the_exact_meaning(self):
+        """Ano? "What?" reached ani via "what is gained" (one word of slack). The
+        same spelling already means something else, so the bar is higher."""
+        d = cs.Dictionary(cs.load_dictionary([_entry("ano", "a name"), _entry("ani", "a harvest; what is gained")]))
+        assert d.classify(_word("Ano?", "What?")).relation is cs.Relation.FALSE_FRIEND
+        assert DICTIONARY.classify(_word("gabi", "night")).target_text == "gabii"
+
+    def test_an_accepted_same_spelling_wins_over_a_near_cognate(self):
+        """mainit was accepted as itself in batch 2; batch 3 must not also mint init."""
+        d = cs.Dictionary(cs.load_dictionary([_entry("mainit", "hot"), _entry("init", "hot; warm; humid")]))
+        p = cs.plan([_word("mainit", "warm")], d, accept=cs.parse_accept("mainit"))
+        assert [(st.match.target_text, st.match.relation) for st in p.starters] == [("mainit", cs.Relation.COGNATE)]
+
+    def test_a_rejected_word_is_never_a_starter(self):
+        p = cs.plan([_word("gabi", "night")], DICTIONARY, reject=frozenset({"gabi"}))
+        assert p.starters == []
+        assert p.rejected == 1
