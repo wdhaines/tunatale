@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-	import type { PipelineDayState, PipelineStatus } from '$lib/api';
+	import type { PipelineStatus } from '$lib/api';
 	import { t } from '$lib/i18n/i18n.svelte';
 
 	interface Props {
@@ -20,8 +20,13 @@
 	 * a real percentage rather than a guess. `false` for anything else: a
 	 * finished day has no percentage left to report, and a queued one has no
 	 * plan.
+	 *
+	 * The parameter is the GENERATED day type, not the hand-written
+	 * `PipelineDayState`: `PipelineDayStatus.state` is a plain `string` (the
+	 * backend does not constrain it), so the old 5-value union is gone and only
+	 * the `!== 'rendering'` comparison below decides.
 	 */
-	function renderProgress(day: PipelineDayState): { done: number; total: number; percent: number } | null {
+	function renderProgress(day: PipelineStatus["days"][number]): { done: number; total: number; percent: number } | null {
 		if (day.state !== 'rendering' || !day.clips_total || day.clips_total <= 0) return null;
 		const done = day.clips_done ?? 0;
 		// Floor, so a render that is 170/171 reads 99% and not 100% — a

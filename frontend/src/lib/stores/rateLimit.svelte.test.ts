@@ -33,6 +33,9 @@ const STATUS: RateLimitStatus = {
   azure_tts_chars_used_month: 0,
   azure_tts_chars_per_month_limit: 500000,
   azure_tts_month_reset_in_s: 1512000,
+  tokens_prompt_24h: null,
+  tokens_completion_24h: null,
+  tokens_reasoning_24h: null,
 };
 
 const NO_SNAPSHOT_STATUS: RateLimitStatus = {
@@ -50,6 +53,9 @@ const NO_SNAPSHOT_STATUS: RateLimitStatus = {
   azure_tts_chars_used_month: 0,
   azure_tts_chars_per_month_limit: 500000,
   azure_tts_month_reset_in_s: 1512000,
+  tokens_prompt_24h: null,
+  tokens_completion_24h: null,
+  tokens_reasoning_24h: null,
 };
 
 const MOCK_MODE_STATUS: RateLimitStatus = {
@@ -67,6 +73,9 @@ const MOCK_MODE_STATUS: RateLimitStatus = {
   azure_tts_chars_used_month: 0,
   azure_tts_chars_per_month_limit: 500000,
   azure_tts_month_reset_in_s: 1512000,
+  tokens_prompt_24h: null,
+  tokens_completion_24h: null,
+  tokens_reasoning_24h: null,
 };
 
 interface RateLimitStore {

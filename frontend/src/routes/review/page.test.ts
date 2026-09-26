@@ -85,6 +85,8 @@ beforeEach(() => {
     daily_new_cap: 20,
     cap_source: "default",
     fsrs_source: "default",
+    daily_review_cap: 100,
+    review_cap_source: "default",
   });
   mockFetchReviewQueue.mockResolvedValue({ queue: [] });
   mockFetchLessonReviewQueue.mockResolvedValue({ queue: [], has_unreviewed_listen: false });
@@ -337,6 +339,8 @@ describe("review/+page.svelte", () => {
       daily_new_cap: 30,
       cap_source: "cache",
       fsrs_source: "cache",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     });
     const { findByText } = render(ReviewPage);
     expect(await findByText("7")).toBeTruthy();
@@ -352,6 +356,8 @@ describe("review/+page.svelte", () => {
       daily_new_cap: 20,
       cap_source: "default",
       fsrs_source: "default",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     });
     const { findByText } = render(ReviewPage);
     expect(await findByText(/\(default\)/)).toBeTruthy();
@@ -365,6 +371,8 @@ describe("review/+page.svelte", () => {
       daily_new_cap: 30,
       cap_source: "cache",
       fsrs_source: "cache",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     });
     const { queryByText, findByText } = render(ReviewPage);
     await findByText("5");
@@ -379,6 +387,8 @@ describe("review/+page.svelte", () => {
       daily_new_cap: 20,
       cap_source: "config",
       fsrs_source: "default",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     });
     const { findByText } = render(ReviewPage);
     expect(await findByText(/\(config\)/)).toBeTruthy();
@@ -394,6 +404,8 @@ describe("review/+page.svelte", () => {
       daily_new_cap: 30,
       cap_source: "cache",
       fsrs_source: "default",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     });
     const { findByText } = render(ReviewPage);
     expect(await findByText(/FSRS: defaults/)).toBeTruthy();
@@ -407,6 +419,8 @@ describe("review/+page.svelte", () => {
       daily_new_cap: 30,
       cap_source: "cache",
       fsrs_source: "cache",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     });
     const { queryByText, findByText } = render(ReviewPage);
     await findByText("5");
@@ -1305,6 +1319,8 @@ describe("review/+page.svelte", () => {
       daily_new_cap: 20,
       cap_source: "default",
       fsrs_source: "default",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     });
     const item = makeReviewQueueItem({ id: 1, text: "okno", direction: "recognition" });
     mockFetchReviewQueue.mockResolvedValue({ queue: [item] });

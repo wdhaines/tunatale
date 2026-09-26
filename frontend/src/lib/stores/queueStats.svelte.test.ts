@@ -16,6 +16,8 @@ const STATS = {
   daily_new_cap: 20,
   cap_source: "cache" as const,
   fsrs_source: "cache" as const,
+  daily_review_cap: 100,
+  review_cap_source: "default",
 };
 
 beforeEach(() => {

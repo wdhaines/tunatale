@@ -72,6 +72,7 @@ describe("listenedStore", () => {
             { code: "no", name: "Norwegian" },
           ],
           active: "sl",
+          sync_available: true,
         });
         mockApi.importListens.mockResolvedValue({
           imported: [],
@@ -93,6 +94,7 @@ describe("listenedStore", () => {
         mockApi.getLanguages.mockResolvedValue({
           languages: [{ code: "sl", name: "Slovene" }],
           active: "sl",
+          sync_available: true,
         });
         mockApi.importListens.mockResolvedValue({
           imported: ["legacy-1"],
@@ -116,6 +118,7 @@ describe("listenedStore", () => {
             { code: "no", name: "Norwegian" },
           ],
           active: "sl",
+          sync_available: true,
         });
         mockApi.importListens.mockResolvedValue({
           imported: ["l1"],
@@ -140,6 +143,7 @@ describe("listenedStore", () => {
             { code: "no", name: "Norwegian" },
           ],
           active: "sl",
+          sync_available: true,
         });
         // Language "sl" succeeds, language "no" fails
         mockApi.importListens
@@ -185,6 +189,7 @@ describe("listenedStore", () => {
         mockApi.getLanguages.mockResolvedValue({
           languages: [{ code: "sl", name: "Slovene" }],
           active: "sl",
+          sync_available: true,
         });
         mockApi.importListens.mockResolvedValue({
           imported: ["l1"],
@@ -205,6 +210,7 @@ describe("listenedStore", () => {
         mockApi.getLanguages.mockResolvedValue({
           languages: [{ code: "sl", name: "Slovene" }],
           active: "sl",
+          sync_available: true,
         });
         mockApi.importListens.mockResolvedValue({
           imported: ["l1"],

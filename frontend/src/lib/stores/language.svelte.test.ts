@@ -15,6 +15,7 @@ const TWO = {
     { code: "no", name: "Norwegian" },
   ],
   active: "sl",
+  sync_available: true,
 };
 
 describe("languageStore", () => {
@@ -67,7 +68,7 @@ describe("languageStore", () => {
   });
 
   it("name is empty when the active code matches no option", async () => {
-    mockGet.mockResolvedValue({ languages: [], active: "" });
+    mockGet.mockResolvedValue({ languages: [], active: "", sync_available: true });
     await languageStore.init();
     expect(languageStore.name).toBe("");
   });

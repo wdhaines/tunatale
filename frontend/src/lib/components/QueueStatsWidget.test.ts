@@ -12,6 +12,8 @@ describe("QueueStatsWidget", () => {
       daily_new_cap: 30,
       cap_source: "default",
       fsrs_source: "default",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     };
 
     const { container } = render(QueueStatsWidget, { stats });
@@ -45,6 +47,8 @@ describe("QueueStatsWidget", () => {
       daily_new_cap: 30,
       cap_source: "default",
       fsrs_source: "default",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     };
 
     render(QueueStatsWidget, { stats });
@@ -67,6 +71,8 @@ describe("QueueStatsWidget", () => {
       daily_new_cap: 30,
       cap_source: "default",
       fsrs_source: "default",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     };
 
     render(QueueStatsWidget, { stats });
@@ -88,6 +94,8 @@ describe("QueueStatsWidget", () => {
       daily_new_cap: 30,
       cap_source: "default",
       fsrs_source: "default",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     };
 
     const { container } = render(QueueStatsWidget, { stats, currentState: "new" });
@@ -109,6 +117,8 @@ describe("QueueStatsWidget", () => {
       daily_new_cap: 30,
       cap_source: "default",
       fsrs_source: "default",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     };
 
     const { container } = render(QueueStatsWidget, { stats, currentState: "learning" });
@@ -130,6 +140,8 @@ describe("QueueStatsWidget", () => {
       daily_new_cap: 30,
       cap_source: "default",
       fsrs_source: "default",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     };
 
     const { container } = render(QueueStatsWidget, { stats, currentState: "relearning" });
@@ -147,6 +159,8 @@ describe("QueueStatsWidget", () => {
       daily_new_cap: 30,
       cap_source: "default",
       fsrs_source: "default",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     };
 
     const { container } = render(QueueStatsWidget, { stats, currentState: "review" });
@@ -168,6 +182,8 @@ describe("QueueStatsWidget", () => {
       daily_new_cap: 30,
       cap_source: "default",
       fsrs_source: "default",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     };
 
     const { container } = render(QueueStatsWidget, { stats });
@@ -185,6 +201,8 @@ describe("QueueStatsWidget", () => {
       daily_new_cap: 30,
       cap_source: "default",
       fsrs_source: "default",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     };
 
     const { container } = render(QueueStatsWidget, { stats, currentState: null });

@@ -51,7 +51,7 @@ beforeEach(async () => {
   }));
   themeStore.set("system");
   prefetchPrefStore.set(true);
-  mockGetLanguages.mockResolvedValue({ languages: [], active: "sl" });
+  mockGetLanguages.mockResolvedValue({ languages: [], active: "sl", sync_available: true });
   // Reset the auth singleton to the dev-box shape — gate off, nobody signed in.
   // `getMe` is deliberately left unstubbed here: with the gate off the store
   // never calls it, and stubbing it would hide a regression that did.
@@ -94,6 +94,7 @@ describe("/settings", () => {
         { code: "no", name: "Norwegian" },
       ],
       active: "sl",
+      sync_available: true,
     });
     await languageStore.init();
 

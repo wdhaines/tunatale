@@ -67,6 +67,8 @@ beforeEach(() => {
     daily_new_cap: 20,
     cap_source: "default",
     fsrs_source: "default",
+    daily_review_cap: 100,
+    review_cap_source: "default",
   });
   mockFetchImageCandidates.mockResolvedValue({ query: "", status: "ok", candidates: [] });
 });
@@ -766,6 +768,8 @@ describe("cards/+page.svelte", () => {
       daily_new_cap: 30,
       cap_source: "cache",
       fsrs_source: "cache",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     });
     const { findByText } = render(CardsPage);
     expect(await findByText(/12 new/)).toBeTruthy();
@@ -796,6 +800,8 @@ describe("cards/+page.svelte", () => {
       daily_new_cap: 20,
       cap_source: "default" as const,
       fsrs_source: "default" as const,
+      daily_review_cap: 100,
+      review_cap_source: "default",
     });
     mockFetchQueueStats
       .mockReturnValueOnce(new Promise((r) => (resolveStale = r)))

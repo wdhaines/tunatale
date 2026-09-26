@@ -39,6 +39,9 @@ const STATUS_WITH_SNAPSHOT = {
   azure_tts_chars_used_month: 0,
   azure_tts_chars_per_month_limit: 500000,
   azure_tts_month_reset_in_s: 1512000,
+  tokens_prompt_24h: null,
+  tokens_completion_24h: null,
+  tokens_reasoning_24h: null,
 };
 
 beforeEach(() => {
@@ -117,6 +120,9 @@ describe("RateLimitWidget", () => {
         azure_tts_chars_used_month: 0,
         azure_tts_chars_per_month_limit: 500000,
         azure_tts_month_reset_in_s: 1512000,
+        tokens_prompt_24h: null,
+        tokens_completion_24h: null,
+        tokens_reasoning_24h: null,
       });
     });
 
@@ -153,6 +159,9 @@ describe("RateLimitWidget", () => {
         azure_tts_chars_used_month: 0,
         azure_tts_chars_per_month_limit: 500000,
         azure_tts_month_reset_in_s: 1512000,
+        tokens_prompt_24h: null,
+        tokens_completion_24h: null,
+        tokens_reasoning_24h: null,
       });
     });
 
@@ -230,6 +239,9 @@ describe("RateLimitWidget", () => {
         azure_tts_chars_used_month: 0,
         azure_tts_chars_per_month_limit: 500000,
         azure_tts_month_reset_in_s: 1512000,
+        tokens_prompt_24h: null,
+        tokens_completion_24h: null,
+        tokens_reasoning_24h: null,
       });
     });
 
@@ -266,6 +278,9 @@ describe("RateLimitWidget", () => {
         azure_tts_chars_used_month: 0,
         azure_tts_chars_per_month_limit: 500000,
         azure_tts_month_reset_in_s: 1512000,
+        tokens_prompt_24h: null,
+        tokens_completion_24h: null,
+        tokens_reasoning_24h: null,
       });
     });
 
@@ -301,6 +316,9 @@ describe("RateLimitWidget", () => {
         azure_tts_chars_used_month: 0,
         azure_tts_chars_per_month_limit: 500000,
         azure_tts_month_reset_in_s: 1512000,
+        tokens_prompt_24h: null,
+        tokens_completion_24h: null,
+        tokens_reasoning_24h: null,
       });
     });
 
@@ -336,6 +354,9 @@ describe("RateLimitWidget", () => {
         azure_tts_chars_used_month: 0,
         azure_tts_chars_per_month_limit: 500000,
         azure_tts_month_reset_in_s: 1512000,
+        tokens_prompt_24h: null,
+        tokens_completion_24h: null,
+        tokens_reasoning_24h: null,
       });
     });
 
@@ -372,6 +393,9 @@ describe("RateLimitWidget", () => {
         azure_tts_chars_used_month: 0,
         azure_tts_chars_per_month_limit: 500000,
         azure_tts_month_reset_in_s: 1512000,
+        tokens_prompt_24h: null,
+        tokens_completion_24h: null,
+        tokens_reasoning_24h: null,
       });
     });
 
@@ -407,6 +431,9 @@ describe("RateLimitWidget", () => {
         azure_tts_chars_used_month: 0,
         azure_tts_chars_per_month_limit: 500000,
         azure_tts_month_reset_in_s: 1512000,
+        tokens_prompt_24h: null,
+        tokens_completion_24h: null,
+        tokens_reasoning_24h: null,
       });
     });
 

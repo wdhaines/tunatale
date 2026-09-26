@@ -67,16 +67,14 @@ export function setParkedHandler(handler: ((url: string) => void) | null): void 
 // itself (the backend answers it identically whether the gate is on or off).
 const AUTH_PATH_PREFIX = "/api/auth/";
 
-export interface AuthStatus {
-  /**
-   * Whether this deployment requires a login at all.
-   *
-   * The frontend cannot infer this from a 401: `GET /api/auth/me` answers 401
-   * for an anonymous caller in BOTH flag states, so a dev running with auth
-   * off would be redirected to a login page that cannot help them.
-   */
-  auth_enabled: boolean;
-}
+/**
+ * Whether this deployment requires a login at all.
+ *
+ * The frontend cannot infer this from a 401: `GET /api/auth/me` answers 401
+ * for an anonymous caller in BOTH flag states, so a dev running with auth
+ * off would be redirected to a login page that cannot help them.
+ */
+export type AuthStatus = components["schemas"]["AuthStatusResponse"];
 
 export interface AuthUser {
   email: string;
@@ -87,14 +85,13 @@ export interface LanguageOption {
   name: string;
 }
 
-export interface LanguagesResponse {
-  languages: LanguageOption[];
-  active: string;
-  // Whether the optional anki_sync plugin is installed AND settings.sync_enabled
-  // is on for this deployment (see backend app/main.py). Absent on older backends;
-  // callers should treat a missing value as available (fail open).
-  sync_available?: boolean;
-}
+/**
+ * `sync_available` reports whether the optional anki_sync plugin is installed
+ * AND settings.sync_enabled is on for this deployment (see backend
+ * app/main.py). The generated type makes it REQUIRED: the hand-written copy
+ * had it optional so callers could fail open against older backends.
+ */
+export type LanguagesResponse = components["schemas"]["LanguagesResponse"];
 
 export interface DayPlan {
   /**
@@ -111,11 +108,16 @@ export interface DayPlan {
   story_guidance: string;
 }
 
-export interface ProposedBatch {
-  start_day: number;
-  days: DayPlan[];
-}
+export type ProposedBatch = components["schemas"]["ProposedBatch"];
 
+/**
+ * NOT an alias: the generated `CurriculumSummary` is a NAME COLLISION, not this
+ * type. It is one element of GET /api/curriculum (id/topic/created_at) — what
+ * `listCurricula` returns — whereas this is the body of GET
+ * /api/curriculum/{id}, whose schema is `GetCurriculumResponse`. Aliasing here
+ * drops `days`/`proposed`/`language_code`/`cefr_level` and adds `created_at`.
+ * `listCurricula` therefore references the generated type directly.
+ */
 export interface CurriculumSummary {
   id: string;
   topic: string;
@@ -136,6 +138,13 @@ export interface CurriculumCreated {
   days: number;
 }
 
+/**
+ * NOT an alias: the generated `PlanTurnResponse.proposed` is an untyped bag —
+ * `Record<string, unknown> | null`, and not even required — because the backend
+ * models the planner's batch loosely. It cannot be assigned to `ProposedBatch`
+ * without a cast, and the brief forbids casts. This is the drift: the hand-written
+ * type claimed more than the wire guarantees.
+ */
 export interface PlanTurnResponse {
   reply: string;
   proposed: ProposedBatch | null;
@@ -358,16 +367,7 @@ export interface TranscriptData {
   dialogue_lines: DialogueLine[];
 }
 
-export interface ListenResponse {
-  status: string;
-  created: number;
-  /** Auto-graded rows parked in the pending bucket for "Check your work". */
-  staged: number;
-  /** Rows the user graded in the preview, applied immediately. */
-  applied: number;
-  remaining_candidates: number;
-  listen_count: number;
-}
+export type ListenResponse = components["schemas"]["ListenResponse"];
 
 export interface LessonListenRecord {
   lesson_id: string;
@@ -375,15 +375,9 @@ export interface LessonListenRecord {
   last_listened_at: string;
 }
 
-export interface ListensResponse {
-  lessons: LessonListenRecord[];
-}
+export type ListensResponse = components["schemas"]["ListensResponse"];
 
-export interface ImportListensResponse {
-  imported: string[];
-  already_present: string[];
-  unknown: string[];
-}
+export type ImportListensResponse = components["schemas"]["ImportListensResponse"];
 
 export interface SectionAudio {
   audio_id: string;
@@ -517,46 +511,16 @@ export interface SRSStats {
   due_today: number;
 }
 
-export interface QueueStats {
-  new: number;
-  learning: number;
-  review: number;
-  daily_new_cap: number;
-  cap_source: string;
-  fsrs_source?: string;
-}
+export type QueueStats = components["schemas"]["QueueStatsResponse"];
 
-export interface RateLimitSnapshot {
-  age_s: number | null;
-  requests_limit: number | null;
-  requests_remaining: number | null;
-  requests_reset_in_s: number | null;
-  tokens_limit: number | null;
-  tokens_remaining: number | null;
-  tokens_reset_in_s: number | null;
-}
+export type RateLimitSnapshot = components["schemas"]["RateLimitSnapshot"];
 
 export interface RateLimitLast429 {
   ago_s: number | null;
   retry_in_s: number | null;
 }
 
-export interface RateLimitStatus {
-  provider: string;
-  model: string;
-  llm_mode: string;
-  snapshot: RateLimitSnapshot | null;
-  last_429: RateLimitLast429 | null;
-  tokens_used_day: number | null;
-  tokens_per_day_limit: number | null;
-  tokens_day_reset_in_s: number | null;
-  requests_used_day: number | null;
-  requests_per_day_limit: number | null;
-  requests_day_reset_in_s: number | null;
-  azure_tts_chars_used_month: number;
-  azure_tts_chars_per_month_limit: number;
-  azure_tts_month_reset_in_s: number;
-}
+export type RateLimitStatus = components["schemas"]["RateLimitStatusResponse"];
 
 export interface LlmHealthLastError {
   status: string | number;
@@ -600,19 +564,13 @@ export interface PipelineDayState {
   eta_seconds?: number | null;
 }
 
-export interface PipelineStatus {
-  active: boolean;
-  days: PipelineDayState[];
-}
+export type PipelineStatus = components["schemas"]["PipelineStatusResponse"];
 
 export interface PipelineRetryResponse {
   status: "queued" | "ready";
 }
 
-export interface PipelineRegenerateRequest {
-  day: number;
-  strategy: ContentStrategy;
-}
+export type PipelineRegenerateRequest = components["schemas"]["PipelineRegenerateRequest"];
 
 // ── LLM activity ──────────────────────────────────────────────────────
 
@@ -663,11 +621,7 @@ export interface ImportStoryPayload {
   raw?: string;
 }
 
-export interface ImportStoryResponse {
-  id: string;
-  title: string;
-  sections: Array<{ type: string; phrase_count: number }>;
-}
+export type ImportStoryResponse = components["schemas"]["ImportStoryResponse"];
 
 export interface PeerSyncResult {
   auth_success: boolean;
@@ -677,20 +631,9 @@ export interface PeerSyncResult {
   dry_run: boolean;
 }
 
-export interface ImageCandidate {
-  preview_url: string;
-  webformat_url: string;
-  tags: string;
-  width: number;
-  height: number;
-  likes: number;
-}
+export type ImageCandidate = components["schemas"]["ImageCandidate"];
 
-export interface ImageCandidatesResponse {
-  query: string;
-  status: string;
-  candidates: ImageCandidate[];
-}
+export type ImageCandidatesResponse = components["schemas"]["ImageCandidatesResponse"];
 
 /**
  * The `Idempotency-Key` header, or nothing at all when there is no key.
@@ -771,7 +714,7 @@ export class TunaTaleAPI {
     return res.json();
   }
 
-  async listCurricula(): Promise<Array<{ id: string; topic: string; created_at: string }>> {
+  async listCurricula(): Promise<components["schemas"]["CurriculumSummary"][]> {
     return this.request("/api/curriculum");
   }
 

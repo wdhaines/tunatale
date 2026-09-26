@@ -52,6 +52,8 @@ const stats = {
   daily_new_cap: 20,
   cap_source: "default" as const,
   fsrs_source: "default" as const,
+  daily_review_cap: 100,
+  review_cap_source: "default",
 };
 const item = (id: number) =>
   makeReviewQueueItem({ id, text: `w${id}`, translation: "x", direction: "recognition" });

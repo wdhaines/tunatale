@@ -17,6 +17,7 @@ const TWO = {
     { code: "no", name: "Norwegian" },
   ],
   active: "sl",
+  sync_available: true,
 };
 
 describe("LanguageSelector", () => {
@@ -27,7 +28,11 @@ describe("LanguageSelector", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("does not render when only one language is configured", async () => {
-    mockGet.mockResolvedValue({ languages: [{ code: "sl", name: "Slovene" }], active: "sl" });
+    mockGet.mockResolvedValue({
+      languages: [{ code: "sl", name: "Slovene" }],
+      active: "sl",
+      sync_available: true,
+    });
     await languageStore.init();
     const { container } = render(LanguageSelector);
     expect(container.querySelector("select")).toBeNull();

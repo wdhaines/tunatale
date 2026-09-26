@@ -93,6 +93,8 @@ beforeEach(async () => {
     daily_new_cap: 20,
     cap_source: "default",
     fsrs_source: "default",
+    daily_review_cap: 100,
+    review_cap_source: "default",
   });
   // `authStore` is a module singleton, so it carries state between tests. Reset
   // it to the dev-box shape — gate off, nobody signed in — via its real init.
@@ -240,6 +242,8 @@ describe("root +layout.svelte", () => {
       daily_new_cap: 20,
       cap_source: "cache",
       fsrs_source: "cache",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     });
     const { findByText, container } = renderLayout();
     expect(await findByText("5")).toBeTruthy();
@@ -256,6 +260,8 @@ describe("root +layout.svelte", () => {
       daily_new_cap: 20,
       cap_source: "cache",
       fsrs_source: "cache",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     });
     const { findByText } = renderLayout();
     await findByText("5");
@@ -269,6 +275,8 @@ describe("root +layout.svelte", () => {
       daily_new_cap: 20,
       cap_source: "cache",
       fsrs_source: "cache",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     });
 
     expect(await findByText("4")).toBeTruthy();
@@ -292,6 +300,8 @@ describe("root +layout.svelte", () => {
         daily_new_cap: 20,
         cap_source: "cache",
         fsrs_source: "cache",
+        daily_review_cap: 100,
+        review_cap_source: "default",
       })
       .mockResolvedValueOnce({
         new: 9,
@@ -300,6 +310,8 @@ describe("root +layout.svelte", () => {
         daily_new_cap: 20,
         cap_source: "cache",
         fsrs_source: "cache",
+        daily_review_cap: 100,
+        review_cap_source: "default",
       });
     const { findByText } = renderLayout();
     await findByText("5");
@@ -344,6 +356,8 @@ describe("root +layout.svelte", () => {
       daily_new_cap: 20,
       cap_source: "cache",
       fsrs_source: "cache",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     });
     const { queryByText, container } = renderLayout();
     await waitFor(() => expect(queryByText("Sync with AnkiWeb")).toBeNull());
@@ -359,6 +373,8 @@ describe("root +layout.svelte", () => {
       daily_new_cap: 20,
       cap_source: "cache",
       fsrs_source: "cache",
+      daily_review_cap: 100,
+      review_cap_source: "default",
     });
     const { findByText } = renderLayout();
     await findByText("Sync with AnkiWeb");
