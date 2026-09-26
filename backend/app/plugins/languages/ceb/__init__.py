@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from app.cards.field_map import NotetypeProfile
 from app.cards.vocab_notetype import CEBUANO_VOCAB
 from app.languages import LanguageConfig, register
 from app.models.language import NARRATOR_VOICE, Language
@@ -69,6 +70,17 @@ register(
         deck_name="3. Bisaya",
         mint_deck_name="3. Bisaya::TunaTale",
         vocab_notetype=CEBUANO_VOCAB,
+        # TT's own vocab notes store the headword as plain text, with no L2
+        # markup class, so without this the reader has to GUESS which field is
+        # the Cebuano. Cebuano has no letters that tell it apart from English,
+        # so there is no scorer to guess with, and the first Cebuano mint (74
+        # starter cards, u8nz.7) failed its sync on exactly that. TT wrote the
+        # notetype, so name its fields instead.
+        notetype_profiles={
+            CEBUANO_VOCAB.name: NotetypeProfile(
+                l2=CEBUANO_VOCAB.l2_field, translation="English", disambig="DisambigKey"
+            ),
+        },
         # The style guide's first job is keeping Tagalog OUT: close kin, and
         # dominant in training data (tunatale-u8nz.4). All three data files are
         # orchestrator-drafted and not yet native-checked (tunatale-u8nz.9).
@@ -105,6 +117,7 @@ register(
         # - wordfreq_lang: wordfreq has no "ceb" (tunatale-u8nz.6).
         # - lemma_table_path, lemmatizer_type (stays at the shared "lowercase"
         #   default): tunatale-u8nz.5.
-        # - l2_scorer, notetype_profiles: later Cebuano beads.
+        # - l2_scorer: nothing to score with (see notetype_profiles above); a
+        #   deck the user imports will need its own profile, as Tagalog's did.
     ),
 )

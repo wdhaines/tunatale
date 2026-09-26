@@ -728,7 +728,10 @@ class TestCebuanoRegistration:
         assert config.lemma_table_path is None
         assert config.lemmatizer_type == "lowercase"  # the shared default, not a choice
         assert config.l2_scorer is None
-        assert config.notetype_profiles == {}
+        # Exactly TT's own vocab notetype, read by field name (u8nz.7: the first
+        # Cebuano mint failed its sync without it). An imported deck's profile
+        # is still a later bead's; tests/test_anki_cebuano_vocab_read.py pins this.
+        assert set(config.notetype_profiles) == {"Cebuano Vocabulary"}
         # NOT asserted unset: phoneme_planner_factory now ships (tunatale-u8nz.1),
         # and tests/test_ceb_phoneme_plan.py pins what it plans; syllabifier_fn
         # ships with its owning bead (tunatale-u8nz.6), pinned by
