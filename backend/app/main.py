@@ -31,7 +31,7 @@ from app.srs.database import SRSDatabase
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, model_version_for
 from app.storage.db_backup import rotate_db_backups
 from app.storage.store import ContentStore
-from app.storage.user_dbs import UserDatabases, owner_user_id
+from app.storage.user_dbs import UserDatabases, owner_user_id, user_data_root
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("app.audio.renderer").setLevel(logging.DEBUG)
@@ -99,15 +99,8 @@ def _language_db_map() -> dict[str, str]:
 
 
 def _user_data_root(db_map: dict[str, str]) -> Path:
-    """Where non-owner accounts' decks live: the setting, else beside the owner's.
-
-    "Beside" is the directory of the first configured DB, so the per-user files
-    land on whatever volume the owner's already do. See settings.user_data_dir.
-    """
-    if settings.user_data_dir is not None:
-        return settings.user_data_dir
-    first = next(iter(db_map.values()))
-    return Path(first.removeprefix("sqlite:///")).parent / "users"
+    """Where non-owner accounts' decks live — beside the first configured DB by default."""
+    return user_data_root(next(iter(db_map.values())), settings.user_data_dir)
 
 
 def _assert_prod_profile() -> None:

@@ -54,6 +54,18 @@ def owner_user_id(auth_db: AuthDatabase | None, owner_email: str) -> int | None:
     return min((u.id for u in users), default=None)
 
 
+def user_data_root(owner_db_url: str, override: Path | None) -> Path:
+    """Where non-owner accounts' decks live: ``override``, else beside the owner's DB.
+
+    "Beside" puts the per-user files on whatever volume the owner's already are
+    (the container's /data, the laptop instance's ~/TunaTaleLive/data) with no
+    extra setting to forget. See ``settings.user_data_dir``.
+    """
+    if override is not None:
+        return override
+    return Path(owner_db_url.removeprefix("sqlite:///")).parent / "users"
+
+
 class UserDatabases:
     """Lazily opened (SRSDatabase, ContentStore) pairs for non-owner accounts."""
 
