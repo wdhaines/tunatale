@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 
     from app.srs.database import SRSDatabase
 
+SOURCE = "base-list"
 MINTABLE = frozenset({"dictionary", "variant", "usage", "reviewed"})
 BACK_BASE = 1_000_000
 _ORD = {Direction.RECOGNITION: 0, Direction.PRODUCTION: 1}
@@ -106,7 +107,7 @@ def mint_base_words(db: SRSDatabase, words: Iterable[BaseWord], *, language_code
             translation=word.english,
             word_count=1,
             difficulty=1,
-            source="base-list",
+            source=SOURCE,
             note=f"{list_name} · {word.category}",
         )
         added += db.add_collocation(unit, language_code)
@@ -114,7 +115,7 @@ def mint_base_words(db: SRSDatabase, words: Iterable[BaseWord], *, language_code
 
 
 def back_positions(db: SRSDatabase, words: Iterable[BaseWord], *, language_code: str) -> list[tuple[int, int]]:
-    """``(anki_card_id, position)`` for every minted, still-NEW card of *words*.
+    """``(anki_card_id, position)`` for every minted, still-NEW card the list added.
 
     A card already introduced keeps its position: moving it would change nothing
     the learner sees and would re-push it for no reason.
@@ -122,7 +123,10 @@ def back_positions(db: SRSDatabase, words: Iterable[BaseWord], *, language_code:
     out: list[tuple[int, int]] = []
     for word in words:
         item = db.get_collocation_by_guid(compute_guid(word.text, language_code, ""))
-        if item is None:
+        # Only cards the LIST added. A word that was already a card keeps its place
+        # among the cards waiting: moving it behind the list is the opposite of
+        # "after the waiting cards" (23 were moved that way live, 2026-09-26).
+        if item is None or item.syntactic_unit.source != SOURCE:
             continue
         for direction, ds in item.directions.items():
             if ds.anki_card_id is None or ds.reps > 0 or ds.state.value != "new":

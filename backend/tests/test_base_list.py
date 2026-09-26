@@ -9,6 +9,7 @@ whatever chunk it was minted in.
 from __future__ import annotations
 
 from app.models.srs_item import Direction, SRSState
+from app.models.syntactic_unit import SyntacticUnit
 from app.srs import base_list as bl
 from app.srs.database import SRSDatabase
 
@@ -83,3 +84,15 @@ def test_back_positions_follow_rank_and_ord_for_minted_new_cards_only():
     ds.state, ds.reps = SRSState.LEARNING, 1
     db.update_direction(iring.guid, Direction.RECOGNITION, ds)
     assert bl.back_positions(db, words, language_code="ceb") == [(71, bl.BACK_BASE + 3)]
+
+
+def test_a_card_that_predates_the_list_keeps_its_place():
+    """Live, 2026-09-26: the first --position moved 23 cards that were already
+    waiting (lola, tita...) into their list slots, behind the list's own cards.
+    "After the waiting cards" means only cards the LIST added move."""
+    db = SRSDatabase(":memory:")
+    db.add_collocation(SyntacticUnit("iring", "cat", 1, 1, "user"), "ceb")
+    iring = db.get_collocation("iring")
+    db.set_anki_ids(iring.guid, 7, {Direction.RECOGNITION: 70, Direction.PRODUCTION: 71})
+    bl.mint_base_words(db, _words()[:2], language_code="ceb", list_name="FF 625")
+    assert bl.back_positions(db, _words(), language_code="ceb") == []
