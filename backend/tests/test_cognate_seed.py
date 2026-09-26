@@ -312,3 +312,48 @@ class TestMintAndSeed:
 
         again = cs.seed(target, p.starters, language_code="ceb", now=now)
         assert (again.seeded, again.already_started) == (0, 3)
+
+
+class TestASecondBatch:
+    """Adding reviewed words after the first batch is live (2026-09-26): 14 of the
+    34 "false friends" mean the same thing and failed only on wording (sige "all
+    right" / "OK"). The user accepted them by name. A second run must not
+    re-schedule the first batch, and must not break the 10-a-day cap it set."""
+
+    def test_an_accepted_false_friend_becomes_a_cognate(self):
+        words = [_word("Amerikana", "coat"), _word("kumain", "to eat")]
+        p = cs.plan(words, DICTIONARY, accept=frozenset({"amerikana", "kumain"}))
+        assert [(st.match.target_text, st.match.relation) for st in p.starters] == [("Amerikana", cs.Relation.COGNATE)]
+        assert p.false_friends == []
+        # Accepting a word the dictionary lacks does not invent a Cebuano word.
+        assert p.unrelated == 1
+
+    def test_without_acceptance_it_stays_a_false_friend(self):
+        p = cs.plan([_word("Amerikana", "coat")], DICTIONARY, accept=frozenset({"tubig"}))
+        assert [m.word.text for m in p.false_friends] == ["Amerikana"]
+
+    def test_words_already_started_are_left_out_and_counted(self):
+        p = cs.plan([_word("tubig", "water"), _word("bahay", "house")], DICTIONARY, started=frozenset({"tubig"}))
+        assert [st.match.target_text for st in p.starters] == ["balay"]
+        assert p.already_started == 1
+
+    def test_the_cap_counts_reviews_already_scheduled(self):
+        occupied = Counter({d: 10 for d in range(1, 12)})
+        occupied[12] = 4
+        match = cs.Match(_word("sige", "all right", rec=160.0, prod=51.5), cs.Relation.COGNATE, "sige")
+        [starter], unplaced = cs.schedule([match], occupied=occupied)
+        assert unplaced == 0
+        assert {d: s.offset_days for d, s in starter.seeds.items()} == {PROD: 12, REC: 13}
+
+    def test_review_load_reads_the_seeded_days_from_the_db(self):
+        db = SRSDatabase(":memory:")
+        db.add_collocation(SyntacticUnit("tubig", "water", 1, 1, "test"), "ceb")
+        db.add_collocation(SyntacticUnit("asawa", "wife", 1, 1, "test"), "ceb")  # minted, still NEW
+        tubig = db.get_collocation("tubig")
+        db.set_anki_ids(tubig.guid, 1, {REC: 10, PROD: 11})
+        now = datetime.now(UTC)
+        row_id = db.get_collocation_id_by_guid(tubig.guid)
+        db.seed_review_state(row_id, REC, stability=20.0, difficulty=5.0, due_in_days=3, now=now)
+        assert cs.review_load(db, now=now) == Counter({3: 1})
+        # asawa is minted but NOT started: the batch's second --apply must find it to seed it.
+        assert cs.started_texts(db) == frozenset({"tubig"})

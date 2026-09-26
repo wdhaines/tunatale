@@ -60,4 +60,11 @@ def test_apply_mints_then_seeds_after_the_sync(dbs, capsys):
     assert target.get_collocation("tubig").directions[Direction.PRODUCTION].state == SRSState.REVIEW
 
     main(["--dictionary", str(dictionary), "--apply"])
-    assert "2 direction(s) already have a schedule" in capsys.readouterr().out
+    assert "1 word(s) already started in an earlier batch" in capsys.readouterr().out
+
+
+def test_an_accepted_word_is_minted_as_a_cognate(dbs, capsys):
+    target, dictionary = dbs
+    main(["--dictionary", str(dictionary), "--apply", "--accept", "Amerikana"])
+    assert "FALSE FRIENDS" not in capsys.readouterr().out
+    assert target.get_collocation("Amerikana").syntactic_unit.note == "Tagalog cognate: Amerikana"

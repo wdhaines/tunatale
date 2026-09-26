@@ -58,6 +58,7 @@ from typing import TYPE_CHECKING
 from app.common.guid import compute_guid
 from app.models.srs_item import Direction, SRSState
 from app.models.syntactic_unit import SyntacticUnit
+from app.srs.anki_mirror.rollover import anki_today
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -231,9 +232,8 @@ class Dictionary:
         text = normalize(word.text)
         glosses = self.entries.get(text)
         if glosses is not None:
-            if glosses_compatible(word.translation, glosses):
-                return Match(word, Relation.COGNATE, word.text.strip().strip(_EDGE_PUNCT), glosses)
-            return Match(word, Relation.FALSE_FRIEND, text, glosses)
+            relation = Relation.COGNATE if glosses_compatible(word.translation, glosses) else Relation.FALSE_FRIEND
+            return Match(word, relation, word.text.strip().strip(_EDGE_PUNCT), glosses)
         limit = near_cognate_distance(text)
         candidates = {w for tok in gloss_tokens(word.translation) for w in self._by_token.get(tok, ())}
         scored = sorted(
@@ -270,13 +270,19 @@ def _rank(match: Match) -> tuple[int, float, str]:
     return (0 if match.relation is Relation.COGNATE else 1, -best, normalize(match.word.text))
 
 
-def schedule(matches: list[Match], *, per_day: int = DEFAULT_PER_DAY) -> tuple[list[Starter], int]:
+def schedule(
+    matches: list[Match], *, per_day: int = DEFAULT_PER_DAY, occupied: Counter[int] | None = None
+) -> tuple[list[Starter], int]:
     """Turn ranked matches into starters with a due day for every seeded direction.
 
     Days are offsets from today, from 1. Tightest deadline first (a direction must
     fall due strictly inside its interval), so a short near-cognate interval is
     not crowded out by long ones that could have waited. A direction with no free
     day inside its interval stays NEW. Returns the starters and that count.
+
+    *occupied* is reviews already on each day from an earlier batch
+    (``review_load``); they count toward ``per_day``, so a second batch fills in
+    around the first instead of stacking on it.
     """
     tasks: list[tuple[int, int, int, Direction, float, float]] = []
     for idx, match in enumerate(matches):
@@ -288,7 +294,7 @@ def schedule(matches: list[Match], *, per_day: int = DEFAULT_PER_DAY) -> tuple[l
             tasks.append((max(1, round(stability)) - 1, idx, order, direction, stability, difficulty))
     tasks.sort(key=lambda t: t[:3])
 
-    load: Counter[int] = Counter()
+    load: Counter[int] = Counter(occupied or {})
     seeds: dict[int, dict[Direction, Seed]] = {}
     unplaced = 0
     for last_day, idx, _, direction, stability, difficulty in tasks:
@@ -309,14 +315,36 @@ class Plan:
     duplicates: list[Match] = field(default_factory=list)
     unrelated: int = 0
     unplaced: int = 0
+    already_started: int = 0
 
 
-def plan(words: Iterable[KnownWord], dictionary: Dictionary, *, per_day: int = DEFAULT_PER_DAY) -> Plan:
-    """Classify every known single word and schedule the cognates."""
+def plan(
+    words: Iterable[KnownWord],
+    dictionary: Dictionary,
+    *,
+    per_day: int = DEFAULT_PER_DAY,
+    accept: frozenset[str] = frozenset(),
+    started: frozenset[str] = frozenset(),
+    occupied: Counter[int] | None = None,
+) -> Plan:
+    """Classify every known single word and schedule the cognates.
+
+    *accept* holds normalised source words a person has reviewed and judged to
+    mean the same thing, though the gloss test said otherwise ("all right" /
+    "OK"). It turns only a FALSE_FRIEND into a COGNATE: the dictionary must
+    still hold the spelling, so acceptance never invents a target word.
+    *started* holds normalised target words whose card already has a schedule
+    (``started_texts``); they are left out and counted, so a later batch never
+    re-plans an earlier one. A card that is minted but still NEW is NOT started:
+    the second ``--apply`` of a batch has to find it again to seed it.
+    *occupied* is passed to ``schedule``.
+    """
     out = Plan()
     kept: list[Match] = []
     for word in words:
         match = dictionary.classify(word)
+        if match.relation is Relation.FALSE_FRIEND and normalize(word.text) in accept:
+            match = Match(word, Relation.COGNATE, match.target_text, match.target_glosses)
         if match.relation is Relation.FALSE_FRIEND:
             out.false_friends.append(match)
         elif match.relation is Relation.UNRELATED:
@@ -327,12 +355,15 @@ def plan(words: Iterable[KnownWord], dictionary: Dictionary, *, per_day: int = D
     ranked: list[Match] = []
     for match in sorted(kept, key=_rank):
         key = normalize(match.target_text or "")
+        if key in started:
+            out.already_started += 1
+            continue
         if key in seen:
             out.duplicates.append(match)
             continue
         seen.add(key)
         ranked.append(match)
-    out.starters, out.unplaced = schedule(ranked, per_day=per_day)
+    out.starters, out.unplaced = schedule(ranked, per_day=per_day, occupied=occupied)
     out.false_friends.sort(key=lambda m: normalize(m.word.text))
     return out
 
@@ -348,6 +379,28 @@ def known_words(db: SRSDatabase) -> list[KnownWord]:
         directions = {d: KnownDirection(ds.state, ds.stability, ds.difficulty) for d, ds in item.directions.items()}
         words.append(KnownWord(unit.text, unit.translation, directions))
     return words
+
+
+def started_texts(db: SRSDatabase) -> frozenset[str]:
+    """Normalised text of every card in *db* with any direction past NEW."""
+    rows, _ = db.list_collocations(limit=1_000_000)
+    return frozenset(
+        normalize(item.syntactic_unit.text)
+        for _, item, _ in rows
+        if any(ds.state is not SRSState.NEW for ds in item.directions.values())
+    )
+
+
+def review_load(db: SRSDatabase, *, now: datetime) -> Counter[int]:
+    """Reviews already due on each future day (offset from today) in *db*."""
+    today = anki_today(now)
+    load: Counter[int] = Counter()
+    rows, _ = db.list_collocations(limit=1_000_000)
+    for _, item, _ in rows:
+        for ds in item.directions.values():
+            if ds.state is SRSState.REVIEW and (offset := (ds.due_at.date() - today).days) >= 1:
+                load[offset] += 1
+    return load
 
 
 def mint(db: SRSDatabase, starters: Iterable[Starter], *, language_code: str, source_name: str) -> int:

@@ -41,6 +41,30 @@ from app.languages import resolve_language_context
 from app.srs import cognate_seed
 from app.srs.database import SRSDatabase
 
+# Tagalog words whose Cebuano twin the gloss test called a FALSE FRIEND though
+# both mean the same thing: it ignores pronouns and prepositions ("we" / "we;
+# us") and cannot see synonyms (sige "all right" / "OK"). Reviewed one by one
+# and accepted by the user on 2026-09-26. eroplano and buwan were left out: the
+# dictionary lists them only as variants of ayroplano and bulan.
+REVIEWED_COGNATES = frozenset(
+    {
+        "ako",
+        "ko",
+        "kami",
+        "siya",
+        "nila",
+        "inyo",
+        "para",
+        "sa",
+        "sige",
+        "puwede",
+        "babay",
+        "kaopisina",
+        "mainit",
+        "anak",
+    }
+)
+
 _BACKEND = Path(__file__).resolve().parents[1]
 DEFAULT_DICTIONARY = _BACKEND / "scripts/local/kaikki/Cebuano.jsonl"
 
@@ -51,6 +75,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--target", default="ceb", help="language to seed")
     parser.add_argument("--dictionary", type=Path, default=DEFAULT_DICTIONARY, help="kaikki.org JSONL for --target")
     parser.add_argument("--per-day", type=int, default=cognate_seed.DEFAULT_PER_DAY)
+    parser.add_argument(
+        "--accept",
+        default=",".join(sorted(REVIEWED_COGNATES)),
+        help="comma-separated source words to treat as cognates despite the gloss test ('' for none)",
+    )
     parser.add_argument("--apply", action="store_true", help="write to the target DB (default: dry run)")
     args = parser.parse_args(argv)
 
@@ -60,15 +89,23 @@ def main(argv: list[str] | None = None) -> int:
     with args.dictionary.open(encoding="utf-8") as fh:
         dictionary = cognate_seed.Dictionary(cognate_seed.load_dictionary(fh))
 
-    plan = cognate_seed.plan(cognate_seed.known_words(SRSDatabase(source.db_url)), dictionary, per_day=args.per_day)
+    db = SRSDatabase(target.db_url)
+    now = datetime.now(UTC)
+    plan = cognate_seed.plan(
+        cognate_seed.known_words(SRSDatabase(source.db_url)),
+        dictionary,
+        per_day=args.per_day,
+        accept=frozenset(cognate_seed.normalize(w) for w in args.accept.split(",") if w.strip()),
+        started=cognate_seed.started_texts(db),
+        occupied=cognate_seed.review_load(db, now=now),
+    )
     _print_plan(plan)
 
     if not args.apply:
         print("\nDry run. Re-run with --apply to write.")
         return 0
-    db = SRSDatabase(target.db_url)
     added = cognate_seed.mint(db, plan.starters, language_code=args.target, source_name=source_name)
-    report = cognate_seed.seed(db, plan.starters, language_code=args.target, now=datetime.now(UTC))
+    report = cognate_seed.seed(db, plan.starters, language_code=args.target, now=now)
     print(f"\nAdded {added} new card(s). Seeded {report.seeded} direction(s).")
     if report.not_minted:
         print(f"{report.not_minted} direction(s) wait for their card to be minted: sync, then run --apply again.")
@@ -93,6 +130,7 @@ def _print_plan(plan: cognate_seed.Plan) -> None:
     )
     print("Reviews per day: " + " ".join(f"+{d}:{n}" for d, n in sorted(load.items())))
     print(f"{plan.unrelated} word(s) with no counterpart; {len(plan.duplicates)} duplicate(s) of an earlier starter.")
+    print(f"{plan.already_started} word(s) already started in an earlier batch, left alone.")
     if plan.false_friends:
         print(f"\nFALSE FRIENDS ({len(plan.false_friends)}), never minted — same spelling, different meaning:")
         for m in plan.false_friends:
