@@ -103,7 +103,10 @@ test('switching to Norwegian from the header re-points the library at the Norweg
  * pill's rect and the document's overflow are engine-computed, so no tier below
  * a browser can check them (`.claude/rules/test-tiers.md`). 320px is the
  * narrowest width the app supports, and 24px is the largest Android root size
- * the listen-preview layout spec sweeps.
+ * the listen-preview layout spec sweeps. The overflow half measures the whole
+ * Lessons page, not just the header: its first CI run caught the "+ New
+ * curriculum" button pushing the page 18px sideways on Linux fonts, which macOS
+ * only reproduces at a 28px root.
  */
 test('the language pill stays inside a 320px viewport at a 24px root font', async ({ page }) => {
 	await page.setViewportSize({ width: 320, height: 640 });

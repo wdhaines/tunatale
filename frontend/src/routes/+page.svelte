@@ -516,6 +516,9 @@
 	.new-btn {
 		flex-shrink: 0;
 		align-self: flex-start;
+		/* At a large Android root font the label outgrows a 320px column (18px of
+		   page overflow in CI's Linux fonts at a 24px root); wrap it instead. */
+		max-width: 100%;
 		padding: 0.55rem 1rem;
 		background: var(--color-primary);
 		color: var(--color-on-primary);
