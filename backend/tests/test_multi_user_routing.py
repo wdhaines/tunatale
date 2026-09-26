@@ -8,8 +8,9 @@ The claims, each of which a leak would falsify:
   deck is never created by asking for it.
 - Everything process-global (Anki sync, admin) is the owner's: a non-owner gets
   403 from every such route, enumerated from the live route table.
-- Lesson writes are the owner's too (the pipeline is keyed by language alone),
-  while lesson READS serve the non-owner's own, empty, store.
+- Lesson writes are every account's (tunatale-98zf.3): the pipeline carries the
+  account, so a learner's write lands in the learner's own files and the owner's
+  store is untouched. Lesson READS serve the non-owner's own store.
 - Auth off is the single-user path, unchanged: the flat DBs serve every request.
 """
 
@@ -188,14 +189,14 @@ class TestOwnerOnlySurfaces:
         assert {p for _, p in OWNER_ONLY} <= mounted
         assert len(LESSON_WRITES) >= 20 and len(LESSON_READS) >= 15
 
-    @pytest.mark.parametrize(("method", "path"), OWNER_ONLY + LESSON_WRITES)
+    @pytest.mark.parametrize(("method", "path"), OWNER_ONLY)
     async def test_a_non_owner_is_refused(self, world, method, path):
         async with _client(world["auth_db"], world["learner"].id) as learner:
             resp = await learner.request(method, _concrete_path(path))
         assert resp.status_code == 403, f"{method} {path} answered {resp.status_code} to a non-owner"
 
-    @pytest.mark.parametrize(("method", "path"), LESSON_READS)
-    async def test_lesson_reads_are_not_refused(self, world, method, path):
+    @pytest.mark.parametrize(("method", "path"), LESSON_WRITES + LESSON_READS)
+    async def test_lesson_routes_are_not_refused(self, world, method, path):
         async with _client(world["auth_db"], world["learner"].id) as learner:
             resp = await learner.request(method, _concrete_path(path))
         assert resp.status_code != 403
@@ -208,6 +209,27 @@ class TestOwnerOnlySurfaces:
     async def test_anonymous_is_still_401_not_403(self, world):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as anon:
             assert (await anon.get("/api/admin/background-work")).status_code == 401
+
+    async def test_a_learners_lesson_write_lands_in_their_file_and_not_the_owners(self, world, monkeypatch):
+        """The inverse of the old 403 sweep (tunatale-98zf.3): the write succeeds,
+        the learner reads it back, and the owner's store is byte-identical."""
+        owner_path = world["tmp"] / "owner_no_content.db"
+        owner_store = ContentStore(str(owner_path))
+        monkeypatch.setitem(app.state.content_stores, "no", owner_store)
+        before = owner_path.read_bytes()
+
+        async with _client(world["auth_db"], world["learner"].id) as learner:
+            resp = await learner.post("/api/curriculum/plan", json={"topic": "kaffe"}, headers={"X-TT-Language": "no"})
+            assert resp.status_code == 201, resp.text
+            mine = await learner.get("/api/curriculum", headers={"X-TT-Language": "no"})
+        async with _client(world["auth_db"], world["owner"].id) as owner:
+            theirs = await owner.get("/api/curriculum", headers={"X-TT-Language": "no"})
+
+        assert [c["id"] for c in mine.json()] == [resp.json()["id"]]
+        assert theirs.json() == []
+        assert owner_path.read_bytes() == before
+        _, learner_store = world["user_dbs"].get(world["learner"].id, "no")
+        assert learner_store.get_curriculum(resp.json()["id"]) is not None
 
     async def test_lesson_reads_serve_the_learners_empty_store(self, world):
         async with _client(world["auth_db"], world["learner"].id) as learner:

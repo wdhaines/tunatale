@@ -454,7 +454,7 @@ from app.api import client_log as client_log_api  # noqa: E402
 from app.api import llm as llm_api  # noqa: E402
 from app.api import review_sessions as review_sessions_api  # noqa: E402
 from app.api import srs_images as srs_images_api  # noqa: E402
-from app.auth.dependencies import require_owner, require_owner_for_writes, require_user  # noqa: E402
+from app.auth.dependencies import require_owner, require_user  # noqa: E402
 
 
 def _anki_sync_importable() -> bool:
@@ -473,17 +473,19 @@ def _anki_sync_importable() -> bool:
 
 
 # Who may do what beyond "logged in" (tunatale-3k8): OWNER = process-global
-# state that is the owner's by construction (Anki sync, admin); LESSON_WRITES =
-# anything that can reach the language-keyed LessonPipeline. Order matters —
+# state that is the owner's by construction (Anki sync, admin). Order matters —
 # require_user first, so an anonymous caller is told 401 rather than 403.
+# Lesson surfaces are every account's (tunatale-98zf.3): the request resolves
+# the caller's own stores and LessonPipeline jobs carry the account, so a
+# learner's lesson lands in the learner's files. They share one Groq budget.
 OWNER = [Depends(require_user), Depends(require_owner)]
-LESSON_WRITES = [Depends(require_user), Depends(require_owner_for_writes)]
-app.include_router(curriculum.router, dependencies=LESSON_WRITES)
-app.include_router(generation.router, dependencies=LESSON_WRITES)
+USER = [Depends(require_user)]
+app.include_router(curriculum.router, dependencies=USER)
+app.include_router(generation.router, dependencies=USER)
 app.include_router(srs.router, dependencies=[Depends(require_user)])
 app.include_router(srs_images_api.router, dependencies=[Depends(require_user)])
-app.include_router(audio.router, dependencies=LESSON_WRITES)
-app.include_router(review_sessions_api.router, dependencies=LESSON_WRITES)
+app.include_router(audio.router, dependencies=USER)
+app.include_router(review_sessions_api.router, dependencies=USER)
 if settings.sync_enabled and _anki_sync_importable():
     app.include_router(anki.router, dependencies=OWNER)
 app.include_router(admin.router, dependencies=OWNER)
@@ -492,7 +494,7 @@ app.include_router(admin.router, dependencies=OWNER)
 # says who may write, the flag says whether the channel exists at all, and a
 # debug channel wants both.
 app.include_router(client_log_api.router, dependencies=[Depends(require_user)])
-app.include_router(llm_api.router, dependencies=LESSON_WRITES)
+app.include_router(llm_api.router, dependencies=USER)
 app.include_router(auth_api.router)  # NO router-level dependency — login/logout are unauthenticated
 
 
