@@ -762,6 +762,10 @@ class TestCebuanoRegistration:
 
         for word in ("ang", "sa", "og", "ug", "si", "ni", "kang", "mga", "nga", "ba", "pud", "sad", "man", "gyud"):
             assert is_function_word(word, "ceb", upos=None) is True, word
+        # The conjunction and preposition the user ruled closed-class on 2026-09-26:
+        # with no Cebuano analyzer the POS list is inert, so they need naming.
+        for word in ("pero", "para"):
+            assert is_function_word(word, "ceb", upos=None) is True, word
         # Tagalog's markers are not Cebuano function words, and content words never are.
         for word in ("ng", "po", "isda", "balay"):
             assert is_function_word(word, "ceb", upos=None) is False, word
