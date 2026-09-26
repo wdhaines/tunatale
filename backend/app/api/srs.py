@@ -294,7 +294,7 @@ async def _generate_add_time_media(
     )
 
 
-@router.get("/due", status_code=200, response_model=DueCollocationsResponse, response_model_exclude_unset=True)
+@router.get("/due", status_code=200, response_model=DueCollocationsResponse)
 async def get_due_collocations(request: Request, direction: str = "recognition"):
     db = request.state.srs_db
     today = anki_today()
@@ -311,7 +311,7 @@ async def get_due_collocations(request: Request, direction: str = "recognition")
     return {"due": _triples_to_dicts(db, triples)}
 
 
-@router.get("/new", status_code=200, response_model=NewCollocationsResponse, response_model_exclude_unset=True)
+@router.get("/new", status_code=200, response_model=NewCollocationsResponse)
 async def get_new_collocations(request: Request, limit: int = 10, direction: str = "recognition"):
     db = request.state.srs_db
     try:
@@ -326,9 +326,6 @@ async def get_new_collocations(request: Request, limit: int = 10, direction: str
     "/items/{item_id}/direction/{direction}/feedback",
     status_code=200,
     response_model=DrillFeedbackResponse,
-    # `left` is appended only when the new direction has one; a plain
-    # response_model would re-add "left": null to the omitting branch.
-    response_model_exclude_unset=True,
 )
 async def drill_feedback(item_id: int, direction: str, body: DrillRequest, request: Request):
     try:
@@ -1677,10 +1674,6 @@ def _has_unreviewed_listen(latest_listen: str | None, latest_review: str | None)
     "/content/{content_id}/review-queue",
     status_code=200,
     response_model=LessonReviewQueueResponse,
-    # The nested DirectionStateResponse omits `left` when None
-    # (srs.py::_direction_to_dict) — a plain response_model would put
-    # "left": null back into every NEW/REVIEW direction.
-    response_model_exclude_unset=True,
 )
 async def get_lesson_review_queue(content_id: str, request: Request, response: Response) -> dict:
     """Lesson-scoped "Check your work" queue: exactly the listen's autograded cards.
@@ -2718,7 +2711,7 @@ _STATE_MAP = {
 }
 
 
-@router.post("/items", status_code=201, response_model=SrsItemResponse, response_model_exclude_unset=True)
+@router.post("/items", status_code=201, response_model=SrsItemResponse)
 async def create_item(body: CreateItemRequest, request: Request):
     db = request.state.srs_db
     if body.word_count < 1:
@@ -2828,9 +2821,6 @@ async def _persist_new_card(
     "/items/base",
     status_code=200,
     response_model=CreateCardResponse,
-    # item nests SrsItemResponse whose directions omit "left" when None
-    # (srs.py::_direction_to_dict) — same exclude_unset trap as create_item.
-    response_model_exclude_unset=True,
 )
 async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dict:
     """Create a base card for an unknown clicked word (Phase 5, Part C / decision 8, C-a).
@@ -2926,7 +2916,7 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     )
 
 
-@router.get("/items", status_code=200, response_model=ListItemsResponse, response_model_exclude_unset=True)
+@router.get("/items", status_code=200, response_model=ListItemsResponse)
 async def list_items(
     request: Request,
     search: str | None = None,
@@ -2964,7 +2954,7 @@ async def list_items(
     }
 
 
-@router.patch("/items/{item_id}", status_code=200, response_model=SrsItemResponse, response_model_exclude_unset=True)
+@router.patch("/items/{item_id}", status_code=200, response_model=SrsItemResponse)
 async def patch_item(item_id: int, body: UpdateItemRequest, request: Request):
     db = request.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
@@ -2993,9 +2983,7 @@ async def bulk_delete_items(body: BulkDeleteRequest, request: Request):
     return {"deleted": deleted}
 
 
-@router.post(
-    "/items/{item_id}/reset", status_code=200, response_model=SrsItemResponse, response_model_exclude_unset=True
-)
+@router.post("/items/{item_id}/reset", status_code=200, response_model=SrsItemResponse)
 async def reset_item(item_id: int, request: Request):
     db = request.state.srs_db
     if db.get_collocation_by_id(item_id) is None:
@@ -3009,7 +2997,6 @@ async def reset_item(item_id: int, request: Request):
     "/items/{item_id}/state",
     status_code=200,
     response_model=SrsItemResponse,
-    response_model_exclude_unset=True,
 )
 async def set_item_state(item_id: int, body: SetStateRequest, request: Request):
     if body.state not in _VALID_USER_STATES:
@@ -3042,7 +3029,6 @@ async def set_item_state(item_id: int, body: SetStateRequest, request: Request):
     "/items/{item_id}/restore-known",
     status_code=200,
     response_model=SrsItemResponse,
-    response_model_exclude_unset=True,
 )
 async def restore_known_item(item_id: int, request: Request):
     """Reverse a "Mark known" — restore the snapshotted pre-known schedule.
@@ -3063,7 +3049,6 @@ async def restore_known_item(item_id: int, request: Request):
     "/items/{item_id}/untrack",
     status_code=200,
     response_model=UntrackItemResponse,
-    response_model_exclude_unset=True,
 )
 async def untrack_item(item_id: int, request: Request):
     db = request.state.srs_db
@@ -3080,7 +3065,6 @@ async def untrack_item(item_id: int, request: Request):
     "/items/{item_id}/suspend",
     status_code=200,
     response_model=SrsItemResponse,
-    response_model_exclude_unset=True,
 )
 async def suspend_item(item_id: int, body: SuspendRequest, request: Request):
     db = request.state.srs_db
@@ -3153,8 +3137,6 @@ def _queue_item_to_dict(
     "/inflection-clozes",
     status_code=200,
     response_model=CreateCardResponse,
-    # Same nested SrsItemResponse "left" trap as /items/base — see above.
-    response_model_exclude_unset=True,
 )
 async def create_inflection_cloze(body: InflectionClozeRequest, request: Request) -> dict:
     """Create one morphology cloze for an inflected surface (Phase 4a).
@@ -3283,8 +3265,6 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
     "/review-queue",
     status_code=200,
     response_model=ReviewQueueResponse,
-    # Same nested `left` omission as the lesson queue — see above.
-    response_model_exclude_unset=True,
 )
 async def get_review_queue(request: Request, response: Response, session_start: bool = False) -> dict:
     """Return the entire ordered review queue in one shot.

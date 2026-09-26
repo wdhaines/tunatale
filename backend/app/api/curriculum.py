@@ -393,10 +393,6 @@ async def delete_day(curriculum_id: str, day: int, request: Request):
     "/{curriculum_id}/days/{day}/lesson",
     status_code=200,
     response_model=LessonResponse,
-    # serialize_lesson is called without a day here (unlike get_lesson), so the
-    # payload has no "day" key — exclude_unset keeps it that way instead of
-    # re-adding "day": null.
-    response_model_exclude_unset=True,
     tags=["curriculum"],
 )
 async def get_lesson_by_day(curriculum_id: str, day: int, request: Request):

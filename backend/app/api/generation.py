@@ -236,10 +236,6 @@ async def get_lesson_source(lesson_id: str, request: Request):
     "/{lesson_id}",
     status_code=200,
     response_model=LessonResponse,
-    # day is only present when the serializer resolved one (get_lesson passes
-    # it; get_lesson_by_day does not) — a plain response_model would rewrite the
-    # payload by re-adding "day": null on the by-day route.
-    response_model_exclude_unset=True,
 )
 async def get_lesson(lesson_id: str, request: Request):
     store = request.state.content_store

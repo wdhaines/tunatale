@@ -84,10 +84,6 @@ def _build_section_filename(topic: str, day: int, section_index: int, section_ty
     "/render",
     status_code=200,
     response_model=RenderAudioResponse,
-    # cues[].ref omits target_index on narration cues ({"kind": "narration"})
-    # — a plain response_model would re-add "target_index": null to every
-    # narration ref.
-    response_model_exclude_unset=True,
 )
 async def render_audio(body: RenderAudioRequest, request: Request):
     store = request.state.content_store
