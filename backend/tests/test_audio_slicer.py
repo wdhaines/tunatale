@@ -7,8 +7,11 @@ enough to exercise every decision the slicer makes.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
+import threading
+import time
 
 import numpy as np
 import pytest
@@ -267,6 +270,89 @@ class TestWholeWordSpansAreNotStretched:
         # while a single syllable is stretched UP toward the 400 ms target.
         assert _duration_ms(whole) > 600.0
         assert _duration_ms(syllable) < 600.0
+
+
+class _Ticker:
+    """Counts event-loop turns while it runs, to tell whether a call YIELDED.
+
+    A coroutine that does its CPU work inline never gives the loop back, so a
+    ticker scheduled beside it cannot advance; one that hands the work to a
+    thread awaits it, and the ticker runs in the meantime. That is the property
+    under test (tunatale-xnv9.4): on the 1-vCPU prod box, inline signal work
+    stalls every other request for the length of each slice.
+    """
+
+    def __init__(self) -> None:
+        self.turns = 0
+        self._running = True
+
+    async def run(self) -> None:
+        while self._running:
+            self.turns += 1
+            await asyncio.sleep(0)
+
+    def stop(self) -> None:
+        self._running = False
+
+
+class TestSignalWorkLeavesTheEventLoop:
+    async def test_building_a_parent_yields_to_the_event_loop(self, tmp_path):
+        slicer = _slicer(tmp_path)
+        ticker = _Ticker()
+        task = asyncio.create_task(ticker.run())
+        await asyncio.sleep(0)
+        before = ticker.turns
+        assert await slicer.slice_to_file(SliceSpec("haden", 0, 1, "v"), tmp_path / "a.wav") is True
+        after = ticker.turns
+        ticker.stop()
+        await task
+        assert after > before
+
+    async def test_cutting_a_chunk_from_a_warm_parent_yields_to_the_event_loop(self, tmp_path):
+        """The parent is memoised after the first call, so the second call is
+        ONLY the chunk work: raw span, WSOLA polish and the file write."""
+        slicer = _slicer(tmp_path)
+        await slicer.slice_to_file(SliceSpec("haden", 0, 1, "v"), tmp_path / "a.wav")
+        ticker = _Ticker()
+        task = asyncio.create_task(ticker.run())
+        await asyncio.sleep(0)
+        before = ticker.turns
+        assert await slicer.slice_to_file(SliceSpec("haden", 1, 2, "v"), tmp_path / "b.wav") is True
+        after = ticker.turns
+        ticker.stop()
+        await task
+        assert after > before
+
+    async def test_alignment_never_runs_twice_at_once(self, tmp_path):
+        """Sections render concurrently and share one slicer, so once alignment
+        is on worker threads two words could run the model together, doubling
+        its memory on a 1 GB box. It is serialised instead."""
+
+        class SlowAligner(FakeAligner):
+            def __init__(self) -> None:
+                super().__init__()
+                self.active = 0
+                self.max_active = 0
+                self._lock = threading.Lock()
+
+            def char_spans(self, samples, word):
+                with self._lock:
+                    self.active += 1
+                    self.max_active = max(self.max_active, self.active)
+                time.sleep(0.05)
+                with self._lock:
+                    self.active -= 1
+                return super().char_spans(samples, word)
+
+        aligner = SlowAligner()
+        slicer = _slicer(tmp_path, aligner=aligner, cache_dir=None)
+        results = await asyncio.gather(
+            slicer.slice_to_file(SliceSpec("haden", 0, 1, "v"), tmp_path / "a.wav"),
+            slicer.slice_to_file(SliceSpec("politiet", 0, 1, "v"), tmp_path / "b.wav"),
+        )
+        assert results == [True, True]
+        assert aligner.calls == 2
+        assert aligner.max_active == 1
 
 
 class TestAlignerIsLoadedOnce:

@@ -15,11 +15,13 @@ break a lesson render.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import importlib.util
 import json
 import logging
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -63,6 +65,11 @@ _TARGET_MS = 400.0
 # deliberately not per-ChunkSlicer, because the CLI preview path builds a fresh
 # renderer per invocation.
 _ALIGNERS: dict[str, CharAligner] = {}
+# Alignment runs on worker threads (see _analyse_parent), and the renderer
+# gathers sections concurrently over one shared slicer, so without this two
+# words could load or run the model at once: a double load, or twice its
+# memory, on a 1 GB box. One lock per process, like _ALIGNERS itself.
+_ALIGN_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -232,7 +239,13 @@ class ChunkSlicer:
             await self._tts.synthesize(
                 word, voice_id, parent_file, rate=self._parent_rate, speak_locale=self._speak_locale
             )
-            raw, rate = sf.read(str(parent_file), dtype="float32", always_2d=True)
+            # Everything past the synthesis is CPU work (decode, trim, the
+            # alignment model, splice refinement): off the loop, as in
+            # slice_to_file. Awaited inside the block so the file still exists.
+            return await asyncio.to_thread(self._analyse_parent, word, voice_id, parent_file, syllables)
+
+    def _analyse_parent(self, word: str, voice_id: str, parent_file: Path, syllables: list[str]) -> SlicedWord | None:
+        raw, rate = sf.read(str(parent_file), dtype="float32", always_2d=True)
         samples = trim_silence(raw.mean(axis=1), int(rate))
 
         cache_path = self._cache_path(word, voice_id)
@@ -266,10 +279,11 @@ class ChunkSlicer:
         self, word: str, samples: np.ndarray, rate: int, syllables: list[str]
     ) -> tuple[list[int], list[int]] | None:
         try:
-            aligner = self._aligner()
-            if not aligner.supports(word):
-                return None
-            char_spans, n_frames = aligner.char_spans(resample_to_model_rate(samples, rate), word)
+            with _ALIGN_LOCK:
+                aligner = self._aligner()
+                if not aligner.supports(word):
+                    return None
+                char_spans, n_frames = aligner.char_spans(resample_to_model_rate(samples, rate), word)
             return derive_syllable_bounds(char_spans, n_frames, len(samples), syllables, self._vowels)
         except Exception:
             logger.warning("Alignment failed for %r; falling back to TTS", word, exc_info=True)
@@ -288,6 +302,15 @@ class ChunkSlicer:
             logger.warning("Span %s outside %r's %d syllables", (spec.start, spec.stop), spec.word, len(sw.syllables))
             return False
 
+        # The signal work below (WSOLA polish, the file write) is CPU-bound and
+        # used to run on the event loop, stalling every other request for the
+        # length of each slice: ~35 ms a chunk here, ~10x that on the 1-vCPU
+        # prod box (tunatale-xnv9.4). The renderer already threads its other
+        # audio work the same way.
+        await asyncio.to_thread(self._write_chunk, sw, spec, out_path)
+        return True
+
+    def _write_chunk(self, sw: SlicedWord, spec: SliceSpec, out_path: Path) -> None:
         head = int(_HEAD_PAD_MS / 1000.0 * sw.rate)
         tail = int(_TAIL_PAD_MS / 1000.0 * sw.rate)
         span = raw_span(sw, spec.start, spec.stop, head, tail)
@@ -306,4 +329,3 @@ class ChunkSlicer:
         )
         out_path.parent.mkdir(parents=True, exist_ok=True)
         sf.write(str(out_path), chunk, sw.rate, subtype="PCM_16")
-        return True
