@@ -7,6 +7,7 @@
 	import logo from '$lib/assets/logo.png';
 	import { page } from '$app/stores';
 	import SyncButton from '$lib/components/SyncButton.svelte';
+	import LanguageSelector from '$lib/components/LanguageSelector.svelte';
 	import QueueStatsWidget from '$lib/components/QueueStatsWidget.svelte';
 	import { languageStore } from '$lib/stores/language.svelte';
 	import { syncStore } from '$lib/stores/sync.svelte';
@@ -24,9 +25,11 @@
 
 	let { children } = $props();
 
-	// Theme, auto-download, and language are set-and-forget prefs — they live on
-	// /settings now. The header keeps only critical CTAs (nav + Sync). Their stores
-	// still init here so the boot-time preference (theme, prefetch) applies app-wide.
+	// Theme and auto-download are set-and-forget prefs — they live on /settings.
+	// The header keeps critical CTAs (nav + Sync) plus the language pill, which
+	// came back from /settings once switching languages became routine
+	// (tunatale-hi5y). Their stores still init here so the boot-time preference
+	// (theme, prefetch) applies app-wide.
 
 	// The review counts live in the nav (Anki-style) so they're visible from every
 	// page. They come from a shared store so a grade on /review updates the nav
@@ -203,6 +206,7 @@
 		<a href="/cards" class="nav-link" class:active={onCards}>{t('layout.navCards')}</a>
 	</div>
 	<div class="nav-actions">
+		<LanguageSelector />
 		<a
 			href="/settings"
 			class="settings-link"

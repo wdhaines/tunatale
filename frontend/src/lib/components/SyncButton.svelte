@@ -48,12 +48,24 @@
 
 {#if syncAvailable}
 	<div class="sync-button">
+		<!-- On a phone the label shortens to "Sync" so the header's action row (brand,
+		     language pill, Settings, Sync) stays one row at 360px. aria-label keeps
+		     the full name for every width, because a display:none span drops out of
+		     the computed accessible name. -->
 		<button
 			onclick={handleSync}
 			disabled={syncLoading}
 			title={t('syncButton.title')}
+			aria-label={syncLoading ? t('syncButton.syncing') : t('syncButton.syncWithAnkiWeb')}
 		>
-			{syncLoading ? t('syncButton.syncing') : t('syncButton.syncWithAnkiWeb')}
+			{#if syncLoading}
+				{t('syncButton.syncing')}
+			{:else}
+				<span class="label-long">{t('syncButton.syncWithAnkiWeb')}</span><span
+					class="label-short"
+					aria-hidden="true">{t('syncButton.sync')}</span
+				>
+			{/if}
 		</button>
 
 		{#if error}
@@ -79,6 +91,17 @@
 		font-weight: 600;
 		cursor: pointer;
 		transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+	}
+	.label-short {
+		display: none;
+	}
+	@media (max-width: 480px) {
+		.label-long {
+			display: none;
+		}
+		.label-short {
+			display: inline;
+		}
 	}
 	.sync-button button:hover:not(:disabled) {
 		border-color: var(--color-primary);

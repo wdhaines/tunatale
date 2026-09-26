@@ -1,8 +1,9 @@
 import { test, expect } from './fixtures';
 
 /**
- * Switching the active language in Settings re-points the whole app at the
- * other language's database.
+ * Switching the active language from the header pill re-points the whole app at
+ * the other language's database. (The pill moved back from /settings to the
+ * header in tunatale-hi5y.)
  *
  * ADMITTED AS A CORE JOURNEY, not as a seam (`.claude/rules/test-tiers.md`).
  * Every assertion below is app-computed — visible text, a select's value — and
@@ -24,7 +25,7 @@ import { test, expect } from './fixtures';
  * and `test_story.py::TestNorwegianStoryGeneration` (voices across every
  * section, plus the `natural_speed` section builder). The spec's own header
  * comment said "the frontend isn't yet language-switchable (Phase 5)" — that
- * premise expired when /settings grew the selector this test drives.
+ * premise expired when the app grew the selector this test drives.
  *
  * The Norwegian curriculum is seeded through the SAME backend the browser talks
  * to (:8001), with the same header the app itself sends. :8001 is configured
@@ -42,7 +43,7 @@ import { test, expect } from './fixtures';
 // mode for a reason that has nothing to do with language switching.
 const NO_TOPIC = `norsk kaffekurs (language-switch ${Math.random().toString(36).slice(2, 8)})`;
 
-test('switching to Norwegian in Settings re-points the library at the Norwegian DB', async ({
+test('switching to Norwegian from the header re-points the library at the Norwegian DB', async ({
 	backendURL,
 	page,
 	request
@@ -79,8 +80,7 @@ test('switching to Norwegian in Settings re-points the library at the Norwegian 
 	await expect(page.locator('.review-badge')).toBeVisible({ timeout: 10000 });
 	await expect(page.getByText(NO_TOPIC)).toHaveCount(0);
 
-	await page.goto('/settings');
-	const selector = page.getByRole('combobox', { name: 'Active language' });
+	const selector = page.getByRole('navigation').getByRole('combobox', { name: 'Active language' });
 	// Vacuity guard: the selector renders only when the backend reports more than
 	// one configured language. A single-language backend would hide it, and every
 	// assertion after this would be about a page with no control on it.
@@ -95,4 +95,30 @@ test('switching to Norwegian in Settings re-points the library at the Norwegian 
 	// header, so the library now comes from the Norwegian connection.
 	await page.goto('/');
 	await expect(page.getByText(NO_TOPIC)).toBeVisible({ timeout: 10000 });
+});
+
+/**
+ * SEAM (layout): the header's action row — brand, language pill, Settings,
+ * Sync — must stay on the viewport at phone width and a large root font. The
+ * pill's rect and the document's overflow are engine-computed, so no tier below
+ * a browser can check them (`.claude/rules/test-tiers.md`). 320px is the
+ * narrowest width the app supports, and 24px is the largest Android root size
+ * the listen-preview layout spec sweeps.
+ */
+test('the language pill stays inside a 320px viewport at a 24px root font', async ({ page }) => {
+	await page.setViewportSize({ width: 320, height: 640 });
+	await page.goto('/');
+	await page.addStyleTag({ content: 'html { font-size: 24px !important; }' });
+	const selector = page.getByRole('navigation').getByRole('combobox', { name: 'Active language' });
+	// Vacuity guard, as above: the e2e backend reports two languages.
+	await expect(selector).toBeVisible({ timeout: 10000 });
+
+	const geometry = await page.evaluate(() => {
+		const pill = document.querySelector('.language-pill')!.getBoundingClientRect();
+		const doc = document.documentElement;
+		return { left: pill.left, right: pill.right, overflow: doc.scrollWidth - doc.clientWidth };
+	});
+	expect(geometry.left).toBeGreaterThanOrEqual(0);
+	expect(geometry.right).toBeLessThanOrEqual(320);
+	expect(geometry.overflow).toBe(0);
 });

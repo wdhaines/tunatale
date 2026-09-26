@@ -13,56 +13,77 @@
 	}
 </script>
 
+<!-- Header pill (tunatale-hi5y). The visible face is only the language CODE, so
+     it fits beside the Settings link on a 320px row; the real <select> lies
+     transparent over the whole pill, so one tap opens the platform's own picker,
+     which lists the full names. A native select cannot show one text closed and
+     another open, hence the overlay. -->
 {#if languageStore.options.length > 1}
-	<select
-		class="language-selector"
-		aria-label={t('languageSelector.activeLanguage')}
-		title={t('languageSelector.activeLanguage')}
-		value={languageStore.code}
-		onchange={onChange}
-	>
-		{#each languageStore.options as option (option.code)}
-			<option value={option.code}>{option.name}</option>
-		{/each}
-	</select>
+	<span class="language-pill">
+		<span class="language-code" aria-hidden="true">{languageStore.code.toUpperCase()}</span>
+		<select
+			class="language-selector"
+			aria-label={t('languageSelector.activeLanguage')}
+			title={t('languageSelector.activeLanguage')}
+			value={languageStore.code}
+			onchange={onChange}
+		>
+			{#each languageStore.options as option (option.code)}
+				<option value={option.code}>{option.name}</option>
+			{/each}
+		</select>
+	</span>
 {/if}
 
 <style>
-	.language-selector {
-		/* Match the sibling nav controls (theme toggle): same height, pill shape,
-		   design tokens. appearance:none + a token-aware caret so the box and the
-		   popup follow the app's [data-theme] rather than the OS color-scheme. */
-		appearance: none;
-		-webkit-appearance: none;
-		color-scheme: light;
-		font: inherit;
-		font-size: 0.88rem;
-		font-weight: 600;
+	/* Same height, pill shape and tokens as the sibling .settings-link. */
+	.language-pill {
+		position: relative;
+		box-sizing: border-box;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
 		height: 34px;
-		padding: 0 1.7rem 0 0.7rem;
+		padding: 0 0.6rem 0 0.7rem;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-pill);
-		background-color: var(--color-surface);
+		background: var(--color-surface);
 		color: var(--color-text);
-		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5' fill='none' stroke='%235c6672' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-		background-repeat: no-repeat;
-		background-position: right 0.6rem center;
-		background-size: 0.7rem;
-		cursor: pointer;
+		font-size: 0.82rem;
+		font-weight: 700;
+		letter-spacing: 0.03em;
 		transition:
 			border-color 0.15s ease,
 			background-color 0.15s ease;
 	}
-	.language-selector:hover {
+	/* Token-aware caret: currentColor follows [data-theme] with no second SVG. */
+	.language-pill::after {
+		content: '';
+		width: 0.38rem;
+		height: 0.38rem;
+		margin-top: -0.2rem;
+		border-right: 1.5px solid currentColor;
+		border-bottom: 1.5px solid currentColor;
+		transform: rotate(45deg);
+		opacity: 0.7;
+	}
+	.language-pill:hover {
 		border-color: var(--color-primary);
 		background-color: var(--color-surface-2);
 	}
-	.language-selector:focus-visible {
+	.language-pill:focus-within {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 1px;
 	}
-	:global(:root[data-theme='dark']) .language-selector {
-		color-scheme: dark;
-		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5' fill='none' stroke='%239faaa9' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+	.language-selector {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		opacity: 0;
+		font: inherit;
+		/* iOS zooms into a focused control under 16px; the face is the span. */
+		font-size: 16px;
+		cursor: pointer;
 	}
 </style>

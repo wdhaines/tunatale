@@ -1,6 +1,7 @@
 /**
  * Tests for /settings — the home for the set-and-forget prefs that used to live
- * in the header: theme, auto-download-on-wifi, and the language switcher.
+ * in the header: theme and auto-download-on-wifi. The language switcher went
+ * back to the header (tunatale-hi5y).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
@@ -86,13 +87,7 @@ describe("/settings", () => {
     expect(toggle.textContent).toContain("Off");
   });
 
-  it("hides the language section for a single-language deployment", () => {
-    const { queryByRole } = render(Settings);
-    expect(queryByRole("heading", { name: "Language" })).toBeNull();
-    expect(queryByRole("combobox", { name: /active language/i })).toBeNull();
-  });
-
-  it("shows the language switcher when more than one language is configured", async () => {
+  it("has no language switcher even with several languages: it lives in the header", async () => {
     mockGetLanguages.mockResolvedValue({
       languages: [
         { code: "sl", name: "Slovene" },
@@ -102,9 +97,9 @@ describe("/settings", () => {
     });
     await languageStore.init();
 
-    const { getByRole } = render(Settings);
-    expect(getByRole("heading", { name: "Language" })).toBeTruthy();
-    expect(getByRole("combobox", { name: /active language/i })).toBeTruthy();
+    const { queryByRole } = render(Settings);
+    expect(queryByRole("heading", { name: "Language" })).toBeNull();
+    expect(queryByRole("combobox", { name: /active language/i })).toBeNull();
   });
 
   it("selecting a countdown option updates the store and pressed state", async () => {

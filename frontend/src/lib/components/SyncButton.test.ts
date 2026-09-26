@@ -35,6 +35,16 @@ describe("SyncButton", () => {
     expect(queryByText("Synced with AnkiWeb")).toBeNull();
   });
 
+  it("keeps the full accessible name while carrying a short phone label", () => {
+    // CSS swaps which label is visible (jsdom sees no media queries); the
+    // aria-label is what keeps the name whole when the long span is display:none.
+    const { getByRole, container } = render(SyncButton);
+    expect(getByRole("button", { name: "Sync with AnkiWeb" })).toBeTruthy();
+    const short = container.querySelector(".label-short");
+    expect(short?.textContent).toBe("Sync");
+    expect(short?.getAttribute("aria-hidden")).toBe("true");
+  });
+
   it("calls peerSync on click", async () => {
     mockPeerSync.mockResolvedValue(RESULT);
     const { getByText } = render(SyncButton);

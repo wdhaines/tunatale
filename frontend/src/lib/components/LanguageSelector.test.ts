@@ -46,6 +46,18 @@ describe("LanguageSelector", () => {
     expect(reload).toHaveBeenCalled();
   });
 
+  it("shows the active language's code on the pill and full names in the list", async () => {
+    mockGet.mockResolvedValue({ ...TWO, active: "no" });
+    localStorage.removeItem("tt-language");
+    await languageStore.init();
+    const { container, getAllByRole } = render(LanguageSelector);
+    const face = container.querySelector(".language-code");
+    expect(face?.textContent).toBe("NO");
+    // The face is decoration; the select carries the accessible name.
+    expect(face?.getAttribute("aria-hidden")).toBe("true");
+    expect(getAllByRole("option").map((o) => o.textContent)).toEqual(["Slovene", "Norwegian"]);
+  });
+
   it("does nothing when re-selecting the already-active language", async () => {
     mockGet.mockResolvedValue(TWO);
     await languageStore.init(); // active = sl

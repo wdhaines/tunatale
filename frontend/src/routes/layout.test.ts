@@ -173,9 +173,34 @@ describe("root +layout.svelte", () => {
     expect(getByRole("link", { name: "Settings" }).className).toContain("active");
   });
 
-  it("no longer renders the theme or language controls in the header", () => {
+  it("no longer renders the theme control in the header", () => {
     const { queryByRole } = renderLayout();
     expect(queryByRole("button", { name: /theme:/i })).toBeNull();
+  });
+
+  it("renders the language pill in the header when several languages are configured", async () => {
+    mockGetLanguages.mockResolvedValueOnce({
+      languages: [
+        { code: "sl", name: "Slovene" },
+        { code: "no", name: "Norwegian" },
+      ],
+      active: "no",
+      sync_available: false,
+    });
+    const { findByRole, container } = renderLayout();
+    const select = await findByRole("combobox", { name: /active language/i });
+    expect(select.closest("nav")).not.toBeNull();
+    expect(container.querySelector(".language-code")?.textContent).toBe("NO");
+  });
+
+  it("has no language pill for a single-language deployment", async () => {
+    mockGetLanguages.mockResolvedValueOnce({
+      languages: [{ code: "sl", name: "Slovene" }],
+      active: "sl",
+      sync_available: false,
+    });
+    const { queryByRole } = renderLayout();
+    await waitFor(() => expect(mockGetLanguages).toHaveBeenCalled());
     expect(queryByRole("combobox", { name: /active language/i })).toBeNull();
   });
 

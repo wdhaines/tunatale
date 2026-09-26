@@ -1,9 +1,7 @@
 <script lang="ts">
-	import LanguageSelector from '$lib/components/LanguageSelector.svelte';
 	import { themeStore, type ThemePref } from '$lib/stores/theme.svelte';
 	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
 	import { listenCountdownPref, type CountdownValue } from '$lib/stores/listenCountdownPref.svelte';
-	import { languageStore } from '$lib/stores/language.svelte';
 	import { authStore } from '$lib/stores/auth.svelte';
 	import {
 		mediaTraceEnabled,
@@ -117,16 +115,6 @@
 			{t('settings.autoDownload')}{prefetchPrefStore.enabled ? t('settings.on') : t('settings.off')}
 		</button>
 	</section>
-
-	{#if languageStore.options.length > 1}
-		<section class="card setting">
-			<div class="setting-head">
-				<h2>{t('settings.language')}</h2>
-				<p>{t('settings.languageDesc')}</p>
-			</div>
-			<LanguageSelector />
-		</section>
-	{/if}
 
 	{#if authStore.enabled}
 		<section class="card setting">

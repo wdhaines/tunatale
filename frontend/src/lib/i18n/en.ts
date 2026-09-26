@@ -257,6 +257,7 @@ export const en = {
   "syncButton.title": "Sync TunaTale with AnkiWeb (Anki can stay open; changes reach AnkiDroid).",
   "syncButton.syncing": "Syncing…",
   "syncButton.syncWithAnkiWeb": "Sync with AnkiWeb",
+  "syncButton.sync": "Sync",
   "syncButton.synced": "Synced with AnkiWeb",
 
   // RateLimitWidget.svelte
@@ -383,9 +384,6 @@ export const en = {
   "settings.autoDownload": "Auto-download on wifi: ",
   "settings.on": "On",
   "settings.off": "Off",
-  "settings.language": "Language",
-  "settings.languageDesc":
-    "Switch the active learning language. The app reloads to refetch your decks.",
   "settings.account": "Account",
   "settings.signedInAs": "Signed in as {email}.",
   "settings.signOut": "Sign out",
