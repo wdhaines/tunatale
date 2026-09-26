@@ -206,7 +206,6 @@
 		<a href="/cards" class="nav-link" class:active={onCards}>{t('layout.navCards')}</a>
 	</div>
 	<div class="nav-actions">
-		<LanguageSelector />
 		<a
 			href="/settings"
 			class="settings-link"
@@ -214,6 +213,8 @@
 			aria-label={t('layout.navSettings')}
 			title={t('layout.navSettings')}
 		>⚙️</a>
+		<!-- After the gear, beside Sync: the user's call on the phone (hi5y). -->
+		<LanguageSelector />
 		<SyncButton syncAvailable={languageStore.syncAvailable} />
 	</div>
 </nav>

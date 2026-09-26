@@ -193,6 +193,11 @@ describe("root +layout.svelte", () => {
     const select = await findByRole("combobox", { name: /active language/i });
     expect(select.closest("nav")).not.toBeNull();
     expect(container.querySelector(".language-code")?.textContent).toBe("NO");
+    // The user's call on the phone (hi5y, 2026-09-26): Settings first, then the
+    // language pill beside Sync. DOCUMENT_POSITION_FOLLOWING = the pill comes after.
+    const gear = container.querySelector(".nav-actions .settings-link")!;
+    const pill = select.closest(".nav-actions > *")!;
+    expect(gear.compareDocumentPosition(pill) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("has no language pill for a single-language deployment", async () => {
