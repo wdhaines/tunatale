@@ -28,7 +28,7 @@ def backfill_lesson(
 
     Shared between the CLI script and the test harness.
     """
-    from app.api.generation import annotate_chunk_upos
+    from app.generation.lemma_annotation import annotate_chunk_upos
     from app.srs.database import SRSDatabase
 
     if not model_version:
@@ -55,8 +55,8 @@ def main() -> None:
 
     dry_run = not args.apply
 
-    from app.api.generation import annotate_chunk_upos
     from app.config import settings
+    from app.generation.lemma_annotation import annotate_chunk_upos
     from app.languages import resolve_db_path
     from app.srs.database import SRSDatabase
     from app.srs.lemmatizer import get_lemmatizer, model_version_for

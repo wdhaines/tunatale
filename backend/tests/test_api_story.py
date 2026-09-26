@@ -506,7 +506,7 @@ class TestStoryEndpoints:
 
     async def test_prewarm_lesson_populates_cache(self, monkeypatch):
         """_prewarm_lesson fills the lemma_analysis_cache for a lesson's L2 phrases."""
-        from app.api.generation import _prewarm_lesson
+        from app.generation.lemma_annotation import _prewarm_lesson
         from app.srs.database import SRSDatabase
         from app.srs.lemmatizer import LowercaseLemmatizer
 
@@ -527,7 +527,7 @@ class TestStoryEndpoints:
         class _CachingLemmatizer(LowercaseLemmatizer):
             _cache_version = "test-v1"
 
-        monkeypatch.setattr("app.api.generation.get_lemmatizer", lambda code: _CachingLemmatizer())
+        monkeypatch.setattr("app.generation.lemma_annotation.get_lemmatizer", lambda code: _CachingLemmatizer())
 
         srs_db = SRSDatabase(":memory:")
         try:
@@ -543,7 +543,7 @@ class TestStoryEndpoints:
 
     async def test_prewarm_skips_cheap_lemmatizer(self, monkeypatch):
         """_prewarm_lesson is a no-op for LowercaseLemmatizer (no _cache_version)."""
-        from app.api.generation import _prewarm_lesson
+        from app.generation.lemma_annotation import _prewarm_lesson
         from app.srs.database import SRSDatabase
         from app.srs.lemmatizer import LowercaseLemmatizer
 
@@ -566,7 +566,7 @@ class TestStoryEndpoints:
                 call_count += 1
                 return super().analyze_sentence(sentence, language_code)
 
-        monkeypatch.setattr("app.api.generation.get_lemmatizer", lambda code: _CountingLemmatizer())
+        monkeypatch.setattr("app.generation.lemma_annotation.get_lemmatizer", lambda code: _CountingLemmatizer())
 
         srs_db = SRSDatabase(":memory:")
         try:
@@ -578,7 +578,7 @@ class TestStoryEndpoints:
 
     async def test_prewarm_skips_no_natural_speed(self, monkeypatch):
         """_prewarm_lesson returns early when lesson has no NATURAL_SPEED section (line 47)."""
-        from app.api.generation import _prewarm_lesson
+        from app.generation.lemma_annotation import _prewarm_lesson
         from app.srs.database import SRSDatabase
         from app.srs.lemmatizer import LowercaseLemmatizer
 
@@ -596,7 +596,7 @@ class TestStoryEndpoints:
         class _CachingLemmatizer(LowercaseLemmatizer):
             _cache_version = "test-v1"
 
-        monkeypatch.setattr("app.api.generation.get_lemmatizer", lambda code: _CachingLemmatizer())
+        monkeypatch.setattr("app.generation.lemma_annotation.get_lemmatizer", lambda code: _CachingLemmatizer())
 
         srs_db = SRSDatabase(":memory:")
         try:
@@ -640,7 +640,7 @@ class TestStoryEndpoints:
 
     async def test_prewarm_swallows_exception(self, monkeypatch):
         """_prewarm_lesson logs and swallows exceptions from get_lemmatizer (lines 52-53)."""
-        from app.api.generation import _prewarm_lesson
+        from app.generation.lemma_annotation import _prewarm_lesson
         from app.srs.database import SRSDatabase
 
         lesson = Lesson(
@@ -657,7 +657,7 @@ class TestStoryEndpoints:
         def _raise(code):
             raise RuntimeError("boom")
 
-        monkeypatch.setattr("app.api.generation.get_lemmatizer", _raise)
+        monkeypatch.setattr("app.generation.lemma_annotation.get_lemmatizer", _raise)
 
         srs_db = SRSDatabase(":memory:")
         try:

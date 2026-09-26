@@ -44,6 +44,7 @@ from typing import Protocol
 
 from app.audio.render_service import render_lesson_audio
 from app.generation.ids import mint_id
+from app.generation.lemma_annotation import _prewarm_lesson, annotate_chunk_upos_for_lesson
 from app.models.lesson import Lesson
 from app.storage.lesson_io import sync_curriculum_day_title
 
@@ -87,10 +88,6 @@ async def publish_lesson(
 ) -> str:
     """Lemmas + UPOS (awaited, pre-write) -> write -> invalidate -> prewarm -> render."""
     if srs_db is not None:
-        # Imported here, not at module scope: publishing is imported by the API
-        # routers, and these helpers live in app.api.generation, so a module-
-        # level import would be a cycle. Same lazy pattern LessonPipeline uses.
-        from app.api.generation import annotate_chunk_upos_for_lesson
         from app.srs.lemma_resolver import resolve_lesson_lemmas
 
         await resolve_lesson_lemmas(lesson, srs_db, llm, **lemmatizer_kwargs)
@@ -102,8 +99,6 @@ async def publish_lesson(
         target.invalidate_audio(content_id)
 
     if srs_db is not None:
-        from app.api.generation import _prewarm_lesson
-
         _anchor(asyncio.create_task(_prewarm_lesson(lesson, srs_db)))
 
     await target.schedule_render(content_id, lesson)

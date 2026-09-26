@@ -397,7 +397,7 @@ class TestAnnotateChunkUpos:
 
     def test_tags_chunk_from_its_key_phrase(self, tmp_path: Path, srs_db: SRSDatabase) -> None:
         """A chunk gets the UPOS from the key phrase it belongs to."""
-        from app.api.generation import annotate_chunk_upos
+        from app.generation.lemma_annotation import annotate_chunk_upos
 
         # Breakdown of "sporet": ['sporet', 'ret', 'spo', 'sporet', 'sporet']
         # with source_word on chunks 1,2,3
@@ -435,7 +435,7 @@ class TestAnnotateChunkUpos:
         This is THE test that proves per-occurrence attachment. A lesson-wide
         surface→upos map would confidently mispronounce one of them.
         """
-        from app.api.generation import annotate_chunk_upos
+        from app.generation.lemma_annotation import annotate_chunk_upos
         from app.srs.lemmatizer import TokenAnalysis
 
         # "sporet" breakdown: 5 chunks; "jeg sporet" breakdown: 7 chunks
@@ -487,7 +487,7 @@ class TestAnnotateChunkUpos:
 
     def test_no_tag_when_key_phrase_arithmetic_fails(self, tmp_path: Path, srs_db: SRSDatabase) -> None:
         """When the key-phrase arithmetic doesn't land, tag nothing and warn."""
-        from app.api.generation import annotate_chunk_upos
+        from app.generation.lemma_annotation import annotate_chunk_upos
         from app.srs.lemmatizer import TokenAnalysis
 
         # Build a lesson with an extra phrase that breaks the arithmetic
@@ -522,7 +522,7 @@ class TestAnnotateChunkUpos:
 
     def test_no_lemmatizer_model_version_left_untouched(self, tmp_path: Path, srs_db: SRSDatabase) -> None:
         """A lesson with no lemmatizer model version is left untouched."""
-        from app.api.generation import annotate_chunk_upos
+        from app.generation.lemma_annotation import annotate_chunk_upos
         from app.srs.lemmatizer import LowercaseLemmatizer
 
         lesson = self._make_lesson(
@@ -539,7 +539,7 @@ class TestAnnotateChunkUpos:
 
     def test_failure_does_not_break_lesson(self, tmp_path: Path, srs_db: SRSDatabase) -> None:
         """annotate_chunk_upos swallows exceptions and returns 0."""
-        from app.api.generation import annotate_chunk_upos
+        from app.generation.lemma_annotation import annotate_chunk_upos
 
         lesson = self._make_lesson(
             key_phrases=[("sporet", "the track")],
@@ -564,7 +564,7 @@ class TestAnnotateChunkUpos:
 
     def test_no_key_phrases_section(self, tmp_path: Path, srs_db: SRSDatabase) -> None:
         """A lesson with no KEY_PHRASES section tags nothing."""
-        from app.api.generation import annotate_chunk_upos
+        from app.generation.lemma_annotation import annotate_chunk_upos
         from app.srs.lemmatizer import LowercaseLemmatizer
 
         lesson = Lesson(
@@ -585,7 +585,7 @@ class TestAnnotateChunkUpos:
 
     def test_no_title_phrase_first_phrase_is_l2(self, tmp_path: Path, srs_db: SRSDatabase) -> None:
         """When the first phrase IS the L2 language (no narrator title), phrase_idx stays 0."""
-        from app.api.generation import annotate_chunk_upos
+        from app.generation.lemma_annotation import annotate_chunk_upos
 
         l2 = "nb-NO-PernilleNeural"
         en = "en-US-GuyNeural"
@@ -629,7 +629,7 @@ class TestAnnotateChunkUpos:
 
     def test_analysis_exception_warns_and_skips(self, tmp_path: Path, srs_db: SRSDatabase) -> None:
         """When analyze_sentence_cached raises, the key phrase is skipped with a warning."""
-        from app.api.generation import annotate_chunk_upos
+        from app.generation.lemma_annotation import annotate_chunk_upos
 
         lesson = self._make_lesson(
             key_phrases=[("sporet", "the track")],
@@ -660,7 +660,7 @@ class TestAnnotateChunkUpos:
 
     def test_chunk_source_word_not_in_analysis(self, tmp_path: Path, srs_db: SRSDatabase) -> None:
         """A chunk whose source_word is not in the analysis result gets no UPOS tag."""
-        from app.api.generation import annotate_chunk_upos
+        from app.generation.lemma_annotation import annotate_chunk_upos
         from app.srs.lemmatizer import TokenAnalysis
 
         lesson = self._make_lesson(
@@ -713,7 +713,7 @@ class TestAnnotateChunkUposForLesson:
 
     async def test_no_model_version_returns_zero(self, srs_db: SRSDatabase) -> None:
         """A language whose lemmatizer has no model version is left untouched."""
-        from app.api.generation import annotate_chunk_upos_for_lesson
+        from app.generation.lemma_annotation import annotate_chunk_upos_for_lesson
 
         lesson = Lesson(
             title="Day 1",
@@ -730,7 +730,7 @@ class TestAnnotateChunkUposForLesson:
 
     async def test_failure_is_swallowed(self, srs_db: SRSDatabase, caplog) -> None:
         """Tagging must never break generation."""
-        from app.api.generation import annotate_chunk_upos_for_lesson
+        from app.generation.lemma_annotation import annotate_chunk_upos_for_lesson
 
         class _Exploding:
             @property
@@ -832,7 +832,7 @@ class TestBackfillDryRun:
 
     def test_dry_run_writes_nothing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """--dry-run prints output but does not modify the store."""
-        from app.api.generation import annotate_chunk_upos
+        from app.generation.lemma_annotation import annotate_chunk_upos
         from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
         from app.srs.database import SRSDatabase
         from app.srs.lemmatizer import get_lemmatizer, model_version_for
@@ -878,7 +878,7 @@ class TestAnnotateSuccessPath:
     """
 
     async def test_tags_through_the_awaited_helper(self, srs_db: SRSDatabase) -> None:
-        from app.api.generation import annotate_chunk_upos_for_lesson
+        from app.generation.lemma_annotation import annotate_chunk_upos_for_lesson
         from app.srs.lemmatizer import TokenAnalysis
 
         lesson = TestAnnotateChunkUpos._make_lesson(

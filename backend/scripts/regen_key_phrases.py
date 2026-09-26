@@ -109,7 +109,7 @@ async def main() -> int:
     tts = get_tts_service(cache_dir=settings.tts_cache_dir)
     renderer = build_lesson_renderer(tts, [code], settings, slicers=build_slicers([code], tts, settings))
 
-    from app.api.generation import annotate_chunk_upos_for_lesson
+    from app.generation.lemma_annotation import annotate_chunk_upos_for_lesson
 
     # Lessons AND review sessions. A session is stored as a Lesson and drilled
     # like one, but lives in its own table — so `list_lessons` misses it, and it
