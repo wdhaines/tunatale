@@ -26,7 +26,25 @@ _log = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from app.srs.database import SRSDatabase
 
-_CACHE_MAX_AGE_DAYS = 30
+
+def _config_row_fresh(db: SRSDatabase, key: str, updated_at: str) -> bool:
+    """Whether a mirrored config row is young enough to use.
+
+    The max age is the key's ``cache_registry`` ``max_age_days`` — the only
+    source of it, so the registry and the resolvers cannot disagree again. A
+    deck that can never sync (``db.anki_config_expires`` False) never ages its
+    config out: nothing would re-stamp it, and defaults are not its settings
+    (tunatale-98zf.5). Raises what ``fromisoformat`` raises on a bad stamp; the
+    callers already treat that as "not usable".
+    """
+    from app.srs.anki_mirror.cache_registry import REGISTRY
+
+    max_age_days = REGISTRY[key].max_age_days
+    if max_age_days is None or not db.anki_config_expires:
+        return True
+    age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
+    return age < timedelta(days=max_age_days)
+
 
 # Field numbers in DeckConfig.Config protobuf (Anki ≥24.04)
 _LEARN_STEPS_FIELD = 1  # VARINT uint32 → packed float (learn steps in minutes)
@@ -350,8 +368,7 @@ def resolve_daily_review_cap(db: SRSDatabase) -> tuple[int, str]:
     if row is not None:
         value_str, updated_at = row
         try:
-            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+            if _config_row_fresh(db, "daily_review_cap", updated_at):
                 return (int(value_str), "cache")
         except ValueError, TypeError, OverflowError:
             pass
@@ -479,8 +496,7 @@ def resolve_daily_new_cap(db: SRSDatabase) -> tuple[int, str]:
     if row is not None:
         value_str, updated_at = row
         try:
-            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+            if _config_row_fresh(db, "daily_new_cap", updated_at):
                 return (int(value_str), "cache")
         except ValueError, TypeError, OverflowError:
             pass
@@ -502,8 +518,7 @@ def resolve_new_spread(db: SRSDatabase) -> tuple[int, str]:
     if row is not None:
         value_str, updated_at = row
         try:
-            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+            if _config_row_fresh(db, "new_spread", updated_at):
                 val = int(value_str)
                 if val in (0, 1, 2):
                     return (val, "cache")
@@ -519,8 +534,7 @@ def _resolve_cached_enum(db: SRSDatabase, key: str, valid: range, default: int) 
     if row is not None:
         value_str, updated_at = row
         try:
-            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+            if _config_row_fresh(db, key, updated_at):
                 val = int(value_str)
                 if val in valid:
                     return (val, "cache")
@@ -580,8 +594,7 @@ def resolve_bury_new(db: SRSDatabase) -> tuple[bool, str]:
     if row is not None:
         value_str, updated_at = row
         try:
-            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+            if _config_row_fresh(db, "bury_new", updated_at):
                 return (value_str == "True", "cache")
         except ValueError, TypeError, OverflowError:
             pass
@@ -598,8 +611,7 @@ def resolve_bury_review(db: SRSDatabase) -> tuple[bool, str]:
     if row is not None:
         value_str, updated_at = row
         try:
-            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+            if _config_row_fresh(db, "bury_review", updated_at):
                 return (value_str == "True", "cache")
         except ValueError, TypeError, OverflowError:
             pass
@@ -787,8 +799,7 @@ def resolve_fsrs_params(db: SRSDatabase) -> tuple[FSRSParams, str]:
     if row is not None:
         value_str, updated_at = row
         try:
-            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+            if _config_row_fresh(db, "fsrs_params", updated_at):
                 cached = json.loads(value_str)
                 # Backward compat: old cache rows lack "version"; infer from weight count
                 return (
@@ -863,8 +874,7 @@ def resolve_learning_steps(db: SRSDatabase) -> tuple[list[float], str]:
     if row is not None:
         value_str, updated_at = row
         try:
-            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+            if _config_row_fresh(db, "learn_steps", updated_at):
                 return (json.loads(value_str), "cache")
         except ValueError, TypeError, OverflowError:
             pass
@@ -883,8 +893,7 @@ def resolve_relearning_steps(db: SRSDatabase) -> tuple[list[float], str]:
     if row is not None:
         value_str, updated_at = row
         try:
-            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+            if _config_row_fresh(db, "relearn_steps", updated_at):
                 return (json.loads(value_str), "cache")
         except ValueError, TypeError, OverflowError:
             pass
@@ -1153,8 +1162,7 @@ def resolve_maximum_review_interval(db: SRSDatabase) -> tuple[int, str]:
     if row is not None:
         value_str, updated_at = row
         try:
-            age = datetime.now(UTC) - datetime.fromisoformat(updated_at).replace(tzinfo=UTC)
-            if age < timedelta(days=_CACHE_MAX_AGE_DAYS):
+            if _config_row_fresh(db, "maximum_review_interval", updated_at):
                 return (int(value_str), "cache")
         except ValueError, TypeError, OverflowError:
             pass
