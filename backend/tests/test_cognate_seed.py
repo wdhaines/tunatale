@@ -434,3 +434,15 @@ class TestBatchThreeLiveDryRun:
         p = cs.plan([_word("gabi", "night")], DICTIONARY, reject=frozenset({"gabi"}))
         assert p.starters == []
         assert p.rejected == 1
+
+
+class TestFunctionWordsAreNotVocab:
+    """Function words are clozes in this app (``/listen`` and ``/items/base`` route
+    them there). Batches 1-3 minted sa, ni, mga and lang as picture vocab cards,
+    which is the "meaningless image" card the router exists to prevent."""
+
+    def test_a_function_word_is_listed_not_minted(self):
+        words = [_word("tubig", "water"), _word("asawa", "wife")]
+        p = cs.plan(words, DICTIONARY, function_word=lambda w: w == "asawa")
+        assert [st.match.target_text for st in p.starters] == ["tubig"]
+        assert [m.target_text for m in p.function_words] == ["asawa"]

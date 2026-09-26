@@ -62,7 +62,7 @@ from app.models.syntactic_unit import SyntacticUnit
 from app.srs.anki_mirror.rollover import anki_today
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
     from datetime import datetime
 
     from app.srs.database import SRSDatabase
@@ -377,6 +377,7 @@ class Plan:
     duplicates: list[Match] = field(default_factory=list)
     unrelated: int = 0
     rejected: int = 0
+    function_words: list[Match] = field(default_factory=list)
     unplaced: int = 0
     already_started: int = 0
 
@@ -388,6 +389,7 @@ def plan(
     per_day: int = DEFAULT_PER_DAY,
     accept: Mapping[str, str] | None = None,
     reject: frozenset[str] = frozenset(),
+    function_word: Callable[[str], bool] | None = None,
     started: frozenset[str] = frozenset(),
     occupied: Counter[int] | None = None,
 ) -> Plan:
@@ -405,7 +407,10 @@ def plan(
     re-plans an earlier one. A card that is minted but still NEW is NOT started:
     the second ``--apply`` of a batch has to find it again to seed it.
     *reject* holds normalised source words a person has ruled out; they are
-    never starters, whatever matched. *occupied* is passed to ``schedule``.
+    never starters, whatever matched. *function_word* (the target language's
+    closed-class test) sends a match to ``function_words`` instead: a function
+    word is a cloze in this app, and a cloze needs a sentence this plan does not
+    have. *occupied* is passed to ``schedule``.
     """
     out = Plan()
     kept: list[Match] = []
@@ -415,6 +420,13 @@ def plan(
             continue
         match = dictionary.classify(word)
         match = _apply_acceptance(match, (accept or {}).get(normalize(word.text)), dictionary)
+        if (
+            match.relation in (Relation.COGNATE, Relation.NEAR_COGNATE)
+            and function_word is not None
+            and function_word(normalize(match.target_text or ""))
+        ):
+            out.function_words.append(match)
+            continue
         if match.relation is Relation.FALSE_FRIEND:
             out.false_friends.append(match)
         elif match.relation is Relation.UNRELATED:

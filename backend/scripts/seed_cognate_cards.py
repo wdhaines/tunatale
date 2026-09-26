@@ -40,6 +40,7 @@ from app.config import settings
 from app.languages import resolve_language_context
 from app.srs import cognate_seed
 from app.srs.database import SRSDatabase
+from app.srs.function_words import is_function_word
 
 # Tagalog words a person reviewed one by one and judged to mean the same thing in
 # Cebuano, though the automatic tests said otherwise (parse_accept syntax).
@@ -98,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         per_day=args.per_day,
         accept=cognate_seed.parse_accept(args.accept),
         reject=frozenset(cognate_seed.parse_accept(args.reject)),
+        function_word=lambda w: is_function_word(w, args.target),
         started=cognate_seed.started_texts(db),
         occupied=cognate_seed.review_load(db, now=now),
     )
@@ -134,6 +136,10 @@ def _print_plan(plan: cognate_seed.Plan) -> None:
     print(f"{plan.unrelated} word(s) with no counterpart; {len(plan.duplicates)} duplicate(s) of an earlier starter.")
     print(f"{plan.already_started} word(s) already started in an earlier batch, left alone.")
     print(f"{plan.rejected} word(s) rejected by review.")
+    if plan.function_words:
+        print(f"\nFUNCTION WORDS ({len(plan.function_words)}), not minted — add each as a cloze from a sentence:")
+        for m in plan.function_words:
+            print(f"  {m.target_text} ({m.relation.value} of {m.word.text!r}, {m.word.translation!r})")
     if plan.false_friends:
         print(f"\nFALSE FRIENDS ({len(plan.false_friends)}), never minted — same spelling, different meaning:")
         for m in plan.false_friends:
