@@ -568,9 +568,20 @@ server, and quit desktop Anki. The script refuses to run otherwise.
 | TTS cache, alignment cache | `~/.tunatale/tts-cache`, `alignment-cache` | `/data/.tunatale/` | both |
 | usage ledgers | `~/.tunatale/{azure_tts,llm}_usage.log` | `/data/.tunatale/` | both |
 | **Anki media + its sync DB** | `~/.tunatale/tt_collection.media{,.db2}` | `/data/.tunatale/` | **to-prod only** |
+| **accounts + learner decks** | `<laptop root>/auth.db`, `users/` | `/data/auth.db`, `/data/users/` | both, **laptop-root mode only** |
 
-Never moved: `auth.db` (production only), logs, the AnkiWeb password file, and
-the Mac's backup directories.
+Never moved: logs, the AnkiWeb password file, and the Mac's backup directories.
+
+⚠️ **Accounts and learner decks are one unit.** A second learner's decks live at
+`users/<id>/`, named by their account's id in `auth.db`, so the two move
+together or not at all — a deck beside a different `auth.db` belongs to whoever
+holds that id there. They move only when `switch.sh` drives the transfer
+(`TT_LAPTOP_ROOT`), where both sides are real deployments; the dev checkout's
+`auth.db` is a throwaway and must never replace prod's. Like everything else it
+is a handover: the destination's accounts and learner decks are REPLACED by the
+source's, after being saved to the transfer backup. So passwords follow the
+data — after a to-prod, you sign in to the box with the password you set on the
+laptop.
 
 ⚠️ **Why the Anki media pair is one-way.** On the Mac `tt_collection.media` is
 a SYMLINK to desktop Anki's own `collection.media`, so writing into it would
@@ -722,9 +733,10 @@ uv run python scripts/seed_user_deck.py --language ceb --email them@example.com 
 uv run python scripts/seed_user_deck.py --language ceb --email them@example.com --apply
 ```
 
-⚠️ `data-transfer.sh` and the off-box backup do not carry `users/` yet
-(`tunatale-98zf.4`). Until they do, do not switch sides with a second learner
-on the instance you are leaving.
+`switch.sh` / `data-transfer.sh` move `users/` together with `auth.db`
+(§ Moving data), and `backup_offbox.py` stages both under `identity/`.
+⚠️ But the scheduled off-box job runs against the DEV checkout's data, not the
+laptop instance's — see `tunatale-98zf.6`.
 
 ### ⚠️ Never pass a password in argv
 
