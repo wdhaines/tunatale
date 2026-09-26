@@ -94,10 +94,12 @@ REGISTRY: Final[dict[str, CacheKeySpec]] = {
     "daily_new_cap": CacheKeySpec(
         name="daily_new_cap",
         source=CacheSource.ANKI_CONFIG,
+        max_age_days=30,
     ),
     "daily_review_cap": CacheKeySpec(
         name="daily_review_cap",
         source=CacheSource.ANKI_CONFIG,
+        max_age_days=30,
     ),
     "desired_retention": CacheKeySpec(
         name="desired_retention",
@@ -106,6 +108,7 @@ REGISTRY: Final[dict[str, CacheKeySpec]] = {
     "new_spread": CacheKeySpec(
         name="new_spread",
         source=CacheSource.ANKI_CONFIG,
+        max_age_days=30,
     ),
     # New-card display order. Hardcoded in TT (TEMPLATE + HighestPosition) until
     # 2026-08-22; mirrored since, because the user's preset was on DECK gather and
@@ -113,18 +116,22 @@ REGISTRY: Final[dict[str, CacheKeySpec]] = {
     "new_card_sort_order": CacheKeySpec(
         name="new_card_sort_order",
         source=CacheSource.ANKI_CONFIG,
+        max_age_days=30,
     ),
     "new_card_gather_priority": CacheKeySpec(
         name="new_card_gather_priority",
         source=CacheSource.ANKI_CONFIG,
+        max_age_days=30,
     ),
     "bury_new": CacheKeySpec(
         name="bury_new",
         source=CacheSource.ANKI_CONFIG,
+        max_age_days=30,
     ),
     "bury_review": CacheKeySpec(
         name="bury_review",
         source=CacheSource.ANKI_CONFIG,
+        max_age_days=30,
     ),
     "col_crt": CacheKeySpec(
         name="col_crt",
