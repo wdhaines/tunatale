@@ -39,7 +39,6 @@ from app.api.models import (
     StatusResponse,
 )
 from app.generation.planner import CurriculumPlanner, PlannerError, build_turn_prompt, parse_turn
-from app.llm.client import LLMError, LLMQuotaExceededError
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.srs.planner_snapshot import build_learner_snapshot
 from app.storage.plan_io import export_plan, get_planner_state, import_plan, mint_curriculum_id
@@ -145,13 +144,6 @@ async def plan_turn(curriculum_id: str, body: PlanTurnRequest, request: Request)
             )
     except PlannerError as e:
         # Nothing is persisted for a failed turn — the user retries.
-        raise HTTPException(status_code=502, detail=str(e)) from e
-    except LLMQuotaExceededError as e:
-        # 429, not the neighbouring 502: nothing upstream failed — TT declined
-        # to call because the day budget is exhausted. A 502 would read as "the
-        # provider failed" and trigger retries that cannot succeed.
-        raise HTTPException(status_code=429, detail=str(e)) from e
-    except LLMError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
 
     state = get_planner_state(curriculum)

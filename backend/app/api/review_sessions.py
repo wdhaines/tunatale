@@ -78,7 +78,6 @@ from app.generation.story import (
     build_lesson_from_story,
     build_review_session_prompts,
 )
-from app.llm.client import LLMError, LLMQuotaExceededError
 from app.storage.lesson_io import export_review_session, validate_story
 
 _logger = logging.getLogger(__name__)
@@ -169,12 +168,6 @@ async def _generate_and_store(
         # as an upstream failure.
         raise HTTPException(status_code=409, detail=_NOTHING_DUE) from e
     except StoryGenerationError as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
-    except LLMQuotaExceededError as e:
-        # 429, not 502: nothing upstream failed. TT declined to call because the
-        # day budget is exhausted, and a retry cannot succeed against that.
-        raise HTTPException(status_code=429, detail=str(e)) from e
-    except LLMError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
 
     # Reaching this line proves srs_db is not None: a session with no SRS
@@ -438,17 +431,11 @@ async def get_review_session_prompt(session_id: str, request: Request):
     if row is None:
         raise HTTPException(status_code=404, detail="Review session not found")
 
-    try:
-        prompts = build_review_session_prompts(
-            request.state.language,
-            _latest_cefr_level(store),
-            review_words=row["review_requested"] or (),
-        )
-    except NoReviewVocabularyError as e:
-        # A session stored without a request cannot be rewritten to a target.
-        # 409 rather than an empty prompt: a REVIEW prompt with no words is not a
-        # smaller prompt, it is a prompt with no content at all.
-        raise HTTPException(status_code=409, detail=str(e)) from e
+    prompts = build_review_session_prompts(
+        request.state.language,
+        _latest_cefr_level(store),
+        review_words=row["review_requested"] or (),
+    )
 
     return {"system_prompt": prompts.system_prompt, "user_prompt": prompts.user_prompt}
 
