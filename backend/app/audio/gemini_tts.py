@@ -39,6 +39,8 @@ import google.oauth2.service_account
 import httpx
 
 from app.audio.ports import TTSExhausted
+from app.generation.section_builder import _SENTENCE_PUNCTUATION
+from app.languages import language_name_for_tts_locale
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,12 @@ RATE_LIMIT_DELAY = 20.0
 
 _SYNTHESIS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize"
 _AUDIO_ENCODING = "MP3"
+
+# Which wording of the IPA instruction is in the cache key (see ``_cache_path``).
+# The model's output is nondeterministic, so a reworded instruction cannot be
+# told apart from yesterday's audio by anything else: bump this on ANY change to
+# the sentence, or the cache keeps serving what the old words produced.
+PROMPT_VERSION = 1
 
 # cloud-platform, not the narrower speech scope: the token is minted for the
 # service account's own role, and a wrong scope is a 403 at synthesis time.
@@ -168,6 +176,40 @@ def _is_fatal(status: int) -> bool:
     return _FATAL_STATUS_MIN <= status < _FATAL_STATUS_MAX and status != _THROTTLED
 
 
+# The instruction that carries a fragment's IPA, in the only channel available:
+# Cloud TTS rejects SSML ``<phoneme>`` for Gemini voices, so ``input.prompt`` is
+# all there is. The language is named in words because an adapter never sees the
+# name otherwise — it has the locale, sliced out of the voice id, and the
+# registry is what turns that back into a language.
+#
+# 2.5 (gemini-2.5-flash-tts) is the model this works on, chosen by the user's
+# listening test: it follows the IPA, where the 3.x family treats the text as a
+# verbatim transcript and says nothing else. A wrong-IPA control proved it.
+def _ipa_prompt(name: str, ipa: str) -> str:
+    """The instruction for one spoken fragment. *name* carries its own trailing space."""
+    return (
+        f"Say only this one {name}syllable or word, exactly once, with nothing "
+        f"before or after it. Pronounce it exactly as the IPA /{ipa}/."
+    )
+
+
+def _single_token_ipa(text: str, phonemes: Mapping[str, str]) -> str | None:
+    """The one IPA an instruction can carry, or ``None`` when the shape does not fit.
+
+    The instruction says "say only this one", so it fits ONE fragment: a phrase
+    is a refusal, not a worse version of a yes. Punctuation is measured off
+    first, because a fragment is stored with the sentence's commas and question
+    marks on it ("inyong,"), and those are not what makes it several tokens.
+
+    The entry is taken by POSITION, never by looking its key up in *text*: the
+    renderer's key is the bare word, and a chunk whose caption carries a hyphen
+    is keyed without one.
+    """
+    if len(phonemes) != 1 or any(c.isspace() for c in text.strip(_SENTENCE_PUNCTUATION)):
+        return None
+    return next(iter(phonemes.values()))
+
+
 class GeminiTTSService:
     """Google Cloud TTS adapter for ``<locale>-<Name>Gemini`` voices.
 
@@ -246,32 +288,37 @@ class GeminiTTSService:
             output_path: Destination file path for the synthesized audio.
             rate: Speech rate adjustment as a percentage string (e.g.
                 ``"-20%"``), mapped to the provider's multiplier.
-            phonemes: Accepted and IGNORED. This provider takes no markup, so
-                per-token IPA cannot be expressed; a non-empty mapping logs one
-                warning and changes neither the request nor the cache key.
+            phonemes: Per-token IPA. A SINGLE token with one entry is spoken
+                from it, via an ``input.prompt`` instruction (there is no
+                ``<phoneme>`` markup for Gemini voices). Any other non-empty
+                mapping logs one warning and changes neither the request nor the
+                cache key.
             speak_locale: Accepted and IGNORED, silently. The voice's own
                 ``languageCode`` is explicit, so there is nothing to override.
         """
         language_code, name = _parse_voice_id(voice_id)
         speaking_rate = _speaking_rate(rate)
+        ipa: str | None = None
         if phonemes:
-            self._warn_phonemes_unsupported()
+            ipa = _single_token_ipa(text, phonemes)
+            if ipa is None:
+                self._warn_phonemes_unsupported()
 
         if self._cache_dir is not None:
-            cached = self._cache_path(text, voice_id, rate)
+            cached = self._cache_path(text, voice_id, rate, ipa)
             if cached.exists():
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(cached, output_path)
                 logger.debug("Gemini TTS cache hit for %r", text[:40])
                 return
 
-        audio = await self._synthesize_with_retry(text, language_code, name, speaking_rate)
+        audio = await self._synthesize_with_retry(text, language_code, name, speaking_rate, ipa)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(audio)
 
         if self._cache_dir is not None:
-            cached = self._cache_path(text, voice_id, rate)
+            cached = self._cache_path(text, voice_id, rate, ipa)
             cached.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(output_path, cached)
 
@@ -299,8 +346,8 @@ class GeminiTTSService:
             "lexicon phonemes for a voice served by this adapter."
         )
 
-    def _cache_path(self, text: str, voice_id: str, rate: str) -> Path:
-        """The cache file for one (model, voice, rate, text) tuple.
+    def _cache_path(self, text: str, voice_id: str, rate: str, ipa: str | None = None) -> Path:
+        """The cache file for one (model, voice, rate, text, ipa) tuple.
 
         The ``gemini|`` prefix keeps this adapter's entries disjoint from the
         sibling's in the one shared cache directory: both name files by a
@@ -309,28 +356,46 @@ class GeminiTTSService:
         because the output is nondeterministic per call — a model swap has to
         be able to tell that yesterday's file was not produced by today's
         model.
+
+        A spoken fragment's key carries its IPA AND the prompt's version. Both
+        halves are load-bearing and neither may be dropped: without the IPA a
+        prompted render would be served for the bare text (and vice versa), and
+        without the version a reworded instruction would keep serving the audio
+        the old words produced. With no IPA the key is EXACTLY what it was
+        before prompts existed, so every clip already cached still hits.
         """
-        key = f"gemini|{self._model}|{voice_id}|{rate}|{text}"
+        ipa_part = f"|ipa:{ipa}|p{PROMPT_VERSION}" if ipa is not None else ""
+        key = f"gemini|{self._model}|{voice_id}|{rate}|{text}{ipa_part}"
         digest = hashlib.sha256(key.encode()).hexdigest()[:16]
         return self._cache_dir / f"{digest}.mp3"  # type: ignore[operator]
 
-    def _request_body(self, text: str, language_code: str, name: str, speaking_rate: float) -> dict:
+    def _request_body(
+        self, text: str, language_code: str, name: str, speaking_rate: float, ipa: str | None = None
+    ) -> dict:
         """The JSON body, exactly as the endpoint is measured to accept it.
 
         ``model_name`` is snake_case on the wire, under ``voice``; the response
-        carries base64 MP3 in ``audioContent``.
+        carries base64 MP3 in ``audioContent``. ``prompt`` rides inside
+        ``input``, and is omitted entirely when there is no IPA to speak — the
+        field is not in the request at all for a plain render.
         """
+        request_input: dict[str, str] = {"text": text}
+        if ipa is not None:
+            language_name = language_name_for_tts_locale(language_code)
+            request_input["prompt"] = _ipa_prompt(f"{language_name} " if language_name else "", ipa)
         return {
-            "input": {"text": text},
+            "input": request_input,
             "voice": {"languageCode": language_code, "name": name, "model_name": self._model},
             "audioConfig": {"audioEncoding": _AUDIO_ENCODING, "speakingRate": speaking_rate},
         }
 
-    async def _synthesize_with_retry(self, text: str, language_code: str, name: str, speaking_rate: float) -> bytes:
+    async def _synthesize_with_retry(
+        self, text: str, language_code: str, name: str, speaking_rate: float, ipa: str | None = None
+    ) -> bytes:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
-                return await self._do_synthesize(text, language_code, name, speaking_rate)
+                return await self._do_synthesize(text, language_code, name, speaking_rate, ipa)
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code
                 if _is_fatal(status):
@@ -365,14 +430,16 @@ class GeminiTTSService:
                 await self._sleep(delay)
         raise TTSExhausted(f"Gemini TTS synthesis failed after {MAX_RETRIES} attempts") from last_error
 
-    async def _do_synthesize(self, text: str, language_code: str, name: str, speaking_rate: float) -> bytes:
+    async def _do_synthesize(
+        self, text: str, language_code: str, name: str, speaking_rate: float, ipa: str | None = None
+    ) -> bytes:
         token = await self._token_provider()
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "User-Agent": "tunatale",
         }
-        body = self._request_body(text, language_code, name, speaking_rate)
+        body = self._request_body(text, language_code, name, speaking_rate, ipa)
         # The pacing delay is paid on EVERY attempt — success or failure — so
         # that consecutive request STARTS are at least min_delay apart. A
         # throttled request that exits instantly is what turns a burst into a

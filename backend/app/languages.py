@@ -472,6 +472,35 @@ def get_tts_locale(code: str) -> str | None:
     return get_language(code).tts_locale
 
 
+def language_name_for_tts_locale(locale: str) -> str | None:
+    """The language *name* (in words) of the language served at *locale*.
+
+    The Gemini adapter's ``input.prompt`` names the language in a sentence
+    ("Say only this one Cebuano syllable or word"), and the only thing it has to
+    go on is the locale sliced out of the voice id. So this is the reverse of
+    :func:`get_tts_locale`: locale in, name out.
+
+    ``None`` for a locale no language declares and for one that MORE THAN ONE
+    declares — a prompt that names neither beats one that misnames the language.
+    A shared locale is not hypothetical (fil-PH is Tagalog's today), so the
+    ambiguity is resolved by refusing rather than by picking a winner.
+    """
+    discover()
+    return _select_name_for_tts_locale(locale, _CONFIGS)
+
+
+def _select_name_for_tts_locale(locale: str, configs: dict[str, LanguageConfig]) -> str | None:
+    """Pure selector behind :func:`language_name_for_tts_locale`.
+
+    Split out for the same reason :func:`_select_planner_example` is: the
+    ambiguous case cannot be produced by registering a second language in a
+    test, and a test that mutated the module-level registry would leak into
+    every later test in the session.
+    """
+    names = [c.language.name for c in configs.values() if c.language.tts_locale == locale]
+    return names[0] if len(names) == 1 else None
+
+
 def get_ipa_read_in_voice_locale(code: str) -> bool:
     """Does *code*'s TTS locale ignore IPA, so IPA must go out unwrapped?
 

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.languages import (
+    LanguageConfig,
     LanguageContext,
     card_surface_variants,
     format_vocab_headword,
@@ -21,6 +22,7 @@ from app.languages import (
     get_variant_separator,
     get_vocab_notetype,
     known_language_codes,
+    language_name_for_tts_locale,
     resolve_language_context,
 )
 from app.models.language import NARRATOR_VOICE, Language
@@ -728,7 +730,8 @@ class TestCebuanoRegistration:
         assert config.lemmatizer_type == "lowercase"  # the shared default, not a choice
         assert config.l2_scorer is None
         assert config.notetype_profiles == {}
-        assert config.phoneme_planner_factory is None
+        # NOT asserted unset: phoneme_planner_factory now ships (tunatale-u8nz.1),
+        # and tests/test_ceb_phoneme_plan.py pins what it plans.
 
     def test_the_style_guide_guards_against_tagalog(self):
         """Tagalog is the drift risk: close kin, and dominant in training data.
@@ -803,3 +806,53 @@ class TestPlannerExampleIsNeverTheLowestSortingLanguage:
     )
     def test_the_selected_example_language(self, target, expected_example_language):
         assert get_planner_example(target).language_code == expected_example_language
+
+
+class TestLanguageNameForTtsLocale:
+    """The registry-side lookup a Gemini ``input.prompt`` needs.
+
+    The instruction the Gemini adapter sends names the language in words
+    ("Say only this one Cebuano syllable or word"), and the only thing it has to
+    go on is the locale sliced off the voice id — a string the registry never
+    hands to an adapter directly. An unresolved locale must read as "say no
+    name", not as a guess, so a prompt that is vaguer is better than one that
+    misnames the language.
+    """
+
+    def test_a_registered_locale_names_its_language(self):
+        assert language_name_for_tts_locale("ceb-PH") == "Cebuano"
+        assert language_name_for_tts_locale("nb-NO") == "Norwegian"
+
+    def test_every_declared_locale_round_trips(self):
+        """Whatever the plugins declare is what a voice id of that locale reads back.
+
+        Otherwise a language could render every fragment through a prompt that
+        either names it wrongly or not at all, and no other test would notice:
+        the adapter's own tests use one locale.
+        """
+        for code in sorted(known_language_codes()):
+            locale = get_language(code).tts_locale
+            if locale is not None:
+                assert language_name_for_tts_locale(locale) == get_language(code).name, code
+
+    def test_an_unregistered_locale_has_no_name(self):
+        assert language_name_for_tts_locale("xx-XX") is None
+
+    def test_an_ambiguous_locale_has_no_name(self):
+        """Two languages on one locale, and the name is not a coin flip.
+
+        fil-PH is the real case: Tagalog declares it today, and a second
+        language sharing it would otherwise make the prompt name one of the two.
+        """
+        from app.languages import _select_name_for_tts_locale
+
+        def _config(code: str, name: str, locale: str) -> LanguageConfig:
+            return LanguageConfig(
+                language=Language(code=code, name=name, native_name=name, script="latin", tts_locale=locale)
+            )
+
+        shared = {"a": _config("aa", "Aaa", "zz-ZZ"), "b": _config("bb", "Bbb", "zz-ZZ")}
+        assert _select_name_for_tts_locale("zz-ZZ", shared) is None
+        # ...and one language alone on the locale is not ambiguous.
+        assert _select_name_for_tts_locale("zz-ZZ", {"a": _config("aa", "Aaa", "zz-ZZ")}) == "Aaa"
+        assert _select_name_for_tts_locale("yy-YY", shared) is None
