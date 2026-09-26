@@ -1,0 +1,513 @@
+# Fluent Forever 'Your First 625' (Gabriel Wyner, thematic order), Cebuano (tunatale-u8nz, 2026-09-26).
+# Translations drafted by the orchestrator, then gated against the kaikki.org Cebuano extract.
+# status: dictionary = headword with a compatible gloss; variant = listed as an alternative form (spelling kept because it is the common one);
+#   usage = no headword, but used >= 5 times in the dictionary's example sentences; reviewed = headword whose gloss wording differs, meaning checked by hand;
+#   unconfirmed = the dictionary cannot confirm it (mostly loanwords the extract lacks). NOT minted unless the user accepts it.
+# Words dropped: multi-word entries (train station, son, daughter...), grammar labels, senses Cebuano shares one word for, and pink/adult (dictionary disagrees).
+category	english	cebuano	status
+animal	dog	iro	dictionary
+animal	cat	iring	dictionary
+animal	fish	isda	dictionary
+animal	bird	langgam	dictionary
+animal	cow	baka	dictionary
+animal	pig	baboy	dictionary
+animal	mouse	ilaga	dictionary
+animal	horse	kabayo	dictionary
+animal	wing	pako	dictionary
+animal	animal	hayop	dictionary
+transportation	train	tren	dictionary
+transportation	plane	ayroplano	reviewed
+transportation	car	awto	dictionary
+transportation	truck	trak	dictionary
+transportation	bicycle	bisikleta	dictionary
+transportation	bus	bus	unconfirmed
+transportation	boat	baroto	unconfirmed
+transportation	ship	barko	dictionary
+transportation	tire	ligid	dictionary
+transportation	gasoline	gasolina	dictionary
+transportation	engine	makina	dictionary
+transportation	ticket	tiket	dictionary
+transportation	vehicle	sakyanan	variant
+location	city	siyudad	dictionary
+location	house	balay	dictionary
+location	street; road	dalan	dictionary
+location	airport	tugpahanan	dictionary
+location	bridge	taytayan	dictionary
+location	hotel	hotel	unconfirmed
+location	restaurant	restawran	unconfirmed
+location	farm; field	uma	dictionary
+location	court	korte	unconfirmed
+location	school	eskwelahan	variant
+location	office	opisina	dictionary
+location	room	kwarto	unconfirmed
+location	town	lungsod	dictionary
+location	university	unibersidad	dictionary
+location	bar	bar	unconfirmed
+location	park	parke	unconfirmed
+location	camp	kampo	unconfirmed
+location	store; shop	tindahan	dictionary
+location	theater	teatro	unconfirmed
+location	library	librarya	unconfirmed
+location	hospital	ospital	dictionary
+location	church	simbahan	dictionary
+location	market	merkado	dictionary
+location	country	nasod	dictionary
+location	building	bilding	unconfirmed
+location	ground; earth; soil	yuta	dictionary
+location	outer space	kawanangan	dictionary
+location	bank	bangko	dictionary
+location	place; location	lugar	usage
+clothing	hat	kalo	dictionary
+clothing	dress	bestida	unconfirmed
+clothing	skirt	sayal	variant
+clothing	clothes; shirt	sinina	dictionary
+clothing	T-shirt	kamiseta	unconfirmed
+clothing	pants	karsones	dictionary
+clothing	shoes	sapatos	dictionary
+clothing	pocket	bulsa	dictionary
+clothing	jacket; coat	dyaket	unconfirmed
+clothing	stain	mansa	dictionary
+color	red	pula	dictionary
+color	green	berde	dictionary
+color	blue	asul	dictionary
+color	yellow	dalag	dictionary
+color	orange	kahel	unconfirmed
+color	black	itom	dictionary
+color	white	puti	dictionary
+color	gray	abuhon	unconfirmed
+color	color	kolor	dictionary
+people	mother	inahan	dictionary
+people	father	amahan	dictionary
+people	parent	ginikanan	dictionary
+people	baby	masuso	reviewed
+people	man	lalaki	dictionary
+people	woman	babaye	dictionary
+people	sibling	igsoon	dictionary
+people	family	pamilya	usage
+people	grandfather	lolo	dictionary
+people	grandmother	lola	dictionary
+people	husband	bana	dictionary
+people	wife	asawa	dictionary
+people	king	hari	dictionary
+people	queen	reyna	unconfirmed
+people	president	presidente	dictionary
+people	neighbor	silingan	reviewed
+people	child	bata	dictionary
+people	person; human	tawo	dictionary
+people	friend	higala	dictionary
+people	victim	biktima	dictionary
+people	player	magdudula	dictionary
+people	crowd	panon	dictionary
+job	teacher	magtutudlo	dictionary
+job	student	estudyante	dictionary
+job	lawyer	abogado	dictionary
+job	doctor	doktor	dictionary
+job	patient	pasyente	dictionary
+job	waiter	weyter	dictionary
+job	secretary	sekretarya	unconfirmed
+job	priest	pari	dictionary
+job	police	pulis	unconfirmed
+job	soldier	sundalo	dictionary
+job	author; writer	magsusulat	dictionary
+job	manager	manedyer	reviewed
+job	actor	aktor	unconfirmed
+job	job; work	trabaho	dictionary
+society	religion	relihiyon	unconfirmed
+society	sky; heaven	langit	dictionary
+society	hell	impyerno	dictionary
+society	death	kamatayon	dictionary
+society	medicine	tambal	dictionary
+society	money	kwarta	variant
+society	dollar	dolyar	unconfirmed
+society	marriage	kaminyoon	dictionary
+society	wedding	kasal	dictionary
+society	relationship	relasyon	dictionary
+society	murder	pagpatay	reviewed
+society	prison	prisohan	dictionary
+society	technology	teknolohiya	dictionary
+society	strength; energy	kusog	dictionary
+society	war	gubat	dictionary
+society	peace	kalinaw	dictionary
+society	election	eleksyon	dictionary
+society	magazine	magasin	dictionary
+society	newspaper	mantalaan	dictionary
+society	poison	hilo	dictionary
+society	gun	pusil	dictionary
+society	sport	isport	unconfirmed
+society	race (contest)	lumba	dictionary
+society	exercise	ehersisyo	dictionary
+society	ball	bola	dictionary
+society	game; play	dula	dictionary
+society	price	presyo	dictionary
+society	contract	kontrata	unconfirmed
+society	drug	droga	unconfirmed
+society	sign	karatula	unconfirmed
+society	science	siyensya	unconfirmed
+society	God	Diyos	dictionary
+art	band	banda	unconfirmed
+art	song; sing	kanta	dictionary
+art	musical instrument	instrumento	unconfirmed
+art	music	musika	unconfirmed
+art	movie	sine	dictionary
+art	art	arte	unconfirmed
+beverage	coffee	kape	dictionary
+beverage	tea	tsa	dictionary
+beverage	wine	bino	unconfirmed
+beverage	beer	serbesa	dictionary
+beverage	juice	duga	dictionary
+beverage	water	tubig	dictionary
+beverage	milk	gatas	dictionary
+beverage	drink; beverage	ilimnon	dictionary
+food	egg	itlog	dictionary
+food	cheese	keso	dictionary
+food	bread	pan	dictionary
+food	soup	sabaw	dictionary
+food	cake	keyk	dictionary
+food	chicken	manok	dictionary
+food	meat	karne	unconfirmed
+food	apple	mansanas	dictionary
+food	banana	saging	dictionary
+food	lemon	limon	unconfirmed
+food	corn	mais	dictionary
+food	rice (uncooked)	bugas	dictionary
+food	cooked rice	kan-on	dictionary
+food	oil	lana	dictionary
+food	seed	liso	dictionary
+food	knife	kutsilyo	dictionary
+food	spoon	kutsara	dictionary
+food	fork	tinidor	dictionary
+food	plate	plato	usage
+food	cup	tasa	dictionary
+food	breakfast	pamahaw	dictionary
+food	lunch	paniudto	dictionary
+food	dinner	panihapon	dictionary
+food	sugar	asukar	dictionary
+food	salt	asin	dictionary
+food	bottle	botelya	dictionary
+food	food	pagkaon	dictionary
+home	table	lamesa	dictionary
+home	chair	lingkoranan	dictionary
+home	bed	katre	dictionary
+home	dream	damgo	dictionary
+home	window	bintana	dictionary
+home	door	pultahan	dictionary
+home	kitchen	kusina	variant
+home	bathroom	banyo	dictionary
+home	pencil	lapis	dictionary
+home	pen	bolpen	dictionary
+home	photograph	litrato	dictionary
+home	soap	sabon	dictionary
+home	book	libro	dictionary
+home	page	panid	dictionary
+home	key	yawe	variant
+home	paint	pintura	unconfirmed
+home	letter; write	sulat	dictionary
+home	wall	bungbong	dictionary
+home	paper	papel	dictionary
+home	floor	salog	dictionary
+home	ceiling	kisame	variant
+home	roof	atop	dictionary
+home	lock	kandado	unconfirmed
+home	telephone	telepono	dictionary
+home	garden	tanaman	dictionary
+home	yard	nataran	unconfirmed
+home	needle	dagom	dictionary
+home	box	kahon	dictionary
+home	gift	regalo	dictionary
+home	ring	singsing	dictionary
+home	tool	himan	dictionary
+electronics	clock	orasan	unconfirmed
+electronics	lamp	lampara	unconfirmed
+electronics	electric fan	bentilador	dictionary
+electronics	cell phone	selpon	dictionary
+electronics	computer	kompyuter	dictionary
+electronics	camera	kamera	unconfirmed
+electronics	television	telebisyon	dictionary
+electronics	radio	radyo	dictionary
+body	head	ulo	dictionary
+body	neck	liog	dictionary
+body	face	nawong	dictionary
+body	beard	bungot	reviewed
+body	hair	buhok	dictionary
+body	eye	mata	dictionary
+body	mouth	baba	dictionary
+body	lip	ngabil	dictionary
+body	nose	ilong	dictionary
+body	tooth	ngipon	dictionary
+body	ear	dunggan	variant
+body	tear (drop)	luha	dictionary
+body	tongue	dila	dictionary
+body	finger	tudlo	dictionary
+body	foot	tiil	dictionary
+body	hand	kamot	dictionary
+body	leg	bitiis	dictionary
+body	arm	bukton	dictionary
+body	shoulder	abaga	dictionary
+body	heart	kasingkasing	dictionary
+body	blood	dugo	dictionary
+body	brain	utok	dictionary
+body	knee	tuhod	dictionary
+body	sweat	singot	dictionary
+body	sick; pain; disease	sakit	dictionary
+body	bone	bukog	dictionary
+body	voice; sound	tingog	unconfirmed
+body	skin	panit	dictionary
+body	body	lawas	dictionary
+nature	sea	dagat	dictionary
+nature	ocean	kadagatan	dictionary
+nature	river	suba	dictionary
+nature	mountain	bukid	dictionary
+nature	rain	ulan	dictionary
+nature	snow	niyebe	dictionary
+nature	tree; wood	kahoy	dictionary
+nature	sun; day	adlaw	dictionary
+nature	moon; month	bulan	dictionary
+nature	world	kalibotan	dictionary
+nature	forest	lasang	dictionary
+nature	plant	tanom	dictionary
+nature	wind; air	hangin	dictionary
+nature	flower	bulak	dictionary
+nature	valley	walog	dictionary
+nature	root	gamot	dictionary
+nature	lake	linaw	dictionary
+nature	star	bituon	dictionary
+nature	grass	sagbot	dictionary
+nature	leaf	dahon	dictionary
+nature	sand	balas	dictionary
+nature	beach	baybayon	reviewed
+nature	wave	balod	dictionary
+nature	fire	kalayo	dictionary
+nature	ice	yelo	unconfirmed
+nature	island	pulo	dictionary
+nature	hill	bungtod	dictionary
+nature	heat	kainit	unconfirmed
+nature	nature	kinaiyahan	unconfirmed
+material	drinking glass	baso	unconfirmed
+material	metal	metal	unconfirmed
+material	plastic	plastik	unconfirmed
+material	stone	bato	dictionary
+material	diamond	diyamante	dictionary
+material	mud; clay	lapok	dictionary
+material	dust	abog	dictionary
+material	gold	bulawan	dictionary
+material	copper	tumbaga	unconfirmed
+material	silver	pilak	dictionary
+measure	meter	metro	unconfirmed
+measure	kilogram	kilo	unconfirmed
+measure	inch	pulgada	dictionary
+measure	pound	libra	unconfirmed
+measure	half	tunga	dictionary
+measure	circle	lingin	dictionary
+measure	square	kwadrado	unconfirmed
+measure	temperature	temperatura	unconfirmed
+measure	date	petsa	dictionary
+measure	weight	gibug-aton	unconfirmed
+measure	edge	ngilit	unconfirmed
+measure	corner	eskina	dictionary
+misc	map	mapa	dictionary
+misc	dot	tuldok	unconfirmed
+misc	light	kahayag	dictionary
+misc	yes	oo	dictionary
+misc	no; not	dili	reviewed
+misc	piece	piraso	unconfirmed
+misc	wound; injury	samad	dictionary
+misc	hole	lungag	dictionary
+misc	image; picture	hulagway	reviewed
+direction	top; above	ibabaw	dictionary
+direction	below; down; low	ubos	dictionary
+direction	side	kilid	dictionary
+direction	front	atubangan	usage
+direction	back (behind)	likod	dictionary
+direction	outside	gawas	dictionary
+direction	inside	sulod	dictionary
+direction	tall; long; high; up	taas	dictionary
+direction	right (side)	tuo	dictionary
+direction	straight ahead	deretso	dictionary
+direction	north	amihanan	dictionary
+direction	south	habagatan	dictionary
+direction	east	sidlakan	dictionary
+direction	west	kasadpan	dictionary
+direction	direction	direksyon	unconfirmed
+season	dry season; summer	ting-init	dictionary
+season	cold season; winter	tingtugnaw	dictionary
+number	one	usa	reviewed
+number	two	duha	dictionary
+number	three	tulo	dictionary
+number	four	upat	dictionary
+number	five	lima	dictionary
+number	six	unom	dictionary
+number	seven	pito	dictionary
+number	eight	walo	dictionary
+number	nine	siyam	dictionary
+number	ten	napulo	dictionary
+number	twenty	kawhaan	variant
+number	thirty	katloan	dictionary
+number	forty	kap-atan	dictionary
+number	fifty	kalim-an	dictionary
+number	sixty	kan-uman	unconfirmed
+number	seventy	kapitoan	dictionary
+number	eighty	kawaloan	dictionary
+number	ninety	kasiyaman	dictionary
+number	hundred	gatos	dictionary
+number	thousand	libo	dictionary
+number	million	milyon	unconfirmed
+number	first	una	dictionary
+number	second (ordinal)	ikaduha	dictionary
+number	third	ikatulo	dictionary
+number	number	numero	unconfirmed
+month	January	Enero	dictionary
+month	February	Pebrero	dictionary
+month	March	Marso	dictionary
+month	April	Abril	dictionary
+month	May	Mayo	dictionary
+month	June	Hunyo	dictionary
+month	July	Hulyo	dictionary
+month	August	Agosto	dictionary
+month	September	Septiyembre	dictionary
+month	October	Oktubre	dictionary
+month	November	Nobyembre	dictionary
+month	December	Disyembre	dictionary
+day	Monday	Lunes	dictionary
+day	Tuesday	Martes	dictionary
+day	Wednesday	Miyerkoles	dictionary
+day	Thursday	Huwebes	dictionary
+day	Friday	Biyernes	dictionary
+day	Saturday	Sabado	dictionary
+day	Sunday	Domingo	variant
+time	year	tuig	dictionary
+time	week	semana	dictionary
+time	hour; time	oras	dictionary
+time	minute	minuto	dictionary
+time	second	segundo	dictionary
+time	morning	buntag	dictionary
+time	afternoon	hapon	dictionary
+time	evening; night	gabii	dictionary
+verb	walk	lakaw	dictionary
+verb	run	dagan	dictionary
+verb	drive	maneho	dictionary
+verb	fly	lupad	dictionary
+verb	swim	langoy	dictionary
+verb	go	adto	reviewed
+verb	stop	hunong	dictionary
+verb	follow	sunod	dictionary
+verb	think	hunahuna	reviewed
+verb	say; speak	sulti	dictionary
+verb	eat	kaon	dictionary
+verb	drink	inom	dictionary
+verb	kill; die; dead	patay	dictionary
+verb	smile	pahiyom	dictionary
+verb	laugh	katawa	dictionary
+verb	cry	hilak	dictionary
+verb	buy	palit	dictionary
+verb	pay; payment	bayad	dictionary
+verb	sell	baligya	dictionary
+verb	study; learn	tuon	dictionary
+verb	jump	ambak	dictionary
+verb	smell	simhot	dictionary
+verb	hear	dungog	dictionary
+verb	listen	paminaw	dictionary
+verb	taste	tilaw	dictionary
+verb	touch	hikap	dictionary
+verb	see	kita	dictionary
+verb	watch; look	tan-aw	dictionary
+verb	kiss	halok	dictionary
+verb	burn	sunog	reviewed
+verb	melt	tunaw	dictionary
+verb	dig	kalot	dictionary
+verb	explode	buto	dictionary
+verb	sit	lingkod	dictionary
+verb	stand	barog	dictionary
+verb	love	gugma	dictionary
+verb	pass by	agi	usage
+verb	cut	putol	dictionary
+verb	fight	away	dictionary
+verb	lie down	higda	dictionary
+verb	dance	sayaw	dictionary
+verb	sleep	tulog	reviewed
+verb	count	ihap	dictionary
+verb	marry	minyo	dictionary
+verb	pray	ampo	dictionary
+verb	win	daog	dictionary
+verb	lose	pildi	dictionary
+verb	mix	sagol	dictionary
+verb	wash	hugas	dictionary
+verb	cook	luto	dictionary
+verb	open	abli	dictionary
+verb	close	sira	dictionary
+verb	call	tawag	dictionary
+verb	turn	liko	dictionary
+verb	build	tukod	dictionary
+verb	grow	tubo	dictionary
+verb	draw	drowing	unconfirmed
+verb	feed	pakaon	unconfirmed
+verb	catch	dakop	dictionary
+verb	throw	labay	dictionary
+verb	clean	limpyo	dictionary
+verb	search; look for	pangita	unconfirmed
+verb	fall	hulog	dictionary
+verb	push	tulod	dictionary
+verb	pull	bira	dictionary
+verb	carry; bring	dala	usage
+verb	break	buak	dictionary
+verb	wear	sul-ob	dictionary
+verb	hang	bitay	dictionary
+verb	shake	uyog	dictionary
+verb	sign (one's name)	pirma	dictionary
+verb	hit; beat	bunal	dictionary
+verb	lift	alsa	dictionary
+adjective	short	mubo	reviewed
+adjective	wide	lapad	dictionary
+adjective	narrow	pig-ot	dictionary
+adjective	big	dako	dictionary
+adjective	small	gamay	dictionary
+adjective	slow	hinay	dictionary
+adjective	fast	paspas	dictionary
+adjective	hot	init	dictionary
+adjective	cold	bugnaw	dictionary
+adjective	new	bag-o	dictionary
+adjective	old (thing)	daan	dictionary
+adjective	young	batan-on	dictionary
+adjective	old (person)	tigulang	dictionary
+adjective	good	maayo	dictionary
+adjective	bad	daotan	dictionary
+adjective	wet	basa	dictionary
+adjective	dry	uga	dictionary
+adjective	healthy	himsog	unconfirmed
+adjective	noisy; loud	saba	unconfirmed
+adjective	quiet	hilom	dictionary
+adjective	happy	malipayon	dictionary
+adjective	sad	masulub-on	unconfirmed
+adjective	beautiful	nindot	variant
+adjective	ugly	pangit	unconfirmed
+adjective	deaf	bungol	dictionary
+adjective	blind	buta	unconfirmed
+adjective	kind; nice	buotan	dictionary
+adjective	rich	dato	reviewed
+adjective	poor	kabus	unconfirmed
+adjective	thick	baga	dictionary
+adjective	thin	nipis	dictionary
+adjective	expensive	mahal	dictionary
+adjective	cheap	barato	dictionary
+adjective	flat	patag	unconfirmed
+adjective	tight	hugot	dictionary
+adjective	loose	luag	dictionary
+adjective	soft	humok	dictionary
+adjective	hard	gahi	dictionary
+adjective	deep	lawom	dictionary
+adjective	shallow	mabaw	dictionary
+adjective	dirty	hugaw	dictionary
+adjective	strong	kusgan	dictionary
+adjective	weak	luya	dictionary
+adjective	alive	buhi	dictionary
+adjective	heavy	bug-at	dictionary
+adjective	light (weight)	gaan	dictionary
+adjective	dark	ngitngit	dictionary
+adjective	bright	hayag	dictionary
+adjective	famous	bantogan	reviewed
+pronoun	I	ako	unconfirmed
+pronoun	you	ikaw	reviewed
+pronoun	he; she	siya	unconfirmed
+pronoun	this (near me)	kini	dictionary
+pronoun	we (not you)	kami	unconfirmed
+pronoun	you (plural)	kamo	reviewed
+pronoun	they	sila	unconfirmed
