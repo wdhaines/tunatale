@@ -725,13 +725,14 @@ class TestCebuanoRegistration:
         config = _CONFIGS["ceb"]
         assert config.planner_example is None
         assert config.wordfreq_lang is None
-        assert config.syllabifier_fn is None
         assert config.lemma_table_path is None
         assert config.lemmatizer_type == "lowercase"  # the shared default, not a choice
         assert config.l2_scorer is None
         assert config.notetype_profiles == {}
         # NOT asserted unset: phoneme_planner_factory now ships (tunatale-u8nz.1),
-        # and tests/test_ceb_phoneme_plan.py pins what it plans.
+        # and tests/test_ceb_phoneme_plan.py pins what it plans; syllabifier_fn
+        # ships with its owning bead (tunatale-u8nz.6), pinned by
+        # tests/test_ceb_syllabify.py.
 
     def test_the_style_guide_guards_against_tagalog(self):
         """Tagalog is the drift risk: close kin, and dominant in training data.

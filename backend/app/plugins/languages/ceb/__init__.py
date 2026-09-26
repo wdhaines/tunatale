@@ -7,6 +7,7 @@ from app.languages import LanguageConfig, register
 from app.models.language import NARRATOR_VOICE, Language
 from app.plugins.languages.ceb.phoneme_plan import create_phoneme_planner
 from app.plugins.languages.ceb.preprocessor import CebuanoPreprocessor
+from app.plugins.languages.ceb.syllabify import syllabify_cebuano_word
 
 _DATA = Path(__file__).parent / "data"
 _style_notes = (_DATA / "style.md").read_text(encoding="utf-8").strip()
@@ -88,6 +89,12 @@ register(
         # per-word map would wrap every word in <phoneme> and change audio
         # nobody has listened to.
         ipa_for_drill_phrases=True,
+        # Onset maximization with Cebuano phonotactics (tunatale-u8nz.6): `ng`
+        # opens a syllable (pa|nga|lan) and loan clusters do too (es|kwe|la|han),
+        # where the generic default cut pan|ga|lan and esk|we|la|han. The
+        # phoneme planner and the breakdown both split through syllabify_word,
+        # so registering it here moves both together.
+        syllabifier_fn=syllabify_cebuano_word,
         # Deliberately omitted until their owning beads ship:
         # - planner_example: get_planner_example picks the LOWEST-SORTING other
         #   language that supplies one, and "ceb" sorts before every other
@@ -96,11 +103,8 @@ register(
         #   relative, would be shown Cebuano. That is exactly the
         #   planner-language contamination the selector exists to prevent.
         # - wordfreq_lang: wordfreq has no "ceb" (tunatale-u8nz.6).
-        # - syllabifier_fn, lemma_table_path, lemmatizer_type (stays at the
-        #   shared "lowercase" default): tunatale-u8nz.6 and tunatale-u8nz.5.
-        #   The planner splitting words with syllabify_word is not a fourth
-        #   omission to fix: that IS the splitter the breakdown uses, and
-        #   registering a second one here would desynchronise the two.
+        # - lemma_table_path, lemmatizer_type (stays at the shared "lowercase"
+        #   default): tunatale-u8nz.5.
         # - l2_scorer, notetype_profiles: later Cebuano beads.
     ),
 )
