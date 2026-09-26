@@ -76,9 +76,16 @@ const AUTH_PATH_PREFIX = "/api/auth/";
  */
 export type AuthStatus = components["schemas"]["AuthStatusResponse"];
 
-export interface AuthUser {
-  email: string;
-}
+/**
+ * The logged-in user, reduced to what the UI needs.
+ *
+ * Two schemas carry it — `LoginResponse` (POST /auth/login) and `MeResponse`
+ * (GET /auth/me) — and they are identical: `{ email: string }`, required. This
+ * is the `MeResponse` alias because it is the "who am I" shape `AuthUser`
+ * stands in for; `login()` stays assignable because the two are structurally
+ * the same type.
+ */
+export type AuthUser = components["schemas"]["MeResponse"];
 
 export interface LanguageOption {
   code: string;
@@ -150,10 +157,20 @@ export interface PlanTurnResponse {
   proposed: ProposedBatch | null;
 }
 
-export interface PromptExport {
-  system_prompt: string;
-  user_prompt: string;
-}
+/**
+ * A prompt pair, for display only — nothing writes it back.
+ *
+ * Three endpoints return one: the plan turn (`PlanTurnPromptResponse`) and the
+ * two story prompts (`GetStoryPromptResponse`, which is the schema of two of
+ * the three call sites). Those two are structurally identical — `system_prompt`
+ * and `user_prompt`, both required strings — so this is the
+ * `GetStoryPromptResponse` alias and the plan-turn call site stays assignable.
+ *
+ * NOT `GetReviewSessionDraftPromptResponse`: that one also carries
+ * `review_words`, and answers GET /api/review-sessions/prompt (the draft prompt
+ * for a session that does not exist yet), not either route this type serves.
+ */
+export type PromptExport = components["schemas"]["GetStoryPromptResponse"];
 
 export interface PlanSource {
   id: string;
@@ -229,12 +246,9 @@ export type ReadableLesson = Pick<
   "id" | "language_code" | "sections" | "key_phrases"
 >;
 
-export interface DayProgress {
-  day: number;
-  /** @see DayPlan.position */
-  position: number;
-  lesson_id: string;
-}
+/** One element of GET /curriculum/{id}/progress.
+ *  `position` @see DayPlan.position */
+export type DayProgress = components["schemas"]["CurriculumProgressEntry"];
 
 // Mirrors the backend's rating domain for /listen (app/api/models.py::ListenRequest).
 // "good" is the default a listen stages; "skip" means "stage nothing for this item".
@@ -361,6 +375,24 @@ export interface DialogueLine {
   words: WordToken[];
 }
 
+/**
+ * NOT an alias: the generated `LessonTranscriptResponse` is stricter than the
+ * wire in three ways, so aliasing it costs 130 svelte-check errors across six
+ * test files (bd tunatale-ss5q.4).
+ *
+ *  1. `TranscriptDialogueLine.sentence` is REQUIRED; `DialogueLine.sentence` is
+ *     optional, because the backend always sends it (reconstructed from
+ *     surfaces) and only the fixtures benefit from leaving it out.
+ *  2. `TranscriptWord` requires all 31 of its fields; the local `WordToken`
+ *     makes 13 optional so existing test literals need no update — see the
+ *     "Optional, same rationale as the siblings" comments on it.
+ *  3. `TranscriptWord` has no `collocation_is_due`. The generated docstring
+ *     says why: it is computed but never serialized, and the model can only
+ *     filter, never invent. Fixtures DO set it, so the local type must allow it.
+ *
+ * The generated `TranscriptKeyPhrase` is identical to the local `KeyPhrase`,
+ * but one of three components matching is not an alias.
+ */
 export interface TranscriptData {
   lesson_id: string;
   key_phrases: KeyPhrase[];
@@ -498,18 +530,11 @@ export interface SRSListParams {
   offset?: number;
 }
 
-export interface SRSDue {
-  due: Array<{ text: string; translation: string }>;
-}
+export type SRSDue = components["schemas"]["DueCollocationsResponse"];
 
-export interface SRSNew {
-  new: Array<{ text: string; translation: string }>;
-}
+export type SRSNew = components["schemas"]["NewCollocationsResponse"];
 
-export interface SRSStats {
-  total: number;
-  due_today: number;
-}
+export type SRSStats = components["schemas"]["SrsStatsResponse"];
 
 export type QueueStats = components["schemas"]["QueueStatsResponse"];
 
@@ -522,19 +547,7 @@ export interface RateLimitLast429 {
 
 export type RateLimitStatus = components["schemas"]["RateLimitStatusResponse"];
 
-export interface LlmHealthLastError {
-  status: string | number;
-  message: string;
-  ago_s: number;
-}
-
-export interface LlmHealthStatus {
-  healthy: boolean;
-  consecutive_failures: number;
-  last_error: LlmHealthLastError | null;
-  fallback_allowed: boolean;
-  llm_mode: string;
-}
+export type LlmHealthStatus = components["schemas"]["LlmHealthResponse"];
 
 export interface ReviewQueueItem extends SRSItemDetail {
   direction: "recognition" | "production";
@@ -608,11 +621,10 @@ export interface ActivityResponse {
 
 // ── Story source / import ──────────────────────────────────────────────
 
-export interface StorySourceResponse {
-  curriculum_id: string;
-  day: number;
-  story: Record<string, unknown>;
-}
+/** `story` stays a bare bag on purpose: it is the raw editable Story-JSON file,
+ *  heterogeneous and versioned, and the backend treats it as opaque too (the
+ *  generated `LessonSourceResponse` documents the same for its import model). */
+export type StorySourceResponse = components["schemas"]["LessonSourceResponse"];
 
 export interface ImportStoryPayload {
   curriculum_id: string;
@@ -623,13 +635,11 @@ export interface ImportStoryPayload {
 
 export type ImportStoryResponse = components["schemas"]["ImportStoryResponse"];
 
-export interface PeerSyncResult {
-  auth_success: boolean;
-  pull_required: number | null;
-  push_required: number | null;
-  tt_push_pull_exit: number | null;
-  dry_run: boolean;
-}
+/** `pull_required`/`push_required` are NOT booleans despite the names — they
+ *  carry AnkiWeb's proto `ChangesRequired` code, and are null on a leg that
+ *  never ran (exactly what a dry run produces). See the generated
+ *  `PeerSyncResponse` for the full warning. */
+export type PeerSyncResult = components["schemas"]["PeerSyncResponse"];
 
 export type ImageCandidate = components["schemas"]["ImageCandidate"];
 
