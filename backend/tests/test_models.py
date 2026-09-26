@@ -8,7 +8,7 @@ import pytest
 from app.languages import get_language
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.language import Language
-from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
+from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType, project_key_phrases
 from app.models.srs_item import Rating, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from tests._helpers import assert_json_roundtrip
@@ -314,6 +314,28 @@ class TestLesson:
         assert restored.key_phrases[0].phrase == "dober dan"
         assert restored.key_phrases[0].translation == "good day"
         assert restored.key_phrases[1].phrase == "kako ste"
+
+    def test_project_key_phrases_matches_lesson_to_json_shape(self):
+        """The shared projection is the one Lesson.to_json already wrote by hand."""
+        key_phrases = [
+            KeyPhraseInfo(phrase="dober dan", translation="good day"),
+            KeyPhraseInfo(phrase="kako ste", translation="how are you"),
+        ]
+        lesson = _make_lesson()
+        lesson.key_phrases = list(key_phrases)
+        assert project_key_phrases(key_phrases) == json.loads(lesson.to_json())["key_phrases"]
+
+    def test_project_key_phrases_of_empty_is_empty(self):
+        assert project_key_phrases([]) == []
+
+    def test_project_key_phrases_accepts_any_phrase_translation_pair(self):
+        """Also used for transcript key phrases, which are a different type."""
+
+        class _Other:
+            phrase = "dober dan"
+            translation = "good day"
+
+        assert project_key_phrases([_Other()]) == [{"phrase": "dober dan", "translation": "good day"}]
 
     def test_lesson_without_key_phrases_deserializes_empty(self):
         """Old lessons serialized without key_phrases should deserialize with empty list."""

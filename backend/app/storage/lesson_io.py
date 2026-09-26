@@ -18,6 +18,7 @@ from app.models.lesson import (
     Lesson,
     SectionType,
     extract_sentence_translations_from_translated,
+    project_key_phrases,
 )
 from app.storage.store import ContentStore
 
@@ -155,7 +156,7 @@ def _reconstruct_story(lesson: Lesson) -> dict:
     token_glosses = lesson.generation_metadata.get("token_glosses", {})
     return {
         "title": lesson.title,
-        "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in lesson.key_phrases],
+        "key_phrases": project_key_phrases(lesson.key_phrases),
         "scenes": scenes,
         "dialogue_glosses": [{"word": w, "translation": t} for w, t in token_glosses.items()],
         "morphology_focus": lesson.generation_metadata.get("morphology_focus", []),

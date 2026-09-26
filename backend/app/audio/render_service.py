@@ -448,12 +448,6 @@ def _transcode_to_delivery(src: Path, dest: Path, rate: int) -> None:
     dest.write_bytes(encode_audio(samples, rate, settings.audio_delivery_codec, settings.audio_delivery_bitrate))
 
 
-def _ms_to_frames(ms: int, rate: int) -> int:
-    """Milliseconds to frames. build_cue_manifest divides by the same rate, so
-    the value cancels out of the answer; only using ONE rate throughout matters."""
-    return int(round(ms * rate / 1000))
-
-
 def _write_silence(path: Path, duration_ms: int, rate: int) -> None:
     """Write *duration_ms* of silence in the delivery codec.
 
@@ -652,7 +646,7 @@ async def reassemble_lesson_audio(
             section_index=None,
             phrase_index=0,
             start_frame=0,
-            end_frame=_ms_to_frames(title_ms, assembly_rate),
+            end_frame=_assembly._ms_to_frames(title_ms, assembly_rate),
         )
     ]
     section_cue_timings: dict[int, list[CueTiming]] = {}
@@ -661,8 +655,8 @@ async def reassemble_lesson_audio(
             CueTiming(
                 section_index=i,
                 phrase_index=cd["phrase_index"],
-                start_frame=_ms_to_frames(cd["start_ms"], assembly_rate),
-                end_frame=_ms_to_frames(cd["end_ms"], assembly_rate),
+                start_frame=_assembly._ms_to_frames(cd["start_ms"], assembly_rate),
+                end_frame=_assembly._ms_to_frames(cd["end_ms"], assembly_rate),
             )
             for cd in cue_dicts
         ]

@@ -17,6 +17,19 @@ class CachedClozeSentence(NamedTuple):
     sentence_translation: str = ""
 
 
+def _check_registered(key: str) -> None:
+    """Raise KeyError unless *key* is in the anki_state_cache key registry.
+
+    The import stays function-local: cache_registry is a leaf module, but keeping
+    it deferred leaves the mixin's import cost unchanged for callers that never
+    touch the cache.
+    """
+    from app.srs.anki_mirror.cache_registry import REGISTRY
+
+    if key not in REGISTRY:
+        raise KeyError(f"unregistered cache key: {key!r}. Register it in cache_registry.py first.")
+
+
 class DbKvCacheMixin:
     """anki_state_cache accessors. Mixed into SRSDatabase; relies on SRSDatabaseBase infra."""
 
@@ -27,10 +40,7 @@ class DbKvCacheMixin:
         """
         from datetime import UTC, datetime
 
-        from app.srs.anki_mirror.cache_registry import REGISTRY
-
-        if key not in REGISTRY:
-            raise KeyError(f"unregistered cache key: {key!r}. Register it in cache_registry.py first.")
+        _check_registered(key)
 
         updated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
         with self._get_conn() as conn:
@@ -49,10 +59,7 @@ class DbKvCacheMixin:
 
         Raises KeyError if the key is not registered in the cache_registry.
         """
-        from app.srs.anki_mirror.cache_registry import REGISTRY
-
-        if key not in REGISTRY:
-            raise KeyError(f"unregistered cache key: {key!r}. Register it in cache_registry.py first.")
+        _check_registered(key)
 
         with self._get_conn() as conn:
             conn.execute(
@@ -66,10 +73,7 @@ class DbKvCacheMixin:
 
         Raises KeyError if the key is not registered in the cache_registry.
         """
-        from app.srs.anki_mirror.cache_registry import REGISTRY
-
-        if key not in REGISTRY:
-            raise KeyError(f"unregistered cache key: {key!r}. Register it in cache_registry.py first.")
+        _check_registered(key)
 
         with self._get_conn() as conn:
             row = conn.execute(
@@ -85,10 +89,7 @@ class DbKvCacheMixin:
 
         Raises KeyError if the key is not registered in the cache_registry.
         """
-        from app.srs.anki_mirror.cache_registry import REGISTRY
-
-        if key not in REGISTRY:
-            raise KeyError(f"unregistered cache key: {key!r}. Register it in cache_registry.py first.")
+        _check_registered(key)
 
         with self._get_conn() as conn:
             conn.execute("DELETE FROM anki_state_cache WHERE key = ?", (key,))

@@ -6,6 +6,7 @@ Pimsleur 4-section format ported from micro-demo-0.0/tunatale/core/models/.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -28,6 +29,15 @@ class KeyPhraseInfo:
 
     phrase: str
     translation: str
+
+
+def project_key_phrases(key_phrases: Iterable[KeyPhraseInfo]) -> list[dict[str, str]]:
+    """Project key phrases to the ``{"phrase", "translation"}`` shape every serializer emits.
+
+    Shared by the lesson store, the API serializers and the SRS transcript
+    response so the shape is defined once beside the model.
+    """
+    return [{"phrase": kp.phrase, "translation": kp.translation} for kp in key_phrases]
 
 
 class SectionType(Enum):
@@ -96,7 +106,7 @@ class Lesson:
             "title": self.title,
             "language_code": self.language_code,
             "narrator_voice": self.narrator_voice,
-            "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in self.key_phrases],
+            "key_phrases": project_key_phrases(self.key_phrases),
             "sections": [
                 {
                     "section_type": s.section_type.value,

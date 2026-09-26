@@ -73,6 +73,7 @@ from app.languages import (
 from app.llm.call_sites import CallSite
 from app.llm.cloze_quality import ClozeVerdict, generate_cloze_sentence, judge_cloze
 from app.llm.translate import generate_word_gloss, translate_term
+from app.models.lesson import project_key_phrases
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today, due_at_rollover_utc
@@ -2305,7 +2306,7 @@ async def build_transcript_payload(content_id: str, lesson, request: Request) ->
 
     return {
         "lesson_id": content_id,
-        "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in transcript.key_phrases],
+        "key_phrases": project_key_phrases(transcript.key_phrases),
         "dialogue_lines": [
             {
                 "role": line.role,

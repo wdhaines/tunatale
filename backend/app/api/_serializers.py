@@ -1,6 +1,6 @@
 """Response serialization helpers for API endpoints."""
 
-from app.models.lesson import Lesson
+from app.models.lesson import Lesson, project_key_phrases
 
 
 def serialize_lesson(lesson_id: str, lesson: Lesson, *, day: int | None = None) -> dict:
@@ -9,7 +9,7 @@ def serialize_lesson(lesson_id: str, lesson: Lesson, *, day: int | None = None) 
         "id": lesson_id,
         "title": lesson.title,
         "language_code": lesson.language_code,
-        "key_phrases": [{"phrase": kp.phrase, "translation": kp.translation} for kp in lesson.key_phrases],
+        "key_phrases": project_key_phrases(lesson.key_phrases),
         "sections": [
             {
                 "type": s.section_type.value,

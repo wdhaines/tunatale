@@ -24,6 +24,7 @@ import json
 import logging
 import re
 
+from app.generation.json_parsing import _strip_fences
 from app.llm.call_sites import CallSite
 from app.models.language import Language
 from app.srs.lemmatizer import get_lemmatizer, lemmatize_surfaces_in_context
@@ -113,15 +114,6 @@ Respond with ONLY a JSON array (no markdown fences, no prose):
 Dialogue:
 {dialogue}
 """
-
-
-def _strip_fences(raw: str) -> str:
-    """Strip markdown code fences from an LLM response."""
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*\n?", "", raw)
-        raw = re.sub(r"\n?```\s*$", "", raw)
-        raw = raw.strip()
-    return raw
 
 
 def _recover_entries(text: str) -> tuple[list[dict], int]:

@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from app.generation.section_builder import build_key_phrases_section
-from app.models.lesson import SectionType
+from app.models.lesson import SectionType, project_key_phrases
 
 if TYPE_CHECKING:
     from app.models.lesson import Lesson, Section
@@ -77,7 +77,7 @@ def resync_key_phrases(store: ContentStore, *, dry_run: bool = False) -> ResyncR
 
         voice_map, narrator = _voices(section, lesson.language_code)
         rebuilt = build_key_phrases_section(
-            [{"phrase": kp.phrase, "translation": kp.translation} for kp in lesson.key_phrases],
+            project_key_phrases(lesson.key_phrases),
             voice_map,
             narrator,
             lesson.language_code,
