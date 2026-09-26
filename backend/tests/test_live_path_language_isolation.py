@@ -92,9 +92,9 @@ def two_language_dbs(tmp_path, monkeypatch):
     db_no.set_anki_state_cache("relearn_steps", "[45.0]")
     db_no.set_anki_state_cache("fsrs_params", _fsrs_params_json(0.70))
 
-    monkeypatch.setattr("app.srs.queue_stats.settings.database_url", f"sqlite:///{sl_path}")
+    monkeypatch.setattr("app.srs.anki_mirror.queue_stats.settings.database_url", f"sqlite:///{sl_path}")
     monkeypatch.setattr(
-        "app.srs.queue_stats.settings.database_urls",
+        "app.srs.anki_mirror.queue_stats.settings.database_urls",
         {"sl": f"sqlite:///{sl_path}", "no": f"sqlite:///{no_path}"},
     )
     return db_sl, db_no
@@ -217,7 +217,7 @@ class TestQueueSortReadsTheRequestDatabaseFsrsParams:
         from app.srs.anki_mirror.queue_engine import _compute_live_main
 
         _, db_no = two_language_dbs
-        monkeypatch.setattr("app.srs.queue_stats.settings.database_url", _UNOPENABLE)
+        monkeypatch.setattr("app.srs.anki_mirror.queue_stats.settings.database_url", _UNOPENABLE)
 
         cid_n, _ = _seed_review_card(db_no, "null-r", stability=1.0, last_review=None)
         cid_k, ds_k = _seed_review_card(db_no, "known-r", stability=10.0, last_review=_midnight_utc_days_ago(27))

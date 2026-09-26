@@ -73,16 +73,16 @@ def measure(pre_db: Path, post_db: Path, anki_pre_db: Path, anki_post_db: Path) 
     from app.anki.safety import _register_anki_collations
     from app.models.srs_item import Direction, DirectionState, Rating, SRSItem, SRSState
     from app.models.syntactic_unit import SyntacticUnit
-    from app.srs.database import SRSDatabase
-    from app.srs.fsrs import compute_anki_day_index, schedule
-    from app.srs.load_balancer import LOAD_BALANCE_DAYS, LoadBalancer
-    from app.srs.queue_stats import (
+    from app.srs.anki_mirror.load_balancer import LOAD_BALANCE_DAYS, LoadBalancer
+    from app.srs.anki_mirror.queue_stats import (
         refresh_col_crt,
         refresh_fsrs_params,
         refresh_learning_steps,
         resolve_col_crt,
         resolve_fsrs_params,
     )
+    from app.srs.database import SRSDatabase
+    from app.srs.fsrs import compute_anki_day_index, schedule
 
     # Warm caches from the Anki post snapshot (params + col_crt are stable
     # across the sync interval). Use plain sqlite3 with collations registered,

@@ -25,7 +25,9 @@ from pathlib import Path
 import pytest
 
 from app.models.srs_item import Rating
+from app.srs.anki_mirror.load_balancer import LoadBalancer
 from app.srs.anki_mirror.protobuf_wire import anki_today_col_day
+from app.srs.anki_mirror.queue_stats import build_live_load_balancer
 from app.srs.anki_mirror.rollover import local_today_rollover
 from app.srs.database import SRSDatabase
 from app.srs.fsrs import (
@@ -37,8 +39,6 @@ from app.srs.fsrs import (
     _passing_intervals_with_fuzz,
     _quantize_stability,
 )
-from app.srs.load_balancer import LoadBalancer
-from app.srs.queue_stats import build_live_load_balancer
 from tests.anki_oracle.harness_fixtures import run_oracle
 from tests.anki_oracle.synthetic_collection import COL_CRT, DEFAULT_DESIRED_RETENTION, SyntheticCollection
 

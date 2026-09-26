@@ -394,7 +394,7 @@ class TestListenToSyncRoundTrip:
             "refresh_easy_days",
             "warn_if_multi_deck_preset",
         ):
-            monkeypatch.setattr(f"app.srs.queue_stats.{name}", lambda *a, **k: None)
+            monkeypatch.setattr(f"app.srs.anki_mirror.queue_stats.{name}", lambda *a, **k: None)
         await run_full_sync(
             sync,
             anki_conn,

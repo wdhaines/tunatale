@@ -12,7 +12,7 @@ Instead we lock the port against:
 
 from __future__ import annotations
 
-from app.srs._anki_rng import ChaCha12Rng, random_range_f32
+from app.srs.anki_mirror._anki_rng import ChaCha12Rng, random_range_f32
 from app.srs.fsrs import (
     _constrained_fuzz_bounds,
     _fuzz_delta,

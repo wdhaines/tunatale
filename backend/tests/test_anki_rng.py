@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.srs._anki_rng import (
+from app.srs.anki_mirror._anki_rng import (
     ChaCha12Rng,
     _chacha12_block,
     _f32_from_bits,

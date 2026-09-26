@@ -10,14 +10,7 @@ bit-exact in the 2026-05 sweep) and guard against regression.
 
 from __future__ import annotations
 
-from app.srs.fsrs import (
-    DEFAULT_FSRS5_PARAMS,
-    _graduation_intervals_with_fuzz,
-    _next_interval_raw,
-    _passing_intervals_with_fuzz,
-    _quantize_stability,
-)
-from app.srs.load_balancer import (
+from app.srs.anki_mirror.load_balancer import (
     _EASY_MINIMUM,
     _EASY_NORMAL,
     _EASY_REDUCED,
@@ -31,6 +24,13 @@ from app.srs.load_balancer import (
     _LoadBalancerDay,
     _LoadBalancerInterval,
     _select_weighted_interval,
+)
+from app.srs.fsrs import (
+    DEFAULT_FSRS5_PARAMS,
+    _graduation_intervals_with_fuzz,
+    _next_interval_raw,
+    _passing_intervals_with_fuzz,
+    _quantize_stability,
 )
 
 

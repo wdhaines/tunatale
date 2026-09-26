@@ -47,7 +47,7 @@ def _patch_all_refreshes(monkeypatch):
     without a realistic config blob. The refresh phase-list is pinned separately
     by TestRunFullSync — these tests assert other phases."""
     for name in _REFRESH_FUNCS:
-        monkeypatch.setattr(f"app.srs.queue_stats.{name}", lambda *a, **k: None)
+        monkeypatch.setattr(f"app.srs.anki_mirror.queue_stats.{name}", lambda *a, **k: None)
 
 
 class TestRunFullSync:
@@ -80,7 +80,7 @@ class TestRunFullSync:
     def _patch_refreshes(self, monkeypatch, recorder):
         for name in _REFRESH_FUNCS:
             monkeypatch.setattr(
-                f"app.srs.queue_stats.{name}",
+                f"app.srs.anki_mirror.queue_stats.{name}",
                 lambda *a, _n=name, **k: recorder.append(_n),
             )
 

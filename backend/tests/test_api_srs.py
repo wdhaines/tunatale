@@ -1277,7 +1277,7 @@ class TestReviewQueue:
 
     async def test_spread_mix_interleaves(self, api_app_state):
         """Test _spread_mix interleaves news into reviews."""
-        from app.api.srs import _spread_mix
+        from app.srs.anki_mirror.queue_engine import _spread_mix
 
         # Create fake queue items
         reviews = [(i, None, None, Direction.RECOGNITION) for i in range(10)]
@@ -1293,7 +1293,7 @@ class TestReviewQueue:
 
     async def test_spread_mix_direct(self, api_app_state):
         """Test _spread_mix directly."""
-        from app.api.srs import _spread_mix
+        from app.srs.anki_mirror.queue_engine import _spread_mix
 
         reviews = [(i, None, "sl", Direction.RECOGNITION) for i in range(5)]
         news = [(i, None, "sl", Direction.PRODUCTION) for i in range(3)]
@@ -1302,7 +1302,7 @@ class TestReviewQueue:
 
     async def test_spread_mix_matches_anki_intersperser_3_3(self, api_app_state):
         """Anki Intersperser([1,2,3], [11,22,33]) yields [1,11,2,22,3,33]."""
-        from app.api.srs import _spread_mix
+        from app.srs.anki_mirror.queue_engine import _spread_mix
 
         reviews = [(i, "R", "sl", Direction.RECOGNITION) for i in range(3)]
         news = [(i, "N", "sl", Direction.PRODUCTION) for i in range(3)]
@@ -1311,7 +1311,7 @@ class TestReviewQueue:
 
     async def test_spread_mix_matches_anki_intersperser_3_2(self, api_app_state):
         """Anki Intersperser([1,2,3], [11,22]) yields [1,11,2,22,3]."""
-        from app.api.srs import _spread_mix
+        from app.srs.anki_mirror.queue_engine import _spread_mix
 
         reviews = [(i, "R", "sl", Direction.RECOGNITION) for i in range(3)]
         news = [(i, "N", "sl", Direction.PRODUCTION) for i in range(2)]
@@ -1323,7 +1323,7 @@ class TestReviewQueue:
 
         Intersperser([1,2,3], [11,22,33,44,55,66]) = [11,1,22,33,2,44,55,3,66].
         """
-        from app.api.srs import _spread_mix
+        from app.srs.anki_mirror.queue_engine import _spread_mix
 
         reviews = [(i, "R", "sl", Direction.RECOGNITION) for i in range(3)]
         news = [(i, "N", "sl", Direction.PRODUCTION) for i in range(6)]
@@ -1332,7 +1332,7 @@ class TestReviewQueue:
 
     async def test_fnv1a_64_zero_args_returns_offset_basis(self, api_app_state):
         """Empty input returns FNV-1a's 64-bit offset basis, cast to signed i64."""
-        from app.api.srs import _fnv1a_64_i64
+        from app.srs.anki_mirror.queue_engine import _fnv1a_64_i64
 
         # 0xcbf29ce484222325 - 2**64
         assert _fnv1a_64_i64() == -3750763034362895579
@@ -1345,7 +1345,7 @@ class TestReviewQueue:
         first new appears earlier in long review queues — matching what the user
         observes in Anki when a new card surfaces while TT is still on a review.
         """
-        from app.api.srs import _spread_mix
+        from app.srs.anki_mirror.queue_engine import _spread_mix
 
         reviews = [(i, "R", "sl", Direction.RECOGNITION) for i in range(10)]
         news = [(i, "N", "sl", Direction.PRODUCTION) for i in range(2)]
@@ -1385,7 +1385,7 @@ class TestReviewQueue:
     async def test_merge_retrievability_empty_inputs(self, api_app_state):
         from datetime import date
 
-        from app.api.srs import _merge_by_retrievability_ascending
+        from app.srs.anki_mirror.queue_engine import _merge_by_retrievability_ascending
 
         # col_crt/params are required now, not defaulted: the old `params=None`
         # fallback resolved them from `settings.database_url`, the singular
@@ -1396,7 +1396,7 @@ class TestReviewQueue:
         assert result == []
 
     async def test_merge_directions_empty_inputs(self, api_app_state):
-        from app.api.srs import _merge_directions
+        from app.srs.anki_mirror.queue_engine import _merge_directions
 
         result = _merge_directions([], [])
         assert result == []
@@ -1484,14 +1484,14 @@ class TestReviewQueue:
 
     # --- Additional tests for _spread_mix ---
     async def test_spread_mix_empty_news_returns_reviews(self, api_app_state):
-        from app.api.srs import _spread_mix
+        from app.srs.anki_mirror.queue_engine import _spread_mix
 
         reviews = [(i, None, "sl", Direction.RECOGNITION) for i in range(5)]
         result = _spread_mix(reviews, [])
         assert result == reviews
 
     async def test_spread_mix_empty_reviews_returns_news(self, api_app_state):
-        from app.api.srs import _spread_mix
+        from app.srs.anki_mirror.queue_engine import _spread_mix
 
         news = [(i, None, "sl", Direction.PRODUCTION) for i in range(3)]
         result = _spread_mix([], news)
@@ -1500,7 +1500,7 @@ class TestReviewQueue:
     async def test_spread_mix_more_news_than_reviews(self, api_app_state):
         # Anki parity: when news outnumber reviews, Intersperser starts from
         # the longer iter (news). For 2 reviews + 5 news → [N, R, N, N, R, N, N].
-        from app.api.srs import _spread_mix
+        from app.srs.anki_mirror.queue_engine import _spread_mix
 
         reviews = [(i, None, "sl", Direction.RECOGNITION) for i in range(2)]
         news = [(i, None, "sl", Direction.PRODUCTION) for i in range(5)]
@@ -1606,7 +1606,7 @@ class TestReviewQueue:
         """
         from datetime import date
 
-        from app.api.srs import _merge_directions
+        from app.srs.anki_mirror.queue_engine import _merge_directions
 
         # Phantom: collocation linked to Anki, but this direction has anki_due=NULL.
         phantom = self._make_item(date(2026, 1, 1), 999, Direction.PRODUCTION, anki_due=None)
@@ -1714,7 +1714,7 @@ class TestReviewQueue:
             ),
         )
 
-        from app.api.srs import _compute_live_main
+        from app.srs.anki_mirror.queue_engine import _compute_live_main
 
         live = _compute_live_main(db)
         new_cards = [t for t in live if t[1].directions[t[3]].state == SRSState.NEW]
@@ -2700,7 +2700,7 @@ class TestJustGradedLearningCollapse:
         """
         from datetime import UTC, datetime, timedelta
 
-        from app.srs.queue_stats import advance_learning_cutoff
+        from app.srs.anki_mirror.queue_stats import advance_learning_cutoff
 
         db = api_app_state
         today = anki_today()
@@ -2745,7 +2745,7 @@ class TestJustGradedLearningCollapse:
         """
         from datetime import UTC, datetime, timedelta
 
-        from app.srs.queue_stats import advance_learning_cutoff
+        from app.srs.anki_mirror.queue_stats import advance_learning_cutoff
 
         db = api_app_state
         today = anki_today()
@@ -2782,7 +2782,7 @@ class TestJustGradedLearningCollapse:
         next, so the just-graded card stays in pending naturally."""
         from datetime import UTC, datetime, timedelta
 
-        from app.srs.queue_stats import advance_learning_cutoff
+        from app.srs.anki_mirror.queue_stats import advance_learning_cutoff
 
         db = api_app_state
         today = anki_today()

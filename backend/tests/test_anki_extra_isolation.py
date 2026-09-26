@@ -22,7 +22,7 @@ def test_anki_not_imported_by_core():
         import app.main
         import app.api.srs
         import app.srs.fsrs
-        import app.srs.queue_stats
+        import app.srs.anki_mirror.queue_stats
         import app.plugins.anki_sync.sync
 
         assert "anki" not in sys.modules, (

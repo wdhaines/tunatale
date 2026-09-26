@@ -1543,7 +1543,7 @@ class TestSyncPullInvalidatesSessionMainQueue:
 
         # Seed a stale cache from earlier today with bogus row ids.
         today = anki_today()
-        from app.srs.queue_stats import get_session_main_queue, set_session_main_queue
+        from app.srs.anki_mirror.queue_stats import get_session_main_queue, set_session_main_queue
 
         set_session_main_queue(db, today, [(9999, "recognition"), (8888, "production")])
 
@@ -1592,7 +1592,7 @@ class TestSyncPullInvalidatesSessionMainQueue:
         )
 
         # Seed stale cache and let sync_pull run.
-        from app.srs.queue_stats import set_session_main_queue
+        from app.srs.anki_mirror.queue_stats import set_session_main_queue
 
         set_session_main_queue(db, today, [(9999, "recognition")])
 
@@ -1603,7 +1603,7 @@ class TestSyncPullInvalidatesSessionMainQueue:
 
         # Cache must now hold the freshly rebuilt order, not be empty and not be
         # the stale placeholder.
-        from app.srs.queue_stats import get_session_main_queue
+        from app.srs.anki_mirror.queue_stats import get_session_main_queue
 
         cached = get_session_main_queue(db, today)
         assert cached is not None, "sync_pull should eagerly rebuild — not leave the cache empty"
@@ -1619,7 +1619,7 @@ class TestSyncPullInvalidatesSessionMainQueue:
         db = _make_tt_db()
         guid = _add_banka(db)
         today = date.today()
-        from app.srs.queue_stats import set_session_main_queue
+        from app.srs.anki_mirror.queue_stats import set_session_main_queue
 
         items = [(1, "recognition")]
         set_session_main_queue(db, today, items)
@@ -1628,7 +1628,7 @@ class TestSyncPullInvalidatesSessionMainQueue:
         records = [make_note_record(anki_guid=guid, cards=[card])]
         AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull(dry_run=True)
 
-        from app.srs.queue_stats import get_session_main_queue
+        from app.srs.anki_mirror.queue_stats import get_session_main_queue
 
         assert get_session_main_queue(db, today) == items
 

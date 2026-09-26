@@ -26,11 +26,11 @@ import time
 
 import pytest
 
-from app.srs.fsrs import DEFAULT_FSRS5_PARAMS
-from app.srs.queue_stats import (
+from app.srs.anki_mirror.queue_stats import (
     _read_new_per_day_from_anki,
     _read_reviews_per_day_from_anki,
 )
+from app.srs.fsrs import DEFAULT_FSRS5_PARAMS
 from tests.anki_oracle.harness_fixtures import run_oracle
 from tests.anki_oracle.synthetic_collection import (
     DEFAULT_DESIRED_RETENTION,

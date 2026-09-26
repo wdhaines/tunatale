@@ -39,13 +39,18 @@ from app.plugins.anki_sync.sync_common import (
     build_cloze_back_extra,
 )
 from app.srs.anki_mirror.protobuf_wire import anki_today_col_day
+from app.srs.anki_mirror.queue_stats import (
+    resolve_bury_new,
+    resolve_bury_review,
+    resolve_learning_steps,
+    resolve_relearning_steps,
+)
 from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
 from app.srs.database import SRSDatabase
 from app.srs.direction_fields import SYNC_COMPARABLE_MODEL_FIELDS
 from app.srs.fsrs import is_day_level_last_review
 from app.srs.function_words import is_function_word, make_cloze_text, uncloze_text
 from app.srs.lemmatizer import headword_lemma
-from app.srs.queue_stats import resolve_bury_new, resolve_bury_review, resolve_learning_steps, resolve_relearning_steps
 
 # Logger name pinned to "app.anki.sync": BURY_TRACE assertions in
 # tests/test_anki_sync_pull.py (caplog.at_level(..., logger="app.anki.sync"))
@@ -820,7 +825,7 @@ class AnkiSync:
         ticked past-due during the Anki session would never become eligible.
         """
         if not dry_run and max_revlog_ms > 0:
-            from app.srs.queue_stats import advance_learning_cutoff
+            from app.srs.anki_mirror.queue_stats import advance_learning_cutoff
 
             advance_learning_cutoff(self._db, datetime.fromtimestamp(max_revlog_ms / 1000, UTC))
 
@@ -834,8 +839,8 @@ class AnkiSync:
         The eager rebuild aligns the freeze moments. Layer 29.
         """
         if not dry_run:
-            from app.srs.queue_engine import build_and_freeze_main_queue
-            from app.srs.queue_stats import clear_session_main_queue
+            from app.srs.anki_mirror.queue_engine import build_and_freeze_main_queue
+            from app.srs.anki_mirror.queue_stats import clear_session_main_queue
 
             clear_session_main_queue(self._db)
             build_and_freeze_main_queue(self._db)
@@ -878,7 +883,7 @@ class AnkiSync:
         # The merge writes Anki's cards.data verbatim (take-Anki), so a replay
         # that diverges signals a genuine Anki recompute event (Optimize /
         # FSRS-param / retention change / restore), not a stored-state choice.
-        from app.srs.queue_stats import resolve_fsrs_params
+        from app.srs.anki_mirror.queue_stats import resolve_fsrs_params
 
         replay_params = resolve_fsrs_params(self._db)[0]
         replay_col_crt = self._anki_col_crt
@@ -1275,7 +1280,7 @@ class AnkiSync:
         from app.plugins.anki_sync.sync import _copy_tt_media_to_anki
 
         """Push TunaTale → Anki. Returns a PushReport summarising changes."""
-        from app.srs.queue_stats import resolve_fsrs_params
+        from app.srs.anki_mirror.queue_stats import resolve_fsrs_params
 
         report = PushReport()
         # Layer 70: threaded into update_card_memory_state so a card whose

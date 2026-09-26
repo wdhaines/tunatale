@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from app.srs.anki_mirror.queue_stats import refresh_review_settings, resolve_daily_new_cap
 from app.srs.database import SRSDatabase
-from app.srs.queue_stats import refresh_review_settings, resolve_daily_new_cap
 from tests._helpers.protobuf import pb_len_field, pb_varint_field
 
 
@@ -24,7 +24,7 @@ def test_returns_cache_source_when_cache_present():
 
 
 def test_falls_back_to_config_when_no_cache(monkeypatch):
-    from app.srs import queue_stats
+    from app.srs.anki_mirror import queue_stats
 
     db = SRSDatabase(":memory:")
     monkeypatch.setattr(queue_stats.settings, "anki_new_per_day_default", 25)
@@ -34,7 +34,7 @@ def test_falls_back_to_config_when_no_cache(monkeypatch):
 
 
 def test_falls_back_to_default_when_config_zero(monkeypatch):
-    from app.srs import queue_stats
+    from app.srs.anki_mirror import queue_stats
 
     db = SRSDatabase(":memory:")
     monkeypatch.setattr(queue_stats.settings, "anki_new_per_day_default", 0)
@@ -90,7 +90,7 @@ def test_read_config_value_returns_none_on_closed_connection():
     first statement executed is the protobuf-path table probe — hits the
     `except sqlite3.Error` guard directly.
     """
-    from app.srs.queue_stats import _read_config_value_from_deck_config_table
+    from app.srs.anki_mirror.queue_stats import _read_config_value_from_deck_config_table
 
     conn = sqlite3.connect(":memory:")
     conn.close()
@@ -100,7 +100,7 @@ def test_read_config_value_returns_none_on_closed_connection():
 
 def test_read_config_value_wire_type_fallthrough_returns_none(tmp_path):
     """An unrecognized wire_type (neither VARINT=0 nor FIXED32=5) falls through to None."""
-    from app.srs.queue_stats import _read_config_value_from_deck_config_table
+    from app.srs.anki_mirror.queue_stats import _read_config_value_from_deck_config_table
 
     db_path = tmp_path / "wire_type_fallthrough.anki2"
     conn = sqlite3.connect(str(db_path))
@@ -316,8 +316,8 @@ def test_refresh_review_settings_skips_on_no_config_blob(tmp_path):
 
 def test_resolve_new_spread_empty_cache_default():
     """resolve_new_spread: a real db with an empty anki_state_cache falls back to the documented default."""
+    from app.srs.anki_mirror.queue_stats import resolve_new_spread
     from app.srs.database import SRSDatabase
-    from app.srs.queue_stats import resolve_new_spread
 
     db = SRSDatabase(":memory:")
     val, source = resolve_new_spread(db)
@@ -327,8 +327,8 @@ def test_resolve_new_spread_empty_cache_default():
 
 def test_resolve_bury_new_empty_cache_default():
     """resolve_bury_new: a real db with an empty anki_state_cache falls back to the documented default."""
+    from app.srs.anki_mirror.queue_stats import resolve_bury_new
     from app.srs.database import SRSDatabase
-    from app.srs.queue_stats import resolve_bury_new
 
     db = SRSDatabase(":memory:")
     val, source = resolve_bury_new(db)
@@ -338,8 +338,8 @@ def test_resolve_bury_new_empty_cache_default():
 
 def test_resolve_bury_review_empty_cache_default():
     """resolve_bury_review: a real db with an empty anki_state_cache falls back to the documented default."""
+    from app.srs.anki_mirror.queue_stats import resolve_bury_review
     from app.srs.database import SRSDatabase
-    from app.srs.queue_stats import resolve_bury_review
 
     db = SRSDatabase(":memory:")
     val, source = resolve_bury_review(db)
@@ -351,8 +351,8 @@ def test_resolve_new_spread_cache_too_old(monkeypatch):
     """Test new_spread cache fallback when cache is too old."""
     from datetime import UTC, datetime, timedelta
 
+    from app.srs.anki_mirror.queue_stats import resolve_new_spread
     from app.srs.database import SRSDatabase
-    from app.srs.queue_stats import resolve_new_spread
 
     db = SRSDatabase(":memory:")
     # Set cache with old timestamp
@@ -388,7 +388,7 @@ def test_resolve_new_spread_cache_too_old(monkeypatch):
 
 def test_resolve_bury_review_from_cache():
     """Test bury_review resolution from cache."""
-    from app.srs.queue_stats import resolve_bury_review
+    from app.srs.anki_mirror.queue_stats import resolve_bury_review
 
     db = SRSDatabase(":memory:")
     db.set_anki_state_cache("bury_review", "False")
@@ -400,7 +400,7 @@ def test_resolve_bury_review_from_cache():
 
 def test_resolve_new_spread_invalid_value(monkeypatch):
     """Test new_spread cache with invalid value (not in 0,1,2) falls to default."""
-    from app.srs.queue_stats import resolve_new_spread
+    from app.srs.anki_mirror.queue_stats import resolve_new_spread
 
     db = SRSDatabase(":memory:")
     # Cache has value "5" which is not in (0, 1, 2)
@@ -415,7 +415,7 @@ def test_resolve_new_spread_invalid_timestamp(monkeypatch):
     """Test new_spread cache with invalid timestamp falls to default."""
     from datetime import UTC, datetime, timedelta
 
-    from app.srs.queue_stats import resolve_new_spread
+    from app.srs.anki_mirror.queue_stats import resolve_new_spread
 
     db = SRSDatabase(":memory:")
     # Write cache with invalid timestamp
@@ -430,7 +430,7 @@ def test_resolve_bury_new_cache_too_old(monkeypatch):
     """Test bury_new cache fallback when cache is too old."""
     from datetime import UTC, datetime, timedelta
 
-    from app.srs.queue_stats import resolve_bury_new
+    from app.srs.anki_mirror.queue_stats import resolve_bury_new
 
     db = SRSDatabase(":memory:")
     db.set_anki_state_cache("bury_new", "False")
@@ -451,7 +451,7 @@ def test_resolve_bury_review_cache_too_old(monkeypatch):
     """Test bury_review cache fallback when cache is too old."""
     from datetime import UTC, datetime, timedelta
 
-    from app.srs.queue_stats import resolve_bury_review
+    from app.srs.anki_mirror.queue_stats import resolve_bury_review
 
     db = SRSDatabase(":memory:")
     db.set_anki_state_cache("bury_review", "False")
@@ -471,7 +471,7 @@ def test_resolve_new_spread_corrupt_cache(monkeypatch):
     """Test new_spread with corrupt cache value (triggers exception handler)."""
     from datetime import UTC, datetime
 
-    from app.srs.queue_stats import resolve_new_spread
+    from app.srs.anki_mirror.queue_stats import resolve_new_spread
 
     db = SRSDatabase(":memory:")
     # Insert cache with non-integer value to trigger ValueError in int(value_str)
@@ -483,7 +483,7 @@ def test_resolve_new_spread_corrupt_cache(monkeypatch):
 
 def test_resolve_bury_new_corrupt_cache(monkeypatch):
     """Test bury_new with corrupt cache value."""
-    from app.srs.queue_stats import resolve_bury_new
+    from app.srs.anki_mirror.queue_stats import resolve_bury_new
 
     db = SRSDatabase(":memory:")
     # Insert cache with corrupt timestamp to trigger exception
@@ -495,7 +495,7 @@ def test_resolve_bury_new_corrupt_cache(monkeypatch):
 
 def test_resolve_bury_review_corrupt_cache(monkeypatch):
     """Test bury_review with corrupt cache timestamp."""
-    from app.srs.queue_stats import resolve_bury_review
+    from app.srs.anki_mirror.queue_stats import resolve_bury_review
 
     db = SRSDatabase(":memory:")
     # Insert cache with corrupt timestamp
@@ -531,7 +531,7 @@ def _make_legacy_col_conn(tmp_path: Path, name: str, decks_json: str = "", dconf
 
 def test_refresh_daily_new_cap_writes_nothing_when_col_row_missing(tmp_path):
     """Empty col table → cache stays empty."""
-    from app.srs.queue_stats import refresh_daily_new_cap
+    from app.srs.anki_mirror.queue_stats import refresh_daily_new_cap
 
     db = SRSDatabase(":memory:")
     conn = _make_legacy_col_conn(tmp_path, "empty.anki2")
@@ -541,7 +541,7 @@ def test_refresh_daily_new_cap_writes_nothing_when_col_row_missing(tmp_path):
 
 def test_refresh_daily_new_cap_writes_nothing_on_corrupt_legacy_json(tmp_path):
     """Bad JSON in col.decks/col.dconf → cache stays empty (no crash)."""
-    from app.srs.queue_stats import refresh_daily_new_cap
+    from app.srs.anki_mirror.queue_stats import refresh_daily_new_cap
 
     db = SRSDatabase(":memory:")
     conn = sqlite3.connect(str(tmp_path / "bad_json.anki2"))
@@ -558,7 +558,7 @@ def test_refresh_daily_new_cap_writes_nothing_on_corrupt_legacy_json(tmp_path):
 
 def test_refresh_daily_new_cap_caches_value_from_legacy_json(tmp_path):
     """Legacy JSON deck config with perDay=15 → cache is set to "15"."""
-    from app.srs.queue_stats import refresh_daily_new_cap
+    from app.srs.anki_mirror.queue_stats import refresh_daily_new_cap
 
     db = SRSDatabase(":memory:")
     conn = _make_legacy_col_conn(
@@ -575,7 +575,7 @@ def test_refresh_daily_new_cap_caches_value_from_legacy_json(tmp_path):
 
 def test_refresh_daily_new_cap_writes_nothing_when_legacy_conf_id_absent(tmp_path):
     """Deck points to conf_id=999 that's not in dconf → cache stays empty."""
-    from app.srs.queue_stats import refresh_daily_new_cap
+    from app.srs.anki_mirror.queue_stats import refresh_daily_new_cap
 
     db = SRSDatabase(":memory:")
     conn = _make_legacy_col_conn(
@@ -590,7 +590,7 @@ def test_refresh_daily_new_cap_writes_nothing_when_legacy_conf_id_absent(tmp_pat
 
 def test_refresh_daily_new_cap_writes_nothing_when_legacy_perday_not_numeric(tmp_path):
     """perDay is a string → int() raises, cache stays empty."""
-    from app.srs.queue_stats import refresh_daily_new_cap
+    from app.srs.anki_mirror.queue_stats import refresh_daily_new_cap
 
     db = SRSDatabase(":memory:")
     conn = _make_legacy_col_conn(
@@ -605,7 +605,7 @@ def test_refresh_daily_new_cap_writes_nothing_when_legacy_perday_not_numeric(tmp
 
 def test_refresh_daily_new_cap_writes_nothing_when_legacy_new_key_missing(tmp_path):
     """conf has no 'new' key → KeyError, cache stays empty."""
-    from app.srs.queue_stats import refresh_daily_new_cap
+    from app.srs.anki_mirror.queue_stats import refresh_daily_new_cap
 
     db = SRSDatabase(":memory:")
     conn = _make_legacy_col_conn(
@@ -620,12 +620,12 @@ def test_refresh_daily_new_cap_writes_nothing_when_legacy_new_key_missing(tmp_pa
 
 def test_resolve_daily_new_cap_db_creation_fails(monkeypatch):
     """Lines 332-337: db is None and SRSDatabase creation fails."""
+    from app.srs.anki_mirror.queue_stats import resolve_daily_new_cap
     from app.srs.database import SRSDatabase
-    from app.srs.queue_stats import resolve_daily_new_cap
 
     db = SRSDatabase(":memory:")
     # Make config default 0 so it falls through to hard default
-    monkeypatch.setattr("app.srs.queue_stats.settings.anki_new_per_day_default", 0)
+    monkeypatch.setattr("app.srs.anki_mirror.queue_stats.settings.anki_new_per_day_default", 0)
     cap, source = resolve_daily_new_cap(db)
     assert source == "default"
     assert cap == 20
@@ -633,7 +633,7 @@ def test_resolve_daily_new_cap_db_creation_fails(monkeypatch):
 
 def test_resolve_daily_new_cap_corrupt_cache_value(monkeypatch):
     """Lines 347-348: Cache has invalid value_str that int() raises ValueError."""
-    from app.srs.queue_stats import resolve_daily_new_cap
+    from app.srs.anki_mirror.queue_stats import resolve_daily_new_cap
 
     db = SRSDatabase(":memory:")
     # Insert cache with non-integer value to trigger ValueError in int(value_str)
@@ -645,7 +645,7 @@ def test_resolve_daily_new_cap_corrupt_cache_value(monkeypatch):
 
 def test_resolve_daily_new_cap_cache_too_old(monkeypatch):
     """Lines 345->350: Cache exists but is older than _CACHE_MAX_AGE_DAYS (30 days)."""
-    from app.srs.queue_stats import resolve_daily_new_cap
+    from app.srs.anki_mirror.queue_stats import resolve_daily_new_cap
 
     db = SRSDatabase(":memory:")
     # Set cache with timestamp older than 30 days
@@ -658,7 +658,7 @@ def test_resolve_daily_new_cap_cache_too_old(monkeypatch):
 
 def test_resolve_daily_new_cap_corrupt_cache_timestamp(monkeypatch):
     """Lines 347-348: Cache has invalid timestamp that fromisoformat() raises ValueError."""
-    from app.srs.queue_stats import resolve_daily_new_cap
+    from app.srs.anki_mirror.queue_stats import resolve_daily_new_cap
 
     db = SRSDatabase(":memory:")
     # Insert cache with corrupt timestamp
@@ -673,11 +673,11 @@ def test_resolve_daily_new_cap_corrupt_cache_timestamp(monkeypatch):
 
 def test_resolve_daily_review_cap_db_creation_fails(monkeypatch):
     """db is None and SRSDatabase creation fails."""
+    from app.srs.anki_mirror.queue_stats import resolve_daily_review_cap
     from app.srs.database import SRSDatabase
-    from app.srs.queue_stats import resolve_daily_review_cap
 
     db = SRSDatabase(":memory:")
-    monkeypatch.setattr("app.srs.queue_stats.settings.anki_reviews_per_day_default", 0)
+    monkeypatch.setattr("app.srs.anki_mirror.queue_stats.settings.anki_reviews_per_day_default", 0)
     cap, source = resolve_daily_review_cap(db)
     assert source == "default"
     assert cap == 200
@@ -685,7 +685,7 @@ def test_resolve_daily_review_cap_db_creation_fails(monkeypatch):
 
 def test_resolve_daily_review_cap_cache_corrupt_timestamp():
     """Cache has invalid timestamp that fromisoformat raises ValueError."""
-    from app.srs.queue_stats import resolve_daily_review_cap
+    from app.srs.anki_mirror.queue_stats import resolve_daily_review_cap
 
     db = SRSDatabase(":memory:")
     db.set_anki_state_cache_raw("daily_review_cap", "30", "not-a-valid-timestamp")
@@ -695,7 +695,7 @@ def test_resolve_daily_review_cap_cache_corrupt_timestamp():
 
 def test_resolve_daily_review_cap_cache_too_old():
     """Cache exists but is older than _CACHE_MAX_AGE_DAYS (30 days)."""
-    from app.srs.queue_stats import resolve_daily_review_cap
+    from app.srs.anki_mirror.queue_stats import resolve_daily_review_cap
 
     db = SRSDatabase(":memory:")
     old_ts = (datetime.now(UTC) - timedelta(days=31)).strftime("%Y-%m-%d %H:%M:%S")
@@ -708,7 +708,7 @@ def test_refresh_desired_retention_skips_when_config_row_missing(tmp_path):
     """deck points to a conf_id that doesn't exist in deck_config → cache untouched."""
     import sqlite3
 
-    from app.srs.queue_stats import refresh_desired_retention
+    from app.srs.anki_mirror.queue_stats import refresh_desired_retention
 
     db = SRSDatabase(":memory:")
     conn = sqlite3.connect(":memory:")
@@ -757,7 +757,7 @@ class TestReadFSRSParamsFromDeckConfig:
 
     def test_reads_fsrs6_field_6(self, tmp_path):
         """Field 6 with 21 packed floats → FSRS-6 params with version=6."""
-        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_fsrs_params_from_deck_config_table
 
         fsrs6_weights = [0.4 + i * 0.01 for i in range(21)]
         config_blob = _packed_float_field(6, fsrs6_weights)
@@ -774,7 +774,7 @@ class TestReadFSRSParamsFromDeckConfig:
 
     def test_prefers_field_6_when_both_present(self, tmp_path):
         """Both field 5 (19 floats) and field 6 (21 floats) → returns FSRS-6."""
-        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_fsrs_params_from_deck_config_table
 
         fsrs5_weights = [0.4 + i * 0.01 for i in range(19)]
         fsrs6_weights = [0.4 + i * 0.01 for i in range(21)]
@@ -791,7 +791,7 @@ class TestReadFSRSParamsFromDeckConfig:
 
     def test_falls_back_to_field_5_when_field_6_is_19_floats(self, tmp_path):
         """Field 6 with 19 floats (Anki dual-write artifact) → fall back to field 5."""
-        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_fsrs_params_from_deck_config_table
 
         fsrs5_weights = [0.4 + i * 0.01 for i in range(19)]
         fsrs6_19 = [0.5 + i * 0.01 for i in range(19)]  # field 6 has 19 floats (dual-write)
@@ -807,7 +807,7 @@ class TestReadFSRSParamsFromDeckConfig:
 
     def test_falls_back_to_defaults_when_no_field(self, tmp_path):
         """No field 5 or 6 → returns None."""
-        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_fsrs_params_from_deck_config_table
 
         config_blob = b""  # empty config
         conn = _make_deck_config_blob(tmp_path, "Test", config_blob, conf_id=1)
@@ -817,7 +817,7 @@ class TestReadFSRSParamsFromDeckConfig:
 
     def test_returns_none_on_closed_connection(self):
         """Closed connection raises sqlite3.ProgrammingError on the sqlite_master probe."""
-        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_fsrs_params_from_deck_config_table
 
         conn = sqlite3.connect(":memory:")
         conn.close()
@@ -825,7 +825,7 @@ class TestReadFSRSParamsFromDeckConfig:
 
     def test_reads_fsrs_short_term_when_present(self, tmp_path):
         """_read_fsrs_short_term_from_config_table returns True for b'true'."""
-        from app.srs.queue_stats import _read_fsrs_short_term_from_config_table
+        from app.srs.anki_mirror.queue_stats import _read_fsrs_short_term_from_config_table
 
         db_path = tmp_path / "test.anki2"
         conn = sqlite3.connect(str(db_path))
@@ -838,7 +838,7 @@ class TestReadFSRSParamsFromDeckConfig:
 
     def test_reads_fsrs_short_term_when_false(self, tmp_path):
         """_read_fsrs_short_term_from_config_table returns False for b'false'."""
-        from app.srs.queue_stats import _read_fsrs_short_term_from_config_table
+        from app.srs.anki_mirror.queue_stats import _read_fsrs_short_term_from_config_table
 
         db_path = tmp_path / "test.anki2"
         conn = sqlite3.connect(str(db_path))
@@ -851,7 +851,7 @@ class TestReadFSRSParamsFromDeckConfig:
 
     def test_reads_fsrs_short_term_when_missing(self, tmp_path):
         """_read_fsrs_short_term_from_config_table returns None when key absent."""
-        from app.srs.queue_stats import _read_fsrs_short_term_from_config_table
+        from app.srs.anki_mirror.queue_stats import _read_fsrs_short_term_from_config_table
 
         db_path = tmp_path / "test.anki2"
         conn = sqlite3.connect(str(db_path))
@@ -863,7 +863,7 @@ class TestReadFSRSParamsFromDeckConfig:
 
     def test_reads_fsrs_short_term_when_no_config_table(self, tmp_path):
         """_read_fsrs_short_term_from_config_table returns None when config table absent."""
-        from app.srs.queue_stats import _read_fsrs_short_term_from_config_table
+        from app.srs.anki_mirror.queue_stats import _read_fsrs_short_term_from_config_table
 
         conn = sqlite3.connect(":memory:")
         # No config table at all
@@ -873,7 +873,7 @@ class TestReadFSRSParamsFromDeckConfig:
 
     def test_reads_fsrs_short_term_returns_none_on_closed_connection(self):
         """Closed connection raises sqlite3.ProgrammingError on the sqlite_master probe."""
-        from app.srs.queue_stats import _read_fsrs_short_term_from_config_table
+        from app.srs.anki_mirror.queue_stats import _read_fsrs_short_term_from_config_table
 
         conn = sqlite3.connect(":memory:")
         conn.close()
@@ -881,7 +881,7 @@ class TestReadFSRSParamsFromDeckConfig:
 
     def test_refresh_fsrs_short_term_flag_writes_cache(self, tmp_path):
         """refresh_fsrs_short_term_flag writes the flag to anki_state_cache."""
-        from app.srs.queue_stats import refresh_fsrs_short_term_flag
+        from app.srs.anki_mirror.queue_stats import refresh_fsrs_short_term_flag
 
         db_path = tmp_path / "test.anki2"
         conn = sqlite3.connect(str(db_path))
@@ -898,7 +898,7 @@ class TestReadFSRSParamsFromDeckConfig:
 
     def test_refresh_fsrs_short_term_flag_skips_cache_when_config_table_absent(self, tmp_path):
         """refresh_fsrs_short_term_flag does nothing when config table is absent (val is None)."""
-        from app.srs.queue_stats import refresh_fsrs_short_term_flag
+        from app.srs.anki_mirror.queue_stats import refresh_fsrs_short_term_flag
 
         conn = sqlite3.connect(":memory:")
         db = SRSDatabase(":memory:")
@@ -915,7 +915,7 @@ class TestResolveFSRSParams:
         """resolve_fsrs_params returns cached params with correct version after refresh."""
         import json
 
-        from app.srs.queue_stats import resolve_fsrs_params
+        from app.srs.anki_mirror.queue_stats import resolve_fsrs_params
 
         fsrs6_weights = list(range(21))  # dummy FSRS-6 weights
         fsrs6_weights[20] = 0.1542  # decay param
@@ -939,7 +939,7 @@ class TestResolveFSRSParams:
         """Old cache rows without 'version' still work; version inferred from weight count."""
         import json
 
-        from app.srs.queue_stats import resolve_fsrs_params
+        from app.srs.anki_mirror.queue_stats import resolve_fsrs_params
 
         # Old cache format: no "version" key
         fsrs5_weights = [0.4 + i * 0.01 for i in range(19)]
@@ -965,7 +965,7 @@ class TestMaximumReviewInterval:
 
     def test_read_maximum_review_interval_from_deck_config(self, tmp_path):
         """Field 16 (VARINT uint32) is read from deck_config."""
-        from app.srs.queue_stats import _read_config_value_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_config_value_from_deck_config_table
 
         blob = pb_varint_field(16, 36500)
         conn = _make_deck_config_blob(tmp_path, "Test", blob)
@@ -975,7 +975,7 @@ class TestMaximumReviewInterval:
 
     def test_read_maximum_review_interval_absent_returns_none(self, tmp_path):
         """No field 16 in blob → None."""
-        from app.srs.queue_stats import _read_config_value_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_config_value_from_deck_config_table
 
         blob = pb_varint_field(9, 20)  # only new_per_day, no field 16
         conn = _make_deck_config_blob(tmp_path, "Test", blob)
@@ -985,7 +985,7 @@ class TestMaximumReviewInterval:
 
     def test_resolve_maximum_review_interval_returns_cache(self, srs_db):
         """When cache is set and fresh, returns the cached value."""
-        from app.srs.queue_stats import resolve_maximum_review_interval
+        from app.srs.anki_mirror.queue_stats import resolve_maximum_review_interval
 
         srs_db.set_anki_state_cache("maximum_review_interval", "36500")
         val, source = resolve_maximum_review_interval(srs_db)
@@ -994,7 +994,7 @@ class TestMaximumReviewInterval:
 
     def test_resolve_maximum_review_interval_fallback_default(self, srs_db):
         """No cache → returns hard default 36500."""
-        from app.srs.queue_stats import resolve_maximum_review_interval
+        from app.srs.anki_mirror.queue_stats import resolve_maximum_review_interval
 
         val, source = resolve_maximum_review_interval(srs_db)
         assert val == 36500
@@ -1004,7 +1004,7 @@ class TestMaximumReviewInterval:
         """Cache older than 30 days → falls back to default."""
         from datetime import timedelta
 
-        from app.srs.queue_stats import resolve_maximum_review_interval
+        from app.srs.anki_mirror.queue_stats import resolve_maximum_review_interval
 
         old_ts = (datetime.now(UTC) - timedelta(days=31)).strftime("%Y-%m-%d %H:%M:%S")
         srs_db.set_anki_state_cache_raw("maximum_review_interval", "1000", old_ts)
@@ -1013,7 +1013,7 @@ class TestMaximumReviewInterval:
 
     def test_resolve_maximum_review_interval_corrupted_cache(self, srs_db):
         """Corrupted cache value (non-int) → falls back to default."""
-        from app.srs.queue_stats import resolve_maximum_review_interval
+        from app.srs.anki_mirror.queue_stats import resolve_maximum_review_interval
 
         srs_db.set_anki_state_cache_raw("maximum_review_interval", "not_a_number", datetime.now(UTC).isoformat())
         val, source = resolve_maximum_review_interval(srs_db)
@@ -1029,31 +1029,31 @@ class TestEffectiveReviewBudget:
     """
 
     def test_subtracts_both_reviews_and_new_intros(self):
-        from app.srs.queue_stats import effective_review_budget
+        from app.srs.anki_mirror.queue_stats import effective_review_budget
 
         # 50 - 7 reviews - 3 new intros = 40
         assert effective_review_budget(50, 7, 3) == 40
 
     def test_no_intros_matches_reviews_only(self):
-        from app.srs.queue_stats import effective_review_budget
+        from app.srs.anki_mirror.queue_stats import effective_review_budget
 
         assert effective_review_budget(50, 7, 0) == 43
 
     def test_clamps_at_zero_when_overspent(self):
-        from app.srs.queue_stats import effective_review_budget
+        from app.srs.anki_mirror.queue_stats import effective_review_budget
 
         # reviews + intros exceed the cap → budget floors at 0, never negative
         assert effective_review_budget(5, 4, 3) == 0
 
     def test_flag_on_ignores_new_intros(self):
         """Brief #4a: new_cards_ignore_review_limit ON → intros don't charge the budget."""
-        from app.srs.queue_stats import effective_review_budget
+        from app.srs.anki_mirror.queue_stats import effective_review_budget
 
         # Same inputs as the OFF case (50, 7, 3) but the 3 intros no longer count.
         assert effective_review_budget(50, 7, 3, new_cards_ignore_review_limit=True) == 43
 
     def test_flag_on_still_subtracts_reviews_and_clamps(self):
-        from app.srs.queue_stats import effective_review_budget
+        from app.srs.anki_mirror.queue_stats import effective_review_budget
 
         assert effective_review_budget(50, 40, 999, new_cards_ignore_review_limit=True) == 10
         assert effective_review_budget(5, 40, 999, new_cards_ignore_review_limit=True) == 0
@@ -1065,7 +1065,7 @@ class TestEffectiveReviewBudget:
         decrement as review cards (gathering.rs:35-61) — oracle-pinned by
         test_parity_daily_caps.py::test_anki_interday_learning_charges_review_limit.
         """
-        from app.srs.queue_stats import effective_review_budget
+        from app.srs.anki_mirror.queue_stats import effective_review_budget
 
         assert effective_review_budget(3, 0, 0, interday_learning_due=2) == 1
         # Clamps at zero when interday learning alone exhausts the cap.
@@ -1075,7 +1075,7 @@ class TestEffectiveReviewBudget:
         """new_cards_ignore_review_limit only lifts the NEW couplings — the
         interday-learning gather still runs decrement(Review) unconditionally
         (limits.rs:136 gates only the new re-min, not the review decrement)."""
-        from app.srs.queue_stats import effective_review_budget
+        from app.srs.anki_mirror.queue_stats import effective_review_budget
 
         assert effective_review_budget(50, 7, 3, interday_learning_due=4, new_cards_ignore_review_limit=True) == 39
         assert effective_review_budget(50, 7, 3, interday_learning_due=4) == 36
@@ -1101,21 +1101,21 @@ class TestNewCardsIgnoreReviewLimit:
         return conn
 
     def test_reads_true(self):
-        from app.srs.queue_stats import _read_new_cards_ignore_review_limit_from_config_table
+        from app.srs.anki_mirror.queue_stats import _read_new_cards_ignore_review_limit_from_config_table
 
         conn = self._make_config_conn(b"true")
         assert _read_new_cards_ignore_review_limit_from_config_table(conn) is True
         conn.close()
 
     def test_reads_false(self):
-        from app.srs.queue_stats import _read_new_cards_ignore_review_limit_from_config_table
+        from app.srs.anki_mirror.queue_stats import _read_new_cards_ignore_review_limit_from_config_table
 
         conn = self._make_config_conn(b"false")
         assert _read_new_cards_ignore_review_limit_from_config_table(conn) is False
         conn.close()
 
     def test_missing_key_returns_none(self):
-        from app.srs.queue_stats import _read_new_cards_ignore_review_limit_from_config_table
+        from app.srs.anki_mirror.queue_stats import _read_new_cards_ignore_review_limit_from_config_table
 
         conn = self._make_config_conn(None)
         assert _read_new_cards_ignore_review_limit_from_config_table(conn) is None
@@ -1124,7 +1124,7 @@ class TestNewCardsIgnoreReviewLimit:
     def test_no_config_table_returns_none(self):
         import sqlite3
 
-        from app.srs.queue_stats import _read_new_cards_ignore_review_limit_from_config_table
+        from app.srs.anki_mirror.queue_stats import _read_new_cards_ignore_review_limit_from_config_table
 
         conn = sqlite3.connect(":memory:")
         assert _read_new_cards_ignore_review_limit_from_config_table(conn) is None
@@ -1132,18 +1132,18 @@ class TestNewCardsIgnoreReviewLimit:
 
     def test_sqlite_error_returns_none(self):
         """A closed connection raises sqlite3.Error on the sqlite_master probe → None."""
-        from app.srs.queue_stats import _read_new_cards_ignore_review_limit_from_config_table
+        from app.srs.anki_mirror.queue_stats import _read_new_cards_ignore_review_limit_from_config_table
 
         conn = self._make_config_conn(b"true")
         conn.close()  # subsequent .execute raises sqlite3.ProgrammingError (a sqlite3.Error)
         assert _read_new_cards_ignore_review_limit_from_config_table(conn) is None
 
     def test_refresh_then_resolve_true(self):
-        from app.srs.database import SRSDatabase
-        from app.srs.queue_stats import (
+        from app.srs.anki_mirror.queue_stats import (
             refresh_new_cards_ignore_review_limit,
             resolve_new_cards_ignore_review_limit,
         )
+        from app.srs.database import SRSDatabase
 
         conn = self._make_config_conn(b"true")
         db = SRSDatabase(":memory:")
@@ -1152,11 +1152,11 @@ class TestNewCardsIgnoreReviewLimit:
         conn.close()
 
     def test_refresh_then_resolve_false(self):
-        from app.srs.database import SRSDatabase
-        from app.srs.queue_stats import (
+        from app.srs.anki_mirror.queue_stats import (
             refresh_new_cards_ignore_review_limit,
             resolve_new_cards_ignore_review_limit,
         )
+        from app.srs.database import SRSDatabase
 
         conn = self._make_config_conn(b"false")
         db = SRSDatabase(":memory:")
@@ -1165,11 +1165,11 @@ class TestNewCardsIgnoreReviewLimit:
         conn.close()
 
     def test_refresh_noop_when_key_absent(self):
-        from app.srs.database import SRSDatabase
-        from app.srs.queue_stats import (
+        from app.srs.anki_mirror.queue_stats import (
             refresh_new_cards_ignore_review_limit,
             resolve_new_cards_ignore_review_limit,
         )
+        from app.srs.database import SRSDatabase
 
         conn = self._make_config_conn(None)
         db = SRSDatabase(":memory:")
@@ -1179,7 +1179,7 @@ class TestNewCardsIgnoreReviewLimit:
         conn.close()
 
     def test_resolve_defaults_false(self):
+        from app.srs.anki_mirror.queue_stats import resolve_new_cards_ignore_review_limit
         from app.srs.database import SRSDatabase
-        from app.srs.queue_stats import resolve_new_cards_ignore_review_limit
 
         assert resolve_new_cards_ignore_review_limit(SRSDatabase(":memory:")) is False

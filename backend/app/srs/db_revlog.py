@@ -141,8 +141,8 @@ class DbRevlogMixin:
         Returns the replayed ``DirectionState``.  The caller is responsible for
         writing it back (and merging non-FSRS fields).
         """
+        from app.srs.anki_mirror.queue_stats import resolve_learning_steps, resolve_relearning_steps
         from app.srs.fsrs import DEFAULT_FSRS5_PARAMS, Rating, schedule
-        from app.srs.queue_stats import resolve_learning_steps, resolve_relearning_steps
 
         if params is None:
             params = DEFAULT_FSRS5_PARAMS

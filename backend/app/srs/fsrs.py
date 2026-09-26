@@ -13,7 +13,7 @@ import numpy as np
 
 from app.config import ANKI_ROLLOVER_HOUR
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSItem, SRSState
-from app.srs._anki_rng import ChaCha12Rng, random_range_f32, random_range_u32
+from app.srs.anki_mirror._anki_rng import ChaCha12Rng, random_range_f32, random_range_u32
 from app.srs.anki_mirror.protobuf_wire import (
     anki_today_col_day,
     compute_anki_day_index,
@@ -894,7 +894,7 @@ def _get_steps_for_state(state: SRSState) -> tuple[list[float], str]:
     produced under test (conftest pins the singular setting at an empty tmp db,
     so the cache lookup always missed).
     """
-    from app.srs.queue_stats import _DEFAULT_LEARN_STEPS, _DEFAULT_RELEARN_STEPS
+    from app.srs.anki_mirror.queue_stats import _DEFAULT_LEARN_STEPS, _DEFAULT_RELEARN_STEPS
 
     if state == SRSState.RELEARNING:
         return (_DEFAULT_RELEARN_STEPS, "default")

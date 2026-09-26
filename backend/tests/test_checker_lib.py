@@ -56,5 +56,5 @@ class TestAllowlist:
     def test_matches_allowlist_star_dot_star(self):
         patterns = ["app.*.settings.*"]
         assert matches_allowlist("app.config.settings.foo", patterns) is True
-        assert matches_allowlist("app.srs.queue_stats.settings.bar", patterns) is True
+        assert matches_allowlist("app.srs.anki_mirror.queue_stats.settings.bar", patterns) is True
         assert matches_allowlist("app.config.notsettings.foo", patterns) is False

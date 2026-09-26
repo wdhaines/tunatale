@@ -20,8 +20,8 @@ from datetime import UTC, datetime, timedelta
 
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.plugins.anki_sync.sync import AnkiSync, PullReport
+from app.srs.anki_mirror.queue_stats import resolve_fsrs_params
 from app.srs.database import SRSDatabase
-from app.srs.queue_stats import resolve_fsrs_params
 from tests._helpers.anki_sync_pull import FakeReader, FakeWriter, _add_banka, _make_tt_db
 from tests.conftest import make_card_record, make_note_record
 

@@ -100,15 +100,15 @@ def replay_fsrs_from_revlog(
 
     Returns a summary dict with bucket counts and error list.
     """
-    from app.srs.database import SRSDatabase
-    from app.srs.fsrs import Direction
-    from app.srs.queue_stats import (
+    from app.srs.anki_mirror.queue_stats import (
         refresh_col_crt,
         refresh_fsrs_params,
         refresh_learning_steps,
         resolve_col_crt,
         resolve_fsrs_params,
     )
+    from app.srs.database import SRSDatabase
+    from app.srs.fsrs import Direction
 
     with safe_open(anki_col_path, mode="ro") as ctx:
         anki = ctx.conn

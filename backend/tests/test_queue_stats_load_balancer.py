@@ -16,10 +16,9 @@ from datetime import UTC, datetime
 
 import pytest
 
+from app.srs.anki_mirror.load_balancer import LOAD_BALANCE_DAYS
 from app.srs.anki_mirror.protobuf_wire import anki_today_col_day
-from app.srs.database import SRSDatabase
-from app.srs.load_balancer import LOAD_BALANCE_DAYS
-from app.srs.queue_stats import (
+from app.srs.anki_mirror.queue_stats import (
     _EASY_DAYS_FIELD,
     _read_easy_days_from_deck_config_table,
     _read_load_balancer_enabled_from_config_table,
@@ -30,6 +29,7 @@ from app.srs.queue_stats import (
     resolve_load_balancer_enabled,
     warn_if_multi_deck_preset,
 )
+from app.srs.database import SRSDatabase
 from tests._helpers.localtz import local_timezone
 from tests._helpers.protobuf import encode_varint, pb_len_field, pb_varint_field
 

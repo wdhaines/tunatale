@@ -76,6 +76,20 @@ from app.llm.translate import generate_word_gloss, translate_term
 from app.models.lesson import project_key_phrases
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
+from app.srs.anki_mirror.queue_engine import assemble_review_queue
+from app.srs.anki_mirror.queue_stats import (
+    advance_learning_cutoff,
+    build_live_load_balancer,
+    effective_review_budget,
+    resolve_bury_new,
+    resolve_col_crt,
+    resolve_daily_new_cap,
+    resolve_daily_review_cap,
+    resolve_fsrs_params,
+    resolve_learning_steps,
+    resolve_new_cards_ignore_review_limit,
+    resolve_relearning_steps,
+)
 from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today, due_at_rollover_utc
 from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, build_revlog_row, schedule
@@ -94,26 +108,6 @@ from app.srs.grade_undo import UndoNotAvailable, record_grade_snapshot, undo_las
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, lemmatize_surfaces_in_context, model_version_for
 from app.srs.mastery import is_well_known
 from app.srs.multiword import is_trapped_occurrence
-from app.srs.queue_engine import _compute_live_main as _compute_live_main
-from app.srs.queue_engine import _fnv1a_64_i64 as _fnv1a_64_i64
-from app.srs.queue_engine import _merge_by_retrievability_ascending as _merge_by_retrievability_ascending
-from app.srs.queue_engine import _merge_directions as _merge_directions
-from app.srs.queue_engine import _spread_mix as _spread_mix
-from app.srs.queue_engine import assemble_review_queue as assemble_review_queue
-from app.srs.queue_engine import build_and_freeze_main_queue as build_and_freeze_main_queue
-from app.srs.queue_stats import (
-    advance_learning_cutoff,
-    build_live_load_balancer,
-    effective_review_budget,
-    resolve_bury_new,
-    resolve_col_crt,
-    resolve_daily_new_cap,
-    resolve_daily_review_cap,
-    resolve_fsrs_params,
-    resolve_learning_steps,
-    resolve_new_cards_ignore_review_limit,
-    resolve_relearning_steps,
-)
 from app.srs.tokenizer import tokenize
 from app.srs.transcript import (
     _build_inflection_index,
@@ -3028,8 +3022,8 @@ async def set_item_state(item_id: int, body: SetStateRequest, request: Request):
     if body.state == "learning":
         db.promote_to_learning(item_id)
     elif body.state == "known":
+        from app.srs.anki_mirror.queue_stats import resolve_fsrs_params, resolve_maximum_review_interval
         from app.srs.fsrs import stability_for_interval
-        from app.srs.queue_stats import resolve_fsrs_params, resolve_maximum_review_interval
 
         max_ivl, _ = resolve_maximum_review_interval(db)
         params, _ = resolve_fsrs_params(db)

@@ -387,7 +387,7 @@ async def run_full_sync(
     }
 
     if not dry_run:
-        from app.srs.queue_stats import (
+        from app.srs.anki_mirror.queue_stats import (
             refresh_col_crt,
             refresh_daily_new_cap,
             refresh_daily_review_cap,

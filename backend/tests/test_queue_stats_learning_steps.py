@@ -5,14 +5,14 @@ import sqlite3
 import struct
 from datetime import UTC, datetime, timedelta
 
-from app.srs.database import SRSDatabase
-from app.srs.queue_stats import (
+from app.srs.anki_mirror.queue_stats import (
     _LEARN_STEPS_FIELD,
     _RELEARN_STEPS_FIELD,
     refresh_learning_steps,
     resolve_learning_steps,
     resolve_relearning_steps,
 )
+from app.srs.database import SRSDatabase
 from tests._helpers.protobuf import encode_varint, pb_len_field, pb_varint_field
 
 
@@ -224,7 +224,7 @@ class TestResolveLearningSteps:
         """Lines 512-513: _read_learning_steps_from_deck_config_table with closed connection."""
         conn = sqlite3.connect(":memory:")
         conn.close()
-        from app.srs.queue_stats import _read_learning_steps_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_learning_steps_from_deck_config_table
 
         result = _read_learning_steps_from_deck_config_table(conn, "Test Deck")
         assert result is None
@@ -260,7 +260,7 @@ class TestResolveLearningSteps:
         conn.execute("INSERT INTO decks VALUES (1, 'Test', ?)", (kind_blob,))
         conn.commit()
 
-        from app.srs.queue_stats import _read_learning_steps_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_learning_steps_from_deck_config_table
 
         result = _read_learning_steps_from_deck_config_table(conn, "Test")
         assert result is None
@@ -277,7 +277,7 @@ class TestResolveLearningSteps:
         conn.execute("INSERT INTO decks VALUES (1, 'Test', ?)", (kind_blob,))
         conn.commit()
 
-        from app.srs.queue_stats import _read_learning_steps_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_learning_steps_from_deck_config_table
 
         result = _read_learning_steps_from_deck_config_table(conn, "Test")
         assert result is None
@@ -294,7 +294,7 @@ class TestResolveLearningSteps:
         conn.execute("INSERT INTO decks VALUES (1, 'Test', ?)", (kind_blob,))
         conn.commit()
 
-        from app.srs.queue_stats import _read_learning_steps_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_learning_steps_from_deck_config_table
 
         result = _read_learning_steps_from_deck_config_table(conn, "Test")
         assert result is None
@@ -313,7 +313,7 @@ class TestResolveLearningSteps:
         conn.execute("INSERT INTO decks VALUES (1, 'Test', ?)", (kind_blob,))
         conn.commit()
 
-        from app.srs.queue_stats import _read_learning_steps_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_learning_steps_from_deck_config_table
 
         result = _read_learning_steps_from_deck_config_table(conn, "Test")
         assert result is None
@@ -325,7 +325,7 @@ class TestResolveLearningSteps:
         conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY)")
         conn.commit()
 
-        from app.srs.queue_stats import _read_learning_steps_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_learning_steps_from_deck_config_table
 
         result = _read_learning_steps_from_deck_config_table(conn, "Test")
         assert result is None

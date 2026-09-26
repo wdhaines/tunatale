@@ -89,9 +89,9 @@ def two_language_dbs(tmp_path, monkeypatch):
     db_no.set_anki_state_cache("learn_steps", json.dumps(_NO_LEARN_STEPS))
     db_no.set_anki_state_cache("relearn_steps", "[45.0]")
 
-    monkeypatch.setattr("app.srs.queue_stats.settings.database_url", f"sqlite:///{sl_path}")
+    monkeypatch.setattr("app.srs.anki_mirror.queue_stats.settings.database_url", f"sqlite:///{sl_path}")
     monkeypatch.setattr(
-        "app.srs.queue_stats.settings.database_urls",
+        "app.srs.anki_mirror.queue_stats.settings.database_urls",
         {"sl": f"sqlite:///{sl_path}", "no": f"sqlite:///{no_path}"},
     )
     return (db_sl, sl_path), (db_no, no_path)
@@ -152,7 +152,7 @@ class TestReplayUsesTheRequestLanguageSteps:
         the fix.
         """
         _, (db_no, no_path) = two_language_dbs
-        monkeypatch.setattr("app.srs.queue_stats.settings.database_url", _UNOPENABLE)
+        monkeypatch.setattr("app.srs.anki_mirror.queue_stats.settings.database_url", _UNOPENABLE)
 
         delta_min = _replay_first_step_minutes(db_no, no_path)
 

@@ -269,7 +269,7 @@ def test_fnv_tiebreaker_on_card_mod_LAYER_37(synthetic_collection: SyntheticColl
     Setup: 3 cards with IDENTICAL stability + last_review (→ identical R).
     Different mod values. Anki's queue order should be `fnv(id, mod)` ascending.
     """
-    from app.api.srs import _fnv1a_64_i64
+    from app.srs.anki_mirror.queue_engine import _fnv1a_64_i64
 
     synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
 

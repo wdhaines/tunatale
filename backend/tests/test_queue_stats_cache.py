@@ -7,9 +7,7 @@ import struct
 from datetime import UTC, datetime, timedelta
 
 from app.config import settings
-from app.srs.database import SRSDatabase
-from app.srs.fsrs import DEFAULT_FSRS5_PARAMS
-from app.srs.queue_stats import (
+from app.srs.anki_mirror.queue_stats import (
     refresh_daily_new_cap,
     refresh_daily_review_cap,
     refresh_fsrs_params,
@@ -22,6 +20,8 @@ from app.srs.queue_stats import (
     resolve_new_card_sort_order,
     resolve_new_spread,
 )
+from app.srs.database import SRSDatabase
+from app.srs.fsrs import DEFAULT_FSRS5_PARAMS
 from tests._helpers.anki_db import (
     DESIRED_RETENTION_FIELD,
     FSRS5_WEIGHTS_FIELD,
@@ -328,7 +328,11 @@ class TestPbParsing:
 
     def test_no_conf_id_in_normal_kind_submessage(self):
         """kind blob has LEN at field 1 but no VARINT at field 1 inside → returns None."""
-        from app.srs.queue_stats import _NEW_PER_DAY_FIELD, _WIRE_TYPE_VARINT, _read_config_value_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import (
+            _NEW_PER_DAY_FIELD,
+            _WIRE_TYPE_VARINT,
+            _read_config_value_from_deck_config_table,
+        )
 
         # Inner submessage has field 2 (VARINT=99) but not field 1
         inner = pb_varint_field(2, 99)
@@ -406,7 +410,7 @@ class TestRefreshFSRSParams:
 
         db = SRSDatabase(":memory:")
         conn = make_modern_anki_conn(new_per_day=20)  # blob has no FSRS weights
-        with caplog.at_level(logging.WARNING, logger="app.srs.queue_stats"):
+        with caplog.at_level(logging.WARNING, logger="app.srs.anki_mirror.queue_stats"):
             refresh_fsrs_params(db, conn, "0. Slovene")
         assert any("FSRS" in r.message and "0. Slovene" in r.message for r in caplog.records)
 
@@ -416,7 +420,7 @@ class TestRefreshFSRSParams:
 
         db = SRSDatabase(":memory:")
         conn = make_modern_anki_conn_with_fsrs()
-        with caplog.at_level(logging.WARNING, logger="app.srs.queue_stats"):
+        with caplog.at_level(logging.WARNING, logger="app.srs.anki_mirror.queue_stats"):
             refresh_fsrs_params(db, conn, "No Such Deck")
         assert not any("FSRS" in r.message for r in caplog.records)
 
@@ -444,7 +448,7 @@ class TestRefreshFSRSParams:
 
         db = SRSDatabase(":memory:")
         conn = make_modern_anki_conn(new_per_day=20)  # no FSRS weights in blob
-        with caplog.at_level(logging.WARNING, logger="app.srs.queue_stats"):
+        with caplog.at_level(logging.WARNING, logger="app.srs.anki_mirror.queue_stats"):
             refresh_fsrs_params(db, conn, "0. Slovene")
         assert any("FSRS" in r.message and "0. Slovene" in r.message for r in caplog.records)
 
@@ -464,7 +468,7 @@ class TestDesiredRetentionCache:
 
     def test_refresh_caches_value_from_modern_deck_config(self):
         """refresh_desired_retention reads field 37 from deck_config and caches it."""
-        from app.srs.queue_stats import refresh_desired_retention
+        from app.srs.anki_mirror.queue_stats import refresh_desired_retention
 
         db = SRSDatabase(":memory:")
         conn = make_modern_anki_conn_with_fsrs(weights=KNOWN_WEIGHTS, retention=0.86)
@@ -476,7 +480,7 @@ class TestDesiredRetentionCache:
 
     def test_refresh_writes_nothing_when_field_absent(self):
         """No field 37 in the blob → cache untouched, resolver falls back to default."""
-        from app.srs.queue_stats import refresh_desired_retention
+        from app.srs.anki_mirror.queue_stats import refresh_desired_retention
 
         db = SRSDatabase(":memory:")
         conn = make_modern_anki_conn(new_per_day=20)  # no FSRS / no field 37
@@ -484,7 +488,7 @@ class TestDesiredRetentionCache:
         assert db.get_anki_state_cache("desired_retention") is None
 
     def test_refresh_no_error_when_deck_missing(self):
-        from app.srs.queue_stats import refresh_desired_retention
+        from app.srs.anki_mirror.queue_stats import refresh_desired_retention
 
         db = SRSDatabase(":memory:")
         conn = make_modern_anki_conn_with_fsrs()
@@ -497,7 +501,7 @@ class TestMaximumReviewIntervalCache:
 
     def test_refresh_caches_value_from_modern_deck_config(self):
         """refresh_maximum_review_interval reads field 16 and caches it."""
-        from app.srs.queue_stats import refresh_maximum_review_interval
+        from app.srs.anki_mirror.queue_stats import refresh_maximum_review_interval
 
         db = SRSDatabase(":memory:")
         conn = make_modern_anki_conn(new_per_day=20, max_review_interval=36500)
@@ -509,7 +513,7 @@ class TestMaximumReviewIntervalCache:
 
     def test_refresh_writes_nothing_when_field_absent(self):
         """No field 16 in the blob → cache untouched, resolver falls back to default."""
-        from app.srs.queue_stats import refresh_maximum_review_interval
+        from app.srs.anki_mirror.queue_stats import refresh_maximum_review_interval
 
         db = SRSDatabase(":memory:")
         conn = make_modern_anki_conn(new_per_day=20)  # no field 16
@@ -517,7 +521,7 @@ class TestMaximumReviewIntervalCache:
         assert db.get_anki_state_cache("maximum_review_interval") is None
 
     def test_refresh_no_error_when_deck_missing(self):
-        from app.srs.queue_stats import refresh_maximum_review_interval
+        from app.srs.anki_mirror.queue_stats import refresh_maximum_review_interval
 
         db = SRSDatabase(":memory:")
         conn = make_modern_anki_conn(new_per_day=20, max_review_interval=36500)
@@ -568,7 +572,7 @@ class TestPbFSRSHelpersExtra:
     """Coverage for edge paths in the new FSRS protobuf helpers."""
 
     def test_pb_find_packed_float_accepts_memoryview(self):
-        from app.srs.queue_stats import _pb_find_packed_float_field
+        from app.srs.anki_mirror.queue_stats import _pb_find_packed_float_field
 
         payload = struct.pack("<19f", *KNOWN_WEIGHTS)
         tag = encode_varint((FSRS5_WEIGHTS_FIELD << 3) | 2)
@@ -577,7 +581,7 @@ class TestPbFSRSHelpersExtra:
         assert result is not None and len(result) == 19
 
     def test_pb_find_packed_float_returns_none_for_non_divisible_by_4_length(self):
-        from app.srs.queue_stats import _pb_find_packed_float_field
+        from app.srs.anki_mirror.queue_stats import _pb_find_packed_float_field
 
         # Build a LEN field at target with 3-byte payload (3 % 4 != 0)
         tag = encode_varint((FSRS5_WEIGHTS_FIELD << 3) | 2)
@@ -586,7 +590,7 @@ class TestPbFSRSHelpersExtra:
         assert result is None
 
     def test_pb_find_fixed32_accepts_memoryview(self):
-        from app.srs.queue_stats import _pb_find_fixed32_float_field
+        from app.srs.anki_mirror.queue_stats import _pb_find_fixed32_float_field
 
         tag = encode_varint((DESIRED_RETENTION_FIELD << 3) | 5)
         blob = tag + struct.pack("<f", 0.9)
@@ -595,7 +599,7 @@ class TestPbFSRSHelpersExtra:
         assert abs(result - 0.9) < 0.001
 
     def test_pb_find_fixed32_returns_none_when_field_absent(self):
-        from app.srs.queue_stats import _pb_find_fixed32_float_field
+        from app.srs.anki_mirror.queue_stats import _pb_find_fixed32_float_field
 
         # Blob with no field 40 at all
         blob = pb_varint_field(9, 20)
@@ -609,7 +613,7 @@ class TestPbFSRSHelpersExtra:
         of `data` silently truncates instead of raising, so struct.unpack is what
         raises — caught by the `except Exception` guard around the unpack call.
         """
-        from app.srs.queue_stats import _pb_find_packed_float_field
+        from app.srs.anki_mirror.queue_stats import _pb_find_packed_float_field
 
         tag = encode_varint((FSRS5_WEIGHTS_FIELD << 3) | 2)
         blob = tag + encode_varint(8) + b"\x00\x01"  # declares 8 bytes, only 2 present
@@ -618,7 +622,7 @@ class TestPbFSRSHelpersExtra:
 
     def test_pb_find_fixed32_returns_none_when_body_truncated(self):
         """Tag matches the target field (wire_type=5) but fewer than 4 bytes remain."""
-        from app.srs.queue_stats import _pb_find_fixed32_float_field
+        from app.srs.anki_mirror.queue_stats import _pb_find_fixed32_float_field
 
         tag = encode_varint((DESIRED_RETENTION_FIELD << 3) | 5)
         blob = tag + b"\x00\x01"  # only 2 bytes remain, need 4
@@ -648,7 +652,7 @@ class TestReadFSRSParamsEdgeCases:
         return conn
 
     def test_returns_none_when_deck_config_table_missing(self):
-        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_fsrs_params_from_deck_config_table
 
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
@@ -656,7 +660,7 @@ class TestReadFSRSParamsEdgeCases:
         assert result is None
 
     def test_returns_none_when_kind_blob_has_no_normal_kind(self):
-        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_fsrs_params_from_deck_config_table
 
         conn = self._base_conn()
         conn.execute("INSERT INTO deck_config VALUES (1, 'Slovene', 0, -1, ?)", (make_fsrs_deck_config_blob(),))
@@ -668,7 +672,7 @@ class TestReadFSRSParamsEdgeCases:
         assert result is None
 
     def test_returns_none_when_conf_id_not_in_kind(self):
-        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_fsrs_params_from_deck_config_table
 
         conn = self._base_conn()
         conn.execute("INSERT INTO deck_config VALUES (1, 'Slovene', 0, -1, ?)", (make_fsrs_deck_config_blob(),))
@@ -681,7 +685,7 @@ class TestReadFSRSParamsEdgeCases:
         assert result is None
 
     def test_returns_none_when_conf_id_not_in_deck_config(self):
-        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_fsrs_params_from_deck_config_table
 
         conn = self._base_conn()
         conn.execute("INSERT INTO deck_config VALUES (999, 'Slovene', 0, -1, ?)", (make_fsrs_deck_config_blob(),))
@@ -692,7 +696,7 @@ class TestReadFSRSParamsEdgeCases:
         assert result is None
 
     def test_returns_none_when_kind_blob_is_null(self):
-        from app.srs.queue_stats import _read_fsrs_params_from_deck_config_table
+        from app.srs.anki_mirror.queue_stats import _read_fsrs_params_from_deck_config_table
 
         conn = self._base_conn()
         conn.execute("INSERT INTO deck_config VALUES (1, 'Slovene', 0, -1, ?)", (make_fsrs_deck_config_blob(),))
@@ -826,8 +830,8 @@ class TestLearningCutoff:
     def test_resolve_returns_fallback_when_cache_missing(self):
         from datetime import UTC, datetime
 
+        from app.srs.anki_mirror.queue_stats import resolve_learning_cutoff
         from app.srs.database import SRSDatabase
-        from app.srs.queue_stats import resolve_learning_cutoff
 
         db = SRSDatabase(":memory:")
         fallback = datetime(2026, 5, 9, 18, 0, tzinfo=UTC)
@@ -836,8 +840,8 @@ class TestLearningCutoff:
     def test_resolve_returns_fallback_on_corrupt_cache(self):
         from datetime import UTC, datetime
 
+        from app.srs.anki_mirror.queue_stats import resolve_learning_cutoff
         from app.srs.database import SRSDatabase
-        from app.srs.queue_stats import resolve_learning_cutoff
 
         db = SRSDatabase(":memory:")
         db.set_anki_state_cache("learning_cutoff", "not-a-timestamp")
@@ -848,8 +852,8 @@ class TestLearningCutoff:
         """A stale `when` (older than the cached value) is silently ignored."""
         from datetime import UTC, datetime
 
+        from app.srs.anki_mirror.queue_stats import advance_learning_cutoff, resolve_learning_cutoff
         from app.srs.database import SRSDatabase
-        from app.srs.queue_stats import advance_learning_cutoff, resolve_learning_cutoff
 
         db = SRSDatabase(":memory:")
         newer = datetime(2026, 5, 9, 18, 0, tzinfo=UTC)
@@ -867,8 +871,8 @@ class TestSessionMainQueueCache:
     def test_returns_none_when_cache_missing(self):
         from datetime import date
 
+        from app.srs.anki_mirror.queue_stats import get_session_main_queue
         from app.srs.database import SRSDatabase
-        from app.srs.queue_stats import get_session_main_queue
 
         db = SRSDatabase(":memory:")
         assert get_session_main_queue(db, date.today()) is None
@@ -876,8 +880,8 @@ class TestSessionMainQueueCache:
     def test_returns_none_on_corrupt_cache(self):
         from datetime import date
 
+        from app.srs.anki_mirror.queue_stats import get_session_main_queue
         from app.srs.database import SRSDatabase
-        from app.srs.queue_stats import get_session_main_queue
 
         db = SRSDatabase(":memory:")
         db.set_anki_state_cache("session_main_queue", "not-json")
@@ -886,8 +890,8 @@ class TestSessionMainQueueCache:
     def test_round_trips(self):
         from datetime import date
 
+        from app.srs.anki_mirror.queue_stats import get_session_main_queue, set_session_main_queue
         from app.srs.database import SRSDatabase
-        from app.srs.queue_stats import get_session_main_queue, set_session_main_queue
 
         db = SRSDatabase(":memory:")
         today = date.today()
@@ -903,12 +907,12 @@ class TestSessionMainQueueCache:
         """
         from datetime import date
 
-        from app.srs.database import SRSDatabase
-        from app.srs.queue_stats import (
+        from app.srs.anki_mirror.queue_stats import (
             clear_session_main_queue,
             get_session_main_queue,
             set_session_main_queue,
         )
+        from app.srs.database import SRSDatabase
 
         db = SRSDatabase(":memory:")
         today = date.today()
@@ -920,8 +924,8 @@ class TestSessionMainQueueCache:
 
     def test_clear_session_main_queue_is_idempotent(self):
         """Clearing an already-empty cache does not raise."""
+        from app.srs.anki_mirror.queue_stats import clear_session_main_queue
         from app.srs.database import SRSDatabase
-        from app.srs.queue_stats import clear_session_main_queue
 
         db = SRSDatabase(":memory:")
         clear_session_main_queue(db)  # no-op, must not raise
@@ -935,9 +939,9 @@ class TestSessionMainQueueCache:
         """
         from datetime import date as _date
 
+        from app.srs.anki_mirror.queue_stats import get_session_main_queue, set_session_main_queue
         from app.srs.anki_mirror.rollover import anki_today
         from app.srs.database import SRSDatabase
-        from app.srs.queue_stats import get_session_main_queue, set_session_main_queue
 
         db = SRSDatabase(":memory:")
 
@@ -967,7 +971,7 @@ class TestSessionMainQueueCache:
 class TestReadReviewsPerDayFromAnki:
     def test_reads_reviews_per_day_from_legacy_json(self):
         """Legacy col.dconf format with rev.perDay returns the correct value."""
-        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+        from app.srs.anki_mirror.queue_stats import _read_reviews_per_day_from_anki
 
         conn = make_anki_conn(reviews_per_day=97)
         result = _read_reviews_per_day_from_anki(conn, "0. Slovene")
@@ -975,7 +979,7 @@ class TestReadReviewsPerDayFromAnki:
 
     def test_reads_reviews_per_day_from_modern_deck_config(self):
         """Modern deck_config protobuf with reviews_per_day at field 10."""
-        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+        from app.srs.anki_mirror.queue_stats import _read_reviews_per_day_from_anki
 
         conn = make_modern_anki_conn(reviews_per_day=150)
         result = _read_reviews_per_day_from_anki(conn, "0. Slovene")
@@ -983,7 +987,7 @@ class TestReadReviewsPerDayFromAnki:
 
     def test_returns_none_when_dconf_empty(self):
         """When col.dconf is empty, attempts protobuf fallback; no deck_config tables → None."""
-        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+        from app.srs.anki_mirror.queue_stats import _read_reviews_per_day_from_anki
 
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
@@ -1082,7 +1086,7 @@ class TestResolveDailyReviewCap:
 class TestReadReviewsPerDayFromAnkiFallback:
     def test_returns_none_when_col_table_missing_row(self):
         """conn.execute returns None for col query."""
-        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+        from app.srs.anki_mirror.queue_stats import _read_reviews_per_day_from_anki
 
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
@@ -1098,7 +1102,7 @@ class TestReadReviewsPerDayFromAnkiFallback:
 
     def test_legacy_json_decode_error_falls_to_protobuf(self):
         """Corrupted dconf parses, falls through to protobuf, which returns None."""
-        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+        from app.srs.anki_mirror.queue_stats import _read_reviews_per_day_from_anki
 
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
@@ -1117,7 +1121,7 @@ class TestReadReviewsPerDayFromAnkiFallback:
         """dconf has rev section but no perDay → falls to protobuf."""
         import json
 
-        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+        from app.srs.anki_mirror.queue_stats import _read_reviews_per_day_from_anki
 
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
@@ -1141,7 +1145,7 @@ class TestReadReviewsPerDayFromAnkiFallback:
         """Deck name not in decks JSON → deck_info None → falls to protobuf."""
         import json
 
-        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+        from app.srs.anki_mirror.queue_stats import _read_reviews_per_day_from_anki
 
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
@@ -1164,7 +1168,7 @@ class TestReadReviewsPerDayFromAnkiFallback:
         """conf_id found but its value is not a dict → falls to protobuf."""
         import json
 
-        from app.srs.queue_stats import _read_reviews_per_day_from_anki
+        from app.srs.anki_mirror.queue_stats import _read_reviews_per_day_from_anki
 
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
@@ -1187,7 +1191,7 @@ class TestReadReviewsPerDayFromAnkiFallback:
 class TestReadReviewsPerDayFromDeckConfigTable:
     def test_returns_none_when_conf_id_missing(self):
         """conf_id is None when deck is not found in decks table."""
-        from app.srs.queue_stats import (
+        from app.srs.anki_mirror.queue_stats import (
             _REVIEWS_PER_DAY_FIELD,
             _WIRE_TYPE_VARINT,
             _read_config_value_from_deck_config_table,
@@ -1219,7 +1223,7 @@ class TestReadReviewsPerDayFromDeckConfigTable:
 
     def test_returns_none_when_deck_missing_from_deck_config_table(self):
         """conf_id found but no matching row in deck_config table."""
-        from app.srs.queue_stats import (
+        from app.srs.anki_mirror.queue_stats import (
             _REVIEWS_PER_DAY_FIELD,
             _WIRE_TYPE_VARINT,
             _read_config_value_from_deck_config_table,
@@ -1254,7 +1258,7 @@ class TestRefreshAndResolveColCrt:
     """Layer 45 helpers: refresh_col_crt writes the cache; resolve_col_crt reads it."""
 
     def test_refresh_writes_crt_then_resolve_reads_it(self):
-        from app.srs.queue_stats import refresh_col_crt, resolve_col_crt
+        from app.srs.anki_mirror.queue_stats import refresh_col_crt, resolve_col_crt
 
         db = SRSDatabase(":memory:")
         # Fake Anki collection with a single col.crt value.
@@ -1267,14 +1271,14 @@ class TestRefreshAndResolveColCrt:
         assert resolve_col_crt(db) == 1388836800
 
     def test_resolve_returns_none_when_cache_empty(self):
-        from app.srs.queue_stats import resolve_col_crt
+        from app.srs.anki_mirror.queue_stats import resolve_col_crt
 
         db = SRSDatabase(":memory:")
         assert resolve_col_crt(db) is None
 
     def test_refresh_no_op_when_col_table_empty(self):
         """If the col table has no rows, refresh writes nothing."""
-        from app.srs.queue_stats import refresh_col_crt, resolve_col_crt
+        from app.srs.anki_mirror.queue_stats import refresh_col_crt, resolve_col_crt
 
         db = SRSDatabase(":memory:")
         anki_conn = sqlite3.connect(":memory:")
@@ -1286,7 +1290,7 @@ class TestRefreshAndResolveColCrt:
 
     def test_refresh_no_op_on_closed_connection(self):
         """Closed connection raises sqlite3.ProgrammingError; refresh swallows it silently."""
-        from app.srs.queue_stats import refresh_col_crt, resolve_col_crt
+        from app.srs.anki_mirror.queue_stats import refresh_col_crt, resolve_col_crt
 
         db = SRSDatabase(":memory:")
         anki_conn = sqlite3.connect(":memory:")
@@ -1297,7 +1301,7 @@ class TestRefreshAndResolveColCrt:
 
     def test_resolve_corrupt_cache_value_falls_back_to_none(self):
         """Non-integer cached value: int(row[0]) raises ValueError → None."""
-        from app.srs.queue_stats import resolve_col_crt
+        from app.srs.anki_mirror.queue_stats import resolve_col_crt
 
         db = SRSDatabase(":memory:")
         db.set_anki_state_cache("col_crt", "not-an-integer")

@@ -156,9 +156,9 @@ def two_language_dbs(tmp_path, monkeypatch):
 
     # Singular -> Slovene (this is what a db-less resolver call would read).
     # Plural -> both (this is what the request path actually uses).
-    monkeypatch.setattr("app.srs.queue_stats.settings.database_url", f"sqlite:///{sl_path}")
+    monkeypatch.setattr("app.srs.anki_mirror.queue_stats.settings.database_url", f"sqlite:///{sl_path}")
     monkeypatch.setattr(
-        "app.srs.queue_stats.settings.database_urls",
+        "app.srs.anki_mirror.queue_stats.settings.database_urls",
         {"sl": f"sqlite:///{sl_path}", "no": f"sqlite:///{no_path}"},
     )
     return db_sl, db_no
@@ -173,14 +173,14 @@ class TestResolversReadTheRequestDatabase:
     """
 
     def test_learning_steps_come_from_the_db_given(self, two_language_dbs):
-        from app.srs.queue_stats import resolve_learning_steps
+        from app.srs.anki_mirror.queue_stats import resolve_learning_steps
 
         db_sl, db_no = two_language_dbs
         assert resolve_learning_steps(db_sl) == (_SL_LEARN_STEPS, "cache")
         assert resolve_learning_steps(db_no) == (_NO_LEARN_STEPS, "cache")
 
     def test_fsrs_params_come_from_the_db_given(self, two_language_dbs):
-        from app.srs.queue_stats import resolve_fsrs_params
+        from app.srs.anki_mirror.queue_stats import resolve_fsrs_params
 
         db_sl, db_no = two_language_dbs
         assert resolve_fsrs_params(db_sl)[0].desired_retention == pytest.approx(0.85)
@@ -197,7 +197,7 @@ class TestGradingUsesTheRequestLanguageSteps:
         resulting due_at is ~25 min out. Under the defect it is ~1 min out.
         """
         _, db_no = two_language_dbs
-        from app.srs.queue_stats import resolve_learning_steps, resolve_relearning_steps
+        from app.srs.anki_mirror.queue_stats import resolve_learning_steps, resolve_relearning_steps
 
         learn_steps, _ = resolve_learning_steps(db_no)
         relearn_steps, _ = resolve_relearning_steps(db_no)
@@ -229,7 +229,7 @@ class TestGradingUsesTheRequestLanguageSteps:
         [1.0, 10.0] default and this assertion breaks. Mechanism-agnostic:
         it pins the absence of the read, not the shape of the fix.
         """
-        monkeypatch.setattr("app.srs.queue_stats.settings.database_url", _UNOPENABLE)
+        monkeypatch.setattr("app.srs.anki_mirror.queue_stats.settings.database_url", _UNOPENABLE)
 
         now = datetime.datetime.now(UTC)
         result = schedule(
@@ -289,8 +289,8 @@ class TestQueueSortUsesTheRequestLanguageParams:
 
     def test_merge_accepts_injected_params(self, two_language_dbs):
         """The sort must run on the params it is handed, not a resolved global."""
-        from app.srs.queue_engine import _merge_by_retrievability_ascending
-        from app.srs.queue_stats import resolve_fsrs_params
+        from app.srs.anki_mirror.queue_engine import _merge_by_retrievability_ascending
+        from app.srs.anki_mirror.queue_stats import resolve_fsrs_params
 
         _, db_no = two_language_dbs
         params, _ = resolve_fsrs_params(db_no)
@@ -306,12 +306,12 @@ class TestQueueSortUsesTheRequestLanguageParams:
         Same shape as the schedule() guard: an unopenable singular setting
         makes any reintroduced fallback observable.
         """
-        from app.srs.queue_engine import _merge_by_retrievability_ascending
-        from app.srs.queue_stats import resolve_fsrs_params
+        from app.srs.anki_mirror.queue_engine import _merge_by_retrievability_ascending
+        from app.srs.anki_mirror.queue_stats import resolve_fsrs_params
 
         _, db_no = two_language_dbs
         params, _ = resolve_fsrs_params(db_no)
-        monkeypatch.setattr("app.srs.queue_stats.settings.database_url", _UNOPENABLE)
+        monkeypatch.setattr("app.srs.anki_mirror.queue_stats.settings.database_url", _UNOPENABLE)
 
         rec, prod = self._due_pair(db_no)
         ordered = _merge_by_retrievability_ascending(rec, prod, date.today(), col_crt=None, params=params)
@@ -341,7 +341,7 @@ class TestSingularSettingIsUnreachable:
         ["resolve_fsrs_params", "resolve_learning_steps", "resolve_relearning_steps"],
     )
     def test_resolvers_require_a_database(self, func_name):
-        from app.srs import queue_stats
+        from app.srs.anki_mirror import queue_stats
 
         with pytest.raises(TypeError):
             getattr(queue_stats, func_name)()
@@ -368,7 +368,7 @@ class TestSingularSettingIsUnreachable:
         test passed before the fix and proved nothing.
         """
         _, db_no = two_language_dbs
-        import app.srs.queue_stats as qs
+        import app.srs.anki_mirror.queue_stats as qs
 
         qs.settings.database_url = qs.settings.database_urls["no"]
 
