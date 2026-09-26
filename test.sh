@@ -26,7 +26,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # that had genuinely passed. Must stay in lockstep with sentinel_path() in
 # .claude/hooks/commit_gate.py; if these two disagree the gate prompts for ever.
 # (tunatale-5znu, 2026-09-02.)
-TT_SENTINEL="$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null || echo "$ROOT/.git")/tt-test-pass"
+TT_GIT_DIR="$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null || echo "$ROOT/.git")"
+TT_SENTINEL="$TT_GIT_DIR/tt-test-pass"
+# The SHARED git dir: <main>/.git from every worktree. Evidence that should
+# accumulate across checkouts (step history, preserved e2e traces) lives here;
+# the per-run log lives in TT_GIT_DIR so two checkouts cannot clobber it.
+# Same worktree hazard as the sentinel above (tunatale-17a4, 2026-09-26).
+TT_COMMON_DIR="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo "$ROOT/.git")"
 
 # Each group's stdout is a capture file, so the tools would normally strip
 # color (no TTY). Force color from every toolchain (FORCE_COLOR for ruff/bun/
@@ -85,7 +91,7 @@ trap 'rm -f "$backend_log" "$frontend_log" "$peer_sync_log"
 # needed; this file always has all of it. Inside .git on purpose: never
 # committed, and — unlike an untracked file in the tree — it cannot perturb the
 # commit gate's tree fingerprint.
-full_log="$ROOT/.git/tt-test-last.log"
+full_log="$TT_GIT_DIR/tt-test-last.log"
 
 # Per-step pass/fail history, appended across EVERY local run (unlike
 # tt-test-last.log above, which is overwritten each time). CI's flake rate is
@@ -94,7 +100,7 @@ full_log="$ROOT/.git/tt-test-last.log"
 # only evidence would be one-off manual sweeps (tunatale-xw6s). This gives every
 # step — not just e2e — the same kind of history CI gets for free, so if one
 # starts flaking the data is already there instead of needing another campaign.
-tt_test_history="$ROOT/.git/tt-test-history.log"
+tt_test_history="$TT_COMMON_DIR/tt-test-history.log"
 
 # Column 7: WHICH TREE this run tested (commit_gate.py::tree_id, HEAD plus the
 # dirty-tree fingerprint). Computed ONCE, before any step, so every line of one
@@ -233,7 +239,7 @@ backend_pid=$!
   # the `|| true` is on the PRESERVE, and the `false` re-raises the real one.
   if ! log_step frontend "E2E smoke tests" bun run test:e2e; then
     kept=$(uv --directory "$ROOT/backend" run python "$ROOT/backend/scripts/preserve_e2e_artifacts.py" \
-             "$ROOT/frontend/test-results" "$ROOT/.git/tt-e2e-failures" 2>/dev/null || true)
+             "$ROOT/frontend/test-results" "$TT_COMMON_DIR/tt-e2e-failures" 2>/dev/null || true)
     [ -n "$kept" ] && echo "E2E artifacts preserved (the next run would have deleted them): $kept"
     false
   fi
