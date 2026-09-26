@@ -364,6 +364,28 @@ def discover() -> None:
         )
 
 
+def _facet(code: str, attr: str, default: object = None) -> object:
+    """One field of *code*'s :class:`LanguageConfig`, or *default* if unregistered.
+
+    The discover / get / return-attr-or-default shape that every static facet
+    getter below shares. *default* is what an UNKNOWN code yields; a known code
+    yields the field's own value, which for most facets is itself the language's
+    documented fallback (``lemmatizer_type`` defaults to ``"lowercase"`` on the
+    dataclass too), so the two agree.
+
+    Only for that plain shape. A getter that CALLS what it fetches
+    (:func:`get_lexicon`, :func:`get_phoneme_planner`, :func:`get_multiword_traps`),
+    post-processes it (:func:`get_mint_deck_name` tests truthiness, not ``None``),
+    or branches further (:func:`get_syllabifier` falls back to a default function)
+    keeps its own body — folding those in would hide the extra step, not remove it.
+    """
+    discover()
+    config = _CONFIGS.get(code)
+    if config is None:
+        return default
+    return getattr(config, attr)
+
+
 def get_language(code: str) -> Language:
     """Return the ``Language`` domain object for *code*.
 
@@ -519,9 +541,7 @@ def get_ipa_read_in_voice_locale(code: str) -> bool:
     ``False`` for an unknown code: keeping the wrapper is the pre-existing
     behaviour for every language, and the flag is an opt-in per plugin.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.ipa_read_in_voice_locale if config else False
+    return _facet(code, "ipa_read_in_voice_locale", False)
 
 
 def get_ipa_for_drill_phrases(code: str) -> bool:
@@ -532,9 +552,7 @@ def get_ipa_for_drill_phrases(code: str) -> bool:
     than off ``LanguageConfig`` so a call site cannot accidentally pin one
     language's channel to another's.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.ipa_for_drill_phrases if config else False
+    return _facet(code, "ipa_for_drill_phrases", False)
 
 
 def get_tts_voice_gain_db(code: str, voice_id: str) -> float:
@@ -565,9 +583,7 @@ def get_lemmatizer_type(code: str) -> str:
     forced to lowercase) is the global ``settings.lemmatizer_type`` gate in
     ``app.srs.lemmatizer.get_lemmatizer``.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.lemmatizer_type if config else "lowercase"
+    return _facet(code, "lemmatizer_type", "lowercase")
 
 
 def get_syllabifier(code: str) -> Callable[[str], list[str]]:
@@ -592,9 +608,7 @@ def get_vocab_notetype(code: str) -> VocabNotetype | None:
     ``None`` for an unknown code or a language TT doesn't mint into (``en``) —
     callers fall back to the deck-discovered notetype.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.vocab_notetype if config else None
+    return _facet(code, "vocab_notetype", None)
 
 
 def get_l2_css_class(code: str) -> str:
@@ -624,8 +638,9 @@ def get_l2_scorer(code: str) -> Callable[[str], float] | None:
     into Anki as a headword (tunatale-yaan): with no Norwegian scorer, ``snøm``
     scored 0.0 and the sentence won on one ``æ`` in ``være``.
     """
-    config = _CONFIGS.get(code)
-    return config.l2_scorer if config is not None else None
+    # Through _facet like its siblings: this getter alone skipped discover(), so
+    # a first call before any other getter saw no plugins and returned None.
+    return _facet(code, "l2_scorer", None)
 
 
 def get_breakdown_spans(code: str) -> Callable[[str], list[BreakdownChunk]] | None:
@@ -635,9 +650,7 @@ def get_breakdown_spans(code: str) -> Callable[[str], list[BreakdownChunk]] | No
     fall back to the generic per-syllable buildup in
     ``section_builder._generic_breakdown_spans``. Unknown codes → ``None``.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.breakdown_spans_fn if config else None
+    return _facet(code, "breakdown_spans_fn", None)
 
 
 def get_alignment(code: str) -> AlignmentConfig | None:
@@ -646,9 +659,7 @@ def get_alignment(code: str) -> AlignmentConfig | None:
     ``None`` is the language-level off-switch for syllable slicing; the
     process-level gate is ``app.audio.slicer.alignment_installed``.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.alignment if config else None
+    return _facet(code, "alignment", None)
 
 
 def get_slow_word(code: str) -> Callable[[str], str] | None:
@@ -657,9 +668,7 @@ def get_slow_word(code: str) -> Callable[[str], str] | None:
     Norwegian uses morpheme-aware micro-pauses; other languages slow by simple
     whitespace splitting.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.slow_word_fn if config else None
+    return _facet(code, "slow_word_fn", None)
 
 
 def get_story_text_normalizer(code: str) -> Callable[[str], str] | None:
@@ -668,9 +677,7 @@ def get_story_text_normalizer(code: str) -> Callable[[str], str] | None:
     ``None`` means the language has no story-text normalizer, and
     ``build_lesson_from_story`` applies nothing. Unknown codes → ``None``.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.story_text_normalizer if config else None
+    return _facet(code, "story_text_normalizer", None)
 
 
 def get_definite_form_checker(code: str) -> Callable[[str], bool] | None:
@@ -680,9 +687,7 @@ def get_definite_form_checker(code: str) -> Callable[[str], bool] | None:
     article (Slovene) or is not an L2 (``en``); callers must treat it as "cannot
     tell" and leave the gloss untouched rather than guessing.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.definite_form_fn if config else None
+    return _facet(code, "definite_form_fn", None)
 
 
 def get_lemma_plausible(code: str) -> Callable[[str, str], bool] | None:
@@ -692,9 +697,7 @@ def get_lemma_plausible(code: str) -> Callable[[str, str], bool] | None:
     (Slovene, ``en``); callers must treat it as "cannot tell" and keep the
     lemmatizer's lemma as the headword rather than guessing at a fallback.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.lemma_plausible_fn if config else None
+    return _facet(code, "lemma_plausible_fn", None)
 
 
 def get_multiword_traps(code: str) -> frozenset[tuple[str, str]]:
@@ -717,9 +720,7 @@ def get_variant_separator(code: str) -> str | None:
     Unknown codes → ``None``. Norwegian uses ``","`` (``mot, imot``); every other
     wired language returns ``None``, so ``card_surface_variants`` is a no-op there.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.variant_separator if config else None
+    return _facet(code, "variant_separator", None)
 
 
 def get_mint_deck_name(code: str, *, default: str) -> str:
@@ -737,9 +738,7 @@ def get_mint_deck_name(code: str, *, default: str) -> str:
 
 def get_notetype_profiles(code: str) -> Mapping[str, NotetypeProfile]:
     """*code*'s own notetype profiles (``{}`` when it declares none, or is unknown)."""
-    discover()
-    config = _CONFIGS.get(code)
-    return config.notetype_profiles if config else {}
+    return _facet(code, "notetype_profiles", {})
 
 
 def all_notetype_profiles() -> list[NotetypeProfile]:
@@ -755,9 +754,7 @@ def get_infinitive_marker(code: str) -> str | None:
     Unknown codes → ``None``. Norwegian uses ``"å"``; every other wired
     language returns ``None``.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.infinitive_marker if config else None
+    return _facet(code, "infinitive_marker", None)
 
 
 def get_gender_article(code: str, gender: str, *, lemma: str = "") -> str:
@@ -807,18 +804,14 @@ def get_style_notes(code: str) -> str:
 
     Empty string when the language has no style file or is unknown.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.style_notes if config else ""
+    return _facet(code, "style_notes", "")
 
 
 def get_function_words_path(code: str) -> Path | None:
     """Return the path to the per-language function-word JSON config, or ``None``
     when the language has no curated function-word policy.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.function_words_path if config else None
+    return _facet(code, "function_words_path", None)
 
 
 def get_numbers_path(code: str) -> Path | None:
@@ -828,18 +821,14 @@ def get_numbers_path(code: str) -> Path | None:
     number words as far as TT is concerned, and every one of its words keeps the
     routing it has today. Capability-driven, like ``get_function_words_path``.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.numbers_path if config else None
+    return _facet(code, "numbers_path", None)
 
 
 def get_wordfreq_lang(code: str) -> str | None:
     """Return the wordfreq lookup code for *code*, or ``None`` when the language
     has no wordfreq code (frequency ranking is disabled).
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.wordfreq_lang if config else None
+    return _facet(code, "wordfreq_lang", None)
 
 
 def card_surface_variants(code: str, text: str) -> list[str]:
@@ -867,9 +856,7 @@ def get_morphology_profile(code: str) -> str | None:
     tagging block injected into the story prompt), or ``None`` when the language gets
     no morphology block. Unknown codes → ``None``.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.morphology_profile if config else None
+    return _facet(code, "morphology_profile", None)
 
 
 def get_a1_morphology(code: str) -> A1Morphology | None:
@@ -878,9 +865,7 @@ def get_a1_morphology(code: str) -> A1Morphology | None:
     ``None`` means the A1-morphology call sites keep the default (Slovene-shaped)
     vocabulary — never a guess. Unknown codes → ``None``.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.a1_morphology if config else None
+    return _facet(code, "a1_morphology", None)
 
 
 def get_lexicon(code: str) -> PronunciationLexicon | None:
@@ -901,9 +886,7 @@ def get_lexicon(code: str) -> PronunciationLexicon | None:
 
 def get_lemma_table_path(code: str) -> Path | None:
     """Return *code*'s shipped lemma-table extract, or ``None`` when it has none."""
-    discover()
-    config = _CONFIGS.get(code)
-    return config.lemma_table_path if config else None
+    return _facet(code, "lemma_table_path", None)
 
 
 def all_lemma_table_paths() -> list[Path]:

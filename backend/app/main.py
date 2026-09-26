@@ -361,7 +361,6 @@ from app.api import admin, anki, audio, curriculum, generation, srs  # noqa: E40
 from app.api import auth as auth_api  # noqa: E402
 from app.api import client_log as client_log_api  # noqa: E402
 from app.api import llm as llm_api  # noqa: E402
-from app.api import pipeline as pipeline_api  # noqa: E402
 from app.api import review_sessions as review_sessions_api  # noqa: E402
 from app.api import srs_images as srs_images_api  # noqa: E402
 from app.auth.dependencies import require_user  # noqa: E402
@@ -383,7 +382,6 @@ def _anki_sync_importable() -> bool:
 
 
 app.include_router(curriculum.router, dependencies=[Depends(require_user)])
-app.include_router(pipeline_api.router, dependencies=[Depends(require_user)])
 app.include_router(generation.router, dependencies=[Depends(require_user)])
 app.include_router(srs.router, dependencies=[Depends(require_user)])
 app.include_router(srs_images_api.router, dependencies=[Depends(require_user)])

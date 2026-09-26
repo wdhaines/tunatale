@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Fail if the two content surfaces (lessons vs review sessions) drift apart.
 
-The lesson-side verbs are spread across FOUR routers (``generation.py``,
-``curriculum.py``, ``audio.py``, ``pipeline.py``), while the session-side verbs
+The lesson-side verbs are spread across THREE routers (``generation.py``,
+``curriculum.py``, ``audio.py``), while the session-side verbs
 all live in one (``review_sessions.py``) — so a router-vs-router comparison
 reports ~8 false asymmetries and the gate means nothing. Instead this checker
 holds a **verb map**: semantic verb → (lesson route, session route), where
@@ -17,7 +17,7 @@ Three assertions, in both directions:
    ``review_sessions.router``) is either named in the map or listed in the
    script's ``OUT_OF_SCOPE``. A new route on either that nobody classified
    fails. The sweep deliberately does NOT extend to ``curriculum.py`` /
-   ``audio.py`` / ``pipeline.py`` — those carry planning/settings routes that
+   ``audio.py`` — those carry planning/settings routes that
    are not content-surface verbs; for them only assertion 1 applies.
 3. **Every absent cell has an allowlist entry, and every entry corresponds to
    an actually-absent cell** — shrink-only: a cell that gets filled in later
@@ -128,7 +128,6 @@ def _default_routers() -> dict[str, object]:
     from app.api.audio import router as audio_router
     from app.api.curriculum import router as curriculum_router
     from app.api.generation import router as generation_router
-    from app.api.pipeline import router as pipeline_router
     from app.api.review_sessions import router as review_sessions_router
 
     return {
@@ -136,7 +135,6 @@ def _default_routers() -> dict[str, object]:
         "review_sessions": review_sessions_router,
         "curriculum": curriculum_router,
         "audio": audio_router,
-        "pipeline": pipeline_router,
     }
 
 

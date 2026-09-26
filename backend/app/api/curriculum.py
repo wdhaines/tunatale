@@ -1,4 +1,6 @@
-"""Curriculum generation and retrieval endpoints."""
+"""Curriculum generation and retrieval endpoints, plus the pipeline's
+status/retry/regenerate routes (they address the same ``/api/curriculum``
+prefix, so they live on this router rather than a second one)."""
 
 from __future__ import annotations
 
@@ -19,6 +21,9 @@ from app.api.models import (
     ImportCurriculumPlanResponse,
     ImportPlanRequest,
     LessonResponse,
+    PipelineRegenerateRequest,
+    PipelineRetryRequest,
+    PipelineStatusResponse,
     PlanCommitResponse,
     PlanFeedbackRequest,
     PlanFeedbackResponse,
@@ -31,6 +36,7 @@ from app.api.models import (
     SetReviewPressureResponse,
     StartPlanRequest,
     StartPlanResponse,
+    StatusResponse,
 )
 from app.generation.planner import CurriculumPlanner, PlannerError, build_turn_prompt, parse_turn
 from app.llm.client import LLMError, LLMQuotaExceededError
@@ -38,7 +44,11 @@ from app.models.curriculum import Curriculum, CurriculumDay
 from app.srs.planner_snapshot import build_learner_snapshot
 from app.storage.plan_io import export_plan, get_planner_state, import_plan, mint_curriculum_id
 
-router = APIRouter(prefix="/api/curriculum", tags=["curriculum"])
+router = APIRouter(prefix="/api/curriculum")
+# No router-level ``tags=``: the pipeline routes below share this prefix and
+# carry ``tags=["pipeline"]``, and ``APIRouter.add_api_route`` always PREPENDS
+# ``self.tags`` — a route-level tag extends the router's, it never replaces it.
+# So the curriculum tag is declared per route instead.
 
 
 def _turn_inputs(curriculum_id: str, request: Request) -> tuple:
@@ -58,7 +68,7 @@ def _turn_inputs(curriculum_id: str, request: Request) -> tuple:
     return store, curriculum, planner, snapshot, language
 
 
-@router.post("/import", status_code=201, response_model=ImportCurriculumPlanResponse)
+@router.post("/import", status_code=201, response_model=ImportCurriculumPlanResponse, tags=["curriculum"])
 async def import_curriculum_plan(body: ImportPlanRequest, request: Request):
     store = request.state.content_store
     try:
@@ -82,7 +92,7 @@ def _get_curriculum_or_404(store, curriculum_id: str) -> Curriculum:
     return curriculum
 
 
-@router.post("/plan", status_code=201, response_model=StartPlanResponse)
+@router.post("/plan", status_code=201, response_model=StartPlanResponse, tags=["curriculum"])
 async def start_plan(body: StartPlanRequest, request: Request):
     """LLM-free: mint an id and save an empty curriculum with empty planner state."""
     store = request.state.content_store
@@ -104,7 +114,7 @@ async def start_plan(body: StartPlanRequest, request: Request):
     }
 
 
-@router.post("/{curriculum_id}/plan/turn", status_code=200, response_model=PlanTurnResponse)
+@router.post("/{curriculum_id}/plan/turn", status_code=200, response_model=PlanTurnResponse, tags=["curriculum"])
 async def plan_turn(curriculum_id: str, body: PlanTurnRequest, request: Request):
     """One planner chat turn: snapshot → LLM / pasted response → append chat, set/replace proposed."""
     store, curriculum, planner, snapshot, language = _turn_inputs(curriculum_id, request)
@@ -158,7 +168,9 @@ async def plan_turn(curriculum_id: str, body: PlanTurnRequest, request: Request)
     return {"reply": turn.reply, "proposed": state["proposed"]}
 
 
-@router.post("/{curriculum_id}/plan/turn/prompt", status_code=200, response_model=PlanTurnPromptResponse)
+@router.post(
+    "/{curriculum_id}/plan/turn/prompt", status_code=200, response_model=PlanTurnPromptResponse, tags=["curriculum"]
+)
 async def plan_turn_prompt(curriculum_id: str, body: PlanTurnRequest, request: Request):
     """Export the exact prompts for a planner turn, without calling any LLM.
 
@@ -176,7 +188,7 @@ async def plan_turn_prompt(curriculum_id: str, body: PlanTurnRequest, request: R
     return {"system_prompt": system_prompt, "user_prompt": user_prompt}
 
 
-@router.post("/{curriculum_id}/plan/commit", status_code=200, response_model=PlanCommitResponse)
+@router.post("/{curriculum_id}/plan/commit", status_code=200, response_model=PlanCommitResponse, tags=["curriculum"])
 async def plan_commit(curriculum_id: str, request: Request):
     """Append the proposed batch to the committed days and clear the proposal."""
     store = request.state.content_store
@@ -217,7 +229,7 @@ async def plan_commit(curriculum_id: str, request: Request):
     return {"id": curriculum_id, "days": len(curriculum.days)}
 
 
-@router.post("/{curriculum_id}/plan/reset", status_code=200, response_model=PlanResetResponse)
+@router.post("/{curriculum_id}/plan/reset", status_code=200, response_model=PlanResetResponse, tags=["curriculum"])
 async def plan_reset(curriculum_id: str, request: Request):
     """Clear the planner chat and proposed batch (keeps feedback and committed days)."""
     store = request.state.content_store
@@ -231,7 +243,9 @@ async def plan_reset(curriculum_id: str, request: Request):
     return {"reply_count_cleared": reply_count}
 
 
-@router.post("/{curriculum_id}/plan/feedback", status_code=200, response_model=PlanFeedbackResponse)
+@router.post(
+    "/{curriculum_id}/plan/feedback", status_code=200, response_model=PlanFeedbackResponse, tags=["curriculum"]
+)
 async def plan_feedback(curriculum_id: str, body: PlanFeedbackRequest, request: Request):
     """Record listening feedback for a committed day; it enters the next turn's prompt."""
     store = request.state.content_store
@@ -245,7 +259,9 @@ async def plan_feedback(curriculum_id: str, body: PlanFeedbackRequest, request: 
     return {"feedback": state["feedback"]}
 
 
-@router.post("/{curriculum_id}/generation-mode", status_code=200, response_model=SetGenerationModeResponse)
+@router.post(
+    "/{curriculum_id}/generation-mode", status_code=200, response_model=SetGenerationModeResponse, tags=["curriculum"]
+)
 async def set_generation_mode(curriculum_id: str, body: GenerationModeRequest, request: Request):
     """Set the generation mode for a curriculum: 'auto' (default, Groq pipeline) or 'manual' (copy/paste)."""
     store = request.state.content_store
@@ -255,7 +271,9 @@ async def set_generation_mode(curriculum_id: str, body: GenerationModeRequest, r
     return {"mode": body.mode}
 
 
-@router.post("/{curriculum_id}/review-pressure", status_code=200, response_model=SetReviewPressureResponse)
+@router.post(
+    "/{curriculum_id}/review-pressure", status_code=200, response_model=SetReviewPressureResponse, tags=["curriculum"]
+)
 async def set_review_pressure(curriculum_id: str, body: ReviewPressureRequest, request: Request):
     """Set how hard this plan's stories push to use the learner's review words.
 
@@ -270,13 +288,13 @@ async def set_review_pressure(curriculum_id: str, body: ReviewPressureRequest, r
     return {"pressure": body.pressure}
 
 
-@router.get("", status_code=200, response_model=list[CurriculumSummary])
+@router.get("", status_code=200, response_model=list[CurriculumSummary], tags=["curriculum"])
 async def list_curricula(request: Request):
     store = request.state.content_store
     return store.list_curricula()
 
 
-@router.get("/{curriculum_id}", status_code=200, response_model=GetCurriculumResponse)
+@router.get("/{curriculum_id}", status_code=200, response_model=GetCurriculumResponse, tags=["curriculum"])
 async def get_curriculum(curriculum_id: str, request: Request):
     store = request.state.content_store
     curriculum = store.get_curriculum(curriculum_id)
@@ -308,7 +326,7 @@ async def get_curriculum(curriculum_id: str, request: Request):
     }
 
 
-@router.get("/{curriculum_id}/progress", response_model=list[CurriculumProgressEntry])
+@router.get("/{curriculum_id}/progress", response_model=list[CurriculumProgressEntry], tags=["curriculum"])
 async def get_curriculum_progress(curriculum_id: str, request: Request):
     store = request.state.content_store
     curriculum = store.get_curriculum(curriculum_id)
@@ -323,7 +341,7 @@ async def get_curriculum_progress(curriculum_id: str, request: Request):
     ]
 
 
-@router.get("/{curriculum_id}/source", status_code=200, response_model=CurriculumSourceResponse)
+@router.get("/{curriculum_id}/source", status_code=200, response_model=CurriculumSourceResponse, tags=["curriculum"])
 async def get_curriculum_source(curriculum_id: str, request: Request):
     store = request.state.content_store
     try:
@@ -332,7 +350,7 @@ async def get_curriculum_source(curriculum_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Curriculum not found") from None
 
 
-@router.delete("/{curriculum_id}", status_code=200, response_model=DeleteCurriculumResponse)
+@router.delete("/{curriculum_id}", status_code=200, response_model=DeleteCurriculumResponse, tags=["curriculum"])
 async def delete_curriculum(curriculum_id: str, request: Request):
     store = request.state.content_store
     orphaned = store.delete_curriculum(curriculum_id)
@@ -344,7 +362,7 @@ async def delete_curriculum(curriculum_id: str, request: Request):
     return {"deleted": curriculum_id}
 
 
-@router.delete("/{curriculum_id}/days/{day}", status_code=200, response_model=DeleteDayResponse)
+@router.delete("/{curriculum_id}/days/{day}", status_code=200, response_model=DeleteDayResponse, tags=["curriculum"])
 async def delete_day(curriculum_id: str, day: int, request: Request):
     """Delete a committed day: its lessons/audio are removed, the day itself is
     dropped from ``curriculum.days`` (no renumbering of later days). Existing
@@ -380,6 +398,7 @@ async def delete_day(curriculum_id: str, day: int, request: Request):
     # payload has no "day" key — exclude_unset keeps it that way instead of
     # re-adding "day": null.
     response_model_exclude_unset=True,
+    tags=["curriculum"],
 )
 async def get_lesson_by_day(curriculum_id: str, day: int, request: Request):
     store = request.state.content_store
@@ -388,3 +407,64 @@ async def get_lesson_by_day(curriculum_id: str, day: int, request: Request):
         raise HTTPException(status_code=404, detail=f"No lesson found for day {day}")
     lesson_id, lesson = result
     return serialize_lesson(lesson_id, lesson)
+
+
+# ── Pipeline status and control ──────────────────────────────────────────────
+# The pipeline's routes address the same /api/curriculum prefix, so they are
+# declared on this router rather than in a second module that redeclares the
+# prefix. They keep the ``pipeline`` tag they were registered with, and are
+# registered LAST, so the OpenAPI snapshot and the match order are both what
+# they were when this was a separate router included after this one.
+
+
+def _pipeline(request: Request):
+    pipeline = getattr(request.app.state, "pipeline", None)
+    return pipeline
+
+
+@router.get("/{curriculum_id}/pipeline", status_code=200, response_model=PipelineStatusResponse, tags=["pipeline"])
+async def pipeline_status(curriculum_id: str, request: Request):
+    pipeline = _pipeline(request)
+    if pipeline is None:
+        return {"active": False, "days": []}
+
+    language_code = request.state.language_code
+
+    # 404 if curriculum doesn't exist
+    store = request.state.content_store
+    _get_curriculum_or_404(store, curriculum_id)
+
+    pipeline.reconcile(language_code, curriculum_id)
+    return pipeline.status_for(language_code, curriculum_id)
+
+
+@router.post("/{curriculum_id}/pipeline/retry", status_code=200, response_model=StatusResponse, tags=["pipeline"])
+async def pipeline_retry(curriculum_id: str, body: PipelineRetryRequest, request: Request):
+    pipeline = _pipeline(request)
+    if pipeline is None:
+        raise HTTPException(status_code=404, detail="Pipeline not available")
+
+    language_code = request.state.language_code
+    try:
+        status = pipeline.retry(language_code, curriculum_id, body.day)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Day {body.day} not found in curriculum") from None
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return {"status": status}
+
+
+@router.post("/{curriculum_id}/pipeline/regenerate", status_code=200, response_model=StatusResponse, tags=["pipeline"])
+async def pipeline_regenerate(curriculum_id: str, body: PipelineRegenerateRequest, request: Request):
+    pipeline = _pipeline(request)
+    if pipeline is None:
+        raise HTTPException(status_code=404, detail="Pipeline not available")
+
+    language_code = request.state.language_code
+    try:
+        status = pipeline.regenerate(language_code, curriculum_id, body.day, strategy=body.strategy)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Day {body.day} not found in curriculum") from None
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    return {"status": status}
