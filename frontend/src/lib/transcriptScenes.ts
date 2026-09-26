@@ -13,28 +13,21 @@ export interface Scene {
   lines: UnifiedLine[];
 }
 
-// ⚠️ Duplicate of backend `section_builder.py::SECTION_TITLES`. Keep the
-// two lists in lockstep (tunatale-v3ri).
-//
-// Measured 2026-08-28, because the obvious reading of this set is wrong. Only
-// ONE of the two consumers is live against today's phrase order:
-//   - buildScenes (natural_speed): LIVE. The section title is the first
-//     narrator L1 phrase, and without it here it becomes a spurious scene
-//     heading. Dropping "Natural Speed" reds 4 tests.
-//   - extractTranslations (translated): NOT currently reachable. The builders
-//     emit [title, scene_label, l2, gloss, ...], so every title and scene label
-//     is already skipped by the `awaiting` guard before this set is consulted.
-//     The entries are defence-in-depth against a phrase order where a title
-//     follows an L2 line; see the test named for that shape.
-const SECTION_TITLES = new Set([
-  "Key Phrases",
-  "Natural Speed",
-  "Enunciated",
-  "English After",
-  "English Before",
-  "Enunciated, English After",
-  "Enunciated, English Before",
-]);
+// Every section a lesson builder emits opens with its own spoken title, a
+// narrator line in the L1 (backend `section_builder.py`). It is skipped BY
+// POSITION. An English list mirroring the backend's titles used to decide
+// this, and a copy edit or a language plugin's own title would then have
+// turned the title into a spurious scene heading (tunatale-ss5q.3). A first
+// phrase that is dialogue is kept, since only a narrator line can be a title.
+function withoutTitle(
+  phrases: LessonDetail["sections"][number]["phrases"],
+  languageCode: string,
+): LessonDetail["sections"][number]["phrases"] {
+  const first = phrases[0];
+  const isTitle =
+    first !== undefined && first.role === "narrator" && first.language_code !== languageCode;
+  return isTitle ? phrases.slice(1) : phrases;
+}
 
 function extractTranslations(
   phrases: LessonDetail["sections"][number]["phrases"],
@@ -42,11 +35,11 @@ function extractTranslations(
 ): string[] {
   const out: string[] = [];
   let awaiting = false;
-  for (const p of phrases) {
+  for (const p of withoutTitle(phrases, languageCode)) {
     if (p.language_code === languageCode) {
       if (awaiting) out.push("");
       awaiting = true;
-    } else if (p.role === "narrator" && awaiting && !SECTION_TITLES.has(p.text)) {
+    } else if (p.role === "narrator" && awaiting) {
       out.push(p.text);
       awaiting = false;
     }
@@ -72,10 +65,9 @@ export function buildScenes(lesson: ReadableLesson, dialogueLines: DialogueLine[
   let currentScene: Scene = { title: null, lines: [] };
   let lineIndex = 0;
 
-  for (const p of natural.phrases) {
+  for (const p of withoutTitle(natural.phrases, languageCode)) {
     const isNarratorL1 = p.language_code !== languageCode && p.role === "narrator";
     if (isNarratorL1) {
-      if (SECTION_TITLES.has(p.text)) continue;
       if (currentScene.lines.length > 0 || currentScene.title !== null) {
         scenes.push(currentScene);
       }

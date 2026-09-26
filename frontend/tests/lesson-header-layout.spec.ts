@@ -366,6 +366,21 @@ test.describe("Repeat on a touch screen", () => {
 		hasTouch: PIXEL.hasTouch,
 	});
 
+	// tunatale-9k7j: under full-gate load this test flakes (2 of 5 gates on
+	// 2026-09-26): the tap lands, the current cue is on screen, and yet
+	// aria-pressed never reads true. The saved trace shows a media load failing
+	// right after the tap, but not WHAT cleared the latch. The player's own
+	// media trace names it (`latch:off by=<action>`), so record it on every run
+	// and attach it on failure instead of guessing again.
+	test.beforeEach(async ({ page }) => {
+		await page.addInitScript(() => localStorage.setItem("mediaTrace", "on"));
+	});
+	test.afterEach(async ({ page }, testInfo) => {
+		if (testInfo.status === testInfo.expectedStatus) return;
+		const log = await page.evaluate(() => localStorage.getItem("mediaTraceLog")).catch(() => null);
+		await testInfo.attach("media-trace", { body: log ?? "(no media trace)", contentType: "text/plain" });
+	});
+
 	test("released Repeat does not keep looking engaged after the tap", async ({ page, request }) => {
 		test.skip(!(await backendAvailable(request)), "Backend not available");
 		const cid = await curriculumId(request);

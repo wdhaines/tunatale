@@ -71,7 +71,11 @@ describe("TranscriptPlaceholder", () => {
       sections: [
         {
           type: "natural_speed",
+          // Every built section opens with its spoken title, and the scene
+          // grouping skips it by position (tunatale-ss5q.3); all 13 stored
+          // lessons were measured to have one on 2026-09-26.
           phrases: [
+            { text: "Natural Speed", role: "narrator", language_code: "en", voice_id: "v1" },
             { text: "At the hotel", role: "narrator", language_code: "en", voice_id: "v1" },
             { text: "Dober dan", role: "Petra", language_code: "sl", voice_id: "v2" },
             { text: "Dober dan", role: "Marko", language_code: "sl", voice_id: "v3" },
