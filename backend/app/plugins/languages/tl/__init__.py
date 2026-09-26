@@ -114,6 +114,14 @@ register(
                 disambig="Front",
                 recognition_ord=1,
             ),
+            # TT's own vocab notes store the headword as plain text with no L2
+            # markup class, and Tagalog has no letters to score it by, so they
+            # are read by field name. The first sync that minted any (20, on
+            # 2026-09-26) raised "No L2 scorer" reading them back; Cebuano hit
+            # the same wall the same day (tunatale-2qqr).
+            TAGALOG_VOCAB.name: NotetypeProfile(
+                l2=TAGALOG_VOCAB.l2_field, translation="English", disambig="DisambigKey"
+            ),
         },
         vocab_notetype=TAGALOG_VOCAB,
         planner_example=PlannerExample(
