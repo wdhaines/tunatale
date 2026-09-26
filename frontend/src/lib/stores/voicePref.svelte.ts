@@ -1,32 +1,17 @@
-const STORAGE_KEY = "voice";
+import { createLocalPref } from "./localPref.svelte";
 
 // Voice capture is opt-in (the spike's false-positive numbers made that
 // deliberate). The non-default state is ON, so `class:active` marks enabled.
 // An empty localStorage AND an unrecognised stored value both yield false.
-function createVoicePref() {
-  let enabled = $state(false);
+const pref = createLocalPref("voice", {
+  parse: (raw) => raw === "on",
+  serialize: (next) => (next ? "on" : "off"),
+});
 
-  function init(): void {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === "on") {
-      enabled = true;
-    } else {
-      enabled = false;
-    }
-  }
-
-  function set(next: boolean): void {
-    enabled = next;
-    localStorage.setItem(STORAGE_KEY, next ? "on" : "off");
-  }
-
-  return {
-    get enabled(): boolean {
-      return enabled;
-    },
-    init,
-    set,
-  };
-}
-
-export const voicePref = createVoicePref();
+export const voicePref = {
+  get enabled(): boolean {
+    return pref.value;
+  },
+  init: pref.init,
+  set: pref.set,
+};

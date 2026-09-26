@@ -1,6 +1,7 @@
 import { untrack } from "svelte";
 import type { Cue, CueRef, LessonAudio } from "$lib/api";
 import { mediaTrace, mediaTraceSource } from "$lib/mediaTrace";
+import type { SectionType } from "$lib/sectionTypes";
 
 // The hands-free pass sequence, in order of playback. One const so a later
 // change is a single edit. Matches LessonPlayer.svelte's pill model
@@ -12,12 +13,16 @@ import { mediaTrace, mediaTraceSource } from "$lib/mediaTrace";
 // that track: the advance is indexed from whatever is playing, so turning
 // hands-free on mid-dialogue still starts at that pass and never rewinds into
 // the key phrases.
+//
+// `satisfies`, not an annotation: the tokens are the shared SectionType set, so
+// a misspelling here is a compile error, and the order and the literal types
+// stay exactly as written.
 export const HANDS_FREE_SEQUENCE = [
   "key_phrases",
   "natural_speed",
   "slow_speed",
   "translated",
-] as const;
+] as const satisfies readonly SectionType[];
 
 // Where each track sits in HANDS_FREE_SEQUENCE, for the Section ▶ button
 // (tunatale-0w2w). The user's order, 2026-09-21: "Key Phrases, Natural, Slow,

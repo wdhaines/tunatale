@@ -1,31 +1,16 @@
-const STORAGE_KEY = "captionBlur";
+import { createLocalPref } from "./localPref.svelte";
 
-function createCaptionBlurPref() {
-  let enabled = $state(true);
+// Blurring the caption behind the audio is ON by default: a learner hearing a
+// phrase for the first time should read it, not be able to skip past it.
+const pref = createLocalPref("captionBlur", {
+  parse: (raw) => raw !== "off",
+  serialize: (next) => (next ? "on" : "off"),
+});
 
-  function init(): void {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === "off") {
-      enabled = false;
-    } else if (stored === "on") {
-      enabled = true;
-    } else {
-      enabled = true;
-    }
-  }
-
-  function set(next: boolean): void {
-    enabled = next;
-    localStorage.setItem(STORAGE_KEY, next ? "on" : "off");
-  }
-
-  return {
-    get enabled(): boolean {
-      return enabled;
-    },
-    init,
-    set,
-  };
-}
-
-export const captionBlurPref = createCaptionBlurPref();
+export const captionBlurPref = {
+  get enabled(): boolean {
+    return pref.value;
+  },
+  init: pref.init,
+  set: pref.set,
+};

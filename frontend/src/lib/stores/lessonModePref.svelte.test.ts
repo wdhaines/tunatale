@@ -29,6 +29,17 @@ describe("viewportDefault", () => {
     stubMatchMedia(false);
     expect(viewportDefault()).toBe("read");
   });
+
+  it("returns 'read' when there is no window at all (SSR)", () => {
+    // The store self-initialises on the first read, so its default is computed
+    // where there is no viewport to ask.
+    vi.stubGlobal("window", undefined);
+    try {
+      expect(viewportDefault()).toBe("read");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("lessonModePref", () => {

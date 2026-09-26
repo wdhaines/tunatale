@@ -1,3 +1,5 @@
+import { createLocalPref } from "./localPref.svelte";
+
 // Hands-free mode, persisted so it survives the navigation BETWEEN lessons.
 //
 // It lives here rather than on the playback controller because the controller
@@ -9,52 +11,40 @@
 //
 // Two facts, deliberately kept apart:
 //   enabled  — the user's setting, localStorage, survives a restart like every
-//              other player preference.
+//              other player preference. createLocalPref owns it, including the
+//              blocked-storage and no-storage cases.
 //   handoff  — a ONE-SHOT baton meaning "this navigation was performed by
 //              hands-free, so start playing on arrival". sessionStorage, and
 //              consumed on read. Without the distinction, merely opening a
 //              lesson with hands-free left on would start playing at you.
 
-const ENABLED_KEY = "handsFree";
 const HANDOFF_KEY = "handsFreeHandoff";
 
-function createHandsFreePref() {
-  let enabled = $state(false);
+const pref = createLocalPref("handsFree", {
+  parse: (raw) => raw === "on",
+  serialize: (next) => (next ? "on" : "off"),
+});
 
-  // Always establishes a clean state — a stored "on", else off — so an empty
-  // storage also resets in-memory carryover between test cases and re-mounts.
-  function init(): void {
-    try {
-      enabled = localStorage.getItem(ENABLED_KEY) === "on";
-    } catch {
-      // Private mode / blocked site data: the setting degrades to off rather
-      // than breaking the player it is attached to.
-      enabled = false;
-    }
-  }
-
-  function set(next: boolean): void {
-    enabled = next;
-    try {
-      localStorage.setItem(ENABLED_KEY, next ? "on" : "off");
-    } catch {
-      // Same as init: an unwritable store must not break the toggle.
-    }
-  }
+export const handsFreePref = {
+  get enabled(): boolean {
+    return pref.value;
+  },
+  init: pref.init,
+  set: pref.set,
 
   // Arm the baton immediately before a hands-free navigation.
-  function armHandoff(): void {
+  armHandoff(): void {
     try {
       sessionStorage.setItem(HANDOFF_KEY, "1");
     } catch {
       // Unarmed means the next page loads paused — the degraded case, not a
       // broken one.
     }
-  }
+  },
 
   // Read-and-clear. One-shot by construction: a reload of the arrival page must
   // not start playing a second time.
-  function consumeHandoff(): boolean {
+  consumeHandoff(): boolean {
     try {
       const armed = sessionStorage.getItem(HANDOFF_KEY) === "1";
       sessionStorage.removeItem(HANDOFF_KEY);
@@ -62,17 +52,5 @@ function createHandsFreePref() {
     } catch {
       return false;
     }
-  }
-
-  return {
-    get enabled(): boolean {
-      return enabled;
-    },
-    init,
-    set,
-    armHandoff,
-    consumeHandoff,
-  };
-}
-
-export const handsFreePref = createHandsFreePref();
+  },
+};

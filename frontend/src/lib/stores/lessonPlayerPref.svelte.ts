@@ -1,8 +1,11 @@
 // Lesson-player phase/enunciation/English selection, persisted across lessons.
-// Mirrors the lessonModePref $state + localStorage pattern: the default lives
-// here, init() seeds from storage on mount (browser-only), set() writes the
-// override. Default is Dialogue · Natural · English-off — the plain listening
-// start point.
+// The storage half is the shared createLocalPref; what is stored and what the
+// stored bytes mean (the legacy english-boolean migration) stays here, because
+// that is this preference's business and no other store's.
+// Default is Dialogue · Natural · English-off — the plain listening start point.
+
+import { createLocalPref } from "./localPref.svelte";
+import { isSectionType, type SectionType } from "$lib/sectionTypes";
 
 export type PlayerPhase = "key_phrases" | "dialogue";
 
@@ -21,8 +24,6 @@ export interface PlayerSelection {
   enunciation: string;
   english: EnglishMode;
 }
-
-const STORAGE_KEY = "lessonPlayerSelection";
 
 function defaultSelection(): PlayerSelection {
   return { phase: "dialogue", enunciation: "natural", english: "off" };
@@ -51,45 +52,47 @@ function enunciatedLevel(current: string | undefined): string {
 // that phase) untouched.
 //
 // *currentEnunciation* is the level the pill holds now, and is consulted only
-// by the slow_* cases — see enunciatedLevel.
-export function pillsForSection(
-  sectionType: string | null,
-  currentEnunciation?: string,
-): {
+// by the slow_* rows — see enunciatedLevel.
+//
+// Keyed by the shared SectionType union rather than switched on a string, so
+// this is the declared INVERSE of LessonPlayer::resolveSectionType and stays
+// exhaustive in both directions: a token added to `$lib/sectionTypes` without a
+// row here, or a row keyed on a token that does not exist, is a compile error.
+// (A switch could not say that — an unlisted token would fall through to
+// returning nothing at all.)
+type Pills = {
   phase?: PlayerPhase;
   enunciation?: string;
   english?: EnglishMode;
-} {
-  switch (sectionType) {
-    case "key_phrases":
-      return { phase: "key_phrases" };
-    case "natural_speed":
-      return { phase: "dialogue", enunciation: "natural", english: "off" };
-    case "translated":
-      return { phase: "dialogue", enunciation: "natural", english: "l2_first" };
-    case "en_translated":
-      return { phase: "dialogue", enunciation: "natural", english: "en_first" };
-    case "slow_speed":
-      return {
-        phase: "dialogue",
-        enunciation: enunciatedLevel(currentEnunciation),
-        english: "off",
-      };
-    case "slow_translated":
-      return {
-        phase: "dialogue",
-        enunciation: enunciatedLevel(currentEnunciation),
-        english: "l2_first",
-      };
-    case "slow_en_translated":
-      return {
-        phase: "dialogue",
-        enunciation: enunciatedLevel(currentEnunciation),
-        english: "en_first",
-      };
-    default:
-      return {};
-  }
+};
+
+const PILLS_FOR_SECTION: Record<SectionType, (current: string | undefined) => Pills> = {
+  key_phrases: () => ({ phase: "key_phrases" }),
+  natural_speed: () => ({ phase: "dialogue", enunciation: "natural", english: "off" }),
+  translated: () => ({ phase: "dialogue", enunciation: "natural", english: "l2_first" }),
+  en_translated: () => ({ phase: "dialogue", enunciation: "natural", english: "en_first" }),
+  slow_speed: (current) => ({
+    phase: "dialogue",
+    enunciation: enunciatedLevel(current),
+    english: "off",
+  }),
+  slow_translated: (current) => ({
+    phase: "dialogue",
+    enunciation: enunciatedLevel(current),
+    english: "l2_first",
+  }),
+  slow_en_translated: (current) => ({
+    phase: "dialogue",
+    enunciation: enunciatedLevel(current),
+    english: "en_first",
+  }),
+};
+
+// The tokens come off the wire, so an unrecognised type (or none) is still
+// possible; it forces nothing, exactly as before.
+export function pillsForSection(sectionType: string | null, currentEnunciation?: string): Pills {
+  if (!isSectionType(sectionType)) return {};
+  return PILLS_FOR_SECTION[sectionType](currentEnunciation);
 }
 
 // Coerce a parsed stored value into a valid PlayerSelection, or null if it's
@@ -112,41 +115,30 @@ function coerce(v: unknown): PlayerSelection | null {
   return { phase: s.phase, enunciation: s.enunciation, english };
 }
 
-function createLessonPlayerPref() {
-  let selection = $state<PlayerSelection>(defaultSelection());
-
-  // Called from LessonPlayer's onMount (browser-only), the same way the
-  // theme/prefetch/mode prefs seed. Always establishes a clean state — a valid
-  // stored value, else the default — so it also resets any in-memory carryover
-  // when storage is empty (matters for test isolation and lesson re-mounts).
-  function init(): void {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored !== null) {
-      try {
-        const coerced = coerce(JSON.parse(stored));
-        if (coerced !== null) {
-          selection = coerced;
-          return;
-        }
-      } catch {
-        // Malformed JSON — fall through to the default.
-      }
+// Always yields a clean selection — a coerced stored value, else the default —
+// so it also resets any in-memory carryover when storage is empty (matters for
+// test isolation and lesson re-mounts).
+function parseSelection(raw: string | null): PlayerSelection {
+  if (raw !== null) {
+    try {
+      const coerced = coerce(JSON.parse(raw));
+      if (coerced !== null) return coerced;
+    } catch {
+      // Malformed JSON — fall through to the default.
     }
-    selection = defaultSelection();
   }
-
-  function set(next: PlayerSelection): void {
-    selection = next;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-  }
-
-  return {
-    get selection(): PlayerSelection {
-      return selection;
-    },
-    init,
-    set,
-  };
+  return defaultSelection();
 }
 
-export const lessonPlayerPref = createLessonPlayerPref();
+const pref = createLocalPref<PlayerSelection>("lessonPlayerSelection", {
+  parse: parseSelection,
+  serialize: (next) => JSON.stringify(next),
+});
+
+export const lessonPlayerPref = {
+  get selection(): PlayerSelection {
+    return pref.value;
+  },
+  init: pref.init,
+  set: pref.set,
+};

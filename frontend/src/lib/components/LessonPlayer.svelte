@@ -15,6 +15,7 @@
 	import { captionBlurPref } from '$lib/stores/captionBlurPref.svelte';
 	import { voicePref } from '$lib/stores/voicePref.svelte';
 	import { splitCaption, activeChunkIndex } from '$lib/captionChunks';
+	import type { SectionType } from '$lib/sectionTypes';
 	import { createWakeLock } from '$lib/voice/wakeLock';
 	import { t } from '$lib/i18n/i18n.svelte';
 	import type { MessageKey } from '$lib/i18n/i18n.svelte';
@@ -134,7 +135,7 @@
 		}
 	] satisfies readonly EnunciationOption[];
 
-	function resolveSectionType(phase: Phase, enunLevel: string, engMode: EnglishMode): string | null {
+	function resolveSectionType(phase: Phase, enunLevel: string, engMode: EnglishMode): SectionType {
 		if (phase === 'key_phrases') return 'key_phrases';
 		const natural = enunLevel === 'natural';
 		if (engMode === 'off') return natural ? 'natural_speed' : 'slow_speed';

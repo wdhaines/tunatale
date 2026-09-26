@@ -803,66 +803,6 @@
 		background: color-mix(in srgb, var(--color-danger) 14%, transparent);
 		color: var(--color-danger);
 	}
-	/* Single centered action row: the button keeps the card's centre line it has
-	   always had, with whatever the last listen produced beside it. Wraps on
-	   narrow viewports rather than squeezing the link. */
-	.listen-actions {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: center;
-		gap: 0.5rem 0.9rem;
-	}
-	.listen-btn {
-		/* The component-wide `button` rule adds a 0.75rem top margin, which in a
-		   flex row just offsets the button from its neighbours. */
-		margin-top: 0;
-		padding: 0.5rem 1.25rem;
-		background: var(--color-primary);
-		color: var(--color-on-primary);
-		border: none;
-		border-radius: var(--radius-pill);
-		cursor: pointer;
-		font-weight: 600;
-	}
-	.listen-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-	.listen-btn.listened {
-		background: var(--color-success);
-	}
-	.listen-confirmation {
-		color: var(--color-success);
-		font-size: 0.85rem;
-		margin: 0;
-	}
-	.check-work-link {
-		display: inline-block;
-		color: var(--color-primary);
-		font-weight: 600;
-		font-size: 0.9rem;
-		text-decoration: none;
-	}
-	.check-work-link:hover {
-		text-decoration: underline;
-	}
-	.mastery-line {
-		color: var(--color-muted);
-		font-size: 0.82rem;
-		margin: 0;
-	}
-	.mastery-pct {
-		font-weight: 700;
-	}
-	.mastery-segment {
-		cursor: default;
-	}
-	/* Element boundary instead of a bare text node: Svelte collapses inline
-	   whitespace around component tags, which ate the ` · ` separator. */
-	.mastery-sep {
-		margin: 0 0.3em;
-	}
 	.tools-card summary {
 		cursor: pointer;
 		font-size: 0.9rem;

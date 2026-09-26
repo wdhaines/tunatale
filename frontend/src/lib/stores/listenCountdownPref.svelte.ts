@@ -1,34 +1,26 @@
-const STORAGE_KEY = "listenCountdown";
+import { createLocalPref } from "./localPref.svelte";
 
-type CountdownValue = "off" | "10" | "30" | "60";
+const COUNTDOWN_VALUES = ["off", "10", "30", "60"] as const;
 
-const VALID = new Set<string>(["off", "10", "30", "60"]);
+type CountdownValue = (typeof COUNTDOWN_VALUES)[number];
 
-function createListenCountdownPref() {
-  let value = $state<CountdownValue>("off");
-
-  function init(): void {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored !== null && VALID.has(stored)) {
-      value = stored as CountdownValue;
-    } else {
-      value = "off";
-    }
-  }
-
-  function set(next: CountdownValue): void {
-    value = next;
-    localStorage.setItem(STORAGE_KEY, next);
-  }
-
-  return {
-    get value(): CountdownValue {
-      return value;
-    },
-    init,
-    set,
-  };
+// find, not a Set plus a cast: an unrecognised stored string (or no string at
+// all) resolves to the default, and the narrowing is the value's own type.
+function parseCountdown(raw: string | null): CountdownValue {
+  return COUNTDOWN_VALUES.find((v) => v === raw) ?? "off";
 }
 
-export const listenCountdownPref = createListenCountdownPref();
+const pref = createLocalPref<CountdownValue>("listenCountdown", {
+  parse: parseCountdown,
+  serialize: (next) => next,
+});
+
+export const listenCountdownPref = {
+  get value(): CountdownValue {
+    return pref.value;
+  },
+  init: pref.init,
+  set: pref.set,
+};
+
 export type { CountdownValue };
