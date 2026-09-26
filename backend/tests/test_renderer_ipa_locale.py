@@ -26,6 +26,7 @@ from tests.test_renderer import _make_wav_bytes
 
 _VOICE = "de-DE-FlorianMultilingualNeural"
 _NARRATOR = "en-US-GuyNeural"
+_CEB_VOICE = "ceb-PH-KoreGemini"
 
 
 class _NoPre(TextPreprocessor):
@@ -66,6 +67,45 @@ async def _render(tmp_path, lesson: Lesson, planner, locale: str) -> list[dict]:
 
 def _tl(text: str, **kw) -> Phrase:
     return Phrase(text=text, voice_id=_VOICE, language_code="tl", **kw)
+
+
+def _ceb(text: str, **kw) -> Phrase:
+    return Phrase(text=text, voice_id=_CEB_VOICE, language_code="ceb", **kw)
+
+
+async def test_a_cebuano_drill_fragment_reaches_the_voice_as_ipa(tmp_path):
+    """The wiring the Cebuano plugin exists to switch on, end to end.
+
+    Registering ``phoneme_planner_factory`` is all this needs: the renderer asks
+    the language's planner about every chunk that carries provenance and hands
+    the answer to the adapter as ``phonemes``. A planner that worked in unit
+    tests and never arrived here would still render a Cebuano drill the way
+    Gemini renders bare text — extra words, clipped endings — which is the whole
+    reason the planner was written.
+
+    The planner comes from the REGISTRY, not from a hand-built object, so this
+    also pins that registering it was the only wiring step.
+    """
+    lesson = _lesson(
+        "ceb",
+        [
+            _ceb("inyong"),
+            _ceb("yong", source_word="inyong", syllable_span=(1, 2)),
+            # A multi-word partial is plain text, twice over: the builder gives
+            # it no provenance, and a caption naming more letters than its span
+            # is refused by the planner even if it somehow had one.
+            _ceb("yong mao"),
+            _ceb("yong mao", source_word="inyong", syllable_span=(1, 2)),
+        ],
+    )
+
+    calls = await _render(tmp_path, lesson, get_phoneme_planner("ceb"), "ceb-PH")
+    by_text: dict[str, dict] = {}
+    for call in calls:
+        by_text.setdefault(call["text"], call)
+
+    assert by_text["yong"]["phonemes"] == {"yong": "ˈjoŋ"}
+    assert by_text["yong mao"]["phonemes"] is None
 
 
 async def test_a_punctuated_chunk_keys_its_ipa_by_the_bare_word(tmp_path):

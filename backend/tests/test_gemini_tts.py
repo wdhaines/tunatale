@@ -331,17 +331,18 @@ async def test_no_cache_dir_means_no_cache_and_still_renders(tmp_path):
 
 
 # ------------------------------------------------------------------
-# phonemes / speak_locale — capabilities this provider does not have
+# phonemes / speak_locale — per-token IPA, and the one shape it fits
 # ------------------------------------------------------------------
 
 
 @respx.mock
 async def test_phonemes_are_ignored_but_warned_about_once(tmp_path, caplog):
-    """Gemini takes no SSML, so per-token IPA cannot be expressed.
+    """A MULTI-WORD utterance with IPA: degrade with a warning.
 
-    Degrade with a warning, as the port requires of an adapter that cannot
-    emit the markup — and warn ONCE per adapter, because the renderer would
-    otherwise emit a line per render.
+    Gemini takes no SSML, so per-token IPA cannot be expressed as markup, and an
+    instruction only fits one fragment. Degrade with a warning, as the port
+    requires of an adapter that cannot express what it was handed — and warn ONCE
+    per adapter, because the renderer would otherwise emit a line per render.
     """
     respx.post(SYNTHESIS_URL).mock(return_value=_ok())
     svc = _svc()
@@ -355,7 +356,7 @@ async def test_phonemes_are_ignored_but_warned_about_once(tmp_path, caplog):
 
 @respx.mock
 async def test_phonemes_change_neither_the_body_nor_the_cache_key(tmp_path):
-    """Identical request body and identical cache key to phonemes=None.
+    """A MULTI-WORD utterance: identical request body and cache key to phonemes=None.
 
     The cache key is the load-bearing half: a mapping must not orphan an
     already-rendered clip, or the whole corpus re-renders to say nothing new.
@@ -376,8 +377,171 @@ async def test_phonemes_change_neither_the_body_nor_the_cache_key(tmp_path):
     await _svc(cache_dir=without).synthesize(TEXT, VOICE, tmp_path / "2.mp3", rate="-20%", phonemes=None)
 
     assert bodies[0] == bodies[1]
+    assert "prompt" not in bodies[0]["input"]
     assert (with_map / "e488d618284a366e.mp3").exists()
     assert (without / "e488d618284a366e.mp3").exists()
+
+
+# ------------------------------------------------------------------
+# the one shape a Gemini instruction fits: ONE token, spoken from its IPA
+# ------------------------------------------------------------------
+
+# A whole word, and the IPA a Cebuano planner spells off it. The user picked
+# this shape by ear (tunatale-u8nz): gemini-2.5-flash-tts renders a lone drill
+# fragment badly as bare text — extra words, clipped endings, English readings —
+# and a wrong-IPA control proved 2.5 follows the IPA when told to.
+_ONE_TOKEN = "inyong"
+_ONE_TOKEN_IPA = "ʔinjoŋ"
+_ONE_TOKEN_PROMPT = (
+    "Say only this one Cebuano syllable or word, exactly once, with nothing "
+    "before or after it. Pronounce it exactly as the IPA /ʔinjoŋ/."
+)
+
+
+@respx.mock
+async def test_a_single_token_is_spoken_from_its_ipa(tmp_path, caplog):
+    """The IPA reaches the model as an instruction, in ``input.prompt``.
+
+    Cloud TTS rejects SSML ``<phoneme>`` for Gemini voices, so the prompt is the
+    ONLY channel; the locale is named in words because an adapter never sees the
+    language name otherwise. And it must NOT also warn "the phoneme mapping is
+    ignored" — that would be false, and would be logged on every fragment of
+    every lesson.
+    """
+    bodies: list[dict] = []
+
+    async def _record(request):
+        bodies.append(json.loads(request.content))
+        return _ok()
+
+    respx.post(SYNTHESIS_URL).mock(side_effect=_record)
+
+    with caplog.at_level(logging.WARNING):
+        await _svc().synthesize(_ONE_TOKEN, VOICE, tmp_path / "1.mp3", phonemes={_ONE_TOKEN: _ONE_TOKEN_IPA})
+
+    assert bodies == [
+        {
+            "input": {"text": _ONE_TOKEN, "prompt": _ONE_TOKEN_PROMPT},
+            "voice": {"languageCode": "ceb-PH", "name": "Kore", "model_name": MODEL},
+            "audioConfig": {"audioEncoding": "MP3", "speakingRate": 1.0},
+        }
+    ]
+    assert _warnings(caplog) == []
+
+
+@respx.mock
+async def test_a_prompted_fragment_gets_its_own_cache_file(tmp_path):
+    """The prompt is part of the key; a plain render of the same text is not.
+
+    Both halves matter. A key that ignored the IPA would serve a clip rendered
+    from the bare text forever, and a key that ignored the WORDING would keep
+    serving a clip an earlier wording produced — which is what PROMPT_VERSION is
+    for. The two digests are pinned so neither half can move silently.
+    """
+    respx.post(SYNTHESIS_URL).mock(return_value=_ok())
+    with_ipa = tmp_path / "ipa"
+    plain = tmp_path / "plain"
+
+    await _svc(cache_dir=with_ipa).synthesize(
+        _ONE_TOKEN, VOICE, tmp_path / "1.mp3", phonemes={_ONE_TOKEN: _ONE_TOKEN_IPA}
+    )
+    await _svc(cache_dir=plain).synthesize(_ONE_TOKEN, VOICE, tmp_path / "2.mp3")
+
+    assert (with_ipa / "0ea768a64fd8347a.mp3").exists()
+    assert (plain / "280228822562fb94.mp3").exists()
+
+
+@respx.mock
+async def test_the_ipa_is_taken_from_the_mapping_not_from_looking_up_the_text(tmp_path):
+    """A fragment keyed ``a`` in a chunk spelled ``-a``.
+
+    The renderer's key is the bare word with sentence punctuation off, which
+    is not always the text: a chunk whose caption carries a hyphen is keyed
+    without one. Looking the entry up by text would find nothing, and the one
+    case the prompt exists for would be the one case it skipped.
+    """
+    bodies: list[dict] = []
+
+    async def _record(request):
+        bodies.append(json.loads(request.content))
+        return _ok()
+
+    respx.post(SYNTHESIS_URL).mock(side_effect=_record)
+
+    await _svc().synthesize("a", VOICE, tmp_path / "1.mp3", phonemes={"a": "ˈʔa"})
+
+    assert bodies[0]["input"]["prompt"].endswith("the IPA /ˈʔa/.")
+
+
+@respx.mock
+async def test_a_single_token_is_measured_after_its_punctuation(tmp_path):
+    """``inyong,`` is one token: the comma is on the phrase, not in the word."""
+    bodies: list[dict] = []
+
+    async def _record(request):
+        bodies.append(json.loads(request.content))
+        return _ok()
+
+    respx.post(SYNTHESIS_URL).mock(side_effect=_record)
+
+    await _svc().synthesize(f"{_ONE_TOKEN},", VOICE, tmp_path / "1.mp3", phonemes={_ONE_TOKEN: _ONE_TOKEN_IPA})
+
+    assert bodies[0]["input"]["text"] == f"{_ONE_TOKEN},"
+    assert bodies[0]["input"]["prompt"] == _ONE_TOKEN_PROMPT
+
+
+@respx.mock
+async def test_a_locale_no_language_registers_leaves_the_name_out(tmp_path):
+    """No name, not a wrong one: the sentence still says what to do.
+
+    ``xx-XX`` is a well-formed Gemini voice id that no plugin claims, and the
+    prompt degrades to "this one syllable or word" rather than naming a language
+    that is not being spoken.
+    """
+    bodies: list[dict] = []
+
+    async def _record(request):
+        bodies.append(json.loads(request.content))
+        return _ok()
+
+    respx.post(SYNTHESIS_URL).mock(side_effect=_record)
+
+    await _svc().synthesize(_ONE_TOKEN, "xx-XX-TestGemini", tmp_path / "1.mp3", phonemes={_ONE_TOKEN: "ʔinjoŋ"})
+
+    assert bodies[0]["input"]["prompt"] == (
+        "Say only this one syllable or word, exactly once, with nothing "
+        "before or after it. Pronounce it exactly as the IPA /ʔinjoŋ/."
+    )
+
+
+@respx.mock
+async def test_two_phoneme_entries_degrade_to_the_warning(tmp_path, caplog):
+    """Two entries means a phrase, and the instruction fits one fragment."""
+    respx.post(SYNTHESIS_URL).mock(return_value=_ok())
+
+    with caplog.at_level(logging.WARNING):
+        await _svc().synthesize("a", VOICE, tmp_path / "1.mp3", phonemes={"a": "ˈʔa", "ko": "ko"})
+
+    assert len(_warnings(caplog)) == 1
+
+
+@respx.mock
+async def test_a_single_token_with_two_phoneme_entries_warns_about_the_second(tmp_path, caplog):
+    """The count is the discriminator, not the text: "a" has no whitespace."""
+    respx.post(SYNTHESIS_URL).mock(return_value=_ok())
+    bodies: list[dict] = []
+
+    async def _record(request):
+        bodies.append(json.loads(request.content))
+        return _ok()
+
+    respx.post(SYNTHESIS_URL).mock(side_effect=_record)
+
+    with caplog.at_level(logging.WARNING):
+        await _svc().synthesize(_ONE_TOKEN, VOICE, tmp_path / "1.mp3", phonemes={"in": "ʔin", "yong": "joŋ"})
+
+    assert len(_warnings(caplog)) == 1
+    assert "prompt" not in bodies[0]["input"]
 
 
 @respx.mock

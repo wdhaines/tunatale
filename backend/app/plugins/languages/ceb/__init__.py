@@ -5,6 +5,7 @@ from pathlib import Path
 from app.cards.vocab_notetype import CEBUANO_VOCAB
 from app.languages import LanguageConfig, register
 from app.models.language import NARRATOR_VOICE, Language
+from app.plugins.languages.ceb.phoneme_plan import create_phoneme_planner
 from app.plugins.languages.ceb.preprocessor import CebuanoPreprocessor
 
 _DATA = Path(__file__).parent / "data"
@@ -73,6 +74,12 @@ register(
         style_notes=_style_notes,
         function_words_path=_DATA / "function_words.json",
         numbers_path=_DATA / "numbers.json",
+        # The Gemini drill voices are told what to say by an instruction rather
+        # than by markup, and that instruction needs the fragment's IPA — which
+        # is what this factory supplies (tunatale-u8nz.1). It is the FIRST
+        # planner not built on a pronunciation lexicon: the reading comes off
+        # the spelling, in core, with only the letter table here.
+        phoneme_planner_factory=create_phoneme_planner,
         # Deliberately omitted until their owning beads ship:
         # - planner_example: get_planner_example picks the LOWEST-SORTING other
         #   language that supplies one, and "ceb" sorts before every other
@@ -83,7 +90,9 @@ register(
         # - wordfreq_lang: wordfreq has no "ceb" (tunatale-u8nz.6).
         # - syllabifier_fn, lemma_table_path, lemmatizer_type (stays at the
         #   shared "lowercase" default): tunatale-u8nz.6 and tunatale-u8nz.5.
-        # - l2_scorer, notetype_profiles, phoneme_planner_factory: later
-        #   Cebuano beads.
+        #   The planner splitting words with syllabify_word is not a fourth
+        #   omission to fix: that IS the splitter the breakdown uses, and
+        #   registering a second one here would desynchronise the two.
+        # - l2_scorer, notetype_profiles: later Cebuano beads.
     ),
 )
