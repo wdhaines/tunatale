@@ -22,12 +22,10 @@ from app.generation.glossing import ensure_dialogue_glosses
 from app.generation.json_parsing import parse_json_object
 from app.generation.publishing import CurriculumDayTarget, publish_lesson
 from app.generation.story import (
-    NoReviewVocabularyError,
     StoryGenerationError,
     build_lesson_from_story,
     build_story_prompts,
 )
-from app.llm.client import LLMError, LLMQuotaExceededError
 from app.models.lesson import Lesson
 from app.models.strategy import ContentStrategy
 from app.storage.lesson_io import export_lesson, validate_story
@@ -81,24 +79,8 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
             content_store=store,
             curriculum_id=body.curriculum_id,
         )
-    except NoReviewVocabularyError as e:
-        # 409, not the neighbouring 502: nothing upstream failed and nothing is
-        # malformed — a REVIEW story was asked for with nothing due to review.
-        raise HTTPException(status_code=409, detail=str(e)) from e
     except StoryGenerationError as e:
         # Malformed LLM output — nothing persisted; the user retries.
-        raise HTTPException(status_code=502, detail=str(e)) from e
-    except LLMQuotaExceededError as e:
-        # 429, not the neighbouring 502: nothing upstream failed — TT declined
-        # to call because the day budget is exhausted. A 502 would read as "the
-        # provider failed" and trigger retries that cannot succeed.
-        raise HTTPException(status_code=429, detail=str(e)) from e
-    except LLMError as e:
-        # Opt-in fallback: complete() now raises a bare 429/HTTP error instead of
-        # degrading to Ollama. Map to 502 (mirror plan_turn's PlannerError handling)
-        # so the client gets the retry detail, never a raw 500/ASGI traceback. The
-        # lesson-page Regenerate button routes through the pipeline (429 backoff +
-        # sticky-failed) instead — this hardens the sync endpoint's other callers.
         raise HTTPException(status_code=502, detail=str(e)) from e
 
     # request.state, NOT request.app.state (bd tunatale-pf4i). main.py:181 binds
@@ -222,21 +204,16 @@ async def get_story_prompt(
         raise HTTPException(status_code=404, detail=f"Day {day} not found in curriculum")
 
     language = request.state.language
-    try:
-        prompts = build_story_prompts(
-            days[0],
-            language,
-            ContentStrategy[strategy],
-            curriculum.cefr_level,
-            srs_db=request.state.srs_db,
-            review_pressure=curriculum.review_pressure(review_pressure),
-            content_store=store,
-            curriculum_id=curriculum_id,
-        )
-    except NoReviewVocabularyError as e:
-        # 409, not 422 or 502: the request is well-formed and nothing upstream
-        # failed — the collection simply has nothing due to review right now.
-        raise HTTPException(status_code=409, detail=str(e)) from e
+    prompts = build_story_prompts(
+        days[0],
+        language,
+        ContentStrategy[strategy],
+        curriculum.cefr_level,
+        srs_db=request.state.srs_db,
+        review_pressure=curriculum.review_pressure(review_pressure),
+        content_store=store,
+        curriculum_id=curriculum_id,
+    )
     # A write on a GET, deliberately: recording what an EXPORT handed out is
     # part of exporting it, and this is the only moment the requested set exists
     # on the manual path. Re-exporting simply overwrites (bd tunatale-g4c9).

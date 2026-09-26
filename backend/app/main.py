@@ -19,11 +19,11 @@ from app.auth.session import COOKIE_NAME, get_session_user
 from app.config import clock_runtime_problems, prod_profile_problems, settings
 from app.generation.pipeline import LessonPipeline
 from app.generation.planner import CurriculumPlanner
-from app.generation.story import StoryGenerator
+from app.generation.story import NoReviewVocabularyError, StoryGenerator
 from app.languages import get_language
 from app.llm.activity import ActivityLog
 from app.llm.cassette import CassetteLLMClient
-from app.llm.client import LLMClient, reasoning_params_for_model
+from app.llm.client import LLMClient, LLMError, LLMQuotaExceededError, reasoning_params_for_model
 from app.llm.usage_ledger import UsageLedger
 from app.logging_sink import install_warning_file_handler, llm_failure_mirror
 from app.models.lesson import SectionType
@@ -276,6 +276,29 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="TunaTale", version="0.1.0", lifespan=lifespan)
+
+
+@app.exception_handler(LLMQuotaExceededError)
+async def llm_quota_exceeded_handler(request: Request, exc: LLMQuotaExceededError) -> JSONResponse:
+    # 429, not the neighbouring 502: nothing upstream failed — TT declined
+    # to call because the day budget is exhausted. A 502 would read as "the
+    # provider failed" and trigger retries that cannot succeed.
+    return JSONResponse(status_code=429, content={"detail": str(exc)})
+
+
+@app.exception_handler(LLMError)
+async def llm_error_handler(request: Request, exc: LLMError) -> JSONResponse:
+    # complete() raises a bare 429/HTTP error rather than degrading to a fallback
+    # provider; 502 gives the client the retry detail, never a raw 500 traceback.
+    return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+
+@app.exception_handler(NoReviewVocabularyError)
+async def no_review_vocabulary_error_handler(request: Request, exc: NoReviewVocabularyError) -> JSONResponse:
+    # 409, not 502: nothing upstream failed and nothing is malformed —
+    # a REVIEW story or prompt was asked for with nothing due to review. The two
+    # auto-create paths in review_sessions.py catch it first to reword it.
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
 def cors_kwargs() -> dict:
