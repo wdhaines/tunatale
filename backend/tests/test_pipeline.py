@@ -29,7 +29,18 @@ class FakeStoryGenerator:
         self.fail_count: int = 0
         self.raise_error: Exception = StoryGenerationError("mock error")
 
-    async def generate(self, curriculum_day, language, strategy, cefr_level="A2", *, srs_db=None, review_pressure=None):
+    async def generate(
+        self,
+        curriculum_day,
+        language,
+        strategy,
+        cefr_level="A2",
+        *,
+        srs_db=None,
+        review_pressure=None,
+        content_store=None,
+        curriculum_id=None,
+    ):
         # `srs_db` is RECORDED, not ignored: the pipeline is the third call site
         # of build_story_prompts and the one no HTTP test drives, so this double
         # is the only place its per-language db argument can be observed.
@@ -41,6 +52,8 @@ class FakeStoryGenerator:
                 "cefr_level": cefr_level,
                 "srs_db": srs_db,
                 "review_pressure": review_pressure,
+                "content_store": content_store,
+                "curriculum_id": curriculum_id,
             }
         )
         if self.fail_count > 0:
@@ -232,6 +245,36 @@ class TestPipelineHappyPath:
         await wait_for_job(pipeline, "no", cid, 1, "ready")
 
         assert fake_generator.calls[0]["srs_db"] is no_sentinel
+
+    async def test_generate_hands_the_per_language_store_and_curriculum_to_the_generator(
+        self, pipeline, fake_generator
+    ):
+        """tunatale-g8mu — DEEPER reads the previous day's dialogue from the
+        content store. The same two defects as the srs_db test above: passing
+        nothing (every DEEPER lesson silently loses its source), and passing the
+        default language's store (a Slovene "previous day" for a Norwegian one)."""
+        store = pipeline._content_stores["no"]
+        assert pipeline._content_stores["sl"] is not store
+        cid = "cur-source-store"
+        store.save_curriculum(
+            cid,
+            Curriculum(
+                id=cid,
+                topic="test",
+                language_code="no",
+                cefr_level="A2",
+                days=[
+                    CurriculumDay(day=1, title="Day 1", focus="hello", collocations=["hei"], learning_objective="lo"),
+                ],
+            ),
+        )
+
+        pipeline.start()
+        pipeline.enqueue("no", cid, 1, "generate")
+        await wait_for_job(pipeline, "no", cid, 1, "ready")
+
+        assert fake_generator.calls[0]["content_store"] is store
+        assert fake_generator.calls[0]["curriculum_id"] == cid
 
     async def test_generate_uses_the_curriculums_review_pressure(self, pipeline, fake_generator):
         """bd tunatale-po5s — the auto path was locked at NATURAL with no way to

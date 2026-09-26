@@ -499,3 +499,71 @@ class TestStoryPromptEndpoint:
         story_call = recording_llm.complete.call_args_list[0]
         actual_user_prompt = story_call.args[0]
         assert exported_user_prompt == actual_user_prompt
+
+    async def test_deeper_carries_the_previous_days_dialogue_on_both_paths(self):
+        """tunatale-g8mu: both HTTP call sites hand DEEPER the content store and
+        the curriculum id, so the export and the generate path carry the SAME
+        previous-day transcript. A path that dropped either argument would
+        silently send DEEPER with no source; the byte-equality pins that too."""
+        from app.generation.section_builder import build_natural_speed_section
+        from app.generation.story import StoryGenerator
+        from app.models.lesson import Lesson
+
+        store = self._store_with_curriculum()
+        curriculum = store.get_curriculum("c1")
+        curriculum.days.append(
+            CurriculumDay(
+                day=2,
+                title="Day 2",
+                focus="ordering",
+                learning_objective="order",
+                story_guidance="café",
+                collocations=["prosim kavo"],
+            )
+        )
+        store.save_curriculum("c1", curriculum)
+        day1 = build_natural_speed_section(
+            [{"label": "Na vrtu", "lines": [{"speaker": "male-1", "text": "Kje je natakar?"}]}],
+            {"male-1": "sl-SI-RokNeural"},
+            "en-US-GuyNeural",
+            "sl",
+        )
+        store.save_lesson("l1", "c1", 1, Lesson(title="Day 1", language_code="sl", sections=[day1]))
+        app.state.content_store = store
+        app.state.language = get_language("sl")
+
+        story_json = json.dumps(
+            {
+                "title": "Ordering",
+                "key_phrases": [{"phrase": "prosim kavo", "translation": "a coffee please"}],
+                "scenes": [
+                    {
+                        "label": "At the Café",
+                        "lines": [
+                            {"speaker": "female-1", "text": "Prosim kavo.", "translation": "A coffee please."},
+                        ],
+                    }
+                ],
+            }
+        )
+        recording_llm = MagicMock()
+        recording_llm.complete = AsyncMock(return_value=story_json)
+        recording_llm.last_finish_reason = None
+        recording_llm.last_provider = "groq"
+        recording_llm.last_usage = None
+        app.state.story_generator = StoryGenerator(llm_client=recording_llm)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            prompt_resp = await client.get(
+                "/api/story/prompt", params={"curriculum_id": "c1", "day": 2, "strategy": "DEEPER"}
+            )
+            generate_resp = await client.post(
+                "/api/story/generate",
+                json={"curriculum_id": "c1", "day": 2, "strategy": "DEEPER"},
+            )
+
+        assert prompt_resp.status_code == 200
+        assert generate_resp.status_code == 201
+        exported = prompt_resp.json()["user_prompt"]
+        assert "**SOURCE TRANSCRIPT TO ENHANCE:**\n```\n[Na vrtu]\nmale-1: Kje je natakar?\n```" in exported
+        assert recording_llm.complete.call_args_list[0].args[0] == exported

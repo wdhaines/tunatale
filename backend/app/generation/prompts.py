@@ -279,12 +279,7 @@ STORY_PROMPT_DEEPER_TEMPLATE = """\
 
 {cefr_block}
 
-**SOURCE TRANSCRIPT TO ENHANCE:**
-```
-{source_day_transcript}
-```
-
-**New Collocations to Teach:**
+{source_block}**New Collocations to Teach:**
 {new_collocations}
 
 **Review Collocations to Include:**

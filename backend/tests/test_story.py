@@ -712,9 +712,13 @@ class TestBuildStoryPrompts:
         user = build_story_prompts(day, language, ContentStrategy.WIDER, "B1").user_prompt
         assert "B1" in user
 
-    def test_deeper_strategy_user_prompt_contains_source_transcript_marker(self, language):
+    def test_deeper_strategy_without_a_source_carries_no_placeholder(self, language):
+        """This test used to assert the placeholder WAS there, which pinned the
+        bug: every DEEPER prompt fenced "(not available)" as its source. The
+        source-transcript contract lives in test_story_source_transcript.py."""
         from app.generation.story import build_story_prompts
 
         day = _make_curriculum_day()
         user = build_story_prompts(day, language, ContentStrategy.DEEPER, "A2").user_prompt
-        assert "source_day_transcript" in user or "SOURCE TRANSCRIPT" in user
+        assert "SOURCE TRANSCRIPT" not in user
+        assert "(not available)" not in user

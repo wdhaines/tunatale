@@ -29,10 +29,11 @@ from app.languages import get_story_text_normalizer
 from app.llm.call_sites import CallSite
 from app.models.curriculum import CurriculumDay
 from app.models.language import NARRATOR_VOICE, Language
-from app.models.lesson import KeyPhraseInfo, Lesson
+from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
 from app.models.strategy import ContentStrategy, ReviewPressure
 from app.srs.database import SRSDatabase
 from app.srs.review_selector import select_review_collocations
+from app.storage.store import ContentStore
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,12 @@ _GROQ_FREE_TIER_REQUEST_BUDGET = 8000
 # Headroom kept when re-deriving max_tokens from measured prompt_tokens.
 _TRUNCATION_RETRY_MARGIN = 128
 _STORY_MAX_TOKENS = 4096
+# What a story PROMPT may cost, estimated at chars/4: the request budget minus
+# the completion reserve (3904). tunatale-4p44 measured the worst stored
+# Norwegian lesson's DEEPER prompt at ~2586, so this binds only as the corpus
+# grows, and a DEEPER source transcript is what gets trimmed when it does.
+PROMPT_TOKEN_BUDGET = _GROQ_FREE_TIER_REQUEST_BUDGET - _STORY_MAX_TOKENS
+_TRANSCRIPT_TRIM_NOTE = "[transcript trimmed to fit the request budget]"
 
 
 class NoReviewVocabularyError(Exception):
@@ -100,6 +107,44 @@ def _review_usage_log(used: list[str], unused: list[str], language_code: str) ->
     )
 
 
+def prior_day_transcript(store: ContentStore, curriculum_id: str, day: int) -> str | None:
+    """The dialogue of the lesson before *day*, as a DEEPER prompt's source.
+
+    "Before" is the previous STORED day, not ``day - 1``: days are stable keys
+    with gaps (a deleted day 5 leaves 4 then 6), and a regenerated day's latest
+    lesson wins. The stored lesson is a snapshot, so this reads its text as
+    stored rather than assuming today's generator produced it.
+
+    The transcript is the NATURAL_SPEED section, the dialogue as written:
+    scene labels in brackets, then ``speaker: line``. ``None`` when there is no
+    earlier lesson or it has no dialogue — the first day of a curriculum always
+    — and the caller then leaves the source block out entirely.
+    """
+    earlier = [d["day"] for d in store.get_lesson_days(curriculum_id) if d["day"] < day]
+    found = store.get_latest_lesson_by_day(curriculum_id, max(earlier)) if earlier else None
+    if found is None:
+        return None
+    lines: list[str] = []
+    for section in found[1].sections:
+        if section.section_type is not SectionType.NATURAL_SPEED:
+            continue
+        # phrases[0] is the section's own spoken title, not part of the story.
+        for phrase in section.phrases[1:]:
+            lines.append(f"[{phrase.text}]" if phrase.role == "narrator" else f"{phrase.role}: {phrase.text}")
+    return "\n".join(lines) or None
+
+
+def _source_block(transcript: str | None) -> str:
+    """The DEEPER prompt's fenced source section, or nothing at all.
+
+    Never a placeholder: a fenced block around "(not available)" asked the model
+    to enhance nothing, on every DEEPER prompt ever built (tunatale-g8mu).
+    """
+    if transcript is None:
+        return ""
+    return f"**SOURCE TRANSCRIPT TO ENHANCE:**\n```\n{transcript}\n```\n\n"
+
+
 def build_story_prompts(
     curriculum_day: CurriculumDay,
     language: Language,
@@ -108,6 +153,8 @@ def build_story_prompts(
     *,
     srs_db: SRSDatabase | None = None,
     review_pressure: ReviewPressure = ReviewPressure.NATURAL,
+    content_store: ContentStore | None = None,
+    curriculum_id: str | None = None,
 ) -> StoryPrompts:
     """Build the (system_prompt, user_prompt) pair for story generation.
 
@@ -124,6 +171,11 @@ def build_story_prompts(
     existed, at every pressure setting. Every story cassette was recorded that
     way and the cassette key is sha256(system + user), so this is not a courtesy
     default — it is what keeps the recorded corpus valid.
+
+    The DEEPER source transcript is selected here for the same reason:
+    *content_store* and *curriculum_id* go in, the previous day's dialogue comes
+    out (:func:`prior_day_transcript`). Without them, or with no earlier lesson,
+    the source block is absent. WIDER and REVIEW never read either.
     """
     review_words = select_review_collocations(srs_db) if srs_db is not None else ()
     if strategy is ContentStrategy.REVIEW:
@@ -140,18 +192,54 @@ def build_story_prompts(
 
     new_collocations = "\n".join(f"- {c}" for c in curriculum_day.collocations)
     user_prompt_template = get_strategy_prompt(strategy)
-    user_prompt = user_prompt_template.format(
-        language_name=language.name,
-        language_code=language.code,
-        learning_objective=curriculum_day.learning_objective,
-        focus=curriculum_day.focus,
-        story_guidance=curriculum_day.story_guidance,
-        new_collocations=new_collocations,
-        review_collocations=build_review_block(review_words, review_pressure),
-        source_day_transcript="(not available)",
-        cefr_block=_build_cefr_block(cefr_level),
-    )
+
+    def render(transcript: str | None) -> str:
+        return user_prompt_template.format(
+            language_name=language.name,
+            language_code=language.code,
+            learning_objective=curriculum_day.learning_objective,
+            focus=curriculum_day.focus,
+            story_guidance=curriculum_day.story_guidance,
+            new_collocations=new_collocations,
+            review_collocations=build_review_block(review_words, review_pressure),
+            source_block=_source_block(transcript),
+            cefr_block=_build_cefr_block(cefr_level),
+        )
+
+    transcript = None
+    if strategy is ContentStrategy.DEEPER and content_store is not None and curriculum_id is not None:
+        transcript = prior_day_transcript(content_store, curriculum_id, curriculum_day.day)
+    user_prompt = render(None) if transcript is None else _fit_source_transcript(system_prompt, transcript, render)
     return StoryPrompts(system_prompt, user_prompt, tuple(review_words))
+
+
+def _estimate_tokens(system_prompt: str, user_prompt: str) -> int:
+    """chars/4: the same estimate tunatale-4p44 sized the budget with."""
+    return (len(system_prompt) + len(user_prompt)) // 4
+
+
+def _fit_source_transcript(system_prompt: str, transcript: str, render) -> str:
+    """Render the DEEPER prompt, dropping transcript lines from the END to fit.
+
+    Asserted per prompt because the corpus grows (tunatale-4p44 measured 34%
+    headroom on the lessons that existed). The opening of a dialogue is what
+    sets its scene, so the tail goes first, and the prompt SAYS it was cut —
+    a silently shortened source would read as the whole story.
+    """
+    lines = transcript.splitlines()
+    kept = len(lines)
+    user_prompt = render(transcript)
+    while kept > 0 and _estimate_tokens(system_prompt, user_prompt) > PROMPT_TOKEN_BUDGET:
+        kept -= 1
+        user_prompt = render("\n".join([*lines[:kept], _TRANSCRIPT_TRIM_NOTE]))
+    if kept < len(lines):
+        logger.warning(
+            "DEEPER source transcript trimmed from %d to %d lines to fit the %d-token prompt budget",
+            len(lines),
+            kept,
+            PROMPT_TOKEN_BUDGET,
+        )
+    return user_prompt
 
 
 def _build_review_prompts(language: Language, cefr_level: str, review_words: Sequence[str]) -> StoryPrompts:
@@ -229,6 +317,8 @@ class StoryGenerator:
         *,
         srs_db: SRSDatabase | None = None,
         review_pressure: ReviewPressure = ReviewPressure.NATURAL,
+        content_store: ContentStore | None = None,
+        curriculum_id: str | None = None,
     ) -> Lesson:
         """Generate a Lesson for the given curriculum day.
 
@@ -239,6 +329,9 @@ class StoryGenerator:
             cefr_level: CEFR level string (e.g. "A2") to calibrate dialogue complexity.
             srs_db: Per-language SRS database for review collocation selection.
             review_pressure: How hard the prompt should push to use review words.
+            content_store: The language's content store, for DEEPER's source
+                transcript (the previous stored day's dialogue).
+            curriculum_id: The curriculum *curriculum_day* belongs to.
 
         Returns:
             Parsed Lesson with 4 Pimsleur sections built mechanically from LLM JSON.
@@ -250,6 +343,8 @@ class StoryGenerator:
             cefr_level,
             srs_db=srs_db,
             review_pressure=review_pressure,
+            content_store=content_store,
+            curriculum_id=curriculum_id,
         )
         return await self._complete(prompts, language, f"day {curriculum_day.day} ({strategy.value})")
 

@@ -235,6 +235,8 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
             cefr_level=curriculum.cefr_level,
             srs_db=request.state.srs_db,
             review_pressure=curriculum.review_pressure(body.review_pressure),
+            content_store=store,
+            curriculum_id=body.curriculum_id,
         )
     except NoReviewVocabularyError as e:
         # 409, not the neighbouring 502: nothing upstream failed and nothing is
@@ -383,6 +385,8 @@ async def get_story_prompt(
             curriculum.cefr_level,
             srs_db=request.state.srs_db,
             review_pressure=curriculum.review_pressure(review_pressure),
+            content_store=store,
+            curriculum_id=curriculum_id,
         )
     except NoReviewVocabularyError as e:
         # 409, not 422 or 502: the request is well-formed and nothing upstream
