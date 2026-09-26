@@ -223,9 +223,11 @@ class DbQueueMixin:
         with self._get_conn() as conn:
             cursor = conn.execute(
                 # Layer 35: filter on bury_kind='sched' so user buries (queue=-2) survive.
+                # A seeded starter card has a schedule and no reps; last_review is
+                # what marks it (seed_review_state), as Anki's card type does.
                 """
                 UPDATE collocation_directions
-                SET state = CASE WHEN reps > 0 THEN 'review' ELSE 'new' END,
+                SET state = CASE WHEN reps > 0 OR last_review IS NOT NULL THEN 'review' ELSE 'new' END,
                     bury_kind = NULL
                 WHERE state = 'buried' AND bury_kind = 'sched'
                 """

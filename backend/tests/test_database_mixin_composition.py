@@ -100,4 +100,6 @@ def test_public_method_count_pinned() -> None:
     # +image_digest_owner (does any OTHER card already hold these exact image
     #  bytes? The cross-card half of a guard that lived only within one pass —
     #  16 Norwegian image files were each shown on 2+ different words)
-    assert count == 136
+    # +seed_review_state (a Cebuano starter card begins as a REVIEW card with
+    #  stability carried over from its Tagalog cognate, and no revlog — u8nz.7)
+    assert count == 137
