@@ -169,6 +169,45 @@ def _settings_overrides(monkeypatch, tmp_path):
     get_lemmatizer.cache_clear()
 
 
+_APP_STATE_SNAPSHOT: dict = {}
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_setup(item):
+    """Snapshot ``app.state`` before ANY of the test's fixtures run.
+
+    ``app.state`` is process-global and ~20 test files assign to it directly
+    (``app.state.llm = mock_llm``) without restoring. Serially a later file
+    happened to reset it; under ``pytest -n auto`` a worker ran
+    ``test_multi_user_routing`` right after ``test_review_session_manual_create``
+    and hit ``/api/llm/*`` with a leaked MagicMock (CI, 2026-09-27: "'MagicMock'
+    object can't be awaited"). Reproduce: run those two files in that order.
+
+    Hooks, not an autouse fixture: a fixture's teardown runs BEFORE the
+    ``monkeypatch`` undo of fixtures that monkeypatched ``app.state`` (it was
+    instantiated earlier), so clearing there made the undo raise KeyError.
+    Restoring after the whole teardown sidesteps the ordering. Safe because no
+    module/session/class-scoped fixture touches ``app.state`` (checked
+    2026-09-27); only the attribute table is restored, not objects mutated in
+    place.
+    """
+    from app.main import app
+
+    _APP_STATE_SNAPSHOT[item.nodeid] = dict(app.state._state)
+    yield
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(item, nextitem):
+    yield
+    snapshot = _APP_STATE_SNAPSHOT.pop(item.nodeid, None)
+    if snapshot is not None:
+        from app.main import app
+
+        app.state._state.clear()
+        app.state._state.update(snapshot)
+
+
 @pytest.fixture(autouse=True)
 def _autoclose_sqlite_connections(monkeypatch):
     """Track and close every sqlite3.Connection opened during a test.
