@@ -200,27 +200,25 @@ class TestWordfreqLanguageResolution:
     def test_unregistered_language_disables_frequency_ranking(self):
         """The `None` path is reachable without a third plugin: an unknown code
         has no config, so it has no wordfreq code, so ranking falls back."""
-        from app.api.srs import _zipf_for
-        from app.languages import get_wordfreq_lang
+        from app.languages import get_wordfreq_lang, zipf_for
 
         assert get_wordfreq_lang("xx") is None
-        assert _zipf_for("xx") is None
+        assert zipf_for("xx") is None
 
     def test_resolved_callable_returns_real_corpus_frequencies(self):
-        from app.api.srs import _zipf_for
+        from app.languages import zipf_for
 
-        zipf = _zipf_for("sl")
+        zipf = zipf_for("sl")
         assert zipf is not None
         assert zipf("mesto") > zipf("pingvin") > 0.0
 
     def test_a_language_wordfreq_lacks_ranks_from_its_shipped_table(self):
         """Cebuano has no wordfreq code; its plugin ships a corpus table instead
         (tunatale-u8nz.6), so creation candidates rank by frequency too."""
-        from app.api.srs import _zipf_for
-        from app.languages import get_wordfreq_lang
+        from app.languages import get_wordfreq_lang, zipf_for
 
         assert get_wordfreq_lang("ceb") is None
-        zipf = _zipf_for("ceb")
+        zipf = zipf_for("ceb")
         assert zipf is not None
         assert zipf("tawo") > zipf("iring") > 0.0
 

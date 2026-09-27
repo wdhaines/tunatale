@@ -63,13 +63,12 @@ from app.config import settings
 from app.languages import (
     card_surface_variants,
     format_vocab_headword,
-    get_frequency_table_path,
     get_gender_article,
     get_language,
     get_lemma_plausible,
     get_tts_voice,
-    get_wordfreq_lang,
     known_language_codes,
+    zipf_for,
 )
 from app.llm.call_sites import CallSite
 from app.llm.cloze_quality import ClozeVerdict, generate_cloze_sentence, judge_cloze
@@ -93,7 +92,6 @@ from app.srs.anki_mirror.queue_stats import (
 )
 from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today, due_at_rollover_utc
 from app.srs.feedback import rating_from_input
-from app.srs.frequency_table import load_frequency_table
 from app.srs.fsrs import Rating, build_revlog_row, schedule
 from app.srs.function_words import (
     format_morphology_hint,
@@ -872,7 +870,7 @@ def _allocate_intro_pool[T](
     Ranking goes through ``_rank_listen_candidates`` rather than a second sort
     here, so the pool and the creation list cannot drift apart. Callers must
     pass the SAME ``zipf`` object to both call sites (resolve once per request
-    via ``_zipf_for``) or preview and commit diverge — the 6a5c718 bug class.
+    via ``zipf_for``) or preview and commit diverge — the 6a5c718 bug class.
     """
     free = [row for row in new_state_rows if row[1]]
     charged_kps = [row for row in new_state_rows if not row[1] and row[3]]
@@ -939,26 +937,6 @@ def _rank_listen_candidates(
     else:
         ranked_lemmas = sorted(lemmas, key=lambda lem: (-zipf(lem), -occurrences.get(lem, 0)))
     return [("kp", kp) for kp in key_phrases] + [("lemma", lem) for lem in ranked_lemmas]
-
-
-def _zipf_for(language_code: str) -> Callable[[str], float] | None:
-    """Return a lemma → zipf-frequency callable for *language_code*.
-
-    wordfreq when the language has a ``wordfreq_lang``; otherwise the plugin's
-    shipped ``frequency_table_path`` (same zipf scale); ``None`` when it has
-    neither — callers fall back to occurrence-count ranking. ``import
-    wordfreq`` lives inside this function (no module-level side effects per
-    repo convention), so a language that never ranks pays no import cost.
-    """
-    wordfreq_lang = get_wordfreq_lang(language_code)
-    if wordfreq_lang is None:
-        table_path = get_frequency_table_path(language_code)
-        if table_path is None:
-            return None
-        return load_frequency_table(table_path).zipf
-    import wordfreq
-
-    return lambda lem: wordfreq.zipf_frequency(lem, wordfreq_lang)
 
 
 class _LessonWords(NamedTuple):
@@ -1206,7 +1184,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     # has no wordfreq code, which falls back to in-lesson occurrence ranking.
     # Resolved once per request; the preview passes the SAME callable so the
     # two orderings cannot drift (the 6a5c718 bug class).
-    zipf = _zipf_for(lesson.language_code)
+    zipf = zipf_for(lesson.language_code)
 
     # Card-less ignore list: lemmas the user explicitly opted out of.
     # Fetched once per request; both-sides casefolded so a capitalized stored
@@ -1964,7 +1942,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
     the two kinds, because the live cut is a prefix of the ranked pool and the
     creates keep their relative order inside it. The preview and commit agree
     because both make the SAME ``_allocate_intro_pool`` call with the same
-    ``zipf`` callable (resolved once per request via ``_zipf_for``), so the
+    ``zipf`` callable (resolved once per request via ``zipf_for``), so the
     first N live create rows are exactly what ``mark_lesson_listened`` will
     create. Un-checking one does NOT promote the next-ranked tail row: a skip
     consumes its slot server-side (``1535071``), which is why ``will_create``
@@ -1986,7 +1964,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
     # Corpus-frequency ranker for creation candidates — mirrors
     # mark_lesson_listened: the SAME callable must stamp `will_create` here and
     # drive creation there, or preview↔commit diverge (the 6a5c718 bug class).
-    zipf = _zipf_for(lesson.language_code)
+    zipf = zipf_for(lesson.language_code)
 
     # Card-less ignore list — mirrored from mark_lesson_listened.
     ignored = {lem.lower() for lem in db.get_ignored_lemmas(lesson.language_code)}
