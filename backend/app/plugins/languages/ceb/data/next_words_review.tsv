@@ -1,0 +1,104 @@
+# Review decisions for next_words.tsv (tunatale-u8nz.6). Hand-kept; the builder never writes it.
+# reviewed = mint with this English. dropped = leave out (the note says why).
+# A row absent here stays unconfirmed in next_words.tsv and is NOT minted.
+# Batch 1 (2026-09-27, orchestrator): proposals 1-100, judged against the sense the NEWS corpus uses,
+# which is what the frequency counts. Unsure rows were left out of this file on purpose (sakop, pasaka).
+cebuano	english	status	note
+apan		dropped	conjunction "but" (the counted sense); the dictionary's first sense is "grasshopper"; cloze material
+karon	now	reviewed
+barangay	village district	reviewed
+human	after	reviewed
+wala		dropped	negative existential "none, there isn't", not the numeral "zero"; cloze material
+diha	there (near you)	reviewed
+di		dropped	negation particle, short for dili; cloze material
+mayor	mayor	reviewed	the town official; the dictionary's first sense is "major"
+dakbayan	city	reviewed
+hatag	give	reviewed	the corpus uses the verb; the dictionary's first sense is the noun "something given"
+diin	where	reviewed
+kaso	case (lawsuit)	reviewed
+daghan	many	reviewed
+himo	make	reviewed
+suspek	suspect	reviewed
+alas	o'clock	reviewed
+didto	over there	reviewed
+sama	like, same as	reviewed
+kinahanglan	need	reviewed
+gamit	use	reviewed	the corpus uses the verb "use"; the dictionary's first sense is "tool"
+butyag	reveal	reviewed
+abot	arrive	reviewed	the corpus uses "arrive, reach"; the dictionary's first sense is "harvest"
+hinungdan	cause	reviewed
+kuha	take	reviewed
+kaayo	very	reviewed
+walay		dropped	a form of wala, not a root
+isip		dropped	preposition "as (in the role of)"; cloze material
+bahin	part	reviewed
+mahimo	can, possible	reviewed
+anaa		dropped	existential "there is (near you)"; cloze material
+lakip	include	reviewed
+panahon	time; weather	reviewed
+anak	child (son or daughter)	reviewed
+sumala		dropped	preposition "according to"; cloze material
+taga		dropped	"from (a place)", used like a prefix; cloze material
+katawhan	people	reviewed
+dinhi	here	reviewed
+oro		dropped	the name Cagayan de Oro, not "gold"
+balik	return	reviewed
+kagahapon	yesterday	reviewed
+dayon	immediately	reviewed
+sugod	start	reviewed
+kanhi	former	reviewed
+kinabuhi	life	reviewed
+butang	thing	reviewed
+aduna		dropped	existential "there is"; cloze material
+gani		dropped	discourse particle "even, indeed"; cloze material
+unya	later	reviewed
+igo	enough	reviewed
+kagamhanan	government	reviewed
+kauban	companion	reviewed
+problema	problem	reviewed
+giila		dropped	an affixed form of ila ("identified as"), not a root
+programa	program	reviewed
+buhatan	office	reviewed
+higayon	chance, opportunity	reviewed
+imbestigasyon	investigation	reviewed
+matay	die	reviewed
+labing		dropped	superlative marker ("labing dako" = biggest), not "loving"; cloze material
+dali	quick	reviewed
+motorsiklo	motorcycle	reviewed
+andam	ready	reviewed
+ngano	why	reviewed
+kalit	sudden	reviewed
+kasamtangan	currently	reviewed
+hepe	chief (police)	reviewed
+sakay	ride	reviewed
+klaro	clear	reviewed
+tibuok	whole	reviewed
+plano	plan	reviewed
+armas	weapon	reviewed
+pay		dropped	English code-switch; the dictionary's sense is the Greek letter
+among		dropped	English code-switch "among"
+tinuod	true	reviewed
+balaod	law	reviewed
+dugay	take long	reviewed
+suspetsado	suspect	reviewed
+lalawigan	province	reviewed
+tubag	answer	reviewed
+kanunay	always	reviewed
+kantidad	amount	reviewed
+hospital	hospital	reviewed
+lapu-lapu		dropped	the city name Lapu-Lapu
+purok	zone (neighborhood)	reviewed
+dakpan		dropped	an affixed form of dakop ("arrested"), not a root
+buot	want; mean	reviewed	the corpus uses "want, intend" ("buot ipasabot" = means); the dictionary's first sense is "airless"
+buwan	month; moon	reviewed	the dictionary's first sense is a game term
+talisay		dropped	the city name Talisay
+kapolisan	police	reviewed
+hangyo	request	reviewed
+buhat	do	reviewed
+konsehal	councilor	reviewed
+tabang	help	reviewed
+kana		dropped	demonstrative "that"; cloze material
+taho	report	reviewed
+luwas	safe	reviewed
+libre	free (no charge)	reviewed
+rason	reason	reviewed

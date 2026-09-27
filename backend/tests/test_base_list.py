@@ -39,6 +39,18 @@ def test_load_ranks_rows_in_file_order_and_skips_comments():
     assert words[5].category == "location"
 
 
+def test_a_rank_offset_header_starts_the_ranks_there():
+    """A second list (the Cebuano frequency seed) must queue BEHIND the first.
+    Positions are ``BACK_BASE + 2 * rank``, so without an offset its rank 0
+    would land beside the 625 list's rank 0."""
+    words = bl.load_base_list(["#rank_offset=1000\n", *TSV])
+    assert [w.rank for w in words] == [1000, 1001, 1002, 1003, 1004, 1005]
+
+
+def test_an_ordinary_comment_is_not_an_offset():
+    assert _words()[0].rank == 0
+
+
 def test_plan_splits_the_list():
     plan = bl.plan_base_list(_words(), have=frozenset({"tubig"}), function_word=lambda w: w == "ang")
     assert [w.text for w in plan.to_add] == ["iro", "iring", "eskwelahan"]

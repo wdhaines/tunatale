@@ -274,6 +274,10 @@ class LanguageConfig:
     # wordfreq lookup code for pedagogical ranking; None disables frequency
     # ranking (creation candidates fall back to in-lesson occurrence count).
     wordfreq_lang: str | None = None
+    # A shipped corpus-frequency table (``app.srs.frequency_table``) for a
+    # language wordfreq does not cover. Consulted only when ``wordfreq_lang``
+    # is None; ``None`` here too means occurrence-count ranking.
+    frequency_table_path: Path | None = None
     # Per-language A1 morphology vocabulary: how a UD analysis maps to a TT
     # feature string, which feature strings validate as A1, and how they render
     # as hint text (Slovene's person/number vocabulary vs Norwegian's
@@ -882,6 +886,11 @@ def get_lexicon(code: str) -> PronunciationLexicon | None:
     if config is None or config.lexicon_factory is None:
         return None
     return config.lexicon_factory()
+
+
+def get_frequency_table_path(code: str) -> Path | None:
+    """Return *code*'s shipped corpus-frequency table, or ``None`` when it has none."""
+    return _facet(code, "frequency_table_path", None)
 
 
 def get_lemma_table_path(code: str) -> Path | None:

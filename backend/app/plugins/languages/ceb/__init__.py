@@ -111,6 +111,10 @@ register(
         # built from Wiktionary by scripts/build_cebuano_lemma_table.py.
         lemma_table_path=_DATA / "cebuano_lemmas.tsv.gz",
         lemmatizer_type="table",
+        # wordfreq has no "ceb". Root-keyed counts from FineWeb-2's native
+        # Cebuano news (tunatale-u8nz.6), built by
+        # scripts/build_cebuano_frequency.py; see data/ATTRIBUTION.md.
+        frequency_table_path=_DATA / "cebuano_frequency.tsv.gz",
         # Deliberately omitted until their owning beads ship:
         # - planner_example: get_planner_example picks the LOWEST-SORTING other
         #   language that supplies one, and "ceb" sorts before every other
@@ -118,7 +122,6 @@ register(
         #   the example shown to EVERY other language — and Tagalog, a close
         #   relative, would be shown Cebuano. That is exactly the
         #   planner-language contamination the selector exists to prevent.
-        # - wordfreq_lang: wordfreq has no "ceb" (tunatale-u8nz.6).
         # - l2_scorer: nothing to score with (see notetype_profiles above); a
         #   deck the user imports will need its own profile, as Tagalog's did.
     ),

@@ -53,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--list", type=Path, default=None, help="base-list TSV (default: the language's base625.tsv)")
     parser.add_argument("--add", type=int, default=0, help="add the next N words as new cards")
     parser.add_argument("--position", action="store_true", help="move minted list cards behind everything waiting")
+    parser.add_argument("--list-name", default=LIST_NAME, help=f"label on each minted card (default: {LIST_NAME})")
     parser.add_argument("--accept", default="", help="comma-separated unconfirmed words to accept")
     parser.add_argument("--apply", action="store_true", help="write (default: dry run)")
     args = parser.parse_args(argv)
@@ -82,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
         chunk = plan.to_add[: args.add]
         print(f"\nNext {len(chunk)}: " + ", ".join(w.text for w in chunk))
         if args.apply:
-            added = base_list.mint_base_words(db, chunk, language_code=args.language, list_name=LIST_NAME)
+            added = base_list.mint_base_words(db, chunk, language_code=args.language, list_name=args.list_name)
             print(f"Added {added} new card(s). Sync, then run --position --apply.")
 
     if args.position:

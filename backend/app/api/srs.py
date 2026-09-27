@@ -63,6 +63,7 @@ from app.config import settings
 from app.languages import (
     card_surface_variants,
     format_vocab_headword,
+    get_frequency_table_path,
     get_gender_article,
     get_language,
     get_lemma_plausible,
@@ -92,6 +93,7 @@ from app.srs.anki_mirror.queue_stats import (
 )
 from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today, due_at_rollover_utc
 from app.srs.feedback import rating_from_input
+from app.srs.frequency_table import load_frequency_table
 from app.srs.fsrs import Rating, build_revlog_row, schedule
 from app.srs.function_words import (
     format_morphology_hint,
@@ -940,16 +942,20 @@ def _rank_listen_candidates(
 
 
 def _zipf_for(language_code: str) -> Callable[[str], float] | None:
-    """Return a lemma → wordfreq zipf-frequency callable for *language_code*.
+    """Return a lemma → zipf-frequency callable for *language_code*.
 
-    ``None`` when the language has no ``wordfreq_lang`` — callers fall back to
-    occurrence-count ranking. ``import wordfreq`` lives inside this function
-    (no module-level side effects per repo convention), so a language that
-    never ranks pays no import cost.
+    wordfreq when the language has a ``wordfreq_lang``; otherwise the plugin's
+    shipped ``frequency_table_path`` (same zipf scale); ``None`` when it has
+    neither — callers fall back to occurrence-count ranking. ``import
+    wordfreq`` lives inside this function (no module-level side effects per
+    repo convention), so a language that never ranks pays no import cost.
     """
     wordfreq_lang = get_wordfreq_lang(language_code)
     if wordfreq_lang is None:
-        return None
+        table_path = get_frequency_table_path(language_code)
+        if table_path is None:
+            return None
+        return load_frequency_table(table_path).zipf
     import wordfreq
 
     return lambda lem: wordfreq.zipf_frequency(lem, wordfreq_lang)

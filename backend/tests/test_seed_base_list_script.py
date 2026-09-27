@@ -83,3 +83,16 @@ def test_position_refuses_a_descending_deck(env, capsys):
     db.set_anki_state_cache("new_card_gather_priority", "2")
     assert main(["--language", "ceb", "--list", str(list_path), "--position", "--apply"]) == 2
     assert "REFUSING" in capsys.readouterr().out
+
+
+def test_list_name_labels_the_minted_card(env):
+    """A second list (the frequency seed) must say which list minted a card."""
+    db, _, list_path = env
+    main(["--language", "ceb", "--list", str(list_path), "--add", "1", "--apply", "--list-name", "Next words"])
+    assert db.get_collocation("iro").syntactic_unit.note == "Next words · animal"
+
+
+def test_the_default_list_name_is_the_625(env):
+    db, _, list_path = env
+    main(["--language", "ceb", "--list", str(list_path), "--add", "1", "--apply"])
+    assert db.get_collocation("iro").syntactic_unit.note == "Fluent Forever 625 · animal"
