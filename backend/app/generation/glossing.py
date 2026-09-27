@@ -394,10 +394,15 @@ async def ensure_dialogue_glosses(data: dict, llm, language: Language) -> None:
     names every unglossed word — where raising would throw away a valid story and
     502 the exact button bd tunatale-yet7 was filed to fix.
     """
-    if llm is None or data.get("dialogue_glosses"):
+    if data.get("dialogue_glosses"):
         return
     lines = dialogue_lines_from_story(data)
     if not lines:
+        return
+    if llm is None:
+        # Loud on purpose (tunatale-sijo): a lesson stored with an empty gloss
+        # map shows `—` on every listen-preview row, and nothing else says why.
+        logger.warning("Gloss pass skipped (%s): no LLM configured; lesson has no hover glosses", language.code)
         return
     try:
         glosses = await generate_dialogue_glosses(lines, llm, language)

@@ -79,7 +79,7 @@ def _run(anki_conn: sqlite3.Connection | None, tt_conn: sqlite3.Connection, args
     if missing:
         print(f"No {args.language} card for: {', '.join(missing)} — nothing written.", file=sys.stderr)
         return 1
-    _print_plan(plan)
+    _print_plan(plan, "named card(s)")
     if args.dry_run:
         print("--dry-run: no changes applied.")
         return 0

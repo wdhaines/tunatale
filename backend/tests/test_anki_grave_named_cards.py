@@ -116,7 +116,10 @@ def test_main_without_anki_deletes_tt_rows_only(tmp_path, capsys):
     _seed_tt(tt, 2, "tulog")
     tt.close()
     assert main(["--language", "ceb", "--tt-db", str(db), "--no-anki", "--texts", "matulog", "--dry-run"]) == 0
-    assert "--dry-run" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "--dry-run" in out
+    assert "Plan: grave 1 named card(s)" in out
+    assert "ignored" not in out, "the plan header was borrowed from grave_ignored_lemma_cards"
     assert main(["--language", "ceb", "--tt-db", str(db), "--no-anki", "--texts", "matulog"]) == 0
     left = [r[0] for r in sqlite3.connect(db).execute("SELECT text FROM collocations")]
     assert left == ["tulog"]

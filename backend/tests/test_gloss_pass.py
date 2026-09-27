@@ -280,6 +280,23 @@ class TestEnsureDialogueGlosses:
         await ensure_dialogue_glosses(story, None, language)
         assert "dialogue_glosses" not in story
 
+    async def test_no_llm_says_so_loudly(self, language, caplog):
+        """A skipped gloss pass must not be silent (tunatale-sijo).
+
+        A lesson stored with an empty gloss map rendered `—` on every listen
+        preview row, and nothing in the logs said why.
+        """
+        story = _story()
+        with caplog.at_level(logging.WARNING, logger="app.generation.glossing"):
+            await ensure_dialogue_glosses(story, None, language)
+        assert "no LLM" in caplog.text
+
+    async def test_no_llm_is_quiet_when_there_is_nothing_to_gloss(self, language, caplog):
+        story = _story(include_glosses=True)
+        with caplog.at_level(logging.WARNING, logger="app.generation.glossing"):
+            await ensure_dialogue_glosses(story, None, language)
+        assert caplog.text == ""
+
     async def test_fills_glosses_in_place(self, language):
         story = _story()
         client = MagicMock()

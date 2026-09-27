@@ -128,7 +128,8 @@ def _slicer(tmp_path, tts=None, aligner=None, factory_calls=None, **kw):
             factory_calls.append(model_id)
         return aligner
 
-    return ChunkSlicer(
+    cls = kw.pop("cls", ChunkSlicer)
+    return cls(
         tts=tts or FakeTTS(),
         aligner_factory=factory,
         model_id=kw.pop("model_id", "fake/model"),
@@ -272,56 +273,52 @@ class TestWholeWordSpansAreNotStretched:
         assert _duration_ms(syllable) < 600.0
 
 
-class _Ticker:
-    """Counts event-loop turns while it runs, to tell whether a call YIELDED.
+class _ThreadRecordingSlicer(ChunkSlicer):
+    """Records which thread ran each piece of signal work.
 
-    A coroutine that does its CPU work inline never gives the loop back, so a
-    ticker scheduled beside it cannot advance; one that hands the work to a
-    thread awaits it, and the ticker runs in the meantime. That is the property
-    under test (tunatale-xnv9.4): on the 1-vCPU prod box, inline signal work
-    stalls every other request for the length of each slice.
+    The property under test (tunatale-xnv9.4): on the 1-vCPU prod box, signal
+    work run inline on the event loop stalls every other request for the length
+    of each slice, so it must run on a worker thread.
+
+    ⚠️ This used to be measured by a ticker task counting event-loop turns
+    during the call. That flaked once in CI (tunatale-owjp, `assert 1 > 1`)
+    and never reproduced locally (40/40 under 8-way CPU load); every path
+    through slice_to_file awaits a to_thread future. Asserting the thread
+    directly is deterministic and is the actual claim.
     """
 
-    def __init__(self) -> None:
-        self.turns = 0
-        self._running = True
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.parent_threads: list[int] = []
+        self.chunk_threads: list[int] = []
 
-    async def run(self) -> None:
-        while self._running:
-            self.turns += 1
-            await asyncio.sleep(0)
+    def _analyse_parent(self, *args, **kwargs):
+        self.parent_threads.append(threading.get_ident())
+        return super()._analyse_parent(*args, **kwargs)
 
-    def stop(self) -> None:
-        self._running = False
+    def _write_chunk(self, *args, **kwargs):
+        self.chunk_threads.append(threading.get_ident())
+        return super()._write_chunk(*args, **kwargs)
 
 
 class TestSignalWorkLeavesTheEventLoop:
-    async def test_building_a_parent_yields_to_the_event_loop(self, tmp_path):
-        slicer = _slicer(tmp_path)
-        ticker = _Ticker()
-        task = asyncio.create_task(ticker.run())
-        await asyncio.sleep(0)
-        before = ticker.turns
+    async def test_building_a_parent_runs_off_the_loop_thread(self, tmp_path):
+        slicer = _slicer(tmp_path, cls=_ThreadRecordingSlicer)
+        loop_thread = threading.get_ident()
         assert await slicer.slice_to_file(SliceSpec("haden", 0, 1, "v"), tmp_path / "a.wav") is True
-        after = ticker.turns
-        ticker.stop()
-        await task
-        assert after > before
+        assert len(slicer.parent_threads) == 1
+        assert loop_thread not in slicer.parent_threads + slicer.chunk_threads
 
-    async def test_cutting_a_chunk_from_a_warm_parent_yields_to_the_event_loop(self, tmp_path):
+    async def test_cutting_a_chunk_from_a_warm_parent_runs_off_the_loop_thread(self, tmp_path):
         """The parent is memoised after the first call, so the second call is
         ONLY the chunk work: raw span, WSOLA polish and the file write."""
-        slicer = _slicer(tmp_path)
-        await slicer.slice_to_file(SliceSpec("haden", 0, 1, "v"), tmp_path / "a.wav")
-        ticker = _Ticker()
-        task = asyncio.create_task(ticker.run())
-        await asyncio.sleep(0)
-        before = ticker.turns
+        slicer = _slicer(tmp_path, cls=_ThreadRecordingSlicer)
+        loop_thread = threading.get_ident()
+        assert await slicer.slice_to_file(SliceSpec("haden", 0, 1, "v"), tmp_path / "a.wav") is True
         assert await slicer.slice_to_file(SliceSpec("haden", 1, 2, "v"), tmp_path / "b.wav") is True
-        after = ticker.turns
-        ticker.stop()
-        await task
-        assert after > before
+        assert len(slicer.parent_threads) == 1, "the parent must be memoised"
+        assert len(slicer.chunk_threads) == 2
+        assert loop_thread not in slicer.chunk_threads
 
     async def test_alignment_never_runs_twice_at_once(self, tmp_path):
         """Sections render concurrently and share one slicer, so once alignment

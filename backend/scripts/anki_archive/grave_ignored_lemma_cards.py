@@ -152,8 +152,8 @@ def apply_graves(
     return counts
 
 
-def _print_plan(items: list[GraveRecord]) -> None:
-    print(f"Plan: grave {len(items)} ignored-but-carded lemma(s)")
+def _print_plan(items: list[GraveRecord], what: str = "ignored-but-carded lemma(s)") -> None:
+    print(f"Plan: grave {len(items)} {what}")
     for it in items:
         if it.anki_nid is None:
             print(f"  {it.text!r}: tt_cid={it.tt_collocation_id} (no Anki note — TT row only)")
