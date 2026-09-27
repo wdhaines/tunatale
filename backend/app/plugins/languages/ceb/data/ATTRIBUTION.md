@@ -14,8 +14,9 @@ This committed file is **derived from Wiktionary**, extracted by the
 - **Source extract sha256:**
   `60b7806d656ac1eaa94f1dd7911fcda15f59908889324df3323e9d565d4a92c5`
 - **Fetch date:** 2026-09-25
-- **Derived file:** `backend/app/plugins/languages/ceb/data/cebuano_lemmas.tsv.gz`
-  (the only file committed here that is derived from this source).
+- **Derived files:** `backend/app/plugins/languages/ceb/data/cebuano_lemmas.tsv.gz`,
+  and the `dictionary_gloss` column (and the unreviewed English) of
+  `next_words.tsv`, built by `backend/scripts/build_cebuano_next_words.py`.
 
 ## Licence
 
@@ -23,9 +24,9 @@ Wiktionary and the kaikki.org extracts are licensed under the
 **Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)**
 licence: <https://creativecommons.org/licenses/by-sa/4.0/>.
 
-**Share-alike covers the DATA file, not this repository's code:** the derived
-`.tsv.gz` file is data and is distributed under the same CC BY-SA 4.0 terms as
-its source; the TunaTale source code that builds and consumes it is licensed
+**Share-alike covers the DATA files, not this repository's code:** the derived
+files are data and are distributed under the same CC BY-SA 4.0 terms as
+their source; the TunaTale source code that builds and consumes them is licensed
 separately and is not affected.
 
 # Attribution: `cebuano_frequency.tsv.gz`

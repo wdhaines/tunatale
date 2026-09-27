@@ -54,13 +54,20 @@ class BaseWord:
 
 
 def load_base_list(lines: Iterable[str]) -> list[BaseWord]:
-    """Rows of a base-list TSV, ranked in file order. ``#`` lines are comments."""
+    """Rows of a base-list TSV, ranked in file order. ``#`` lines are comments.
+
+    A ``#rank_offset=N`` comment starts the ranks at N, so a list meant to follow
+    another (the Cebuano frequency seed after the 625) queues behind it rather
+    than beside it: positions are ``BACK_BASE + 2 * rank``.
+    """
+    lines = list(lines)
+    offset = next((int(line.partition("=")[2]) for line in lines if line.startswith("#rank_offset=")), 0)
     body = [line for line in lines if line.strip() and not line.startswith("#")]
     reader = csv.DictReader(body, delimiter="\t")
     target = reader.fieldnames[2] if reader.fieldnames else ""
     return [
         BaseWord(rank, row["category"], row["english"], row[target].strip(), row["status"])
-        for rank, row in enumerate(reader)
+        for rank, row in enumerate(reader, start=offset)
     ]
 
 
