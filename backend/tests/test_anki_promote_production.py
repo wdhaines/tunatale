@@ -787,6 +787,24 @@ class TestPromoteProductionCards:
 
         assert (report.clozed, report.unservable) == (0, 1)
 
+    async def test_a_cached_sentence_carrying_blanks_is_refused(self) -> None:
+        """A cached row written before the generator refused templates stays inert.
+
+        The live 'mot' row (2026-09-27) is 'Han gikk ___ mot ___ .' — it passes
+        the boundary check, so without this the mint would build a card with two
+        stray blanks around the real one.
+        """
+        conn = _make_conn()
+        card_id = _add_note(conn, 1000, "beslutning", "decision", examples="Katten sover (<i>The cat sleeps</i>)")
+        db = SRSDatabase(":memory:")
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id, unpicturable=True)
+        db.set_cached_cloze_sentence("beslutning", "sl", sentence="Vi tok ___ beslutning ___ .", status="unknown")
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.clozed, report.unservable) == (0, 1)
+        assert db.count_collocations() == 1
+
     async def test_the_llm_tier_never_writes_the_WORD_gloss_into_the_SENTENCE_slot(self) -> None:
         """tunatale-ml06: 18 of 109 live cloze cards showed the same text twice.
 

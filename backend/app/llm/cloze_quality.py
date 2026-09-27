@@ -322,6 +322,17 @@ async def translate_cloze_sentence(
     return _strip_preamble(reply)
 
 
+def carries_a_blank(sentence: str) -> bool:
+    """True when *sentence* already contains a ``___``-style placeholder.
+
+    A model sometimes answers "write a sentence" with a fill-in TEMPLATE. Such a
+    reply can still contain the word on a boundary, so the boundary check alone
+    lets it through, and a cloze built from it shows stray blanks around the real
+    one (live 2026-09-27: 'Han gikk ___ mot ___ .').
+    """
+    return re.search(r"_{2,}", sentence) is not None
+
+
 async def generate_cloze_sentence(
     client: LLMClient,
     *,
@@ -370,5 +381,7 @@ async def generate_cloze_sentence(
     if not sentence:
         return None
     if not re.search(rf"\b{re.escape(word)}\b", sentence, re.IGNORECASE):
+        return None
+    if carries_a_blank(sentence):
         return None
     return sentence

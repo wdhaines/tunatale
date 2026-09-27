@@ -337,6 +337,20 @@ class TestGenerateClozeSentence:
         )
 
     @pytest.mark.asyncio
+    async def test_rejects_a_sentence_that_already_carries_blanks(self):
+        """A reply with its own ``___`` placeholders is a template, not a sentence.
+
+        Seen live 2026-09-27: 'Han gikk ___ mot ___ . Han så målet i horisonten.'
+        passed the word-boundary check, was cached, and would have been minted
+        as a cloze card with two stray blanks in it.
+        """
+        client = self._client("Han gikk ___ mot ___ . Han så målet i horisonten.")
+        assert (
+            await generate_cloze_sentence(client, word="mot", gloss="towards", pos="ADP", language="no", caller="api")
+            is None
+        )
+
+    @pytest.mark.asyncio
     async def test_matches_the_target_on_a_word_boundary(self):
         """`for` inside `fordi` is not an occurrence — cloze_source's rule again."""
         client = self._client("Jeg blir fordi det regner.")
