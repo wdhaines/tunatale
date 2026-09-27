@@ -13,7 +13,7 @@ retry that arrives afterwards is handed the session the first attempt created
 rather than creating a second one.
 
 ⚠️ IN MEMORY AND DELIBERATELY NOT A TABLE, the same reasoning
-``app.api.review_sessions._renders_in_flight`` records: the marker's honest
+``app.api.app_state.review_renders`` records: the marker's honest
 lifetime is the window in which a retry can still arrive, and a restart ends
 every in-flight request anyway. A marker that outlived the process would promise
 a result no one can still produce.
@@ -33,6 +33,8 @@ from typing import Any
 
 from fastapi import Request
 
+from app.api import app_state
+
 # Long enough to cover a slow generation plus a learner noticing nothing happened
 # and tapping again; short enough that a key reused hours later is a new intent.
 # The 2026-09-19 duplicate arrived 75 s after its twin.
@@ -47,20 +49,6 @@ class _Entry:
     def __init__(self, task: asyncio.Task, created: float) -> None:
         self.task = task
         self.created = created
-
-
-def _registry(app) -> dict[tuple[str, int | None, str, str], _Entry]:
-    """The per-process key registry, created lazily on ``app.state``.
-
-    Lazy rather than lifespan-initialised because the tests set ``app.state.*``
-    by hand and never run the lifespan — the same reason ``_renders_in_flight``
-    gives, and the same AttributeError it avoids.
-    """
-    registry = getattr(app.state, "idempotent_writes", None)
-    if registry is None:
-        registry = {}
-        app.state.idempotent_writes = registry
-    return registry
 
 
 def _evict_expired(registry: dict[tuple[str, int | None, str, str], _Entry], now: float) -> None:
@@ -103,7 +91,7 @@ async def once(
     if not key:
         return await work()
 
-    registry = _registry(request.app)
+    registry = app_state.idempotent_writes(request.app)
     now = time.monotonic()
     _evict_expired(registry, now)
 

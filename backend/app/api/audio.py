@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
+from app.api import app_state
 from app.api.models import GetLessonAudioResponse, RenderAudioRequest, RenderAudioResponse
 from app.audio.paths import resolve_audio_path
 from app.audio.render_service import render_lesson_audio
@@ -36,7 +37,7 @@ def _stores_to_search(request: Request) -> list:
         # account's lesson ids would never match there, but a guessed or leaked
         # one would serve the owner's audio to them.
         return [first]
-    others = getattr(request.app.state, "content_stores", None) or {}
+    others = app_state.content_stores(request) or {}
     return [first] + [s for s in others.values() if s is not first]
 
 

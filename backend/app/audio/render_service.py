@@ -287,7 +287,7 @@ async def _with_render_retries[T](
 # 2026-09-19 two ran at once, went to swap, and took 47 and 58 minutes — with the
 # machine starved badly enough that Docker's DNS timed out and Caddy 502'd.
 #
-# ⚠️ NOT the same guard as ``review_sessions._renders_in_flight``, which refuses
+# ⚠️ NOT the same guard as ``app_state.review_renders``, which refuses
 # a second render of the SAME session id. That one correctly let the 2026-09-19
 # pair through: they were two different ids. This is about the machine.
 #

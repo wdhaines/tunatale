@@ -7,6 +7,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.api import app_state
 from app.api._serializers import serialize_lesson
 from app.api.models import (
     GenerateStoryRequest,
@@ -46,10 +47,10 @@ def _injected_lemmatizer(request: Request) -> dict[str, object]:
     endpoints depend on can only be checked by mocking into ``app.`` — which the
     mock-boundary rule forbids, and rightly: the fix is a seam, not a patch.
     """
-    lemmatizer = getattr(request.app.state, "lemmatizer", None)
+    lemmatizer = app_state.lemmatizer(request)
     if lemmatizer is None:
         return {}
-    return {"lemmatizer": lemmatizer, "model_version": getattr(request.app.state, "model_version", None)}
+    return {"lemmatizer": lemmatizer, "model_version": app_state.model_version(request)}
 
 
 @router.post("/generate", status_code=201, response_model=GenerateStoryResponse)
@@ -100,13 +101,13 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
             language_code=request.state.language_code,
             curriculum_id=body.curriculum_id,
             day=body.day,
-            pipeline=getattr(request.app.state, "pipeline", None),
+            pipeline=app_state.pipeline(request),
             user_id=pipeline_user_id(request.state),
         ),
         srs_db=srs_db,
         lemmatizer_kwargs=_injected_lemmatizer(request),
         replace=False,
-        llm=getattr(request.app.state, "llm", None),
+        llm=app_state.llm(request),
     )
 
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
@@ -141,7 +142,7 @@ async def import_story(body: ImportLessonRequest, request: Request):
     # longer asks for dialogue_glosses either (bd tunatale-yet7). Without this a
     # pasted story would build a lesson with no hover translations at all. A story
     # pasted WITH glosses — an older prompt, or hand-added — skips the call.
-    await ensure_dialogue_glosses(story, getattr(request.app.state, "llm", None), language)
+    await ensure_dialogue_glosses(story, app_state.llm(request), language)
 
     try:
         # Validate and rebuild BEFORE writing — the same derivation import_lesson
@@ -168,13 +169,13 @@ async def import_story(body: ImportLessonRequest, request: Request):
             language_code=request.state.language_code,
             curriculum_id=body.curriculum_id,
             day=body.day,
-            pipeline=getattr(request.app.state, "pipeline", None),
+            pipeline=app_state.pipeline(request),
             user_id=pipeline_user_id(request.state),
         ),
         srs_db=srs_db,
         lemmatizer_kwargs=_injected_lemmatizer(request),
         replace=False,
-        llm=getattr(request.app.state, "llm", None),
+        llm=app_state.llm(request),
     )
 
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
@@ -276,7 +277,7 @@ async def regloss_lesson_story(lesson_id: str, request: Request):
 
     story.pop("dialogue_glosses", None)
     language = request.state.language
-    await ensure_dialogue_glosses(story, getattr(request.app.state, "llm", None), language)
+    await ensure_dialogue_glosses(story, app_state.llm(request), language)
 
     try:
         validate_story(story, language=language)

@@ -18,6 +18,7 @@ import time
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.api import app_state
 from app.api.models import LlmActivityResponse, LlmHealthResponse, RateLimitStatusResponse
 from app.audio.char_ledger import AzureCharacterLedger
 from app.config import settings
@@ -27,7 +28,7 @@ router = APIRouter(prefix="/api/llm", tags=["llm"])
 
 def _unwrap(request: Request):
     """The live Groq state lives on the real client, under any cassette wrapper."""
-    llm = getattr(request.app.state, "llm", None)
+    llm = app_state.llm(request)
     return getattr(llm, "_real_client", None) or llm
 
 
@@ -145,7 +146,7 @@ async def rate_limit_status(request: Request) -> dict:
 
 @router.get("/activity", status_code=200, response_model=LlmActivityResponse)
 async def llm_activity(request: Request, since: int = 0) -> dict:
-    log = getattr(request.app.state, "activity_log", None)
+    log = app_state.activity_log(request)
     if log is None:
         return {"latest": 0, "events": []}
     events, latest = log.events_since(since)

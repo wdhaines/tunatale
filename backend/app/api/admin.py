@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.api import app_state
 from app.api.models import BackgroundWorkResponse, RefreshMediaResponse, TtsCacheStatsResponse
-from app.common.background_work import background_work
 from app.config import settings
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -38,7 +38,7 @@ async def background_work_status(request: Request) -> dict:
     design (tunatale-rwkz.6). ``idle`` is the signal to wait on before measuring
     anything on the box; inferring it from log volume failed twice.
     """
-    return background_work(request.app).snapshot()
+    return app_state.background_work(request.app).snapshot()
 
 
 @router.post("/refresh-media", status_code=200, response_model=RefreshMediaResponse)

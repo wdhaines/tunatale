@@ -8,7 +8,7 @@ fills that machine and two ran out of swap. The box was starved hard enough that
 Docker's own DNS timed out and Caddy answered 502 to the learner's phone.
 
 ⚠️ THE EXISTING GUARD DOES NOT COVER THIS, which is the whole reason for a
-second one. ``review_sessions._renders_in_flight`` refuses a second render OF THE
+second one. ``app_state.review_renders`` refuses a second render OF THE
 SAME SESSION ID; the 2026-09-19 pair were two DIFFERENT ids, so it correctly let
 both through. This gate is about the machine, not about the id.
 

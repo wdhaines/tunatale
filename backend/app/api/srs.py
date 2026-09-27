@@ -15,6 +15,7 @@ import anyio
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
+from app.api import app_state
 from app.api.models import (
     BackfillTranslationsResponse,
     BulkDeleteRequest,
@@ -57,7 +58,6 @@ from app.api.models import (
     UpdateItemRequest,
 )
 from app.audio.cloze_tts import synthesize_cloze_audios
-from app.common.background_work import background_work
 from app.common.guid import compute_guid
 from app.config import settings
 from app.languages import (
@@ -1152,7 +1152,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
         raise HTTPException(status_code=404, detail="Lesson not found")
 
     db = request.state.srs_db
-    llm = getattr(request.app.state, "llm", None)
+    llm = app_state.llm(request)
     # Media work found while building cards, executed after the response by
     # _complete_listen_media. Collected rather than awaited so the request does
     # not pay for a TTS/Pixabay round trip per new word (tunatale-byw's shape).
@@ -1620,7 +1620,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     # Off the critical path: Starlette runs this after the response is sent.
     if pending_vocab or pending_cloze or pending_regloss:
         background_tasks.add_task(
-            background_work(request.app).track("listen_media", _complete_listen_media),
+            app_state.background_work(request.app).track("listen_media", _complete_listen_media),
             db,
             llm,
             vocab=pending_vocab,
@@ -2374,7 +2374,7 @@ async def translate(body: TranslateRequest, request: Request):
             status_code=422,
             detail=f"Invalid language_code: {body.language_code!r}. Must be one of {sorted(_VALID_LANGUAGE_CODES)}",
         )
-    llm = getattr(request.app.state, "llm", None)
+    llm = app_state.llm(request)
     if llm is None:
         raise HTTPException(status_code=503, detail="LLM not configured")
     translation = await translate_term(llm, body.text, body.language_code)
@@ -2417,7 +2417,7 @@ async def propose_cloze_sentence(item_id: int, request: Request):
     db, _row_id, item, language_code = await _load_cloze(request, item_id)
     unit = item.syntactic_unit
 
-    llm = getattr(request.app.state, "llm", None)
+    llm = app_state.llm(request)
     if llm is None:
         raise HTTPException(status_code=503, detail="LLM not configured")
 
@@ -2526,7 +2526,7 @@ async def set_cloze_sentence(item_id: int, body: SetClozeSentenceRequest, reques
         raise HTTPException(status_code=422, detail=f"{unit.text!r} does not occur in that sentence")
 
     plain = uncloze_text(stored)
-    llm = getattr(request.app.state, "llm", None)
+    llm = app_state.llm(request)
     # No 503 when the LLM is missing: the sentence is the thing the human
     # confirmed, and refusing to store it because the translator is down would
     # discard their decision. `translate_term` already fails soft to "".
@@ -2728,7 +2728,7 @@ async def create_item(body: CreateItemRequest, request: Request):
     # LLM auto-translate if translation is empty
     translation = body.translation
     if translation == "":
-        llm_client = getattr(request.app.state, "llm", None)
+        llm_client = app_state.llm(request)
         if llm_client is not None:
             translation = await translate_term(llm_client, body.text, body.language_code)
 
@@ -2760,7 +2760,7 @@ async def create_item(body: CreateItemRequest, request: Request):
     _, item, lang = result
     # Complete the card now (image + audio) so it renders in /review without a
     # sync — the user added it in TunaTale; it shouldn't depend on Anki.
-    llm = getattr(request.app.state, "llm", None)
+    llm = app_state.llm(request)
     await _generate_add_time_media(db, llm, row_id, unit, language_code=body.language_code)
     img = db.get_image_filename(row_id)
     image_url = f"/api/srs/media/{img}" if img else None
@@ -2889,7 +2889,7 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     # is the sense the model picked for a "pumunta" card (live, 2026-09-24).
     translation = body.translation
     if upos == "VERB":
-        llm_client = getattr(request.app.state, "llm", None)
+        llm_client = app_state.llm(request)
         if llm_client is not None:
             gloss = await generate_word_gloss(
                 llm_client, surface=body.surface, lemma=front, source_lang=lang, pos=upos, sentence=body.sentence
@@ -2917,7 +2917,7 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
         synthesize=is_func,
         audio_sentence=body.sentence,
         audio_word=body.surface,
-        llm=getattr(request.app.state, "llm", None),
+        llm=app_state.llm(request),
         media_word=headword,
     )
 
@@ -3217,7 +3217,7 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
     #     conveys the conjugation ("boste" → "you will be"). classla supplies the
     #     lemma/feature; the LLM supplies the English. Fail-soft: keep the
     #     resolved fallback when the LLM is absent or errors.
-    llm_client = getattr(request.app.state, "llm", None)
+    llm_client = app_state.llm(request)
     if llm_client is not None:
         gloss = await generate_word_gloss(
             llm_client,
