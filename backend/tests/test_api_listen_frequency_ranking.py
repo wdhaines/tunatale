@@ -213,6 +213,17 @@ class TestWordfreqLanguageResolution:
         assert zipf is not None
         assert zipf("mesto") > zipf("pingvin") > 0.0
 
+    def test_a_language_wordfreq_lacks_ranks_from_its_shipped_table(self):
+        """Cebuano has no wordfreq code; its plugin ships a corpus table instead
+        (tunatale-u8nz.6), so creation candidates rank by frequency too."""
+        from app.api.srs import _zipf_for
+        from app.languages import get_wordfreq_lang
+
+        assert get_wordfreq_lang("ceb") is None
+        zipf = _zipf_for("ceb")
+        assert zipf is not None
+        assert zipf("tawo") > zipf("iring") > 0.0
+
 
 # ── API: the two call sites, against real wordfreq ───────────────────────
 
