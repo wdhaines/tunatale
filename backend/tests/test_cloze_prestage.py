@@ -186,6 +186,38 @@ class TestPrestageClozeSentences:
         assert db.get_cached_cloze_sentence("foran", "no") is None
 
     @pytest.mark.asyncio
+    async def test_a_variant_pair_is_staged_under_its_more_common_spelling(self):
+        """``fra, ifra`` is ONE word with two spellings (tunatale-i0x6).
+
+        Generating for the comma string asks the model to use "fra, ifra" in a
+        sentence, and a cache row keyed on it can never pass the mint's boundary
+        check. The user's call (2026-09-25): the more common spelling is the
+        cloze answer, so it is what gets generated and cached.
+        """
+        llm = ScriptedLLM(
+            generated={"fra": "Hun kommer fra Bergen."},
+            fillers={"Hun kommer ___ Bergen.": "fra"},
+        )
+        db = _db_with_awaiting([("ifra, fra", "from")])
+
+        report = await prestage_cloze_sentences(db, llm, language_code="no", limit=5)
+
+        assert report.written == 1
+        assert db.get_cached_cloze_sentence("fra", "no") is not None
+        assert db.get_cached_cloze_sentence("ifra, fra", "no") is None
+
+    @pytest.mark.asyncio
+    async def test_a_variant_pair_already_cached_under_its_answer_is_skipped(self):
+        llm = ScriptedLLM()
+        db = _db_with_awaiting([("fra, ifra", "from")])
+        db.set_cached_cloze_sentence("fra", "no", sentence="Hun kommer fra Bergen.", status="determined")
+
+        report = await prestage_cloze_sentences(db, llm, language_code="no", limit=5)
+
+        assert report.already_cached == 1
+        assert llm.generate_calls == 0
+
+    @pytest.mark.asyncio
     async def test_skips_a_word_already_cached(self):
         """Without this the same word costs a live LLM chain on every pass forever."""
         llm = ScriptedLLM(

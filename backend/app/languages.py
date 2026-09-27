@@ -893,6 +893,46 @@ def get_frequency_table_path(code: str) -> Path | None:
     return _facet(code, "frequency_table_path", None)
 
 
+def zipf_for(code: str) -> Callable[[str], float] | None:
+    """Return a word → zipf-frequency callable for *code*.
+
+    wordfreq when the language has a ``wordfreq_lang``; otherwise the plugin's
+    shipped ``frequency_table_path`` (same zipf scale); ``None`` when it has
+    neither — callers fall back to occurrence-count ranking. Both imports live
+    inside this function (no module-level side effects per repo convention), so
+    a language that never ranks pays no import cost.
+    """
+    wordfreq_lang = get_wordfreq_lang(code)
+    if wordfreq_lang is None:
+        table_path = get_frequency_table_path(code)
+        if table_path is None:
+            return None
+        from app.srs.frequency_table import load_frequency_table
+
+        return load_frequency_table(table_path).zipf
+    import wordfreq
+
+    return lambda word: wordfreq.zipf_frequency(word, wordfreq_lang)
+
+
+def cloze_answer_spelling(code: str, text: str) -> str:
+    """The ONE spelling a cloze of card front *text* blanks and expects.
+
+    A variant-pair front (``fra, ifra``) is one word wearing two spellings, and
+    a cloze needs one answer: the more common, by ``zipf_for`` (the user's call,
+    2026-09-25, tunatale-i0x6). Ties and a language with no frequency source
+    keep the card's first spelling. Anything that is not a variant pair is its
+    own answer, unchanged.
+    """
+    variants = card_surface_variants(code, text)
+    if len(variants) == 1:
+        return text
+    zipf = zipf_for(code)
+    if zipf is None:
+        return variants[0]
+    return max(variants, key=zipf)
+
+
 def get_lemma_table_path(code: str) -> Path | None:
     """Return *code*'s shipped lemma-table extract, or ``None`` when it has none."""
     return _facet(code, "lemma_table_path", None)

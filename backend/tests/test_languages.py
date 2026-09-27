@@ -8,6 +8,7 @@ from app.languages import (
     LanguageConfig,
     LanguageContext,
     card_surface_variants,
+    cloze_answer_spelling,
     format_vocab_headword,
     get_deck_name,
     get_infinitive_marker,
@@ -40,6 +41,44 @@ class TestBreakdownAndMorphologyFlags:
 
     def test_norwegian_has_no_morphology_profile(self):
         assert get_morphology_profile("no") is None
+
+
+class TestClozeAnswerSpelling:
+    """A variant-pair front clozes its MORE COMMON spelling (tunatale-i0x6).
+
+    The user's call, 2026-09-25: one answer per word, chosen by frequency, so a
+    learner types the spelling they will actually meet.
+    """
+
+    def test_picks_the_more_common_spelling(self):
+        assert cloze_answer_spelling("no", "fra, ifra") == "fra"
+
+    def test_order_on_the_card_does_not_matter(self):
+        assert cloze_answer_spelling("no", "ifra, fra") == "fra"
+        assert cloze_answer_spelling("no", "sjøl, selv") == "selv"
+
+    def test_a_single_word_is_its_own_answer(self):
+        assert cloze_answer_spelling("no", "noen") == "noen"
+
+    def test_a_real_phrase_with_a_comma_stays_whole(self):
+        assert cloze_answer_spelling("no", "hei, hvordan går det") == "hei, hvordan går det"
+
+    def test_without_a_frequency_source_the_first_spelling_wins(self, monkeypatch):
+        import app.languages as _langs
+        from app.models.language import Language
+
+        monkeypatch.setattr(
+            _langs,
+            "_CONFIGS",
+            {
+                **_langs._CONFIGS,
+                "xx": _langs.LanguageConfig(
+                    language=Language(code="xx", name="XX", native_name="XX", script="latin", tts_voice_map={}),
+                    variant_separator=",",
+                ),
+            },
+        )
+        assert cloze_answer_spelling("xx", "zzb, aaa") == "zzb"
 
 
 class TestCardSurfaceVariants:

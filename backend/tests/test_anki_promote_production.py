@@ -43,6 +43,7 @@ from hashlib import sha256
 import pytest
 
 from app.cards.field_map import get_profile
+from app.common.guid import compute_guid
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.plugins.anki_sync import sync as sync_mod
@@ -628,6 +629,122 @@ class TestPromoteProductionCards:
         rows, _total = db.list_collocations()
         cloze = next(item for _id, item, _lang in rows if item.syntactic_unit.card_type == "cloze")
         assert cloze.syntactic_unit.source_sentence == "Vi tok en {{c1::beslutning}} i går."
+
+    async def test_a_variant_pair_clozes_its_more_common_spelling(self, monkeypatch) -> None:
+        """``fra, ifra`` sat unservable on the live deck for weeks (tunatale-i0x6).
+
+        The cache lookup and the boundary check both keyed on the comma string,
+        which no sentence contains. The answer is resolved once — the more
+        common spelling, by wordfreq (the user's call, 2026-09-25) — and the
+        cache, the boundary check and the cloze row all use it.
+        """
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        card_id = _add_note(
+            conn, 1000, "ifra, fra", "from", word_class="preposition", examples="Katten sover (<i>The cat sleeps</i>)"
+        )
+        db = SRSDatabase(":memory:")
+        vocab_id = _add_word(db, "ifra, fra", "from", note_id=1000, card_id=card_id, disambig="preposition")
+        db.set_cached_cloze_sentence("fra", LANG, sentence="Hun kommer fra Bergen.", status="determined")
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.minted, report.clozed, report.unservable) == (0, 1, 0)
+        cloze_id = _cloze_id(db, "fra")
+        unit = _cloze_unit(db, "fra")
+        assert unit.text == "fra"
+        assert unit.source_sentence == "Hun kommer {{c1::fra}} Bergen."
+        assert db.get_base_collocation_id(cloze_id) == vocab_id
+
+    async def test_an_unlinked_cloze_of_the_answer_spelling_is_adopted(self, monkeypatch) -> None:
+        """The live 'fra' cloze (cid 3005) was made from a lesson, so nothing linked it.
+
+        Minting a second cloze would give the learner the same card twice. The
+        existing one is linked instead and counted ``adopted`` — a card that
+        already existed, merely linked — and its own sentence is left alone.
+        """
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        card_id = _add_note(
+            conn, 1000, "fra, ifra", "from", word_class="preposition", examples="Katten sover (<i>The cat sleeps</i>)"
+        )
+        db = SRSDatabase(":memory:")
+        vocab_id = _add_word(db, "fra, ifra", "from", note_id=1000, card_id=card_id, disambig="preposition")
+        db.add_collocation(
+            SyntacticUnit(
+                text="fra",
+                translation="from",
+                word_count=1,
+                difficulty=1,
+                source="listen",
+                lemma="fra",
+                card_type="cloze",
+                source_sentence="Toget går {{c1::fra}} Oslo.",
+            ),
+            language_code=LANG,
+        )
+        before = db.count_collocations()
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.adopted, report.clozed, report.unservable) == (1, 0, 0)
+        assert db.count_collocations() == before
+        assert db.get_base_collocation_id(_cloze_id(db, "fra")) == vocab_id
+        assert _cloze_unit(db, "fra").source_sentence == "Toget går {{c1::fra}} Oslo."
+
+    async def test_a_cloze_already_covering_another_word_is_not_taken(self, monkeypatch) -> None:
+        """Re-pointing a linked cloze would silently uncover the word it served."""
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        card_id = _add_note(
+            conn, 1000, "fra, ifra", "from", word_class="preposition", examples="Katten sover (<i>The cat sleeps</i>)"
+        )
+        db = SRSDatabase(":memory:")
+        _add_word(db, "fra, ifra", "from", note_id=1000, card_id=card_id, disambig="preposition")
+        db.set_cached_cloze_sentence("fra", LANG, sentence="Hun kommer fra Bergen.", status="determined")
+        db.add_collocation(
+            SyntacticUnit(
+                text="fra",
+                translation="from",
+                word_count=1,
+                difficulty=1,
+                source="listen",
+                lemma="fra",
+                card_type="cloze",
+                source_sentence="Toget går {{c1::fra}} Oslo.",
+            ),
+            language_code=LANG,
+        )
+        other_card = _add_note(conn, 1001, "fra", "off", word_class="adverb")
+        other_word = _add_word(db, "fra", "off", note_id=1001, card_id=other_card, disambig="adverb")
+        cloze_id = db.get_collocation_id_by_guid(compute_guid("fra", LANG, ""))
+        db.set_base_collocation_id(cloze_id, other_word)
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.adopted, report.clozed) == (0, 0)
+        assert report.unservable >= 1
+        assert db.get_base_collocation_id(cloze_id) == other_word
+
+    async def test_a_words_own_vocab_row_is_never_adopted_as_its_cloze(self, monkeypatch, caplog) -> None:
+        """With an empty disambig, a word's vocab row HAS the cloze's guid.
+
+        Adoption must only ever link a CLOZE row. Here the row the guid finds is
+        the word itself, so the existing no-disambig guard still decides.
+        """
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        card_id = _add_note(conn, 1000, "fra", "from", word_class="", examples="Hun kommer fra Bergen (<i>x</i>)")
+        db = SRSDatabase(":memory:")
+        vocab_id = _add_word(db, "fra", "from", note_id=1000, card_id=card_id, disambig="", unpicturable=True)
+        assert db.get_collocation_id_by_guid(compute_guid("fra", LANG, "")) == vocab_id
+
+        with caplog.at_level(logging.WARNING):
+            report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.adopted, report.clozed, report.unservable) == (0, 0, 1)
+        assert "no disambig" in caplog.text
+        assert db.get_base_collocation_id(vocab_id) is None
 
     async def test_the_notes_own_example_still_beats_a_cached_sentence(self) -> None:
         """A deck-authored sentence is real language; a generated one is a fallback.

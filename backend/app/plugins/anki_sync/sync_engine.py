@@ -20,7 +20,7 @@ from app.cards.media.vocab_media import store_tt_media as _store_tt_media
 from app.cards.number_image import number_value
 from app.common.guid import compute_guid
 from app.config import settings
-from app.languages import card_surface_variants, get_tts_voice
+from app.languages import card_surface_variants, cloze_answer_spelling, get_tts_voice
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
 from app.models.syntactic_unit import SyntacticUnit, serialize_extras
 from app.plugins.anki_sync.sync_common import (
@@ -2114,11 +2114,45 @@ class AnkiSync:
         nothing measurable and the failure it prevents would be silent.
         """
         unit = cand.item.syntactic_unit
+        # ONE answer for a variant-pair front (``fra, ifra`` → ``fra``, the more
+        # common spelling: the user's call, 2026-09-25). It keys the cache, the
+        # boundary check and the cloze row. Every one of those used to key on the
+        # comma string, which no sentence contains, so the four variant-pair
+        # words sat unservable on the live deck (tunatale-i0x6). For any other
+        # word the answer IS unit.text and nothing below changes.
+        answer = cloze_answer_spelling(self._language_code, unit.text)
+        existing_id = self._db.get_collocation_id_by_guid(compute_guid(answer, self._language_code, ""))
+        if existing_id is not None:
+            existing_base = self._db.get_base_collocation_id(existing_id)
+            if (
+                existing_base is None
+                and self._db.get_collocation_by_id(existing_id)[1].syntactic_unit.card_type == "cloze"
+            ):
+                # A cloze of this word already exists — made from a lesson, which
+                # never links (only this method calls set_base_collocation_id).
+                # Minting would give the learner the same card twice; link the
+                # existing one instead, and leave its own sentence alone.
+                self._db.set_base_collocation_id(existing_id, cand.collocation_id)
+                report.adopted += 1
+                return
+            if existing_base is not None and existing_base != cand.collocation_id:
+                # The row this cloze would merge into already covers ANOTHER
+                # word; re-pointing it would silently uncover that one.
+                report.unservable += 1
+                _log.warning(
+                    "PRODUCTION_MINT_UNSERVABLE text=%r cid=%d — its cloze %r already covers cid=%d",
+                    unit.text,
+                    cand.collocation_id,
+                    answer,
+                    existing_base,
+                )
+                return
+        variants = card_surface_variants(self._language_code, unit.text)
         choice = choose_cloze_sentence(
             unit.text,
             material.examples,
             material.inflections,
-            variants=card_surface_variants(self._language_code, unit.text),
+            variants=[answer, *(v for v in variants if v != answer)],
         )
         if choice is None:
             # The LLM tier. `choose_cloze_sentence`'s docstring has always ended
@@ -2131,8 +2165,8 @@ class AnkiSync:
             # `Example sentences` is 98.7% populated, so preferring the cache
             # would swap almost the whole deck for model output — a far larger
             # change than the one this is for.
-            cached = self._db.get_cached_cloze_sentence(unit.text, self._language_code)
-            if cached is not None and re.search(rf"\b{re.escape(unit.text)}\b", cached.sentence, re.IGNORECASE):
+            cached = self._db.get_cached_cloze_sentence(answer, self._language_code)
+            if cached is not None and re.search(rf"\b{re.escape(answer)}\b", cached.sentence, re.IGNORECASE):
                 # The boundary check is not redundant with the generator's. A
                 # cached row can predate a prompt change, and a cloze whose
                 # answer is absent from its own sentence blanks nothing —
@@ -2158,7 +2192,7 @@ class AnkiSync:
                 choice = ClozeChoice(
                     sentence=cached.sentence,
                     gloss=cached.sentence_translation,
-                    surface=unit.text,
+                    surface=answer,
                 )
 
         if choice is None:
@@ -2185,13 +2219,13 @@ class AnkiSync:
         # re-derive from the headword. `make_cloze_text` is idempotent, so its
         # second pass there leaves this untouched.
         cloze_unit = SyntacticUnit(
-            text=unit.text,
+            text=answer,
             translation=unit.translation,
             word_count=1,
             difficulty=unit.difficulty,
             source="anki",
             frequency=unit.frequency,
-            lemma=unit.text.casefold(),
+            lemma=answer.casefold(),
             card_type="cloze",
             source_sentence=make_cloze_text(choice.surface, choice.sentence),
             source_sentence_translation=choice.gloss,

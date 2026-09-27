@@ -35,7 +35,7 @@ import logging
 from typing import Any, NamedTuple
 
 from app.cards.field_map import upos_for_disambig
-from app.languages import get_language
+from app.languages import cloze_answer_spelling, get_language
 from app.llm.call_sites import CallSite
 from app.llm.cloze_quality import generate_cloze_sentence, judge_cloze, translate_cloze_sentence
 from app.srs.function_words import is_function_word
@@ -98,13 +98,17 @@ async def prestage_cloze_sentences(
             skipped += 1
             continue
 
-        if db.get_cached_cloze_sentence(unit.text, language_code) is not None:
+        # The cache is keyed by the cloze ANSWER, which the mint looks up: for a
+        # variant-pair front (``fra, ifra``) that is the more common spelling,
+        # never the comma string no sentence can contain (tunatale-i0x6).
+        answer = cloze_answer_spelling(language_code, unit.text)
+        if db.get_cached_cloze_sentence(answer, language_code) is not None:
             # Without this the same word costs two live LLM calls on every pass
             # forever — the failure `is_image_unavailable` prevents for pictures.
             already += 1
             continue
 
-        wanted.append((unit.text, unit.translation))
+        wanted.append((answer, unit.translation))
 
     semaphore = asyncio.Semaphore(CONCURRENCY)
 

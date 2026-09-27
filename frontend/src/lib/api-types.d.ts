@@ -1248,7 +1248,7 @@ export interface paths {
      *     the two kinds, because the live cut is a prefix of the ranked pool and the
      *     creates keep their relative order inside it. The preview and commit agree
      *     because both make the SAME ``_allocate_intro_pool`` call with the same
-     *     ``zipf`` callable (resolved once per request via ``_zipf_for``), so the
+     *     ``zipf`` callable (resolved once per request via ``zipf_for``), so the
      *     first N live create rows are exactly what ``mark_lesson_listened`` will
      *     create. Un-checking one does NOT promote the next-ranked tail row: a skip
      *     consumes its slot server-side (``1535071``), which is why ``will_create``
