@@ -619,7 +619,7 @@ class DbSyncMixin:
         guid: str,
         *,
         translation: str,
-        note: str,
+        note: str | None,
         sentence_translation: str = "",
         dirty_fields_str: str,
         article: str | None = None,
@@ -629,16 +629,17 @@ class DbSyncMixin:
 
         ``article`` and ``extras`` are Anki-sourced display data (never edited in
         TT) — when provided each is set unconditionally (Anki wins). ``None``
-        leaves that stored column untouched. ``extras`` is the serialized JSON
+        leaves that stored column untouched; so does ``note=None``, which is
+        what a vocab notetype (no Note field) reports (tunatale-rcol). ``extras`` is the serialized JSON
         string (see ``serialize_extras``), not a ``BackField`` tuple.
         """
         now_iso = datetime.now(UTC).isoformat()
         # Always-written columns, then any Anki-sourced display columns that were
         # actually provided (None ⇒ leave untouched, so we don't clobber on a sync
         # whose reader didn't supply that field).
-        set_cols = ["translation = ?", "note = ?", "sentence_translation = ?"]
-        params: list[object] = [translation, note, sentence_translation]
-        for col, value in (("article", article), ("extras", extras)):
+        set_cols = ["translation = ?", "sentence_translation = ?"]
+        params: list[object] = [translation, sentence_translation]
+        for col, value in (("note", note), ("article", article), ("extras", extras)):
             if value is not None:
                 set_cols.append(f"{col} = ?")
                 params.append(value)

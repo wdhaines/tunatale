@@ -955,7 +955,7 @@ class AnkiSync:
             if rec.sentence_translation != local_sent_trans:
                 note_changed = True
 
-            if rec.note != local_note:
+            if rec.note is not None and rec.note != local_note:
                 note_changed = True
 
             if article_update is not None:
@@ -1868,7 +1868,7 @@ class AnkiSync:
                 article=rec.article or "",
                 extras=rec.extras or (),
                 lemma=headword_lemma(rec.l2_text, self._language_code) if word_count == 1 else None,
-                source_sentence=rec.note,
+                source_sentence=rec.note or "",
                 source_sentence_translation=rec.sentence_translation,
                 card_type=card_type,
             )
