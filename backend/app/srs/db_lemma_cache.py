@@ -25,6 +25,17 @@ class DbLemmaCacheMixin:
                 return None
             return (row["id"], self._row_to_item(conn, row))
 
+    def get_collocations_by_lemma_with_id(self, lemma: str) -> list[tuple[int, SRSItem]]:
+        """Every row carrying *lemma*, lowest id first.
+
+        ``get_collocation_by_lemma_with_id`` is this list's head. The whole list
+        is what a homograph needs: several vocab rows, one per Word class
+        (tunatale-u8nz.22). See ``transcript.resolve_lemma_card``.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT * FROM collocations WHERE lemma = ? ORDER BY id", (lemma,)).fetchall()
+            return [(row["id"], self._row_to_item(conn, row)) for row in rows]
+
     def get_variant_candidates_with_items(self, language_code: str, separator: str) -> list[tuple[int, str, SRSItem]]:
         """Hydrated (id, text, item) for *language_code* rows whose front contains *separator*.
 

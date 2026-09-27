@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from app.cards.cloze_source import parse_inflection_forms
-from app.cards.field_map import inflection_labels
+from app.cards.field_map import inflection_labels, upos_for_disambig
 from app.languages import card_surface_variants, get_variant_separator
 from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
@@ -353,6 +353,43 @@ def _build_inflection_index(db: SRSDatabase, language_code: str) -> dict[str, in
     return {form: next(iter(ids)) for form, ids in claims.items() if len(ids) == 1}
 
 
+# Both conjunction tags are one deck class: the deck says "conjunction" (mapped
+# to CCONJ) while the taggers call subordinators like 'om' = if SCONJ.
+_UPOS_CLASS = {"SCONJ": "CCONJ"}
+
+
+def resolve_lemma_card(db: SRSDatabase, lemma: str, upos: str | None) -> tuple[int, SRSItem] | None:
+    """The card for *lemma* as used in a sentence whose tagger says *upos*.
+
+    One spelling can be several cards: Norwegian ``om`` is "if", "again" and
+    "about", three vocab rows told apart by the deck's Word class
+    (``disambig_key``). Every lookup used to be first-by-id, so each ``om`` in a
+    lesson graded "if" (tunatale-u8nz.22). When exactly ONE vocab row's Word
+    class matches *upos*, that is the card. Anything less certain — no UPOS, a
+    single card, no match, two matches (Slovene twins share a POS) — keeps the
+    old first-by-id answer, so nothing that resolved before resolves worse.
+
+    THE one resolver for a lemma: the transcript and ``/listen`` both call it,
+    so the reader and a listen can never disagree about which card a word is.
+    """
+    rows = db.get_collocations_by_lemma_with_id(lemma)
+    if not rows:
+        return None
+    if upos:
+        wanted = _UPOS_CLASS.get(upos, upos)
+        vocab = [r for r in rows if r[1].syntactic_unit.card_type == "vocab"]
+        if len(vocab) > 1:
+            hits = [r for r in vocab if _card_upos(r[1]) == wanted]
+            if len(hits) == 1:
+                return hits[0]
+    return rows[0]
+
+
+def _card_upos(item: SRSItem) -> str | None:
+    upos = upos_for_disambig(item.syntactic_unit.disambig_key)
+    return _UPOS_CLASS.get(upos, upos) if upos is not None else None
+
+
 def resolve_via_inflection_index(
     db: SRSDatabase,
     index: dict[str, int],
@@ -383,11 +420,12 @@ def _resolve_base_card(
     db: SRSDatabase,
     surface: str,
     lemma: str,
-    base_cache: dict[str, tuple | None],
-    surface_base_cache: dict[str, tuple | None],
+    base_cache: dict[tuple[str, str], tuple | None],
+    surface_base_cache: dict[tuple[str, str], tuple | None],
     variant_index: dict[str, tuple[int, SRSItem]],
     inflection_index: dict[str, int],
     language_code: str,
+    upos: str = "",
 ) -> tuple[int, SRSItem] | None:
     """Step 2 of the per-token resolution order: the base card for a lemma.
 
@@ -396,6 +434,9 @@ def _resolve_base_card(
     the exact-surface-cloze branch can read the BASE card's recognition band
     with the identical lookup the base branch uses — ``understand_band`` must
     never resolve by a second path. (bd tunatale-yh47)
+
+    *upos* is the token's tag: a homograph (``om`` = if / about) resolves to the
+    meaning in THIS sentence, so both caches are keyed by (key, upos).
     """
     # Clozes-only verbs (e.g. biti) have no base card by LEMMA — but steps 2b
     # and 2c below still run for them, exactly as they did before this helper
@@ -403,18 +444,18 @@ def _resolve_base_card(
     result: tuple | None
     if is_clozes_only_verb(lemma, language_code):
         result = None
-    elif lemma in base_cache:
-        result = base_cache[lemma]
+    elif (lemma, upos) in base_cache:
+        result = base_cache[(lemma, upos)]
     else:
-        result = db.get_collocation_by_lemma_with_id(lemma)
+        result = resolve_lemma_card(db, lemma, upos)
         if result is None and surface.lower() != lemma:
-            surface_key = surface.lower()
+            surface_key = (surface.lower(), upos)
             if surface_key in surface_base_cache:
                 result = surface_base_cache[surface_key]
             else:
-                result = db.get_collocation_by_lemma_with_id(surface_key)
+                result = resolve_lemma_card(db, surface.lower(), upos)
                 surface_base_cache[surface_key] = result
-        base_cache[lemma] = result
+        base_cache[(lemma, upos)] = result
     if result is None:
         result = variant_index.get(surface.casefold())
     if result is None:
@@ -470,14 +511,14 @@ def extract_transcript(
         # Cache inflection clozes per lemma (one gather per unique lemma)
         inflection_cache: dict[str, list[tuple[int, object]]] = {}
         # Cache base-collocation lookups per lemma (finding #6)
-        base_cache: dict[str, tuple | None] = {}
+        base_cache: dict[tuple[str, str], tuple | None] = {}
         # Surface-fallback lookups (lemma missed, surface hit) in their OWN
         # cache: base_cache is read by lemma, so a surface key must never be
         # able to satisfy a lemma read. Sharing one dict let a verb surface
         # ('gaar', lemma 'gaa') hand its card to a later token whose lemma is
         # genuinely 'gaar' — the same sentence rendered a different card by
         # position alone. (tunatale-klh)
-        surface_base_cache: dict[str, tuple | None] = {}
+        surface_base_cache: dict[tuple[str, str], tuple | None] = {}
         # Cache "does this word have a base cloze carrying its production?" per
         # collocation id. Keyed by id rather than lemma because that is what the
         # link records — a lemma cannot tell two homographs apart. `None` is a
@@ -507,6 +548,8 @@ def extract_transcript(
             words: list[WordToken] = []
             for i, (surface, lemma) in enumerate(zip(surfaces, lemmas, strict=True)):
                 prefix_punct, suffix_punct = punct_pairs[i]
+                token_analysis = analysis_by_surface.get(surface.lower())
+                token_upos = getattr(token_analysis, "upos", "") or ""
                 # Resolution order: 1) exact-surface inflection cloze, 2) base, 3) unknown
                 resolved_item: object = None
                 resolved_item_id: int | None = None
@@ -548,6 +591,7 @@ def extract_transcript(
                         variant_index,
                         inflection_index,
                         lesson.language_code,
+                        token_upos,
                     )
                     if result is not None:
                         item_id, item = result
@@ -636,6 +680,7 @@ def extract_transcript(
                             variant_index,
                             inflection_index,
                             lesson.language_code,
+                            token_upos,
                         )
                         rail_rec = (
                             base_result[1].directions.get(Direction.RECOGNITION) if base_result is not None else None

@@ -113,6 +113,7 @@ from app.srs.transcript import (
     _build_inflection_index,
     _build_variant_index,
     extract_transcript,
+    resolve_lemma_card,
     resolve_via_inflection_index,
 )
 
@@ -1044,6 +1045,7 @@ def _resolve_card_for_lemma(
     surfaces: set[str],
     variant_index: dict[str, tuple[int, SRSItem]] | None = None,
     inflection_index: dict[str, int] | None = None,
+    surface_upos: dict[str, str] | None = None,
 ):
     """Resolve the tracked card for a lemma, or None if untracked.
 
@@ -1063,12 +1065,19 @@ def _resolve_card_for_lemma(
     card whose table happens to mention it — 16 forms in the real Norwegian deck
     are both. Ambiguous forms are already absent from the index (see its
     docstring); nothing here arbitrates.
+
+    *surface_upos* (casefolded surface → UPOS, from the lesson's analysis) lets
+    a homograph resolve to the meaning the lesson uses — the same
+    ``resolve_lemma_card`` the transcript calls, so a listen grades the card the
+    reader shows (tunatale-u8nz.22). The lemma's tag is its most frequent
+    surface tag.
     """
-    res = db.get_collocation_by_lemma_with_id(lemma)
+    upos = _lemma_upos(surfaces, surface_upos)
+    res = resolve_lemma_card(db, lemma, upos)
     if res is None:
         for s in surfaces:
             if s.lower() != lemma:
-                res = db.get_collocation_by_lemma_with_id(s.lower())
+                res = resolve_lemma_card(db, s.lower(), upos)
                 if res is not None:
                     break
     if res is None and variant_index:
@@ -1078,6 +1087,16 @@ def _resolve_card_for_lemma(
     if res is None and inflection_index:
         res = resolve_via_inflection_index(db, inflection_index, lemma, *sorted(surfaces))
     return res
+
+
+def _lemma_upos(surfaces: set[str], surface_upos: dict[str, str] | None) -> str | None:
+    """The most frequent non-empty tag among a lemma's surfaces; ties by name."""
+    if not surface_upos:
+        return None
+    tags = Counter(t for s in surfaces if (t := surface_upos.get(s.casefold())))
+    if not tags:
+        return None
+    return min(tags, key=lambda t: (-tags[t], t))
 
 
 def _lemmas_losing_a_shared_card(
@@ -1319,7 +1338,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
             lemma_plausible=lemma_plausible,
         )
         _commit_resolved[_lem] = _resolve_card_for_lemma(
-            db, _lem, lemma_to_surfaces.get(_lem, set()), variant_index, inflection_index
+            db, _lem, lemma_to_surfaces.get(_lem, set()), variant_index, inflection_index, surface_to_upos
         )
     dropped_lemmas = _lemmas_losing_a_shared_card(_commit_resolved, _commit_card_keys)
 
@@ -1336,7 +1355,9 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
             lemma, lemma_to_surfaces.get(lemma, set()), lesson.language_code, surface_to_upos
         )
 
-        res = _resolve_card_for_lemma(db, lemma, lemma_to_surfaces.get(lemma, set()), variant_index, inflection_index)
+        res = _resolve_card_for_lemma(
+            db, lemma, lemma_to_surfaces.get(lemma, set()), variant_index, inflection_index, surface_to_upos
+        )
         existing_id, existing = res if res is not None else (None, None)
 
         if existing is None:
@@ -2032,7 +2053,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
         )
         _preview_card_keys[lemma] = _key
         _preview_resolved[lemma] = _resolve_card_for_lemma(
-            db, _key, words.surfaces.get(lemma, set()), variant_index, inflection_index
+            db, _key, words.surfaces.get(lemma, set()), variant_index, inflection_index, words.surface_upos
         )
     dropped_lemmas = _lemmas_losing_a_shared_card(_preview_resolved, _preview_card_keys)
 
@@ -2060,7 +2081,9 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
         )
         card_key_by_lemma[lemma] = card_key
 
-        res = _resolve_card_for_lemma(db, card_key, words.surfaces.get(lemma, set()), variant_index, inflection_index)
+        res = _resolve_card_for_lemma(
+            db, card_key, words.surfaces.get(lemma, set()), variant_index, inflection_index, words.surface_upos
+        )
         if res is None:
             # Untracked → ranked/budget-truncated below, mirroring
             # mark_lesson_listened exactly.
