@@ -5,11 +5,21 @@
 	// Changing the active language re-points every API request (X-TT-Language) at
 	// the other language's connection. A full reload is the simplest correct way to
 	// refetch all the per-page data + nav badges under the new language.
+	//
+	// Except on a page that belongs to ONE language: a curriculum (and its lessons
+	// and plan) or a review session. Its id means nothing to the other language, so
+	// reloading it there is a 404. Those go home instead.
+	const LANGUAGE_OWNED_PAGE = /^\/(c|review-sessions)\//;
+
 	function onChange(event: Event): void {
 		const code = (event.currentTarget as HTMLSelectElement).value;
 		if (code === languageStore.code) return;
 		languageStore.set(code);
-		window.location.reload();
+		if (LANGUAGE_OWNED_PAGE.test(window.location.pathname)) {
+			window.location.assign('/');
+		} else {
+			window.location.reload();
+		}
 	}
 </script>
 
