@@ -63,6 +63,20 @@ class ClozePreStageReport(NamedTuple):
     failed: int = 0
 
 
+def cloze_cache_key(db, language_code: str, text: str, disambig_key: str, answer: str) -> str:
+    """The cloze-sentence cache key for the word with card front *text*.
+
+    Normally the cloze ANSWER. For a homograph (another vocab row with the same
+    front) it is the answer plus the Word class: each meaning gets its own cloze
+    (the user's call, 2026-09-27, tunatale-umbu), and a sentence generated for
+    'om' = "if" must not serve 'om' = "again". The prestage writes and the mint
+    reads through this one function, so the two cannot disagree.
+    """
+    if disambig_key.strip() and db.count_vocab_with_text(text, language_code) > 1:
+        return f"{answer}#{disambig_key}"
+    return answer
+
+
 async def prestage_cloze_sentences(
     db: Any,
     llm: Any,
@@ -102,23 +116,24 @@ async def prestage_cloze_sentences(
         # variant-pair front (``fra, ifra``) that is the more common spelling,
         # never the comma string no sentence can contain (tunatale-i0x6).
         answer = cloze_answer_spelling(language_code, unit.text)
-        if db.get_cached_cloze_sentence(answer, language_code) is not None:
+        key = cloze_cache_key(db, language_code, unit.text, unit.disambig_key, answer)
+        if db.get_cached_cloze_sentence(key, language_code) is not None:
             # Without this the same word costs two live LLM calls on every pass
             # forever — the failure `is_image_unavailable` prevents for pictures.
             already += 1
             continue
 
-        wanted.append((answer, unit.translation))
+        wanted.append((key, answer, unit.translation))
 
     semaphore = asyncio.Semaphore(CONCURRENCY)
 
-    async def _write_one(word: str, gloss: str):
+    async def _write_one(key: str, word: str, gloss: str):
         async with semaphore:
             sentence = await generate_cloze_sentence(
                 llm, caller=CallSite.CALLER_PRESTAGE, word=word, gloss=gloss, pos="", language=language.name
             )
             if sentence is None:
-                return word, None, None, ""
+                return key, None, None, ""
             verdict = await judge_cloze(
                 llm, caller=CallSite.CALLER_PRESTAGE, sentence=sentence, surface=word, language=language.name
             )
@@ -129,7 +144,7 @@ async def prestage_cloze_sentences(
             translation = await translate_cloze_sentence(
                 llm, caller=CallSite.CALLER_PRESTAGE, sentence=sentence, language=language.name
             )
-            return word, sentence, verdict, translation
+            return key, sentence, verdict, translation
 
     # ⚠️ `return_exceptions=True`, and the reason is measured rather than
     # stylistic: the only caller schedules this via `background_tasks.add_task`,
@@ -137,11 +152,11 @@ async def prestage_cloze_sentences(
     # mid-flight and leaves the DB exactly as it found it, indistinguishable
     # from never having run. One bad fetch discarding up to 19 good ones is
     # tunatale-ouk.10, and it was invisible for six syncs.
-    results = await asyncio.gather(*(_write_one(w, g) for w, g in wanted), return_exceptions=True)
+    results = await asyncio.gather(*(_write_one(k, w, g) for k, w, g in wanted), return_exceptions=True)
 
     written = failed = 0
     failures: list[str] = []
-    for (word, _gloss), result in zip(wanted, results, strict=True):
+    for (word, _answer, _gloss), result in zip(wanted, results, strict=True):
         if isinstance(result, BaseException):
             failed += 1
             failures.append(f"{word}: {type(result).__name__}: {result}")

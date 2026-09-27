@@ -42,6 +42,7 @@ from hashlib import sha256
 
 import pytest
 
+from app.cards.cloze_prestage import cloze_cache_key
 from app.cards.field_map import get_profile
 from app.common.guid import compute_guid
 from app.models.srs_item import Direction, DirectionState, SRSState
@@ -288,6 +289,30 @@ def _cloze_id(db: SRSDatabase, lemma: str) -> int:
 
 def _cloze_unit(db: SRSDatabase, lemma: str) -> SyntacticUnit:
     return db.get_collocation_by_id(_cloze_id(db, lemma))[1].syntactic_unit
+
+
+def _add_cloze(db: SRSDatabase, text: str, translation: str, sentence: str) -> int:
+    """A cloze row as a lesson (or an earlier mint) leaves it: no base link yet."""
+    db.add_collocation(
+        SyntacticUnit(
+            text=text,
+            translation=translation,
+            word_count=1,
+            difficulty=1,
+            source="listen",
+            lemma=text,
+            card_type="cloze",
+            source_sentence=sentence,
+        ),
+        language_code=LANG,
+    )
+    return db.get_collocation_id_by_guid(compute_guid(text, LANG, ""))
+
+
+def _add_homograph(conn, db: SRSDatabase, note_id: int, text: str, english: str, word_class: str, examples: str) -> int:
+    """One meaning of a homograph: its own note, routed to the cloze fork."""
+    card_id = _add_note(conn, note_id, text, english, word_class=word_class, examples=examples)
+    return _add_word(db, text, english, note_id=note_id, card_id=card_id, disambig=word_class, unpicturable=True)
 
 
 def _prod_cards(conn: sqlite3.Connection, note_id: int) -> list[sqlite3.Row]:
@@ -692,39 +717,155 @@ class TestPromoteProductionCards:
         assert db.get_base_collocation_id(_cloze_id(db, "fra")) == vocab_id
         assert _cloze_unit(db, "fra").source_sentence == "Toget går {{c1::fra}} Oslo."
 
-    async def test_a_cloze_already_covering_another_word_is_not_taken(self, monkeypatch) -> None:
-        """Re-pointing a linked cloze would silently uncover the word it served."""
+    async def test_a_cloze_covering_another_meaning_gives_this_word_its_own(self, monkeypatch) -> None:
+        """Each meaning gets its own cloze (the user's call, 2026-09-27, tunatale-umbu).
+
+        The 'fra' cloze belongs to the OTHER word (its translation is that word's),
+        so it is neither taken nor re-pointed; this word gets a second cloze with a
+        distinct ``sense:`` identity, which can merge into neither row.
+        """
         monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
         conn = _make_conn()
         card_id = _add_note(
             conn, 1000, "fra, ifra", "from", word_class="preposition", examples="Katten sover (<i>The cat sleeps</i>)"
         )
         db = SRSDatabase(":memory:")
-        _add_word(db, "fra, ifra", "from", note_id=1000, card_id=card_id, disambig="preposition")
+        cand = _add_word(db, "fra, ifra", "from", note_id=1000, card_id=card_id, disambig="preposition")
         db.set_cached_cloze_sentence("fra", LANG, sentence="Hun kommer fra Bergen.", status="determined")
-        db.add_collocation(
-            SyntacticUnit(
-                text="fra",
-                translation="from",
-                word_count=1,
-                difficulty=1,
-                source="listen",
-                lemma="fra",
-                card_type="cloze",
-                source_sentence="Toget går {{c1::fra}} Oslo.",
-            ),
-            language_code=LANG,
-        )
+        cloze_id = _add_cloze(db, "fra", "off", "Lyset er {{c1::fra}}.")
         other_card = _add_note(conn, 1001, "fra", "off", word_class="adverb")
         other_word = _add_word(db, "fra", "off", note_id=1001, card_id=other_card, disambig="adverb")
-        cloze_id = db.get_collocation_id_by_guid(compute_guid("fra", LANG, ""))
         db.set_base_collocation_id(cloze_id, other_word)
 
         report = await _make_sync(conn, db).promote_production_cards()
 
-        assert (report.adopted, report.clozed) == (0, 0)
-        assert report.unservable >= 1
+        assert (report.adopted, report.clozed) == (0, 1)
         assert db.get_base_collocation_id(cloze_id) == other_word
+        sense_id = db.get_collocation_id_by_guid(compute_guid("fra", LANG, "sense:preposition"))
+        assert sense_id is not None
+        assert db.get_base_collocation_id(sense_id) == cand
+        assert db.get_collocation_by_id(sense_id)[1].syntactic_unit.source_sentence == "Hun kommer {{c1::fra}} Bergen."
+
+    async def test_a_homograph_gets_its_own_cloze_from_its_own_example(self, monkeypatch) -> None:
+        """'om' = if (conjunction) and 'om' = again/about (adverb) are two words."""
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        db = SRSDatabase(":memory:")
+        conj = _add_homograph(conn, db, 1000, "om", "if", "conjunction", "Jeg vet ikke om han kommer (<i>x</i>)")
+        adv = _add_homograph(conn, db, 1001, "om", "again; about", "adverb", "Vi prøver om igjen (<i>x</i>)")
+        shared = _add_cloze(db, "om", "if", "Jeg vet ikke {{c1::om}} han kommer")
+        db.set_base_collocation_id(shared, conj)
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.adopted, report.clozed, report.unservable) == (0, 1, 0)
+        assert db.get_base_collocation_id(shared) == conj
+        sense_id = db.get_collocation_id_by_guid(compute_guid("om", LANG, "sense:adverb"))
+        assert db.get_base_collocation_id(sense_id) == adv
+        assert db.get_collocation_by_id(sense_id)[1].syntactic_unit.source_sentence == "Vi prøver {{c1::om}} igjen"
+
+    async def test_a_shared_cloze_returns_to_the_meaning_it_was_made_for_and_stays(self, monkeypatch) -> None:
+        """The live flip-flop left 'Vi prøver om igjen' ('again; about') on 'om' = if.
+
+        A mint cloze copies the translation of the word it was made for, so that
+        is its owner: the link moves back ONCE, the displaced meaning gets its own
+        cloze on the next run, and a third run changes nothing — no flip-flop.
+        """
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        db = SRSDatabase(":memory:")
+        conj = _add_homograph(conn, db, 1000, "om", "if", "conjunction", "Jeg vet ikke om han kommer (<i>x</i>)")
+        adv = _add_homograph(conn, db, 1001, "om", "again; about", "adverb", "Vi prøver om igjen (<i>x</i>)")
+        shared = _add_cloze(db, "om", "again; about", "Vi prøver {{c1::om}} igjen")
+        db.set_base_collocation_id(shared, conj)
+
+        first = await _make_sync(conn, db).promote_production_cards()
+        assert (first.adopted, first.clozed) == (1, 0)
+        assert db.get_base_collocation_id(shared) == adv
+
+        second = await _make_sync(conn, db).promote_production_cards()
+        assert (second.adopted, second.clozed) == (0, 1)
+        sense_id = db.get_collocation_id_by_guid(compute_guid("om", LANG, "sense:conjunction"))
+        assert db.get_base_collocation_id(sense_id) == conj
+
+        third = await _make_sync(conn, db).promote_production_cards()
+        assert (third.adopted, third.clozed, third.unservable) == (0, 0, 0)
+        assert db.get_base_collocation_id(shared) == adv
+
+    async def test_identical_glosses_never_move_a_shared_cloze(self, monkeypatch) -> None:
+        """When the translation cannot tell the meanings apart, the owner keeps it."""
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        db = SRSDatabase(":memory:")
+        a = _add_homograph(conn, db, 1000, "om", "about", "conjunction", "Jeg vet ikke om han kommer (<i>x</i>)")
+        b = _add_homograph(conn, db, 1001, "om", "about", "adverb", "Vi prøver om igjen (<i>x</i>)")
+        shared = _add_cloze(db, "om", "about", "Jeg vet ikke {{c1::om}} han kommer")
+        db.set_base_collocation_id(shared, a)
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.adopted, report.clozed) == (0, 1)
+        assert db.get_base_collocation_id(shared) == a
+        sense_id = db.get_collocation_id_by_guid(compute_guid("om", LANG, "sense:adverb"))
+        assert db.get_base_collocation_id(sense_id) == b
+
+    async def test_a_homographs_generated_sentence_is_keyed_by_its_meaning(self, monkeypatch) -> None:
+        """A cached 'om' sentence written for one meaning must not serve the other."""
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        db = SRSDatabase(":memory:")
+        conj = _add_homograph(conn, db, 1000, "om", "if", "conjunction", "")
+        adv = _add_homograph(conn, db, 1001, "om", "again; about", "adverb", "")
+        shared = _add_cloze(db, "om", "if", "Jeg vet ikke {{c1::om}} han kommer")
+        db.set_base_collocation_id(shared, conj)
+        db.set_cached_cloze_sentence("om", LANG, sentence="Jeg lurer på om han kommer.", status="determined")
+        db.set_cached_cloze_sentence(
+            cloze_cache_key(db, LANG, "om", "adverb", "om"), LANG, sentence="Vi prøver om igjen.", status="determined"
+        )
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert report.clozed == 1
+        sense_id = db.get_collocation_id_by_guid(compute_guid("om", LANG, "sense:adverb"))
+        assert db.get_base_collocation_id(sense_id) == adv
+        assert db.get_collocation_by_id(sense_id)[1].syntactic_unit.source_sentence == "Vi prøver {{c1::om}} igjen."
+
+    async def test_a_meaning_with_no_word_class_cannot_get_its_own_cloze(self, monkeypatch, caplog) -> None:
+        """Without a Word class there is nothing to build a distinct identity from."""
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        card_id = _add_note(conn, 1000, "fra, ifra", "from", word_class="", examples="Katten sover (<i>x</i>)")
+        db = SRSDatabase(":memory:")
+        _add_word(db, "fra, ifra", "from", note_id=1000, card_id=card_id, disambig="", unpicturable=True)
+        cloze_id = _add_cloze(db, "fra", "off", "Lyset er {{c1::fra}}.")
+        other_card = _add_note(conn, 1001, "fra", "off", word_class="adverb")
+        other_word = _add_word(db, "fra", "off", note_id=1001, card_id=other_card, disambig="adverb")
+        db.set_base_collocation_id(cloze_id, other_word)
+
+        with caplog.at_level(logging.WARNING):
+            report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.adopted, report.clozed) == (0, 0)
+        assert "no disambig to tell its own apart" in caplog.text
+        assert db.get_base_collocation_id(cloze_id) == other_word
+
+    async def test_a_retired_cloze_of_this_same_word_is_not_relinked_elsewhere(self, monkeypatch) -> None:
+        """Suspending a cloze frees its word for the mint (tunatale-fwe5); the
+        cloze is still THIS word's, so nothing is stolen, adopted or duplicated."""
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        db = SRSDatabase(":memory:")
+        conj = _add_homograph(conn, db, 1000, "om", "if", "conjunction", "Jeg vet ikke om han kommer (<i>x</i>)")
+        shared = _add_cloze(db, "om", "if", "Jeg vet ikke {{c1::om}} han kommer")
+        db.set_base_collocation_id(shared, conj)
+        db.set_state_by_id(shared, SRSState.SUSPENDED, Direction.PRODUCTION)
+        before = db.count_collocations()
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert report.adopted == 0
+        assert db.count_collocations() == before
+        assert db.get_base_collocation_id(shared) == conj
 
     async def test_a_words_own_vocab_row_is_never_adopted_as_its_cloze(self, monkeypatch, caplog) -> None:
         """With an empty disambig, a word's vocab row HAS the cloze's guid.
