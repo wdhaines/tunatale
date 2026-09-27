@@ -22,7 +22,7 @@ import asyncio
 
 import pytest
 
-from app.cards.cloze_prestage import prestage_cloze_sentences
+from app.cards.cloze_prestage import cloze_cache_key, prestage_cloze_sentences
 from app.srs.database import SRSDatabase
 
 
@@ -216,6 +216,30 @@ class TestPrestageClozeSentences:
 
         assert report.already_cached == 1
         assert llm.generate_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_each_meaning_of_a_homograph_is_staged_under_its_own_key(self):
+        """'om' = if and 'om' = again/about each get a sentence (tunatale-umbu).
+
+        Keyed by the plain word, the first meaning's sentence would serve both.
+        """
+        from tests.test_anki_promote_production import _add_word
+
+        llm = ScriptedLLM(generated={"om": "Vi prøver om igjen."}, fillers={"Vi prøver ___ igjen.": "om"})
+        db = SRSDatabase(":memory:")
+        _add_word(db, "om", "if", note_id=1000, card_id=10_000, image=False, disambig="conjunction")
+        _add_word(db, "om", "again; about", note_id=1001, card_id=10_001, image=False, disambig="adverb")
+
+        report = await prestage_cloze_sentences(db, llm, language_code="no", limit=5)
+
+        assert report.written == 2
+        assert db.get_cached_cloze_sentence(cloze_cache_key(db, "no", "om", "conjunction", "om"), "no") is not None
+        assert db.get_cached_cloze_sentence(cloze_cache_key(db, "no", "om", "adverb", "om"), "no") is not None
+        assert db.get_cached_cloze_sentence("om", "no") is None
+
+    def test_a_word_with_no_homograph_keys_by_its_answer(self):
+        db = _db_with_awaiting([("fra, ifra", "from")])
+        assert cloze_cache_key(db, "no", "fra, ifra", "preposition", "fra") == "fra"
 
     @pytest.mark.asyncio
     async def test_skips_a_word_already_cached(self):

@@ -102,4 +102,7 @@ def test_public_method_count_pinned() -> None:
     #  16 Norwegian image files were each shown on 2+ different words)
     # +seed_review_state (a Cebuano starter card begins as a REVIEW card with
     #  stability carried over from its Tagalog cognate, and no revlog — u8nz.7)
-    assert count == 137
+    # +count_vocab_with_text (homographs: each meaning gets its own cloze and its
+    #  own cached sentence, so the cache key must know the spelling is shared —
+    #  tunatale-umbu)
+    assert count == 138

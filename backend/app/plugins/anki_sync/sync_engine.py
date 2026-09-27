@@ -14,6 +14,7 @@ import re
 from datetime import UTC, datetime
 
 from app.audio.cloze_tts import synthesize_cloze_audios
+from app.cards.cloze_prestage import cloze_cache_key
 from app.cards.cloze_source import ClozeChoice, choose_cloze_sentence
 from app.cards.media.vocab_media import safe_stem as _safe_stem
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media
@@ -2122,13 +2123,17 @@ class AnkiSync:
         # words sat unservable on the live deck (tunatale-i0x6). For any other
         # word the answer IS unit.text and nothing below changes.
         answer = cloze_answer_spelling(self._language_code, unit.text)
+        # The cloze row's identity. Empty for the word's shared cloze; `sense:<Word
+        # class>` when another meaning of the same spelling already owns that one:
+        # each meaning gets its own cloze (the user's call, 2026-09-27,
+        # tunatale-umbu). The prefix keeps it from merging into the vocab row,
+        # whose disambig is the bare Word class.
+        cloze_disambig = ""
         existing_id = self._db.get_collocation_id_by_guid(compute_guid(answer, self._language_code, ""))
-        if existing_id is not None:
+        existing = self._db.get_collocation_by_id(existing_id)[1].syntactic_unit if existing_id is not None else None
+        if existing is not None and existing.card_type == "cloze":
             existing_base = self._db.get_base_collocation_id(existing_id)
-            if (
-                existing_base is None
-                and self._db.get_collocation_by_id(existing_id)[1].syntactic_unit.card_type == "cloze"
-            ):
+            if existing_base is None:
                 # A cloze of this word already exists — made from a lesson, which
                 # never links (only this method calls set_base_collocation_id).
                 # Minting would give the learner the same card twice; link the
@@ -2136,18 +2141,30 @@ class AnkiSync:
                 self._db.set_base_collocation_id(existing_id, cand.collocation_id)
                 report.adopted += 1
                 return
-            if existing_base is not None and existing_base != cand.collocation_id:
-                # The row this cloze would merge into already covers ANOTHER
-                # word; re-pointing it would silently uncover that one.
-                report.unservable += 1
-                _log.warning(
-                    "PRODUCTION_MINT_UNSERVABLE text=%r cid=%d — its cloze %r already covers cid=%d",
-                    unit.text,
-                    cand.collocation_id,
-                    answer,
-                    existing_base,
-                )
-                return
+            if existing_base != cand.collocation_id:
+                owner = self._db.get_collocation_by_id(existing_base)[1].syntactic_unit
+                if existing.translation == unit.translation != owner.translation:
+                    # A mint cloze copies the translation of the word it was made
+                    # for, so this one is THIS meaning's. Before #229 every sync
+                    # re-pointed a shared cloze to whichever homograph was
+                    # uncovered, and the flip-flop left three on the wrong meaning
+                    # (live 2026-09-27). Deterministic, so it moves once: the
+                    # displaced meaning fails this test and gets its own cloze.
+                    self._db.set_base_collocation_id(existing_id, cand.collocation_id)
+                    report.adopted += 1
+                    return
+                cloze_disambig = f"sense:{unit.disambig_key.strip()}" if unit.disambig_key.strip() else ""
+                if not cloze_disambig:
+                    report.unservable += 1
+                    _log.warning(
+                        "PRODUCTION_MINT_UNSERVABLE text=%r cid=%d — its cloze %r covers cid=%d and this word"
+                        " carries no disambig to tell its own apart",
+                        unit.text,
+                        cand.collocation_id,
+                        answer,
+                        existing_base,
+                    )
+                    return
         variants = card_surface_variants(self._language_code, unit.text)
         choice = choose_cloze_sentence(
             unit.text,
@@ -2166,7 +2183,10 @@ class AnkiSync:
             # `Example sentences` is 98.7% populated, so preferring the cache
             # would swap almost the whole deck for model output — a far larger
             # change than the one this is for.
-            cached = self._db.get_cached_cloze_sentence(answer, self._language_code)
+            cached = self._db.get_cached_cloze_sentence(
+                cloze_cache_key(self._db, self._language_code, unit.text, unit.disambig_key, answer),
+                self._language_code,
+            )
             if (
                 cached is not None
                 and re.search(rf"\b{re.escape(answer)}\b", cached.sentence, re.IGNORECASE)
@@ -2233,6 +2253,7 @@ class AnkiSync:
             source="anki",
             frequency=unit.frequency,
             lemma=answer.casefold(),
+            disambig_key=cloze_disambig,
             card_type="cloze",
             source_sentence=make_cloze_text(choice.surface, choice.sentence),
             source_sentence_translation=choice.gloss,

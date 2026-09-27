@@ -429,6 +429,19 @@ class DbCollocationsMixin:
             result = [(r["id"], self._row_to_item(conn, r), r["language_code"]) for r in rows]
         return result, total
 
+    def count_vocab_with_text(self, text: str, language_code: str) -> int:
+        """How many VOCAB rows in *language_code* carry exactly *text*.
+
+        More than one means homographs: one spelling, several words, told apart
+        by disambig (the deck's Word class). Each gets its own cloze
+        (tunatale-umbu), so anything keyed by the spelling alone must know.
+        """
+        with self._get_conn() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM collocations WHERE text = ? AND language_code = ? AND card_type = 'vocab'",
+                (text, language_code),
+            ).fetchone()[0]
+
     def count_collocations(self) -> int:
         with self._get_conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
