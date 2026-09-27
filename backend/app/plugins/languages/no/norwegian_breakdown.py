@@ -937,7 +937,10 @@ def _build_compound_sequence_spans(
     # the word silently lost its IPA. The multi-word branch discards the
     # bookends, which is why it never showed the defect.
     ends = word if bookend_text is None else bookend_text
-    sliceable = flat_syllables(word) is not None
+    # Both callers pass ``segment_compound(word)`` with >=2 parts, so this is
+    # exactly ``flat_syllables(word) is not None`` without segmenting and
+    # resolving the compound a second time (tunatale-xnv9.4).
+    sliceable = "".join(piece for _, pieces in units for piece in pieces) == word.lower().strip()
     source = word if sliceable else None
 
     def span(start: int, stop: int) -> tuple[int, int] | None:
