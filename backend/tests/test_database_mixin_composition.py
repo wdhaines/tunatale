@@ -105,4 +105,6 @@ def test_public_method_count_pinned() -> None:
     # +count_vocab_with_text (homographs: each meaning gets its own cloze and its
     #  own cached sentence, so the cache key must know the spelling is shared —
     #  tunatale-umbu)
-    assert count == 138
+    # +get_collocations_by_lemma_with_id (every row for a lemma, so a homograph
+    #  resolves to the meaning its sentence uses — tunatale-u8nz.22)
+    assert count == 139

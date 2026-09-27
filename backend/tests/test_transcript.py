@@ -419,9 +419,11 @@ class TestExtractTranscript:
         class CountingDB(SRSDatabase):
             lemma_queries: list[str] = []
 
-            def get_collocation_by_lemma_with_id(self, lemma):
+            # The transcript resolves through resolve_lemma_card, which reads
+            # every row for the key (a homograph needs them all — u8nz.22).
+            def get_collocations_by_lemma_with_id(self, lemma):
                 CountingDB.lemma_queries.append(lemma)
-                return super().get_collocation_by_lemma_with_id(lemma)
+                return super().get_collocations_by_lemma_with_id(lemma)
 
         CountingDB.lemma_queries = []
         db = CountingDB(":memory:")
@@ -1869,12 +1871,12 @@ class TestTranscriptEnrichment:
         """N occurrences of the same lemma cause 1 DB lookup, not N (finding #6).
 
         Regression: without a base_cache, each token calls
-        get_collocation_by_lemma_with_id per occurrence of its lemma.
+        get_collocations_by_lemma_with_id per occurrence of its lemma.
         """
         self._add_vocab("banka", "bank", lemma="banka")
         lesson = _make_lesson([("female-1", "banka banka banka")])
 
-        original_lookup = self.db.get_collocation_by_lemma_with_id
+        original_lookup = self.db.get_collocations_by_lemma_with_id
         call_count = 0
 
         def counting_lookup(lemma: str):
@@ -1882,7 +1884,7 @@ class TestTranscriptEnrichment:
             call_count += 1
             return original_lookup(lemma)
 
-        self.db.get_collocation_by_lemma_with_id = counting_lookup
+        self.db.get_collocations_by_lemma_with_id = counting_lookup
         extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
         assert call_count == 1, f"expected 1 lookup, got {call_count}"
 
