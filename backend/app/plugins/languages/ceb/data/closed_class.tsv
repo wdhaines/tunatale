@@ -1,0 +1,39 @@
+# Cebuano closed-class words the Wiktionary extract gets wrong or lacks (tunatale-u8nz.21).
+# Hand-curated. scripts/build_cebuano_lemma_table.py makes each row THE default reading of its surface;
+# Wiktionary's own readings stay, as non-defaults.
+#
+# Why: kaikki's "article" POS is not in the shared POS map, and the extract has no entry at all for
+# mga, ka, si, ni, aron, usab, o — among the 20 commonest tokens in Cebuano news.
+#
+# ⚠️ wala, ka and kini are VOCAB cards in both learners' decks (measured 2026-09-27). A function-word
+# UPOS (ADP DET CCONJ SCONJ PART) would make a lesson treat them as clozes and stop matching those
+# cards, so they get content UPOS here. Every function-word row below is either already a cloze in the
+# decks or not a card at all.
+# Lemmas: a surface keeps itself unless it is a contraction or case form of another word listed here.
+surface	upos	lemma	note
+ang	DET	ang	topic marker (Wiktionary: article; its only other reading was a PROPN)
+mga	DET	mga	plural marker
+og	DET	og	indefinite marker (Wiktionary: article)
+si	DET	si	personal-name topic marker
+ni	DET	ni	personal-name genitive marker
+ka	PRON	ka	"you" (singular); a vocab card
+mo	PRON	mo	"you" (genitive, short)
+kanila	PRON	kanila	"to them"
+kaniya	PRON	kaniya	"to him/her"
+atong	PRON	aton	"our" (linker form); was PROPN
+kini	PRON	kini	"this"; a vocab card; was ADV
+kana	PRON	kana	"that" (near you); was ADV
+niini	PRON	kini	"of this"
+ning	PRON	kini	"this" (short of kining)
+niadtong	PRON	kadto	"of that (past)"
+apan	CCONJ	apan	"but"; Wiktionary's only sense is the noun "grasshopper"
+pero	CCONJ	pero	"but"
+o	CCONJ	o	"or"
+aron	SCONJ	aron	"so that"
+lang	PART	lang	"just, only"
+unta	PART	unta	"hopefully"
+maoy	PART	mao	mao + y
+usab	ADV	usab	"also, again"
+sab	ADV	usab	"also" (short of usab)
+wala	VERB	wala	"there is none, did not"; a vocab card; was NUM "zero"
+wa	VERB	wala	short of wala
