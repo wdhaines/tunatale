@@ -21,6 +21,7 @@ from app.cards.number_image import number_value
 from app.common.guid import compute_guid
 from app.config import settings
 from app.languages import card_surface_variants, cloze_answer_spelling, get_tts_voice
+from app.llm.cloze_quality import carries_a_blank
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
 from app.models.syntactic_unit import SyntacticUnit, serialize_extras
 from app.plugins.anki_sync.sync_common import (
@@ -2166,7 +2167,13 @@ class AnkiSync:
             # would swap almost the whole deck for model output — a far larger
             # change than the one this is for.
             cached = self._db.get_cached_cloze_sentence(answer, self._language_code)
-            if cached is not None and re.search(rf"\b{re.escape(answer)}\b", cached.sentence, re.IGNORECASE):
+            if (
+                cached is not None
+                and re.search(rf"\b{re.escape(answer)}\b", cached.sentence, re.IGNORECASE)
+                # A row cached before the generator refused templates (live 'mot',
+                # 2026-09-27) must stay inert rather than mint stray blanks.
+                and not carries_a_blank(cached.sentence)
+            ):
                 # The boundary check is not redundant with the generator's. A
                 # cached row can predate a prompt change, and a cloze whose
                 # answer is absent from its own sentence blanks nothing —
