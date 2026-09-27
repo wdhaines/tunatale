@@ -44,6 +44,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
+from app.api import app_state
 from app.api._serializers import serialize_lesson
 
 # Reached across modules rather than duplicated. These are the shared post-generation
@@ -91,24 +92,6 @@ _FALLBACK_CEFR_LEVEL = "A2"
 # than rewritten: "no vocabulary is due" is the part that tells them this is a
 # normal Tuesday and not a broken button.
 _NOTHING_DUE = "Nothing to review right now — no vocabulary is due in this language today"
-
-
-def _renders_in_flight(app) -> set[str]:
-    """The set of session ids currently rendering, held on ``app.state``.
-
-    ⚠️ In memory, and deliberately NOT a table. The marker's honest lifetime is
-    the render's, and the render lives in this process's event loop. A restart
-    kills the render, so a marker that survived the restart would be a lie
-    needing exactly the reconciliation this module's docstring says a session
-    does not have. Created lazily on first use because the tests set
-    ``app.state.*`` by hand and never run the lifespan; a lifespan-only
-    initialiser would ``AttributeError`` under test.
-    """
-    renders = getattr(app.state, "review_renders", None)
-    if renders is None:
-        renders = set()
-        app.state.review_renders = renders
-    return renders
 
 
 def _latest_cefr_level(store) -> str:
@@ -187,14 +170,14 @@ async def _generate_and_store(
             language_code=request.state.language_code,
             session_id=session_id,
             session_date=session_date,
-            renderer=getattr(request.app.state, "renderer", None),
-            audio_dir=getattr(request.app.state, "audio_dir", None),
-            renders_in_flight=_renders_in_flight(request.app),
+            renderer=app_state.renderer(request),
+            audio_dir=app_state.audio_dir(request),
+            renders_in_flight=app_state.review_renders(request.app),
         ),
         srs_db=srs_db,
         lemmatizer_kwargs=_injected_lemmatizer(request),
         replace=replace,
-        llm=getattr(request.app.state, "llm", None),
+        llm=app_state.llm(request),
     )
 
     warnings: list[str] = []
@@ -301,7 +284,7 @@ async def _import_and_store(body: CreateReviewSessionFromPasteRequest, request: 
     language = request.state.language
     review_words = tuple(body.review_words)
 
-    await ensure_dialogue_glosses(story, getattr(request.app.state, "llm", None), language)
+    await ensure_dialogue_glosses(story, app_state.llm(request), language)
 
     try:
         # Validated BEFORE building, exactly as import_lesson and the rewrite route
@@ -324,14 +307,14 @@ async def _import_and_store(body: CreateReviewSessionFromPasteRequest, request: 
             language_code=request.state.language_code,
             session_id=session_id,
             session_date=session_date,
-            renderer=getattr(request.app.state, "renderer", None),
-            audio_dir=getattr(request.app.state, "audio_dir", None),
-            renders_in_flight=_renders_in_flight(request.app),
+            renderer=app_state.renderer(request),
+            audio_dir=app_state.audio_dir(request),
+            renders_in_flight=app_state.review_renders(request.app),
         ),
         srs_db=srs_db,
         lemmatizer_kwargs=_injected_lemmatizer(request),
         replace=False,
-        llm=getattr(request.app.state, "llm", None),
+        llm=app_state.llm(request),
     )
 
     warnings: list[str] = []
@@ -497,7 +480,7 @@ async def import_review_session(session_id: str, body: ImportReviewSessionReques
     # Same reason as import_story: the exported prompt no longer asks for glosses
     # (bd tunatale-yet7), so a pasted session needs its own gloss pass or it lands
     # with no hover translations.
-    await ensure_dialogue_glosses(story, getattr(request.app.state, "llm", None), language)
+    await ensure_dialogue_glosses(story, app_state.llm(request), language)
     try:
         # Validated BEFORE building, exactly as ``import_lesson`` does. Without
         # it a story missing ``lines[].speaker`` reaches the speaker-warning pass
@@ -522,14 +505,14 @@ async def import_review_session(session_id: str, body: ImportReviewSessionReques
             language_code=request.state.language_code,
             session_id=session_id,
             session_date=row["session_date"],
-            renderer=getattr(request.app.state, "renderer", None),
-            audio_dir=getattr(request.app.state, "audio_dir", None),
-            renders_in_flight=_renders_in_flight(request.app),
+            renderer=app_state.renderer(request),
+            audio_dir=app_state.audio_dir(request),
+            renders_in_flight=app_state.review_renders(request.app),
         ),
         srs_db=srs_db,
         lemmatizer_kwargs=_injected_lemmatizer(request),
         replace=True,
-        llm=getattr(request.app.state, "llm", None),
+        llm=app_state.llm(request),
     )
 
     warnings: list[str] = []
@@ -600,7 +583,7 @@ async def render_review_session(session_id: str, request: Request):
     if lesson is None:
         raise HTTPException(status_code=404, detail="Review session not found")
 
-    renders = _renders_in_flight(request.app)
+    renders = app_state.review_renders(request.app)
     if session_id in renders:
         raise HTTPException(status_code=409, detail="A render is already in progress for this session")
     renders.add(session_id)
@@ -637,7 +620,7 @@ async def get_review_session_render_status(session_id: str, request: Request):
     store = request.state.content_store
     if store.get_review_session_row(session_id) is None:
         raise HTTPException(status_code=404, detail="Review session not found")
-    return {"rendering": session_id in _renders_in_flight(request.app)}
+    return {"rendering": session_id in app_state.review_renders(request.app)}
 
 
 @router.post(
@@ -672,7 +655,7 @@ async def regloss_review_session(session_id: str, request: Request):
 
     story.pop("dialogue_glosses", None)
     language = request.state.language
-    await ensure_dialogue_glosses(story, getattr(request.app.state, "llm", None), language)
+    await ensure_dialogue_glosses(story, app_state.llm(request), language)
 
     try:
         validate_story(story, language=language)

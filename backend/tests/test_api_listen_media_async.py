@@ -116,7 +116,7 @@ class TestListenMediaIsOffTheCriticalPath:
 
     async def test_the_deferred_media_is_visible_as_background_work(self, monkeypatch, tmp_path):
         """tunatale-rwkz.6: work that outlives the response must be counted."""
-        from app.common.background_work import background_work
+        from app.api.app_state import background_work
 
         before = background_work(app).snapshot()["completed"].get("listen_media", 0)
         await self._run(monkeypatch, tmp_path, lesson_id="lesson-async-bg")

@@ -346,7 +346,7 @@ class TestPreStagesNextSyncsImages:
     async def test_the_prestage_is_visible_as_background_work(self, fake_driver, tmp_path, monkeypatch):
         """tunatale-rwkz.6: the sync returning is not the work finishing, so the
         prestage must be counted by the app's background-work tracker."""
-        from app.common.background_work import background_work
+        from app.api.app_state import background_work
 
         monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path / "media")
         self._seed_awaiting_production(app.state.srs_db)
@@ -478,7 +478,7 @@ class TestPreStagesClozeSentences:
     @pytest.mark.usefixtures("sociable_tt_collection")
     async def test_the_cloze_prestage_is_visible_as_background_work(self, fake_driver, tmp_path, monkeypatch):
         """tunatale-rwkz.6, the cloze half: counted under its own kind."""
-        from app.common.background_work import background_work
+        from app.api.app_state import background_work
 
         monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path / "media")
         self._seed_closed_class(app.state.srs_db)

@@ -15,7 +15,8 @@ import threading
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.common.background_work import BackgroundWork, background_work
+from app.api.app_state import background_work
+from app.common.background_work import BackgroundWork
 from app.main import app
 
 

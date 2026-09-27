@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.api import app_state
 from app.api._serializers import serialize_lesson
 from app.api.models import (
     CurriculumProgressEntry,
@@ -214,7 +215,7 @@ async def plan_commit(curriculum_id: str, request: Request):
     store.save_curriculum(curriculum_id, curriculum)
 
     # Enqueue pipeline jobs for the newly committed days (gated on generation_mode)
-    pipeline = getattr(request.app.state, "pipeline", None)
+    pipeline = app_state.pipeline(request)
     if pipeline is not None and curriculum.metadata.get("generation_mode", "auto") != "manual":
         for day_entry in days:
             pipeline.enqueue(
@@ -413,7 +414,7 @@ async def get_lesson_by_day(curriculum_id: str, day: int, request: Request):
 
 
 def _pipeline(request: Request):
-    pipeline = getattr(request.app.state, "pipeline", None)
+    pipeline = app_state.pipeline(request)
     return pipeline
 
 

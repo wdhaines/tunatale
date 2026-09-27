@@ -12,6 +12,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
+from app.api import app_state
 from app.api.models import (
     AuthStatusResponse,
     LoginRequest,
@@ -80,7 +81,7 @@ async def login(request: Request, body: LoginRequest) -> Response:
     recorded only for accounts that exist, the status code would answer "does
     this user exist?" for anyone willing to send five requests.
     """
-    auth_db = getattr(request.app.state, "auth_db", None)
+    auth_db = app_state.auth_db(request)
     if auth_db is None:
         raise HTTPException(status_code=503, detail="Auth unavailable")
 
@@ -122,7 +123,7 @@ async def logout(request: Request) -> Response:
     Succeeds even when no cookie is present or the session is already gone —
     someone clicking "log out" on an expired session should not get an error.
     """
-    auth_db = getattr(request.app.state, "auth_db", None)
+    auth_db = app_state.auth_db(request)
     token = request.cookies.get(COOKIE_NAME)
     if auth_db is not None and token is not None:
         auth_db.delete_session(token)
@@ -158,7 +159,7 @@ async def me(request: Request) -> dict[str, str]:
     they cannot disagree about what a valid session is.
     """
     token = request.cookies.get(COOKIE_NAME)
-    auth_db = getattr(request.app.state, "auth_db", None)
+    auth_db = app_state.auth_db(request)
     user: User | None = None
     if auth_db is not None and token is not None:
         user = get_session_user(auth_db, token)

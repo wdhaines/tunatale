@@ -116,16 +116,3 @@ class BackgroundWork:
             "failed": dict(self._failed),
             "last_finished": last,
         }
-
-
-def background_work(app: Any) -> BackgroundWork:
-    """The app's tracker, created on first use.
-
-    Lazily, rather than in the lifespan, so tests that build ``app.state`` by
-    hand — most of them — get one without seeding it.
-    """
-    work = getattr(app.state, "background_work", None)
-    if work is None:
-        work = BackgroundWork()
-        app.state.background_work = work
-    return work

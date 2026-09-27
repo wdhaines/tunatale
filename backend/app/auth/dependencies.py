@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException, Request
 
+from app.api import app_state
 from app.auth.models import User
 from app.auth.session import COOKIE_NAME, get_session_user
 from app.config import settings
@@ -23,7 +24,7 @@ async def require_user(request: Request) -> User | None:
     if token is None:
         raise HTTPException(status_code=401)
 
-    auth_db = getattr(request.app.state, "auth_db", None)
+    auth_db = app_state.auth_db(request)
     user = get_session_user(auth_db, token)
     if user is None:
         raise HTTPException(status_code=401)
