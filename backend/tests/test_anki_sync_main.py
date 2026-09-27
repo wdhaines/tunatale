@@ -9,6 +9,7 @@ import pytest
 
 from app.plugins.anki_sync.sync import (
     CreateNewReport,
+    NoMintNotetypeError,
     PromotionReport,
     PullReport,
     PushReport,
@@ -707,23 +708,12 @@ class TestMainCreateNew:
         assert tt_db.get_collocation("oprostiti").anki_note_id is None
         assert len(anki_conn.execute("SELECT id FROM notes").fetchall()) == 0
 
-    def test_main_discovers_model_name_when_unset(self, tmp_path, monkeypatch):
-        """Discovery is the third-tier model_name fallback (after the anki_model_name
-        override and the active language's configured vocab notetype). To exercise it,
-        target_language is a code with no configured vocab notetype, so neither of the
-        first two tiers fires and main() discovers the model via the cache. _CACHE_PATH
-        is pinned to tmp by conftest, so seed it explicitly."""
-        import app.plugins.anki_sync.model_discovery as md
-        from app.models.syntactic_unit import SyntacticUnit
-        from tests._helpers.anki_sync_create_new import _make_dual_collection_conn
-
-        md._CACHE_PATH.write_text("Slovene Vocabulary\n")
-
-        # "zz" has no vocab notetype (that is what makes discovery fire) but the
-        # reader still has to identify an L2 field, and since tunatale-yaan a
-        # language with no scorer is REFUSED rather than scored with another
-        # language's letters. Register a neutral scorer — empty charset, so every
-        # field ties at 0.0 and the forward-layout default (first field) wins.
+    def test_main_refuses_a_language_with_no_mint_notetype(self, tmp_path, monkeypatch, capsys):
+        """A language that registers no vocab notetype, with no ``anki_model_name``
+        override, has nowhere TT can mint into. main() must say so and exit 1 BEFORE
+        opening the collection — the retired fallback instead read a global cache
+        file keyed on nothing, so such a language silently minted into whatever
+        notetype an earlier deck had cached (locally: "Slovene Vocabulary")."""
         from app.cards.l2_scoring import make_l2_scorer
         from app.languages import _CONFIGS as _configs
         from app.languages import LanguageConfig
@@ -738,35 +728,33 @@ class TestMainCreateNew:
             ),
         )
 
-        anki_conn = _make_dual_collection_conn()
-        tt_db = SRSDatabase(":memory:")
-        tt_db.add_collocation(
-            SyntacticUnit(text="oprostiti", translation="to excuse", word_count=1, difficulty=1, source="user")
-        )
-
         class FakeSettings:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
             anki_model_name = ""
-            target_language = "zz"  # no configured vocab notetype → discovery fallback fires
+            target_language = "zz"
             database_url = "sqlite:///:memory:"
+
+        opened: list[str] = []
 
         @contextmanager
         def fake_safe_open(path, mode):
-            yield type("Ctx", (), {"conn": anki_conn})()
-
-        _patch_all_refreshes(monkeypatch)
+            opened.append(mode)
+            yield type("Ctx", (), {"conn": sqlite3.connect(":memory:")})()
 
         exit_code = main(
             argv=[],
             _settings=FakeSettings(),
             _safe_open_fn=fake_safe_open,
             _sync_log_path=tmp_path / "sync.log",
-            _db=tt_db,
+            _db=SRSDatabase(":memory:"),
         )
 
-        assert exit_code == 0
-        assert tt_db.get_collocation("oprostiti").anki_note_id is not None
+        assert exit_code == 1
+        assert opened == []
+        err = capsys.readouterr().err
+        assert "zz" in err
+        assert "anki_model_name" in err
 
 
 class TestMain:
@@ -1065,10 +1053,26 @@ class TestResolveModelName:
         target_language = "sl"
         database_urls = {"sl": "sqlite:///./tunatale_sl.db", "no": "sqlite:///./tunatale_no.db"}
 
-    def test_resolve_model_name_prefers_language_vocab_notetype(self):
-        conn = sqlite3.connect(":memory:")
-        assert _resolve_model_name(self._S(), "no", conn, "deck") == "Norwegian Vocabulary"
-        assert _resolve_model_name(self._S(), "sl", conn, "deck") == "Slovene Vocabulary"
+    @pytest.mark.parametrize(
+        ("code", "expected"),
+        [
+            ("no", "Norwegian Vocabulary"),
+            ("sl", "Slovene Vocabulary"),
+            ("tl", "Tagalog Vocabulary"),
+            ("ceb", "Cebuano Vocabulary"),
+        ],
+    )
+    def test_resolve_model_name_is_the_language_vocab_notetype(self, code, expected):
+        assert _resolve_model_name(self._S(), code) == expected
+
+    def test_resolve_model_name_override_wins(self):
+        s = self._S()
+        s.anki_model_name = "Basic"
+        assert _resolve_model_name(s, "no") == "Basic"
+
+    def test_resolve_model_name_refuses_a_language_with_no_vocab_notetype(self):
+        with pytest.raises(NoMintNotetypeError, match="'en'"):
+            _resolve_model_name(self._S(), "en")
 
 
 class TestPromotionHeartbeat:

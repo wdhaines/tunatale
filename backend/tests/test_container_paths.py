@@ -146,9 +146,7 @@ def test_home_relocates_every_remaining_mutable_path(tmp_path):
     These are deliberately NOT converted one by one — ``expanduser()`` at
     config-import time already relocates them together. This pins that, so a
     later refactor to an eagerly-resolved absolute default cannot quietly break
-    the container story. ``model_discovery._CACHE_PATH`` is included because it
-    is a module-level constant rather than a setting, and was the one the scope
-    note flagged as needing verification.
+    the container story.
     """
     home = tmp_path / "data"
     home.mkdir()
@@ -156,7 +154,6 @@ def test_home_relocates_every_remaining_mutable_path(tmp_path):
     code = """
 import json
 from app.config import settings
-from app.plugins.anki_sync.model_discovery import _CACHE_PATH
 print(json.dumps({
     "llm_usage_ledger_path": str(settings.llm_usage_ledger_path),
     "anki_backup_dir": str(settings.anki_backup_dir),
@@ -165,7 +162,6 @@ print(json.dumps({
     "anki_fallback_log": str(settings.anki_fallback_log),
     "sync_log": str(settings.sync_log),
     "tt_collection_path": str(settings.tt_collection_path),
-    "model_discovery_cache": str(_CACHE_PATH),
 }))
 """
     result = _probe(code, {"HOME": str(home)}, cwd=tmp_path)

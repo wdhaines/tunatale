@@ -5814,7 +5814,6 @@ The new test files exclusively for Anki integration:
 | `test_anki_sync_create_new.py` | Duplicate detection (id-first then GUID), media linking |
 | `test_anki_sync_round_trip.py` | Full push → pull round-trip cycle |
 | `test_anki_sync_force_fsrs.py` | automatic force-FSRS write path (the ack flow + preflight died with the CLI/AnkiConnect; `test_anki_sqlite_writer.py`, `test_anki_syncKey_preflight.py`, `test_anki_sync_mode_detection.py`, `test_anki_connect_client.py` were deleted with their subjects) |
-| `test_anki_model_discovery.py` | Notetype inference from existing notes |
 | `test_anki_normalize_usns.py` | USN clamping after a full upload |
 | `test_anki_migrate_homonyms.py`, `test_anki_repair_nested_homonyms.py` | Disambiguation migrations for homonym L2 forms |
 | `test_anki_merge_dupes_*.py` | Plan / apply / CLI for merging duplicate notes |
@@ -5847,7 +5846,7 @@ Each step goes through `safe_open` for backup + lock probe and emits a dry-run p
 
 After this pipeline, ongoing sync uses only the peer-sync endpoint (PART 12.4) — no further bootstrap is needed unless the user adds a third notetype or imports a substantially new deck.
 
-`app.plugins.anki_sync.model_discovery` is a small support utility: given a deck and an open Anki connection (or just the offline collection), it figures out which notetype's notes to sync. Called by the sync handler whenever `settings.anki_model_name` is unset.
+The notetype TT mints into is `settings.anki_model_name` when set, otherwise the language's registered vocab notetype (`sync.py::_resolve_model_name`). A language with neither makes the sync exit 1 before opening the collection; the old deck-discovery fallback (`model_discovery`, a global cache keyed on nothing) was deleted in `tunatale-ux66.2`.
 
 ---
 
