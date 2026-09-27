@@ -1621,6 +1621,51 @@ describe("playbackController", () => {
       rejected.catch(() => {}); // settle it so the runner stays clean
     });
 
+    // tunatale-yoj4: on the 2026-09-27 drive a hands-free hand-off into the next
+    // lesson ended in silence, and the trace could not say whether play() had
+    // been refused — the rejection was swallowed without a line. "call:play"
+    // with no "el:play" after it was the only, ambiguous, sign.
+    it("a refused play() records play:rejected with the error's name", async () => {
+      clearMediaTrace();
+      setMediaTraceEnabled(true);
+      const ctrl = createController({ audio: hfAudio });
+      const err = new DOMException("play() failed", "NotAllowedError");
+      vi.mocked(audioEl.play).mockReturnValueOnce(Promise.reject(err));
+
+      ctrl.play();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(
+        readMediaTrace().some(
+          (l) =>
+            l.includes("play:rejected") && l.includes("via=call") && l.includes("NotAllowedError"),
+        ),
+      ).toBe(true);
+    });
+
+    it("a refused play() on a hands-free advance records play:rejected too", async () => {
+      clearMediaTrace();
+      setMediaTraceEnabled(true);
+      const ctrl = createController({ audio: hfAudio });
+      ctrl.setHandsFree(true);
+      const err = new DOMException("play() failed", "NotAllowedError");
+      vi.mocked(audioEl.play).mockReturnValueOnce(Promise.reject(err));
+
+      audioEl.dispatchEvent(new Event("ended"));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(
+        readMediaTrace().some(
+          (l) =>
+            l.includes("play:rejected") &&
+            l.includes("via=advance") &&
+            l.includes("NotAllowedError"),
+        ),
+      ).toBe(true);
+    });
+
     it("hands-free OFF: ended leaves the track ended, no advance", () => {
       const mediaSession = makeFakeMediaSession();
       const ctrl = createController({

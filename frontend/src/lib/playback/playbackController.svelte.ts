@@ -348,6 +348,21 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     );
   }
 
+  // Every play() in this controller goes through here. A browser that blocks
+  // autoplay REJECTS rather than throwing, and the hand-off between lessons
+  // plays with no user gesture directly behind it. Unhandled, a rejection is a
+  // console error on a path the user experiences simply as "it didn't start";
+  // swallowed silently, it was invisible in the on-device trace too — the
+  // 2026-09-27 drive ended in silence at a hand-off and the log could not say
+  // whether play() had been refused (tunatale-yoj4). So it is caught AND
+  // recorded, with `via` naming the call site.
+  function startPlay(via: string): void {
+    const started = audioEl.play();
+    if (started && typeof started.catch === "function") {
+      started.catch((err: unknown) => trace("play:rejected", `via=${via} err=${String(err)}`));
+    }
+  }
+
   // Audio event listeners
   onEl("timeupdate", () => {
     // The loop check runs BEFORE the playhead is copied into the reactive
@@ -377,7 +392,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       pendingSeek = null;
       swapping = false;
       if (wasPlayingBeforeSwap) {
-        audioEl.play();
+        startPlay("swap");
         wasPlayingBeforeSwap = false;
       }
     }
@@ -407,7 +422,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     // leave the element paused at the cue start. The latch would go silent
     // exactly where drilling one line matters most, so resume playback.
     if (latchLoopCheck()) {
-      void audioEl.play();
+      startPlay("latch");
       return;
     }
     // Hands-free: advance to the next pass of the sequence (shared with the
@@ -485,7 +500,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     try {
       ms.setActionHandler("play", () => {
         trace("action:play");
-        audioEl.play();
+        startPlay("action");
       });
     } catch {
       trace("refused:play");
@@ -838,7 +853,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       ) ?? null;
     if (here) {
       doSeek(here.start_ms / 1000);
-      audioEl.play();
+      startPlay("jump");
       return;
     }
     if (findCueInSection(canonicalSection(ref), ref)) {
@@ -923,7 +938,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     );
     if (next !== undefined) {
       selectTrack(next, null, true);
-      void audioEl.play();
+      startPlay("advance");
       return;
     }
     playing = false;
@@ -941,7 +956,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     const first = HANDS_FREE_SEQUENCE.find((t) => audioSections.some((s) => s.section_type === t));
     if (first === undefined) return false;
     selectTrack(first, null, true);
-    void audioEl.play();
+    startPlay("restart");
     return true;
   }
 
@@ -991,13 +1006,8 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     play() {
       trace("call:play");
       // The hand-off between lessons calls this without a user gesture directly
-      // behind it, and a browser that blocks autoplay REJECTS rather than
-      // throwing. Unhandled, that surfaces as a console error on a path the
-      // user experiences simply as "it didn't start" — the transport is right
-      // there, so swallow it rather than making a blocked autoplay look like a
-      // crash.
-      const started = audioEl.play();
-      if (started && typeof started.catch === "function") started.catch(() => {});
+      // behind it — see startPlay for what a refusal does.
+      startPlay("call");
     },
     pause() {
       trace("call:pause");
@@ -1010,7 +1020,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       // on `playing` could call pause() on an already-paused element — no event
       // fires, so the button stays stuck. Ground truth always recovers.
       if (audioEl.paused) {
-        audioEl.play();
+        startPlay("toggle");
       } else {
         audioEl.pause();
       }
