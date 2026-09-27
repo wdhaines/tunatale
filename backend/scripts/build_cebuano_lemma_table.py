@@ -83,6 +83,7 @@ _BACKEND = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE = _BACKEND / "scripts/local/kaikki/Cebuano.jsonl"
 OUTPUT = _BACKEND / "app/plugins/languages/ceb/data/cebuano_lemmas.tsv.gz"
 BASE_LIST = _BACKEND / "app/plugins/languages/ceb/data/base625.tsv"
+CLOSED_CLASS = _BACKEND / "app/plugins/languages/ceb/data/closed_class.tsv"
 
 # base625.tsv's category column → the UPOS a base-list word keeps. Everything
 # else in that list is a thing (nouns, colours, places), so NOUN.
@@ -372,7 +373,46 @@ def base_list_headwords(path: Path | None) -> tuple[set[str], dict[str, set[str]
     return verbs, dict(nonverb)
 
 
-def build_from_path(source: Path, output: Path, base_list: Path | None = None) -> dict:
+def load_closed_class(path: Path) -> list[tuple[str, str, str]]:
+    """``(surface, UPOS, lemma)`` rows of the hand-curated closed-class list (tunatale-u8nz.21).
+
+    Raises on an unknown UPOS or a surface listed twice: either is a typo that
+    would otherwise ship silently.
+    """
+    import csv
+
+    with open(path, encoding="utf-8") as fh:
+        body = [line for line in fh if line.strip() and not line.startswith("#")]
+    out: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for row in csv.DictReader(body, delimiter="\t"):
+        surface, upos, lemma = row["surface"], row["upos"], row["lemma"]
+        if upos not in UPOS_ORDER:
+            raise ValueError(f"{path}: {surface}: unknown UPOS {upos!r}")
+        if surface in seen:
+            raise ValueError(f"{path}: {surface} is listed twice")
+        seen.add(surface)
+        out.append((surface, upos, lemma))
+    return out
+
+
+def apply_closed_class(rows: Rows, entries: Iterable[tuple[str, str, str]]) -> Rows:
+    """Make each listed ``(upos, lemma)`` THE default of its surface; keep every other reading.
+
+    Wiktionary's own readings of a listed surface survive as non-defaults, so a
+    context resolver can still pick them (``apan`` the noun "grasshopper").
+    """
+    listed = {surface: (upos, lemma) for surface, upos, lemma in entries}
+    out: Rows = {row for row in rows if row[0] not in listed}
+    for surface, (upos, lemma) in listed.items():
+        out.update((s, u, lem, 0) for s, u, lem, _ in rows if s == surface and (u, lem) != (upos, lemma))
+        out.add((surface, upos, lemma, 1))
+    return out
+
+
+def build_from_path(
+    source: Path, output: Path, base_list: Path | None = None, closed_class: Path | None = None
+) -> dict:
     """Build the table from *source* JSONL into *output* ``.tsv.gz``, print the report."""
     sha_hex = _sha256(source)
     with open(source, encoding="utf-8") as fh:
@@ -425,6 +465,9 @@ def build_from_path(source: Path, output: Path, base_list: Path | None = None) -
 
     # Rule 5: defaults
     rows = assign_defaults(verb_surfaces, nonverb, attested_surfaces, root_form_count, headword_upos, linkers)
+    # Rule 6: the hand-curated closed-class list overrides (tunatale-u8nz.21).
+    if closed_class is not None:
+        rows = apply_closed_class(rows, load_closed_class(closed_class))
 
     # Emit
     out = io.StringIO()
@@ -480,7 +523,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.source.exists():
         parser.error(f"source extract not found: {args.source}")
-    build_from_path(args.source, OUTPUT, BASE_LIST)
+    build_from_path(args.source, OUTPUT, BASE_LIST, CLOSED_CLASS)
     return 0
 
 
