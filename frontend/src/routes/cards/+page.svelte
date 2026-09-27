@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
+	import { dueStudyDay } from '$lib/studyDay';
 	import type { SRSItemDetail, SRSListParams, QueueStats } from '$lib/api';
 	import { syncStore } from '$lib/stores/sync.svelte';
 	import ImageEditModal from '$lib/components/ImageEditModal.svelte';
@@ -223,11 +224,14 @@
 		return value.replace(/\[sound:[^\]]*\]/g, '');
 	}
 
-	function formatDue(iso: string | null | undefined): string {
+	/** The due date as a STUDY day: a learning/relearning due_at is an intraday
+	 *  instant, and its UTC date is a day late in the evening west of UTC. */
+	function formatDue(iso: string | null | undefined, state: string): string {
 		if (!iso) return '';
 		const d = new Date(iso);
 		if (isNaN(d.getTime())) return iso;
-		return d.toLocaleDateString(undefined, {
+		const day = dueStudyDay(d, state === 'learning' || state === 'relearning');
+		return new Date(day).toLocaleDateString(undefined, {
 			year: 'numeric',
 			month: 'short',
 			day: 'numeric',
@@ -323,7 +327,7 @@
 						<input class="col-text" bind:value={editText} />
 						<input class="col-trans" bind:value={editTranslation} />
 						<span class="col-state">{item.state}</span>
-						<span class="col-due">{formatDue(item.due_at)}</span>
+						<span class="col-due">{formatDue(item.due_at, item.state)}</span>
 						<span class="col-reps">{item.reps}</span>
 						<span class="col-actions">
 							<button onclick={() => saveEdit(item.id)}>{t('cards.save')}</button>
@@ -347,7 +351,7 @@
 						<span class="col-text">{stripSoundTags(item.text)}</span>
 						<span class="col-trans">{stripSoundTags(item.translation)}</span>
 						<span class="col-state state-{item.state}">{item.state}</span>
-						<span class="col-due">{formatDue(item.due_at)}</span>
+						<span class="col-due">{formatDue(item.due_at, item.state)}</span>
 						<span class="col-reps">{item.reps}</span>
 						<span class="col-actions actions-menu">
 							<button

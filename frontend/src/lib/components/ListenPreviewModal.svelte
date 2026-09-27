@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
+	import { dueStudyDay, studyDayOf } from '$lib/studyDay';
 	import {
 		api,
 		type ListenPayload,
@@ -398,47 +399,19 @@
 		ratings = rts;
 	}
 
-	/** TT's study day rolls at 4 AM LOCAL, mirroring Anki — the frontend half of
-	 *  `ANKI_ROLLOVER_HOUR` in backend/app/config.py. A compile-time constant on
-	 *  both sides; nothing plumbs it over the wire. */
-	const ROLLOVER_HOUR = 4;
-
 	/** Whole days from the current STUDY DAY until the card is due; null if unknown.
 	 *
-	 * ⚠️ Two different day domains meet here, and mixing them was bd tunatale-l0b6.
-	 * The DUE side is a UTC date: `due_at_rollover_utc` writes day-level due
-	 * timestamps at 04:00 **UTC** on the due date, so flooring to UTC midnight
-	 * recovers the due date exactly. The TODAY side is NOT a UTC date — it is
-	 * `rollover.py::anki_today`, the LOCAL date of the most recent 04:00 LOCAL
-	 * rollover. Using the browser's UTC date for it read every count one day low
-	 * from 20:00 to 04:00 at UTC-4 — roughly a third of the day, reported as
-	 * "lots of -1s in the evening".
-	 *
-	 * Plain `Date`, not `SvelteDate`: these are throwaway values that are never
-	 * mutated, so the reactive wrapper tracked nothing — and because
-	 * `SvelteDate extends Date` binds `Date` at module-eval time, it also made
-	 * the clock unreachable from `vi.setSystemTime`, so this function could not
-	 * be tested at all.
+	 * Both sides come from `$lib/studyDay`, which holds the convention and the
+	 * history of getting it wrong (tunatale-l0b6: the TODAY side read the
+	 * browser's UTC date and every count was one day low from 20:00 to 04:00 at
+	 * UTC-4). A learning row never shows a day count here (`dueLabel` says
+	 * "learning"), so the due side is read day-level.
 	 */
 	function dueDays(due_at: string | null): number | null {
 		if (!due_at) return null;
 		const dueDate = new Date(due_at);
 		if (isNaN(dueDate.getTime())) return null;
-		// Both sides are built with `Date.UTC` and NOTHING is mutated. That is
-		// required, not stylistic: `svelte/prefer-svelte-reactivity` rejects a
-		// MUTABLE `Date`, and `SvelteDate` cannot be used here because it binds
-		// the real clock at module-eval time (see the note above). Read-only
-		// `Date` satisfies the rule and stays testable.
-		const dueDay = Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate());
-		// `Date.UTC` normalises an out-of-range day, so day-1 before the rollover
-		// rolls back across month and year ends without a branch.
-		const now = new Date();
-		const today = Date.UTC(
-			now.getFullYear(),
-			now.getMonth(),
-			now.getDate() - (now.getHours() < ROLLOVER_HOUR ? 1 : 0),
-		);
-		return Math.round((dueDay - today) / 86400000);
+		return Math.round((dueStudyDay(dueDate, false) - studyDayOf(new Date())) / 86400000);
 	}
 
 	function formatDueAt(due_at: string | null): string | null {
