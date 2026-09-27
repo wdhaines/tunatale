@@ -1184,6 +1184,15 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
     lemma_occurrences = words.occurrences
     lemma_to_sentence = words.first_sentence
+    # An existing cloze is matched to THIS lesson by its own sentence, never by its
+    # lemma: the lemma's first sentence here is some other line whenever the word
+    # is frequent (`sa`, `ang`), and backfilling from it stamps an unrelated
+    # translation onto the card (tunatale-u8nz.19). Both maps are keyed by the
+    # normalized sentence: the lesson's raw sentence (for audio) and its
+    # translation (which may be missing).
+    own_sentence_index = {normalize_sentence_key(k): k for k in sentence_translations}
+    own_sentence_index.update({normalize_sentence_key(v): v for v in lemma_to_sentence.values()})
+    own_translation_index = {normalize_sentence_key(k): v for k, v in sentence_translations.items()}
     lemma_to_surfaces = words.surfaces
     lemma_to_first_surface = words.first_surface
     surface_to_upos = words.surface_upos
@@ -1366,24 +1375,21 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
         else:
             # ── Existing row — skip cloze, grade recognition for eligible vocab ──
             if existing.syntactic_unit.card_type == "cloze":
-                # Backfill empty sentence_translation on existing cloze rows so
-                # the user's pre-existing cards can still surface the English
-                # sentence in Anki / TT review. Mark dirty so sync_push picks it
-                # up and rewrites Back Extra.
-                if not existing.syntactic_unit.source_sentence_translation:
-                    # Translations are keyed by the raw sentence; the stored
-                    # source_sentence may now be pre-clozed (Phase 2b), so use the raw
-                    # sentence from this lesson (lemma is always present in the loop).
-                    sent = lemma_to_sentence.get(lemma, "")
-                    new_st = sentence_translations.get(sent, "")
-                    if new_st:
-                        db.set_sentence_translation_dirty(existing.guid, new_st)
-                # Try to generate missing audio for existing cloze rows.
-                # Use the raw sentence (lemma_to_sentence) — the stored
-                # source_sentence contains {{c1::…}} markup under Phase-2b.
-                sent = lemma_to_sentence.get(lemma, "")
-                if sent and not db.get_sentence_audio_filename(existing_id):
-                    pending_cloze.append((existing_id, sent, lemma_to_first_surface.get(lemma, lemma), lemma))
+                # Backfill an existing cloze's empty sentence_translation and
+                # missing audio — but only when ITS OWN sentence is in this
+                # lesson. The stored source_sentence is pre-clozed (Phase 2b), so
+                # match it normalized and take the lesson's raw key: translations
+                # and audio are keyed by the raw sentence.
+                own_key = normalize_sentence_key(existing.syntactic_unit.source_sentence)
+                own = own_sentence_index.get(own_key)
+                if own is None:
+                    continue
+                new_st = own_translation_index.get(own_key, "")
+                if new_st and not existing.syntactic_unit.source_sentence_translation:
+                    # Mark dirty so sync_push picks it up and rewrites Back Extra.
+                    db.set_sentence_translation_dirty(existing.guid, new_st)
+                if not db.get_sentence_audio_filename(existing_id):
+                    pending_cloze.append((existing_id, own, lemma_to_first_surface.get(lemma, lemma), lemma))
                 continue
 
             # An earlier listen created this card but its gloss retry failed.

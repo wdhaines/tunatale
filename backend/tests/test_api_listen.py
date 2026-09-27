@@ -793,6 +793,75 @@ class TestListenClozeIntegration:
         dirty = db.get_dirty_fields(item_kje.guid)
         assert "sentence_translation" in dirty.split(",")
 
+    async def _cloze_with_own_sentence(self, own_sentence: str):
+        """A `kje` cloze minted from an EARLIER lesson: empty translation, its own
+        sentence, already in Anki (so a backfill marks it dirty for push)."""
+        db = await self._setup_lesson()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
+        item = db.get_collocation_by_lemma("kje")
+        assert item.syntactic_unit.card_type == "cloze"
+        with db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocations SET source_sentence = ?, sentence_translation = '', anki_note_id = 9999"
+                " WHERE guid = ?",
+                (own_sentence, item.guid),
+            )
+            conn.commit()
+        return db, item.guid
+
+    async def test_listen_never_backfills_a_cloze_with_another_sentences_translation(self):
+        """The cloze's own sentence is not in this lesson → its translation stays empty.
+
+        Regression (tunatale-u8nz.19, 2026-09-26): the backfill looked up the
+        translation of the lesson's FIRST sentence containing the lemma. For a
+        cloze on a frequent word (`sa`, `ang`, `mga` in Cebuano) that is almost
+        never the cloze's own sentence, so every listen stamped an unrelated
+        English line onto the card and marked it dirty for Anki.
+        """
+        from app.storage.store import ContentStore
+
+        db, guid = await self._cloze_with_own_sentence("Zdravo, {{c1::kje}} ste?")
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("lesson-1")
+        lesson.generation_metadata = {"sentence_translations": {"Kje je banka?": "Where is the bank?"}}
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
+        assert response.status_code == 200
+
+        item = db.get_collocation_by_lemma("kje")
+        assert item.syntactic_unit.source_sentence_translation == ""
+        assert "sentence_translation" not in (db.get_dirty_fields(guid) or "").split(",")
+
+    async def test_listen_backfills_a_cloze_from_its_own_sentence_not_the_first(self):
+        """The lemma's FIRST sentence in the lesson is a different one; the cloze
+        gets the translation of the sentence it was made from."""
+        from app.storage.store import ContentStore
+
+        db, guid = await self._cloze_with_own_sentence("Zdravo, {{c1::kje}} ste")
+        store: ContentStore = app.state.content_store
+        lesson = store.get_lesson("lesson-1")
+        lesson.sections[0].phrases.append(
+            Phrase(text="Zdravo, kje ste?", voice_id="female-1", language_code="sl", role="female-1")
+        )
+        lesson.generation_metadata = {
+            "sentence_translations": {
+                "Kje je banka?": "Where is the bank?",
+                "Zdravo, kje ste?": "Hello, where are you?",
+            }
+        }
+        store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/srs/listen", json={"content_id": "lesson-1"})
+        assert response.status_code == 200
+
+        item = db.get_collocation_by_lemma("kje")
+        assert item.syntactic_unit.source_sentence_translation == "Hello, where are you?"
+        assert "sentence_translation" in db.get_dirty_fields(guid).split(",")
+
     async def test_listen_skips_key_phrase_when_cloze(self):
         """Key phrase existing as cloze (defensive) → skip, no crash."""
         from app.models.syntactic_unit import SyntacticUnit
