@@ -469,23 +469,30 @@ async def run_full_sync(
     return create_report, push_report, pull_report, media_report, promotion_report
 
 
-def _resolve_model_name(_s, code: str, conn, deck_name: str) -> str:
+class NoMintNotetypeError(ValueError):
+    """The language registers no vocab notetype and no override names one."""
+
+
+def _resolve_model_name(_s, code: str) -> str:
     """Notetype to mint TT-originated cards into for *code*.
 
     Precedence: explicit ``anki_model_name`` override > the language's TT vocab
     notetype (e.g. "Norwegian Vocabulary", NOT the imported deck's recognition-only
-    notetype discovery would return) > deck-discovered model (the Slovene case,
-    where deck notetype == mint notetype).
+    notetype). With neither there is nowhere to mint, and that is an error: the
+    deck-discovery fallback this replaced cached one name globally, keyed on
+    nothing, so a language without a notetype silently minted into Slovene's.
     """
     from app.languages import get_vocab_notetype
-    from app.plugins.anki_sync import model_discovery
 
+    if _s.anki_model_name:
+        return _s.anki_model_name
     vocab = get_vocab_notetype(code)
-    return (
-        _s.anki_model_name
-        or (vocab.name if vocab is not None else "")
-        or model_discovery.get_or_discover_model_name_offline(conn, deck_name)
-    )
+    if vocab is None:
+        raise NoMintNotetypeError(
+            f"language {code!r} registers no vocab notetype to mint into; "
+            "register one in its language plugin or set anki_model_name"
+        )
+    return vocab.name
 
 
 def main(
@@ -529,6 +536,14 @@ def main(
     # a fixed per-sync cost that scales with collection SIZE, not with the number
     # of dirty rows. A timer set that started at run_full_sync's first phase could
     # report every phase at ~0 and still leave the wall time unexplained.
+    # Resolved before the collection is opened: a language with nowhere to mint
+    # should fail without paying for safe_open's backup and integrity check.
+    try:
+        model_name = _resolve_model_name(_s, _s.target_language)
+    except NoMintNotetypeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
     timings: dict[str, float] = {}
     _t_total = time.perf_counter()
 
@@ -568,8 +583,6 @@ def main(
                 _anki_col_crt=col_crt,
                 language_code=language_code,
             )
-            with _phase(timings, "resolve_model"):
-                model_name = _resolve_model_name(_s, language_code, ctx.conn, deck_name)
             create, push, pull, media, promotion = asyncio.run(
                 run_full_sync(
                     sync,
