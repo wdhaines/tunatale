@@ -176,7 +176,7 @@ class OfflineReader:
                     disambig_key = extract_disambig_from_fields(note.fields)
                     article = None
                     extras = None
-                note_text = ""
+                note_text = None
             card_records = [
                 CardRecord(
                     anki_card_id=c.id,

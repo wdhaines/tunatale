@@ -82,7 +82,10 @@ class NoteRecord:
     anki_guid: str
     l2_text: str
     translation: str
-    note: str
+    # ``None`` = this notetype has no Note field (every vocab notetype): no
+    # opinion, so the pull heal must not overwrite TT's local note
+    # (tunatale-rcol). Only a cloze's Back Extra carries one.
+    note: str | None
     disambig_key: str
     mod: int
     cards: list[CardRecord]

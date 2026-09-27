@@ -362,7 +362,9 @@ class TestOfflineReader:
 
         basic = next(r for r in records if r.anki_note_id == 2002)
         assert basic.translation == "bank"
-        assert basic.note == ""
+        # A vocab notetype has no Note field, so the reader has no opinion
+        # (tunatale-rcol): "" would tell the pull heal "Anki says blank".
+        assert basic.note is None
         assert basic.l2_text == "banka"
 
 
@@ -584,6 +586,46 @@ class TestSyncPull:
 
         assert report.notes_updated == 0
         assert db.get_collocation_by_guid(guid).syntactic_unit.article == "en"
+
+    def test_sync_pull_leaves_a_vocab_note_alone(self):
+        """``note=None`` means "this notetype has no Note field" (tunatale-rcol).
+
+        TT keeps a vocab card's note locally and never pushes it: only a cloze's
+        Back Extra carries one. The reader used to report ``""`` for every vocab
+        note, so the first pull blanked every base-list label
+        (``'<list> · <category>'``) — all 538 on the live Cebuano deck.
+        """
+        db = _make_tt_db()
+        unit = SyntacticUnit(
+            text="banka", translation="bank", word_count=1, difficulty=1, source="corpus", note="625 · places"
+        )
+        db.add_collocation(unit)
+        guid = db.get_collocation("banka").guid
+        db.set_anki_ids(guid, note_id=9001, card_ids={Direction.RECOGNITION: 90010})
+
+        cards = [make_card_record(anki_card_id=90010, ord=0, queue=2, reps=3, stability=5.0, difficulty=4.5)]
+        records = [make_note_record(anki_guid=guid, cards=cards, note=None)]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.notes_updated == 0
+        assert db.get_collocation_by_guid(guid).syntactic_unit.note == "625 · places"
+
+    def test_sync_pull_vocab_translation_change_keeps_the_note(self):
+        """The heal rewrites translation; the unrelated TT-only note must ride through."""
+        db = _make_tt_db()
+        unit = SyntacticUnit(
+            text="banka", translation="bank", word_count=1, difficulty=1, source="corpus", note="625 · places"
+        )
+        db.add_collocation(unit)
+        guid = db.get_collocation("banka").guid
+
+        records = [make_note_record(anki_guid=guid, translation="bank (financial)", cards=[], note=None)]
+        report = AnkiSync(db=db, _reader=FakeReader(records), _writer=FakeWriter()).sync_pull()
+
+        assert report.notes_updated == 1
+        unit_after = db.get_collocation_by_guid(guid).syntactic_unit
+        assert unit_after.translation == "bank (financial)"
+        assert unit_after.note == "625 · places"
 
     def test_sync_pull_blank_article_field_still_wins_over_local(self):
         """A profile notetype whose Article field IS blank stays authoritative.

@@ -285,6 +285,7 @@ def make_note_record(
     disambig_key: str = "",
     mod: int = 0,
     cards: list | None = None,
+    note: str | None = "",
     **overrides,
 ) -> NoteRecord:
     """Create a NoteRecord with sensible defaults for sync tests."""
@@ -300,7 +301,7 @@ def make_note_record(
         l2_text=l2_text,
         translation=translation,
         sentence_translation=sentence_translation,
-        note="",
+        note=note,
         disambig_key=disambig_key,
         mod=mod,
         cards=cards,
