@@ -107,6 +107,10 @@ register(
         # phoneme planner and the breakdown both split through syllabify_word,
         # so registering it here moves both together.
         syllabifier_fn=syllabify_cebuano_word,
+        # Roots first (tunatale-u8nz.5): affixed forms lemmatize to their root,
+        # built from Wiktionary by scripts/build_cebuano_lemma_table.py.
+        lemma_table_path=_DATA / "cebuano_lemmas.tsv.gz",
+        lemmatizer_type="table",
         # Deliberately omitted until their owning beads ship:
         # - planner_example: get_planner_example picks the LOWEST-SORTING other
         #   language that supplies one, and "ceb" sorts before every other
@@ -115,8 +119,6 @@ register(
         #   relative, would be shown Cebuano. That is exactly the
         #   planner-language contamination the selector exists to prevent.
         # - wordfreq_lang: wordfreq has no "ceb" (tunatale-u8nz.6).
-        # - lemma_table_path, lemmatizer_type (stays at the shared "lowercase"
-        #   default): tunatale-u8nz.5.
         # - l2_scorer: nothing to score with (see notetype_profiles above); a
         #   deck the user imports will need its own profile, as Tagalog's did.
     ),
