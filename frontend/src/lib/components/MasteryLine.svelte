@@ -24,9 +24,15 @@
 	 */
 	let {
 		transcript,
+		loading = false,
 		extra = null
 	}: {
 		transcript: TranscriptData | null;
+		/** While true and there is no transcript yet, render an invisible
+		 *  placeholder of the same markup, so the line's arrival does not shove
+		 *  the player below it ~45px mid-tap (tunatale-9k7j: a tap aimed at
+		 *  Repeat landed on Play). A failed load passes false: no gap left. */
+		loading?: boolean;
 		/** `tooltip` is REQUIRED: the on-line text has to be terse enough not to
 		 *  wrap, so the full phrasing has nowhere else to live. An optional one
 		 *  produced a branch nothing ever took. */
@@ -71,7 +77,18 @@
 	}
 </script>
 
-{#if mastery && mastery.pct !== null}
+{#if !transcript && loading}
+	<div class="mastery-placeholder" aria-hidden="true">
+		<p class="mastery-line"><span class="mastery-segment">0 known</span></p>
+		<div class="mastery-sides">
+			{#each ['Understand', 'Produce'] as label (label)}
+				<span class="side-label">{label}</span>
+				<span class="side-bar"></span>
+				<span class="side-pct">—</span>
+			{/each}
+		</div>
+	</div>
+{:else if mastery && mastery.pct !== null}
 	<p class="mastery-line">
 		{#each segments as seg, i (seg.key)}{#if i > 0}<span class="mastery-sep">·</span>{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}{#if extra}<span class="mastery-sep">·</span><Tooltip translation={extra.tooltip}><span class="mastery-segment mastery-extra" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{extra.text}</span></Tooltip>{/if}
 	</p>
@@ -87,6 +104,14 @@
 {/if}
 
 <style>
+	/* display: contents keeps the p and the grid as the PARENT's direct
+	   children, exactly as the real line has them, so a flex/grid gap between
+	   them is the same too. visibility (not display:none) is what keeps the
+	   space; it also keeps the placeholder out of the accessibility tree. */
+	.mastery-placeholder {
+		display: contents;
+		visibility: hidden;
+	}
 	.mastery-line {
 		color: var(--color-muted);
 		font-size: 0.82rem;

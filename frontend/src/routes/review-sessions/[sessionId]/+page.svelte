@@ -428,7 +428,7 @@
 			<!-- The reused figure rides the stats line instead of owning one. As its
 			     own paragraph it cost ~17px of a phone's first screen to carry a
 			     single number; the full phrasing survives in the tooltip. -->
-			<MasteryLine {transcript} extra={coverageSegment} />
+			<MasteryLine {transcript} loading={transcriptLoading} extra={coverageSegment} />
 		{/snippet}
 		{#snippet actions()}
 			<ListenActions
