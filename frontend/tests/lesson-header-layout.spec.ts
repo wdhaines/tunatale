@@ -381,6 +381,37 @@ test.describe("Repeat on a touch screen", () => {
 		await testInfo.attach("media-trace", { body: log ?? "(no media trace)", contentType: "text/plain" });
 	});
 
+	// The cause of tunatale-9k7j, read off its trace (2026-09-27): the mastery
+	// line above the player rendered NOTHING until the transcript arrived, then
+	// three lines at once, pushing the controls down ~45px. A tap Playwright
+	// had aimed at Repeat — and a learner's thumb — landed on Play, which sits
+	// directly above it at the same x. Geometry, so it lives here, not in jsdom.
+	test("the player does not move when the mastery line arrives", async ({ page, request }) => {
+		test.skip(!(await backendAvailable(request)), "Backend not available");
+		const cid = await curriculumId(request);
+		await stubFullAudio(page);
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => (release = resolve));
+		await page.route("**/api/srs/content/*/transcript", async (route) => {
+			await held;
+			await route.continue();
+		});
+		await page.goto(`/c/${cid}`);
+		await page.getByRole("button", { name: "Day 1" }).click();
+
+		const repeat = page.locator(".player-card .sentence-row button[aria-pressed]");
+		await expect(repeat).toBeVisible({ timeout: 15000 });
+		// Guard: the transcript really is still in flight, or this measures nothing.
+		await expect(page.locator(".mastery-placeholder")).toHaveCount(1);
+		const before = await repeat.boundingBox();
+
+		release();
+		await expect(page.locator(".mastery-placeholder")).toHaveCount(0);
+		await expect(page.locator(".mastery-line")).toBeVisible();
+		const after = await repeat.boundingBox();
+		expect(after?.y, "Repeat moved when the mastery line arrived").toBe(before?.y);
+	});
+
 	test("released Repeat does not keep looking engaged after the tap", async ({ page, request }) => {
 		test.skip(!(await backendAvailable(request)), "Backend not available");
 		const cid = await curriculumId(request);

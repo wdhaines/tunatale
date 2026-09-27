@@ -492,7 +492,7 @@
 		{#snippet headerBelow()}
 				<!-- Stats read as lesson metadata under the title rather than a third
 				     stacked line in the action row — same information, no extra row. -->
-				<MasteryLine {transcript} />
+				<MasteryLine {transcript} loading={transcriptLoading} />
 		{/snippet}
 		{#snippet noAudio()}
 				<div class="render-row">
