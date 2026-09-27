@@ -6,6 +6,7 @@ from app.cards.field_map import NotetypeProfile
 from app.cards.vocab_notetype import CEBUANO_VOCAB
 from app.languages import LanguageConfig, register
 from app.models.language import NARRATOR_VOICE, Language
+from app.plugins.languages.ceb.a1_morphology import CEBUANO_A1_MORPHOLOGY
 from app.plugins.languages.ceb.phoneme_plan import create_phoneme_planner
 from app.plugins.languages.ceb.preprocessor import CebuanoPreprocessor
 from app.plugins.languages.ceb.syllabify import syllabify_cebuano_word
@@ -115,6 +116,9 @@ register(
         # Cebuano news (tunatale-u8nz.6), built by
         # scripts/build_cebuano_frequency.py; see data/ATTRIBUTION.md.
         frequency_table_path=_DATA / "cebuano_frequency.tsv.gz",
+        # Stage 2 (tunatale-u8nz.20): an affixed form (milakaw) becomes an
+        # inflection cloze on its root card once the root is in production review.
+        a1_morphology=CEBUANO_A1_MORPHOLOGY,
         # Deliberately omitted until their owning beads ship:
         # - planner_example: get_planner_example picks the LOWEST-SORTING other
         #   language that supplies one, and "ceb" sorts before every other
