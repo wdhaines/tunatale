@@ -15,9 +15,8 @@ from pydantic import BaseModel
 
 from app.api.models import ImageCandidatesResponse, ImageItemResponse
 from app.cards.media import pixabay as _pixabay_mod
-from app.cards.media import vocab_media as _vocab_media
 from app.cards.media.pixabay import PixabaySearch
-from app.cards.media.vocab_media import _unlink_orphaned_images, replace_item_image
+from app.cards.media.vocab_media import _drop_image_rows, replace_item_image
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -202,7 +201,7 @@ async def delete_image(
     db = request.state.srs_db
     coll_id, item, _lang = _resolve_item(db, item_id)
 
-    _unlink_orphaned_images(db, coll_id, "image", _vocab_media._MEDIA_DIR)
+    _drop_image_rows(db, coll_id, "image")
     db.add_dirty_field_by_id(coll_id, "image")
 
     return _item_response(db, coll_id, item)

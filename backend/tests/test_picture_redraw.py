@@ -59,7 +59,7 @@ def test_a_photographed_number_is_planned_and_everything_else_is_not() -> None:
     assert plan[1].new_filename.startswith("clock_05_")
 
 
-def test_apply_swaps_the_picture_flags_the_push_and_retires_the_photo() -> None:
+def test_apply_swaps_the_picture_and_flags_the_push() -> None:
     db = SRSDatabase(":memory:")
     duha = _card(db, "duha", image="img_two_1234abcd.jpg")
     old_file = vocab_media._MEDIA_DIR / "img_two_1234abcd.jpg"
@@ -71,7 +71,7 @@ def test_apply_swaps_the_picture_flags_the_push_and_retires_the_photo() -> None:
     assert db.get_image_filename(duha) == picture.filename
     assert (vocab_media._MEDIA_DIR / picture.filename).read_bytes() == picture.svg
     assert "image" in db.get_dirty_fields(db.get_collocation("duha").guid).split(",")
-    assert not old_file.exists()
+    assert old_file.exists(), "the photo is kept: another DB sharing the media dir may still show it"
 
 
 def test_an_unlinked_card_is_redrawn_but_not_flagged_for_a_push() -> None:
@@ -119,3 +119,22 @@ def test_a_spatial_word_is_redrawn_filled_or_left_by_its_gloss() -> None:
     assert db.get_image_filename(likod) == by_id[likod].new_filename
     assert "image" in db.get_dirty_fields(db.get_collocation("likod").guid).split(",")
     assert plan_redraws(db, "ceb") == []
+
+
+def test_a_repair_never_deletes_a_photo_another_db_still_shows(tmp_path) -> None:
+    """The live failure (tunatale-ja9q, 2026-09-28).
+
+    Every language DB and every learner's DB share one media dir. The Cebuano
+    repair swapped kilid's img_side.jpg for a drawing, found nothing else in the
+    CEBUANO DB using it, and deleted the file — which a Slovene card still showed.
+    """
+    ceb = SRSDatabase(f"sqlite:///{tmp_path / 'ceb.db'}")
+    sl = SRSDatabase(f"sqlite:///{tmp_path / 'sl.db'}")
+    _card(ceb, "kilid", image="img_side.jpg", translation="side")
+    _card(sl, "stran", image="img_side.jpg", translation="side", lang="sl")
+    shared = vocab_media._MEDIA_DIR / "img_side.jpg"
+
+    apply_redraws(ceb, plan_redraws(ceb, "ceb"), "ceb")
+
+    assert ceb.get_image_filename(ceb.get_collocation_id_by_guid(ceb.get_collocation("kilid").guid)) != "img_side.jpg"
+    assert shared.exists()
