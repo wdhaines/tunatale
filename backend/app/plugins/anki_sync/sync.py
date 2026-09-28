@@ -86,6 +86,7 @@ from app.plugins.anki_sync.sync_engine import (
 from app.plugins.anki_sync.sync_reader import OfflineReader as OfflineReader
 from app.plugins.anki_sync.sync_writer import MintedCard as MintedCard
 from app.plugins.anki_sync.sync_writer import OfflineWriter as OfflineWriter
+from app.srs.anki_mirror.preset_watch import PresetWatchReport, format_preset_lines, watch_preset
 from app.srs.anki_mirror.queue_stats import new_cards_gather_descending
 from app.srs.database import SRSDatabase
 
@@ -189,6 +190,7 @@ def _write_sync_soak_log(
     push,
     db=None,
     promotion: PromotionReport | None = None,
+    preset: PresetWatchReport | None = None,
 ) -> None:
     """Append a durable, greppable soak line for each non-dry CLI sync.
 
@@ -277,6 +279,11 @@ def _write_sync_soak_log(
             f"unservable={promotion.unservable} no_template={promotion.no_template} "
             f"awaiting_image={promotion.awaiting_image}"
         )
+    if preset is not None:
+        # FSRS_PRESET every sync, PRESET_CHANGE when the synced deck's preset
+        # moved (tunatale-sf6h). A preset change writes no revlog row, so this is
+        # the only durable trace one ever happened.
+        lines.extend(format_preset_lines(preset, ts))
     for d in pull.recompute_divergences:
         lines.append(
             f"{ts}   RECOMPUTE_DIVERGENCE cid={d.collocation_id} dir={d.direction} "
@@ -417,6 +424,10 @@ async def run_full_sync(
             refresh_desired_retention(db, conn, deck_name)
         with _phase(timings, "refresh_fsrs_params"):
             refresh_fsrs_params(db, conn, deck_name)
+        # AFTER the pull, so the due/stability ratio it records reflects the
+        # stabilities Anki just recomputed. Reads only; never schedules.
+        with _phase(timings, "watch_fsrs_preset"):
+            preset_report = watch_preset(db, conn, deck_name, now_ms=int(time.time() * 1000))
         with _phase(timings, "refresh_fsrs_short_term_flag"):
             refresh_fsrs_short_term_flag(db, conn)
         with _phase(timings, "refresh_maximum_review_interval"):
@@ -462,6 +473,7 @@ async def run_full_sync(
                 push=push_report,
                 db=db,
                 promotion=promotion_report,
+                preset=preset_report,
             )
 
     if timings is not None:

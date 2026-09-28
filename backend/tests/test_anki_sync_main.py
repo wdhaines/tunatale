@@ -154,6 +154,11 @@ class TestRunFullSync:
         # grepping the log, and it is the only caller of `list_sync_conflicts`,
         # which vulture nominated as dead precisely because nothing read it.
         assert "conflicts_total=" in soak_log.read_text()
+        # tunatale-sf6h: the preset-change detector runs on this path and says so
+        # every sync. A MagicMock collection has no readable preset, which the
+        # line must report as UNREADABLE — never as silence.
+        assert "FSRS_PRESET" in soak_log.read_text()
+        assert "UNREADABLE" in soak_log.read_text()
         # Every deck-config refresh fired — this is the gap that bit the peer path.
         assert set(refreshed) == set(_REFRESH_FUNCS)
         assert isinstance(create, CreateNewReport)
@@ -198,6 +203,9 @@ class TestRunFullSync:
         # dry_run writes no soak artifact at all.
         assert not soak_log.exists()
         assert refreshed == []
+        # ...and does not advance the preset baseline: a dry run that moved it
+        # would make the next real sync diff against a preset it never reported.
+        assert db.get_anki_state_cache("fsrs_preset_snapshot") is None
         assert media_report == {
             "new_media": 0,
             "updated_media": 0,
