@@ -165,6 +165,10 @@ def _print_plan(items: list[GraveRecord], what: str = "ignored-but-carded lemma(
 def _open_tt(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
+    # SQLite leaves foreign keys OFF per connection, and the app turns them on
+    # (db_base). Without this, deleting a collocation here does not cascade to
+    # its tt_revlog and media rows, and they are orphaned (tunatale-vpn).
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 

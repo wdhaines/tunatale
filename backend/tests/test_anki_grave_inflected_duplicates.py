@@ -24,7 +24,7 @@ import sqlite3
 
 import pytest
 
-from scripts.anki_archive.grave_inflected_duplicates import DuplicateOp, apply_graves, plan_graves
+from scripts.anki_archive.grave_inflected_duplicates import DuplicateOp, _open_tt, apply_graves, plan_graves
 
 _GRAVE_KIND_CARD, _GRAVE_KIND_NOTE = 0, 1
 
@@ -194,3 +194,9 @@ class TestApplyIsAnkiSafe:
         before = anki.execute("SELECT mod FROM col").fetchone()["mod"]
         assert apply_graves(anki, tt, []) == {"notes_graved": 0, "cards_graved": 0, "tt_collocations_deleted": 0}
         assert anki.execute("SELECT mod FROM col").fetchone()["mod"] == before
+
+
+def test_the_tt_connection_enforces_foreign_keys(tmp_path):
+    """A raw sqlite3 connection has FKs OFF, so a collocation delete would orphan
+    its tt_revlog and media rows instead of cascading (tunatale-vpn)."""
+    assert _open_tt(tmp_path / "tt.db").execute("PRAGMA foreign_keys").fetchone()[0] == 1
