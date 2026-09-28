@@ -1,0 +1,17 @@
+{
+  "_comment": "Spatial words drawn as a picture, not searched for and not clozed (tunatale-hvj0, the user 2026-09-28: 'they become picture cards'). Each maps a word to a language-neutral concept in app.cards.spatial_scenes.SPATIAL_CONCEPTS. A word listed here is NOT a function word, whatever `function_words.json` or a POS tag says: app.srs.function_words.is_function_word vetoes it, so it cards as vocab and its image is drawn. The picture is only drawn when the card's English gloss names the relation (app.cards.spatial_picture.gloss_matches), which is what keeps a homograph's other sense off the picture. Map only words whose MAIN sense is spatial: the case marker 'sa' stays a cloze: it marks location, direction and the oblique object alike, so it has no one picture.",
+  "words": {
+    "harap": "in_front",
+    "ibaba": "down",
+    "ibabaw": "above",
+    "ilalim": "under",
+    "itaas": "up",
+    "kaliwa": "left",
+    "kanan": "right",
+    "labas": "out",
+    "likod": "behind",
+    "loob": "in",
+    "pagitan": "between",
+    "tabi": "beside"
+  }
+}

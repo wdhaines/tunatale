@@ -416,23 +416,25 @@ class TestPromoteProductionCards:
         The deck's POS label resolves through the language registry, so this is
         the same closed-class test `/listen` applies — not a parallel one.
         """
+        # `til`, not a spatial word: `foran` was the example here until spatial
+        # words became picture cards (tunatale-hvj0) — see the test after next.
         conn = _make_conn()
         card_id = _add_note(
             conn,
             1000,
-            "foran",
-            "in front of",
+            "til",
+            "to",
             word_class="preposition",
-            examples="Bilen står foran huset (<i>The car is in front of the house</i>)",
+            examples="Jeg går til butikken (<i>I am walking to the shop</i>)",
         )
         db = SRSDatabase(":memory:")
-        _add_word(db, "foran", "in front of", note_id=1000, card_id=card_id, disambig="preposition")
+        _add_word(db, "til", "to", note_id=1000, card_id=card_id, disambig="preposition")
 
         report = await _make_sync(conn, db).promote_production_cards()
 
         assert (report.clozed, report.minted) == (1, 0)
         assert _prod_cards(conn, 1000) == []
-        assert _cloze_unit(db, "foran").source_sentence == "Bilen står {{c1::foran}} huset"
+        assert _cloze_unit(db, "til").source_sentence == "Jeg går {{c1::til}} butikken"
 
     async def test_a_number_word_is_pictured_rather_than_clozed(self, tmp_path, monkeypatch) -> None:
         """The complaint this whole change answers (tunatale-elrj, 2026-09-03).
@@ -475,6 +477,44 @@ class TestPromoteProductionCards:
         filename = db.get_image_filename(coll_id)
         assert _image_field(conn, 1000) == f'<img src="{filename}">'
         assert (anki_media / filename).read_bytes().count(b"<circle") == 5
+
+    async def test_a_spatial_preposition_is_pictured_rather_than_clozed(self, tmp_path, monkeypatch) -> None:
+        """The user, 2026-09-28: spatial words are picture cards (tunatale-hvj0).
+
+        `under` arrives exactly as `foran` used to: labelled `preposition`, which
+        maps to ADP, which is closed-class. The spatial veto in
+        `is_function_word` outranks the tag, and the pre-stage's drawing — a box
+        and a ball beneath it — fronts the production card.
+        """
+        from app.cards.drawn_picture import drawn_picture
+        from app.cards.media.vocab_media import store_tt_media
+
+        monkeypatch.setattr(sync_mod.settings, "target_language", LANG)
+        conn = _make_conn()
+        card_id = _add_note(
+            conn,
+            1000,
+            "under",
+            "under",
+            word_class="preposition",
+            examples="Katten ligger under bordet (<i>The cat is lying under the table</i>)",
+        )
+        db = SRSDatabase(":memory:")
+        coll_id = _add_word(
+            db, "under", "under", note_id=1000, card_id=card_id, disambig="preposition", image=False, unpicturable=True
+        )
+        picture = drawn_picture("under", LANG, "under")
+        assert picture is not None
+        store_tt_media(db, coll_id, "image", picture.filename, picture.svg)
+        anki_media = tmp_path / "collection.media"
+        anki_media.mkdir()
+
+        report = await _make_sync(conn, db, anki_media).promote_production_cards()
+
+        assert (report.minted, report.clozed) == (1, 0)
+        assert db.count_collocations() == 1, "a cloze would have added a second collocation"
+        assert _image_field(conn, 1000) == f'<img src="{picture.filename}">'
+        assert (anki_media / picture.filename).read_bytes() == picture.svg
 
     async def test_a_determinative_that_is_not_a_number_still_clozes(self, monkeypatch) -> None:
         """The control. Without it, "numbers are pictured" is indistinguishable

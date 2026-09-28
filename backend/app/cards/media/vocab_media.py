@@ -27,7 +27,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from app.cards.number_picture import number_picture
+from app.cards.drawn_picture import drawn_picture
 from app.config import settings
 
 from .pipeline import fetch_card_media
@@ -147,10 +147,11 @@ async def generate_vocab_media(
     fetch_fn = _fetch_fn or fetch_card_media
     stored: dict[str, str] = {}
 
-    # A number is DRAWN, not searched for (tunatale-w4m7.10): a counting
-    # picture, a clock face or a peso amount, right by construction. Stored
+    # A number or a spatial word is DRAWN, not searched for (tunatale-w4m7.10,
+    # hvj0): a counting picture, a clock, a peso amount, or a box and a ball —
+    # right by construction. Stored
     # first so the fetch below is asked for audio alone ("" skips the image).
-    picture = number_picture(word, language_code)
+    picture = drawn_picture(word, language_code, english)
     if picture is not None:
         store_tt_media(db, coll_id, "image", picture.filename, picture.svg)
         stored["image"] = picture.filename

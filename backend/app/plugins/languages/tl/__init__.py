@@ -145,6 +145,7 @@ register(
         style_notes=_style_notes,
         function_words_path=_DATA / "function_words.json",
         numbers_path=_DATA / "numbers.json",
+        spatial_path=_DATA / "spatial.json",
         # Key-phrase fragments as IPA from Wiktionary's narrow readings, for the
         # key-phrases voice (tunatale-w4m7.16; see tl/phoneme_plan.py).
         phoneme_planner_factory=create_phoneme_planner,

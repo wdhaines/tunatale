@@ -539,6 +539,37 @@ class TestImageStatusSplitsTransientFromSettled:
         assert "no_results" in caplog.text
 
 
+class TestSpatialWords:
+    """A spatial word is drawn too, and is a picture card, not a cloze (tunatale-hvj0).
+
+    Counted under `rendered_number`: the report field predates spatial words and
+    is what the persisted PRESTAGE_IMAGES line prints, so it keeps its name and
+    now means "drawn rather than fetched".
+    """
+
+    async def test_draws_the_relation_instead_of_skipping_it_as_a_function_word(self, db) -> None:
+        # Before hvj0 `under` was in Norwegian's function-word include list, so
+        # the pre-stage skipped it and the mint clozed it.
+        media_fn = _MediaFn()
+        coll_id = _add_word(db, "under", "under", note_id=1000, card_id=10000)
+
+        report = await prestage_production_images(db, media_fn, language_code=LANG, limit=10)
+
+        assert media_fn.calls == []
+        assert (report.rendered_number, report.skipped_function_word, report.fetched) == (1, 0, 0)
+        assert db.get_image_filename(coll_id).startswith("spatial_under_")
+
+    async def test_a_polysemous_preposition_is_still_skipped(self, db) -> None:
+        """The control: `på` stays a cloze, so the spatial route did not swallow it."""
+        media_fn = _MediaFn()
+        _add_word(db, "på", "on", note_id=1000, card_id=10000)
+
+        report = await prestage_production_images(db, media_fn, language_code=LANG, limit=10)
+
+        assert media_fn.calls == []
+        assert (report.rendered_number, report.skipped_function_word) == (0, 1)
+
+
 class TestNumberWords:
     """A number word is drawn, never searched for (tunatale-elrj).
 

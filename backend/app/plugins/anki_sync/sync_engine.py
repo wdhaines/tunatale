@@ -16,9 +16,9 @@ from datetime import UTC, datetime
 from app.audio.cloze_tts import synthesize_cloze_audios
 from app.cards.cloze_prestage import cloze_cache_key
 from app.cards.cloze_source import ClozeChoice, choose_cloze_sentence
+from app.cards.drawn_picture import drawn_picture
 from app.cards.media.vocab_media import safe_stem as _safe_stem
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media
-from app.cards.number_picture import number_picture
 from app.common.guid import compute_guid
 from app.config import settings
 from app.languages import card_surface_variants, cloze_answer_spelling, get_tts_voice
@@ -1766,13 +1766,14 @@ class AnkiSync:
             existing_audio = self._db.get_audio_filename(coll_id)
             existing_image = self._db.get_image_filename(coll_id)
 
-            # A number is DRAWN, never searched for (tunatale-w4m7.10). This path
+            # A number or a spatial word is DRAWN, never searched for (w4m7.10,
+            # hvj0). This path
             # used to be the one that did not ask: a base-list seed or any other
             # card minted here got a Pixabay photo for "five", while only words
             # promoted through the pre-stage got the counting picture. Stored
             # before the fetch so `_media_fn` is asked for audio alone and spends
             # no image query on a word whose picture is already known.
-            picture = number_picture(word, self._language_code) if existing_image is None else None
+            picture = drawn_picture(word, self._language_code, english) if existing_image is None else None
             if picture is not None:
                 _store_tt_media(self._db, coll_id, "image", picture.filename, picture.svg)
                 existing_image = picture.filename
@@ -2010,7 +2011,8 @@ class AnkiSync:
             unit = cand.item.syntactic_unit
             material = self._reader.get_cloze_material(cand.anki_note_id)
 
-            # A number word overtakes the closed-class fork below (tunatale-elrj).
+            # A DRAWN word — a number (tunatale-elrj) or a spatial word (hvj0) —
+            # overtakes the closed-class fork below. For a number:
             # It does NOT loosen it: `fem` really is closed-class — the deck says
             # `determinative`, the profile maps that to DET, and DET is in the
             # language's closed-class set — but it is the one closed class with a
@@ -2018,15 +2020,17 @@ class AnkiSync:
             # wrong shape for it in a way a preposition's is not: "jeg har ___
             # barn" admits every number, so the card constrains nothing and marks
             # a right answer wrong. Every other determinative (`denne`, `hver`,
-            # `min`) still clozes, and a test holds that.
+            # `min`) still clozes, and a test holds that. A spatial word never
+            # reaches the fork as closed-class at all (`is_function_word` vetoes
+            # it); it is here for the stale-marker veto further down.
             #
             # The picture is DRAWN by `prestage_production_images`, never here —
             # this phase makes no network call and now makes no drawing either,
             # so its contract is unchanged: it mints from what is already staged.
-            is_number = number_picture(unit.text, self._language_code) is not None
-            if not is_number and is_function_word(unit.text, self._language_code, upos=material.upos):
+            is_drawn = drawn_picture(unit.text, self._language_code, unit.translation) is not None
+            if not is_drawn and is_function_word(unit.text, self._language_code, upos=material.upos):
                 # Closed-class words route to a cloze without spending a fetch: a
-                # picture of "foran" is noise, and minting a card with a meaningless
+                # photo of "til" is noise, and minting a card with a meaningless
                 # image is the failure mode this whole router exists to avoid. The
                 # test goes through the language registry — the deck's own POS label
                 # is mapped to a UPOS tag by its notetype profile — so this is the
@@ -2035,14 +2039,14 @@ class AnkiSync:
                 continue
 
             filename = self._db.get_image_filename(cand.collocation_id)
-            # `is_number` vetoes the marker as well. It records a verdict about a
-            # PHOTO search — "Pixabay had nothing for 'five'" — and every number
+            # `is_drawn` vetoes the marker as well. It records a verdict about a
+            # PHOTO search — "Pixabay had nothing for 'five'" — and every drawn
             # word in the real deck predates the drawing, so letting that stale
             # verdict stand would permanently mis-shape exactly the words this
-            # change exists to fix. A number with no picture yet falls through to
+            # change exists to fix. A drawn word with no picture yet falls through to
             # `awaiting_image` below and waits for the pre-stage, which is the
             # correct reading of "not drawn yet".
-            if not is_number and filename is None and self._db.is_image_unavailable(cand.collocation_id):
+            if not is_drawn and filename is None and self._db.is_image_unavailable(cand.collocation_id):
                 # The pre-stage already looked and found nothing picturable, so
                 # this is the settled "cannot be pictured" case, not an early one.
                 # Same destination as before the fetch moved off the sync: a card

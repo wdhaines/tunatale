@@ -88,6 +88,7 @@ register(
         style_notes=_style_notes,
         function_words_path=_DATA / "function_words.json",
         numbers_path=_DATA / "numbers.json",
+        spatial_path=_DATA / "spatial.json",
         # The Gemini drill voices are told what to say by an instruction rather
         # than by markup, and that instruction needs the fragment's IPA — which
         # is what this factory supplies (tunatale-u8nz.1). It is the FIRST

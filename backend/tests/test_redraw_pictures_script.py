@@ -1,4 +1,4 @@
-"""The redraw_number_pictures CLI: dry run by default, --apply writes, --db picks the learner."""
+"""The redraw_pictures CLI: dry run by default, --apply writes, --db picks the learner."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from app.config import settings
 from app.models.srs_item import Direction
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
-from scripts.redraw_number_pictures import main
+from scripts.redraw_pictures import main
 
 
 def _photographed_duha(url: str) -> SRSDatabase:
@@ -46,3 +46,16 @@ def test_apply_against_an_explicit_learner_db(tmp_path, capsys) -> None:
     assert "Redrew 1." in capsys.readouterr().out
     coll_id = db.get_collocation_id_by_guid(db.get_collocation("duha").guid)
     assert db.get_image_filename(coll_id) == number_picture("duha", "ceb").filename
+
+
+def test_a_filled_card_prints_as_having_had_no_image(tmp_path, capsys) -> None:
+    url = f"sqlite:///{tmp_path / 'no.db'}"
+    db = SRSDatabase(url)
+    db.add_collocation(
+        SyntacticUnit(text="under", translation="under", word_count=1, difficulty=1, source="corpus"), "no"
+    )
+
+    assert main(["--language", "no", "--db", url]) == 0
+
+    out = capsys.readouterr().out
+    assert "(no image)" in out and "spatial_under_" in out and "(no Anki note)" in out

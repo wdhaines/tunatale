@@ -259,6 +259,11 @@ class LanguageConfig:
     # cloze route their UPOS would otherwise send them down. See
     # ``app.cards.number_image``.
     numbers_path: Path | None = None
+    # Path to the per-language spatial-word JSON (``under`` -> a concept id), or
+    # ``None`` when the language registers none. A listed word is drawn, and is
+    # never a function word whatever its UPOS says. See
+    # ``app.cards.spatial_picture``.
+    spatial_path: Path | None = None
     # Breakdown variant that also reports which syllables of which word each
     # chunk is, so the renderer can cut it out of one whole-word render instead
     # of synthesizing the fragment alone. ``None`` (every language but Norwegian)
@@ -842,6 +847,15 @@ def get_numbers_path(code: str) -> Path | None:
     routing it has today. Capability-driven, like ``get_function_words_path``.
     """
     return _facet(code, "numbers_path", None)
+
+
+def get_spatial_path(code: str) -> Path | None:
+    """Return the path to the per-language spatial-word JSON vocabulary.
+
+    ``None`` when the language registers none: it has no drawn spatial words,
+    and every one of its words keeps the routing it has today.
+    """
+    return _facet(code, "spatial_path", None)
 
 
 def get_wordfreq_lang(code: str) -> str | None:
