@@ -358,3 +358,102 @@ class TestPrestageEdges:
         assert "PRESTAGE_CLOZE" in caplog.text
         assert "foran" in caplog.text
         assert "CancelledError" in caplog.text
+
+
+class TestUnjudgedSentencesAreRejudged:
+    """``unknown`` means the judge never answered (tunatale-0xc7).
+
+    Live, 2026-09-28: a Groq 429 on the judge call cached om = "about" as
+    ``unknown``, and nothing ever looked at it again, because a cached row
+    counted as done. The mint now holds such a row back, so the prestage must
+    come back to it, re-judging the sentence it already has rather than paying
+    for a new one.
+    """
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_verdict_is_rejudged_without_regenerating(self):
+        llm = ScriptedLLM(fillers={"Bilen står ___ huset, ikke bak det.": "foran"})
+        db = _db_with_awaiting([("foran", "in front of")])
+        db.set_cached_cloze_sentence(
+            "foran",
+            "no",
+            sentence="Bilen står foran huset, ikke bak det.",
+            status="unknown",
+            sentence_translation="The car is in front of the house, not behind it.",
+        )
+
+        report = await prestage_cloze_sentences(db, llm, language_code="no", limit=5)
+
+        assert (report.rejudged, report.already_cached, report.written) == (1, 0, 0)
+        assert (llm.generate_calls, llm.judge_calls) == (0, 1)
+        cached = db.get_cached_cloze_sentence("foran", "no")
+        assert cached.status == "determined"
+        assert cached.sentence == "Bilen står foran huset, ikke bak det."
+
+    @pytest.mark.asyncio
+    async def test_a_rejudge_keeps_a_translation_it_already_has(self):
+        llm = ScriptedLLM(fillers={"Bilen står ___ huset, ikke bak det.": "foran"})
+        db = _db_with_awaiting([("foran", "in front of")])
+        db.set_cached_cloze_sentence(
+            "foran",
+            "no",
+            sentence="Bilen står foran huset, ikke bak det.",
+            status="unknown",
+            sentence_translation="kept",
+        )
+
+        await prestage_cloze_sentences(db, llm, language_code="no", limit=5)
+
+        assert llm.translate_calls == 0
+        assert db.get_cached_cloze_sentence("foran", "no").sentence_translation == "kept"
+
+    @pytest.mark.asyncio
+    async def test_a_rejudge_fills_a_missing_translation(self):
+        llm = ScriptedLLM(
+            fillers={"Bilen står ___ huset, ikke bak det.": "foran"},
+            translations={"Bilen står foran huset": "The car is in front of the house."},
+        )
+        db = _db_with_awaiting([("foran", "in front of")])
+        db.set_cached_cloze_sentence("foran", "no", sentence="Bilen står foran huset, ikke bak det.", status="unknown")
+
+        await prestage_cloze_sentences(db, llm, language_code="no", limit=5)
+
+        assert db.get_cached_cloze_sentence("foran", "no").sentence_translation == "The car is in front of the house."
+
+    @pytest.mark.asyncio
+    async def test_a_rejudge_that_fails_again_stays_unknown_and_counts_as_failed(self):
+        llm = ScriptedLLM()  # the judge answers nothing: the verdict is unknown again
+        db = _db_with_awaiting([("foran", "in front of")])
+        db.set_cached_cloze_sentence(
+            "foran", "no", sentence="Bilen står foran huset, ikke bak det.", status="unknown", sentence_translation="t"
+        )
+
+        report = await prestage_cloze_sentences(db, llm, language_code="no", limit=5)
+
+        assert (report.rejudged, report.failed) == (0, 1)
+        cached = db.get_cached_cloze_sentence("foran", "no")
+        assert (cached.status, cached.sentence) == ("unknown", "Bilen står foran huset, ikke bak det.")
+
+    @pytest.mark.asyncio
+    async def test_a_new_sentence_whose_judge_fails_is_cached_as_unknown(self):
+        """Cached so the next pass re-judges it instead of regenerating; the mint
+        will not use it meanwhile."""
+        llm = ScriptedLLM(generated={"foran": "Bilen står foran huset, ikke bak det."})
+        db = _db_with_awaiting([("foran", "in front of")])
+
+        report = await prestage_cloze_sentences(db, llm, language_code="no", limit=5)
+
+        assert report.written == 1
+        assert db.get_cached_cloze_sentence("foran", "no").status == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_the_log_line_counts_rejudged_rows(self, caplog):
+        import logging
+
+        llm = ScriptedLLM(fillers={"Bilen står ___ huset, ikke bak det.": "foran"})
+        db = _db_with_awaiting([("foran", "in front of")])
+        db.set_cached_cloze_sentence("foran", "no", sentence="Bilen står foran huset, ikke bak det.", status="unknown")
+        with caplog.at_level(logging.WARNING, logger="app.cards.cloze_prestage"):
+            await prestage_cloze_sentences(db, llm, language_code="no", limit=5)
+
+        assert "rejudged=1" in caplog.text

@@ -22,7 +22,7 @@ from app.cards.number_image import number_value
 from app.common.guid import compute_guid
 from app.config import settings
 from app.languages import card_surface_variants, cloze_answer_spelling, get_tts_voice
-from app.llm.cloze_quality import carries_a_blank
+from app.llm.cloze_quality import UNJUDGED, carries_a_blank
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
 from app.models.syntactic_unit import SyntacticUnit, serialize_extras
 from app.plugins.anki_sync.sync_common import (
@@ -2189,6 +2189,11 @@ class AnkiSync:
             )
             if (
                 cached is not None
+                # The judge never answered (a 429): nothing has looked at this
+                # sentence, so it waits for the prestage to re-judge it. Live
+                # 2026-09-28, an unjudged 'hun snakker om.' minted (tunatale-0xc7).
+                # `underdetermined` still mints: the user's 2026-09-06 call.
+                and cached.status != UNJUDGED
                 and re.search(rf"\b{re.escape(answer)}\b", cached.sentence, re.IGNORECASE)
                 # A row cached before the generator refused templates (live 'mot',
                 # 2026-09-27) must stay inert rather than mint stray blanks.
@@ -2224,10 +2229,19 @@ class AnkiSync:
 
         if choice is None:
             report.unservable += 1
+            # `cached` is always bound here: reaching this line means the first
+            # `choice is None` block ran. Naming the unjudged case keeps the log
+            # from saying "no staged sentence" about a row that exists.
+            staged = (
+                "staged sentence not yet judged"
+                if cached is not None and cached.status == UNJUDGED
+                else "no staged sentence"
+            )
             _log.warning(
-                "PRODUCTION_MINT_UNSERVABLE text=%r cid=%d — no image, no clozable example, no staged sentence",
+                "PRODUCTION_MINT_UNSERVABLE text=%r cid=%d — no image, no clozable example, %s",
                 unit.text,
                 cand.collocation_id,
+                staged,
             )
             return
 
