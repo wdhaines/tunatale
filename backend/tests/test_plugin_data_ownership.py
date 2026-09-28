@@ -6,6 +6,7 @@ from app.languages import (
     get_function_words_path,
     get_language,
     get_numbers_path,
+    get_pronouns_path,
     get_spatial_path,
     get_style_notes,
     known_language_codes,
@@ -130,3 +131,33 @@ def test_spatial_vocabulary_lives_in_the_plugin_dir() -> None:
 def test_en_and_unknown_spatial_paths_are_none() -> None:
     assert get_spatial_path("en") is None
     assert get_spatial_path("xx") is None
+
+
+# ── Personal-pronoun vocabulary ──────────────────────────────────────────
+
+
+def test_every_language_with_function_words_also_ships_pronouns() -> None:
+    """The same pairing argument as the other two, and sharper.
+
+    A personal pronoun is ``PRON`` in every deck that labels its parts of
+    speech, so a closed-class policy puts all of them on the cloze route. The
+    pronoun file is what takes them off it (tunatale-3rxu), and a language
+    shipping one policy without the other has the exact configuration in which
+    every pronoun is drilled as a case marker.
+    """
+    for code in (c for c in known_language_codes() if get_function_words_path(c) is not None):
+        assert get_pronouns_path(code) is not None, code
+
+
+def test_pronoun_vocabulary_lives_in_the_plugin_dir() -> None:
+    with_pronouns = sorted(c for c in known_language_codes() if get_pronouns_path(c) is not None)
+    assert {"sl", "no", "tl", "ceb"} <= set(with_pronouns)
+    for code in with_pronouns:
+        path = get_pronouns_path(code)
+        assert path.exists(), code
+        assert (path.parent.name, path.parent.parent.name) == ("data", code)
+
+
+def test_en_and_unknown_pronoun_paths_are_none() -> None:
+    assert get_pronouns_path("en") is None
+    assert get_pronouns_path("xx") is None

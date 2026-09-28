@@ -1,7 +1,8 @@
 """Give existing cards the drawn picture new ones now get (tunatale-w4m7.10, hvj0).
 
-``app.cards.drawn_picture`` fixed the ROUTING: a number or spatial word minted
-from now on is drawn. Cards already minted keep what they were given — for every number that
+``app.cards.drawn_picture`` fixed the ROUTING: a number, spatial word or
+personal pronoun minted from now on is drawn. Cards already minted keep what
+they were given — for every number that
 entered as a new card (the Cebuano base list, an add from the reader) that is a
 Pixabay photo of "five", which is the failure the drawing exists to prevent. A
 card's image is fixed once stored, so nothing heals them on its own.
@@ -21,8 +22,8 @@ Scope, deliberately narrow:
   mint now draws it — or it carries no picture for a reason recorded elsewhere
   (a notetype without an Image field). Replacing a wrong picture is this
   module's job; deciding a number should have one is not.
-- **a SPATIAL word with no image is filled.** That decision was made: the user
-  said these are picture cards (2026-09-28), and the Norwegian deck's
+- **a SPATIAL or PRONOUN word with no image is filled.** That decision was made:
+  the user said these are picture cards (2026-09-28), and the Norwegian deck's
   ``under``/``foran``/``inni`` came from Anki with no picture at all. A note
   whose notetype has no Image field is safe to flag: the push logs
   ``PUSH_FIELD_DROPPED`` and clears the flag (``sync_engine.py::sync_push``).
@@ -38,6 +39,7 @@ from typing import Any, NamedTuple
 
 from app.cards.drawn_picture import drawn_picture
 from app.cards.media import vocab_media
+from app.cards.pronoun_picture import pronoun_picture
 from app.cards.spatial_picture import spatial_picture
 
 
@@ -64,7 +66,16 @@ def plan_redraws(db: Any, language_code: str) -> list[Redraw]:
         current = db.get_image_filename(coll_id)
         if current == picture.filename:
             continue
-        if current is None and spatial_picture(unit.text, language_code, unit.translation) is None:
+        # A card with NO image is only FILLED for the families the user decided
+        # are picture cards outright (spatial, pronoun). Everything else — a
+        # number above — keeps the "deciding it should have one is not this
+        # module's job" rule, so the check is for a picture being drawn at all
+        # rather than for a number being absent.
+        if (
+            current is None
+            and spatial_picture(unit.text, language_code, unit.translation) is None
+            and pronoun_picture(unit.text, language_code, unit.translation) is None
+        ):
             continue
         plan.append(
             Redraw(coll_id, unit.text, current, picture.filename, item.anki_note_id is not None, unit.translation)

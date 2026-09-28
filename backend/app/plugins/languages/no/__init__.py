@@ -118,6 +118,7 @@ register(
         function_words_path=Path(__file__).parent / "data" / "function_words.json",
         numbers_path=Path(__file__).parent / "data" / "numbers.json",
         spatial_path=Path(__file__).parent / "data" / "spatial.json",
+        pronouns_path=Path(__file__).parent / "data" / "pronouns.json",
         wordfreq_lang="nb",
         breakdown_spans_fn=build_norwegian_breakdown_spans,
         alignment=AlignmentConfig(

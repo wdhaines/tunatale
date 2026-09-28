@@ -352,20 +352,35 @@ class TestListenStagedCreation:
         async def _query(_word, _english, **_kw):
             return "a clear depiction"
 
-        async def _fetch(word, _english, **_kw):
+        async def _fetch(word, _english, **kw):
             fetched.append(word)
-            return MediaResult(audio_bytes=b"A", audio_source="forvo", image_bytes=b"I", image_ext="jpg")
+            # The real pipeline's contract: image_query == "" skips the image
+            # (fetch_card_media). A stub that ignored it would overwrite a DRAWN
+            # picture with a photo that production never fetches.
+            image = None if kw.get("image_query") == "" else b"I"
+            return MediaResult(audio_bytes=b"A", audio_source="forvo", image_bytes=image, image_ext="jpg")
 
         monkeypatch.setattr(vocab_media, "generate_image_query", _query)
         monkeypatch.setattr(vocab_media, "fetch_card_media", _fetch)
 
-        db = self._setup(self._lesson(["Jeg lyver"], language_code="no"))
+        lesson = self._lesson(["Jeg lyver"], language_code="no")
+        # A real lesson carries the LLM's per-token glosses; "jeg" needs its gloss
+        # for the pronoun picture's guard to confirm the sense (tunatale-3rxu).
+        lesson.generation_metadata = {"token_glosses": {"jeg": "I", "lyve": "to lie"}}
+        db = self._setup(lesson)
         db.set_anki_state_cache("daily_new_cap", "10")
 
         data = await self._listen()
 
         assert data["created"] == 2
-        assert fetched == ["lyve"]
+        # The point of this test: the fetch is keyed on the bare lemma "lyve",
+        # never the surface "lyver". Since tunatale-3rxu "jeg" is a PICTURE card,
+        # not a cloze, so it is fetched too — for its audio only, because its
+        # image is drawn rather than searched for.
+        assert sorted(fetched) == ["jeg", "lyve"]
+        with db._get_conn() as conn:
+            (jeg_id,) = conn.execute("SELECT id FROM collocations WHERE lemma = 'jeg'").fetchone()
+        assert db.get_image_filename(jeg_id).startswith("pronoun_i_")
         coll = db.get_collocation_by_lemma("lyve")
         assert coll is not None
         assert coll.syntactic_unit.text == "å lyve"
