@@ -56,7 +56,7 @@ def test_public_method_count_pinned() -> None:
     # +list_media_by_collocation_and_filename +update_media_stat (media refresh optimisation)
     # +add_dirty_field_by_id (Step 6: manual image-update API)
     # +get_image_filenames (Step 6-tail: batched image lookup for /items)
-    # +is_media_filename_referenced (fix #4: shared-file reference check for orphan cleanup)
+    # +is_media_filename_referenced (fix #4), since removed: tunatale-ja9q
     # +record_listen, has_listen, count_listens, get_listened_lessons (lesson_listens)
     # +latest_listen_at (lesson_listens)
     # +count_new_created_today (staged-listen creation budget)
@@ -107,4 +107,6 @@ def test_public_method_count_pinned() -> None:
     #  tunatale-umbu)
     # +get_collocations_by_lemma_with_id (every row for a lemma, so a homograph
     #  resolves to the meaning its sentence uses — tunatale-u8nz.22)
-    assert count == 139
+    # -is_media_filename_referenced (tunatale-ja9q: no caller once swaps stopped
+    #  deleting files — its one-DB answer was the bug)
+    assert count == 138

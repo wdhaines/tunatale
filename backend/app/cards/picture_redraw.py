@@ -73,12 +73,11 @@ def plan_redraws(db: Any, language_code: str) -> list[Redraw]:
 
 
 def apply_redraws(db: Any, plan: list[Redraw], language_code: str) -> None:
-    """Store each planned drawing, retire the old file if orphaned, flag the push."""
+    """Store each planned drawing and flag the push. The old file stays on disk
+    (tunatale-ja9q: the media dir is shared by DBs this call cannot see)."""
     for redraw in plan:
         picture = drawn_picture(redraw.text, language_code, redraw.gloss)
-        vocab_media._unlink_orphaned_images(
-            db, redraw.collocation_id, "image", vocab_media._MEDIA_DIR, skip_filename=picture.filename
-        )
+        vocab_media._drop_image_rows(db, redraw.collocation_id, "image")
         vocab_media.store_tt_media(db, redraw.collocation_id, "image", picture.filename, picture.svg)
         if redraw.linked:
             db.add_dirty_field_by_id(redraw.collocation_id, "image")

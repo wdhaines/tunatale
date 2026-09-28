@@ -24,7 +24,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from pathlib import Path
 from typing import Any
 
 from app.cards.drawn_picture import drawn_picture
@@ -48,36 +47,19 @@ def safe_stem(word: str, prefix: str) -> str:
     return f"{prefix}_{sanitized}"
 
 
-def _unlink_orphaned_images(
-    db: Any, coll_id: int, kind: str, media_dir: Path, *, skip_filename: str | None = None
-) -> None:
-    """Delete media rows for (coll_id, kind) and unlink files no longer referenced.
+def _drop_image_rows(db: Any, coll_id: int, kind: str) -> None:
+    """Delete (coll_id, kind)'s media rows. The FILES are never deleted.
 
-    Captures filenames *before* deleting the rows, then for each old filename
-    that is (a) not *skip_filename* and (b) not referenced by any other media
-    row, removes the file from *media_dir*. Errors are logged and swallowed —
-    a missing or locked file must not propagate.
+    This used to unlink each old file once no other row in *db* referenced it.
+    But one media dir is shared by every language DB and every learner's DB
+    (``data/users/<id>/``), and a caller holds only one of them — so "nothing
+    here uses it" never meant "nothing uses it". On 2026-09-28 the Cebuano
+    picture repair deleted ``img_side.jpg`` while a Slovene card still showed
+    it (tunatale-ja9q). An orphaned file costs disk; a wrongly deleted one
+    breaks a card nobody was touching. Reclaiming orphans, if it is ever worth
+    doing, is a sweep that reads every DB, not a side effect of a swap.
     """
-    with db._get_conn() as conn:
-        rows = conn.execute(
-            "SELECT filename FROM media WHERE collocation_id = ? AND kind = ?",
-            (coll_id, kind),
-        ).fetchall()
-    old_filenames = [r["filename"] for r in rows]
-
     db.delete_all_media_for_kind(coll_id, kind)
-
-    for fname in old_filenames:
-        if fname == skip_filename:
-            continue
-        if db.is_media_filename_referenced(fname):
-            continue
-        fpath = media_dir / fname
-        if fpath.exists():
-            try:
-                fpath.unlink()
-            except OSError:
-                logger.warning("Could not unlink orphaned image %s", fpath)
 
 
 def store_tt_media(db: Any, coll_id: int, kind: str, filename: str, data: bytes) -> None:
@@ -106,7 +88,7 @@ def replace_item_image(db: Any, coll_id: int, english: str, data: bytes, ext: st
     Returns the new filename.
     """
     filename = f"{safe_stem(english, 'img')}_{hashlib.sha256(data).hexdigest()[:8]}.{ext}"
-    _unlink_orphaned_images(db, coll_id, "image", _MEDIA_DIR, skip_filename=filename)
+    _drop_image_rows(db, coll_id, "image")
     store_tt_media(db, coll_id, "image", filename, data)
     db.add_dirty_field_by_id(coll_id, "image")
     return filename

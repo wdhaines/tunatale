@@ -358,8 +358,8 @@ class TestPutImageUrl:
         second_filename = api.get_image_filename(cid)
         assert second_filename is not None
         assert second_filename != first_filename
-        # Old file unlinked, new file present
-        assert not first_path.exists(), "Old image file should be unlinked after replace"
+        # Old file KEPT (another DB may show it — tunatale-ja9q), new file present
+        assert first_path.exists(), "a replace must never delete the old file"
         assert (tmp_path / second_filename).exists()
         # Only one media row should exist
         with api._get_conn() as conn:
@@ -605,7 +605,11 @@ class TestDeleteImage:
         assert "image" in _dirty_fields(api, cid)
 
     @respx.mock
-    async def test_delete_unlinks_unshared_file(self, api, monkeypatch, tmp_path):
+    async def test_delete_drops_the_row_but_never_the_file(self, api, monkeypatch, tmp_path):
+        """The media dir is shared by every language DB and every learner, and this
+        route can see only one DB, so it cannot know a file is unused (tunatale-ja9q:
+        a repair deleted a photo a Slovene card still showed). The row goes; the
+        file stays."""
         monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
@@ -620,7 +624,8 @@ class TestDeleteImage:
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             await c.delete(f"/api/srs/items/{cid}/image")
-        assert not filepath.exists()
+        assert filepath.exists()
+        assert api.get_image_filename(cid) is None
 
     @respx.mock
     async def test_shared_file_not_unlinked_when_other_collocation_still_references_it(
