@@ -1074,11 +1074,18 @@ reproduces the source warts and all — but each is worth fixing.
    the same place under the dev CWD. Tracked by the container-safe mutable paths
    work.
 
-2. **41 foreign-key orphans in `tunatale_no.db`** — 25 `tt_revlog` rows
-   referencing absent `collocation_directions`, 16 `media` rows referencing
-   absent `collocations`. `PRAGMA foreign_keys` is `0` (SQLite's default), so
-   nothing enforces these at write time. Identical row-for-row in live and
-   restored, so pre-existing.
+2. **Foreign-key orphans** (`tunatale-vpn`, diagnosed 2026-09-28) — `tt_revlog`
+   rows referencing absent `collocation_directions`, `media` rows referencing
+   absent `collocations`. First found as 41 in `tunatale_no.db`. **The app
+   cannot create these:** every SRS connection sets `PRAGMA foreign_keys = ON`
+   (`app/srs/db_base.py`) and both relationships are `ON DELETE CASCADE`. The
+   `0` the drill reads is its OWN connection's default, not the app's. The
+   orphans come from one-off scripts that opened the DB with a raw
+   `sqlite3.connect` (foreign keys off) and deleted collocations by hand. The
+   2026-09-27 Cebuano run of `grave_named_cards.py` is the traced case. That
+   script's shared `_open_tt` now turns foreign keys on. **Clean with**
+   `scripts/clean_fk_orphans.py --db <file>` (dry run first, back up first); it
+   deletes only `tt_revlog`/`media` orphans and refuses anything else.
 
 3. ~~**One dangling media reference in `tunatale_sl.db`**~~ — **FIXED
    2026-08-12.** Row 723 (collocation 373, `skodelica`) pointed at

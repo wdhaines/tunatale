@@ -17,6 +17,8 @@ import sqlite3
 import pytest
 
 from app.config import settings
+from app.models.syntactic_unit import SyntacticUnit
+from app.srs.database import SRSDatabase
 from scripts.anki_archive.grave_named_cards import main, plan_by_texts
 
 _GRAVE_KIND_CARD, _GRAVE_KIND_NOTE = 0, 1
@@ -159,3 +161,59 @@ def test_main_needs_a_collection_or_no_anki(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(settings, "tt_collection_path", tmp_path / "absent.anki2")
     assert main(["--language", "ceb", "--tt-db", str(db), "--texts", "x"]) == 1
     assert "not found" in capsys.readouterr().err
+
+
+# ── the REAL schema: a delete must not orphan tt_revlog / media (tunatale-vpn) ─
+#
+# The tests above run on a toy two-table schema with no foreign keys, which is
+# why they never saw this. On the real schema, ``tt_revlog`` references
+# ``collocation_directions`` and ``media`` references ``collocations``, both ON
+# DELETE CASCADE — but SQLite enforces neither unless the CONNECTION turns
+# ``foreign_keys`` on, and a raw ``sqlite3.connect`` leaves it off. That is how
+# the 2026-09-27 Cebuano run left 2 revlog rows and 8 media rows pointing at
+# nothing (and 8 more in the second learner's deck).
+
+
+def _real_tt(path) -> int:
+    """A real TT schema at *path* with one reviewed, pictured card; returns its id."""
+    db = SRSDatabase(f"sqlite:///{path}")
+    db.add_collocation(
+        SyntacticUnit(text="matulog", translation="to sleep", word_count=1, difficulty=1, source="test"),
+        language_code="ceb",
+    )
+    with db._get_conn() as conn:
+        cid = conn.execute("SELECT id FROM collocations WHERE text = 'matulog'").fetchone()[0]
+        conn.execute(
+            "INSERT INTO tt_revlog (id, collocation_id, direction, button_chosen, interval, last_interval,"
+            " factor, taken_millis, review_kind) VALUES (1790423172221, ?, 'recognition', 3, 1, 0, 0, 1000, 1)",
+            (cid,),
+        )
+        conn.commit()
+    db.add_media(cid, "image", "img_to_sleep.jpg", "img_to_sleep.jpg", "img_to_sleep.jpg", "0" * 64, 1)
+    return cid
+
+
+def _fk_violations(path) -> list[tuple]:
+    return sqlite3.connect(path).execute("PRAGMA foreign_key_check").fetchall()
+
+
+def test_no_anki_delete_leaves_no_fk_orphans_on_the_real_schema(tmp_path):
+    db = tmp_path / "u2.db"
+    cid = _real_tt(db)
+    assert main(["--language", "ceb", "--tt-db", str(db), "--no-anki", "--texts", "matulog"]) == 0
+    assert _fk_violations(db) == []
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT count(*) FROM tt_revlog WHERE collocation_id = ?", (cid,)).fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM media WHERE collocation_id = ?", (cid,)).fetchone()[0] == 0
+
+
+def test_anki_delete_leaves_no_fk_orphans_on_the_real_schema(tmp_path, fake_anki_db, monkeypatch):
+    monkeypatch.setattr(settings, "anki_backup_dir", tmp_path / "backups")
+    anki = _anki(fake_anki_db)
+    _seed_note(anki, 900, (901, 902))
+    anki.close()
+    db = tmp_path / "owner.db"
+    cid = _real_tt(db)
+    sqlite3.connect(db).execute("UPDATE collocations SET anki_note_id = 900 WHERE id = ?", (cid,)).connection.commit()
+    assert main(["--language", "ceb", "--tt-db", str(db), "--anki-db", str(fake_anki_db), "--texts", "matulog"]) == 0
+    assert _fk_violations(db) == []
