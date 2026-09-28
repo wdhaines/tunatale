@@ -1,0 +1,19 @@
+{
+  "_comment": "Spatial words drawn as a picture, not searched for and not clozed (tunatale-hvj0, the user 2026-09-28: 'they become picture cards'). Each maps a word to a language-neutral concept in app.cards.spatial_scenes.SPATIAL_CONCEPTS. A word listed here is NOT a function word, whatever `function_words.json` or a POS tag says: app.srs.function_words.is_function_word vetoes it, so it cards as vocab and its image is drawn. The picture is only drawn when the card's English gloss names the relation (app.cards.spatial_picture.gloss_matches), which is what keeps a homograph's other sense off the picture. Map only words whose MAIN sense is spatial: na/v/za/med/pred stay clozes — each has a common non-spatial sense (za = for, med = during or honey, pred = ago, na/v also mark time and direction), and the cloze drills the case they govern.",
+  "words": {
+    "desno": "right",
+    "dol": "down",
+    "gor": "up",
+    "levo": "left",
+    "nad": "above",
+    "notri": "in",
+    "pod": "under",
+    "poleg": "beside",
+    "spodaj": "under",
+    "spredaj": "in_front",
+    "zadaj": "behind",
+    "zgoraj": "above",
+    "zraven": "beside",
+    "zunaj": "out"
+  }
+}

@@ -475,3 +475,56 @@ async def test_an_ordinary_word_still_gets_an_image_query(media_dir) -> None:
         db, 7, "båt", "boat", llm=object(), pixabay_key="k", language_code="no", _query_fn=_query, _fetch_fn=_fetch
     )
     assert queried == ["båt"]
+
+
+@pytest.mark.parametrize(("word", "language_code", "english"), [("under", "no", "under"), ("sulod", "ceb", "inside")])
+async def test_a_spatial_word_is_drawn_not_searched_for(media_dir, word, language_code, english) -> None:
+    """A spatial word added as a NEW card gets its box-and-ball picture (tunatale-hvj0)."""
+    from app.cards.spatial_picture import spatial_picture
+
+    db = _FakeDB()
+    queried: list[str] = []
+    fetched_with: list[str | None] = []
+
+    async def _query(word, *_a, **_k):  # must NOT be called
+        queried.append(word)
+        return "a photo of a table"
+
+    async def _fetch(*_a, image_query=None, **_k):
+        fetched_with.append(image_query)
+        return MediaResult(audio_bytes=b"AUD", audio_source="tts", image_status="skipped")
+
+    out = await vocab_media.generate_vocab_media(
+        db,
+        7,
+        word,
+        english,
+        llm=object(),
+        pixabay_key="k",
+        language_code=language_code,
+        _query_fn=_query,
+        _fetch_fn=_fetch,
+    )
+
+    picture = spatial_picture(word, language_code, english)
+    assert picture is not None and out["image"] == picture.filename
+    assert (media_dir / picture.filename).read_bytes() == picture.svg
+    assert (queried, fetched_with) == ([], [""])
+
+
+async def test_a_spatial_homograph_glossed_with_its_other_sense_is_searched_for(media_dir) -> None:
+    """Cebuano `wala` is "left" and "none": a card glossed "none" gets no arrow."""
+    db = _FakeDB()
+    queried: list[str] = []
+
+    async def _query(word, *_a, **_k):
+        queried.append(word)
+        return "nothing"
+
+    async def _fetch(*_a, **_k):
+        return MediaResult()
+
+    await vocab_media.generate_vocab_media(
+        db, 7, "wala", "none", llm=object(), pixabay_key="k", language_code="ceb", _query_fn=_query, _fetch_fn=_fetch
+    )
+    assert queried == ["wala"]

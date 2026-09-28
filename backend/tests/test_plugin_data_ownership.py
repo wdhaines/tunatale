@@ -2,7 +2,14 @@
 
 from pathlib import Path
 
-from app.languages import get_function_words_path, get_language, get_numbers_path, get_style_notes, known_language_codes
+from app.languages import (
+    get_function_words_path,
+    get_language,
+    get_numbers_path,
+    get_spatial_path,
+    get_style_notes,
+    known_language_codes,
+)
 
 
 def test_sl_style_notes_non_empty() -> None:
@@ -98,3 +105,28 @@ def test_en_numbers_path_none() -> None:
 
 def test_unknown_numbers_path_none() -> None:
     assert get_numbers_path("xx") is None
+
+
+# ── Spatial-word vocabulary ──────────────────────────────────────────────
+
+
+def test_every_language_with_function_words_also_ships_spatial_words() -> None:
+    """The same pairing argument as numbers: a closed-class policy puts every
+    preposition on the cloze route, and the spatial file is what takes the
+    picturable ones off it (tunatale-hvj0)."""
+    for code in (c for c in known_language_codes() if get_function_words_path(c) is not None):
+        assert get_spatial_path(code) is not None, code
+
+
+def test_spatial_vocabulary_lives_in_the_plugin_dir() -> None:
+    with_spatial = sorted(c for c in known_language_codes() if get_spatial_path(c) is not None)
+    assert {"sl", "no", "tl", "ceb"} <= set(with_spatial)
+    for code in with_spatial:
+        path = get_spatial_path(code)
+        assert path.exists(), code
+        assert (path.parent.name, path.parent.parent.name) == ("data", code)
+
+
+def test_en_and_unknown_spatial_paths_are_none() -> None:
+    assert get_spatial_path("en") is None
+    assert get_spatial_path("xx") is None

@@ -42,7 +42,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from app.cards.number_picture import number_picture
+from app.cards.drawn_picture import drawn_picture
 from app.srs.function_words import is_function_word
 
 from .vocab_media import safe_stem, store_tt_media
@@ -275,7 +275,7 @@ async def prestage_production_images(
             already += 1
             return
 
-        # A number word is DRAWN, not searched for (tunatale-elrj). Checked before
+        # A number or spatial word is DRAWN, not searched for (tunatale-elrj, hvj0). Checked before
         # every other filter below, and deliberately so in two directions:
         #
         # - before the unpicturable marker, because that marker records a verdict
@@ -289,10 +289,11 @@ async def prestage_production_images(
         #   be the one closed class with a perfect picture.
         #
         # It costs nothing against `limit`, which bounds live network chains and
-        # this is not one. `number_picture` returns None for anything it will not
-        # draw — not a number, excluded, zero, or too large — so those words fall
-        # through to exactly the routing they had before.
-        picture = number_picture(unit.text, language_code)
+        # this is not one. `drawn_picture` returns None for anything it will not
+        # draw — not a number or spatial word, excluded, zero, too large, or a
+        # spatial homograph whose gloss names its other sense — so those words
+        # fall through to exactly the routing they had before.
+        picture = drawn_picture(unit.text, language_code, unit.translation)
         if picture is not None:
             store_tt_media(db, cand.collocation_id, "image", picture.filename, picture.svg)
             if repair:

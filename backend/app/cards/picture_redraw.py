@@ -1,7 +1,7 @@
-"""Give existing number cards the drawn picture new ones now get (tunatale-w4m7.10).
+"""Give existing cards the drawn picture new ones now get (tunatale-w4m7.10, hvj0).
 
-``app.cards.number_picture`` fixed the ROUTING: a number minted from now on is
-drawn. Cards already minted keep what they were given — for every number that
+``app.cards.drawn_picture`` fixed the ROUTING: a number or spatial word minted
+from now on is drawn. Cards already minted keep what they were given — for every number that
 entered as a new card (the Cebuano base list, an add from the reader) that is a
 Pixabay photo of "five", which is the failure the drawing exists to prevent. A
 card's image is fixed once stored, so nothing heals them on its own.
@@ -17,10 +17,15 @@ Scope, deliberately narrow:
 - **a card whose image already IS the drawing is left alone**, so a second run is
   a no-op and a language whose numbers are already drawn (Norwegian, via the
   pre-stage) plans nothing;
-- **a row with no image is left alone**. It is either not minted yet — the mint
-  now draws it — or it carries no picture for a reason recorded elsewhere (a
-  notetype without an Image field). Replacing a wrong picture is this module's
-  job; deciding a word should have one is not.
+- **a NUMBER with no image is left alone**. It is either not minted yet — the
+  mint now draws it — or it carries no picture for a reason recorded elsewhere
+  (a notetype without an Image field). Replacing a wrong picture is this
+  module's job; deciding a number should have one is not.
+- **a SPATIAL word with no image is filled.** That decision was made: the user
+  said these are picture cards (2026-09-28), and the Norwegian deck's
+  ``under``/``foran``/``inni`` came from Anki with no picture at all. A note
+  whose notetype has no Image field is safe to flag: the push logs
+  ``PUSH_FIELD_DROPPED`` and clears the flag (``sync_engine.py::sync_push``).
 
 ⚠️ It rewrites the Image field of whatever note the row points at, which for an
 Anki-originated note is a card the user made. Run it per language, dry first,
@@ -31,40 +36,46 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple
 
+from app.cards.drawn_picture import drawn_picture
 from app.cards.media import vocab_media
-from app.cards.number_picture import number_picture
+from app.cards.spatial_picture import spatial_picture
 
 
 class Redraw(NamedTuple):
     collocation_id: int
     text: str
-    old_filename: str
+    old_filename: str | None  # None: the card had no picture, and is being filled
     new_filename: str
     linked: bool  # has an Anki note, so the next sync must push the new picture
+    gloss: str  # the card's English, which a spatial word's picture is checked against
 
 
-def plan_number_redraws(db: Any, language_code: str) -> list[Redraw]:
-    """Every non-cloze card in *db* whose number word shows the wrong picture."""
+def plan_redraws(db: Any, language_code: str) -> list[Redraw]:
+    """Every non-cloze card in *db* whose drawn word shows the wrong picture, or none."""
     rows, _ = db.list_collocations(limit=1_000_000)
     plan = []
     for coll_id, item, _guid in rows:
         unit = item.syntactic_unit
         if unit.card_type == "cloze":
             continue
-        picture = number_picture(unit.text, language_code)
+        picture = drawn_picture(unit.text, language_code, unit.translation)
         if picture is None:
             continue
         current = db.get_image_filename(coll_id)
-        if current is None or current == picture.filename:
+        if current == picture.filename:
             continue
-        plan.append(Redraw(coll_id, unit.text, current, picture.filename, item.anki_note_id is not None))
+        if current is None and spatial_picture(unit.text, language_code, unit.translation) is None:
+            continue
+        plan.append(
+            Redraw(coll_id, unit.text, current, picture.filename, item.anki_note_id is not None, unit.translation)
+        )
     return plan
 
 
-def apply_number_redraws(db: Any, plan: list[Redraw], language_code: str) -> None:
+def apply_redraws(db: Any, plan: list[Redraw], language_code: str) -> None:
     """Store each planned drawing, retire the old file if orphaned, flag the push."""
     for redraw in plan:
-        picture = number_picture(redraw.text, language_code)
+        picture = drawn_picture(redraw.text, language_code, redraw.gloss)
         vocab_media._unlink_orphaned_images(
             db, redraw.collocation_id, "image", vocab_media._MEDIA_DIR, skip_filename=picture.filename
         )

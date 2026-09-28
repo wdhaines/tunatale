@@ -2086,6 +2086,29 @@ class TestCreateNewDrawsNumbers:
         assert media_kwargs[0]["skip_image"] is True
         assert fields["Audio"].startswith("[sound:tts_")
 
+    async def test_a_spatial_word_gets_its_drawn_picture_and_no_image_fetch(self):
+        """Same route as a number, for a spatial word (tunatale-hvj0)."""
+        from app.cards.spatial_picture import spatial_picture
+
+        db = _make_db()
+        _add_item(db, "under", "under")
+        media_kwargs: list[dict] = []
+
+        async def media(word, english, *, used_image_urls, **kwargs):
+            media_kwargs.append(kwargs)
+            return MediaResult(audio_bytes=b"AUD", audio_source="tts", image_status="skipped")
+
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer, language_code="no").sync_create_new(
+            deck_name="0. Norwegian", model_name="Norwegian Vocabulary", _media_fn=media
+        )
+
+        picture = spatial_picture("under", "no", "under")
+        assert picture is not None
+        fields = next(c for c in writer.calls if c[0] == "create_note")[3]
+        assert fields["Image"] == f'<img src="{picture.filename}">'
+        assert media_kwargs[0]["skip_image"] is True
+
     async def test_an_ordinary_word_still_asks_the_media_fn_for_an_image(self):
         """The control: `skip_image` is never sent for a word that is not a number."""
         db = _make_db()

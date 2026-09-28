@@ -3,7 +3,7 @@
   "pos": ["ADP", "DET", "CCONJ", "SCONJ", "PRON", "AUX", "PART"],
   "include": [
     "i", "på", "til", "av", "for", "med", "om", "fra", "etter",
-    "under", "over", "mot", "ved", "hos", "mellom", "uten", "gjennom",
+    "mot", "ved", "hos", "uten", "gjennom",
     "en", "ei", "et", "som", "at"
   ],
   "exclude": [],
