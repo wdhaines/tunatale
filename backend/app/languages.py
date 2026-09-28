@@ -317,6 +317,13 @@ class LanguageConfig:
     # is about a key phrase, and phrase IPA on a full sentence is untested. See
     # ``get_ipa_for_drill_phrases``.
     ipa_for_drill_phrases: bool = False
+    # A multi-word card matches a lesson phrase only on its exact surface form,
+    # not on its lemmas (tunatale-w4m7.17). For a language whose lemma table
+    # keys every verb form on the root, lemma matching lights up — and grades —
+    # a phrase card for a DIFFERENT form of the verb (Tagalog "Magdadala ako",
+    # I will bring, matched the card "magdala ako", let me bring). Single words
+    # still resolve by lemma. See ``get_phrase_match_exact_form``.
+    phrase_match_exact_form: bool = False
     # Gzipped lemma table that reproduces this language's lemmatizer model without
     # PyTorch (``surface, upos, lemma, is_default`` rows; see
     # ``app.srs.lemma_table``). Served when ``settings.lemmatizer_type == "table"``
@@ -557,6 +564,15 @@ def get_ipa_for_drill_phrases(code: str) -> bool:
     language's channel to another's.
     """
     return _facet(code, "ipa_for_drill_phrases", False)
+
+
+def get_phrase_match_exact_form(code: str) -> bool:
+    """Do *code*'s multi-word cards match lesson phrases on exact surface form?
+
+    ``False`` for an unknown code: lemma matching is what every language did
+    before the flag existed, and it is an opt-in per plugin.
+    """
+    return _facet(code, "phrase_match_exact_form", False)
 
 
 def get_tts_voice_gain_db(code: str, voice_id: str) -> float:

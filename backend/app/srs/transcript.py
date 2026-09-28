@@ -7,7 +7,7 @@ from datetime import date
 
 from app.cards.cloze_source import parse_inflection_forms
 from app.cards.field_map import inflection_labels, upos_for_disambig
-from app.languages import card_surface_variants, get_variant_separator
+from app.languages import card_surface_variants, get_phrase_match_exact_form, get_variant_separator
 from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import deserialize_extras
@@ -177,6 +177,15 @@ def _build_collocation_index(
             db.set_lemma_key(coll_id, lemma_key)
         index[tuple(lemma_key.split(" ")) if lemma_key else ()] = coll_id
     return index
+
+
+def _build_surface_collocation_index(collocations: list[tuple[int, str, str | None]]) -> dict[tuple[str, ...], int]:
+    """Surface-tuple → DB id index, for a language whose phrase cards match on
+    exact form (``get_phrase_match_exact_form``). Keys are the card's own
+    tokens, casefolded; ``tokenize`` drops the punctuation on both sides, so
+    "Salamat po." and "salamat po!" share a key while "magdala ako" and
+    "magdadala ako" do not."""
+    return {tuple(t.casefold() for t in tokenize(text)): coll_id for coll_id, text, _ in collocations}
 
 
 def resolve_active_direction(item: object) -> Direction:
@@ -495,7 +504,12 @@ def extract_transcript(
 
     # Pre-load multi-word collocations for span detection
     raw_collocations = db.get_collocations_with_lemma_key(lesson.language_code, min_word_count=2)
-    collocation_index = _build_collocation_index(db, raw_collocations, lemmatizer, lesson.language_code)
+    exact_form_phrases = get_phrase_match_exact_form(lesson.language_code)
+    collocation_index = (
+        _build_surface_collocation_index(raw_collocations)
+        if exact_form_phrases
+        else _build_collocation_index(db, raw_collocations, lemmatizer, lesson.language_code)
+    )
     # Card-less ignore list
     ignored_lemmas = db.get_ignored_lemmas(lesson.language_code)
     # Spelling-variant cards ('mot, imot') keyed by each accepted surface form
@@ -791,7 +805,8 @@ def extract_transcript(
                 )
 
             # Annotate collocation spans
-            span_annotations = match_spans(lemmas, collocation_index)
+            span_keys = [t.casefold() for t in surfaces] if exact_form_phrases else lemmas
+            span_annotations = match_spans(span_keys, collocation_index)
             span_cache: dict[int, tuple[str, str, str | None, float | None, bool, str, str]] = {}
             for word, (span_id, is_start) in zip(words, span_annotations, strict=True):
                 word.collocation_span_id = span_id
