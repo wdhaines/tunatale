@@ -90,7 +90,7 @@ REGISTRY: Final[dict[str, CacheKeySpec]] = {
         day_scoped=True,
         logic_version=2,
     ),
-    # ANKI_CONFIG keys (17 total)
+    # ANKI_CONFIG keys (18 total)
     "daily_new_cap": CacheKeySpec(
         name="daily_new_cap",
         source=CacheSource.ANKI_CONFIG,
@@ -141,6 +141,14 @@ REGISTRY: Final[dict[str, CacheKeySpec]] = {
         name="fsrs_params",
         source=CacheSource.ANKI_CONFIG,
         max_age_days=30,
+    ),
+    # The preset-change detector's baseline (preset_watch.py, tunatale-sf6h). No
+    # max age on purpose: it is a diff baseline, not a resolver input, and aging
+    # it out would make a long-unsynced deck's next sync look like a first sync —
+    # silently missing exactly the change it exists to report.
+    "fsrs_preset_snapshot": CacheKeySpec(
+        name="fsrs_preset_snapshot",
+        source=CacheSource.ANKI_CONFIG,
     ),
     "learn_steps": CacheKeySpec(
         name="learn_steps",

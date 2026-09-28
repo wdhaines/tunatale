@@ -11,9 +11,9 @@ from app.srs.database import SRSDatabase
 class TestRegistryStructure:
     """Test the registry itself."""
 
-    def test_registry_has_19_keys(self):
-        """All 19 cache keys are registered."""
-        assert len(REGISTRY) == 21
+    def test_registry_key_count(self):
+        """Every cache key is registered (the count lives here, not in the name)."""
+        assert len(REGISTRY) == 22
 
     def test_registry_keys_sorted(self):
         """Registry keys (for visual clarity in diffs)."""
@@ -26,6 +26,7 @@ class TestRegistryStructure:
             "desired_retention",
             "easy_days_percentages",
             "fsrs_params",
+            "fsrs_preset_snapshot",
             "fsrs_short_term_with_steps_enabled",
             "last_grade_undo",
             "last_unbury_day",
@@ -43,9 +44,9 @@ class TestRegistryStructure:
         assert set(REGISTRY.keys()) == expected_keys
 
     def test_anki_config_keys_count(self):
-        """17 keys have source ANKI_CONFIG."""
+        """18 keys have source ANKI_CONFIG."""
         anki_config_count = sum(1 for spec in REGISTRY.values() if spec.source == CacheSource.ANKI_CONFIG)
-        assert anki_config_count == 17
+        assert anki_config_count == 18
 
     def test_tt_session_keys_count(self):
         """2 keys have source TT_SESSION."""
