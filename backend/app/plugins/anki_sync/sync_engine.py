@@ -18,7 +18,7 @@ from app.cards.cloze_prestage import cloze_cache_key
 from app.cards.cloze_source import ClozeChoice, choose_cloze_sentence
 from app.cards.media.vocab_media import safe_stem as _safe_stem
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media
-from app.cards.number_image import number_value
+from app.cards.number_picture import number_picture
 from app.common.guid import compute_guid
 from app.config import settings
 from app.languages import card_surface_variants, cloze_answer_spelling, get_tts_voice
@@ -1766,6 +1766,17 @@ class AnkiSync:
             existing_audio = self._db.get_audio_filename(coll_id)
             existing_image = self._db.get_image_filename(coll_id)
 
+            # A number is DRAWN, never searched for (tunatale-w4m7.10). This path
+            # used to be the one that did not ask: a base-list seed or any other
+            # card minted here got a Pixabay photo for "five", while only words
+            # promoted through the pre-stage got the counting picture. Stored
+            # before the fetch so `_media_fn` is asked for audio alone and spends
+            # no image query on a word whose picture is already known.
+            picture = number_picture(word, self._language_code) if existing_image is None else None
+            if picture is not None:
+                _store_tt_media(self._db, coll_id, "image", picture.filename, picture.svg)
+                existing_image = picture.filename
+
             media = None
             if _media_fn is not None and (existing_audio is None or existing_image is None):
                 media = await _media_fn(
@@ -1774,6 +1785,7 @@ class AnkiSync:
                     source_sentence=item.syntactic_unit.source_sentence,
                     grammar=item.syntactic_unit.grammar,
                     used_image_urls=used_image_urls,
+                    **({"skip_image": True} if picture is not None else {}),
                 )
 
             if existing_audio is not None:
@@ -2011,7 +2023,7 @@ class AnkiSync:
             # The picture is DRAWN by `prestage_production_images`, never here —
             # this phase makes no network call and now makes no drawing either,
             # so its contract is unchanged: it mints from what is already staged.
-            is_number = number_value(unit.text, self._language_code) is not None
+            is_number = number_picture(unit.text, self._language_code) is not None
             if not is_number and is_function_word(unit.text, self._language_code, upos=material.upos):
                 # Closed-class words route to a cloze without spending a fetch: a
                 # picture of "foran" is noise, and minting a card with a meaningless

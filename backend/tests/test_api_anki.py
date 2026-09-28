@@ -274,6 +274,33 @@ class TestBuildMediaFn:
 
         assert db.get_image_query("sodišče", "court", IMAGE_QUERY_MODEL_VERSION) == "courtroom interior"
 
+    async def test_skip_image_spends_no_image_query_and_asks_for_no_picture(self, monkeypatch):
+        """A drawn number already has its picture (tunatale-w4m7.10).
+
+        The caller wants audio alone, so neither the LLM image query nor a
+        Pixabay search may run — `""` is `fetch_card_media`'s skip sentinel.
+        """
+        from app.api.anki import _build_media_fn
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "pixabay_api_key", "test-key")
+
+        class _ExplodingLLM:
+            async def complete(self, *args, **kwargs):
+                raise AssertionError("no image query may be generated for a drawn picture")
+
+        captured: list[str | None] = []
+
+        async def fake_fetch(word, english, *, pixabay_key, used_image_urls, image_query=None, **kw):
+            captured.append(image_query)
+            return None
+
+        with patch("app.api.anki.fetch_card_media", fake_fetch):
+            media_fn = _build_media_fn(_ExplodingLLM(), app.state.srs_db)
+            await media_fn("fem", "five", used_image_urls=set(), skip_image=True)
+
+        assert captured == [""]
+
 
 class TestPreStagesNextSyncsImages:
     """The sync schedules a background image pre-stage (tunatale-6xa).

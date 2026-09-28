@@ -2051,3 +2051,55 @@ class TestSyncCreateNewClozeAudioMint:
         assert calls == [], "a cloze that already has audio must not hit the TTS boundary"
         notes = anki_conn.execute("SELECT n.flds FROM notes n").fetchall()
         assert "[sound:tts_sentence_seeded.mp3]" in notes[0][0]
+
+
+class TestCreateNewDrawsNumbers:
+    """A number minted as a NEW card is drawn, not photographed (tunatale-w4m7.10).
+
+    The base-list seed adds words with no media, so the sync's own fetch was the
+    one that picked their picture — a Pixabay photo for "five" — while only
+    words promoted through the pre-stage got the counting picture.
+    """
+
+    async def test_a_number_word_gets_its_drawn_picture_and_no_image_fetch(self):
+        from app.cards.number_picture import number_picture
+
+        db = _make_db()
+        _add_item(db, "fem", "five")
+        media_kwargs: list[dict] = []
+
+        async def media(word, english, *, used_image_urls, **kwargs):
+            media_kwargs.append(kwargs)
+            return MediaResult(audio_bytes=b"AUD", audio_source="tts", image_status="skipped")
+
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer, language_code="no").sync_create_new(
+            deck_name="0. Norwegian", model_name="Norwegian Vocabulary", _media_fn=media
+        )
+
+        picture = number_picture("fem", "no")
+        assert picture is not None
+        assert db.get_image_filename(db.get_collocation_id_by_guid(db.get_collocation("fem").guid)) == picture.filename
+        fields = next(c for c in writer.calls if c[0] == "create_note")[3]
+        assert fields["Image"] == f'<img src="{picture.filename}">'
+        assert ("store_media_file", picture.filename, len(picture.svg)) in writer.calls
+        assert media_kwargs[0]["skip_image"] is True
+        assert fields["Audio"].startswith("[sound:tts_")
+
+    async def test_an_ordinary_word_still_asks_the_media_fn_for_an_image(self):
+        """The control: `skip_image` is never sent for a word that is not a number."""
+        db = _make_db()
+        _add_item(db, "båt", "boat")
+        media_kwargs: list[dict] = []
+
+        async def media(word, english, *, used_image_urls, **kwargs):
+            media_kwargs.append(kwargs)
+            return MediaResult(image_bytes=b"IMG", image_ext="jpg", image_status="ok")
+
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer, language_code="no").sync_create_new(
+            deck_name="0. Norwegian", model_name="Norwegian Vocabulary", _media_fn=media
+        )
+
+        assert "skip_image" not in media_kwargs[0]
+        assert db.get_image_filename(db.get_collocation_id_by_guid(db.get_collocation("båt").guid)) == "img_boat.jpg"

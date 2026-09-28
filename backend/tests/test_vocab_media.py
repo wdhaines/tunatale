@@ -419,3 +419,59 @@ class TestAddTimeImagesAreUniquePerCard:
             await self._generate(db)
 
         assert "duplicates collocation 42" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("word", "language_code", "stem"),
+    [("fem", "no", "count_005"), ("singko", "ceb", "clock_05"), ("kinse", "ceb", "money_0015")],
+)
+async def test_a_number_is_drawn_not_searched_for(media_dir, word, language_code, stem) -> None:
+    """A number added as a NEW card gets its drawn picture (tunatale-w4m7.10).
+
+    This path used to send "five" to the LLM image query and Pixabay like any
+    other word, so only numbers promoted through the pre-stage were drawn. The
+    fetch still runs — the card needs audio — but is told to skip the image.
+    """
+    from app.cards.number_picture import number_picture
+
+    db = _FakeDB()
+    queried: list[str] = []
+    fetched_with: list[str | None] = []
+
+    async def _query(word, *_a, **_k):  # must NOT be called
+        queried.append(word)
+        return "a photo of a numeral"
+
+    async def _fetch(*_a, image_query=None, **_k):
+        fetched_with.append(image_query)
+        return MediaResult(audio_bytes=b"AUD", audio_source="tts", image_status="skipped")
+
+    out = await vocab_media.generate_vocab_media(
+        db, 7, word, "n", llm=object(), pixabay_key="k", language_code=language_code, _query_fn=_query, _fetch_fn=_fetch
+    )
+
+    picture = number_picture(word, language_code)
+    assert picture is not None and picture.filename.startswith(f"{stem}_")
+    assert out["image"] == picture.filename
+    assert (media_dir / picture.filename).read_bytes() == picture.svg
+    assert queried == []
+    assert fetched_with == [""]
+    assert out["audio"].startswith("tts_")
+
+
+async def test_an_ordinary_word_still_gets_an_image_query(media_dir) -> None:
+    """The control for the test above: the number check does not swallow words."""
+    db = _FakeDB()
+    queried: list[str] = []
+
+    async def _query(word, *_a, **_k):
+        queried.append(word)
+        return "a boat"
+
+    async def _fetch(*_a, **_k):
+        return MediaResult()
+
+    await vocab_media.generate_vocab_media(
+        db, 7, "båt", "boat", llm=object(), pixabay_key="k", language_code="no", _query_fn=_query, _fetch_fn=_fetch
+    )
+    assert queried == ["båt"]

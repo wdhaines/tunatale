@@ -42,7 +42,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from app.cards.number_image import number_value, render_count_svg
+from app.cards.number_picture import number_picture
 from app.srs.function_words import is_function_word
 
 from .vocab_media import safe_stem, store_tt_media
@@ -289,14 +289,12 @@ async def prestage_production_images(
         #   be the one closed class with a perfect picture.
         #
         # It costs nothing against `limit`, which bounds live network chains and
-        # this is not one. `number_value` returns None for anything it will not
+        # this is not one. `number_picture` returns None for anything it will not
         # draw — not a number, excluded, zero, or too large — so those words fall
         # through to exactly the routing they had before.
-        value = number_value(unit.text, language_code)
-        if value is not None:
-            image = render_count_svg(value)
-            digest = hashlib.sha256(image).hexdigest()[:8]
-            store_tt_media(db, cand.collocation_id, "image", f"count_{value:03d}_{digest}.svg", image)
+        picture = number_picture(unit.text, language_code)
+        if picture is not None:
+            store_tt_media(db, cand.collocation_id, "image", picture.filename, picture.svg)
             if repair:
                 db.add_dirty_field_by_id(cand.collocation_id, "image")
             drawn += 1

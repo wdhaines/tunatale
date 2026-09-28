@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 from functools import cache
+from typing import NamedTuple
 
 from app.languages import get_numbers_path
 
@@ -83,21 +84,47 @@ _ROD_FILL = "#e8eef8"
 _ROD_STROKE = "#93a9c9"
 
 
+class NumberConfig(NamedTuple):
+    """One language's ``numbers.json``, casefolded for case-insensitive lookup.
+
+    ``values`` and ``exclude`` drive the counting picture drawn here. ``clock``
+    and ``money`` name the words drawn in a context instead of as a heap — an
+    hour on a clock face, an amount in coins and bills — and carry the currency
+    those amounts are paid in (``app.cards.number_scenes``). Nothing here is a
+    literal: a language without the keys simply has no such words.
+    """
+
+    values: dict[str, int]
+    exclude: frozenset[str]
+    clock: frozenset[str] = frozenset()
+    money: frozenset[str] = frozenset()
+    money_symbol: str = ""
+    coins: tuple[int, ...] = ()
+    bills: tuple[int, ...] = ()
+
+
 @cache
-def _load_number_config(language_code: str) -> tuple[dict[str, int], frozenset[str]]:
-    """Load ``(values, exclude)`` for *language_code*.
+def load_number_config(language_code: str) -> NumberConfig:
+    """Load *language_code*'s number vocabulary.
 
     Returns an empty vocabulary when the language registers no file — a language
     without one simply has no number words, and every one of its words keeps the
-    routing it has today. Both maps are casefolded for case-insensitive lookup.
+    routing it has today.
     """
     path = get_numbers_path(language_code)
     if path is None or not path.exists():
-        return {}, frozenset()
+        return NumberConfig({}, frozenset())
     data = json.loads(path.read_text(encoding="utf-8"))
-    values = {str(word).casefold(): int(value) for word, value in data.get("values", {}).items()}
-    exclude = frozenset(str(word).casefold() for word in data.get("exclude", []))
-    return values, exclude
+    money = data.get("money", {})
+    return NumberConfig(
+        values={str(word).casefold(): int(value) for word, value in data.get("values", {}).items()},
+        exclude=frozenset(str(word).casefold() for word in data.get("exclude", [])),
+        clock=frozenset(str(word).casefold() for word in data.get("clock", [])),
+        money=frozenset(str(word).casefold() for word in money.get("words", [])),
+        money_symbol=str(money.get("symbol", "")),
+        coins=tuple(int(v) for v in money.get("coins", [])),
+        bills=tuple(int(v) for v in money.get("bills", [])),
+    )
 
 
 def number_value(text: str, language_code: str) -> int | None:
@@ -118,11 +145,11 @@ def number_value(text: str, language_code: str) -> int | None:
     ``null`` included, which records that those words were considered rather than
     overlooked.
     """
-    values, exclude = _load_number_config(language_code)
+    config = load_number_config(language_code)
     word = text.strip().casefold()
-    if word in exclude:
+    if word in config.exclude:
         return None
-    value = values.get(word)
+    value = config.values.get(word)
     if value is None or not 1 <= value <= MAX_RENDERABLE:
         return None
     return value

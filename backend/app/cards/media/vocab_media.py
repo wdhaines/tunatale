@@ -27,6 +27,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.cards.number_picture import number_picture
 from app.config import settings
 
 from .pipeline import fetch_card_media
@@ -145,14 +146,26 @@ async def generate_vocab_media(
     query_fn = _query_fn or generate_image_query
     fetch_fn = _fetch_fn or fetch_card_media
     stored: dict[str, str] = {}
+
+    # A number is DRAWN, not searched for (tunatale-w4m7.10): a counting
+    # picture, a clock face or a peso amount, right by construction. Stored
+    # first so the fetch below is asked for audio alone ("" skips the image).
+    picture = number_picture(word, language_code)
+    if picture is not None:
+        store_tt_media(db, coll_id, "image", picture.filename, picture.svg)
+        stored["image"] = picture.filename
     try:
-        image_query = await query_fn(
-            word,
-            english,
-            llm=llm,
-            db=db,
-            source_sentence=source_sentence,
-            grammar=grammar,
+        image_query = (
+            ""
+            if picture is not None
+            else await query_fn(
+                word,
+                english,
+                llm=llm,
+                db=db,
+                source_sentence=source_sentence,
+                grammar=grammar,
+            )
         )
         media = await fetch_fn(
             word,
