@@ -260,6 +260,15 @@ export const en = {
   "syncButton.sync": "Sync",
   "syncButton.synced": "Synced with AnkiWeb",
 
+  // PresetChangeBanner.svelte
+  "presetChangeBanner.heading": "FSRS preset changed — due dates were NOT rescheduled",
+  "presetChangeBanner.deck": "Deck: {name}",
+  "presetChangeBanner.retention": "Desired retention: {old} → {new}",
+  "presetChangeBanner.dueRatioMedian": "Median due/stability ratio: {old} → {new}",
+  "presetChangeBanner.body":
+    "The deck's scheduler parameters changed and Anki wrote no reschedule, so due dates no longer match the new stabilities. Reviews will drift out of range until the due dates are rescheduled.",
+  "presetChangeBanner.dismiss": "Dismiss",
+
   // RateLimitWidget.svelte
   "rateLimitWidget.noCallYet": "No LLM call yet this session — click to check",
   "rateLimitWidget.probing": "LLM …",

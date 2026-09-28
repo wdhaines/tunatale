@@ -21,6 +21,7 @@
 	import { setParkedHandler, setUnauthorizedHandler } from '$lib/api';
 	import { parkedStore } from '$lib/stores/parked.svelte';
 	import LlmHealthBanner from '$lib/components/LlmHealthBanner.svelte';
+	import PresetChangeBanner from '$lib/components/PresetChangeBanner.svelte';
 	import { t } from '$lib/i18n/i18n.svelte';
 
 	let { children } = $props();
@@ -214,6 +215,7 @@
 {:else}
 {#if !onLogin}
 <LlmHealthBanner />
+<PresetChangeBanner syncAvailable={languageStore.syncAvailable} />
 
 <nav class="global-nav" bind:this={navEl}>
 	<a href="/" class="brand"><img class="brand-mark" src={logo} alt="" />TunaTale</a>

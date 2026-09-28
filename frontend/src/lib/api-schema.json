@@ -2998,6 +2998,84 @@
         "title": "PlanTurnResponse",
         "type": "object"
       },
+      "PresetChange": {
+        "description": "Non-null value of ``PresetChangeResponse.change``.\n\n``preset_watch.PresetChangeAlert`` minus ``dismissed_at_ms`` \u2014 the field the\nGET filters on, so a dismissed record is not a record as far as the UI is\nconcerned. ``due_ratio_median_old``/``_new`` are ``None`` when the deck had\nno review rows to measure: that is \"not measured\", and it must never reach a\ncaller as ``0.00`` \u2014 which is a real ratio, and a very different claim.",
+        "properties": {
+          "deck_name": {
+            "title": "Deck Name",
+            "type": "string"
+          },
+          "desired_retention_new": {
+            "title": "Desired Retention New",
+            "type": "number"
+          },
+          "desired_retention_old": {
+            "title": "Desired Retention Old",
+            "type": "number"
+          },
+          "detected_at_ms": {
+            "title": "Detected At Ms",
+            "type": "integer"
+          },
+          "due_ratio_median_new": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Ratio Median New"
+          },
+          "due_ratio_median_old": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Ratio Median Old"
+          },
+          "weights_changed": {
+            "title": "Weights Changed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deck_name",
+          "detected_at_ms",
+          "desired_retention_old",
+          "desired_retention_new",
+          "weights_changed",
+          "due_ratio_median_old",
+          "due_ratio_median_new"
+        ],
+        "title": "PresetChange",
+        "type": "object"
+      },
+      "PresetChangeResponse": {
+        "description": "Response of GET /api/anki/preset-change and POST /api/anki/preset-change/dismiss.\n\nOne nullable key, shared by both routes, and both are the cases the banner\ncares about: ``null`` is either \"nothing was recorded\" or \"the user\ndismissed it\" \u2014 indistinguishable on purpose, because the banner does the\nsame thing about both.",
+        "properties": {
+          "change": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PresetChange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "change"
+        ],
+        "title": "PresetChangeResponse",
+        "type": "object"
+      },
       "ProposeClozeResponse": {
         "description": "Response of POST /api/srs/items/{item_id}/cloze/propose.\n\n\u26a0\ufe0f This endpoint WRITES NOTHING. It is one half of a confirm-before-write\npair: the caller shows ``current`` beside ``candidate`` and the human picks,\nthen ``PUT .../cloze/sentence`` stores the choice. The earlier one-shot\nversion wrote immediately and marked the row dirty, so a sync firing before\nthe learner could react had already rewritten the Anki note in place.\n\n``candidate`` is null when the generator produced nothing usable \u2014 a real\noutcome on a rate-limited free tier, and one the caller must report rather\nthan render as an empty suggestion.\n\n``recommended`` is the machine's opinion only: true when the candidate has a\nbetter verdict, or the same verdict with fewer competitors. It labels a\ndefault; it does not gate the write. That is the point of the split.",
         "properties": {
@@ -5086,6 +5164,50 @@
           }
         },
         "summary": "Trigger Peer Sync",
+        "tags": [
+          "anki"
+        ]
+      }
+    },
+    "/api/anki/preset-change": {
+      "get": {
+        "description": "The unrescheduled preset change to tell the user about, if any.\n\n``{\"change\": null}`` covers both \"no change was ever recorded\" and \"the one\nthat was has been dismissed\" \u2014 the banner renders nothing for either.",
+        "operationId": "get_preset_change_api_anki_preset_change_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresetChangeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Preset Change",
+        "tags": [
+          "anki"
+        ]
+      }
+    },
+    "/api/anki/preset-change/dismiss": {
+      "post": {
+        "description": "Mark the stored alert seen. Idempotent, and a no-op with nothing recorded.\n\nAlways answers ``{\"change\": null}``: the only success here is \"the banner is\ngone\", and an error would put a second thing on screen at the moment the user\nasked for the first to leave.",
+        "operationId": "dismiss_preset_change_api_anki_preset_change_dismiss_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresetChangeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Dismiss Preset Change",
         "tags": [
           "anki"
         ]

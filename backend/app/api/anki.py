@@ -3,17 +3,69 @@
 from __future__ import annotations
 
 import logging
+import time
+from dataclasses import replace
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from app.api import app_state
-from app.api.models import PeerSyncResponse
+from app.api.models import PeerSyncResponse, PresetChangeResponse
 from app.cards.media.pipeline import fetch_card_media
 from app.cards.media.query_llm import generate_image_query
+from app.srs.anki_mirror.preset_watch import PRESET_CHANGE_KEY, PresetChangeAlert
 
 router = APIRouter(prefix="/api/anki", tags=["anki"])
 
 _log = logging.getLogger(__name__)
+
+
+# ── the unrescheduled-preset-change banner (tunatale-c649) ────────────────────
+#
+# ``watch_preset`` records a preset change Anki did NOT reschedule; these two
+# routes are the only way the app learns about one. They read the same
+# ``request.state.srs_db`` the sync wrote — the language DB ``X-TT-Language``
+# resolved — because the record is per-language: a Norwegian Optimize must not
+# banner a Slovene deck, and dismissing one must not silence the other.
+
+
+def _undismissed_alert(db) -> PresetChangeAlert | None:
+    """The stored alert, or None if there is none or the user dismissed it.
+
+    A dismissed record is deliberately still IN the cache rather than deleted:
+    it is the evidence that this change was already seen, and the next
+    unrescheduled change overwrites it anyway.
+    """
+    row = db.get_anki_state_cache(PRESET_CHANGE_KEY)
+    if row is None:
+        return None
+    alert = PresetChangeAlert.from_json(row[0])
+    return None if alert.dismissed_at_ms is not None else alert
+
+
+@router.get("/preset-change", response_model=PresetChangeResponse)
+async def get_preset_change(request: Request):
+    """The unrescheduled preset change to tell the user about, if any.
+
+    ``{"change": null}`` covers both "no change was ever recorded" and "the one
+    that was has been dismissed" — the banner renders nothing for either.
+    """
+    return {"change": _undismissed_alert(request.state.srs_db)}
+
+
+@router.post("/preset-change/dismiss", response_model=PresetChangeResponse)
+async def dismiss_preset_change(request: Request):
+    """Mark the stored alert seen. Idempotent, and a no-op with nothing recorded.
+
+    Always answers ``{"change": null}``: the only success here is "the banner is
+    gone", and an error would put a second thing on screen at the moment the user
+    asked for the first to leave.
+    """
+    db = request.state.srs_db
+    row = db.get_anki_state_cache(PRESET_CHANGE_KEY)
+    if row is not None:
+        alert = PresetChangeAlert.from_json(row[0])
+        db.set_anki_state_cache(PRESET_CHANGE_KEY, replace(alert, dismissed_at_ms=int(time.time() * 1000)).to_json())
+    return {"change": None}
 
 
 def _build_media_fn(llm, db):
