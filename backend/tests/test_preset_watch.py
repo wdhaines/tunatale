@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -24,7 +25,9 @@ from app.common.guid import compute_guid
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.anki_mirror.preset_watch import (
+    PRESET_CHANGE_KEY,
     PRESET_SNAPSHOT_KEY,
+    PresetChangeAlert,
     due_ratio_median,
     format_preset_lines,
     watch_preset,
@@ -35,6 +38,7 @@ DECK = "Norwegian (TunaTale)"
 DECK_ID = 1700000000001
 T0_MS = 1_790_000_000_000  # the first sync
 T1_MS = T0_MS + 86_400_000  # the second, a day later
+T2_MS = T1_MS + 86_400_000  # the third
 # An Optimize's signature: every weight moves. Built from the stock tuple so the
 # length (19, field 5) stays readable by the real parser.
 OPTIMIZED = tuple(round(w * 1.25, 4) for w in DEFAULT_WEIGHTS)
@@ -242,3 +246,151 @@ def test_watch_never_writes_the_collection(srs_db, tmp_path):
     watch_preset(srs_db, conn, DECK, now_ms=T1_MS)
     conn.close()
     assert coll.path.read_bytes() == before
+
+
+# ---------------------------------------------------------------------------
+# the alert record — the NOT_RESCHEDULED change as data (tunatale-c649)
+# ---------------------------------------------------------------------------
+#
+# The sync.log line is the diagnosis; this record is the notification. It exists
+# only for the dangerous case (`rescheduled_rows == 0`), because a safe change
+# needs no banner: Anki already moved the due dates for it.
+
+
+def _stored_alert(db) -> PresetChangeAlert:
+    row = db.get_anki_state_cache(PRESET_CHANGE_KEY)
+    assert row is not None, "no preset-change alert was recorded"
+    return PresetChangeAlert.from_json(row[0])
+
+
+def _dismiss(db, at_ms: int) -> None:
+    """Dismiss by editing the stored record — the same field the API endpoint sets.
+
+    No mock and no side door: a dismissal produced by anything other than the
+    real payload could pass a test that a real one would fail.
+    """
+    db.set_anki_state_cache(PRESET_CHANGE_KEY, replace(_stored_alert(db), dismissed_at_ms=at_ms).to_json())
+
+
+def test_a_not_rescheduled_change_records_the_alert_with_its_exact_values(srs_db, tmp_path):
+    """The xzp6 shape as stored data: exactly the numbers the banner prints."""
+    _review(srs_db, "en", stability=2.0, days_after_review=3.0)  # median 1.50
+    watch_preset(srs_db, _conn(_collection(tmp_path)), DECK, now_ms=T0_MS)
+    # The pull after an Optimize: same interval, smaller stability, bigger ratio.
+    srs_db.update_direction(
+        compute_guid("en", "no", ""),
+        Direction.RECOGNITION,
+        DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.REVIEW,
+            stability=0.5,
+            last_review=datetime(2026, 9, 1, 4, 0, tzinfo=UTC),
+            due_at=datetime(2026, 9, 4, 4, 0, tzinfo=UTC),
+        ),
+    )
+    watch_preset(srs_db, _conn(_collection(tmp_path, weights=OPTIMIZED, name="c2.anki2")), DECK, now_ms=T1_MS)
+
+    alert = _stored_alert(srs_db)
+    assert alert.deck_name == DECK
+    assert alert.detected_at_ms == T1_MS
+    assert alert.desired_retention_old == pytest.approx(0.9, abs=1e-6)
+    assert alert.desired_retention_new == pytest.approx(0.9, abs=1e-6)
+    assert alert.weights_changed is True
+    assert alert.due_ratio_median_old == pytest.approx(1.5)
+    assert alert.due_ratio_median_new == pytest.approx(6.0)
+    assert alert.dismissed_at_ms is None
+
+
+def test_a_rescheduled_change_records_no_alert(srs_db, tmp_path):
+    """Anki moved the due dates itself, so there is nothing to warn about."""
+    watch_preset(srs_db, _conn(_collection(tmp_path)), DECK, now_ms=T0_MS)
+    coll = _collection(tmp_path, weights=OPTIMIZED, name="c2.anki2")
+    coll.add_revlog(id=T0_MS + 1000, card_id=6001, ease=0, ivl=5, last_ivl=3, time=0, type=5)
+    report = watch_preset(srs_db, _conn(coll), DECK, now_ms=T1_MS)
+    assert report.rescheduled_rows == 1
+    assert srs_db.get_anki_state_cache(PRESET_CHANGE_KEY) is None
+
+
+def test_an_unchanged_sync_records_no_alert(srs_db, tmp_path):
+    watch_preset(srs_db, _conn(_collection(tmp_path)), DECK, now_ms=T0_MS)
+    watch_preset(srs_db, _conn(_collection(tmp_path, name="c2.anki2")), DECK, now_ms=T1_MS)
+    assert srs_db.get_anki_state_cache(PRESET_CHANGE_KEY) is None
+
+
+def test_a_first_sync_records_no_alert(srs_db, tmp_path):
+    """No previous snapshot is not a change, and must not read as one."""
+    report = watch_preset(srs_db, _conn(_collection(tmp_path, weights=OPTIMIZED)), DECK, now_ms=T0_MS)
+    assert report.previous is None
+    assert srs_db.get_anki_state_cache(PRESET_CHANGE_KEY) is None
+
+
+def test_a_retention_only_change_with_nothing_to_measure_records_null_medians(srs_db, tmp_path):
+    """An unmeasurable median is null, never 0 — a ratio of 0 is a real ratio."""
+    watch_preset(srs_db, _conn(_collection(tmp_path)), DECK, now_ms=T0_MS)
+    watch_preset(srs_db, _conn(_collection(tmp_path, retention=0.86, name="c2.anki2")), DECK, now_ms=T1_MS)
+    alert = _stored_alert(srs_db)
+    assert alert.weights_changed is False
+    assert alert.due_ratio_median_old is None
+    assert alert.due_ratio_median_new is None
+
+
+def test_an_unreadable_preset_records_no_alert(srs_db, tmp_path):
+    watch_preset(srs_db, _conn(_collection(tmp_path)), DECK, now_ms=T0_MS)
+    watch_preset(
+        srs_db, _conn(_collection(tmp_path, weights=(0.1, 0.2, 0.3, 0.4, 0.5), name="c2.anki2")), DECK, now_ms=T1_MS
+    )
+    assert srs_db.get_anki_state_cache(PRESET_CHANGE_KEY) is None
+
+
+def test_an_unreadable_preset_leaves_an_existing_alert_untouched(srs_db, tmp_path):
+    """A blind sync knows nothing, so it may not clear, refresh or resurrect a record."""
+    watch_preset(srs_db, _conn(_collection(tmp_path)), DECK, now_ms=T0_MS)
+    watch_preset(srs_db, _conn(_collection(tmp_path, weights=OPTIMIZED, name="c2.anki2")), DECK, now_ms=T1_MS)
+    _dismiss(srs_db, T1_MS + 5)
+    stored = srs_db.get_anki_state_cache(PRESET_CHANGE_KEY)[0]
+
+    watch_preset(
+        srs_db, _conn(_collection(tmp_path, weights=(0.1, 0.2, 0.3, 0.4, 0.5), name="c3.anki2")), DECK, now_ms=T2_MS
+    )
+    assert srs_db.get_anki_state_cache(PRESET_CHANGE_KEY)[0] == stored
+    assert _stored_alert(srs_db).dismissed_at_ms == T1_MS + 5
+
+
+def test_a_later_change_reopens_a_dismissed_alert(srs_db, tmp_path):
+    """A dismissal belongs to ONE change, not to the deck: the next unrescheduled
+    change is news again, and must arrive undismissed or the user never sees it."""
+    watch_preset(srs_db, _conn(_collection(tmp_path)), DECK, now_ms=T0_MS)
+    watch_preset(srs_db, _conn(_collection(tmp_path, weights=OPTIMIZED, name="c2.anki2")), DECK, now_ms=T1_MS)
+    _dismiss(srs_db, T1_MS + 5)
+    assert _stored_alert(srs_db).dismissed_at_ms == T1_MS + 5
+
+    report = watch_preset(
+        srs_db,
+        _conn(_collection(tmp_path, weights=OPTIMIZED, retention=0.85, name="c3.anki2")),
+        DECK,
+        now_ms=T2_MS,
+    )
+    assert report.changed is True
+    assert report.rescheduled_rows == 0
+
+    alert = _stored_alert(srs_db)
+    assert alert.dismissed_at_ms is None
+    assert alert.detected_at_ms == T2_MS
+    assert alert.weights_changed is False
+    assert alert.desired_retention_old == pytest.approx(0.9, abs=1e-6)
+    assert alert.desired_retention_new == pytest.approx(0.85, abs=1e-6)
+
+
+def test_the_alert_key_is_tt_state_and_is_never_deck_config():
+    """ANKI_CONFIG keys are asserted fresh after EVERY sync and copied into a
+    second learner's deck. This record is written only on a change, is alert
+    state, and another learner must not inherit it — so TT_STATE, not
+    ANKI_CONFIG, and with no day-scoping (a dismissal must survive the rollover).
+    """
+    from app.srs.anki_mirror.cache_registry import REGISTRY, CacheSource
+    from app.srs.user_deck_seed import CONFIG_KEYS
+
+    spec = REGISTRY[PRESET_CHANGE_KEY]
+    assert spec.source is CacheSource.TT_STATE
+    assert (spec.day_scoped, spec.max_age_days, spec.logic_version) == (False, None, None)
+    assert PRESET_CHANGE_KEY not in CONFIG_KEYS

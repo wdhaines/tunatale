@@ -101,6 +101,53 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/anki/preset-change": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Preset Change
+     * @description The unrescheduled preset change to tell the user about, if any.
+     *
+     *     ``{"change": null}`` covers both "no change was ever recorded" and "the one
+     *     that was has been dismissed" — the banner renders nothing for either.
+     */
+    get: operations["get_preset_change_api_anki_preset_change_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/anki/preset-change/dismiss": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Dismiss Preset Change
+     * @description Mark the stored alert seen. Idempotent, and a no-op with nothing recorded.
+     *
+     *     Always answers ``{"change": null}``: the only success here is "the banner is
+     *     gone", and an error would put a second thing on screen at the moment the user
+     *     asked for the first to leave.
+     */
+    post: operations["dismiss_preset_change_api_anki_preset_change_dismiss_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/audio/lesson/{lesson_id}": {
     parameters: {
       query?: never;
@@ -3459,6 +3506,44 @@ export interface components {
       reply: string;
     };
     /**
+     * PresetChange
+     * @description Non-null value of ``PresetChangeResponse.change``.
+     *
+     *     ``preset_watch.PresetChangeAlert`` minus ``dismissed_at_ms`` — the field the
+     *     GET filters on, so a dismissed record is not a record as far as the UI is
+     *     concerned. ``due_ratio_median_old``/``_new`` are ``None`` when the deck had
+     *     no review rows to measure: that is "not measured", and it must never reach a
+     *     caller as ``0.00`` — which is a real ratio, and a very different claim.
+     */
+    PresetChange: {
+      /** Deck Name */
+      deck_name: string;
+      /** Desired Retention New */
+      desired_retention_new: number;
+      /** Desired Retention Old */
+      desired_retention_old: number;
+      /** Detected At Ms */
+      detected_at_ms: number;
+      /** Due Ratio Median New */
+      due_ratio_median_new: number | null;
+      /** Due Ratio Median Old */
+      due_ratio_median_old: number | null;
+      /** Weights Changed */
+      weights_changed: boolean;
+    };
+    /**
+     * PresetChangeResponse
+     * @description Response of GET /api/anki/preset-change and POST /api/anki/preset-change/dismiss.
+     *
+     *     One nullable key, shared by both routes, and both are the cases the banner
+     *     cares about: ``null`` is either "nothing was recorded" or "the user
+     *     dismissed it" — indistinguishable on purpose, because the banner does the
+     *     same thing about both.
+     */
+    PresetChangeResponse: {
+      change: components["schemas"]["PresetChange"] | null;
+    };
+    /**
      * ProposeClozeResponse
      * @description Response of POST /api/srs/items/{item_id}/cloze/propose.
      *
@@ -4331,6 +4416,46 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_preset_change_api_anki_preset_change_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PresetChangeResponse"];
+        };
+      };
+    };
+  };
+  dismiss_preset_change_api_anki_preset_change_dismiss_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["PresetChangeResponse"];
         };
       };
     };

@@ -196,6 +196,127 @@ class TestPeerSync:
         assert failed[0].exc_info is not None
 
 
+# ── GET/POST /api/anki/preset-change (the unrescheduled-preset banner) ───────
+
+
+def _store_alert(db, **overrides) -> None:
+    """Write a preset-change alert the way ``watch_preset`` does — real dataclass, real DB.
+
+    Built from the real payload shape rather than a hand-rolled JSON string, so a
+    field rename in ``PresetChangeAlert`` fails here instead of silently testing a
+    dict the product never writes.
+    """
+    from app.srs.anki_mirror.preset_watch import PRESET_CHANGE_KEY, PresetChangeAlert
+
+    fields = {
+        "deck_name": "Norwegian (TunaTale)",
+        "detected_at_ms": 1_790_000_000_000,
+        "desired_retention_old": 0.9,
+        "desired_retention_new": 0.95,
+        "weights_changed": True,
+        "due_ratio_median_old": 1.5,
+        "due_ratio_median_new": 6.0,
+        "dismissed_at_ms": None,
+    }
+    db.set_anki_state_cache(PRESET_CHANGE_KEY, PresetChangeAlert(**(fields | overrides)).to_json())
+
+
+def _read_alert(db):
+    from app.srs.anki_mirror.preset_watch import PRESET_CHANGE_KEY, PresetChangeAlert
+
+    row = db.get_anki_state_cache(PRESET_CHANGE_KEY)
+    return None if row is None else PresetChangeAlert.from_json(row[0])
+
+
+async def _get_preset_change(**kwargs):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        return await c.get("/api/anki/preset-change", **kwargs)
+
+
+async def _dismiss_preset_change(**kwargs):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        return await c.post("/api/anki/preset-change/dismiss", **kwargs)
+
+
+class TestPresetChange:
+    """The two endpoints behind the banner (tunatale-c649).
+
+    They read the SAME ``request.state.srs_db`` the sync wrote: no record, and a
+    dismissed record, are the two ways of having nothing to say.
+    """
+
+    async def test_no_record_reads_as_null(self):
+        response = await _get_preset_change()
+        assert response.status_code == 200
+        assert response.json() == {"change": None}
+
+    async def test_the_recorded_change_is_served_whole(self):
+        _store_alert(app.state.srs_db)
+        response = await _get_preset_change()
+        assert response.status_code == 200
+        # Every payload key except dismissed_at_ms — which is the GET's own filter.
+        assert response.json() == {
+            "change": {
+                "deck_name": "Norwegian (TunaTale)",
+                "detected_at_ms": 1_790_000_000_000,
+                "desired_retention_old": 0.9,
+                "desired_retention_new": 0.95,
+                "weights_changed": True,
+                "due_ratio_median_old": 1.5,
+                "due_ratio_median_new": 6.0,
+            }
+        }
+
+    async def test_dismiss_hides_it_and_the_get_then_says_null(self):
+        _store_alert(app.state.srs_db)
+
+        dismissed = await _dismiss_preset_change()
+        assert dismissed.status_code == 200
+        assert dismissed.json() == {"change": None}
+        assert (await _get_preset_change()).json() == {"change": None}
+        # Durable in the record, not a client-side lie: it must survive a reload
+        # and a restart, and a test that only checked the GET could not tell.
+        assert _read_alert(app.state.srs_db).dismissed_at_ms is not None
+
+    async def test_dismissing_nothing_is_a_no_op_not_an_error(self):
+        response = await _dismiss_preset_change()
+        assert response.status_code == 200
+        assert response.json() == {"change": None}
+
+    @pytest.fixture
+    def two_languages(self):
+        from app.languages import get_language
+        from app.srs.database import SRSDatabase
+        from app.storage.store import ContentStore
+
+        dbs = {"sl": SRSDatabase(":memory:"), "no": SRSDatabase(":memory:")}
+        app.state.srs_dbs = dbs
+        app.state.content_stores = {code: ContentStore(":memory:") for code in dbs}
+        app.state.languages = {code: get_language(code) for code in dbs}
+        try:
+            yield dbs
+        finally:
+            for db in dbs.values():
+                db.close()
+            for attr in ("srs_dbs", "content_stores", "languages"):
+                if hasattr(app.state, attr):
+                    delattr(app.state, attr)
+
+    async def test_the_header_selects_whose_alert_is_shown(self, two_languages):
+        """A Norwegian change must not banner a Slovene deck, and a Slovene
+        dismissal must not silence the Norwegian one. The alert lives in the
+        language DB the sync wrote, so this is the isolation that matters."""
+        _store_alert(two_languages["no"])
+
+        served = await _get_preset_change(headers={"X-TT-Language": "no"})
+        assert served.json()["change"]["deck_name"] == "Norwegian (TunaTale)"
+        assert (await _get_preset_change(headers={"X-TT-Language": "sl"})).json() == {"change": None}
+
+        assert (await _dismiss_preset_change(headers={"X-TT-Language": "no"})).json() == {"change": None}
+        assert _read_alert(two_languages["no"]) is not None
+        assert _read_alert(two_languages["sl"]) is None
+
+
 # ── _build_media_fn (shared media generator) ──────────────────────────────────
 
 

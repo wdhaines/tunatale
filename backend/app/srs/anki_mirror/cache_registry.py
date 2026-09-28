@@ -68,7 +68,7 @@ class CacheKeySpec:
 
 
 REGISTRY: Final[dict[str, CacheKeySpec]] = {
-    # TT_STATE keys (2 total)
+    # TT_STATE keys (3 total)
     "last_unbury_day": CacheKeySpec(
         name="last_unbury_day",
         source=CacheSource.TT_STATE,
@@ -76,6 +76,21 @@ REGISTRY: Final[dict[str, CacheKeySpec]] = {
     ),
     "last_grade_undo": CacheKeySpec(
         name="last_grade_undo",
+        source=CacheSource.TT_STATE,
+    ),
+    # The undismissed-alert record for a preset change Anki did NOT reschedule
+    # (preset_watch.py, tunatale-c649). ⚠️ TT_STATE and NOT ANKI_CONFIG, and the
+    # distinction is load-bearing twice over: an ANKI_CONFIG key is asserted
+    # freshly written after EVERY sync (test_sync_cache_conservation), and this
+    # one is written only on a change — so it would fail that gate on every sync
+    # that changed nothing. It is also copied into a second learner's deck by
+    # user_deck_seed.CONFIG_KEYS, which is precisely the wrong inheritance: an
+    # alert about one learner's unrescheduled change is not a fact about the
+    # deck. `day_scoped=False` for the same family of reasons — a dismissal must
+    # still hold at tomorrow's rollover, and this payload's two timestamps
+    # (detected_at_ms, dismissed_at_ms) are alert bookkeeping, not an Anki day.
+    "last_preset_change": CacheKeySpec(
+        name="last_preset_change",
         source=CacheSource.TT_STATE,
     ),
     # TT_SESSION keys (2 total)

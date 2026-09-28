@@ -641,6 +641,11 @@ export type ImportStoryResponse = components["schemas"]["ImportStoryResponse"];
  *  `PeerSyncResponse` for the full warning. */
 export type PeerSyncResult = components["schemas"]["PeerSyncResponse"];
 
+/** One unrescheduled FSRS preset change, or null. The dismissal is a filter the
+ *  server applies, so a dismissed record never reaches the banner as a change. */
+export type PresetChange = components["schemas"]["PresetChange"];
+export type PresetChangeResult = components["schemas"]["PresetChangeResponse"];
+
 export type ImageCandidate = components["schemas"]["ImageCandidate"];
 
 export type ImageCandidatesResponse = components["schemas"]["ImageCandidatesResponse"];
@@ -1407,6 +1412,15 @@ export class TunaTaleAPI {
     return this.request(`/api/anki/peer-sync?dry_run=${dryRun}`, {
       method: "POST",
     });
+  }
+
+  /** The preset change the sync found and Anki did not reschedule, or null. */
+  async getPresetChange(): Promise<PresetChangeResult> {
+    return this.request("/api/anki/preset-change");
+  }
+
+  async dismissPresetChange(): Promise<PresetChangeResult> {
+    return this.request("/api/anki/preset-change/dismiss", { method: "POST" });
   }
 
   async getLanguages(): Promise<LanguagesResponse> {

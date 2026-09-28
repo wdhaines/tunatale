@@ -2046,6 +2046,38 @@ describe("TunaTaleAPI", () => {
       );
     });
 
+    it("getPresetChange calls GET /api/anki/preset-change", async () => {
+      const change = {
+        deck_name: "Norwegian",
+        detected_at_ms: 1790000000000,
+        desired_retention_old: 0.9,
+        desired_retention_new: 0.95,
+        weights_changed: true,
+        due_ratio_median_old: 1.5,
+        due_ratio_median_new: null,
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ change })));
+
+      const result = await api.getPresetChange();
+
+      const [url, init] = vi.mocked(fetch).mock.calls[0];
+      expect(url).toBe(`${BASE}/api/anki/preset-change`);
+      expect(init?.method ?? "GET").toBe("GET");
+      expect(result.change).toEqual(change);
+    });
+
+    it("dismissPresetChange calls POST /api/anki/preset-change/dismiss", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ change: null })));
+
+      const result = await api.dismissPresetChange();
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/anki/preset-change/dismiss`,
+        expect.objectContaining({ method: "POST" }),
+      );
+      expect(result.change).toBeNull();
+    });
+
     it("surfaces the server's error detail (body.detail) on a failed request", async () => {
       const detail =
         "AnkiWeb requires a one-way FULL_SYNC (required=2) on the pull leg. " +

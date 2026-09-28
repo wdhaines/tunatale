@@ -13,7 +13,7 @@ class TestRegistryStructure:
 
     def test_registry_key_count(self):
         """Every cache key is registered (the count lives here, not in the name)."""
-        assert len(REGISTRY) == 22
+        assert len(REGISTRY) == 23
 
     def test_registry_keys_sorted(self):
         """Registry keys (for visual clarity in diffs)."""
@@ -29,6 +29,7 @@ class TestRegistryStructure:
             "fsrs_preset_snapshot",
             "fsrs_short_term_with_steps_enabled",
             "last_grade_undo",
+            "last_preset_change",
             "last_unbury_day",
             "learn_steps",
             "learning_cutoff",
@@ -54,9 +55,9 @@ class TestRegistryStructure:
         assert tt_session_count == 2
 
     def test_tt_state_keys_count(self):
-        """2 keys have source TT_STATE."""
+        """3 keys have source TT_STATE."""
         tt_state_count = sum(1 for spec in REGISTRY.values() if spec.source == CacheSource.TT_STATE)
-        assert tt_state_count == 2
+        assert tt_state_count == 3
 
     def test_day_scoped_keys(self):
         """3 keys are day_scoped: last_unbury_day, learning_cutoff, session_main_queue."""

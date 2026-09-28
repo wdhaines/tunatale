@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 _log = logging.getLogger(__name__)
 
 PRESET_SNAPSHOT_KEY = "fsrs_preset_snapshot"
+PRESET_CHANGE_KEY = "last_preset_change"
 
 # RevlogReviewKind::Rescheduled (rslib/src/revlog/mod.rs). Distinct from 4
 # (Manual: set-due-date / reset), which a preset change never writes.
@@ -77,6 +78,63 @@ class PresetSnapshot:
 
 
 @dataclass(frozen=True)
+class PresetChangeAlert:
+    """One unrescheduled preset change, recorded so the app can tell the user.
+
+    The ``sync.log`` line is the diagnosis; this is the notification, and it
+    exists ONLY for the NOT_RESCHEDULED case. A change Anki rescheduled itself is
+    the already-safe one, so there is nothing to warn about — a banner that also
+    fired on safe changes would teach the reader to dismiss it unread.
+
+    ``dismissed_at_ms`` is set by the dismiss endpoint, never by the detector,
+    and a later unrescheduled change REPLACES this record wholesale — which is
+    why the write below always stores ``None``. A dismissal belongs to ONE
+    change, not to the deck: a permanent "I have seen this" would silently hide
+    the next Optimize, which is the same class of silent decoupling this module
+    exists to end.
+    """
+
+    deck_name: str
+    detected_at_ms: int
+    desired_retention_old: float
+    desired_retention_new: float
+    weights_changed: bool
+    due_ratio_median_old: float | None
+    due_ratio_median_new: float | None
+    dismissed_at_ms: int | None = None
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "deck_name": self.deck_name,
+                "detected_at_ms": self.detected_at_ms,
+                "desired_retention_old": self.desired_retention_old,
+                "desired_retention_new": self.desired_retention_new,
+                "weights_changed": self.weights_changed,
+                "due_ratio_median_old": self.due_ratio_median_old,
+                "due_ratio_median_new": self.due_ratio_median_new,
+                "dismissed_at_ms": self.dismissed_at_ms,
+            }
+        )
+
+    @classmethod
+    def from_json(cls, raw: str) -> PresetChangeAlert:
+        data = json.loads(raw)
+        return cls(
+            deck_name=data["deck_name"],
+            detected_at_ms=data["detected_at_ms"],
+            desired_retention_old=data["desired_retention_old"],
+            desired_retention_new=data["desired_retention_new"],
+            weights_changed=data["weights_changed"],
+            due_ratio_median_old=data["due_ratio_median_old"],
+            due_ratio_median_new=data["due_ratio_median_new"],
+            # An ABSENT key is the same fact as a null one — nobody has dismissed
+            # it — so a record written before the field existed reads as new.
+            dismissed_at_ms=data.get("dismissed_at_ms"),
+        )
+
+
+@dataclass(frozen=True)
 class PresetWatchReport:
     """One sync's view of the preset: now, last time, and what Anki did between.
 
@@ -105,6 +163,31 @@ class PresetWatchReport:
     @property
     def changed(self) -> bool:
         return self.weights_changed or self.retention_changed
+
+    @property
+    def not_rescheduled(self) -> bool:
+        """The xzp6 shape: the preset moved and Anki wrote no reschedule for it.
+
+        The one predicate that decides whether the user is told. A property
+        rather than a re-derivation at the call site, so the stored record, the
+        log line and this flag cannot come to disagree about what is dangerous.
+        """
+        return self.changed and self.rescheduled_rows == 0
+
+
+def _alert_from_report(report: PresetWatchReport, now_ms: int) -> PresetChangeAlert:
+    """The stored record for one NOT_RESCHEDULED change, built from what was logged."""
+    old, new = report.previous, report.current
+    assert old is not None and new is not None  # only reached when changed
+    return PresetChangeAlert(
+        deck_name=report.deck_name,
+        detected_at_ms=now_ms,
+        desired_retention_old=old.desired_retention,
+        desired_retention_new=new.desired_retention,
+        weights_changed=report.weights_changed,
+        due_ratio_median_old=old.due_ratio_median,
+        due_ratio_median_new=new.due_ratio_median,
+    )
 
 
 def due_ratio_median(db: SRSDatabase) -> float | None:
@@ -146,6 +229,12 @@ def watch_preset(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str, *, n
     Anki just recomputed. An unreadable preset keeps the previous snapshot, so
     the next readable sync still diffs against the last good one rather than
     against nothing.
+
+    A change Anki did NOT reschedule is additionally recorded under
+    ``PRESET_CHANGE_KEY`` for the app to show as a banner (tunatale-c649). Every
+    other path — rescheduled, unchanged, first sync, unreadable — leaves any
+    existing record exactly as it was, so the detector cannot clear an alert it
+    has no new information about.
     """
     stored = db.get_anki_state_cache(PRESET_SNAPSHOT_KEY)
     previous = PresetSnapshot.from_json(stored[0]) if stored is not None else None
@@ -167,6 +256,8 @@ def watch_preset(db: SRSDatabase, conn: sqlite3.Connection, deck_name: str, *, n
     report = PresetWatchReport(deck_name=deck_name, current=current, previous=previous, rescheduled_rows=rescheduled)
     if report.changed:
         _log.warning("%s", _change_line(report))
+        if report.not_rescheduled:
+            db.set_anki_state_cache(PRESET_CHANGE_KEY, _alert_from_report(report, now_ms).to_json())
     return report
 
 

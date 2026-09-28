@@ -1554,6 +1554,37 @@ class PeerSyncResponse(BaseModel):
     dry_run: bool
 
 
+class PresetChange(BaseModel):
+    """Non-null value of ``PresetChangeResponse.change``.
+
+    ``preset_watch.PresetChangeAlert`` minus ``dismissed_at_ms`` — the field the
+    GET filters on, so a dismissed record is not a record as far as the UI is
+    concerned. ``due_ratio_median_old``/``_new`` are ``None`` when the deck had
+    no review rows to measure: that is "not measured", and it must never reach a
+    caller as ``0.00`` — which is a real ratio, and a very different claim.
+    """
+
+    deck_name: str
+    detected_at_ms: int
+    desired_retention_old: float
+    desired_retention_new: float
+    weights_changed: bool
+    due_ratio_median_old: float | None
+    due_ratio_median_new: float | None
+
+
+class PresetChangeResponse(BaseModel):
+    """Response of GET /api/anki/preset-change and POST /api/anki/preset-change/dismiss.
+
+    One nullable key, shared by both routes, and both are the cases the banner
+    cares about: ``null`` is either "nothing was recorded" or "the user
+    dismissed it" — indistinguishable on purpose, because the banner does the
+    same thing about both.
+    """
+
+    change: PresetChange | None
+
+
 class DrillFeedbackResponse(BaseModel):
     """Response of POST /api/srs/items/{id}/direction/{direction}/feedback.
 
