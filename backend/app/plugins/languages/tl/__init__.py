@@ -6,6 +6,7 @@ from app.cards.field_map import NotetypeProfile
 from app.cards.vocab_notetype import TAGALOG_VOCAB
 from app.languages import LanguageConfig, PlannerExample, register
 from app.models.language import NARRATOR_VOICE, Language
+from app.plugins.languages.tl.a1_morphology import TAGALOG_A1_MORPHOLOGY
 from app.plugins.languages.tl.hyphenation import normalize_affix_hyphens
 from app.plugins.languages.tl.phoneme_plan import create_phoneme_planner
 from app.plugins.languages.tl.preprocessor import TagalogPreprocessor
@@ -149,11 +150,18 @@ register(
         phoneme_planner_factory=create_phoneme_planner,
         # fil-PH ignores <phoneme>: the planned IPA must reach the voice unwrapped.
         ipa_read_in_voice_locale=True,
+        # An affixed verb form (magdadala) becomes an inflection cloze on its
+        # root card once the root is in production review (tunatale-w4m7.17).
+        a1_morphology=TAGALOG_A1_MORPHOLOGY,
+        # The lemma table keys every verb form on its root, so a phrase card
+        # would light up for another form of the verb: the wake lesson's
+        # "Magdadala ako" (I will bring) graded "magdala ako" (let me bring).
+        # Phrase cards match on exact form, the user's call (tunatale-w4m7.17).
+        phrase_match_exact_form=True,
         # Deliberately omitted until their owning beads ship:
         # - l2_scorer: Tagalog has no letters that distinguish it from English,
         #   and None is a LOUD condition at the call site (see get_l2_scorer's
         #   docstring) — the deck-import bead uses a NotetypeProfile instead.
-        # - morphology_profile, a1_morphology: out of scope for w4m7.6 (their
-        #   owning beads ship them).
+        # - morphology_profile: out of scope for w4m7.6 (its owning bead ships it).
     ),
 )
