@@ -9,6 +9,7 @@ from __future__ import annotations
 from app.cards.media import vocab_media
 from app.cards.number_picture import number_picture
 from app.cards.picture_redraw import apply_redraws, plan_redraws
+from app.cards.pronoun_picture import pronoun_picture
 from app.cards.spatial_picture import spatial_picture
 from app.models.srs_item import Direction
 from app.models.syntactic_unit import SyntacticUnit
@@ -119,6 +120,35 @@ def test_a_spatial_word_is_redrawn_filled_or_left_by_its_gloss() -> None:
     assert db.get_image_filename(likod) == by_id[likod].new_filename
     assert "image" in db.get_dirty_fields(db.get_collocation("likod").guid).split(",")
     assert plan_redraws(db, "ceb") == []
+
+
+def test_a_pronoun_is_redrawn_filled_or_left_by_its_gloss() -> None:
+    """The same two rules the spatial family follows, for the same reason.
+
+    A Norwegian ``hun`` with no picture is FILLED, because the user decided
+    pronouns are picture cards; a ``de`` glossed "the" is left alone, because the
+    token veto cannot see that card is about the article and only the gloss can.
+    """
+    db = SRSDatabase(":memory:")
+    hun = _card(db, "hun", image=None, translation="she", lang="no")
+    de_photo = _card(db, "de", image="img_the_00000000.jpg", translation="they", lang="no")
+    de_article = _card(db, "den", image=None, translation="that", lang="no")
+    _card(db, "hus", image=None, translation="house", lang="no")  # not a pronoun
+
+    plan = plan_redraws(db, "no")
+
+    by_id = {r.collocation_id: r for r in plan}
+    assert {i: r.old_filename for i, r in by_id.items()} == {hun: None, de_photo: "img_the_00000000.jpg"}
+    assert by_id[hun].new_filename == pronoun_picture("hun", "no", "she").filename
+    assert by_id[hun].new_filename.startswith("pronoun_she_")
+    assert de_article not in by_id, "`den` glossed 'that' confirms no picture, so none is drawn"
+
+    apply_redraws(db, plan, "no")
+
+    assert db.get_image_filename(hun) == by_id[hun].new_filename
+    assert db.get_image_filename(de_photo) == by_id[de_photo].new_filename
+    assert "image" in db.get_dirty_fields(db.get_collocation("hun").guid).split(",")
+    assert plan_redraws(db, "no") == []
 
 
 def test_a_repair_never_deletes_a_photo_another_db_still_shows(tmp_path) -> None:

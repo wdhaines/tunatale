@@ -1,0 +1,17 @@
+{
+  "_comment": "Personal pronouns drawn as a picture, not searched for and not clozed (tunatale-3rxu, the user 2026-09-28). Each maps a word to a language-neutral concept in app.cards.pronoun_scenes.PRONOUN_CONCEPTS; the picture is a conversation with the referent filled and standing outside the outline, because a pronoun's meaning IS a relation between people and a photo cannot carry one. A word listed here is NOT a function word, whatever `function_words.json` or a POS tag says: app.srs.function_words.is_function_word vetoes it, so a PRON never goes down the case-marker cloze route. The veto is asked about a bare token, so listing a homograph would take EVERY sense of it off the picture route — the picture is therefore only drawn when the card's English gloss names the referent (app.cards.pronoun_picture.gloss_matches). Map only words whose MAIN sense is the personal pronoun. NOT listed: `mi`, `ti`, `vi`, which are also the dative or the enclitic '(to) me/you/us' and are in function_words.json's include list — they stay clozes. Slovene has no generic `we`: midva/midve is the inclusive pair and vidva/vidve the exclusive one, which is why two concepts map to the same word forms.",
+  "words": {
+    "jaz": "i",
+    "midva": "we_two",
+    "midve": "we_two",
+    "on": "he",
+    "ona": "she",
+    "onadva": "they_two",
+    "one": "they_many",
+    "oni": "they_many",
+    "onidve": "they_two",
+    "ono": "it",
+    "vidva": "you_two",
+    "vidve": "you_two"
+  }
+}

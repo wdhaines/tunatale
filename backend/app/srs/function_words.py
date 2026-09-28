@@ -14,6 +14,7 @@ import json
 import re
 from functools import cache
 
+from app.cards.pronoun_picture import is_pronoun_word
 from app.cards.spatial_picture import is_spatial_word
 from app.languages import get_a1_morphology, get_function_words_path
 from app.srs.lemmatizer import TokenAnalysis
@@ -52,12 +53,25 @@ def is_function_word(token: str, language_code: str, *, upos: str | None = None)
     analyzer is present (LowercaseLemmatizer emits ``upos=""``), exactly reproducing
     the legacy surface-list behavior. ``exclude`` force-removes. Case-insensitive.
 
-    A drawn spatial word (``app.cards.spatial_picture``) is never a function
-    word, whatever its UPOS: the user decided they are picture cards, not clozes
-    (tunatale-hvj0). Checked first so every router — ``/listen``, the base-card
-    add, the mint's fork, the cloze pre-stage — reaches the same answer.
+    A drawn spatial word (``app.cards.spatial_picture``) or a drawn personal
+    pronoun (``app.cards.pronoun_picture``) is never a function word, whatever
+    its UPOS: the user decided they are picture cards, not clozes (tunatale-hvj0,
+    tunatale-3rxu). Checked first so every router — ``/listen``, the base-card
+    add, the mint's fork, the cloze pre-stage — reaches the same answer. The
+    pronoun veto is the one a ``PRON`` tag cannot survive: a personal pronoun is
+    closed-class by every analyzer, so without it each of these words would be
+    drilled as a case marker instead of as a referent.
+
+    Unlike the spatial veto, the pronoun veto is GATED ON THE TAG: it applies
+    when *upos* is ``PRON`` or absent, never when an analyzer tagged the token
+    as something else. Norwegian ``den``/``de`` are also the articles ("den
+    store bilen"), the most frequent function words in the deck; tagged DET they
+    keep the cloze route. Untagged, the veto changes nothing that did not already
+    hold, because none of the listed words is in an include list.
     """
     if is_spatial_word(token, language_code):
+        return False
+    if is_pronoun_word(token, language_code) and upos in (None, "", "PRON"):
         return False
     pos, include, exclude, _ = _load_function_word_config(language_code)
     t = token.casefold()

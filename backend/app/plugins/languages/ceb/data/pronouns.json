@@ -1,0 +1,12 @@
+{
+  "_comment": "Personal pronouns drawn as a picture, not searched for and not clozed (tunatale-3rxu, the user 2026-09-28). Each maps a word to a language-neutral concept in app.cards.pronoun_scenes.PRONOUN_CONCEPTS; the picture is a conversation with the referent filled and standing outside the outline, because a pronoun's meaning IS a relation between people and a photo cannot carry one. A word listed here is NOT a function word, whatever `function_words.json` or a POS tag says: app.srs.function_words.is_function_word vetoes it, so a PRON never goes down the case-marker cloze route. The veto is asked about a bare token, so listing a homograph would take EVERY sense of it off the picture route — the picture is therefore only drawn when the card's English gloss names the referent (app.cards.pronoun_picture.gloss_matches). Map only words whose MAIN sense is the personal pronoun. `kita` is also the root of 'to see' and of `kitaon` ('let's'), which is the one live homograph in this file: the token veto would have taken every sense of it off the picture route, so it is listed and the GLOSS guard does the separating instead — a `kita` glossed 'see' gets no picture. `siya` maps to third_one and carries NO gender mark. `kita` is the inclusive we and `kami` the exclusive one, the same distinction Tagalog draws.",
+  "words": {
+    "ako": "i",
+    "ikaw": "you_one",
+    "kami": "we_excl",
+    "kamo": "you_many",
+    "kita": "we_incl",
+    "sila": "they_many",
+    "siya": "third_one"
+  }
+}

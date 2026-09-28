@@ -93,6 +93,7 @@ register(
         function_words_path=Path(__file__).parent / "data" / "function_words.json",
         numbers_path=Path(__file__).parent / "data" / "numbers.json",
         spatial_path=Path(__file__).parent / "data" / "spatial.json",
+        pronouns_path=Path(__file__).parent / "data" / "pronouns.json",
         wordfreq_lang="sl",
         a1_morphology=SLOVENE_A1_MORPHOLOGY,
     ),

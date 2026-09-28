@@ -1,0 +1,13 @@
+{
+  "_comment": "Personal pronouns drawn as a picture, not searched for and not clozed (tunatale-3rxu, the user 2026-09-28). Each maps a word to a language-neutral concept in app.cards.pronoun_scenes.PRONOUN_CONCEPTS; the picture is a conversation with the referent filled and standing outside the outline, because a pronoun's meaning IS a relation between people and a photo cannot carry one. A word listed here is NOT a function word, whatever `function_words.json` or a POS tag says: app.srs.function_words.is_function_word vetoes it, so a PRON never goes down the case-marker cloze route. The veto is asked about a bare token, so listing a homograph would take EVERY sense of it off the picture route — the picture is therefore only drawn when the card's English gloss names the referent (app.cards.pronoun_picture.gloss_matches). Map only words whose MAIN sense is the personal pronoun. NOT listed: `det` (dummy subject, article — polysemous), and the object forms meg/deg/ham/henne/oss/dem, which stay clozes because the cloze drills the case, which is the difficulty. `den` and `de` ARE listed although they are also the articles ('den store bilen'): the veto is gated on the tag (is_function_word applies it only for upos PRON or no tag), so a token tagged DET stays a cloze, and the gloss guard keeps a card glossed 'the' off the picture.",
+  "words": {
+    "de": "they_many",
+    "den": "it",
+    "dere": "you_many",
+    "du": "you_one",
+    "han": "he",
+    "hun": "she",
+    "jeg": "i",
+    "vi": "we_many"
+  }
+}

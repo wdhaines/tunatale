@@ -264,6 +264,12 @@ class LanguageConfig:
     # never a function word whatever its UPOS says. See
     # ``app.cards.spatial_picture``.
     spatial_path: Path | None = None
+    # Path to the per-language personal-pronoun JSON (``hun`` -> a concept id),
+    # or ``None`` when the language registers none. A listed word is drawn as a
+    # conversation, and is never a function word whatever its UPOS says — a
+    # pronoun is ``PRON``, so without the veto every one of them would be a
+    # case-marker cloze. See ``app.cards.pronoun_picture``.
+    pronouns_path: Path | None = None
     # Breakdown variant that also reports which syllables of which word each
     # chunk is, so the renderer can cut it out of one whole-word render instead
     # of synthesizing the fragment alone. ``None`` (every language but Norwegian)
@@ -856,6 +862,15 @@ def get_spatial_path(code: str) -> Path | None:
     and every one of its words keeps the routing it has today.
     """
     return _facet(code, "spatial_path", None)
+
+
+def get_pronouns_path(code: str) -> Path | None:
+    """Return the path to the per-language personal-pronoun JSON vocabulary.
+
+    ``None`` when the language registers none: it has no drawn pronouns, and
+    every one of its words keeps the routing it has today.
+    """
+    return _facet(code, "pronouns_path", None)
 
 
 def get_wordfreq_lang(code: str) -> str | None:
