@@ -16,15 +16,19 @@
     "             of one thing is equally 'a thing'. Same reasoning as Norwegian `en`.",
     "  sandaan  — a doublet of isandaan (100); isandaan is the produced form.",
     "  the Spanish-derived words — their context is a clock face or a price, not a",
-    "             heap. ⚠️ An excluded word takes the ordinary card route, which can",
-    "             fetch a PHOTO of a numeral. Spanish-number cards need their own",
-    "             route (a clock face for alas-X, a peso amount); that is a follow-up",
-    "             bead, not something this file can fix.",
+    "             heap; they take the `clock` / `money` picture below instead.",
     "",
     "Every Spanish-derived cardinal is listed anyway, so this file records that",
     "they were considered rather than overlooked, and so the follow-up has its",
     "vocabulary. 0 and 1000 are listed for the same reason; the renderable range",
-    "lives only in number_image.py::MAX_RENDERABLE."
+    "lives only in number_image.py::MAX_RENDERABLE.",
+    "",
+    "`clock` and `money` (tunatale-w4m7.10, user's decision 2026-09-27): the Spanish-",
+    "derived words get their OWN picture, drawn in their own context rather than a",
+    "heap. 1-12 are an analog clock at that hour (alas singko = five o'clock); 13 and",
+    "up are the peso coins and bills that make the amount (app/cards/number_scenes.py).",
+    "Both stay in `exclude`, which governs only the counting picture. Each list must",
+    "be injective within itself, like `values`; tests hold that."
   ],
   "values": {
     "isa": 1,
@@ -121,5 +125,54 @@
     "nobenta",
     "siyento",
     "mil"
-  ]
+  ],
+  "clock": [
+    "uno",
+    "dos",
+    "tres",
+    "kuwatro",
+    "singko",
+    "sais",
+    "siyete",
+    "otso",
+    "nuwebe",
+    "diyes",
+    "onse",
+    "dose"
+  ],
+  "money": {
+    "symbol": "₱",
+    "coins": [
+      1,
+      5,
+      10,
+      20
+    ],
+    "bills": [
+      50,
+      100,
+      200,
+      500,
+      1000
+    ],
+    "words": [
+      "trese",
+      "katorse",
+      "kinse",
+      "disisais",
+      "disisiyete",
+      "disiotso",
+      "disinuwebe",
+      "bente",
+      "trenta",
+      "kuwarenta",
+      "singkuwenta",
+      "sesenta",
+      "setenta",
+      "otsenta",
+      "nobenta",
+      "siyento",
+      "mil"
+    ]
+  }
 }

@@ -23,14 +23,21 @@ def _build_media_fn(llm, db):
     """
     from app.config import settings
 
-    async def _media_fn(word, english, *, used_image_urls, source_sentence="", grammar=""):
-        image_query = await generate_image_query(
-            word,
-            english,
-            llm=llm,
-            db=db,
-            source_sentence=source_sentence,
-            grammar=grammar,
+    async def _media_fn(word, english, *, used_image_urls, source_sentence="", grammar="", skip_image=False):
+        # `skip_image`: the caller already has the picture (a drawn number), so
+        # spend neither the LLM image query nor a Pixabay search. "" is
+        # `fetch_card_media`'s documented skip sentinel.
+        image_query = (
+            ""
+            if skip_image
+            else await generate_image_query(
+                word,
+                english,
+                llm=llm,
+                db=db,
+                source_sentence=source_sentence,
+                grammar=grammar,
+            )
         )
         return await fetch_card_media(
             word,
