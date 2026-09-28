@@ -274,7 +274,46 @@ def _memo_key(
     )
 
 
-def price_lessons(
+@dataclass(frozen=True)
+class RenderKeys:
+    """Every distinct synthesis key a scope would send, split by provider leg.
+
+    The four dicts are the renderer keys, keyed by the renderer's own dedupe
+    tuples (a 5-tuple for the phrase leg, ``(source_word, voice_id)`` for the
+    slicer leg) and valued by the field tuple the adapters' ``_cache_path`` and
+    ``_billable_body`` take. They are MUTABLE dicts on a frozen record: the
+    record is a completed collection, not a value that should be edited in
+    place, and freezing it keeps a caller from rebinding a leg.
+
+    Separate from :class:`RenderCost` because it needs no cache directory — a
+    caller that wants to address a key (the re-roll script) must not have to
+    open a cache to do it, and a key collection that could not be built without
+    one would put the address space in the wrong place.
+    """
+
+    phrase: dict[_MemoKey, _SynthValue] = field(default_factory=dict)
+    slicer: dict[tuple[str, str], _SynthValue] = field(default_factory=dict)
+    gemini_phrase: dict[_MemoKey, _SynthValue] = field(default_factory=dict)
+    gemini_slicer: dict[tuple[str, str], _SynthValue] = field(default_factory=dict)
+
+    @property
+    def gemini_values(self) -> list[_SynthValue]:
+        """Both Gemini legs' value tuples, in that order, possibly overlapping.
+
+        A caller dedupes on the ADAPTER's key (two renderer keys can be one
+        file — they differ only in what this provider ignores); listing both
+        legs keeps that caller's job at the adapter, where the truth is, rather
+        than hiding a dedupe behind this property.
+        """
+        return [*self.gemini_phrase.values(), *self.gemini_slicer.values()]
+
+    @property
+    def azure_values(self) -> list[_SynthValue]:
+        """Both Azure legs' value tuples — the counterpart of ``gemini_values``."""
+        return [*self.phrase.values(), *self.slicer.values()]
+
+
+def collect_keys(
     lessons: Iterable[Lesson],
     *,
     language_code: str,
@@ -284,9 +323,15 @@ def price_lessons(
     syllabify_fn: Callable[[str], list[str] | None] | None,
     slicer_enabled: bool,
     parent_rate: str,
-    cache_dir: Path,
-) -> RenderCost:
-    """Price *lessons* against *cache_dir*, mirroring ``_render_section``.
+) -> RenderKeys:
+    """The synthesis keys *lessons* would send, mirroring ``_render_section``.
+
+    Every rule of the key derivation lives here, unchanged and in the renderer's
+    order, and NO cache is touched: a key is a function of the lessons and the
+    injected resolvers alone. :func:`price_lessons` is this plus the cache
+    question, and a caller that only wants to ADDRESS a key (which file is it?)
+    must be able to ask without opening a cache — the address space is the
+    adapter's ``_cache_path``, and it is the adapter's alone.
 
     All resolvers are injected so a test can stub any one of them (see the
     STAGE 1 brief). ``slicer_enabled`` is the renderer's OWN gate —
@@ -294,21 +339,8 @@ def price_lessons(
     the language has ``AlignmentConfig`` wiring — and ``syllabify_fn`` is the
     same function the slicer was constructed with (``AlignmentConfig.syllabify_fn``);
     neither is restated here.
-
-    Keys are deduped ACROSS all lessons in scope: identical 5-tuples share one
-    TTS-cache key, and a cache populated mid-curriculum serves every later
-    lesson, so this is the number of requests a cold render of the whole scope
-    would actually send.
     """
-    tts = AzureTTSService(cache_dir=cache_dir)
-    # One adapter for the whole scope, for the same reason as the Azure one: the
-    # cache directory is the whole address space, and this one is only ever
-    # asked where a file IS, never to synthesize.
-    gemini = GeminiTTSService(cache_dir=cache_dir)
-    phrase_keys: dict[_MemoKey, _SynthValue] = {}
-    gemini_phrase_keys: dict[_MemoKey, _SynthValue] = {}
-    slicer_keys: dict[tuple[str, str], _SynthValue] = {}
-    gemini_slicer_keys: dict[tuple[str, str], _SynthValue] = {}
+    keys = RenderKeys()
 
     for lesson in lessons:
         for section in lesson.sections:
@@ -337,7 +369,7 @@ def price_lessons(
                 # key billed as Azure characters would be wrong by two
                 # multipliers at once, and would also move the Azure allowance
                 # line for a request Azure never receives.
-                leg = gemini_phrase_keys if provider_for(phrase.voice_id) == "gemini" else phrase_keys
+                leg = keys.gemini_phrase if provider_for(phrase.voice_id) == "gemini" else keys.phrase
                 leg.setdefault(key, (text, phrase.voice_id, phrase.rate, ph_map, speak_locale))
 
                 # Rule 5: the slicer is a second, MUTUALLY EXCLUSIVE cost source.
@@ -361,18 +393,72 @@ def price_lessons(
                     # whichever adapter owns its voice, so its rate and its
                     # currency are that provider's.
                     skey = (phrase.source_word, phrase.voice_id)
-                    leg = gemini_slicer_keys if provider_for(phrase.voice_id) == "gemini" else slicer_keys
+                    leg = keys.gemini_slicer if provider_for(phrase.voice_id) == "gemini" else keys.slicer
                     leg.setdefault(
                         skey,
                         (phrase.source_word, phrase.voice_id, parent_rate, None, target_locale),
                     )
 
-    return RenderCost(
-        phrase=_leg_stats(phrase_keys, tts),
-        slicer=_leg_stats(slicer_keys, tts),
-        gemini_phrase=_gemini_leg_stats(gemini_phrase_keys, gemini),
-        gemini_slicer=_gemini_leg_stats(gemini_slicer_keys, gemini),
+    return keys
+
+
+def price_lessons(
+    lessons: Iterable[Lesson],
+    *,
+    language_code: str,
+    preprocessor: TextPreprocessor,
+    planner: PhonemePlanner | None,
+    target_locale: str | None,
+    syllabify_fn: Callable[[str], list[str] | None] | None,
+    slicer_enabled: bool,
+    parent_rate: str,
+    cache_dir: Path,
+) -> RenderCost:
+    """Price *lessons* against *cache_dir*, mirroring ``_render_section``.
+
+    Keys are deduped ACROSS all lessons in scope: identical 5-tuples share one
+    TTS-cache key, and a cache populated mid-curriculum serves every later
+    lesson, so this is the number of requests a cold render of the whole scope
+    would actually send.
+    """
+    tts = AzureTTSService(cache_dir=cache_dir)
+    # One adapter for the whole scope, for the same reason as the Azure one: the
+    # cache directory is the whole address space, and this one is only ever
+    # asked where a file IS, never to synthesize.
+    gemini = GeminiTTSService(cache_dir=cache_dir)
+    keys = collect_keys(
+        lessons,
+        language_code=language_code,
+        preprocessor=preprocessor,
+        planner=planner,
+        target_locale=target_locale,
+        syllabify_fn=syllabify_fn,
+        slicer_enabled=slicer_enabled,
+        parent_rate=parent_rate,
     )
+
+    return RenderCost(
+        phrase=_leg_stats(keys.phrase, tts),
+        slicer=_leg_stats(keys.slicer, tts),
+        gemini_phrase=_gemini_leg_stats(keys.gemini_phrase, gemini),
+        gemini_slicer=_gemini_leg_stats(keys.gemini_slicer, gemini),
+    )
+
+
+def gemini_cache_path(gemini: GeminiTTSService, value: _SynthValue) -> Path:
+    """The file one Gemini key IS, in the adapter's own address space.
+
+    The ``resolve_ipa`` + ``_cache_path`` pair, and nothing else: the IPA is part
+    of the file's name, so a key cannot be addressed without it, and a plain
+    file cannot answer which prompt produced it. It is public because two
+    callers must agree on this path to the byte — the cost report, which
+    decides hit-vs-miss without writing, and the re-roll script, which must
+    never recompute a digest by hand (a hand-rolled digest is a silent miss,
+    and a silent miss here is a clip that is evicted from nowhere).
+    """
+    text, voice_id, rate, phonemes, _speak_locale = value
+    ipa, _phrase = resolve_ipa(text, phonemes)
+    return gemini._cache_path(text, voice_id, rate, ipa)
 
 
 def _leg_stats(keys: Mapping[object, _SynthValue], tts: AzureTTSService) -> LegStats:
@@ -413,8 +499,7 @@ def _gemini_leg_stats(keys: Mapping[object, _SynthValue], gemini: GeminiTTSServi
     # request, so the leg dedupes again on the adapter's own key.
     files: set[Path] = set()
     for text, voice_id, rate, phonemes, _speak_locale in keys.values():
-        ipa, _phrase = resolve_ipa(text, phonemes)
-        path = gemini._cache_path(text, voice_id, rate, ipa)
+        path = gemini_cache_path(gemini, (text, voice_id, rate, phonemes, _speak_locale))
         if path in files:
             continue
         files.add(path)
