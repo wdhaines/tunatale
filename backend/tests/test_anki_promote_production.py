@@ -655,6 +655,44 @@ class TestPromoteProductionCards:
         cloze = next(item for _id, item, _lang in rows if item.syntactic_unit.card_type == "cloze")
         assert cloze.syntactic_unit.source_sentence == "Vi tok en {{c1::beslutning}} i går."
 
+    async def test_an_unjudged_cached_sentence_does_not_mint(self, caplog) -> None:
+        """``unknown`` means the judge never answered, not that it approved (tunatale-0xc7).
+
+        Live, 2026-09-28: the judge call for om = "about" hit a Groq 429, the
+        sentence was cached as ``unknown``, and the next sync minted
+        'Læreren forklarte temaet, og hun snakker om.' — ungrammatical, and
+        nothing had looked at it. The word stays unservable until a later
+        prestage pass judges the sentence.
+        """
+        conn = _make_conn()
+        card_id = _add_note(conn, 1000, "beslutning", "decision", examples="Katten sover (<i>The cat sleeps</i>)")
+        db = SRSDatabase(":memory:")
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id, unpicturable=True)
+        db.set_cached_cloze_sentence("beslutning", "sl", sentence="Vi tok en beslutning i går.", status="unknown")
+
+        with caplog.at_level(logging.WARNING):
+            report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.minted, report.clozed, report.unservable) == (0, 0, 1)
+        assert db.count_collocations() == 1
+        # The log names the real reason, not "no staged sentence".
+        assert "staged sentence not yet judged" in caplog.text
+
+    async def test_an_underdetermined_cached_sentence_still_mints(self) -> None:
+        """The user's call (2026-09-06): a loose blank beats no card. Only an
+        UNJUDGED sentence is held back, not one the judge found loose."""
+        conn = _make_conn()
+        card_id = _add_note(conn, 1000, "beslutning", "decision", examples="Katten sover (<i>The cat sleeps</i>)")
+        db = SRSDatabase(":memory:")
+        _add_word(db, "beslutning", "decision", note_id=1000, card_id=card_id, unpicturable=True)
+        db.set_cached_cloze_sentence(
+            "beslutning", "sl", sentence="Vi tok en beslutning i går.", status="underdetermined"
+        )
+
+        report = await _make_sync(conn, db).promote_production_cards()
+
+        assert (report.minted, report.clozed, report.unservable) == (0, 1, 0)
+
     async def test_a_variant_pair_clozes_its_more_common_spelling(self, monkeypatch) -> None:
         """``fra, ifra`` sat unservable on the live deck for weeks (tunatale-i0x6).
 

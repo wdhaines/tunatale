@@ -37,7 +37,8 @@ from typing import Any, NamedTuple
 from app.cards.field_map import upos_for_disambig
 from app.languages import cloze_answer_spelling, get_language
 from app.llm.call_sites import CallSite
-from app.llm.cloze_quality import generate_cloze_sentence, judge_cloze, translate_cloze_sentence
+from app.llm.cloze_quality import UNJUDGED, generate_cloze_sentence, judge_cloze, translate_cloze_sentence
+from app.srs.db_kv_cache import CachedClozeSentence
 from app.srs.function_words import is_function_word
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,7 @@ class ClozePreStageReport(NamedTuple):
     already_cached: int = 0
     skipped_open_class: int = 0
     failed: int = 0
+    rejudged: int = 0
 
 
 def cloze_cache_key(db, language_code: str, text: str, disambig_key: str, answer: str) -> str:
@@ -89,7 +91,8 @@ async def prestage_cloze_sentences(
 
     # Pass 1 — pick candidates serially. Pure DB reads and a curated word list,
     # so there is nothing here worth overlapping.
-    wanted: list[tuple[str, str]] = []
+    # (cache key, answer, gloss, the cached row to RE-JUDGE or None to generate)
+    wanted: list[tuple[str, str, str, CachedClozeSentence | None]] = []
     already = skipped = 0
     for cand in db.list_words_awaiting_production(limit=SCAN_LIMIT):
         if len(wanted) >= limit:
@@ -117,21 +120,28 @@ async def prestage_cloze_sentences(
         # never the comma string no sentence can contain (tunatale-i0x6).
         answer = cloze_answer_spelling(language_code, unit.text)
         key = cloze_cache_key(db, language_code, unit.text, unit.disambig_key, answer)
-        if db.get_cached_cloze_sentence(key, language_code) is not None:
+        cached = db.get_cached_cloze_sentence(key, language_code)
+        if cached is not None and cached.status != UNJUDGED:
             # Without this the same word costs two live LLM calls on every pass
             # forever — the failure `is_image_unavailable` prevents for pictures.
             already += 1
             continue
 
-        wanted.append((key, answer, unit.translation))
+        # An UNJUDGED row (the judge call failed, e.g. a Groq 429) is not done:
+        # the mint holds it back, so this pass comes back to it — re-judging the
+        # sentence it already has, never paying for a new one (tunatale-0xc7).
+        wanted.append((key, answer, unit.translation, cached))
 
     semaphore = asyncio.Semaphore(CONCURRENCY)
 
-    async def _write_one(key: str, word: str, gloss: str):
+    async def _write_one(key: str, word: str, gloss: str, cached: CachedClozeSentence | None):
         async with semaphore:
-            sentence = await generate_cloze_sentence(
-                llm, caller=CallSite.CALLER_PRESTAGE, word=word, gloss=gloss, pos="", language=language.name
-            )
+            if cached is not None:
+                sentence = cached.sentence
+            else:
+                sentence = await generate_cloze_sentence(
+                    llm, caller=CallSite.CALLER_PRESTAGE, word=word, gloss=gloss, pos="", language=language.name
+                )
             if sentence is None:
                 return key, None, None, ""
             verdict = await judge_cloze(
@@ -141,9 +151,14 @@ async def prestage_cloze_sentences(
             # cloze's sentence slot. Without it the only gloss in scope there is
             # the WORD's, and using that wrote the same text into both slots on
             # 18 live cards (tunatale-ml06). Failure yields "" and still caches.
-            translation = await translate_cloze_sentence(
-                llm, caller=CallSite.CALLER_PRESTAGE, sentence=sentence, language=language.name
-            )
+            # A re-judge keeps a translation it already has: the sentence has not
+            # changed, so neither has its English.
+            if cached is not None and cached.sentence_translation:
+                translation = cached.sentence_translation
+            else:
+                translation = await translate_cloze_sentence(
+                    llm, caller=CallSite.CALLER_PRESTAGE, sentence=sentence, language=language.name
+                )
             return key, sentence, verdict, translation
 
     # ⚠️ `return_exceptions=True`, and the reason is measured rather than
@@ -152,17 +167,21 @@ async def prestage_cloze_sentences(
     # mid-flight and leaves the DB exactly as it found it, indistinguishable
     # from never having run. One bad fetch discarding up to 19 good ones is
     # tunatale-ouk.10, and it was invisible for six syncs.
-    results = await asyncio.gather(*(_write_one(k, w, g) for k, w, g in wanted), return_exceptions=True)
+    results = await asyncio.gather(*(_write_one(k, w, g, c) for k, w, g, c in wanted), return_exceptions=True)
 
-    written = failed = 0
+    written = failed = rejudged = 0
     failures: list[str] = []
-    for (word, _answer, _gloss), result in zip(wanted, results, strict=True):
+    for (word, _answer, _gloss, cached), result in zip(wanted, results, strict=True):
         if isinstance(result, BaseException):
             failed += 1
             failures.append(f"{word}: {type(result).__name__}: {result}")
             continue
         _word, sentence, verdict, sentence_translation = result
         if sentence is None or verdict is None:
+            failed += 1
+            continue
+        if cached is not None and verdict.status == UNJUDGED:
+            # Still no verdict: the row stays as it is, for the next pass.
             failed += 1
             continue
         # An underdetermined sentence is still CACHED. These words have no image
@@ -178,14 +197,21 @@ async def prestage_cloze_sentences(
             competitors=verdict.competitors,
             sentence_translation=sentence_translation,
         )
-        written += 1
+        if cached is None:
+            written += 1
+        else:
+            rejudged += 1
 
     # WARNING, not INFO: start-dev.sh runs uvicorn at --log-level warning and
     # this only ever runs inside that dev server, so an info line here is
     # written nowhere a human will read it — the defect that hid the
     # PRODUCTION_MINT backlog for a month.
-    line = f"PRESTAGE_CLOZE written={written} already={already} open_class={skipped} failed={failed}"
+    line = (
+        f"PRESTAGE_CLOZE written={written} already={already} open_class={skipped} failed={failed} rejudged={rejudged}"
+    )
     if failures:
         line += " failures=" + " | ".join(failures)
     logger.warning(line)
-    return ClozePreStageReport(written=written, already_cached=already, skipped_open_class=skipped, failed=failed)
+    return ClozePreStageReport(
+        written=written, already_cached=already, skipped_open_class=skipped, failed=failed, rejudged=rejudged
+    )

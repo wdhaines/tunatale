@@ -74,6 +74,12 @@ BLANK = "___"
 _MAX_TOKENS = 1500
 
 
+#: The verdict when the judge never answered (an LLM failure such as a 429).
+#: It is NOT a judgement: the mint must not use a sentence carrying it, and the
+#: prestage re-judges it on its next pass (tunatale-0xc7).
+UNJUDGED = "unknown"
+
+
 @dataclass(frozen=True)
 class ClozeVerdict:
     """What the blind fill-in found.
