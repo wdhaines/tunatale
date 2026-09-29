@@ -37,7 +37,8 @@ export const en = {
   "lessonPlayer.off": "Off",
   "lessonPlayer.handsFree.label": "Hands-free",
   "lessonPlayer.handsFree.title":
-    "Plays each pass in order without input — natural, enunciated, then English after. The ⏮ ⏭ headphone / car buttons step by sentence.",
+    "Plays the lesson in order without input — key phrases, natural, enunciated, then English after. The ⏮ ⏭ headphone / car buttons step by sentence and ⏪ ⏩ step by section. Repeat plays this lesson again instead of moving on.",
+  "lessonPlayer.handsFree.repeat": "Repeat",
 
   // Transcript.svelte
   "transcript.cancel": "Cancel",

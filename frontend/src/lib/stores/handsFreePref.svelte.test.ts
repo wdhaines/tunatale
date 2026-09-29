@@ -27,10 +27,30 @@ describe("handsFreePref.enabled", () => {
   });
 
   it("set writes through, so the next lesson's mount sees it", () => {
-    handsFreePref.set(true);
+    handsFreePref.set("on");
     expect(localStorage.getItem("handsFree")).toBe("on");
     handsFreePref.init();
     expect(handsFreePref.enabled).toBe(true);
+    expect(handsFreePref.repeat).toBe(false);
+  });
+
+  // Repeat lesson, the third state (the user's call, 2026-09-29): saved like
+  // hands-free, and hands-free is ON in it.
+  it("repeat is saved, survives a re-init, and counts as enabled", () => {
+    handsFreePref.set("repeat");
+    expect(localStorage.getItem("handsFree")).toBe("repeat");
+    handsFreePref.init();
+    expect(handsFreePref.mode).toBe("repeat");
+    expect(handsFreePref.enabled).toBe(true);
+    expect(handsFreePref.repeat).toBe(true);
+  });
+
+  it("set('off') turns both off", () => {
+    handsFreePref.set("repeat");
+    handsFreePref.set("off");
+    expect(localStorage.getItem("handsFree")).toBe("off");
+    expect(handsFreePref.enabled).toBe(false);
+    expect(handsFreePref.repeat).toBe(false);
   });
 
   it("survives a blocked localStorage rather than breaking the toggle", () => {
@@ -42,7 +62,7 @@ describe("handsFreePref.enabled", () => {
     });
     expect(() => handsFreePref.init()).not.toThrow();
     expect(handsFreePref.enabled).toBe(false);
-    expect(() => handsFreePref.set(true)).not.toThrow();
+    expect(() => handsFreePref.set("on")).not.toThrow();
     expect(handsFreePref.enabled).toBe(true); // in-memory still tracks the click
     get.mockRestore();
     put.mockRestore();
