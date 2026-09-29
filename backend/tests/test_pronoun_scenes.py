@@ -537,7 +537,7 @@ def _parse(svg: bytes) -> Picture:
         )
 
     # A bag is the one rounded-corner rect in the picture — the conversation
-    # outline rounds at 16, the bubble at 14, the bag at 3. Keyed on the SHAPE
+    # outline rounds at 16, the bubble at 14, the bag at 4. Keyed on the SHAPE
     # rather than the fill, deliberately: a bag in the wrong colour is still a
     # bag, and a checker that looked for the approved fill would report NO bags
     # and pass a palette mistake as a scene with nothing in its hands.
@@ -552,7 +552,7 @@ def _parse(svg: bytes) -> Picture:
             stroke=el.get("stroke"),
         )
         for el in children
-        if el.tag == f"{_SVG}rect" and el.get("rx") == "3"
+        if el.tag == f"{_SVG}rect" and el.get("rx") == "4"
     ]
 
     # A mark belongs to the head it is geometrically ABOVE, not to whatever it
@@ -985,10 +985,10 @@ _BAG_FILL = "#ffd23f"
 _BAG_STROKE = "#6b4a00"
 
 #: A bag is two elements: the handle arc above it and the rounded rect. The rect
-#: is the one with ``rx="3"`` (the outline rounds at 16, the bubble at 14); the
+#: is the one with ``rx="4"`` (the outline rounds at 16, the bubble at 14); the
 #: handle is the one path stroked at 2.4, a width nothing else in these pictures
 #: uses. Both are stripped together — a bag missing its handle is still a bag.
-_BAG_ELEMENT = re.compile(r'<rect [^>]*\brx="3"[^>]*/>|<path [^>]*\bstroke-width="2\.4"[^>]*/>')
+_BAG_ELEMENT = re.compile(r'<rect [^>]*\brx="4"[^>]*/>|<path [^>]*\bstroke-width="2\.4"[^>]*/>')
 
 
 def _strip_bags(svg: bytes) -> bytes:
@@ -1111,7 +1111,7 @@ def test_every_bag_is_drawn_on_top_of_the_figures(concept: str) -> None:
     """A bag painted under a body would be a body wearing a bag, not carrying one."""
     group = next(el for el in _root(render_pronoun_svg(concept)).iter() if el.tag == f"{_SVG}g")
     children = list(group)
-    bags = [i for i, el in enumerate(children) if el.tag == f"{_SVG}rect" and el.get("rx") == "3"]
+    bags = [i for i, el in enumerate(children) if el.tag == f"{_SVG}rect" and el.get("rx") == "4"]
     handles = [i for i, el in enumerate(children) if el.tag == f"{_SVG}path" and el.get("stroke-width") == "2.4"]
     heads = [i for i, el in enumerate(children) if el.tag == f"{_SVG}circle" and el.get("r") == "12"]
     assert len(bags) == len(handles), "every bag has its handle"
@@ -1158,7 +1158,7 @@ def _palette(svg: bytes) -> dict[str, str]:
         roles["accent"] = marks.pop()
     # The bag, found the same way the picture's own tests find it: by its shape.
     # A recoloured bag is still the bag, so the contrast check gets to see it.
-    bag = next((el for el in root.iter() if el.tag == f"{_SVG}rect" and el.get("rx") == "3"), None)
+    bag = next((el for el in root.iter() if el.tag == f"{_SVG}rect" and el.get("rx") == "4"), None)
     if bag is not None:
         roles["bag"] = bag.get("fill")
         roles["bag-stroke"] = bag.get("stroke")
@@ -1277,16 +1277,16 @@ def _bag_markup(cx: int, top: int) -> str:
 
     Written out rather than captured from a render, so a probe says where the
     bag is instead of asserting whatever the builder happened to put there. The
-    handle is a wide, low tote arc (8 x 5 over a 2-unit stem): the mockup's narrow
+    handle is a wide, low tote arc (12 x 7 over a 3-unit stem): the mockup's narrow
     6-radius shackle read as a PADLOCK once a gender mark sat in the bag like a
     keyhole (orchestrator audit, 2026-09-28). It is written out here for the same
     reason as before: a checker that read its expectations out of the renderer
     would pass a renderer that grew a third unit of stem.
     """
     return (
-        f'<path d="M{cx - 8} {top} v-2 a8 5 0 0 1 16 0 v2" fill="none" '
+        f'<path d="M{cx - 12} {top} v-3 a12 7 0 0 1 24 0 v3" fill="none" '
         f'stroke="{_BAG_STROKE}" stroke-width="2.4"/>'
-        f'<rect x="{cx - 12}" y="{top}" width="24" height="18" rx="3" fill="{_BAG_FILL}" '
+        f'<rect x="{cx - 14}" y="{top}" width="28" height="26" rx="4" fill="{_BAG_FILL}" '
         f'stroke="{_BAG_STROKE}" stroke-width="2"/>'
     )
 
@@ -1505,8 +1505,8 @@ def test_the_checker_rejects_the_cats_bag_floating_off_the_ground() -> None:
     """
     svg = render_pronoun_svg("it_poss")
     cx, top = _own_bag(svg, _parse(svg).bags[0])
-    assert top == 180
-    mutated = _mutate(svg, _bag_markup(cx, top), _bag_markup(cx, top - 18))
+    assert top == 172
+    mutated = _mutate(svg, _bag_markup(cx, top), _bag_markup(cx, top - 26))
     after = _parse(mutated)
     assert after.bags[0].left > after.cats[0].cx, "it is still to the right of the cat"
     assert abs(after.bags[0].bottom - after.ground) > 0.5
@@ -1533,7 +1533,10 @@ def test_the_checker_rejects_the_cats_bag_floating_off_the_ground() -> None:
 #: read off ``fcfb879`` (Part A, tunatale-uy38). A pin, not a measurement, and for
 #: the same reason as ``_BASE_RENDERS_AT_HEAD`` above: a property test cannot see
 #: a picture that has moved, and adding an argument to a renderer is exactly the
-#: change that could move it by accident.
+#: change that could move it by accident. The ``_poss`` rows were re-pinned
+#: 2026-09-29 when the bag and its mark grew about 1.45x (the user's pick of the
+#: marks being too small to read), bag width held to 28; every nominative row
+#: is untouched.
 _OWNED_NONE_AT_HEAD: dict[str, str] = {
     "i": "9c40bf84971d",
     "you_one": "0f2d8e5294b5",
@@ -1549,20 +1552,20 @@ _OWNED_NONE_AT_HEAD: dict[str, str] = {
     "you_many": "fbff1be152f8",
     "they_two": "7570f97e263c",
     "they_many": "5df66a7f9448",
-    "i_poss": "5ec3f1b7214d",
-    "you_one_poss": "7542bf36ba5d",
-    "he_poss": "91aeda8e8785",
-    "she_poss": "39828985555c",
-    "third_one_poss": "0a1886efaa4c",
-    "it_poss": "8890a2c4412b",
-    "we_two_poss": "44bed7d6b452",
-    "we_many_poss": "07e896acdd12",
-    "we_incl_poss": "44bed7d6b452",
-    "we_excl_poss": "877bec03f04e",
-    "you_two_poss": "0e8a2ced58ca",
-    "you_many_poss": "19f45d038261",
-    "they_two_poss": "6759edf51ed5",
-    "they_many_poss": "05487d530e66",
+    "i_poss": "7862b3800699",
+    "you_one_poss": "1ddd51f36731",
+    "he_poss": "e28cb4caf173",
+    "she_poss": "75ec093cc41b",
+    "third_one_poss": "4689b7dc0ed5",
+    "it_poss": "dfa6f3d55844",
+    "we_two_poss": "ec9146800005",
+    "we_many_poss": "55922d07cce3",
+    "we_incl_poss": "ec9146800005",
+    "we_excl_poss": "98e5b7275976",
+    "you_two_poss": "c8524e2d5c4d",
+    "you_many_poss": "b71399c27af9",
+    "they_two_poss": "cc58f3361bb0",
+    "they_many_poss": "2b8f5dadc860",
 }
 
 #: The gender of the owned thing, as the two things a checker can read off the
@@ -1580,11 +1583,11 @@ _OWNED_MARK: dict[str, tuple[str, bool]] = {
 #: not a gender. Transcribed from the brief's geometry rather than derived — the
 #: offset is a drawing decision, and a renderer that computed a "nicer" one would
 #: pass every other check in this section.
-_OWNED_RADIUS = 3.5
-_OWNED_STROKE_WIDTH = "1.6"
+_OWNED_RADIUS = 5
+_OWNED_STROKE_WIDTH = "2.2"
 _PLURAL = "pl"
-_PLURAL_DX = 6
-_PLURAL_DY = -5
+_PLURAL_DX = 9
+_PLURAL_DY = -7
 _OWNED_KINDS = ("m", "f", "n", _PLURAL)
 _OWNED_GENDERS = ("m", "f", "n")
 
@@ -1610,10 +1613,10 @@ def _bag_marks(svg: bytes) -> list[BagMark]:
     been slid away from its strokes would otherwise be read as two marks.
 
     The tolerance is 0.1 rather than a hair because the ♂ arrow begins at the
-    ring's CORNER — the 2.5/2.5 the mockup transcribes is the chord point, 3.54
-    from the centre against a 3.5 ring — so the association is a neighbourhood
-    and not an equality. It is still far tighter than the 30-unit gap between two
-    neighbouring bags, which is what makes it a check.
+    ring's CORNER — the 3.5/3.5 offset is the chord point, 4.95 from the centre
+    against a 5 ring — so the association is a neighbourhood and not an equality.
+    It is still far tighter than the 30 units between two neighbouring bags'
+    centres, which is what makes it a check.
     """
     root = _root(svg)
     dx = _dx(svg)
@@ -1735,7 +1738,7 @@ def test_a_gender_mark_is_painted_over_the_bag_it_is_in(concept: str) -> None:
     bodies = [
         (i, _num(el, "x"), _num(el, "x") + _num(el, "width"))
         for i, el in enumerate(children)
-        if el.tag == f"{_SVG}rect" and el.get("rx") == "3"
+        if el.tag == f"{_SVG}rect" and el.get("rx") == "4"
     ]
     assert len(rings) == len(bodies) > 0
     for ring in rings:
@@ -1759,6 +1762,23 @@ def test_the_three_genders_are_three_different_marks(concept: str) -> None:
         read[owned] = {(m.direction, m.crossed) for m in marks}
         assert read[owned] == {_OWNED_MARK[owned]}
     assert len(set().union(*read.values())) == 3, "two of the three genders read alike"
+
+
+@pytest.mark.parametrize("concept", _POSSESSIVES)
+@pytest.mark.parametrize("owned", (None, *_OWNED_GENDERS))
+def test_neighbouring_referents_bags_do_not_touch(concept: str, owned: str | None) -> None:
+    """Each lit referent's bag stands clear of the next one's.
+
+    The three-person scenes stand their people 30 units apart, so a bag grown
+    wider than that runs into its neighbour, and a row of joined bags reads as
+    one bundle — or as the plural's deliberate second bag. Found when the bag
+    grew for legible marks (2026-09-29): nothing else in this file measures the
+    space BETWEEN bags. The plural is left out on purpose; its overlap is the
+    design.
+    """
+    bags = sorted(_parse(render_pronoun_svg(concept, owned)).bags, key=lambda bag: bag.left)
+    for left_bag, right_bag in zip(bags, bags[1:], strict=False):
+        assert right_bag.left - left_bag.right >= 2, f"bags at x={left_bag.cx} and x={right_bag.cx} touch"
 
 
 @pytest.mark.parametrize("concept", _POSSESSIVES)
@@ -1851,23 +1871,23 @@ def test_an_unknown_concept_is_still_refused_before_the_gender_is_read() -> None
 #: expectations out of the renderer would agree with whatever it fed it.
 _OWN_MARKUP: dict[str, str] = {
     "m": (
-        '<circle cx="22" cy="173" r="3.5" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
-        '<path d="M24.5 170.5 L28 167 h-3 m3 0 v3" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
+        '<circle cx="21" cy="178" r="5" fill="none" stroke="#6b4a00" stroke-width="2.2"/>'
+        '<path d="M24.5 174.5 L30 169 h-4 m4 0 v4" fill="none" stroke="#6b4a00" stroke-width="2.2"/>'
     ),
     "f": (
-        '<circle cx="24" cy="169" r="3.5" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
-        '<path d="M24 172.5 V178 M21.5 175.5 H26.5" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
+        '<circle cx="24" cy="172" r="5" fill="none" stroke="#6b4a00" stroke-width="2.2"/>'
+        '<path d="M24 177 V185 M20.5 181.5 H27.5" fill="none" stroke="#6b4a00" stroke-width="2.2"/>'
     ),
     "n": (
-        '<circle cx="24" cy="169" r="3.5" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
-        '<path d="M24 172.5 V178" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
+        '<circle cx="24" cy="172" r="5" fill="none" stroke="#6b4a00" stroke-width="2.2"/>'
+        '<path d="M24 177 V185" fill="none" stroke="#6b4a00" stroke-width="2.2"/>'
     ),
 }
-#: The same three, thirty units up — clear of the bag, still on its own ring, so
-#: the "inside the bag" check is the only one that can see it.
+#: The same three, forty units up — clear of the bag and its handle, still on its
+#: own ring, so the "inside the bag" check is the only one that can see it.
 _OWN_MARKUP_OUTSIDE = (
-    '<circle cx="24" cy="139" r="3.5" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
-    '<path d="M24 142.5 V148 M21.5 145.5 H26.5" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
+    '<circle cx="24" cy="132" r="5" fill="none" stroke="#6b4a00" stroke-width="2.2"/>'
+    '<path d="M24 137 V145 M20.5 141.5 H27.5" fill="none" stroke="#6b4a00" stroke-width="2.2"/>'
 )
 #: And the feminine mark again, in the colour a referent's own gender uses. The
 #: shape is untouched, so the ring and the strokes are still a mark — found by

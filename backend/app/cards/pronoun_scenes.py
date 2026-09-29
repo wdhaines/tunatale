@@ -198,24 +198,29 @@ _MARK_DIAGONAL = _MARK_R * 0.7071
 #: radius standing this far above it. It is as wide as a body and a shade wider
 #: than a head, which is what makes "the lit referent is carrying this" read
 #: without a label. The handle's RISE and its arc's RADIUS are different
-#: numbers on purpose — the approved mockup drew a 6-radius arc over a 5-unit
-#: stem, and the markup is transcribed rather than tidied.
-_BAG_W = 24
-_BAG_H = 18
-_BAG_RX = 3
-_BAG_HANDLE_R = 8
-_BAG_HANDLE_RY = 5
-_BAG_HANDLE_DY = 2
+#: numbers on purpose: a wide, low tote arc, because a narrow shackle read as a
+#: PADLOCK once a mark sat in the bag like a keyhole (2026-09-28). Bag, handle
+#: and mark were all grown about 1.45x on 2026-09-29, the user's pick after the
+#: marks proved too small to tell apart at card size; the numbers are that
+#: approved render rounded to whole or half units, not derived — except the
+#: WIDTH, held to 28 so that people standing 30 apart keep a gap between their
+#: bags (34 made the three-person scenes' bags run together).
+_BAG_W = 28
+_BAG_H = 26
+_BAG_RX = 4
+_BAG_HANDLE_R = 12
+_BAG_HANDLE_RY = 7
+_BAG_HANDLE_DY = 3
 
 #: How high a CARRIED bag hangs: its bottom this far above the ground, which puts
 #: it across the referent's chest rather than at their feet.
 _BAG_CARRY_DY = 36
 
 #: The cat's bag, which has no hands to hold it: this far to the right of the
-#: animal, standing on the ground rather than hanging (its top is the ground
+#: animal (far enough that the bigger bag clears the cat's tail), standing on the ground rather than hanging (its top is the ground
 #: minus one bag height), and — being wider than the cat — the reason the
 #: ``it_poss`` group is centred wider than the ``it`` one.
-_CAT_BAG_DX = 48
+_CAT_BAG_DX = 50
 
 # ── The gender of the thing in the bag (tunatale-l1ba) ──────────────────────
 # The gender belongs to the OWNED thing, not to the person carrying the bag, so
@@ -234,31 +239,31 @@ _CAT_BAG_DX = 48
 OWNED_KINDS: tuple[str, ...] = ("m", "f", "n", "pl")
 
 #: A mark is a ring of this radius with strokes this thin, small enough to sit in
-#: a 24x18 bag with air around it and thick enough to read at card size.
-_OWNED_R = 3.5
-_OWNED_STROKE_W = "1.6"
+#: a 28x26 bag with air around it and thick enough to read at card size.
+_OWNED_R = 5
+_OWNED_STROKE_W = "2.2"
 
 #: ♂ is the only mark that is not centred: its ring sits low and left, because
 #: the arrow goes up and to the RIGHT out of it and needs the room. ♀ and ⚲
 #: share a ring, the stem, and the stem's length — the crossbar is the whole of
 #: the difference between them.
-_OWNED_M_DX = -2
-_OWNED_M_DY = 11
-_OWNED_DY = 7
-_OWNED_STEM_END = 9
-_OWNED_ARM_DX = 2.5
-_OWNED_ARM_DY = 6.5
+_OWNED_M_DX = -3
+_OWNED_M_DY = 16
+_OWNED_DY = 10
+_OWNED_STEM_END = 13
+_OWNED_ARM_DX = 3.5
+_OWNED_ARM_DY = 9.5
 #: The ♂ arrow: out of the ring's up-right edge, up and right, and an arrowhead.
-_OWNED_M_ARROW_DX = 2.5
-_OWNED_M_ARROW_DY = -2.5
-_OWNED_M_REACH = 6
-_OWNED_M_HEAD = 3
+_OWNED_M_ARROW_DX = 3.5
+_OWNED_M_ARROW_DY = -3.5
+_OWNED_M_REACH = 9
+_OWNED_M_HEAD = 4
 
 #: A plural owned thing is a second bag, drawn BEHIND the first (so it is
 #: emitted first) and up and to the right of it — which is also why a plural
 #: widens the cast and the group has to be centred on the pair.
-_OWNED_PL_DX = 6
-_OWNED_PL_DY = -5
+_OWNED_PL_DX = 9
+_OWNED_PL_DY = -7
 
 
 def _n(value: float) -> str:
