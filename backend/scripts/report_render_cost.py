@@ -38,8 +38,9 @@ WIRES the renderer's existing functions, it does not re-derive their rules:
   sorted(phonemes), speak_locale)`` — the renderer's ``synth_memo`` key — where
   the text is ``preprocess(phrase.text, section.section_type)``, phonemes are
   planned only when BOTH ``source_word`` and ``syllable_span`` are present
-  (``_phrase_phonemes``), and ``speak_locale`` is the target locale only for
-  phrases whose ``language_code`` matches.
+  (``_phrase_phonemes``), and ``speak_locale`` is the target locale for
+  phrases whose ``language_code`` matches and the phrase's OWN language's
+  locale otherwise (an English line declares en-US).
 - **slicer leg**: one key per ``(source_word, voice_id)`` — the slicer's
   ``_words`` memo key — for every provenance phrase the renderer's
   ``_apply_slicing`` hands to ``ChunkSlicer._build_parent``, which synthesizes
@@ -358,9 +359,13 @@ def collect_keys(
                 # Rule 1: the synthesized text is PREPROCESSED text,
                 # never phrase.text itself.
                 text = preprocessor.preprocess(phrase.text, section.section_type)
-                # Rule 3: the target locale declares itself only for phrases in
-                # the section's own language; a narrator line is English.
-                speak_locale = target_locale if phrase.language_code == language_code else None
+                # Rule 3: a phrase declares its own language's locale — the
+                # target locale for the section's language, en-US for an English
+                # line (renderer.py::_phrase_locale). For an en-US voice that
+                # changes neither the SSML nor the cache key.
+                speak_locale = (
+                    target_locale if phrase.language_code == language_code else get_tts_locale(phrase.language_code)
+                )
                 # Rule 4: dedupe by the 5-tuple, render-scoped (here: whole scope).
                 key = _memo_key(text, phrase.voice_id, phrase.rate, ph_map, speak_locale)
                 # The 5-tuple is the same dedupe key for BOTH providers — it is

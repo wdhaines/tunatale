@@ -57,6 +57,9 @@ Usage:
     uv run python scripts/rebuild_lessons_from_story.py --dry-run
     uv run python scripts/rebuild_lessons_from_story.py --go
     uv run python scripts/rebuild_lessons_from_story.py --go --day 8   # one lesson
+    uv run python scripts/rebuild_lessons_from_story.py --go --day 8 --voices-only
+        # stored text, new voices: for a VOICE change heard by ear, where
+        # today's builders would also rewrite drifted key-phrase drills
 """
 
 from __future__ import annotations
@@ -64,6 +67,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -78,7 +82,7 @@ from app.languages import (  # noqa: E402
     get_language,
     resolve_db_path,
 )
-from app.models.lesson import Lesson  # noqa: E402
+from app.models.lesson import Lesson, Section  # noqa: E402
 from app.storage.store import ContentStore  # noqa: E402
 
 
@@ -116,6 +120,42 @@ def _latest_lessons(store: ContentStore) -> list[tuple[str, str, int, Lesson]]:
     return out
 
 
+def voices_only(stored: Lesson, rebuilt: Lesson) -> tuple[Lesson, list[str]]:
+    """The STORED lesson, re-voiced from *rebuilt*. Returns it and the sections kept.
+
+    A full rebuild runs today's section builders, and those have moved on: on
+    2026-09-29 the live day-11 Norwegian lesson rebuilt with 67 key-phrase texts
+    changed (170 -> 172 phrases) while its six dialogue sections came out
+    text-identical. A voice change that the user is judging BY EAR must not
+    arrive with different drills in it (tunatale-ucpg).
+
+    So, per section: when the rebuilt section says the same thing — same texts,
+    languages and roles, phrase for phrase — its voices are copied onto the
+    stored phrases. When it does not, the stored section is KEPT and only its
+    narrator lines move to the new narrator, because that is the one voice that
+    can be reassigned without the builder: it is every English phrase whose
+    voice is the lesson's old narrator.
+    """
+    by_type = {s.section_type: s for s in rebuilt.sections}
+    kept: list[str] = []
+    sections: list[Section] = []
+    for ss in stored.sections:
+        rs = by_type.get(ss.section_type)
+        shape = [(p.text, p.language_code, p.role) for p in ss.phrases]
+        if rs is not None and shape == [(p.text, p.language_code, p.role) for p in rs.phrases]:
+            phrases = [replace(sp, voice_id=rp.voice_id) for sp, rp in zip(ss.phrases, rs.phrases, strict=True)]
+        else:
+            kept.append(ss.section_type.value)
+            phrases = [
+                replace(p, voice_id=rebuilt.narrator_voice)
+                if p.role == "narrator" and p.voice_id == stored.narrator_voice
+                else p
+                for p in ss.phrases
+            ]
+        sections.append(replace(ss, phrases=phrases))
+    return replace(stored, sections=sections, narrator_voice=rebuilt.narrator_voice), kept
+
+
 def describe(stored: Lesson, rebuilt: Lesson) -> str:
     """A one-line summary of what the rebuild would change, for the plan output.
 
@@ -143,6 +183,11 @@ async def main() -> int:
     ap.add_argument("--db", default=None, help="content DB path (default: the configured DB for --language)")
     ap.add_argument("--audio-dir", default=None)
     ap.add_argument("--language", default=None, help="default: settings.target_language")
+    ap.add_argument(
+        "--voices-only",
+        action="store_true",
+        help="keep the stored text and move only the voices (see voices_only)",
+    )
     args = ap.parse_args()
     if args.dry_run == args.go:
         ap.error("pass exactly one of --dry-run / --go")
@@ -171,11 +216,16 @@ async def main() -> int:
             print(f"  --  {label} NO stored Story JSON; skipped (never reconstructed)")
             skipped += 1
             continue
+        kept: list[str] = []
+        if args.voices_only:
+            fresh, kept = voices_only(stored, fresh)
         if fresh.to_json() == stored.to_json():
             print(f"  ==  {label} already current; skipped")
             skipped += 1
             continue
         action = describe(stored, fresh)
+        if kept:
+            action += f" (kept stored text: {', '.join(kept)})"
         if args.dry_run:
             print(f"  ->  {label} would rebuild: {action}")
             rebuilt_count += 1

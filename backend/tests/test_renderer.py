@@ -501,9 +501,9 @@ class TestLessonNarratorVoice:
     """Tests for Lesson.narrator_voice serialization."""
 
     def test_narrator_voice_default(self):
-        """Lesson.narrator_voice defaults to en-US-GuyNeural."""
+        """Lesson.narrator_voice defaults to en-US-DavisMultilingualNeural (tunatale-ucpg)."""
         lesson = Lesson(title="X", language_code="sl")
-        assert lesson.narrator_voice == "en-US-GuyNeural"
+        assert lesson.narrator_voice == "en-US-DavisMultilingualNeural"
 
     def test_narrator_voice_serialization(self):
         """narrator_voice roundtrips through to_json/from_json."""
@@ -638,6 +638,9 @@ class TestLessonRendererCues:
                 "marker": 0.1,
                 "duration_ms": 150,
                 "voice_id": lesson.narrator_voice,
+                # The title is English text, so its gain resolves in the "en"
+                # table, not the lesson's (tunatale-ucpg).
+                "code": "en",
             },
         ]
         for sec_idx, sec in enumerate(lesson.sections):
@@ -650,6 +653,7 @@ class TestLessonRendererCues:
                         "marker": 0.1 * (n + 1),
                         "duration_ms": 150 + 70 * n,
                         "voice_id": sec.phrases[ph_idx].voice_id,
+                        "code": sec.phrases[ph_idx].language_code,
                     }
                 )
 
@@ -687,7 +691,7 @@ class TestLessonRendererCues:
         for i, cue in enumerate(cues):
             spec = all_phrases[i]
             # The per-voice gain scales the constant this search looks for.
-            expected_marker = _gained_marker(spec["marker"], lesson.language_code, spec["voice_id"])
+            expected_marker = _gained_marker(spec["marker"], spec["code"], spec["voice_id"])
             idx = np.where(np.abs(buf[:, 0] - expected_marker) < 0.003)[0]
             assert len(idx) > 0, f"Cue {i} '{cue.text}': marker {expected_marker} not found in buffer"
             assert idx[-1] - idx[0] + 1 == len(idx), f"Cue {i} '{cue.text}': marker run not contiguous"
@@ -741,7 +745,7 @@ class TestLessonRendererCues:
             buf,
             buf_rate,
             [
-                _gained_marker(0.1, lesson.language_code, lesson.narrator_voice),
+                _gained_marker(0.1, "en", lesson.narrator_voice),
                 _gained_marker(0.2, lesson.language_code, "sl-SI-PetraNeural"),
                 _gained_marker(0.3, lesson.language_code, "sl-SI-PetraNeural"),
             ],

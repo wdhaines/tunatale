@@ -501,10 +501,18 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
         build_key_phrases_section(key_phrases, language.tts_voice_map, narrator_voice, language.code),
         build_natural_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
         build_slow_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
-        build_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
-        build_slow_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
-        build_en_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
-        build_slow_en_translated_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+        build_translated_section(
+            scenes, language.tts_voice_map, narrator_voice, language.code, en_voice_map=language.tts_en_voice_map
+        ),
+        build_slow_translated_section(
+            scenes, language.tts_voice_map, narrator_voice, language.code, en_voice_map=language.tts_en_voice_map
+        ),
+        build_en_translated_section(
+            scenes, language.tts_voice_map, narrator_voice, language.code, en_voice_map=language.tts_en_voice_map
+        ),
+        build_slow_en_translated_section(
+            scenes, language.tts_voice_map, narrator_voice, language.code, en_voice_map=language.tts_en_voice_map
+        ),
     ]
 
     kp_infos = []

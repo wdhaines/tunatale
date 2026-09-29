@@ -424,15 +424,18 @@ class TestGetLanguage:
         assert len(set(cast.values())) == 8, f"collapsed cast: {cast}"
 
     def test_every_norwegian_map_voice_has_a_measured_gain(self):
-        """Every voice named in the no voice map also has a tts_voice_gain_db entry.
+        """Every voice that reads Norwegian has a no gain; every voice that reads English, an en gain.
 
         An unmapped voice renders at 0.0 dB — silently un-normalised against
-        the rest of the cast. The narrator (en-US-GuyNeural, measured on
-        ENGLISH text) is covered too.
+        the rest of the cast. The gain resolves under the TEXT's language, so
+        the narrator and the English cast (tts_en_voice_map) are checked
+        against Language.english()'s table, where they are measured.
         """
         lang = get_language("no")
-        missing = set(lang.tts_voice_map.values()) - set(lang.tts_voice_gain_db)
-        assert not missing, f"voices without a measured gain: {missing}"
+        l2_voices = {v for role, v in lang.tts_voice_map.items() if role != "narrator"}
+        assert not l2_voices - set(lang.tts_voice_gain_db)
+        en_voices = {lang.tts_voice_map["narrator"], *lang.tts_en_voice_map.values()}
+        assert not en_voices - set(get_language("en").tts_voice_gain_db)
 
     def test_william_left_the_map_but_stays_in_the_gain_table(self):
         """en-AU-William was male-2 until rag.6; legacy audio must stay normalised.
@@ -704,8 +707,9 @@ class TestKeyPhrasesVoice:
 
     def test_every_tagalog_map_voice_has_a_measured_gain(self):
         lang = get_language("tl")
-        missing = set(lang.tts_voice_map.values()) - set(lang.tts_voice_gain_db)
-        assert not missing, f"voices without a measured gain: {missing}"
+        l2_voices = {v for role, v in lang.tts_voice_map.items() if role != "narrator"}
+        assert not l2_voices - set(lang.tts_voice_gain_db)
+        assert lang.tts_voice_map["narrator"] in get_language("en").tts_voice_gain_db
 
     def test_the_key_phrases_role_is_not_offered_to_the_story_writer(self):
         from app.generation.prompts import _l2_roles_line
@@ -739,13 +743,12 @@ class TestCebuanoRegistration:
     def test_every_cast_voice_has_its_measured_gain(self):
         # Integrated loudness of the 8-sentence Cebuano sample set per voice
         # (ffmpeg ebur128, target -20.0 LUFS), 2026-09-25, tunatale-u8nz.2.
-        # The narrator gain is the one value copied across every plugin table.
+        # The narrator's gain lives in the English table (tunatale-ucpg).
         assert get_language("ceb").tts_voice_gain_db == {
             "ceb-PH-KoreGemini": -6.0,
             "ceb-PH-DespinaGemini": -5.6,
             "ceb-PH-CharonGemini": -3.1,
             "ceb-PH-OrusGemini": -5.0,
-            "en-US-GuyNeural": -0.9,
         }
 
     def test_deck_and_mint_deck_names(self):

@@ -330,6 +330,7 @@ def _build_translated_phrases(
     en_first: bool,
     slow: bool,
     translated: bool = True,
+    en_voice_map: dict[str, str] | None = None,
 ) -> list[Phrase]:
     """Shared scene-loop for the section builders that play a scene's dialogue.
 
@@ -338,7 +339,11 @@ def _build_translated_phrases(
     *translated*: ``True`` → each L2 line is paired with its narrator translation,
     and a line with no translation is skipped; ``False`` → the L2 line stands alone
     (NATURAL_SPEED and SLOW_SPEED), so *en_first* has nothing to order and is ignored.
+    *en_voice_map*: speaker → the English voice reading that speaker's
+    translation; a speaker absent from it (or no map) is read by the narrator.
+    The phrase keeps ``role="narrator"`` regardless — see ``Language.tts_en_voice_map``.
     """
+    en_voice_map = en_voice_map or {}
     phrases: list[Phrase] = []
 
     for scene in scenes:
@@ -375,7 +380,12 @@ def _build_translated_phrases(
             if not translated:
                 phrases.append(l2_phrase)
                 continue
-            narrator_phrase = Phrase(text=translation, voice_id=narrator_voice, language_code="en", role="narrator")
+            narrator_phrase = Phrase(
+                text=translation,
+                voice_id=en_voice_map.get(speaker, narrator_voice),
+                language_code="en",
+                role="narrator",
+            )
             if en_first:
                 phrases.append(narrator_phrase)
                 phrases.append(l2_phrase)
@@ -391,13 +401,17 @@ def build_translated_section(
     l2_voice_map: dict[str, str],
     narrator_voice: str,
     l2_code: str,
+    *,
+    en_voice_map: dict[str, str] | None = None,
 ) -> Section:
     """Build the TRANSLATED section — every L2 line followed by narrator translation."""
     phrases: list[Phrase] = [
         Phrase(
             text=SECTION_TITLES[SectionType.TRANSLATED], voice_id=narrator_voice, language_code="en", role="narrator"
         ),
-        *_build_translated_phrases(scenes, l2_voice_map, narrator_voice, l2_code, en_first=False, slow=False),
+        *_build_translated_phrases(
+            scenes, l2_voice_map, narrator_voice, l2_code, en_first=False, slow=False, en_voice_map=en_voice_map
+        ),
     ]
     return Section(section_type=SectionType.TRANSLATED, phrases=phrases)
 
@@ -407,6 +421,8 @@ def build_slow_translated_section(
     l2_voice_map: dict[str, str],
     narrator_voice: str,
     l2_code: str,
+    *,
+    en_voice_map: dict[str, str] | None = None,
 ) -> Section:
     """Build the SLOW_TRANSLATED section — slowed L2 lines with trailing narrator translation."""
     phrases: list[Phrase] = [
@@ -416,7 +432,9 @@ def build_slow_translated_section(
             language_code="en",
             role="narrator",
         ),
-        *_build_translated_phrases(scenes, l2_voice_map, narrator_voice, l2_code, en_first=False, slow=True),
+        *_build_translated_phrases(
+            scenes, l2_voice_map, narrator_voice, l2_code, en_first=False, slow=True, en_voice_map=en_voice_map
+        ),
     ]
     return Section(section_type=SectionType.SLOW_TRANSLATED, phrases=phrases)
 
@@ -426,6 +444,8 @@ def build_en_translated_section(
     l2_voice_map: dict[str, str],
     narrator_voice: str,
     l2_code: str,
+    *,
+    en_voice_map: dict[str, str] | None = None,
 ) -> Section:
     """Build the EN_TRANSLATED section — narrator translation FIRST, then the L2 line."""
     phrases: list[Phrase] = [
@@ -435,7 +455,9 @@ def build_en_translated_section(
             language_code="en",
             role="narrator",
         ),
-        *_build_translated_phrases(scenes, l2_voice_map, narrator_voice, l2_code, en_first=True, slow=False),
+        *_build_translated_phrases(
+            scenes, l2_voice_map, narrator_voice, l2_code, en_first=True, slow=False, en_voice_map=en_voice_map
+        ),
     ]
     return Section(section_type=SectionType.EN_TRANSLATED, phrases=phrases)
 
@@ -445,6 +467,8 @@ def build_slow_en_translated_section(
     l2_voice_map: dict[str, str],
     narrator_voice: str,
     l2_code: str,
+    *,
+    en_voice_map: dict[str, str] | None = None,
 ) -> Section:
     """Build the SLOW_EN_TRANSLATED section — narrator translation FIRST, then slowed L2."""
     phrases: list[Phrase] = [
@@ -454,6 +478,8 @@ def build_slow_en_translated_section(
             language_code="en",
             role="narrator",
         ),
-        *_build_translated_phrases(scenes, l2_voice_map, narrator_voice, l2_code, en_first=True, slow=True),
+        *_build_translated_phrases(
+            scenes, l2_voice_map, narrator_voice, l2_code, en_first=True, slow=True, en_voice_map=en_voice_map
+        ),
     ]
     return Section(section_type=SectionType.SLOW_EN_TRANSLATED, phrases=phrases)

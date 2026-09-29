@@ -45,6 +45,29 @@ register(
                 "female": "nb-NO-PernilleNeural",
                 "male": "nb-NO-FinnNeural",
             },
+            # Who reads each role's English in the translated sections
+            # (tunatale-ucpg, confirmed by the user 2026-09-29). The five
+            # Multilingual cast members keep their own voice, so a character
+            # sounds like one person in both languages. Pernille, Iselin and
+            # Finn speak only Norwegian and get pitch-matched English voices.
+            # English median F0 on one dialogue line (the nb cast figures above
+            # do not carry over — Dustin and Giuseppe are 32 Hz apart in
+            # Norwegian and ~6 Hz apart in English; kept, on the user's ear):
+            #   female-1 Nancy 175.8   female-2 Amanda 234.0   female-3 Emma 204.1
+            #   female-4 Shimmer 149.6 male-1 Adam 105.9       male-2 Derek 120.5
+            #   male-3 Giuseppe 146.6  male-4 Dustin 141.0     narrator Davis 113.0
+            tts_en_voice_map={
+                "female-1": "en-US-NancyMultilingualNeural",
+                "female-2": "en-US-AmandaMultilingualNeural",
+                "female-3": "en-US-EmmaMultilingualNeural",
+                "female-4": "en-US-ShimmerTurboMultilingualNeural",
+                "male-1": "en-US-AdamMultilingualNeural",
+                "male-2": "en-US-DerekMultilingualNeural",
+                "male-3": "it-IT-GiuseppeMultilingualNeural",
+                "male-4": "en-US-DustinMultilingualNeural",
+                "female": "en-US-NancyMultilingualNeural",
+                "male": "en-US-AdamMultilingualNeural",
+            },
             # The dialogue cast, measured 2026-09-16 through the product's own
             # synthesize() (ffmpeg ebur128 for loudness, Azure STT for WER):
             #   female-1 nb-NO-Pernille  163.3 Hz F0 / 0.722 harmonicity / WER 0.031 / 1 voice-specific error
@@ -75,9 +98,10 @@ register(
             # stays at 0.9 even though he left the map — an unknown voice
             # returns 0.0, which would silently un-normalise legacy audio on
             # the next re-render.
-            # The narrator (en-US-GuyNeural) speaks ENGLISH, so its level is
-            # measured on English text and cannot come from this sentence set.
-            # Unchanged from rag.5 at −0.9; do not re-derive it here.
+            # These are levels reading NORWEGIAN. English lines (the narrator,
+            # and tts_en_voice_map below) resolve against Language.english()'s
+            # table, measured on English text: a voice's two levels differ
+            # (Giuseppe -0.7 here, +0.9 in English).
             tts_voice_gain_db={
                 "nb-NO-PernilleNeural": 1.2,
                 "nb-NO-IselinNeural": -0.1,
@@ -88,7 +112,6 @@ register(
                 "it-IT-GiuseppeMultilingualNeural": -0.7,
                 "en-US-DustinMultilingualNeural": 0.9,
                 "en-AU-WilliamMultilingualNeural": 0.9,
-                "en-US-GuyNeural": -0.9,
             },
         ),
         preprocessor_factory=NorwegianPreprocessor,
