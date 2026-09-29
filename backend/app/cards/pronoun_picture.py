@@ -28,6 +28,22 @@ of the word is off the cloze route, so the picture is drawn only when the card's
 English gloss names the referent. ``de`` glossed "the" gets no filled figures at
 all; it takes the route it was already on. An empty gloss refuses too — a
 picture that cannot be confirmed is not drawn.
+
+**``picture_only`` is a second key of the same file, and it is NOT a second
+listing.** It holds the Norwegian gendered possessives — ``min`` "my", ``mi`` "my"
+of a feminine thing, ``mitt`` of a neuter one, ``mine`` of a plural (tunatale-l1ba):
+four words on one picture family, told apart only by a mark inside the bag. They
+are kept out of ``words`` on purpose, because ``words`` is what
+:func:`is_pronoun_word` reads and its whole job is to VETO the cloze route, and
+the user's deck holds each of these as a vocab card *and* a sentence cloze:
+listing them there would have re-pointed lesson matching at a picture and dropped
+the cloze. So the drawing consults the new key and the router does not read it,
+which is why the tests here state that separation as an absence rather than a
+mapping. A value is a LIST of specs tried in order — ``<concept>`` or
+``<concept>:<m|f|n|pl>`` — and the first whose gloss keywords match wins, so one
+word with two meanings (``deres`` "your (plural)" and "their") draws either
+picture, and a homograph whose gloss says nothing of the kind (``vår`` "spring")
+draws nothing.
 """
 
 from __future__ import annotations
@@ -38,7 +54,7 @@ import re
 from functools import cache
 
 from app.cards.number_picture import NumberPicture
-from app.cards.pronoun_scenes import render_pronoun_svg
+from app.cards.pronoun_scenes import OWNED_KINDS, PRONOUN_CONCEPTS, render_pronoun_svg
 from app.languages import get_pronouns_path
 
 #: The English words that name each concept. A gloss matches when one of its
@@ -99,8 +115,54 @@ def load_pronoun_words(language_code: str) -> dict[str, str]:
     return {str(word).casefold(): str(concept) for word, concept in data.get("words", {}).items()}
 
 
+def _spec(spec: str) -> tuple[str, str | None]:
+    """``"<concept>"`` or ``"<concept>:<m|f|n|pl>"``, as a pair.
+
+    The gender of the owned thing is written into the spec rather than inferred
+    from the concept, because it is a fact about the WORD (``mi`` is "my" of a
+    feminine thing) and not about the picture.
+
+    Refused rather than approximated: a spec naming a concept the renderer cannot
+    draw, or a gender it does not have, would otherwise be caught downstream as a
+    ``KeyError`` or silently drawn as a bag with no mark in it — and a bag with no
+    mark in it where the card asked for a neuter thing is confidently wrong, which
+    is the same thing this module refuses everywhere else.
+    """
+    concept, sep, owned = str(spec).partition(":")
+    possessive = concept.endswith("_poss")
+    if concept not in PRONOUN_CONCEPTS or (sep and (owned not in OWNED_KINDS or not possessive)) or (not sep and owned):
+        raise ValueError(
+            f"{spec!r} is not a drawable spec; expected '<concept>' or "
+            f"'<concept>:<{'|'.join(OWNED_KINDS)}>' with a concept from PRONOUN_CONCEPTS"
+        )
+    return concept, (owned or None)
+
+
+@cache
+def load_picture_only(language_code: str) -> dict[str, tuple[tuple[str, str | None], ...]]:
+    """*language_code*'s picture-ONLY words: each to its ordered list of specs.
+
+    A separate table from :func:`load_pronoun_words` and deliberately invisible to
+    it — these words get a picture without being taken off the cloze route, which
+    is the whole reason they are not in ``words``. Empty when the language
+    registers no such key, which is every language but Norwegian.
+    """
+    path = get_pronouns_path(language_code)
+    if path is None or not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        str(word).casefold(): tuple(_spec(spec) for spec in specs)
+        for word, specs in data.get("picture_only", {}).items()
+    }
+
+
 def is_pronoun_word(text: str, language_code: str) -> bool:
-    """True if *text* is one of *language_code*'s drawn pronoun words."""
+    """True if *text* is one of *language_code*'s drawn pronoun words.
+
+    Reads ``words`` and NOT ``picture_only``: this is the veto the router asks,
+    and a word that has a picture must not thereby stop being a cloze.
+    """
     return text.strip().casefold() in load_pronoun_words(language_code)
 
 
@@ -114,9 +176,24 @@ def pronoun_picture(text: str, language_code: str, gloss: str) -> NumberPicture 
 
     ``None`` means "take the route you were already on": not a pronoun word, or
     one whose *gloss* does not confirm the personal sense.
+
+    A ``words`` entry is one concept and one gloss test. A ``picture_only`` entry
+    is a LIST, tried in order, so a word with two meanings draws whichever
+    picture the card's gloss asks for and no picture at all when the gloss asks
+    for neither — and the gender mark the concept is drawn with comes from the
+    spec, so the file name carries it and two words never collide on one card.
     """
-    concept = load_pronoun_words(language_code).get(text.strip().casefold())
-    if concept is None or not gloss_matches(concept, gloss):
-        return None
-    svg = render_pronoun_svg(concept)
-    return NumberPicture(f"pronoun_{concept}_{hashlib.sha256(svg).hexdigest()[:8]}.svg", svg)
+    key = text.strip().casefold()
+    concept = load_pronoun_words(language_code).get(key)
+    if concept is not None:
+        if not gloss_matches(concept, gloss):
+            return None
+        svg = render_pronoun_svg(concept)
+        return NumberPicture(f"pronoun_{concept}_{hashlib.sha256(svg).hexdigest()[:8]}.svg", svg)
+    for candidate, owned in load_picture_only(language_code).get(key, ()):
+        if not gloss_matches(candidate, gloss):
+            continue
+        svg = render_pronoun_svg(candidate, owned)
+        suffix = f"_{owned}" if owned else ""
+        return NumberPicture(f"pronoun_{candidate}{suffix}_{hashlib.sha256(svg).hexdigest()[:8]}.svg", svg)
+    return None

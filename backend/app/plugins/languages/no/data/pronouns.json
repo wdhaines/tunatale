@@ -1,5 +1,5 @@
 {
-  "_comment": "Personal pronouns drawn as a picture, not searched for and not clozed (tunatale-3rxu, the user 2026-09-28). Each maps a word to a language-neutral concept in app.cards.pronoun_scenes.PRONOUN_CONCEPTS; the picture is a conversation with the referent filled and standing outside the outline, because a pronoun's meaning IS a relation between people and a photo cannot carry one. A word listed here is NOT a function word, whatever `function_words.json` or a POS tag says: app.srs.function_words.is_function_word vetoes it, so a PRON never goes down the case-marker cloze route. The veto is asked about a bare token, so listing a homograph would take EVERY sense of it off the picture route — the picture is therefore only drawn when the card's English gloss names the referent (app.cards.pronoun_picture.gloss_matches). Map only words whose MAIN sense is the personal pronoun. NOT listed: `det` (dummy subject, article — polysemous), and the object forms meg/deg/ham/henne/oss/dem, which stay clozes because the cloze drills the case, which is the difficulty. `den` and `de` ARE listed although they are also the articles ('den store bilen'): the veto is gated on the tag (is_function_word applies it only for upos PRON or no tag), so a token tagged DET stays a cloze, and the gloss guard keeps a card glossed 'the' off the picture.",
+  "_comment": "Personal pronouns drawn as a picture, not searched for and not clozed (tunatale-3rxu, the user 2026-09-28). Each word in `words` maps to a language-neutral concept in app.cards.pronoun_scenes.PRONOUN_CONCEPTS; the picture is a conversation with the referent filled and standing outside the outline, because a pronoun's meaning IS a relation between people and a photo cannot carry one. A word in `words` is NOT a function word, whatever `function_words.json` or a POS tag says: app.srs.function_words.is_function_word vetoes it, so a PRON never goes down the case-marker cloze route. The veto is asked about a bare token, so listing a homograph would take EVERY sense of it off the picture route — the picture is therefore only drawn when the card's English gloss names the referent (app.cards.pronoun_picture.gloss_matches). Map only words whose MAIN sense is the personal pronoun. NOT in `words`: `det` (dummy subject, article — polysemous), and the object forms meg/deg/ham/henne/oss/dem, which stay clozes because the cloze drills the case, which is the difficulty. `den` and `de` ARE listed although they are also the articles ('den store bilen'): the veto is gated on the tag (is_function_word applies it only for upos PRON or no tag), so a token tagged DET stays a cloze, and the gloss guard keeps a card glossed 'the' off the picture. The possessives are in a SECOND key, `picture_only`, and the separation is the design (tunatale-l1ba): the deck holds each of min/din/vår/hans/hennes/deres as BOTH a vocab card and a sentence cloze, and `words` is what is_pronoun_word reads — its only job is that veto — so listing them there would have taken them all off the cloze route and re-pointed lesson matching at a picture. `picture_only` is read by the drawing and by nothing else. Each of its values is a LIST of specs tried in order, the first whose gloss keywords match the card's gloss winning: `deres` is both 'your (plural)' and 'their' and needs both pictures, while `vår` 'spring' gets neither. A spec is `<concept>` or `<concept>:<m|f|n|pl>`, the suffix being the gender of the OWNED thing — Norwegian has four words for 'my' (min/mi/mitt/mine) and the mark inside the bag is the only thing that tells them apart. NOT there either: the reflexive sin/si/sitt/sine ('his own'), which has no clean scene, the bag would be on the same referent that already carries one and the mark indistinguishable from an ordinary possessive; and Slovene moje/moja, which get nothing at all because they do not separate a gender from a number.",
   "words": {
     "de": "they_many",
     "den": "it",
@@ -9,5 +9,21 @@
     "hun": "she",
     "jeg": "i",
     "vi": "we_many"
+  },
+  "picture_only": {
+    "deres": ["you_many_poss", "they_many_poss"],
+    "di": ["you_one_poss:f"],
+    "din": ["you_one_poss:m"],
+    "dine": ["you_one_poss:pl"],
+    "ditt": ["you_one_poss:n"],
+    "hans": ["he_poss"],
+    "hennes": ["she_poss"],
+    "mi": ["i_poss:f"],
+    "min": ["i_poss:m"],
+    "mine": ["i_poss:pl"],
+    "mitt": ["i_poss:n"],
+    "vår": ["we_many_poss"],
+    "våre": ["we_many_poss:pl"],
+    "vårt": ["we_many_poss:n"]
   }
 }

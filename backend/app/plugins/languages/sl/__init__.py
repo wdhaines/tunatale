@@ -94,6 +94,7 @@ register(
         numbers_path=Path(__file__).parent / "data" / "numbers.json",
         spatial_path=Path(__file__).parent / "data" / "spatial.json",
         pronouns_path=Path(__file__).parent / "data" / "pronouns.json",
+        calendar_path=Path(__file__).parent / "data" / "calendar.json",
         wordfreq_lang="sl",
         a1_morphology=SLOVENE_A1_MORPHOLOGY,
     ),

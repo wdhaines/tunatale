@@ -270,6 +270,13 @@ class LanguageConfig:
     # pronoun is ``PRON``, so without the veto every one of them would be a
     # case-marker cloze. See ``app.cards.pronoun_picture``.
     pronouns_path: Path | None = None
+    # Path to the per-language calendar JSON (a month or a weekday word -> a
+    # concept id, plus that language's ``week_start``), or ``None`` when the
+    # language registers none. A listed word is drawn as a calendar page, and is
+    # never a function word whatever its UPOS says. ``week_start`` is DATA
+    # because which day opens a week is a local custom, not a fact about
+    # calendars. See ``app.cards.calendar_picture``.
+    calendar_path: Path | None = None
     # Breakdown variant that also reports which syllables of which word each
     # chunk is, so the renderer can cut it out of one whole-word render instead
     # of synthesizing the fragment alone. ``None`` (every language but Norwegian)
@@ -871,6 +878,15 @@ def get_pronouns_path(code: str) -> Path | None:
     every one of its words keeps the routing it has today.
     """
     return _facet(code, "pronouns_path", None)
+
+
+def get_calendar_path(code: str) -> Path | None:
+    """Return the path to the per-language calendar JSON vocabulary.
+
+    ``None`` when the language registers none: it has no drawn months or
+    weekdays, and every one of its words keeps the routing it has today.
+    """
+    return _facet(code, "calendar_path", None)
 
 
 def get_wordfreq_lang(code: str) -> str | None:

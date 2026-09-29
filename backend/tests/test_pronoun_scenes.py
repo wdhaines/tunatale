@@ -1277,13 +1277,14 @@ def _bag_markup(cx: int, top: int) -> str:
 
     Written out rather than captured from a render, so a probe says where the
     bag is instead of asserting whatever the builder happened to put there. The
-    handle's 5-unit stem under a 6-radius arc is the approved mockup's own
-    geometry, and it is written out here for the same reason: a checker that
-    read its expectations out of the renderer would pass a renderer that grew a
-    sixth unit of stem.
+    handle is a wide, low tote arc (8 x 5 over a 2-unit stem): the mockup's narrow
+    6-radius shackle read as a PADLOCK once a gender mark sat in the bag like a
+    keyhole (orchestrator audit, 2026-09-28). It is written out here for the same
+    reason as before: a checker that read its expectations out of the renderer
+    would pass a renderer that grew a third unit of stem.
     """
     return (
-        f'<path d="M{cx - 6} {top} v-5 a6 6 0 0 1 12 0 v5" fill="none" '
+        f'<path d="M{cx - 8} {top} v-2 a8 5 0 0 1 16 0 v2" fill="none" '
         f'stroke="{_BAG_STROKE}" stroke-width="2.4"/>'
         f'<rect x="{cx - 12}" y="{top}" width="24" height="18" rx="3" fill="{_BAG_FILL}" '
         f'stroke="{_BAG_STROKE}" stroke-width="2"/>'
@@ -1509,3 +1510,441 @@ def test_the_checker_rejects_the_cats_bag_floating_off_the_ground() -> None:
     after = _parse(mutated)
     assert after.bags[0].left > after.cats[0].cx, "it is still to the right of the cat"
     assert abs(after.bags[0].bottom - after.ground) > 0.5
+
+
+# ── Part C: the gender of the OWNED thing, as a mark inside the bag ─────────
+#
+# A Norwegian possessive says more than its nominative does: ``min`` is "my",
+# ``mi`` "my" of a feminine thing, ``mitt`` of a neuter one and ``mine`` of a
+# plural — four words on one picture family, and the only thing that tells them
+# apart is a mark drawn INSIDE the bag (tunatale-l1ba). It is drawn in the bag's
+# own stroke colour rather than the accent on purpose: a referent's own gender
+# mark is drawn in the accent, above a head, so the same glyph in both places
+# would read as one fact about one person — which is the mistake the whole split
+# exists to prevent.
+#
+# The marks are read the way the referent marks are: by the DIRECTION of the
+# first stroke and by the presence of a horizontal subpath, never by an id. ♀ and
+# ⚲ are the pair that forces it — the same ring, the same vertical stem, and one
+# crossbar between them — so a checker that keyed on the ring alone would call a
+# neuter thing feminine, and agree with a table written to match.
+
+#: SHA-256 (truncated) of every render as it stood BEFORE this half of the work,
+#: read off ``fcfb879`` (Part A, tunatale-uy38). A pin, not a measurement, and for
+#: the same reason as ``_BASE_RENDERS_AT_HEAD`` above: a property test cannot see
+#: a picture that has moved, and adding an argument to a renderer is exactly the
+#: change that could move it by accident.
+_OWNED_NONE_AT_HEAD: dict[str, str] = {
+    "i": "9c40bf84971d",
+    "you_one": "0f2d8e5294b5",
+    "he": "be9ebb5ad3df",
+    "she": "3d9f884dc58c",
+    "third_one": "9f9af7a1d14c",
+    "it": "c2938fdf9209",
+    "we_two": "953517cafe4a",
+    "we_many": "83be6f263a7a",
+    "we_incl": "953517cafe4a",
+    "we_excl": "6057b23d5aa4",
+    "you_two": "e2f4c1df78c3",
+    "you_many": "fbff1be152f8",
+    "they_two": "7570f97e263c",
+    "they_many": "5df66a7f9448",
+    "i_poss": "5ec3f1b7214d",
+    "you_one_poss": "7542bf36ba5d",
+    "he_poss": "91aeda8e8785",
+    "she_poss": "39828985555c",
+    "third_one_poss": "0a1886efaa4c",
+    "it_poss": "8890a2c4412b",
+    "we_two_poss": "44bed7d6b452",
+    "we_many_poss": "07e896acdd12",
+    "we_incl_poss": "44bed7d6b452",
+    "we_excl_poss": "877bec03f04e",
+    "you_two_poss": "0e8a2ced58ca",
+    "you_many_poss": "19f45d038261",
+    "they_two_poss": "6759edf51ed5",
+    "they_many_poss": "05487d530e66",
+}
+
+#: The gender of the owned thing, as the two things a checker can read off the
+#: markup: the direction of its first stroke, and whether it carries a crossbar.
+#: The KIND is what the render is asked for; the pair is what comes back, and the
+#: two tables have to agree on every row.
+_OWNED_MARK: dict[str, tuple[str, bool]] = {
+    "m": ("up_right", False),  # ♂ — a stroke up and to the right, with an arrowhead
+    "f": ("down", True),  # ♀ — a stroke down, CROSSED
+    "n": ("down", False),  # ⚲ — a stroke down, NOT crossed
+}
+
+#: A plural owned thing is a SECOND bag, behind the first and up to the right:
+#: two shapes where the singular has one, and no mark at all, because a plural is
+#: not a gender. Transcribed from the brief's geometry rather than derived — the
+#: offset is a drawing decision, and a renderer that computed a "nicer" one would
+#: pass every other check in this section.
+_OWNED_RADIUS = 3.5
+_OWNED_STROKE_WIDTH = "1.6"
+_PLURAL = "pl"
+_PLURAL_DX = 6
+_PLURAL_DY = -5
+_OWNED_KINDS = ("m", "f", "n", _PLURAL)
+_OWNED_GENDERS = ("m", "f", "n")
+
+
+class BagMark(NamedTuple):
+    """The mark inside a bag, read off the markup and placed in viewBox units."""
+
+    cx: float
+    cy: float
+    r: float
+    stroke: str
+    width: str
+    direction: str  # the direction of the FIRST stroke: "up_right" | "down" | ""
+    crossed: bool  # a horizontal subpath of its own — the ♀/⚲ difference
+
+
+def _bag_marks(svg: bytes) -> list[BagMark]:
+    """Every mark drawn inside a bag, found by its own radius and stroke width.
+
+    Each mark is a ring and a set of strokes, and the strokes START on the ring —
+    so the pair is made geometrically rather than by document order, the same
+    rule this file already applies to a referent's mark. A mark whose ring had
+    been slid away from its strokes would otherwise be read as two marks.
+
+    The tolerance is 0.1 rather than a hair because the ♂ arrow begins at the
+    ring's CORNER — the 2.5/2.5 the mockup transcribes is the chord point, 3.54
+    from the centre against a 3.5 ring — so the association is a neighbourhood
+    and not an equality. It is still far tighter than the 30-unit gap between two
+    neighbouring bags, which is what makes it a check.
+    """
+    root = _root(svg)
+    dx = _dx(svg)
+    rings = [el for el in root.iter() if el.tag == f"{_SVG}circle" and _num(el, "r") == _OWNED_RADIUS]
+    strokes = [el for el in root.iter() if el.tag == f"{_SVG}path" and el.get("stroke-width") == _OWNED_STROKE_WIDTH]
+    marks: list[BagMark] = []
+    for stroke in strokes:
+        subpaths, _ = _paths(stroke.get("d"))
+        (sx, sy), (ex, ey) = subpaths[0][0], subpaths[0][1]
+        # Compared in the GROUP's own coordinates — a path's `d` is written where
+        # the element sits inside the translate, which is where the ring's `cx` is
+        # written too. Adding the translate to one side and not the other is a
+        # mismatch of 87 units, not of a hair.
+        hosts = [
+            el
+            for el in rings
+            if abs(((_num(el, "cx") - sx) ** 2 + (_num(el, "cy") - sy) ** 2) ** 0.5 - _OWNED_RADIUS) <= 0.1
+        ]
+        assert len(hosts) == 1, "a bag mark's strokes start on its own ring"
+        ring = hosts[0]
+        # A crossbar is a horizontal segment that is a WHOLE subpath: the arrowhead
+        # of ♂ is horizontal for one step and is not a crossbar, and ♂ is told
+        # apart by its direction anyway.
+        crossed = any(
+            len(part) == 2 and abs(part[0][1] - part[1][1]) < 1e-6 and abs(part[0][0] - part[1][0]) > 1e-6
+            for part in subpaths
+        )
+        direction = ""
+        if abs(ex - sx) < 1e-6 and ey - sy > 0:
+            direction = "down"
+        elif ex - sx > 0 and ey - sy < 0:
+            direction = "up_right"
+        marks.append(
+            BagMark(
+                cx=dx + _num(ring, "cx"),
+                cy=_num(ring, "cy"),
+                r=_OWNED_RADIUS,
+                stroke=stroke.get("stroke"),
+                width=stroke.get("stroke-width"),
+                direction=direction,
+                crossed=crossed,
+            )
+        )
+    return marks
+
+
+def _held_by(picture: Picture, mark: BagMark) -> Bag | None:
+    """The one bag *mark* sits inside, or ``None`` if it sits in none of them.
+
+    "Inside" is the ring's CENTRE strictly within the bag's own rectangle — the
+    mark is a small glyph, and a glyph whose centre is outside the bag is a
+    mark somewhere else entirely.
+    """
+    hosts = [bag for bag in picture.bags if bag.left < mark.cx < bag.right and bag.top < mark.cy < bag.bottom]
+    return hosts[0] if len(hosts) == 1 else None
+
+
+def _accented_from_the_bags_onward(svg: bytes) -> list[str]:
+    """Which elements from the first bag onwards are stroked in the accent colour.
+
+    Scoped to the tail of the group because ``he_poss``/``she_poss`` legitimately
+    carry an accent-stroked mark over a head — the thing this must not collide
+    with is the SAME colour on the SAME picture, inside the bag.
+    """
+    group = next(el for el in _root(svg).iter() if el.tag == f"{_SVG}g")
+    children = list(group)
+    start = next(i for i, el in enumerate(children) if el.get("stroke-width") == "2.4")
+    return [el.tag for el in children[start:] if el.get("stroke") == _ACCENT]
+
+
+@pytest.mark.parametrize("concept", PRONOUN_CONCEPTS)
+def test_asking_for_no_gender_draws_exactly_the_picture_it_drew_before(concept: str) -> None:
+    """All twenty-eight renders, byte for byte, with the new argument unused.
+
+    The parameter is a keyword with a default, so the ordinary call is unchanged
+    textually — which is exactly why only the bytes can say it. Twenty-eight
+    cards already exist in the deck and the file name of each is its content
+    hash, so a render that moved would stage a second copy of a picture nobody
+    asked to change.
+    """
+    assert _digest(render_pronoun_svg(concept)) == _OWNED_NONE_AT_HEAD[concept]
+    assert _digest(render_pronoun_svg(concept, owned=None)) == _OWNED_NONE_AT_HEAD[concept]
+
+
+@pytest.mark.parametrize("concept", _POSSESSIVES)
+@pytest.mark.parametrize("owned", _OWNED_GENDERS)
+def test_every_bag_carries_the_gender_of_the_thing_in_it(concept: str, owned: str) -> None:
+    """One mark per bag, inside it, in the bag's own colour, saying what it must.
+
+    The count is against the transcribed number of lit referents, not against
+    whatever the renderer emitted, and it runs over the cat's ground-standing bag
+    as well as the carried ones — a mark that fitted a hanging bag and not a
+    standing one would be a mark missing from one card.
+    """
+    svg = render_pronoun_svg(concept, owned)
+    picture = _parse(svg)
+    marks = _bag_marks(svg)
+    assert len(marks) == len(picture.bags) == _BAGS[concept[: -len("_poss")]]
+    for mark in marks:
+        assert (mark.direction, mark.crossed) == _OWNED_MARK[owned], f"{concept}:{owned} drew {mark.direction}"
+        assert (mark.stroke, mark.width) == (_BAG_STROKE, _OWNED_STROKE_WIDTH)
+        assert _held_by(picture, mark) is not None, f"the mark at {mark.cx:.1f},{mark.cy:.1f} is in no bag"
+
+
+@pytest.mark.parametrize("concept", _POSSESSIVES)
+def test_a_gender_mark_is_painted_over_the_bag_it_is_in(concept: str) -> None:
+    """A mark drawn under the bag body is a mark nobody can see: the body is opaque.
+
+    Per mark rather than for the picture as a whole, because with several lit
+    referents the body of the SECOND bag is painted after the first bag's mark —
+    so "every mark comes after every body" would be false of a correct render.
+    What has to hold is the local claim: the mark is inside one bag's x-range, and
+    it is painted after THAT body.
+    """
+    svg = render_pronoun_svg(concept, "f")
+    group = next(el for el in _root(svg).iter() if el.tag == f"{_SVG}g")
+    children = list(group)
+    rings = [i for i, el in enumerate(children) if el.tag == f"{_SVG}circle" and _num(el, "r") == _OWNED_RADIUS]
+    bodies = [
+        (i, _num(el, "x"), _num(el, "x") + _num(el, "width"))
+        for i, el in enumerate(children)
+        if el.tag == f"{_SVG}rect" and el.get("rx") == "3"
+    ]
+    assert len(rings) == len(bodies) > 0
+    for ring in rings:
+        cx = _num(children[ring], "cx")
+        hosts = [i for i, left, right in bodies if left < cx < right]
+        assert len(hosts) == 1, "a mark is over exactly one bag"
+        assert hosts[0] < ring, "and it is painted after that bag's body"
+
+
+@pytest.mark.parametrize("concept", _POSSESSIVES)
+def test_the_three_genders_are_three_different_marks(concept: str) -> None:
+    """The property, not three examples: no two of ♂ ♀ ⚲ read the same.
+
+    ♀ and ⚲ share a ring, a radius and a vertical stem, so "they are different
+    marks" is only true if the CROSSBAR is part of what a checker reads — which is
+    what this asserts, for every scene rather than for one hand-picked bag.
+    """
+    read = {}
+    for owned in _OWNED_GENDERS:
+        marks = _bag_marks(render_pronoun_svg(concept, owned))
+        read[owned] = {(m.direction, m.crossed) for m in marks}
+        assert read[owned] == {_OWNED_MARK[owned]}
+    assert len(set().union(*read.values())) == 3, "two of the three genders read alike"
+
+
+@pytest.mark.parametrize("concept", _POSSESSIVES)
+def test_a_plural_owned_thing_is_a_second_bag_behind_the_first(concept: str) -> None:
+    """Two bags per lit referent, the back one up and to the right, and no mark.
+
+    "Behind" is DOCUMENT ORDER: the bags are read off the group in the order they
+    were emitted, so a back bag that came second would be a front bag paired
+    with a front bag and this offset check would fail. A plural carries no mark
+    because a plural is not a gender, and a mark on it would be a fact about
+    nothing.
+    """
+    svg = render_pronoun_svg(concept, _PLURAL)
+    picture = _parse(svg)
+    lit = _BAGS[concept[: -len("_poss")]]
+    assert len(picture.bags) == 2 * lit
+    assert _bag_marks(svg) == [], "a plural is not a gender"
+    for index in range(0, len(picture.bags), 2):
+        back, front = picture.bags[index], picture.bags[index + 1]
+        assert back.left - front.left == _PLURAL_DX, f"bag {index} is not {_PLURAL_DX} to the right of its pair"
+        assert back.top - front.top == _PLURAL_DY, f"bag {index} is not {_PLURAL_DY} above its pair"
+
+
+@pytest.mark.parametrize("concept", _POSSESSIVES)
+@pytest.mark.parametrize("owned", _OWNED_KINDS)
+def test_nothing_in_the_bag_is_drawn_in_the_referent_mark_colour(concept: str, owned: str) -> None:
+    """The bag's mark is in ``BAG_STROKE``; a head's is in ``_ACCENT``.
+
+    Not a style note: the same glyph in the accent above a head is how these
+    pictures say *she*, so an accent mark inside a bag would be read as the same
+    fact said twice about one person rather than as the gender of a house.
+    """
+    assert _accented_from_the_bags_onward(render_pronoun_svg(concept, owned)) == []
+
+
+@pytest.mark.parametrize("concept", _POSSESSIVES)
+@pytest.mark.parametrize("owned", _OWNED_KINDS)
+def test_a_gendered_bag_is_still_centred_in_the_frame(concept: str, owned: str) -> None:
+    """A second bag up and to the right widens the cast, so the cast moves.
+
+    Every other render in this file is held to this, and an owned render is a
+    card like any other — including the cat's, whose ground-standing bag is the
+    one thing that already widened its scene.
+    """
+    picture = _parse(render_pronoun_svg(concept, owned))
+    left, right = picture.extent
+    assert abs((left + right) / 2 - picture.width / 2) <= 6
+
+
+@pytest.mark.parametrize("owned", _OWNED_KINDS)
+@pytest.mark.parametrize("concept", _NOMINATIVES)
+def test_refuses_a_gender_for_a_thing_that_is_not_owned(concept: str, owned: str) -> None:
+    """A nominative scene has no bag to put a mark in, so it is refused.
+
+    ``sin/si/sitt`` are the words this protects: they are the REFLEXIVE ("his
+    own"), they have no clean scene, and the cheapest way to give them one would
+    have been to mark a bag on a scene that carries no bag.
+    """
+    with pytest.raises(ValueError, match="owned"):
+        render_pronoun_svg(concept, owned)
+
+
+@pytest.mark.parametrize("owned", ["x", "M", "", "plural", "f:m", ":m", "n:"])
+def test_refuses_a_gender_it_cannot_draw(owned: str) -> None:
+    """An unknown kind is refused rather than approximated with no mark at all.
+
+    A typo in a data file that drew the same bag it always drew would be a
+    picture confidently showing the wrong word — the same argument as refusing an
+    unrenderable concept.
+    """
+    with pytest.raises(ValueError, match="owned"):
+        render_pronoun_svg("i_poss", owned)
+
+
+def test_an_unknown_concept_is_still_refused_before_the_gender_is_read() -> None:
+    """The concept check comes first, so the refusal still says what it is."""
+    with pytest.raises(ValueError, match="renderable"):
+        render_pronoun_svg("sideways", "m")
+
+
+# ── The owned-mark probes: each checker, shown to reject a real near-miss ────
+#
+# The same five near-misses the brief names, spliced into real renders. Three of
+# them are the crossbar in one direction or the other, which is the whole reason
+# the mark is read by direction and not by identity.
+
+#: The three marks as they appear in ``i_poss``, whose single bag is centred at
+#: x=24 with its top at y=162 in the render's own coordinates. Written out
+#: literally, for the reason :func:`_bag_markup` is: a probe that built its
+#: expectations out of the renderer would agree with whatever it fed it.
+_OWN_MARKUP: dict[str, str] = {
+    "m": (
+        '<circle cx="22" cy="173" r="3.5" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
+        '<path d="M24.5 170.5 L28 167 h-3 m3 0 v3" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
+    ),
+    "f": (
+        '<circle cx="24" cy="169" r="3.5" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
+        '<path d="M24 172.5 V178 M21.5 175.5 H26.5" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
+    ),
+    "n": (
+        '<circle cx="24" cy="169" r="3.5" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
+        '<path d="M24 172.5 V178" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
+    ),
+}
+#: The same three, thirty units up — clear of the bag, still on its own ring, so
+#: the "inside the bag" check is the only one that can see it.
+_OWN_MARKUP_OUTSIDE = (
+    '<circle cx="24" cy="139" r="3.5" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
+    '<path d="M24 142.5 V148 M21.5 145.5 H26.5" fill="none" stroke="#6b4a00" stroke-width="1.6"/>'
+)
+#: And the feminine mark again, in the colour a referent's own gender uses. The
+#: shape is untouched, so the ring and the strokes are still a mark — found by
+#: radius and stroke width, neither of which says anything about colour.
+_OWN_MARKUP_ACCENT = _OWN_MARKUP["f"].replace(_BAG_STROKE, _ACCENT)
+
+
+def test_the_neuter_mark_given_a_crossbar_reads_as_the_feminine_one() -> None:
+    """``mitt`` drawn as ``mi``: the one mistake that teaches the wrong gender.
+
+    The two marks are the same ring at the same place and differ ONLY in the
+    crossbar, so this is the checker reading the single thing that differs — not
+    choosing between two pictures that merely resemble each other.
+    """
+    svg = render_pronoun_svg("i_poss", "n")
+    assert _OWN_MARKUP["n"] in svg.decode() and _OWN_MARKUP["f"] not in svg.decode()
+    swapped = _mutate(svg, _OWN_MARKUP["n"], _OWN_MARKUP["f"])
+    after = _bag_marks(swapped)
+    assert [(m.direction, m.crossed) for m in after] == [_OWNED_MARK["f"]]
+    assert _held_by(_parse(swapped), after[0]) is not None, "it is still the same bag; only the gender changed"
+
+
+def test_the_feminine_mark_losing_its_crossbar_reads_as_the_neuter_one() -> None:
+    """The other direction, so neither mark is a special case in the checker."""
+    svg = render_pronoun_svg("i_poss", "f")
+    swapped = _mutate(svg, _OWN_MARKUP["f"], _OWN_MARKUP["n"])
+    after = _bag_marks(swapped)
+    assert [(m.direction, m.crossed) for m in after] == [_OWNED_MARK["n"]]
+
+
+def test_the_checker_rejects_a_bag_mark_drawn_in_the_referent_mark_colour() -> None:
+    """The mark is still a mark, so it is still found — and still refused.
+
+    Keyed on the stroke WIDTH rather than the colour, deliberately: a mark in the
+    accent is the wrong mark, not no mark, and a reader that looked for the
+    approved colour would report an empty bag and wave this through.
+    """
+    svg = render_pronoun_svg("i_poss", "f")
+    assert _accented_from_the_bags_onward(svg) == []
+    mutated = _mutate(svg, _OWN_MARKUP["f"], _OWN_MARKUP_ACCENT)
+    after = _bag_marks(mutated)
+    assert len(after) == 1, "a recoloured mark is a wrong mark, not no mark"
+    assert (after[0].stroke, after[0].width) != (_BAG_STROKE, _OWNED_STROKE_WIDTH)
+    assert _accented_from_the_bags_onward(mutated) != []
+
+
+def test_the_checker_rejects_a_bag_mark_outside_the_bag() -> None:
+    """``mi`` marked on the person instead of in the bag: the same fact twice.
+
+    Ownership and containment both survive the move except containment, which is
+    why it is its own predicate rather than a consequence of the bag count.
+    """
+    svg = render_pronoun_svg("i_poss", "f")
+    picture = _parse(svg)
+    assert _held_by(picture, _bag_marks(svg)[0]) is not None
+    mutated = _mutate(svg, _OWN_MARKUP["f"], _OWN_MARKUP_OUTSIDE)
+    after = _parse(mutated)
+    assert len(after.bags) == len(_bag_marks(mutated)) == 1, "nothing was lost but its place"
+    assert _held_by(after, _bag_marks(mutated)[0]) is None
+
+
+def test_the_checker_rejects_a_lit_referent_carrying_one_bag_of_a_plural() -> None:
+    """``they_many_poss:pl`` with a back bag gone: "their" rather than "theirs'".
+
+    The count is the only thing that can see it — the remaining bags are all
+    correctly placed, so the pairing check passes on the two bags left over and
+    fails on the count.
+    """
+    svg = render_pronoun_svg("they_many_poss", _PLURAL)
+    picture = _parse(svg)
+    lit = len([f for f in picture.figures if f.lit])
+    assert (len(picture.bags), lit) == (2 * lit, 3)
+    own = [_own_bag(svg, bag) for bag in picture.bags]
+    back, front = own[0], own[1]
+    mutated = _mutate(svg, _bag_markup(*back), "")
+    after = _parse(mutated)
+    assert len(after.bags) == 2 * lit - 1
+    assert len([f for f in after.figures if f.lit]) == 3, "only a bag is missing, not a referent"
+    survivors = [_own_bag(mutated, bag) for bag in after.bags]
+    assert survivors[:2] == [front, own[2]], "the two left over are still a correctly placed pair"

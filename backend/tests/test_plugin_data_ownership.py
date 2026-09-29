@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from app.languages import (
+    get_calendar_path,
     get_function_words_path,
     get_language,
     get_numbers_path,
@@ -161,3 +162,35 @@ def test_pronoun_vocabulary_lives_in_the_plugin_dir() -> None:
 def test_en_and_unknown_pronoun_paths_are_none() -> None:
     assert get_pronouns_path("en") is None
     assert get_pronouns_path("xx") is None
+
+
+# ── Calendar vocabulary ───────────────────────────────────────────────────
+
+
+def test_every_language_with_function_words_also_ships_a_calendar() -> None:
+    """The same pairing argument, and the sharpest form of it.
+
+    A month or a weekday is a ``NOUN`` in every deck that labels its parts of
+    speech, so a closed-class policy leaves it on the ordinary vocab route — which
+    is fine for most nouns and wrong here, because the whole reason for a photo
+    search to fail is that "March" returns a march of people. The calendar file
+    is what draws them instead (tunatale-xykz), and a language shipping a policy
+    without one has the configuration in which every month is a failed image
+    fetch.
+    """
+    for code in (c for c in known_language_codes() if get_function_words_path(c) is not None):
+        assert get_calendar_path(code) is not None, code
+
+
+def test_calendar_vocabulary_lives_in_the_plugin_dir() -> None:
+    with_calendar = sorted(c for c in known_language_codes() if get_calendar_path(c) is not None)
+    assert {"sl", "no", "tl", "ceb"} <= set(with_calendar)
+    for code in with_calendar:
+        path = get_calendar_path(code)
+        assert path.exists(), code
+        assert (path.parent.name, path.parent.parent.name) == ("data", code)
+
+
+def test_en_and_unknown_calendar_paths_are_none() -> None:
+    assert get_calendar_path("en") is None
+    assert get_calendar_path("xx") is None

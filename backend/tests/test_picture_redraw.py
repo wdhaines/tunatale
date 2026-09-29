@@ -151,6 +151,46 @@ def test_a_pronoun_is_redrawn_filled_or_left_by_its_gloss() -> None:
     assert plan_redraws(db, "no") == []
 
 
+def test_a_calendar_word_is_redrawn_filled_or_left_by_its_gloss() -> None:
+    """The same two rules the spatial and pronoun families follow, for the same
+    reason.
+
+    A Tagalog ``sabado`` with no picture is FILLED, because the user decided
+    months and weekdays are picture cards; a ``linggo`` glossed "week" is left
+    alone, because the token cannot see that this card means the week and not the
+    day of it, and only the gloss can. The second half is the one that would
+    otherwise ship a wrong picture rather than no picture.
+    """
+    db = SRSDatabase(":memory:")
+    sabado = _card(db, "sabado", image=None, translation="Saturday", lang="tl")
+    _card(db, "linggo", image=None, translation="week", lang="tl")  # the homograph
+    _card(db, "bahay", image=None, translation="house", lang="tl")  # not a calendar word
+    # A photo that must be REPLACED, not filled — the same card, second DB, so the
+    # two senses of `linggo` can both exist as the live deck holds them.
+    photos = SRSDatabase(":memory:")
+    linggo_photo = _card(photos, "linggo", image="img_week_00000000.jpg", translation="Sunday", lang="tl")
+
+    plan = plan_redraws(db, "tl")
+
+    by_id = {r.collocation_id: r for r in plan}
+    assert {i: r.old_filename for i, r in by_id.items()} == {sabado: None}
+    assert by_id[sabado].new_filename.startswith("calendar_weekday_6_sunday_")
+
+    apply_redraws(db, plan, "tl")
+
+    assert db.get_image_filename(sabado) == by_id[sabado].new_filename
+    assert "image" in db.get_dirty_fields(db.get_collocation("sabado").guid).split(",")
+    assert plan_redraws(db, "tl") == []
+
+    # The photographed Sunday: glossed "Sunday", so it IS a calendar word and its
+    # photo is replaced by the drawing.
+    photo_plan = plan_redraws(photos, "tl")
+    photo_by_id = {r.collocation_id: r for r in photo_plan}
+    assert list(photo_by_id) == [linggo_photo]
+    assert photo_by_id[linggo_photo].old_filename == "img_week_00000000.jpg"
+    assert photo_by_id[linggo_photo].new_filename.startswith("calendar_weekday_7_sunday_")
+
+
 def test_a_repair_never_deletes_a_photo_another_db_still_shows(tmp_path) -> None:
     """The live failure (tunatale-ja9q, 2026-09-28).
 

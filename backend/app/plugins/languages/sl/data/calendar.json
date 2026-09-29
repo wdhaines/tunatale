@@ -1,0 +1,25 @@
+{
+  "_comment": "Months and weekdays drawn as a calendar page, not searched for and not clozed (tunatale-xykz, the user 2026-09-28). Each word in `words` maps to a language-neutral concept in app.cards.calendar_scenes.CALENDAR_CONCEPTS: `month_1`..`month_12` then `weekday_1`..`weekday_7` in ISO order, where 1 is Monday and 7 is Sunday. A photo search CANNOT serve this vocabulary at all: asked for 'marec' it returns a march of people, asked for 'ponedeljek' a photograph of a desk. What these words name is a POSITION in a structure, so the picture is the structure — a year as a 4x3 grid, a week as a row of seven — with the one cell the word points at lit, and a month labelled with its own number because a number is the one thing a position cannot carry. `week_start` is DATA, in this file, because which day opens a week is a local custom rather than a fact about calendars; Slovene and Norwegian open on Monday, the two Philippine decks on Sunday. It is read from here by app.cards.calendar_picture.load_calendar and handed to the renderer as an argument, so the renderer's own copy of the order cannot make the test pass, and it is in every picture's filename for the same reason it is data. A word in `words` is NOT a function word, whatever `function_words.json` or a POS tag says, so a month never goes down the cloze route its UPOS would otherwise pick. The veto is asked about a bare token and cannot see a SENSE, so the picture is drawn only when the card's English gloss names the month or the day. Slovenian's days all differ from their English names by their first letter or two (`torek` for Tuesday, `petek` for Friday, `nedelja` for Sunday), so the gloss is also the only place a reader can confirm the day: a picture cannot print the word on the row, or the card would be answerable by reading it. Only the primary spellings are listed; there is no second form to accommodate here, so every word maps to exactly one concept.",
+  "week_start": "monday",
+  "words": {
+    "januar": "month_1",
+    "februar": "month_2",
+    "marec": "month_3",
+    "april": "month_4",
+    "maj": "month_5",
+    "junij": "month_6",
+    "julij": "month_7",
+    "avgust": "month_8",
+    "september": "month_9",
+    "oktober": "month_10",
+    "november": "month_11",
+    "december": "month_12",
+    "ponedeljek": "weekday_1",
+    "torek": "weekday_2",
+    "sreda": "weekday_3",
+    "četrtek": "weekday_4",
+    "petek": "weekday_5",
+    "sobota": "weekday_6",
+    "nedelja": "weekday_7"
+  }
+}

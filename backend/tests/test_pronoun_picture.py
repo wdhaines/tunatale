@@ -37,8 +37,10 @@ from app.cards.drawn_picture import drawn_picture
 from app.cards.number_picture import number_picture
 from app.cards.pronoun_picture import (
     _CONCEPT_GLOSSES,
+    _spec,
     gloss_matches,
     is_pronoun_word,
+    load_picture_only,
     load_pronoun_words,
     pronoun_picture,
 )
@@ -146,6 +148,73 @@ _ENCLITICS: tuple[tuple[str, str, str], ...] = (
 
 def _words(code: str) -> dict[str, str]:
     return json.loads(get_pronouns_path(code).read_text(encoding="utf-8"))["words"]
+
+
+# ── Part C: the Norwegian gendered possessives ─────────────────────────────
+#
+# ``min`` is "my", ``mi`` "my" of a feminine thing, ``mitt`` of a neuter one and
+# ``mine`` of a plural: four words, one picture family, and the mark inside the
+# bag is the only thing that tells them apart (tunatale-l1ba). They live in a
+# SECOND key of the same file — ``picture_only`` — and that separation is the
+# whole routing decision, not a tidiness one: ``words`` is what
+# ``is_pronoun_word`` reads, and its entire job is to VETO the cloze route. The
+# user's deck holds each of these words as a vocab card AND as a sentence cloze,
+# so listing them in ``words`` would have re-pointed lesson matching at a picture
+# and dropped the cloze. ``picture_only`` is read by the drawing and by nothing
+# else — which is why the invariants below are stated as absences.
+#
+# Slovene gets nothing: it has no cards in the deck, and ``moje``/``moja`` do not
+# separate a gender from a number.
+
+_PICTURE_ONLY: dict[str, dict[str, list[str]]] = {
+    "no": {
+        "min": ["i_poss:m"],
+        "mi": ["i_poss:f"],
+        "mitt": ["i_poss:n"],
+        "mine": ["i_poss:pl"],
+        "din": ["you_one_poss:m"],
+        "di": ["you_one_poss:f"],
+        "ditt": ["you_one_poss:n"],
+        "dine": ["you_one_poss:pl"],
+        "vår": ["we_many_poss"],
+        "vårt": ["we_many_poss:n"],
+        "våre": ["we_many_poss:pl"],
+        "hans": ["he_poss"],
+        "hennes": ["she_poss"],
+        # `deres` is both "your (plural)" and "their", so one word takes a LIST of
+        # specs and the card's gloss says which picture it wants.
+        "deres": ["you_many_poss", "they_many_poss"],
+    },
+}
+
+#: The words deliberately NOT in the table, and why. ``sin/si/sitt/sine`` are the
+#: REFLEXIVE ("his own") and there is no clean scene for them; Slovene inflects
+#: its possessives for the possessed noun (``moj``/``moja``/``moje``), so a mark
+#: inside the bag would be ambiguous between a gender and a number.
+_REFLEXIVES: tuple[tuple[str, str], ...] = (
+    ("sin", "his own"),
+    ("si", "her own"),
+    ("sitt", "its own"),
+    ("sine", "their own"),
+)
+
+
+def _picture_only_file(code: str) -> dict[str, list[str]]:
+    """The raw ``picture_only`` key, as the data file spells it."""
+    return json.loads(get_pronouns_path(code).read_text(encoding="utf-8")).get("picture_only", {})
+
+
+def _discriminating_gloss(spec: str, earlier: list[str]) -> str:
+    """An English gloss that selects *spec* and none of the specs before it.
+
+    The list is tried in order, so "is this spec reachable" is a question about
+    the ORDER and not only about the concept — a table where the second spec is
+    unreachable is a table with a dead entry, and only a gloss that skips the
+    first one can say so.
+    """
+    concept = _spec(spec)[0]
+    taken = set().union(*(_CONCEPT_GLOSSES[_spec(other)[0]] for other in earlier)) if earlier else set()
+    return sorted(set(_CONCEPT_GLOSSES[concept]) - taken)[0]
 
 
 class TestDataFiles:
@@ -376,6 +445,200 @@ class TestDispatch:
 
     def test_the_word_is_stripped_and_casefolded_like_the_spatial_family(self) -> None:
         assert pronoun_picture("  Hun ", "no", "she") == pronoun_picture("hun", "no", "she")
+
+
+class TestPictureOnlyData:
+    """The table is a second key of ``pronouns.json``, and that is the design."""
+
+    def test_only_norwegian_registers_one(self) -> None:
+        # Slovene gets nothing: no cards in the deck, and `moje`/`moja` do not
+        # separate a gender from a number. ceb/tl have no gender to mark.
+        assert set(_picture_only_file("no")) == set(_PICTURE_ONLY["no"])
+        for code in ("sl", "ceb", "tl"):
+            assert _picture_only_file(code) == {}
+            assert load_picture_only(code) == {}
+
+    @pytest.mark.parametrize("code", LANGS)
+    def test_the_table_is_the_one_the_brief_lays_out(self, code) -> None:
+        # Exact, like `words`: a word dropped stops being a picture and nothing in
+        # the app would say so.
+        assert _picture_only_file(code) == _PICTURE_ONLY.get(code, {})
+
+    @pytest.mark.parametrize(("word", "specs"), _PICTURE_ONLY["no"].items())
+    def test_every_spec_names_a_thing_the_renderer_can_draw(self, word, specs) -> None:
+        for spec in specs:
+            concept, owned = _spec(spec)
+            assert concept in PRONOUN_CONCEPTS, f"{word}: {spec}"
+            assert owned in (None, "m", "f", "n", "pl"), f"{word}: {spec}"
+            # And it really is drawable, which is the check the concept list alone
+            # cannot make: a gender mark is the only shape that needs a bag, and
+            # every word here is a possessive.
+            assert render_pronoun_svg(concept, owned).startswith(b"<svg ")
+            assert concept.endswith("_poss"), f"{word}: {spec} has no bag to mark"
+
+    @pytest.mark.parametrize(("word", "specs"), _PICTURE_ONLY["no"].items())
+    def test_the_two_keys_are_disjoint(self, word, specs) -> None:
+        # The same word in `words` would be vetoed off the cloze route, which is
+        # the thing this key exists to avoid.
+        assert word not in _words("no")
+
+    @pytest.mark.parametrize(("word", "specs"), _PICTURE_ONLY["no"].items())
+    def test_a_picture_only_word_is_not_a_pronoun_word(self, word, specs) -> None:
+        # THE invariant. `is_pronoun_word` is what `is_function_word` asks first,
+        # and a True here would take every one of these words off the cloze route
+        # the deck already has it on.
+        assert not is_pronoun_word(word, "no")
+        assert is_function_word(word, "no", upos="PRON"), f"{word} must stay a cloze"
+
+    @pytest.mark.parametrize(("word", "specs"), _PICTURE_ONLY["no"].items())
+    def test_the_cloze_routing_is_unchanged_by_the_picture(self, word, specs) -> None:
+        # Read as a whole, and over both tags the deck actually uses: these words
+        # are function words by POS (no's `pos` set takes DET and PRON) and the
+        # veto does not reach them. The veto's one exemption in this language — a
+        # DET homograph like `den` — must not be extended to them either.
+        assert is_function_word(word, "no", upos="DET"), f"{word} must stay a cloze"
+        assert is_function_word(word, "no", upos="PRON"), f"{word} must stay a cloze"
+
+    def test_min_stays_a_function_word_the_way_the_brief_names_it(self) -> None:
+        # Spelled out because it is the one the brief pins, and because it is the
+        # word a future reader would most expect to have been "fixed" into a
+        # picture-only listing.
+        assert not is_pronoun_word("min", "no")
+        assert is_function_word("min", "no", upos="DET")
+        assert is_function_word("min", "no", upos="PRON")
+
+    @pytest.mark.parametrize(("word", "why"), _REFLEXIVES)
+    def test_a_reflexive_gets_no_picture(self, word, why) -> None:
+        # `sin/si/sitt/sine` are "his own", and no scene says that: the bag would
+        # be on the same referent that already has one, and the mark would be
+        # indistinguishable from the one the ordinary possessive draws.
+        assert word not in _picture_only_file("no"), why
+        assert pronoun_picture(word, "no", "his own") is None
+
+    def test_norwegian_mi_is_not_slovene_mi(self) -> None:
+        # The two languages' data files are separate, and Slovene `mi` is a dative
+        # and an enclitic — so it must not pick up a feminine bag by name alone.
+        # Note the gloss: "her" confirms a THIRD-person possessive, and `mi` is
+        # "my", so the guard refuses it. The gender lives in the spec, never in
+        # what the card's English says.
+        assert _spec(_picture_only_file("no")["mi"][0]) == ("i_poss", "f")
+        assert load_picture_only("sl").get("mi") is None
+        assert pronoun_picture("mi", "sl", "my") is None
+        assert pronoun_picture("mi", "no", "her") is None
+        assert pronoun_picture("mi", "no", "my").svg == render_pronoun_svg("i_poss", "f")
+
+    @pytest.mark.parametrize("spec", ["", "i_poss:", ":m", "i_poss:x", "sideways", "i_poss:m:m", "i:m"])
+    def test_an_unreadable_spec_is_refused_rather_than_approximated(self, spec) -> None:
+        # A spec naming a concept the renderer cannot draw, or a gender it does
+        # not have, would otherwise draw the bag it always draws and be confidently
+        # wrong — which is the same argument as refusing an unrenderable concept.
+        with pytest.raises(ValueError, match="spec"):
+            _spec(spec)
+
+    def test_the_spec_parser_returns_the_concept_and_the_gender(self) -> None:
+        assert _spec("i_poss") == ("i_poss", None)
+        assert _spec("i_poss:m") == ("i_poss", "m")
+        assert _spec("we_many_poss:pl") == ("we_many_poss", "pl")
+
+
+class TestPictureOnlyDispatch:
+    #: Every word, with a gloss that reaches its FIRST spec, and the concept that
+    #: spec names. Transcribed rather than derived so that a change to the table
+    #: above cannot quietly change the expectation with it.
+    _CASES: tuple[tuple[str, str, str, str | None], ...] = (
+        ("min", "my, mine", "i_poss", "m"),
+        ("mi", "my, mine", "i_poss", "f"),
+        ("mitt", "my, mine", "i_poss", "n"),
+        ("mine", "my, mine", "i_poss", "pl"),
+        ("din", "your, yours", "you_one_poss", "m"),
+        ("di", "your, yours", "you_one_poss", "f"),
+        ("ditt", "your, yours", "you_one_poss", "n"),
+        ("dine", "your, yours", "you_one_poss", "pl"),
+        ("vår", "our, ours", "we_many_poss", None),
+        ("vårt", "our, ours", "we_many_poss", "n"),
+        ("våre", "our, ours", "we_many_poss", "pl"),
+        ("hans", "his", "he_poss", None),
+        ("hennes", "her, hers", "she_poss", None),
+        ("deres", "your (plural)", "you_many_poss", None),
+    )
+
+    @pytest.mark.parametrize(("word", "gloss", "concept", "owned"), _CASES)
+    def test_a_gendered_possessive_is_drawn_with_its_mark(self, word, gloss, concept, owned) -> None:
+        picture = pronoun_picture(word, "no", gloss)
+        svg = render_pronoun_svg(concept, owned)
+        assert picture is not None
+        assert picture.svg == svg
+        assert (
+            picture.filename
+            == f"pronoun_{concept}{f'_{owned}' if owned else ''}_{hashlib.sha256(svg).hexdigest()[:8]}.svg"
+        )
+
+    def test_the_four_rendered_files_are_four_different_pictures(self) -> None:
+        # Four words, one family: if any two of min/mi/mitt/mine rendered the same
+        # bytes they would be three words on two pictures.
+        renders = {owned: render_pronoun_svg("i_poss", owned) for owned in (None, "m", "f", "n", "pl")}
+        assert len({bytes(v) for v in renders.values()}) == len(renders)
+
+    def test_the_gender_is_carried_by_the_gloss_and_nothing_else(self) -> None:
+        # `min` and `mi` are different words with the SAME gloss, so the table is
+        # the only thing that could tell them apart — and the picture it names is
+        # the one that differs.
+        assert render_pronoun_svg("i_poss", "m") != render_pronoun_svg("i_poss", "f")
+        assert pronoun_picture("min", "no", "my").svg == render_pronoun_svg("i_poss", "m")
+        assert pronoun_picture("mi", "no", "my").svg == render_pronoun_svg("i_poss", "f")
+
+    @pytest.mark.parametrize(("word", "spec"), [(w, s) for w, ss in _PICTURE_ONLY["no"].items() for s in ss])
+    def test_every_spec_in_the_table_is_reachable_by_its_own_gloss(self, word, spec) -> None:
+        # The property, over the whole table rather than a sample: a spec is
+        # reachable when SOME gloss selects it and no earlier spec claims that
+        # gloss first. A `deres` whose second spec were shadowed would be a dead
+        # entry, and no count would see it.
+        specs = _picture_only_file("no")[word]
+        earlier = specs[: specs.index(spec)]
+        gloss = _discriminating_gloss(spec, earlier)
+        concept, owned = _spec(spec)
+        assert pronoun_picture(word, "no", gloss).svg == render_pronoun_svg(concept, owned)
+
+    def test_deres_is_your_plural_or_theirs_by_the_gloss(self) -> None:
+        # The one word in the table that is two words, and the case the list was
+        # specified for: `vår` "spring" is the neighbouring homograph that gets
+        # nothing at all.
+        assert pronoun_picture("deres", "no", "your (plural)").svg == render_pronoun_svg("you_many_poss")
+        assert pronoun_picture("deres", "no", "their").svg == render_pronoun_svg("they_many_poss")
+
+    @pytest.mark.parametrize(
+        ("word", "gloss"),
+        [
+            ("vår", "spring"),
+            ("min", "spring"),
+            ("mine", "spring"),
+            ("hans", "he"),
+            ("hennes", "she"),
+            ("vår", ""),
+            ("mine", ""),
+            ("min", "I"),
+            ("sin", "his own"),
+            ("sine", "their own"),
+            # A nominative gloss never confirms a possessive concept — the same
+            # rule the `words` table is guarded by, and it is the guard doing the
+            # work, not the key the word is in.
+            ("hans", "he"),
+            ("min", "it"),
+        ],
+    )
+    def test_a_gloss_that_does_not_name_the_referent_is_left_on_its_route(self, word, gloss) -> None:
+        assert pronoun_picture(word, "no", gloss) is None
+
+    def test_a_word_is_stripped_and_casefolded_like_every_other_word(self) -> None:
+        assert pronoun_picture("  Min ", "no", "my") == pronoun_picture("min", "no", "my")
+        assert pronoun_picture("VÅR", "no", "our") == pronoun_picture("vår", "no", "our")
+
+    def test_the_picture_route_does_not_disturb_the_drawn_picture_dispatch(self) -> None:
+        # `drawn_picture` is the front door, and these words now have pictures of
+        # their own: the family grew, the order did not.
+        assert drawn_picture("min", "no", "my") == pronoun_picture("min", "no", "my")
+        assert drawn_picture("vår", "no", "spring") is None
+        assert drawn_picture("jeg", "no", "I") == pronoun_picture("jeg", "no", "I")
 
 
 class TestDrawnPicture:

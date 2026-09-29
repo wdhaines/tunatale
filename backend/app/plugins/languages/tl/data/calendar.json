@@ -1,0 +1,28 @@
+{
+  "_comment": "Months and weekdays drawn as a calendar page, not searched for and not clozed (tunatale-xykz, the user 2026-09-28). Each word in `words` maps to a language-neutral concept in app.cards.calendar_scenes.CALENDAR_CONCEPTS: `month_1`..`month_12` then `weekday_1`..`weekday_7` in ISO order, where 1 is Monday and 7 is Sunday. A photo search CANNOT serve this vocabulary at all: asked for 'marso' it returns a march of people, asked for 'linggo' a photograph of a calendar in general — the word means 'week', so the search returns the wrong level of the structure entirely. What these words name is a POSITION in a structure, so the picture is the structure — a year as a 4x3 grid, a week as a row of seven — with the one cell the word points at lit. `week_start` is DATA, in this file, because which day opens a week is a local custom rather than a fact about calendars: Tagalog and Cebuano open on Sunday, which is the common Philippine printed calendar layout, while Norwegian and Slovene open on Monday. It is read from here by app.cards.calendar_picture.load_calendar and handed to the renderer as an argument, so the renderer's own copy of the order cannot make the test pass; it is also in every picture's FILENAME, because a Sunday-first week draws a different page for the same concept and a shared name would serve this deck's Monday card the European one. A word in `words` is NOT a function word, whatever `function_words.json` or a POS tag says, so a month never goes down the cloze route its UPOS would otherwise pick. The veto is asked about a bare token and cannot see a SENSE, which matters more here than in any other language: `linggo` is BOTH 'week' and 'Sunday' — the same collision `app/languages.py` records in the tl notetype config for the Pimsleur deck, where one Back recurs across notes with different English. So the picture is drawn only when the card's English gloss names the day (app.cards.calendar_picture.gloss_matches); `linggo` glossed 'week' takes the route it was already on and glossed 'Sunday' draws Sunday. This file also carries the SECOND SPELLINGS THE LIVE PIMSLEUR DECK USES, myerkules/hwebes/byernes alongside the Wiktionary miyerkules/huwebes/biyernes: the deck is what the user actually studies, so its spellings have to route, and two spellings of one day are deliberately the same concept and therefore the same picture file. Only those two spellings of the affected days are listed — no more — so every word maps to exactly one concept.",
+  "week_start": "sunday",
+  "words": {
+    "enero": "month_1",
+    "pebrero": "month_2",
+    "marso": "month_3",
+    "abril": "month_4",
+    "mayo": "month_5",
+    "hunyo": "month_6",
+    "hulyo": "month_7",
+    "agosto": "month_8",
+    "setyembre": "month_9",
+    "oktubre": "month_10",
+    "nobyembre": "month_11",
+    "disyembre": "month_12",
+    "lunes": "weekday_1",
+    "martes": "weekday_2",
+    "miyerkules": "weekday_3",
+    "huwebes": "weekday_4",
+    "biyernes": "weekday_5",
+    "sabado": "weekday_6",
+    "linggo": "weekday_7",
+    "myerkules": "weekday_3",
+    "hwebes": "weekday_4",
+    "byernes": "weekday_5"
+  }
+}

@@ -60,6 +60,17 @@ hands is the cat, whose bag therefore stands **on the ground** to the right of
 it, clear of the animal — the single case where the group also has to move to
 stay centred, and the single exception the byte-for-byte test allows.
 
+**A Norwegian possessive then says more than its nominative does**
+(tunatale-l1ba): ``min`` is "my", ``mi`` "my" of a feminine thing, ``mitt`` of a
+neuter one and ``mine`` of a plural. Four words on one picture family, and the
+only thing that tells them apart is a mark drawn **inside** the bag, in the bag's
+own stroke colour rather than :data:`_ACCENT` — a referent's natural gender is
+already drawn in the accent above a head, and the same glyph in both places would
+read as one fact about one person. The marks are ♂, ♀ and ⚲, and ♀ and ⚲ are the
+pair that shapes the design: same ring, same vertical stem, one crossbar between
+them. A plural is not a gender, so it is a **second bag** behind the first, and
+it carries no mark at all.
+
 Nothing here is per-language. The concept ids are the *picture's* key, and a
 language's own words are mapped onto them by the caller — which is where the
 language lives, and what keeps this module clear of one.
@@ -192,8 +203,9 @@ _MARK_DIAGONAL = _MARK_R * 0.7071
 _BAG_W = 24
 _BAG_H = 18
 _BAG_RX = 3
-_BAG_HANDLE_R = 6
-_BAG_HANDLE_DY = 5
+_BAG_HANDLE_R = 8
+_BAG_HANDLE_RY = 5
+_BAG_HANDLE_DY = 2
 
 #: How high a CARRIED bag hangs: its bottom this far above the ground, which puts
 #: it across the referent's chest rather than at their feet.
@@ -204,6 +216,49 @@ _BAG_CARRY_DY = 36
 #: minus one bag height), and — being wider than the cat — the reason the
 #: ``it_poss`` group is centred wider than the ``it`` one.
 _CAT_BAG_DX = 48
+
+# ── The gender of the thing in the bag (tunatale-l1ba) ──────────────────────
+# The gender belongs to the OWNED thing, not to the person carrying the bag, so
+# it is drawn inside the bag and in BAG_STROKE: the accent already means "this
+# referent is a man/a woman" above a head, and reusing it here would say the same
+# thing twice about one person rather than once about a house.
+#
+# Every number below is transcribed from the approved mockup rather than
+# derived, exactly as the bag's own handle is (see _BAG_HANDLE_R): these are
+# drawing decisions, and a renderer that computed a "tidier" mark would pass
+# every count in the suite while drawing a different glyph.
+
+#: What ``owned`` may be: the three genders, and the plural. Public because it
+#: is part of the renderer's contract — the caller that reads it out of a data
+#: file needs the same list this module draws from.
+OWNED_KINDS: tuple[str, ...] = ("m", "f", "n", "pl")
+
+#: A mark is a ring of this radius with strokes this thin, small enough to sit in
+#: a 24x18 bag with air around it and thick enough to read at card size.
+_OWNED_R = 3.5
+_OWNED_STROKE_W = "1.6"
+
+#: ♂ is the only mark that is not centred: its ring sits low and left, because
+#: the arrow goes up and to the RIGHT out of it and needs the room. ♀ and ⚲
+#: share a ring, the stem, and the stem's length — the crossbar is the whole of
+#: the difference between them.
+_OWNED_M_DX = -2
+_OWNED_M_DY = 11
+_OWNED_DY = 7
+_OWNED_STEM_END = 9
+_OWNED_ARM_DX = 2.5
+_OWNED_ARM_DY = 6.5
+#: The ♂ arrow: out of the ring's up-right edge, up and right, and an arrowhead.
+_OWNED_M_ARROW_DX = 2.5
+_OWNED_M_ARROW_DY = -2.5
+_OWNED_M_REACH = 6
+_OWNED_M_HEAD = 3
+
+#: A plural owned thing is a second bag, drawn BEHIND the first (so it is
+#: emitted first) and up and to the right of it — which is also why a plural
+#: widens the cast and the group has to be centred on the pair.
+_OWNED_PL_DX = 6
+_OWNED_PL_DY = -5
 
 
 def _n(value: float) -> str:
@@ -300,21 +355,63 @@ def _bubble(x: float) -> str:
     )
 
 
-def _bag(x: float, y: float) -> str:
+def _bag_parts(x: float, y: float) -> str:
+    """One bag's two elements: the handle above it, the body over the handle."""
+    r, ry, dy = _BAG_HANDLE_R, _BAG_HANDLE_RY, _BAG_HANDLE_DY
+    return (
+        f'<path d="M{_n(x - r)} {_n(y)} v-{dy} a{r} {ry} 0 0 1 {2 * r} 0 v{dy}" fill="none" '
+        f'stroke="{BAG_STROKE}" stroke-width="2.4"/>'
+        f'<rect x="{_n(x - _BAG_W / 2)}" y="{_n(y)}" width="{_BAG_W}" height="{_BAG_H}" '
+        f'rx="{_BAG_RX}" fill="{BAG_FILL}" stroke="{BAG_STROKE}" stroke-width="2"/>'
+    )
+
+
+def _owned_mark(x: float, y: float, owned: str) -> str:
+    """The gender of the thing in the bag at ``(x, y)``, as a mark inside it.
+
+    **The direction is the whole of it.** ♂ is a stroke up and to the right with
+    an arrowhead; ♀ is a stroke DOWN with a crossbar; ⚲ is the same stroke down
+    with no crossbar. So ♀ and ⚲ differ by one horizontal segment and nothing
+    else, which is why the tests read the direction and the crossbar off the path
+    rather than trusting anything recorded here.
+
+    Drawn in :data:`BAG_STROKE` rather than the accent — see the note on the
+    constants above — and emitted AFTER the bag body, since the body is opaque
+    and a mark painted under it is a mark nobody can see.
+    """
+    if owned == "m":
+        cx, cy = x + _OWNED_M_DX, y + _OWNED_M_DY
+        d = (
+            f"M{_n(cx + _OWNED_M_ARROW_DX)} {_n(cy + _OWNED_M_ARROW_DY)} "
+            f"L{_n(cx + _OWNED_M_REACH)} {_n(cy + _OWNED_M_ARROW_DY - (_OWNED_M_REACH - _OWNED_M_ARROW_DX))} "
+            f"h-{_OWNED_M_HEAD} m{_OWNED_M_HEAD} 0 v{_OWNED_M_HEAD}"
+        )
+    else:
+        cx, cy = x, y + _OWNED_DY
+        d = f"M{_n(cx)} {_n(cy + _OWNED_R)} V{_n(cy + _OWNED_STEM_END)}"
+        if owned == "f":
+            d += f" M{_n(cx - _OWNED_ARM_DX)} {_n(cy + _OWNED_ARM_DY)} H{_n(cx + _OWNED_ARM_DX)}"
+    stroke = f' fill="none" stroke="{BAG_STROKE}" stroke-width="{_OWNED_STROKE_W}"'
+    return f'<circle cx="{_n(cx)}" cy="{_n(cy)}" r="{_OWNED_R}"{stroke}/><path d="{d}"{stroke}/>'
+
+
+def _bag(x: float, y: float, owned: str | None = None) -> str:
     """A bag hanging at ``(x, y)`` — the one thing a possessive render adds.
 
     The handle goes down first and the body over it, the same document-order
     convention the rest of this module uses, and the caller appends these after
     every figure: a bag is always painted ON TOP of the person carrying it, so
     it reads as held rather than as a box behind them.
+
+    A plural owned thing is a second bag, emitted BEFORE the first so that it is
+    painted behind it, and it carries no mark. The three genders carry one mark
+    each, emitted last so the opaque body cannot hide it.
     """
-    r, dy = _BAG_HANDLE_R, _BAG_HANDLE_DY
-    return (
-        f'<path d="M{_n(x - r)} {_n(y)} v-{dy} a{r} {r} 0 0 1 {2 * r} 0 v{dy}" fill="none" '
-        f'stroke="{BAG_STROKE}" stroke-width="2.4"/>'
-        f'<rect x="{_n(x - _BAG_W / 2)}" y="{_n(y)}" width="{_BAG_W}" height="{_BAG_H}" '
-        f'rx="{_BAG_RX}" fill="{BAG_FILL}" stroke="{BAG_STROKE}" stroke-width="2"/>'
-    )
+    parts = [_bag_parts(x + _OWNED_PL_DX, y + _OWNED_PL_DY)] if owned == "pl" else []
+    parts.append(_bag_parts(x, y))
+    if owned in ("m", "f", "n"):
+        parts.append(_owned_mark(x, y, owned))
+    return "".join(parts)
 
 
 class _Scene(NamedTuple):
@@ -351,7 +448,7 @@ _SCENES: dict[str, _Scene] = {
 }
 
 
-def render_pronoun_svg(concept: str) -> bytes:
+def render_pronoun_svg(concept: str, owned: str | None = None) -> bytes:
     """Draw the pronoun *concept* names, as SVG bytes.
 
     The relation is carried by who stands inside the dashed outline, who stands
@@ -369,16 +466,28 @@ def render_pronoun_svg(concept: str) -> bytes:
     ground beside the animal, and being wider than the cat it widens the group so
     the cast stays centred.
 
-    Raises ``ValueError`` for a concept this module cannot draw, rather than
-    emitting a near-miss: a picture showing the referent inside the conversation
-    when the card asked for "he" is worse than no picture, because it is
-    confidently wrong.
+    *owned* says what is IN the bags — ``"m"``, ``"f"``, ``"n"`` or ``"pl"``, or
+    ``None`` for no mark at all — which is how one picture family serves four
+    Norwegian words. It is valid only on a possessive, because a nominative scene
+    has no bag to put a mark in, and a plural widens the cast by a second bag.
+    See :func:`_owned_mark`.
+
+    Raises ``ValueError`` for a concept this module cannot draw, and for an
+    *owned* it cannot draw, rather than emitting a near-miss: a picture showing
+    the referent inside the conversation when the card asked for "he" is worse
+    than no picture, because it is confidently wrong — and so is a bag with no
+    mark in it where the card asked for a neuter thing.
     """
     if concept not in PRONOUN_CONCEPTS:
         raise ValueError(
             f"{concept!r} is not a renderable pronoun concept; expected one of {', '.join(PRONOUN_CONCEPTS)}"
         )
     possessive = concept.endswith(_POSSESSIVE)
+    if owned is not None and not (possessive and owned in OWNED_KINDS):
+        raise ValueError(
+            f"owned={owned!r} cannot be drawn into {concept!r}; expected None, or one of "
+            f"{', '.join(OWNED_KINDS)} on a possessive concept"
+        )
     scene = _SCENES[concept[: -len(_POSSESSIVE)] if possessive else concept]
     # A listener is always drawn even when none is the referent: "we, and not
     # them" needs an inside to be outside of.
@@ -397,8 +506,11 @@ def render_pronoun_svg(concept: str) -> bytes:
     lit_x += [x for x in outside_x if not scene.it_cat]
     if possessive and scene.it_cat:
         # The one reach a bag adds: the cat's is wider than the cat is, so the
-        # group is centred on the pair of them rather than on the cat alone.
-        right = outside_x[-1] + _CAT_BAG_DX + _BAG_W / 2 + 2
+        # group is centred on the pair of them rather than on the cat alone. A
+        # plural's back bag reaches a step further still, and the group has to
+        # know about it or the one scene that could not be a bare addition would
+        # become the one scene that sits off to one side.
+        right = outside_x[-1] + _CAT_BAG_DX + _BAG_W / 2 + (_OWNED_PL_DX if owned == "pl" else 0) + 2
     dx = (_W - right) / 2
 
     parts = [
@@ -418,9 +530,9 @@ def render_pronoun_svg(concept: str) -> bytes:
         # height in each lit referent's hands, or — for the cat, which has no
         # hands — one standing on the ground to its right.
         if scene.it_cat:
-            parts.append(_bag(outside_x[-1] + _CAT_BAG_DX, _G - _BAG_H))
+            parts.append(_bag(outside_x[-1] + _CAT_BAG_DX, _G - _BAG_H, owned))
         else:
-            parts += [_bag(x, _G - _BAG_CARRY_DY) for x in lit_x]
+            parts += [_bag(x, _G - _BAG_CARRY_DY, owned) for x in lit_x]
     svg = (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {_W} {_H}" width="{_W}" height="{_H}">'
         f'<rect x="0" y="0" width="{_W}" height="{_H}" fill="{_BG}"/>'

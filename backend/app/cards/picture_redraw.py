@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple
 
+from app.cards.calendar_picture import calendar_picture
 from app.cards.drawn_picture import drawn_picture
 from app.cards.media import vocab_media
 from app.cards.pronoun_picture import pronoun_picture
@@ -67,14 +68,15 @@ def plan_redraws(db: Any, language_code: str) -> list[Redraw]:
         if current == picture.filename:
             continue
         # A card with NO image is only FILLED for the families the user decided
-        # are picture cards outright (spatial, pronoun). Everything else — a
-        # number above — keeps the "deciding it should have one is not this
-        # module's job" rule, so the check is for a picture being drawn at all
-        # rather than for a number being absent.
+        # are picture cards outright (spatial, pronoun, calendar). Everything
+        # else — a number above — keeps the "deciding it should have one is not
+        # this module's job" rule, so the check is for a picture being drawn at
+        # all rather than for a number being absent.
         if (
             current is None
             and spatial_picture(unit.text, language_code, unit.translation) is None
             and pronoun_picture(unit.text, language_code, unit.translation) is None
+            and calendar_picture(unit.text, language_code, unit.translation) is None
         ):
             continue
         plan.append(
