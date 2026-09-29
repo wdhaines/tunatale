@@ -40,7 +40,7 @@ CLOZE_MID = 2000
 TAIL = 1_000_287
 
 _SCHEMA = """
-CREATE TABLE col (id INTEGER PRIMARY KEY, mod INTEGER, scm INTEGER, usn INTEGER);
+CREATE TABLE col (id INTEGER PRIMARY KEY, mod INTEGER, scm INTEGER, usn INTEGER, ls INTEGER);
 CREATE TABLE notes (id INTEGER PRIMARY KEY, mid INTEGER, mod INTEGER, usn INTEGER);
 CREATE TABLE cards (
     id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, ord INTEGER,
@@ -54,7 +54,9 @@ def _conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
-    conn.execute("INSERT INTO col VALUES (1, 100, 5, 0)")
+    # mod/ls as a real collection holds them after a sync with no push leg:
+    # col.ls is milliseconds (tunatale-6zoc measured this shape on tt_collection).
+    conn.execute("INSERT INTO col VALUES (1, 1790648706749, 5, 0, 1790648706749)")
     conn.execute("INSERT INTO notetypes VALUES (?, 'Norwegian Vocabulary')", (VOCAB_MID,))
     conn.execute("INSERT INTO notetypes VALUES (?, 'Cloze')", (CLOZE_MID,))
     conn.execute("INSERT INTO templates VALUES (?, 0, 'Recognition')", (VOCAB_MID,))
@@ -227,7 +229,13 @@ class TestApplyRepositioning:
         rows = conn.execute("SELECT usn, mod FROM cards WHERE id IN (?, ?)", (first, second)).fetchall()
         assert [r["usn"] for r in rows] == [-1, -1]
         assert all(r["mod"] > 100 for r in rows)
-        assert conn.execute("SELECT mod FROM col").fetchone()["mod"] != before_mod
+        col = conn.execute("SELECT mod, ls FROM col").fetchone()
+        assert col["mod"] != before_mod
+        # Anki's col.mod is MILLISECONDS (rslib SyncMeta.modified: TimestampMillis),
+        # unlike cards.mod above. A seconds value sits below col.ls and reads as
+        # "not newer than the server" (tunatale-6zoc).
+        assert len(str(col["mod"])) == 13, f"col.mod={col['mod']} is not in milliseconds"
+        assert col["mod"] > col["ls"]
 
     def test_never_touches_col_usn(self):
         """col.usn is the sync ANCHOR, not a dirty flag — clobbering it forces a full

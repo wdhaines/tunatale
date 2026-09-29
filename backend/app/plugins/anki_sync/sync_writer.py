@@ -58,6 +58,28 @@ _PRODUCTION_BAND_FLOOR = -1_000_000
 _PRODUCTION_BAND_CEILING = 0
 
 
+def bump_col_mod(conn: sqlite3.Connection) -> None:
+    """Mark the collection changed: ``col.mod`` = now, in MILLISECONDS.
+
+    ``col.mod`` is Anki's ``TimestampMillis`` (rslib ``SyncMeta.modified``), unlike
+    ``cards.mod``/``notes.mod``, which are seconds. Writing the seconds stamp here
+    (tunatale-6zoc) left a 10-digit value below the 13-digit ``col.ls``, and rslib
+    then reads the collection as NOT newer than the server:
+    ``compared_to_remote`` sets ``local_is_newer = local.modified > remote.modified``
+    (false, so the client withholds its config), and ``collection_changed_since_sync``
+    (``mod > ls``) reports no local changes over rows TT just dirtied.
+
+    Clamped above both the current value and ``col.ls``. After a sync ``mod == ls ==
+    the server's modified``; a server clock ahead of this machine would make plain
+    ``now`` smaller than that, and a value EQUAL to it would make rslib answer
+    NoChanges and skip the push. ``MAX(now, mod + 1, ls + 1)`` can equal neither.
+
+    Never touches ``col.usn`` — it is the sync anchor, not a dirty flag (Layer 61).
+    """
+    now_ms = int(_time.time() * 1000)
+    conn.execute("UPDATE col SET mod = MAX(?, mod + 1, ls + 1)", (now_ms,))
+
+
 class OfflineWriter:
     """Write changes directly into a raw sqlite3.Connection to collection.anki2.
 
@@ -151,7 +173,11 @@ class OfflineWriter:
         # (e.g. the phone) advanced the server's USN (Layer 61; reproduced 2026-05-29).
         # The content rows we touch (cards/notes/revlog/decks) carry their own usn=-1,
         # which is what actually pushes on the next incremental sync.
-        self._conn.execute("UPDATE col SET mod = ?", (ts,))
+        #
+        # *ts* is the SECONDS stamp the caller wrote to cards.mod/notes.mod and is
+        # deliberately NOT used here: col.mod is milliseconds (tunatale-6zoc).
+        del ts
+        bump_col_mod(self._conn)
 
     def _field_names_for_mid(self, mid: int) -> list[str]:
         """Field names (ord order) for the notetype *mid*, read from the collection.

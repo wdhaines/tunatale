@@ -2360,8 +2360,8 @@ class TestPushLearningCardLeftAndDue:
         # Setup: create Anki DB with a learning card (left=2002, 2 steps remaining)
         db_path = tmp_path / "collection.anki2"
         conn = sqlite3.connect(str(db_path))
-        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, crt INTEGER, mod INTEGER, usn INTEGER)")
-        conn.execute("INSERT INTO col VALUES (1, 1704067200, 0, 0)")  # crt = 2024-01-01
+        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, crt INTEGER, mod INTEGER, usn INTEGER, ls INTEGER)")
+        conn.execute("INSERT INTO col VALUES (1, 1704067200, 0, 0, 0)")  # crt = 2024-01-01
         conn.execute(
             """CREATE TABLE cards (
                 id INTEGER PRIMARY KEY,
@@ -2473,8 +2473,8 @@ class TestPushLearningCardLeftAndDue:
         """Pushing learning steps correctly decrements steps_remaining in left."""
         db_path = tmp_path / "collection.anki2"
         conn = sqlite3.connect(str(db_path))
-        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, crt INTEGER, mod INTEGER, usn INTEGER)")
-        conn.execute("INSERT INTO col VALUES (1, 1704067200, 0, 0)")
+        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, crt INTEGER, mod INTEGER, usn INTEGER, ls INTEGER)")
+        conn.execute("INSERT INTO col VALUES (1, 1704067200, 0, 0, 0)")
         conn.execute(
             """CREATE TABLE cards (
                 id INTEGER PRIMARY KEY,
@@ -3412,8 +3412,8 @@ class TestOfflineWriterUpdateCardMemoryState:
         conn.execute(
             "CREATE TABLE cards (id INTEGER PRIMARY KEY, ivl INTEGER, factor INTEGER, data TEXT, mod INTEGER, usn INTEGER)"
         )
-        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, mod INTEGER)")
-        conn.execute("INSERT INTO col VALUES (1, 0)")
+        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, mod INTEGER, ls INTEGER)")
+        conn.execute("INSERT INTO col VALUES (1, 0, 0)")
         conn.execute("INSERT INTO cards (id, ivl, factor, data, mod, usn) VALUES (12345, 0, 0, ?, 0, 5)", (data,))
         conn.commit()
         return conn

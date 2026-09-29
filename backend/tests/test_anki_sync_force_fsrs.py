@@ -163,8 +163,8 @@ class TestOfflineWriterSetSpecificValue:
         conn.execute(
             "CREATE TABLE cards (id INTEGER PRIMARY KEY, ivl INTEGER, factor INTEGER, data TEXT, mod INTEGER, usn INTEGER)"
         )
-        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, mod INTEGER)")
-        conn.execute("INSERT INTO col VALUES (1, 0)")
+        conn.execute("CREATE TABLE col (id INTEGER PRIMARY KEY, mod INTEGER, ls INTEGER)")
+        conn.execute("INSERT INTO col VALUES (1, 0, 0)")
         conn.execute("INSERT INTO cards (id, ivl, factor, data, mod, usn) VALUES (12345, 0, 0, '', 0, 5)")
 
         writer = OfflineWriter(conn)
