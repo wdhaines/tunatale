@@ -745,6 +745,13 @@ class TestDueQueries:
                     anki_due=42,
                 ),
             )
+        # created_at DESC sorts BEFORE anki_card_id, and it is datetime('now') at
+        # one-second resolution, so three back-to-back inserts only tie when they
+        # land in the same second. On a slow runner they straddle one and the
+        # order comes back newest-first, c/b/a (CI, backend-hostile-tz, PR 248,
+        # 2026-09-29). Pin the tie this test is about instead of assuming it.
+        with srs_db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET created_at = '2026-01-01 00:00:00'")
         texts = [item.syntactic_unit.text for _, item, _ in srs_db.get_new_items(limit=10)]
         # anki_due ties → anki_card_id ASC: b(222), c(333), a(555)
         assert texts == ["word_b", "word_c", "word_a"]
