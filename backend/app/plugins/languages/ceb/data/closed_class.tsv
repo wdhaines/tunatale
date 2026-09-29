@@ -5,7 +5,7 @@
 # Why: kaikki's "article" POS is not in the shared POS map, and the extract has no entry at all for
 # mga, ka, si, ni, aron, usab, o — among the 20 commonest tokens in Cebuano news.
 #
-# ⚠️ wala, ka and kini are VOCAB cards in both learners' decks (measured 2026-09-27). A function-word
+# ⚠️ wala and kini are VOCAB cards in both learners' decks (measured 2026-09-27; ka was too, until 2026-09-28). A function-word
 # UPOS (ADP DET CCONJ SCONJ PART) would make a lesson treat them as clozes and stop matching those
 # cards, so they get content UPOS here. Every function-word row below is either already a cloze in the
 # decks or not a card at all.
@@ -16,7 +16,7 @@ mga	DET	mga	plural marker
 og	DET	og	indefinite marker (Wiktionary: article)
 si	DET	si	personal-name topic marker
 ni	DET	ni	personal-name genitive marker
-ka	PRON	ka	"you" (singular); a vocab card
+ka	PRON	ka	"you" (singular, enclitic); a CLOZE via function_words.json include since 2026-09-28 (the user), UPOS kept PRON
 mo	PRON	mo	"you" (genitive, short)
 kanila	PRON	kanila	"to them"
 kaniya	PRON	kaniya	"to him/her"
