@@ -32,6 +32,7 @@ from app.languages import (
     get_tts_locale,
     get_tts_voice_gain_db,
 )
+from app.models.language import Language
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 
 if TYPE_CHECKING:
@@ -494,7 +495,13 @@ class LessonRenderer:
         ipa_unwrapped = get_ipa_read_in_voice_locale(language_code)
 
         def _phrase_locale(phrase: Phrase, phonemes: Mapping[str, str] | None) -> str | None:
-            if phrase.language_code != language_code or (phonemes and ipa_unwrapped):
+            # A phrase in another language (English) declares ITS OWN locale:
+            # an it-IT Multilingual voice reading an English translation must
+            # be told it is English. For an en-US voice the adapter emits no
+            # wrapper and the cache key is unchanged (_lang_locale).
+            if phrase.language_code != language_code:
+                return self._tts_locales.get(phrase.language_code)
+            if phonemes and ipa_unwrapped:
                 return None
             return target_locale
 
@@ -704,12 +711,13 @@ class LessonRenderer:
             await self._tts.synthesize(lesson.title, lesson.narrator_voice, title_file, rate="+0%")
             logger.debug("TTS title → %.0f ms", (time.perf_counter() - t0) * 1000)
             title_audio = await asyncio.to_thread(_read_audio, title_file)
-            # Same per-voice gain as every phrase, keyed by the narrator voice.
-            # A no-op today (no table entry for the narrator) and correct when
-            # one is measured.
+            # Same per-voice gain as every phrase. The title is ENGLISH text,
+            # so it resolves in the English table exactly as a section's
+            # English phrase does — keyed on the lesson's own code it would
+            # find no entry for the narrator and silently get 0.0.
             title_audio = _apply_voice_gain(
                 title_audio,
-                get_tts_voice_gain_db(lesson.language_code, lesson.narrator_voice),
+                get_tts_voice_gain_db(Language.english().code, lesson.narrator_voice),
             )
 
             # Render all sections concurrently — phrases within each section are
@@ -871,5 +879,9 @@ def build_lesson_renderer(
         delivery_bitrate=settings.audio_delivery_bitrate,
         slicers=slicers,
         phoneme_planners={code: planner for code in codes if (planner := get_phoneme_planner(code)) is not None},
-        tts_locales={code: locale for code in codes if (locale := get_tts_locale(code)) is not None},
+        # English joins the lesson languages: every lesson has English phrases,
+        # and _phrase_locale declares their locale too.
+        tts_locales={
+            code: locale for code in [*codes, Language.english().code] if (locale := get_tts_locale(code)) is not None
+        },
     )

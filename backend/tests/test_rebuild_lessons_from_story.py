@@ -265,7 +265,8 @@ class TestGo:
 
         _run(store, monkeypatch, capsys, "--go", captured=captured)
 
-        assert captured["renderer"]._tts_locales == {_LANG: get_tts_locale(_LANG)}
+        # English rides along: the lessons' English lines declare en-US too.
+        assert captured["renderer"]._tts_locales == {_LANG: get_tts_locale(_LANG), "en": "en-US"}
 
     def test_a_second_run_reports_already_current(self, tmp_path, monkeypatch, capsys):
         """Idempotence, on the honest signal: the rebuilt blob is byte-identical.
@@ -413,3 +414,133 @@ class TestArgs:
 
         with pytest.raises(SystemExit):
             _run(store, monkeypatch, capsys, *args)
+
+
+# ── --voices-only (tunatale-ucpg) ────────────────────────────────────────
+
+_GUY = "en-US-GuyNeural"
+
+
+def _pre_ucpg_language() -> Language:
+    """The language as the stored lessons were built: Guy narrating everything."""
+    current = get_language(_LANG)
+    return Language(
+        code=current.code,
+        name=current.name,
+        native_name=current.native_name,
+        script=current.script,
+        tts_locale=current.tts_locale,
+        tts_voice_map={**current.tts_voice_map, "narrator": _GUY},
+    )
+
+
+def _seed_drifted(tmp_path: Path) -> ContentStore:
+    """A Guy-narrated lesson whose KEY_PHRASES text today's rules no longer produce.
+
+    That is the real corpus: on 2026-09-29 the live day-11 rebuild changed 67
+    key-phrase texts (170 -> 172 phrases) and none in the other six sections.
+    The drift is simulated by editing one stored key-phrase chunk.
+    """
+    store = ContentStore(str(tmp_path / "content.sqlite"))
+    store.save_curriculum(
+        "cur-1",
+        Curriculum(
+            id="cur-1",
+            topic="Coffee",
+            language_code=_LANG,
+            cefr_level="A1",
+            days=[CurriculumDay(day=1, title="T", focus="f", collocations=[], learning_objective="o")],
+        ),
+    )
+    lesson = build_lesson_from_story(_story(), language=_pre_ucpg_language())
+    kp = next(s for s in lesson.sections if s.section_type.value == "key_phrases")
+    l2 = next(p for p in kp.phrases if p.language_code == _LANG)
+    l2.text = l2.text + "?"
+    store.save_lesson("lesson-day-1", "cur-1", 1, lesson)
+    return store
+
+
+def _section(store: ContentStore, value: str):
+    return next(s for s in store.get_lesson("lesson-day-1").sections if s.section_type.value == value)
+
+
+class TestVoicesOnly:
+    _record = staticmethod(TestGo._record)
+
+    def test_a_drifted_section_keeps_its_stored_text(self, tmp_path, monkeypatch, capsys):
+        """The whole point: a listening test must hear the SAME lesson in new voices."""
+        store = _seed_drifted(tmp_path)
+        before = [p.text for p in _section(store, "key_phrases").phrases]
+        self._record(monkeypatch, store, [])
+
+        rc, out = _run(store, monkeypatch, capsys, "--go", "--voices-only")
+
+        assert rc == 0, out
+        assert [p.text for p in _section(store, "key_phrases").phrases] == before
+
+    def test_a_drifted_section_still_moves_its_narrator(self, tmp_path, monkeypatch, capsys):
+        store = _seed_drifted(tmp_path)
+        self._record(monkeypatch, store, [])
+
+        _run(store, monkeypatch, capsys, "--go", "--voices-only")
+
+        english = {p.voice_id for p in _section(store, "key_phrases").phrases if p.language_code == "en"}
+        assert english == {"en-US-DavisMultilingualNeural"}
+
+    def test_an_unchanged_section_takes_the_rebuilt_voices(self, tmp_path, monkeypatch, capsys):
+        """Translations move to the speaker's English voice; the title stays the narrator's."""
+        store = _seed_drifted(tmp_path)
+        self._record(monkeypatch, store, [])
+
+        _run(store, monkeypatch, capsys, "--go", "--voices-only")
+
+        by_text = {p.text: p.voice_id for p in _section(store, "translated").phrases if p.language_code == "en"}
+        en_cast = get_language(_LANG).tts_en_voice_map
+        assert by_text["Thank you."] == en_cast["female-2"]
+        assert by_text["A coffee please."] == en_cast["male-1"]
+        assert by_text["At the Café"] == "en-US-DavisMultilingualNeural"
+
+    def test_the_lesson_narrator_moves_so_the_title_does_too(self, tmp_path, monkeypatch, capsys):
+        store = _seed_drifted(tmp_path)
+        self._record(monkeypatch, store, [])
+
+        _run(store, monkeypatch, capsys, "--go", "--voices-only")
+
+        assert store.get_lesson("lesson-day-1").narrator_voice == "en-US-DavisMultilingualNeural"
+
+    def test_the_renderer_is_handed_the_voices_only_lesson(self, tmp_path, monkeypatch, capsys):
+        store = _seed_drifted(tmp_path)
+        calls: list[dict] = []
+        self._record(monkeypatch, store, calls)
+
+        _run(store, monkeypatch, capsys, "--go", "--voices-only")
+
+        rendered = calls[0]["lesson"]
+        assert rendered.to_json() == store.get_lesson("lesson-day-1").to_json()
+
+    def test_the_plan_names_the_kept_section(self, tmp_path, monkeypatch, capsys):
+        store = _seed_drifted(tmp_path)
+
+        rc, out = _run(store, monkeypatch, capsys, "--dry-run", "--voices-only")
+
+        assert rc == 0
+        assert "kept stored text: key_phrases" in out
+
+    def test_a_second_run_is_already_current(self, tmp_path, monkeypatch, capsys):
+        store = _seed_drifted(tmp_path)
+        self._record(monkeypatch, store, [])
+        _run(store, monkeypatch, capsys, "--go", "--voices-only")
+
+        _rc, out = _run(store, monkeypatch, capsys, "--go", "--voices-only")
+
+        assert "already current" in out
+
+    def test_without_the_flag_the_drifted_text_is_rebuilt(self, tmp_path, monkeypatch, capsys):
+        """Control: the default mode is still a full rebuild, drift and all."""
+        store = _seed_drifted(tmp_path)
+        before = [p.text for p in _section(store, "key_phrases").phrases]
+        self._record(monkeypatch, store, [])
+
+        _run(store, monkeypatch, capsys, "--go")
+
+        assert [p.text for p in _section(store, "key_phrases").phrases] != before

@@ -73,10 +73,9 @@ register(
             # the same -1.9 dB gain the sl table measured on Slovene text.
             # Blessica's +1.8 keeps her true peak (-5.3 dBFS) well under the
             # renderer's -1.0 dBFS clamp.
-            # en-US-GuyNeural is the shared narrator; the gain is resolved per
-            # language (get_tts_voice_gain_db takes a code), so the same measured
-            # value has to appear in every plugin table. Measured 2026-09-13 at
-            # -19.08 LUFS mean.
+            # English lines resolve their gain in Language.english()'s table
+            # (the renderer keys on the text's language), so the narrator has
+            # no entry here.
             tts_voice_gain_db={
                 "fil-PH-BlessicaNeural": 1.8,
                 "fil-PH-AngeloNeural": -0.6,
@@ -87,7 +86,6 @@ register(
                 # The controls reproduced the table within 0.5 dB (Blessica -21.3
                 # vs -21.8, Emma -18.3 vs -18.1).
                 "de-DE-SeraphinaMultilingualNeural": 1.8,
-                "en-US-GuyNeural": -0.9,
             },
         ),
         preprocessor_factory=TagalogPreprocessor,

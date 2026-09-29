@@ -7,7 +7,7 @@ from app.audio.renderer import (
     _apply_voice_gain,
     _Audio,
 )
-from app.languages import get_tts_voice_gain_db
+from app.languages import get_language, get_tts_voice_gain_db
 
 # ---------------------------------------------------------------------------
 # Unit tests for _apply_voice_gain
@@ -140,12 +140,8 @@ class TestGetVoiceGainDb:
             ("sl", "sl-SI-RokNeural", -1.2),
             ("sl", "en-US-EmmaMultilingualNeural", -1.9),
             ("sl", "de-DE-FlorianMultilingualNeural", -0.6),
-            # The shared narrator, measured 2026-09-13 on real ENGLISH narrator
-            # prose at -19.08 LUFS mean. Resolved per language, so the same value
-            # must be present in BOTH plugin tables — that is what these two rows
-            # defend; dropping either silently returns 0.0 for that language.
-            ("no", "en-US-GuyNeural", -0.9),
-            ("sl", "en-US-GuyNeural", -0.9),
+            # English voices, the narrator included, live in the "en" table and
+            # are pinned in tests/test_english_cast.py (tunatale-ucpg).
         ],
     )
     def test_measured_gain_for_each_voice(self, code, voice_id, expected):
@@ -154,17 +150,17 @@ class TestGetVoiceGainDb:
     def test_unknown_voice_returns_zero(self):
         assert get_tts_voice_gain_db("no", "some-unknown-voice") == 0.0
 
-    def test_english_narrator_returns_zero_for_the_en_stub(self):
-        """The narrator gain is deliberately NOT wired into the ``en`` config.
+    def test_the_narrator_has_no_entry_in_an_l2_table(self):
+        """An English voice's gain resolves in the ``en`` table, never an L2 one.
 
-        en-US-AriaNeural and en-US-GuyNeural measured +0.5 / -0.9 dB, but ``en``
-        is a stub registration with no plugin — no preprocessor, no syllabifier,
-        no lessons — so a gain there would be dead config. This asserts the
-        omission is deliberate, not an oversight: ``no`` and ``sl`` carry -0.9
-        (above) while ``en`` stays 0.0.
+        Until 2026-09-29 the narrator sat in every L2 table and the ``en`` table
+        was empty — and since the renderer keys each phrase on its own
+        language_code, every English line in every section got 0.0 dB. An entry
+        back in an L2 table would be dead config that reads as if it worked.
         """
-        assert get_tts_voice_gain_db("en", "en-US-GuyNeural") == 0.0
-        assert get_tts_voice_gain_db("en", "en-US-AriaNeural") == 0.0
+        for code in ("no", "sl", "tl", "ceb"):
+            narrator = get_language(code).tts_voice_map["narrator"]
+            assert narrator not in get_language(code).tts_voice_gain_db, code
 
     def test_unknown_language_returns_zero(self):
         assert get_tts_voice_gain_db("zz", "some-voice") == 0.0

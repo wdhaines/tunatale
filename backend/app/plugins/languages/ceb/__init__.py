@@ -55,16 +55,14 @@ register(
             # LUFS: integrated loudness of the same 8 Cebuano sentences per
             # voice (ffmpeg ebur128), 2026-09-25. Gemini renders run loud
             # (-14.0 to -18.7 LUFS), so every gain is a cut.
-            # en-US-GuyNeural is the shared narrator; the gain is resolved per
-            # language (get_tts_voice_gain_db takes a code), so the same
-            # measured value has to appear in every plugin table. Measured
-            # 2026-09-13 at -19.08 LUFS mean.
+            # English lines resolve their gain in Language.english()'s table
+            # (the renderer keys on the text's language), so the narrator has
+            # no entry here.
             tts_voice_gain_db={
                 "ceb-PH-KoreGemini": -6.0,
                 "ceb-PH-DespinaGemini": -5.6,
                 "ceb-PH-CharonGemini": -3.1,
                 "ceb-PH-OrusGemini": -5.0,
-                "en-US-GuyNeural": -0.9,
             },
         ),
         preprocessor_factory=CebuanoPreprocessor,

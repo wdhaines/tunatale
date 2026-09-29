@@ -51,7 +51,9 @@ class TestBuildLessonRenderer:
     def test_declares_each_languages_tts_locale(self, code):
         renderer = build_lesson_renderer(MagicMock(), [code], settings)
         locale = get_tts_locale(code)
-        assert renderer._tts_locales == ({code: locale} if locale else {})
+        # English rides along with every lesson language: each lesson has
+        # English phrases, and they declare their locale too (tunatale-ucpg).
+        assert renderer._tts_locales == ({code: locale} if locale else {}) | {"en": "en-US"}
 
     def test_tagalog_plain_text_lines_are_declared_filipino(self):
         """The live defect itself: no locale means no <lang> wrapper."""
