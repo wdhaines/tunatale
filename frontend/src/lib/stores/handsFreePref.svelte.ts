@@ -20,14 +20,26 @@ import { createLocalPref } from "./localPref.svelte";
 
 const HANDOFF_KEY = "handsFreeHandoff";
 
-const pref = createLocalPref("handsFree", {
-  parse: (raw) => raw === "on",
-  serialize: (next) => (next ? "on" : "off"),
+// "repeat" is hands-free ON that loops back to this lesson's key phrases
+// instead of moving to the next lesson (the user's call, 2026-09-29: a third
+// state of the one chip, saved like the other two). The stored strings are the
+// modes themselves, so a pre-existing "on" / "off" reads unchanged.
+export type HandsFreeMode = "off" | "on" | "repeat";
+
+const pref = createLocalPref<HandsFreeMode>("handsFree", {
+  parse: (raw) => (raw === "on" || raw === "repeat" ? raw : "off"),
+  serialize: (next) => next,
 });
 
 export const handsFreePref = {
-  get enabled(): boolean {
+  get mode(): HandsFreeMode {
     return pref.value;
+  },
+  get enabled(): boolean {
+    return pref.value !== "off";
+  },
+  get repeat(): boolean {
+    return pref.value === "repeat";
   },
   init: pref.init,
   set: pref.set,

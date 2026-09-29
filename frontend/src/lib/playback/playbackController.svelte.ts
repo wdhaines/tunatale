@@ -54,6 +54,7 @@ export interface PlaybackController {
   readonly duration: number;
   readonly playbackRate: number;
   readonly handsFree: boolean;
+  readonly repeatLesson: boolean;
   readonly repeatLatched: boolean;
   readonly activeSectionType: string | null;
   readonly activeCues: Cue[] | null;
@@ -90,6 +91,7 @@ export interface PlaybackController {
   setRate(rate: number): void;
   setEnunciationRate(rate: number): void;
   setHandsFree(v: boolean): void;
+  setRepeatLesson(v: boolean): void;
   destroy(): void;
 }
 
@@ -223,13 +225,10 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   let rate = $state(1);
   let enunciationRate = 1;
   let handsFree = $state(false);
-  // Section type captured when hands-free turned ON, so turning it OFF can
-  // restore the user's saved phase/enunciation/English preference. null until
-  // first enabled. LessonPlayer's pill-mirror $effect follows
-  // ctrl.activeSectionType and calls persistSelection(), so without this
-  // restore one use of hands-free would silently rewrite the saved selection
-  // to "English After" (translated).
-  let handsFreeRestoreSection: string | null = null;
+  // Repeat lesson: where a hands-free run would complete, loop back to this
+  // lesson's first pass instead (see the `ended` listener). Inert while
+  // hands-free is off.
+  let repeatLesson = $state(false);
   // Identity for the global-mediaSession ownership check above.
   const ownerToken = Symbol("playbackController");
   let repeatLatched = $state(false);
@@ -301,7 +300,12 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       else break;
     }
     if (!best) return;
-    const targetRate = best.language_code === "en" ? 1 : enunciationRate;
+    // A slowed Speed is the Slow pass's, and nobody else's (the user's call,
+    // 2026-09-29): Key Phrases and Natural play at natural speed even with
+    // 0.9× / 0.8× picked, which a hands-free run used to slow too. English
+    // lines are never slowed.
+    const slowTrack = activeSectionType?.startsWith("slow_") ?? false;
+    const targetRate = slowTrack && best.language_code !== "en" ? enunciationRate : 1;
     if (audioEl.playbackRate !== targetRate) {
       audioEl.playbackRate = targetRate;
     }
@@ -433,19 +437,26 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     // silent (looking exactly like "hands-free doesn't work"). A pass of the
     // sequence is fully handled by the helper and returns from here.
     //
-    // An English VARIANT (slow_translated & co. — on the EN step but not a pass
-    // of the sequence) cycles back to the start of the sequence instead: the
-    // user's call, 2026-09-23 (tunatale-hkz8.2), "back to the start of the same
-    // lesson's key phrases" rather than the next lesson or a dead stop. Same
-    // ordering constraint as above, so it sits in the same block. Anything
-    // else falls through to the plain end-of-track state.
+    // Every English track is the EN step (SEQUENCE_STEP), so a VARIANT picked
+    // while hands-free is on is an override that takes the EN pass's place and
+    // completes the run the same way (the user's call, 2026-09-29, replacing
+    // the 2026-09-23 loop-back to the key phrases). Anything else falls
+    // through to the plain end-of-track state.
+    //
+    // Repeat lesson changes only this automatic end: where the run would
+    // complete, it starts this lesson's sequence again. ▶ / hold-⏩ still hand
+    // off (nextSectionAction does not come through here), which keeps the car
+    // a way out of the loop. A lesson with no pass at all has nothing to loop
+    // to and falls through to the plain stop — never a hand-off.
     if (handsFree && activeSectionType !== null) {
-      const step = (HANDS_FREE_SEQUENCE as readonly string[]).indexOf(activeSectionType);
-      if (step !== -1) {
-        advanceHandsFreePass(step);
-        return;
+      const step = SEQUENCE_STEP.get(activeSectionType);
+      if (step !== undefined) {
+        if (!repeatLesson || nextPassAfter(step) !== undefined) {
+          advanceHandsFreePass(step);
+          return;
+        }
+        if (restartHandsFreeSequence()) return;
       }
-      if (SEQUENCE_STEP.has(activeSectionType) && restartHandsFreeSequence()) return;
     }
     playing = false;
     if (mediaSession) mediaSession.playbackState = "none";
@@ -928,14 +939,16 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // below is settled BEFORE onHandsFreeEnd, so a handler that navigates cannot
   // observe a half-updated controller.
   //
-  // `idx` is the current position in HANDS_FREE_SEQUENCE. The caller resolves
-  // it: `ended` by exact membership (an English variant is not a hands-free
-  // pass — it has its own cycle-back, restartHandsFreeSequence), the button by
-  // SEQUENCE_STEP (every variant is the EN step).
-  function advanceHandsFreePass(idx: number): void {
-    const next = HANDS_FREE_SEQUENCE.slice(idx + 1).find((t) =>
+  // `idx` is the current position in HANDS_FREE_SEQUENCE, resolved by the
+  // caller through SEQUENCE_STEP (every English variant is the EN step).
+  function nextPassAfter(idx: number): SectionType | undefined {
+    return HANDS_FREE_SEQUENCE.slice(idx + 1).find((t) =>
       audioSections.some((s) => s.section_type === t),
     );
+  }
+
+  function advanceHandsFreePass(idx: number): void {
+    const next = nextPassAfter(idx);
     if (next !== undefined) {
       selectTrack(next, null, true);
       startPlay("advance");
@@ -948,7 +961,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   }
 
   // Back to the FIRST pass this lesson has (key_phrases, when it exists), from
-  // its beginning — the English-variant cycle-back on `ended`. Found over the
+  // its beginning — the repeat-lesson loop on `ended`. Found over the
   // sections the lesson actually has, for the same reason as the advance above:
   // selectTrack no-ops on a missing section. Returns false when the lesson has
   // no pass at all, so the caller falls through to the plain end-of-track state.
@@ -956,7 +969,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     const first = HANDS_FREE_SEQUENCE.find((t) => audioSections.some((s) => s.section_type === t));
     if (first === undefined) return false;
     selectTrack(first, null, true);
-    startPlay("restart");
+    startPlay("repeat");
     return true;
   }
 
@@ -986,6 +999,9 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     },
     get handsFree() {
       return handsFree;
+    },
+    get repeatLesson() {
+      return repeatLesson;
     },
     get repeatLatched() {
       return repeatLatched;
@@ -1054,9 +1070,11 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       enunciationRate = newRate;
       applyEnunciationRate();
     },
+    // Changes only what happens when a track ENDS — never the track, the
+    // position or play/pause: "where you are is where you are" (the user's
+    // call, 2026-09-29). Turning it off used to jump back to the track that was
+    // active when it was turned on.
     setHandsFree(v: boolean) {
-      // Capture the active section when turning ON so turning OFF restores it.
-      // Restore only if a capture exists. See the handsFreeRestoreSection note.
       if (v !== handsFree) {
         // The transition needs its OWN event. Every trace line already carries
         // `hf=`, but that context field is stale right after a mount: on the
@@ -1068,14 +1086,11 @@ export function createPlaybackController(deps: Deps): PlaybackController {
         // Inside the `v !== handsFree` guard on purpose: a write that changes
         // nothing must not manufacture a transition.
         trace(v ? "handsfree:on" : "handsfree:off");
-        if (v) {
-          handsFreeRestoreSection = activeSectionType;
-        } else if (handsFreeRestoreSection !== null) {
-          selectTrack(handsFreeRestoreSection);
-          handsFreeRestoreSection = null;
-        }
       }
       handsFree = v;
+    },
+    setRepeatLesson(v: boolean) {
+      repeatLesson = v;
     },
     destroy() {
       destroyed = true;

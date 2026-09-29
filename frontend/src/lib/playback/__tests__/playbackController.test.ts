@@ -997,10 +997,33 @@ describe("playbackController", () => {
     });
 
     it("setEnunciationRate applies rate only to L2 cues", () => {
+      // A slow track: the only kind a slowed Speed applies to (tested below).
+      const slow = { section_type: "slow_translated" };
       const mixedCues: Cue[] = [
-        makeCue({ index: 0, start_ms: 0, end_ms: 1000, language_code: "sl", text: "Zdravo" }),
-        makeCue({ index: 1, start_ms: 1000, end_ms: 2000, language_code: "en", text: "Hello" }),
-        makeCue({ index: 2, start_ms: 2000, end_ms: 3000, language_code: "sl", text: "Kako si" }),
+        makeCue({
+          ...slow,
+          index: 0,
+          start_ms: 0,
+          end_ms: 1000,
+          language_code: "sl",
+          text: "Zdravo",
+        }),
+        makeCue({
+          ...slow,
+          index: 1,
+          start_ms: 1000,
+          end_ms: 2000,
+          language_code: "en",
+          text: "Hello",
+        }),
+        makeCue({
+          ...slow,
+          index: 2,
+          start_ms: 2000,
+          end_ms: 3000,
+          language_code: "sl",
+          text: "Kako si",
+        }),
       ];
       const aud: LessonAudio = { ...lessonAudio, cues: mixedCues };
       const ctrl = createController({ audio: aud });
@@ -1048,6 +1071,87 @@ describe("playbackController", () => {
       ctrl.setEnunciationRate(0.8);
       // currentTime is 0, first cue starts at 500ms — no cue matches
       expect(audioEl.playbackRate).toBe(1);
+    });
+
+    // The user's call, 2026-09-29 (hands-free spec): a 0.9× / 0.8× Speed plays
+    // on the Slow pass only. Before, it was set once and applied to every
+    // non-English sentence of every track, so a hands-free run played Key
+    // Phrases and Natural slowed too.
+    describe("a slowed Speed applies to slow tracks only", () => {
+      const l2 = (section_type: string, section_index: number): Cue[] => [
+        makeCue({
+          index: 0,
+          start_ms: 0,
+          end_ms: 1000,
+          section_index,
+          section_type,
+          language_code: "sl",
+          ref: { kind: "line", target_index: 0 },
+        }),
+      ];
+      const rateAudio: LessonAudio = {
+        audio_id: "a1",
+        lesson_id: "l1",
+        sections: [
+          {
+            audio_id: "sec-key",
+            section_index: 0,
+            section_type: "key_phrases",
+            title: "K",
+            cues: l2("key_phrases", 0),
+          },
+          {
+            audio_id: "sec-nat",
+            section_index: 1,
+            section_type: "natural_speed",
+            title: "N",
+            cues: l2("natural_speed", 1),
+          },
+          {
+            audio_id: "sec-slow",
+            section_index: 2,
+            section_type: "slow_speed",
+            title: "S",
+            cues: l2("slow_speed", 2),
+          },
+        ],
+        cues: l2("key_phrases", 0),
+      };
+
+      it.each(["key_phrases", "natural_speed"])("%s plays at natural speed", (track) => {
+        const ctrl = createController({ audio: rateAudio });
+        ctrl.selectTrack(track);
+        ctrl.setEnunciationRate(0.8);
+        audioEl.currentTime = 0.5;
+        audioEl.dispatchEvent(new Event("timeupdate"));
+        expect(audioEl.playbackRate).toBe(1);
+      });
+
+      it("slow_speed plays at the slowed rate", () => {
+        const ctrl = createController({ audio: rateAudio });
+        ctrl.selectTrack("slow_speed");
+        ctrl.setEnunciationRate(0.8);
+        audioEl.currentTime = 0.5;
+        audioEl.dispatchEvent(new Event("timeupdate"));
+        expect(audioEl.playbackRate).toBe(0.8);
+      });
+
+      it("leaving Slow for another pass drops back to 1", () => {
+        // The swap alone does not reset the rate on the fake element (a real
+        // element resets on a new src; relying on that would leave the rule
+        // untested), so this pins the controller doing it.
+        const ctrl = createController({ audio: rateAudio });
+        ctrl.selectTrack("natural_speed");
+        ctrl.setEnunciationRate(0.8);
+        ctrl.setHandsFree(true);
+        audioEl.dispatchEvent(new Event("ended")); // natural -> slow
+        audioEl.currentTime = 0.5;
+        audioEl.dispatchEvent(new Event("timeupdate"));
+        expect(audioEl.playbackRate).toBe(0.8);
+        ctrl.selectTrack("key_phrases");
+        audioEl.dispatchEvent(new Event("timeupdate"));
+        expect(audioEl.playbackRate).toBe(1);
+      });
     });
 
     it("ratechange event updates rate and position state", () => {
@@ -1758,13 +1862,12 @@ describe("playbackController", () => {
       expect(audioEl.play).toHaveBeenCalled();
     });
 
-    // The user's call, 2026-09-23 (tunatale-hkz8.2): with hands-free ON, an
-    // English VARIANT track (not a pass of the sequence) that plays to its end
-    // cycles back to the start of the same lesson's key phrases — not the next
-    // lesson, and not a dead stop. `translated`, the sequence's own EN pass,
-    // still hands off to the next lesson (tested below).
+    // The user's call, 2026-09-29 (hands-free spec, tunatale-k8y7), replacing
+    // the 2026-09-23 loop-back (tunatale-hkz8.2): an English VARIANT picked while
+    // hands-free is on is an override that takes the EN pass's place, so when
+    // it ends the run is COMPLETE, exactly as when `translated` ends.
     it.each(["slow_translated", "en_translated", "slow_en_translated"])(
-      "hands-free ON: %s ending cycles back to the same lesson's key phrases",
+      "hands-free ON: %s ending completes the run like English After (onHandsFreeEnd)",
       (variant) => {
         const audio: LessonAudio = {
           ...hfAudio,
@@ -1772,85 +1875,146 @@ describe("playbackController", () => {
             s.section_type === "slow_translated" ? { ...s, section_type: variant } : s,
           ),
         };
-        const ctrl = createController({ audio });
+        const onHandsFreeEnd = vi.fn();
+        const ctrl = createController({ audio, onHandsFreeEnd });
         ctrl.setHandsFree(true);
         ctrl.selectTrack(variant);
-        expect(ctrl.activeSectionType).toBe(variant);
         vi.mocked(audioEl.play).mockClear();
         audioEl.dispatchEvent(new Event("ended"));
-        expect(ctrl.activeSectionType).toBe("key_phrases");
-        expect(audioEl.src).toBe("/api/audio/sec-key");
-        expect(audioEl.play).toHaveBeenCalled();
+        expect(onHandsFreeEnd).toHaveBeenCalledTimes(1);
+        expect(ctrl.activeSectionType).toBe(variant);
+        expect(audioEl.play).not.toHaveBeenCalled();
+        expect(ctrl.playing).toBe(false);
       },
     );
 
-    it("the cycle-back starts at the BEGINNING of the key phrases (applied seek is 0)", () => {
-      const ctrl = createController({ audio: hfAudio });
-      ctrl.setHandsFree(true);
-      ctrl.selectTrack("slow_translated");
-      audioEl.currentTime = 0.8;
-      audioEl.dispatchEvent(new Event("timeupdate"));
-      audioEl.dispatchEvent(new Event("ended"));
-      audioEl.dispatchEvent(new Event("loadedmetadata"));
-      expect(ctrl.activeSectionType).toBe("key_phrases");
-      expect(audioEl.currentTime).toBe(0);
-    });
-
-    it("a lesson with no key phrases cycles back to its FIRST pass instead", () => {
-      const noKey: LessonAudio = {
-        ...hfAudio,
-        sections: hfAudio.sections.filter((s) => s.section_type !== "key_phrases"),
-      };
-      const ctrl = createController({ audio: noKey });
-      ctrl.setHandsFree(true);
-      ctrl.selectTrack("slow_translated");
-      audioEl.dispatchEvent(new Event("ended"));
-      expect(ctrl.activeSectionType).toBe("natural_speed");
-      expect(audioEl.src).toBe("/api/audio/sec-natural");
-    });
-
-    it("a lesson with NO pass at all: the variant just stops (nothing to cycle to)", () => {
-      const onlyVariant: LessonAudio = {
-        ...hfAudio,
-        sections: hfAudio.sections.filter((s) => s.section_type === "slow_translated"),
-      };
-      const onHandsFreeEnd = vi.fn();
-      const ctrl = createController({ audio: onlyVariant, onHandsFreeEnd });
-      ctrl.setHandsFree(true);
-      ctrl.selectTrack("slow_translated");
-      vi.mocked(audioEl.play).mockClear();
-      audioEl.dispatchEvent(new Event("ended"));
-      expect(ctrl.activeSectionType).toBe("slow_translated");
-      expect(audioEl.play).not.toHaveBeenCalled();
-      expect(ctrl.playing).toBe(false);
-      expect(onHandsFreeEnd).not.toHaveBeenCalled();
-    });
-
-    it("after cycling back, the run continues and the LAST pass still hands off", () => {
-      // The loop re-enters the ordinary sequence rather than trapping the
-      // listener in this lesson forever.
+    it("hands-free OFF: an English variant ending just stops, as any track does", () => {
       const onHandsFreeEnd = vi.fn();
       const ctrl = createController({ audio: hfAudio, onHandsFreeEnd });
-      ctrl.setHandsFree(true);
-      ctrl.selectTrack("slow_translated");
-      audioEl.dispatchEvent(new Event("ended")); // -> key_phrases
-      audioEl.dispatchEvent(new Event("ended")); // -> natural_speed
-      audioEl.dispatchEvent(new Event("ended")); // -> slow_speed
-      audioEl.dispatchEvent(new Event("ended")); // -> translated
-      expect(ctrl.activeSectionType).toBe("translated");
-      expect(onHandsFreeEnd).not.toHaveBeenCalled();
-      audioEl.dispatchEvent(new Event("ended")); // sequence exhausted
-      expect(onHandsFreeEnd).toHaveBeenCalledTimes(1);
-    });
-
-    it("hands-free OFF: an English variant ending just stops, as any track does", () => {
-      const ctrl = createController({ audio: hfAudio });
       ctrl.selectTrack("slow_translated");
       vi.mocked(audioEl.play).mockClear();
       audioEl.dispatchEvent(new Event("ended"));
       expect(ctrl.activeSectionType).toBe("slow_translated");
       expect(audioEl.play).not.toHaveBeenCalled();
       expect(ctrl.playing).toBe(false);
+      expect(onHandsFreeEnd).not.toHaveBeenCalled();
+    });
+
+    // Repeat lesson (the user's call, 2026-09-29): the third hands-free state.
+    // Where the run would complete, it goes back to this lesson's first pass
+    // instead of handing off to the next lesson.
+    describe("repeat lesson", () => {
+      it.each(["translated", "slow_translated"])(
+        "%s ending loops back to the key phrases and plays, no hand-off",
+        (track) => {
+          const onHandsFreeEnd = vi.fn();
+          const ctrl = createController({ audio: hfAudio, onHandsFreeEnd });
+          ctrl.setHandsFree(true);
+          ctrl.setRepeatLesson(true);
+          ctrl.selectTrack(track);
+          vi.mocked(audioEl.play).mockClear();
+          audioEl.dispatchEvent(new Event("ended"));
+          expect(ctrl.activeSectionType).toBe("key_phrases");
+          expect(audioEl.src).toBe("/api/audio/sec-key");
+          expect(audioEl.play).toHaveBeenCalled();
+          expect(onHandsFreeEnd).not.toHaveBeenCalled();
+        },
+      );
+
+      it("the loop starts at the BEGINNING of the key phrases (applied seek is 0)", () => {
+        const ctrl = createController({ audio: hfAudio });
+        ctrl.setHandsFree(true);
+        ctrl.setRepeatLesson(true);
+        ctrl.selectTrack("translated");
+        audioEl.currentTime = 0.8;
+        audioEl.dispatchEvent(new Event("timeupdate"));
+        audioEl.dispatchEvent(new Event("ended"));
+        audioEl.dispatchEvent(new Event("loadedmetadata"));
+        expect(ctrl.activeSectionType).toBe("key_phrases");
+        expect(audioEl.currentTime).toBe(0);
+      });
+
+      it("a lesson with no key phrases loops to its FIRST pass instead", () => {
+        const noKey: LessonAudio = {
+          ...hfAudio,
+          sections: hfAudio.sections.filter((s) => s.section_type !== "key_phrases"),
+        };
+        const ctrl = createController({ audio: noKey });
+        ctrl.setHandsFree(true);
+        ctrl.setRepeatLesson(true);
+        ctrl.selectTrack("translated");
+        audioEl.dispatchEvent(new Event("ended"));
+        expect(ctrl.activeSectionType).toBe("natural_speed");
+        expect(audioEl.src).toBe("/api/audio/sec-natural");
+      });
+
+      it("a lesson with NO pass at all: the variant just stops, and never hands off", () => {
+        const onlyVariant: LessonAudio = {
+          ...hfAudio,
+          sections: hfAudio.sections.filter((s) => s.section_type === "slow_translated"),
+        };
+        const onHandsFreeEnd = vi.fn();
+        const ctrl = createController({ audio: onlyVariant, onHandsFreeEnd });
+        ctrl.setHandsFree(true);
+        ctrl.setRepeatLesson(true);
+        ctrl.selectTrack("slow_translated");
+        vi.mocked(audioEl.play).mockClear();
+        audioEl.dispatchEvent(new Event("ended"));
+        expect(ctrl.activeSectionType).toBe("slow_translated");
+        expect(audioEl.play).not.toHaveBeenCalled();
+        expect(ctrl.playing).toBe(false);
+        expect(onHandsFreeEnd).not.toHaveBeenCalled();
+      });
+
+      it("loops again and again: a full second run never hands off", () => {
+        const onHandsFreeEnd = vi.fn();
+        const ctrl = createController({ audio: hfAudio, onHandsFreeEnd });
+        ctrl.setHandsFree(true);
+        ctrl.setRepeatLesson(true);
+        ctrl.selectTrack("key_phrases");
+        for (let lap = 0; lap < 2; lap++) {
+          for (const next of ["natural_speed", "slow_speed", "translated", "key_phrases"]) {
+            audioEl.dispatchEvent(new Event("ended"));
+            expect(ctrl.activeSectionType).toBe(next);
+          }
+        }
+        expect(onHandsFreeEnd).not.toHaveBeenCalled();
+      });
+
+      it("does nothing with hands-free OFF: the track just stops", () => {
+        const onHandsFreeEnd = vi.fn();
+        const ctrl = createController({ audio: hfAudio, onHandsFreeEnd });
+        ctrl.setRepeatLesson(true);
+        ctrl.selectTrack("translated");
+        vi.mocked(audioEl.play).mockClear();
+        audioEl.dispatchEvent(new Event("ended"));
+        expect(ctrl.activeSectionType).toBe("translated");
+        expect(audioEl.play).not.toHaveBeenCalled();
+        expect(onHandsFreeEnd).not.toHaveBeenCalled();
+      });
+
+      it("turning it off again restores the hand-off", () => {
+        const onHandsFreeEnd = vi.fn();
+        const ctrl = createController({ audio: hfAudio, onHandsFreeEnd });
+        ctrl.setHandsFree(true);
+        ctrl.setRepeatLesson(true);
+        ctrl.setRepeatLesson(false);
+        ctrl.selectTrack("translated");
+        audioEl.dispatchEvent(new Event("ended"));
+        expect(onHandsFreeEnd).toHaveBeenCalledTimes(1);
+      });
+
+      // The loop only replaces the AUTOMATIC end of a run. ▶ / hold-⏩ is a
+      // deliberate "next", and it is the car's only way out of the loop.
+      it("▶ from English still hands off to the next lesson", () => {
+        const onHandsFreeEnd = vi.fn();
+        const ctrl = createController({ audio: hfAudio, onHandsFreeEnd });
+        ctrl.setHandsFree(true);
+        ctrl.setRepeatLesson(true);
+        ctrl.selectTrack("translated");
+        ctrl.nextSectionAction();
+        expect(onHandsFreeEnd).toHaveBeenCalledTimes(1);
+      });
     });
 
     it("a pass the lesson does not have is SKIPPED, not replayed as a silent loop", () => {
@@ -1918,15 +2082,24 @@ describe("playbackController", () => {
       expect(onHandsFreeEnd).not.toHaveBeenCalled();
     });
 
-    it("a section OUTSIDE the sequence does not call onHandsFreeEnd", () => {
-      // slow_translated is not a pass of the sequence, so its end is not the
-      // sequence ending — it cycles back within the lesson (tunatale-hkz8.2)
-      // instead of handing off to the next one.
+    it("a section OUTSIDE the sequence just stops: no advance, no onHandsFreeEnd", () => {
+      // Every known token is a step now (the English variants are the EN step),
+      // so "outside" is a token this player does not know — an older or newer
+      // renderer's. Its end is not the sequence's end.
+      const audio: LessonAudio = {
+        ...hfAudio,
+        sections: hfAudio.sections.map((s) =>
+          s.section_type === "slow_translated" ? { ...s, section_type: "vocabulary" } : s,
+        ),
+      };
       const onHandsFreeEnd = vi.fn();
-      const ctrl = createController({ audio: hfAudio, onHandsFreeEnd });
+      const ctrl = createController({ audio, onHandsFreeEnd });
       ctrl.setHandsFree(true);
-      ctrl.selectTrack("slow_translated");
+      ctrl.selectTrack("vocabulary");
+      vi.mocked(audioEl.play).mockClear();
       audioEl.dispatchEvent(new Event("ended"));
+      expect(ctrl.activeSectionType).toBe("vocabulary");
+      expect(audioEl.play).not.toHaveBeenCalled();
       expect(onHandsFreeEnd).not.toHaveBeenCalled();
     });
 
@@ -1958,14 +2131,23 @@ describe("playbackController", () => {
       expect(ctrl.playing).toBe(false);
     });
 
-    it("turning hands-free OFF restores the section active when it was turned ON", () => {
+    // The user's call, 2026-09-29 (hands-free spec): "where you are is where
+    // you are". Toggling never moves the player; before this it jumped back to
+    // the track that was active when hands-free was turned on.
+    it("turning hands-free OFF stays on the current track, mid-pass, still playing", () => {
       const ctrl = createController({ audio: hfAudio });
       expect(ctrl.activeSectionType).toBe("natural_speed");
       ctrl.setHandsFree(true);
-      ctrl.selectTrack("translated"); // simulate an advance while ON
-      expect(ctrl.activeSectionType).toBe("translated");
+      audioEl.dispatchEvent(new Event("ended")); // a real advance -> slow_speed
+      expect(ctrl.activeSectionType).toBe("slow_speed");
+      audioEl.currentTime = 0.7;
+      const srcBefore = audioEl.src;
+      vi.mocked(audioEl.pause).mockClear();
       ctrl.setHandsFree(false);
-      expect(ctrl.activeSectionType).toBe("natural_speed");
+      expect(ctrl.activeSectionType).toBe("slow_speed");
+      expect(audioEl.src).toBe(srcBefore);
+      expect(audioEl.currentTime).toBe(0.7);
+      expect(audioEl.pause).not.toHaveBeenCalled();
     });
 
     it("mediaSession metadata artist changes across an advance", () => {

@@ -337,6 +337,22 @@ describe("LessonPlayer", () => {
       expect(container.querySelector(".phase-row")).toBeFalsy();
     });
 
+    // The user's call, 2026-09-29: hands-free makes sense in Read mode too
+    // (reading while listening). Before, a saved "on" still ran there with no
+    // chip to turn it off.
+    it("shows the hands-free chip in Read mode, and it works", () => {
+      const { container } = render(LessonPlayer, {
+        props: { audio: audioWithAllSections, compact: true },
+      });
+      const toggle = container.querySelector<HTMLButtonElement>(".hands-free-toggle")!;
+      expect(toggle).toBeTruthy();
+      fireEvent.click(toggle);
+      expect(toggle.getAttribute("aria-pressed")).toBe("true");
+      // The Listen-only chips stay Listen-only.
+      expect(container.querySelector(".caption-blur-btn")).toBeFalsy();
+      expect(container.querySelector(".voice-btn")).toBeFalsy();
+    });
+
     it("still renders transport row in compact mode", () => {
       const { container } = render(LessonPlayer, {
         props: { audio: audioWithNoSections, compact: true },
@@ -375,18 +391,22 @@ describe("LessonPlayer", () => {
       expect(toggle!.textContent).toContain("Off");
     });
 
-    it("clicking the toggle switches between On and Off modes", () => {
+    it("clicking the toggle cycles Off -> On -> Repeat -> Off", () => {
+      // Repeat lesson is the chip's third state (the user's call, 2026-09-29).
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
       const toggle = container.querySelector<HTMLButtonElement>(".hands-free-toggle")!;
-      // Default: Off
-      expect(toggle.textContent).toContain("Off");
-      expect(toggle.textContent).not.toContain("On");
+      const value = () => toggle.querySelector(".chip-value")!.textContent;
+      expect(value()).toBe("Off");
+      expect(toggle.getAttribute("aria-pressed")).toBe("false");
       fireEvent.click(toggle);
-      // Now: On
-      expect(toggle.textContent).toContain("On");
+      expect(value()).toBe("On");
+      expect(toggle.getAttribute("aria-pressed")).toBe("true");
       fireEvent.click(toggle);
-      // Back to Off
-      expect(toggle.textContent).toContain("Off");
+      expect(value()).toBe("Repeat");
+      expect(toggle.getAttribute("aria-pressed")).toBe("true");
+      fireEvent.click(toggle);
+      expect(value()).toBe("Off");
+      expect(toggle.getAttribute("aria-pressed")).toBe("false");
     });
   });
 
@@ -1109,7 +1129,30 @@ describe("LessonPlayer", () => {
       fireEvent.click(toggle);
       expect(localStorage.getItem(HF_KEY)).toBe("on");
       fireEvent.click(toggle);
+      expect(localStorage.getItem(HF_KEY)).toBe("repeat");
+      fireEvent.click(toggle);
       expect(localStorage.getItem(HF_KEY)).toBe("off");
+    });
+
+    it("restores Repeat from storage, and the run then loops instead of handing off", async () => {
+      localStorage.setItem(HF_KEY, "repeat");
+      const onSequenceEnd = vi.fn();
+      const h = mount(onSequenceEnd);
+      await tick();
+      const toggle = h.container.querySelector<HTMLButtonElement>(".hands-free-toggle")!;
+      expect(toggle.querySelector(".chip-value")!.textContent).toBe("Repeat");
+      expect(h.ctrl.handsFree).toBe(true);
+      expect(h.ctrl.repeatLesson).toBe(true);
+    });
+
+    it("cycling from Repeat back to Off clears the loop on the controller", async () => {
+      localStorage.setItem(HF_KEY, "repeat");
+      const h = mount();
+      await tick();
+      fireEvent.click(h.container.querySelector<HTMLButtonElement>(".hands-free-toggle")!);
+      await tick();
+      expect(h.ctrl.handsFree).toBe(false);
+      expect(h.ctrl.repeatLesson).toBe(false);
     });
 
     it("a hands-free run does NOT rewrite the saved English setting", async () => {
@@ -1242,12 +1285,18 @@ describe("LessonPlayer", () => {
       expect(JSON.parse(localStorage.getItem(SEL_KEY)!).enunciation).toBe("natural");
     });
 
-    it("after a resumed restart, turning hands-free off still returns to the saved track", async () => {
+    it("after a resumed restart, turning hands-free off stays on the resumed pass", async () => {
+      // "Where you are is where you are" (the user's call, 2026-09-29). On ->
+      // Repeat -> Off is two taps.
       seed({ section: "slow_speed", position: 42 }, true);
       const h = await mountAndLoad();
-      fireEvent.click(h.container.querySelector<HTMLButtonElement>(".hands-free-toggle")!);
+      const toggle = h.container.querySelector<HTMLButtonElement>(".hands-free-toggle")!;
+      fireEvent.click(toggle);
+      fireEvent.click(toggle);
       await tick();
-      expect(h.ctrl.activeSectionType).toBe("natural_speed");
+      expect(h.ctrl.handsFree).toBe(false);
+      expect(h.ctrl.activeSectionType).toBe("slow_speed");
+      expect(h.ctrl.currentTime).toBe(42);
     });
 
     it("a restart during the key phrases a hand-off started on resumes the key phrases", async () => {
@@ -1299,7 +1348,7 @@ describe("LessonPlayer", () => {
       expect(sessionStorage.getItem(BATON)).toBeNull();
     });
 
-    it("turning hands-free off restores the SAVED track, not the pass it ended on", async () => {
+    it("turning hands-free off stays on the pass it reached, not the saved track", async () => {
       localStorage.setItem(
         SEL_KEY,
         JSON.stringify({ phase: "dialogue", enunciation: "natural", english: "off" }),
@@ -1311,9 +1360,14 @@ describe("LessonPlayer", () => {
       await tick();
       h.ctrl.selectTrack("translated"); // as an advance would
       await tick();
-      fireEvent.click(toggle);
+      fireEvent.click(toggle); // -> Repeat
+      fireEvent.click(toggle); // -> Off
       await tick();
-      expect(h.ctrl.activeSectionType).toBe("natural_speed");
+      expect(h.ctrl.handsFree).toBe(false);
+      expect(h.ctrl.activeSectionType).toBe("translated");
+      // The chips still show the track, and the saved preference is untouched
+      // until the user taps a chip.
+      expect(JSON.parse(localStorage.getItem(SEL_KEY)!).english).toBe("off");
     });
 
     it("the Enunciated chip lights up when hands-free reaches the slow pass", async () => {

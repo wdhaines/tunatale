@@ -8,6 +8,7 @@
 	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
 	import { lessonPlayerPref, pillsForSection } from '$lib/stores/lessonPlayerPref.svelte';
 	import { handsFreePref } from '$lib/stores/handsFreePref.svelte';
+	import type { HandsFreeMode } from '$lib/stores/handsFreePref.svelte';
 	import { playerCollapsedPref } from '$lib/stores/playerCollapsedPref.svelte';
 	import type { EnglishMode } from '$lib/stores/lessonPlayerPref.svelte';
 	import { createPlaybackController } from '$lib/playback/playbackController.svelte';
@@ -231,11 +232,26 @@
 		lessonPlayerPref.set({ phase, enunciation: enunLevel, english: englishMode });
 	}
 
-	// Toggling is a real user choice, so it persists — that is what carries the
-	// mode across the navigation hands-free performs at the end of a run.
+	// Off -> On -> Repeat lesson -> Off. Toggling is a real user choice, so it
+	// persists — that is what carries the mode across the navigation hands-free
+	// performs at the end of a run.
+	const HANDS_FREE_NEXT: Record<HandsFreeMode, HandsFreeMode> = { off: 'on', on: 'repeat', repeat: 'off' };
+	const HANDS_FREE_LABELS: Record<HandsFreeMode, MessageKey> = {
+		off: 'lessonPlayer.off',
+		on: 'lessonPlayer.on',
+		repeat: 'lessonPlayer.handsFree.repeat'
+	};
+	let handsFreeMode: HandsFreeMode = $state('off');
+
+	function applyHandsFreeMode(mode: HandsFreeMode) {
+		handsFreeMode = mode;
+		ctrl.setHandsFree(mode !== 'off');
+		ctrl.setRepeatLesson(mode === 'repeat');
+	}
+
 	function onHandsFreeClick() {
-		const next = !ctrl.handsFree;
-		ctrl.setHandsFree(next);
+		const next = HANDS_FREE_NEXT[handsFreeMode];
+		applyHandsFreeMode(next);
 		handsFreePref.set(next);
 	}
 
@@ -316,7 +332,10 @@
 		// preference nobody picked — which then opened the NEXT lesson in a mode
 		// nobody picked. The pills still follow (the chip must stay truthful);
 		// only the write is suppressed.
-		if (mounted && !ctrl.handsFree) untrack(() => persistSelection());
+		// handsFree is read untracked, so turning hands-free OFF does not re-run
+		// this and save the track the run reached: toggling stays put now
+		// (2026-09-29), and only the user's own chip taps are a preference.
+		if (mounted && !untrack(() => ctrl.handsFree)) untrack(() => persistSelection());
 	});
 
 	// --- Prefetch section URLs ---
@@ -374,17 +393,12 @@
 			englishMode = sel.english;
 			applyTrack();
 
-			// Hands-free is seeded AFTER the saved selection is already the active
-			// track, and that order is load-bearing: setHandsFree(true) captures
-			// the current section as its restore point, so capturing here makes
-			// "hands-free off" return to what the user actually chose rather than
-			// to the Key Phrases the hand-off below jumps to.
 			handsFreePref.init();
 			// Consumed unconditionally — a baton left lying around would fire on
 			// some later, unrelated mount.
 			const handedOff = handsFreePref.consumeHandoff();
 			if (handsFreePref.enabled) {
-				ctrl.setHandsFree(true);
+				applyHandsFreeMode(handsFreePref.mode);
 				if (handedOff) {
 					// Arrived because the previous item's sequence finished: start
 					// this one at the top of the sequence, not on the pass that
@@ -398,10 +412,9 @@
 					// above is the ENTRY track, and the resume's section disagrees with
 					// it on every hands-free restart — which the controller reads as a
 					// stale offset and discards, landing on Natural at 0 (tunatale-muff).
-					// Selecting it AFTER setHandsFree keeps the entry track as the
-					// restore point for "hands-free off"; the mirror will not persist it
-					// because hands-free is on. selectTrack no-ops on a section this
-					// lesson lacks, and the controller then discards the offset itself.
+					// Selected AFTER hands-free is on, so the mirror does not persist it.
+					// selectTrack no-ops on a section this lesson lacks, and the
+					// controller then discards the offset itself.
 					ctrl.selectTrack(ctrl.resumeSection, null, true);
 				}
 			}
@@ -599,22 +612,23 @@
 					<span class="chip-label">{t('lessonPlayer.mic.label')}</span>
 					<span class="chip-value">{voicePref.enabled ? t('lessonPlayer.on') : t('lessonPlayer.off')}</span>
 				</button>
-				<!-- Governs what the physical ⏮⏭ (headphone / car) keys skip — a
-				     different axis from the on-screen transport pills, hence the
-				     headphone marker + dashed treatment to set it apart. -->
-				<button
-					class="hands-free-toggle"
-					aria-pressed={ctrl.handsFree}
-					title={t('lessonPlayer.handsFree.title')}
-					onclick={onHandsFreeClick}
-				>
-					<span class="chip-label">
-						<svg viewBox="0 0 16 16" width="0.85em" height="0.85em" style="vertical-align:-1px"><path d="M8 1.5a5.5 5.5 0 0 0-5.5 5.5v3.5a1.5 1.5 0 0 0 1.5 1.5h1v-4h-2V7a5 5 0 0 1 10 0v2h-2v4h1a1.5 1.5 0 0 0 1.5-1.5V7A5.5 5.5 0 0 0 8 1.5z" fill="currentColor"/></svg>
-						{t('lessonPlayer.handsFree.label')}
-					</span>
-					<span class="chip-value">{ctrl.handsFree ? t('lessonPlayer.on') : t('lessonPlayer.off')}</span>
-				</button>
 			{/if}
+			<!-- Hands-free: whether the lesson plays on by itself when a track
+			     ends (Off / On / Repeat lesson). Shown in Read mode too — reading
+			     while listening (the user's call, 2026-09-29). The headphone
+			     marker + dashed treatment set it apart from the track chips. -->
+			<button
+				class="hands-free-toggle"
+				aria-pressed={handsFreeMode !== 'off'}
+				title={t('lessonPlayer.handsFree.title')}
+				onclick={onHandsFreeClick}
+			>
+				<span class="chip-label">
+					<svg viewBox="0 0 16 16" width="0.85em" height="0.85em" style="vertical-align:-1px"><path d="M8 1.5a5.5 5.5 0 0 0-5.5 5.5v3.5a1.5 1.5 0 0 0 1.5 1.5h1v-4h-2V7a5 5 0 0 1 10 0v2h-2v4h1a1.5 1.5 0 0 0 1.5-1.5V7A5.5 5.5 0 0 0 8 1.5z" fill="currentColor"/></svg>
+					{t('lessonPlayer.handsFree.label')}
+				</span>
+				<span class="chip-value">{t(HANDS_FREE_LABELS[handsFreeMode])}</span>
+			</button>
 		</div>
 	{/if}
 
