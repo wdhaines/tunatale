@@ -17,6 +17,8 @@ exactly the wrong drill for it.
 **Which word means which concept is data**, in each language's ``pronouns.json``;
 this module holds no word of any language. The English keywords below are the
 other half: they are the concept's own names, used to check a card's GLOSS.
+The possessive keywords are where that guard earns its keep twice over, since
+``siya`` and ``niya`` are two words whose pictures differ only by the bags.
 
 **The gloss guard, which carries more weight in this family than the spatial
 one.** A listed pronoun is vetoed by TOKEN, so the router cannot see a sense —
@@ -59,6 +61,26 @@ _CONCEPT_GLOSSES: dict[str, frozenset[str]] = {
     "we_excl": frozenset({"we", "us"}),
     "they_two": frozenset({"they", "them"}),
     "they_many": frozenset({"they", "them"}),
+    # The possessives, which is what this guard is for. A possessive is its
+    # nominative scene plus a bag, so the two halves of this table decide
+    # whether Tagalog `siya` ("he/she") and `niya` ("his/her") are two words on
+    # two pictures or one word drawn twice — and only the card's gloss can say
+    # which. Hence `he` does NOT confirm `third_one_poss` and `me` does NOT
+    # confirm `i_poss`: a nominative gloss is about a different word.
+    "i_poss": frozenset({"my", "mine"}),
+    "you_one_poss": frozenset({"your", "yours"}),
+    "you_two_poss": frozenset({"your", "yours"}),
+    "you_many_poss": frozenset({"your", "yours"}),
+    "he_poss": frozenset({"his"}),
+    "she_poss": frozenset({"her", "hers"}),
+    "third_one_poss": frozenset({"his", "her", "hers"}),
+    "it_poss": frozenset({"its"}),
+    "we_two_poss": frozenset({"our", "ours"}),
+    "we_many_poss": frozenset({"our", "ours"}),
+    "we_incl_poss": frozenset({"our", "ours"}),
+    "we_excl_poss": frozenset({"our", "ours"}),
+    "they_two_poss": frozenset({"their", "theirs"}),
+    "they_many_poss": frozenset({"their", "theirs"}),
 }
 
 _WORD = re.compile(r"[^\W\d_]+")

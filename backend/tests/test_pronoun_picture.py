@@ -16,6 +16,14 @@ the veto is asked about a bare token, so listing a homograph (``de``) takes
 every sense of it off the picture route, which is why the gloss guard below
 exists and why the tables are restricted to words whose main sense is the
 pronoun.
+
+**The possessives ride the same route, and are the reason the gloss guard has to
+keep working.** A possessive is its nominative scene plus a bag in every lit
+referent's hands (tunatale-uy38), so ``siya`` "he/she" and ``niya`` "his/her" are
+two words pointing at two different pictures — and nothing but the card's English
+gloss says which one a ``niya`` is. The enclitics (``ko``, ``mo``, ``ka``,
+``akin``, ``iyo``) are the other half of that decision and stay out of the
+tables; see :data:`_ENCLITICS`.
 """
 
 from __future__ import annotations
@@ -77,6 +85,11 @@ _TABLES: dict[str, dict[str, str]] = {
         "kami": "we_excl",
         "kayo": "you_many",
         "sila": "they_many",
+        "niya": "third_one_poss",
+        "namin": "we_excl_poss",
+        "natin": "we_incl_poss",
+        "ninyo": "you_many_poss",
+        "nila": "they_many_poss",
     },
     "ceb": {
         "ako": "i",
@@ -86,6 +99,13 @@ _TABLES: dict[str, dict[str, str]] = {
         "kami": "we_excl",
         "kamo": "you_many",
         "sila": "they_many",
+        "nako": "i_poss",
+        "nimo": "you_one_poss",
+        "niya": "third_one_poss",
+        "namo": "we_excl_poss",
+        "nato": "we_incl_poss",
+        "ninyo": "you_many_poss",
+        "nila": "they_many_poss",
     },
 }
 
@@ -104,6 +124,23 @@ _CLOSES: tuple[tuple[str, str, str], ...] = (
     ("mi", "sl", "also dative/enclitic '(to) me'"),
     ("ti", "sl", "also dative/enclitic '(to) you'"),
     ("vi", "sl", "also dative/enclitic '(to) us'"),
+)
+
+#: The possessive ENCLITICS, which are not in the tables above and must stay
+#: out of them. Each has a free form carrying the same meaning — ``nako`` "my",
+#: ``nimo`` "your" — and the user's rule, set on ``ka``/``ikaw`` the same day, is
+#: that the enclitic is drilled as a cloze and the FREE FORM gets the picture.
+#: Listing both would give one meaning two pictures and put a ``ko`` on the
+#: cloze route and off it again. These are asserted as *absent from the tables*
+#: rather than through ``_CLOSES``, which asserts they are function words: in
+#: ceb and tl ``pos`` carries no ``PRON``, so ``ko`` was never on the cloze route
+#: to begin with and claiming otherwise would be a false assertion.
+_ENCLITICS: tuple[tuple[str, str, str], ...] = (
+    ("ka", "ceb", "your/yours — and it is in function_words.json's include list, so listing it would be dead data"),
+    ("ko", "ceb", "his/her — the free form `niya` carries the picture"),
+    ("mo", "ceb", "my/our — the free forms `nako`/`namo` carry the picture"),
+    ("akin", "tl", "also the oblique 'to me'"),
+    ("iyo", "tl", "also the oblique 'to you'"),
 )
 
 
@@ -157,10 +194,12 @@ class TestDataFiles:
 
 class TestGlossGuard:
     def test_the_keywords_are_the_briefs(self) -> None:
-        # ORACLE 4, pinned exactly. Whole-word, casefolded matching against a
-        # gloss is the only thing standing between a homograph and a wrong
-        # picture, so the vocabulary it matches on is data, not an implementation
-        # detail.
+        # ORACLE 4 and ORACLE A3, pinned exactly. Whole-word, casefolded matching
+        # against a gloss is the only thing standing between a homograph and a
+        # wrong picture, so the vocabulary it matches on is data, not an
+        # implementation detail. The possessive half is the reason the guard has
+        # to keep working: `siya` and `niya` are different words for "he/she"
+        # and "his/her", and only the gloss says which one a card is.
         assert {c: set(k) for c, k in _CONCEPT_GLOSSES.items()} == {
             "i": {"i", "me"},
             "you_one": {"you"},
@@ -176,6 +215,20 @@ class TestGlossGuard:
             "we_excl": {"we", "us"},
             "they_two": {"they", "them"},
             "they_many": {"they", "them"},
+            "i_poss": {"my", "mine"},
+            "you_one_poss": {"your", "yours"},
+            "you_two_poss": {"your", "yours"},
+            "you_many_poss": {"your", "yours"},
+            "he_poss": {"his"},
+            "she_poss": {"her", "hers"},
+            "third_one_poss": {"his", "her", "hers"},
+            "it_poss": {"its"},
+            "we_two_poss": {"our", "ours"},
+            "we_many_poss": {"our", "ours"},
+            "we_incl_poss": {"our", "ours"},
+            "we_excl_poss": {"our", "ours"},
+            "they_two_poss": {"their", "theirs"},
+            "they_many_poss": {"their", "theirs"},
         }
 
     def test_every_concept_has_keywords(self) -> None:
@@ -202,6 +255,21 @@ class TestGlossGuard:
             ("we_excl", "we, but not you"),
             ("they_two", "the two of them"),
             ("they_many", "they"),
+            # The possessive half, including the real deck's glosses: the
+            # "his / her; by him or her" form is how a gender-neutral `niya`
+            # says which picture it wants.
+            ("i_poss", "my"),
+            ("i_poss", "mine"),
+            ("you_one_poss", "your"),
+            ("you_many_poss", "yours"),
+            ("he_poss", "his"),
+            ("she_poss", "her, hers"),
+            ("third_one_poss", "his / her; by him or her"),
+            ("it_poss", "its"),
+            ("we_excl_poss", "our"),
+            ("we_incl_poss", "ours, including you"),
+            ("they_many_poss", "their"),
+            ("they_two_poss", "theirs, the two of them"),
         ],
     )
     def test_a_gloss_that_names_the_referent_matches(self, concept, gloss) -> None:
@@ -220,6 +288,16 @@ class TestGlossGuard:
             ("he", "she"),
             ("you_one", "young"),
             ("third_one", "it"),  # siya is not glossed "it"
+            # A NOMINATIVE gloss must not confirm a possessive concept: `niya`
+            # glossed "he" is a card about the wrong word, and the free form
+            # `siya` is the one that means it.
+            ("third_one_poss", "he"),
+            ("i_poss", "me"),
+            ("it_poss", "it"),
+            ("he_poss", "him"),
+            ("we_excl_poss", "we"),
+            ("you_one_poss", "you"),
+            ("i_poss", ""),
         ],
     )
     def test_a_gloss_that_does_not_name_the_referent_refuses(self, concept, gloss) -> None:
@@ -245,6 +323,22 @@ class TestDispatch:
             ("kita", "ceb", "we, including you", "we_incl"),
             ("sila", "ceb", "they", "they_many"),
             ("AKO", "ceb", "I", "i"),
+            # The possessives, in both languages. `niya` and `siya` are the pair
+            # the whole possessive family exists for: two words, two pictures,
+            # and only the gloss tells them apart.
+            ("niya", "ceb", "his / her; by him or her", "third_one_poss"),
+            ("nako", "ceb", "my", "i_poss"),
+            ("nimo", "ceb", "your", "you_one_poss"),
+            ("nila", "ceb", "their", "they_many_poss"),
+            ("namo", "ceb", "our", "we_excl_poss"),
+            ("nato", "ceb", "our, including you", "we_incl_poss"),
+            ("ninyo", "ceb", "yours", "you_many_poss"),
+            ("niya", "tl", "his", "third_one_poss"),
+            ("namin", "tl", "our", "we_excl_poss"),
+            ("natin", "tl", "our, including you", "we_incl_poss"),
+            ("ninyo", "tl", "yours", "you_many_poss"),
+            ("nila", "tl", "their", "they_many_poss"),
+            ("NIYA", "tl", "her, hers", "third_one_poss"),
         ],
     )
     def test_a_pronoun_word_is_drawn_as_its_concept(self, word, code, gloss, concept) -> None:
@@ -264,6 +358,17 @@ class TestDispatch:
             ("hus", "no", "house"),  # not a pronoun at all
             ("det", "no", "it"),  # polysemous, deliberately not listed
             ("jaz", "no", "I"),  # right word, wrong language
+            # The possessive guards: a nominative gloss on a possessive word, and
+            # the enclitics whose free forms carry the pictures.
+            ("niya", "ceb", "he"),
+            ("niya", "tl", "she"),
+            ("nako", "ceb", "I"),
+            ("nila", "tl", "they"),
+            ("ko", "ceb", "his"),
+            ("mo", "ceb", "my"),
+            ("ka", "ceb", "your"),
+            ("akin", "tl", "my"),
+            ("iyo", "tl", "your"),
         ],
     )
     def test_anything_else_is_left_on_its_route(self, word, code, gloss) -> None:
@@ -312,6 +417,15 @@ class TestFunctionWordVeto:
     def test_the_deliberate_clozes_stay_clozes(self, word, code, why) -> None:
         assert not is_pronoun_word(word, code), why
         assert is_function_word(word, code, upos="PRON"), why
+
+    @pytest.mark.parametrize(("word", "code", "why"), _ENCLITICS)
+    def test_a_possessive_enclitic_is_not_a_picture_word(self, word, code, why) -> None:
+        # The rule the user set on ka/ikaw the same day: the enclitic is drilled,
+        # the free form gets the picture. Asserted on the TOKEN because that is
+        # the only level at which the choice exists — and `ka` is additionally in
+        # ceb's include list, where a listing would be dead data.
+        assert not is_pronoun_word(word, code), why
+        assert pronoun_picture(word, code, "his") is None
 
     # The pronoun veto is gated on the tag, where the spatial one is not: Norwegian
     # `den` and `de` are also the articles ("den store bilen", "de store husene"),

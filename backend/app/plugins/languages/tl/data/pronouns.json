@@ -1,5 +1,5 @@
 {
-  "_comment": "Personal pronouns drawn as a picture, not searched for and not clozed (tunatale-3rxu, the user 2026-09-28). Each maps a word to a language-neutral concept in app.cards.pronoun_scenes.PRONOUN_CONCEPTS; the picture is a conversation with the referent filled and standing outside the outline, because a pronoun's meaning IS a relation between people and a photo cannot carry one. A word listed here is NOT a function word, whatever `function_words.json` or a POS tag says: app.srs.function_words.is_function_word vetoes it, so a PRON never goes down the case-marker cloze route. The veto is asked about a bare token, so listing a homograph would take EVERY sense of it off the picture route — the picture is therefore only drawn when the card's English gloss names the referent (app.cards.pronoun_picture.gloss_matches). Map only words whose MAIN sense is the personal pronoun. `siya` maps to third_one and carries NO gender mark: no language says whether it is a man or a woman, and a mark would teach a fact the word does not carry. `tayo` is the inclusive we and `kami` the exclusive one, which is a distinction a drawing can show (the other is outside the outline) and so is drawn rather than collapsed.",
+  "_comment": "Personal pronouns drawn as a picture, not searched for and not clozed (tunatale-3rxu, the user 2026-09-28). Each maps a word to a language-neutral concept in app.cards.pronoun_scenes.PRONOUN_CONCEPTS; the picture is a conversation with the referent filled and standing outside the outline, because a pronoun's meaning IS a relation between people and a photo cannot carry one. A word listed here is NOT a function word, whatever `function_words.json` or a POS tag says: app.srs.function_words.is_function_word vetoes it, so a PRON never goes down the case-marker cloze route. The veto is asked about a bare token, so listing a homograph would take EVERY sense of it off the picture route — the picture is therefore only drawn when the card's English gloss names the referent (app.cards.pronoun_picture.gloss_matches). Map only words whose MAIN sense is the personal pronoun. `siya` maps to third_one and carries NO gender mark: no language says whether it is a man or a woman, and a mark would teach a fact the word does not carry. `tayo` is the inclusive we and `kami` the exclusive one, which is a distinction a drawing can show (the other is outside the outline) and so is drawn rather than collapsed. The `_poss` words are the FREE FORMS of the possessive (tunatale-uy38): the same conversation scene as their nominative, with a bag carried by every lit referent, which is what keeps `siya` ('he/she') and `niya` ('his/her') two different words on two different pictures — nothing but the card's gloss tells them apart, so a `niya` glossed 'he' gets no picture at all. `ko` ('his/her') and `mo` ('my/our') are NOT here on purpose: each is an enclitic whose free form above already carries the same meaning, so the enclitic is drilled as a cloze and the free form gets the picture — listing both would put one meaning on two pictures and take the enclitic off the cloze route and back on again. `akin` and `iyo` are excluded for the same reason plus one: they are also the oblique 'to me'/'to you', which is a different case the cloze route exists to drill.",
   "words": {
     "ako": "i",
     "ikaw": "you_one",
@@ -7,6 +7,11 @@
     "kayo": "you_many",
     "sila": "they_many",
     "siya": "third_one",
-    "tayo": "we_incl"
+    "tayo": "we_incl",
+    "niya": "third_one_poss",
+    "namin": "we_excl_poss",
+    "natin": "we_incl_poss",
+    "ninyo": "you_many_poss",
+    "nila": "they_many_poss"
   }
 }

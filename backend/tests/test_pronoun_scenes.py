@@ -30,10 +30,23 @@ concept is matched against the brief's table. The discrimination tests at the
 end then feed those same predicates *mutated* renders and require them to
 reject them, so the checker is proven to discriminate rather than merely to
 agree with the renderer that produced its input.
+
+**A possessive is not a scene, it is a difference.** Tagalog ``siya`` ("he/she")
+and ``niya`` ("his/her") are the same conversation, the same people, the same
+who-is-filled — so a possessive concept is its nominative render with a bag added
+to every lit referent and NOTHING else changed, and the tests check that as a
+*difference*: strip the bags and the two renders must be byte-identical, with one
+exception that is itself asserted (the cat has no hands, so its bag stands on
+the ground beside it and the group has to move to stay centred). A bag is found
+by its corner radius, not by its fill, because a bag in the WRONG COLOUR still
+has to be found for the contrast check to reject it — keyed on the fill it would
+vanish, and "no bags" would read as a scene with no bags rather than as a
+palette mistake.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 import xml.etree.ElementTree as ET
 from typing import NamedTuple
@@ -56,7 +69,7 @@ _SVG = "{http://www.w3.org/2000/svg}"
 # count of everybody inside would be 2 for almost every concept and would carry
 # none of the distinctions the table exists to pin.
 
-_ROW_BASE: dict[str, object] = {"cats": 0, "cats_lit": 0, "pale_outlined": True}
+_ROW_BASE: dict[str, object] = {"cats": 0, "cats_lit": 0, "pale_outlined": True, "bags": 0}
 
 _EXPECTED: dict[str, dict[str, object]] = {
     # concept    speaker lit | listeners drawn/lit | others drawn/lit | extra
@@ -190,6 +203,52 @@ _EXPECTED: dict[str, dict[str, object]] = {
     },
 }
 
+# ── The fourteen possessives ───────────────────────────────────────────────
+# A possessive is its nominative scene plus a bag in the hands of every LIT
+# referent, so its row is the nominative row and one number: how many bags.
+# The counts are transcribed here rather than derived from the row above, so
+# that a scene which quietly lost a referent could not agree with a table
+# computed from itself.
+
+_BAGS: dict[str, int] = {
+    "i": 1,  # the speaker
+    "you_one": 1,  # the one listener
+    "he": 1,
+    "she": 1,
+    "third_one": 1,
+    "it": 1,  # the cat, whose bag stands on the ground beside it
+    "we_two": 2,  # speaker and listener
+    "we_many": 3,  # speaker, listener, other
+    "we_incl": 2,
+    "we_excl": 2,  # speaker and other
+    "you_two": 2,  # two listeners
+    "you_many": 3,
+    "they_two": 2,  # two others
+    "they_many": 3,
+}
+
+#: The nominative concepts, and the possessive ids built from them by suffix —
+#: the one rule the whole family follows, so the pair is written once.
+_NOMINATIVES: tuple[str, ...] = (
+    "i",
+    "you_one",
+    "he",
+    "she",
+    "third_one",
+    "it",
+    "we_two",
+    "we_many",
+    "we_incl",
+    "we_excl",
+    "you_two",
+    "you_many",
+    "they_two",
+    "they_many",
+)
+_POSSESSIVES: tuple[str, ...] = tuple(f"{concept}_poss" for concept in _NOMINATIVES)
+
+_EXPECTED.update({f"{concept}_poss": {**_EXPECTED[concept], "bags": count} for concept, count in _BAGS.items()})
+
 
 # ── Path reading ────────────────────────────────────────────────────────────
 # Two things come out of path data, and both are numbers rather than ids: the
@@ -299,6 +358,7 @@ class Figure(NamedTuple):
     fill: str
     stroke: str
     body_top: float  # topmost y of the arc-bodied path beneath the head
+    body_bottom: float  # its bottommost y — the ground, since a body stands on it
     inside: bool
     symbol: str | None  # "m" | "f" — the mark's DIRECTION, not an id
     mark_cx: float | None  # the mark circle's x, for the "sits over it" check
@@ -319,10 +379,26 @@ class Cat(NamedTuple):
     cx: float
     fill: str
     inside: bool
+    #: The x-range of each shape the cat is MADE OF, in viewBox units. The tail
+    #: is not one of them: it is the one piece with no fill, a stroked line
+    #: rather than a shape, so a bag is never checked against it.
+    filled: tuple[tuple[float, float], ...]
 
     @property
     def lit(self) -> bool:
         return self.fill == _LIT
+
+
+class Bag(NamedTuple):
+    """One bag, found by its corner radius and placed in viewBox units."""
+
+    cx: float
+    left: float
+    right: float
+    top: float
+    bottom: float
+    fill: str
+    stroke: str
 
 
 class Picture(NamedTuple):
@@ -336,6 +412,7 @@ class Picture(NamedTuple):
     bubbles: int
     figures: list[Figure]
     cats: list[Cat]
+    bags: list[Bag]
     extent: tuple[float, float]
     root: ET.Element
 
@@ -374,6 +451,17 @@ def _mark_kind(subpaths: list[list[tuple[float, float]]]) -> str | None:
     return None
 
 
+def _digest(svg: bytes) -> str:
+    """A short, stable fingerprint of a render's exact bytes.
+
+    Twelve hex digits is 48 bits. This is a *change* detector for a table read
+    off history, not an integrity claim about an adversary, and a collision
+    would have to also produce a renderer that draws the same scene differently
+    — at which point the properties elsewhere in this file are what would fire.
+    """
+    return hashlib.sha256(svg).hexdigest()[:12]
+
+
 def _parse(svg: bytes) -> Picture:
     root = _root(svg)
     _, _, width, height = (float(v) for v in root.get("viewBox").split())
@@ -410,6 +498,7 @@ def _parse(svg: bytes) -> Picture:
             continue
         cx = dx + _num(el, "cx")
         if _arc_bodied(below.get("d")):
+            _, body_top, _, body_bottom = _paths(below.get("d"))[1]
             figures.append(
                 Figure(
                     cx=cx,
@@ -417,7 +506,8 @@ def _parse(svg: bytes) -> Picture:
                     r=_num(el, "r"),
                     fill=el.get("fill"),
                     stroke=el.get("stroke"),
-                    body_top=_paths(below.get("d"))[1][1],
+                    body_top=body_top,
+                    body_bottom=body_bottom,
                     inside=panel[0] < cx < panel[1],
                     symbol=None,
                     mark_cx=None,
@@ -428,10 +518,13 @@ def _parse(svg: bytes) -> Picture:
         # same size as a person's and whose body is drawn with curves instead.
         # Its tail and body reach past the head, so the extent is the group's.
         reach = [_num(el, "cx") - _num(el, "r"), _num(el, "cx") + _num(el, "r")]
+        filled = [(dx + _num(el, "cx") - _num(el, "r"), dx + _num(el, "cx") + _num(el, "r"))]
         for part in children[max(0, index - 3) : index]:
             if part.tag == f"{_SVG}path":
                 x0, _, x1, _ = _paths(part.get("d"))[1]
                 reach += [x0, x1]
+                if part.get("fill") != "none":
+                    filled.append((dx + x0, dx + x1))
         cats.append(
             Cat(
                 left=dx + min(reach),
@@ -439,8 +532,28 @@ def _parse(svg: bytes) -> Picture:
                 cx=cx,
                 fill=el.get("fill"),
                 inside=panel[0] < cx < panel[1],
+                filled=tuple(filled),
             )
         )
+
+    # A bag is the one rounded-corner rect in the picture — the conversation
+    # outline rounds at 16, the bubble at 14, the bag at 3. Keyed on the SHAPE
+    # rather than the fill, deliberately: a bag in the wrong colour is still a
+    # bag, and a checker that looked for the approved fill would report NO bags
+    # and pass a palette mistake as a scene with nothing in its hands.
+    bags = [
+        Bag(
+            cx=dx + _num(el, "x") + _num(el, "width") / 2,
+            left=dx + _num(el, "x"),
+            right=dx + _num(el, "x") + _num(el, "width"),
+            top=_num(el, "y"),
+            bottom=_num(el, "y") + _num(el, "height"),
+            fill=el.get("fill"),
+            stroke=el.get("stroke"),
+        )
+        for el in children
+        if el.tag == f"{_SVG}rect" and el.get("rx") == "3"
+    ]
 
     # A mark belongs to the head it is geometrically ABOVE, not to whatever it
     # happens to be drawn after: the brief's rule is "a circle directly above
@@ -465,6 +578,11 @@ def _parse(svg: bytes) -> Picture:
         edges += [figure.cx - figure.r, figure.cx + figure.r]
     for cat in cats:
         edges += [cat.left, cat.right]
+    # The bags are part of the drawn group, so they are part of what "centred"
+    # measures — the cat's bag is what moves that scene off centre, and a
+    # centring check that ignored it would be checking the wrong extent.
+    for bag in bags:
+        edges += [bag.left, bag.right]
     return Picture(
         width=width,
         height=height,
@@ -476,6 +594,7 @@ def _parse(svg: bytes) -> Picture:
         bubbles=len(bubbles),
         figures=figures,
         cats=cats,
+        bags=bags,
         extent=(min(edges), max(edges)),
         root=root,
     )
@@ -536,6 +655,7 @@ def _row(p: Picture) -> dict[str, object]:
         "cats": len(p.cats),
         "cats_lit": sum(1 for c in p.cats if c.lit),
         "pale_outlined": all(f.pale_outlined for f in inside + outside),
+        "bags": len(p.bags),
     }
 
 
@@ -545,25 +665,76 @@ def _matches(p: Picture, expected: dict[str, object]) -> bool:
 
 # ── The table, read row by row ─────────────────────────────────────────────
 
+#: The pairs the drawing is SUPPOSED to collapse, one nominative and one
+#: possessive. Asserted both ways: the renders are identical, and they are the
+#: only identical rows in the family.
+_COLLAPSED: tuple[tuple[str, str], ...] = (("we_two", "we_incl"), ("we_two_poss", "we_incl_poss"))
+
+#: The concepts that carry a gender mark, and which one. ``he_poss``/``she_poss``
+#: are in it because a possessive is its nominative scene plus bags: the mark
+#: rides along with the referent, and "his" drawn without the ♂ would be a
+#: different man.
+_GENDER_MARK: dict[str, str] = {"he": "m", "she": "f", "he_poss": "m", "she_poss": "f"}
+_GENDERED = tuple(_GENDER_MARK)
+
+#: The concepts whose one referent is the cat and not a person.
+_CAT_ONLY = ("it", "it_poss")
+
 
 def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
-    assert PRONOUN_CONCEPTS == (
-        "i",
-        "you_one",
-        "he",
-        "she",
-        "third_one",
-        "it",
-        "we_two",
-        "we_many",
-        "we_incl",
-        "we_excl",
-        "you_two",
-        "you_many",
-        "they_two",
-        "they_many",
-    )
+    assert PRONOUN_CONCEPTS == _NOMINATIVES + _POSSESSIVES
     assert set(_EXPECTED) == set(PRONOUN_CONCEPTS)
+    assert _POSSESSIVES[0] == "i_poss" and _POSSESSIVES[-1] == "they_many_poss"
+
+
+#: SHA-256 (truncated) of every render as it stood BEFORE the possessives were
+#: added, taken from ``git show HEAD:backend/app/cards/pronoun_scenes.py``.
+#:
+#: This table is a **pin, not a measurement** — nothing here describes a
+#: property a reader could have predicted, and a digest is not one. It exists
+#: because the brief makes adding fourteen concepts an *additive* change, and
+#: "additive" is not a thing the rest of this file can see.
+#:
+#: ⚠️ The relative test below cannot catch a regression in the base renderer.
+#: Oracle A4 compares ``<c>_poss`` against ``<c>``: if a change to the shared
+#: figure/outline/bubble code moved both, the two still agree with each other
+#: and the test is green over a picture every existing card ships. Only an
+#: oracle taken from *before the change* can tell the two apart, and the only
+#: such artifact in a repository is history.
+#:
+#: ``we_two``/``we_incl`` share a digest because the pair renders identically by
+#: design (``_COLLAPSED``) — one row fewer here is the collapse, not an omission.
+_BASE_RENDERS_AT_HEAD: dict[str, str] = {
+    "i": "9c40bf84971d",
+    "you_one": "0f2d8e5294b5",
+    "he": "be9ebb5ad3df",
+    "she": "3d9f884dc58c",
+    "third_one": "9f9af7a1d14c",
+    "it": "c2938fdf9209",
+    "we_two": "953517cafe4a",
+    "we_many": "83be6f263a7a",
+    "we_incl": "953517cafe4a",
+    "we_excl": "6057b23d5aa4",
+    "you_two": "e2f4c1df78c3",
+    "you_many": "fbff1be152f8",
+    "they_two": "7570f97e263c",
+    "they_many": "5df66a7f9448",
+}
+
+
+@pytest.mark.parametrize("concept", _NOMINATIVES)
+def test_adding_the_possessives_did_not_move_a_single_existing_picture(concept: str) -> None:
+    """The fourteen pre-existing renders are byte-for-byte what they were.
+
+    Every other test in this file reads a *property* out of the SVG, and a
+    property is the wrong instrument for this claim: a figure shifted 4 units
+    left still draws the right number of people in the right fills at a
+    sensible centring, so every property test here would stay green over a
+    picture that had visibly moved. Only the bytes can say no.
+    """
+    assert _digest(render_pronoun_svg(concept)) == _BASE_RENDERS_AT_HEAD[concept], (
+        f"{concept} no longer renders as it did before the possessives were added"
+    )
 
 
 @pytest.mark.parametrize("concept", PRONOUN_CONCEPTS)
@@ -573,20 +744,23 @@ def test_the_concept_draws_exactly_the_people_its_name_claims(concept: str) -> N
     assert _matches(picture, _EXPECTED[concept]), f"{concept} renders as {_row(picture)}"
 
 
-def test_the_two_words_that_need_no_distinction_render_the_same_picture() -> None:
+@pytest.mark.parametrize(("first", "second"), _COLLAPSED)
+def test_the_two_words_that_need_no_distinction_render_the_same_picture(first: str, second: str) -> None:
     """``we_two`` and ``we_incl`` are identical ON PURPOSE — no language has both.
 
     A contrast the drawing cannot show is not a distinction worth drawing, and
     separate art would invent a difference a learner could not see. Asserted
     byte-for-byte so that splitting them later is a decision somebody makes on
-    purpose rather than an accident that survives.
+    purpose rather than an accident that survives. The same collapse holds of
+    their possessives, which is the same decision once more.
     """
-    assert render_pronoun_svg("we_two") == render_pronoun_svg("we_incl")
+    assert render_pronoun_svg(first) == render_pronoun_svg(second)
 
 
 def test_every_other_pair_of_concepts_renders_different_bytes() -> None:
     """Identical bytes would point two words at one picture."""
-    assert len({render_pronoun_svg(c) for c in PRONOUN_CONCEPTS}) == len(PRONOUN_CONCEPTS) - 1
+    distinct = {render_pronoun_svg(c) for c in PRONOUN_CONCEPTS}
+    assert len(distinct) == len(PRONOUN_CONCEPTS) - len(_COLLAPSED)
 
 
 # ── The speaker, the outline, and the referents ────────────────────────────
@@ -650,7 +824,7 @@ def test_a_pale_person_carries_the_outline_colour(concept: str) -> None:
             assert figure.stroke == picture.panel_stroke
 
 
-@pytest.mark.parametrize("concept", ["he", "she"])
+@pytest.mark.parametrize("concept", _GENDERED)
 def test_the_gender_mark_sits_over_the_other_and_says_which_gender(concept: str) -> None:
     """The mark is over the OUTSIDE, lit figure, and its direction is the gender."""
     picture = _parse(render_pronoun_svg(concept))
@@ -658,25 +832,27 @@ def test_the_gender_mark_sits_over_the_other_and_says_which_gender(concept: str)
     assert len(marked) == 1
     host = marked[0]
     assert not host.inside and host.lit
-    assert host.symbol == ("m" if concept == "he" else "f")
+    assert host.symbol == _GENDER_MARK[concept]
     assert host.mark_cx is not None and abs(host.mark_cx - host.cx) <= 2, "the circle is above ITS head"
 
 
-@pytest.mark.parametrize("concept", [c for c in PRONOUN_CONCEPTS if c not in ("he", "she")])
+@pytest.mark.parametrize("concept", [c for c in PRONOUN_CONCEPTS if c not in _GENDERED])
 def test_no_other_concept_draws_a_gender_mark(concept: str) -> None:
     """``third_one`` is exactly the concept that must NOT guess: no language
     says whether its ``siya`` is a man or a woman, and a mark would teach a
-    fact the word does not carry."""
+    fact the word does not carry. ``third_one_poss`` is the same argument one
+    word along: ``niya`` is just as gender-neutral as ``siya``."""
     assert all(f.symbol is None for f in _parse(render_pronoun_svg(concept)).figures)
 
 
 def test_only_it_draws_a_cat_and_the_cat_is_lit() -> None:
     """The one non-person referent: a lit cat standing outside, facing in."""
     for concept in PRONOUN_CONCEPTS:
-        assert len(_parse(render_pronoun_svg(concept)).cats) == (1 if concept == "it" else 0)
-    picture = _parse(render_pronoun_svg("it"))
-    assert picture.cats[0].lit
-    assert not _outside(picture), "'it' has no person outside the outline"
+        assert len(_parse(render_pronoun_svg(concept)).cats) == (1 if concept in _CAT_ONLY else 0)
+    for concept in _CAT_ONLY:
+        picture = _parse(render_pronoun_svg(concept))
+        assert picture.cats[0].lit
+        assert not _outside(picture), f"'{concept}' has no person outside the outline"
 
 
 def test_the_cat_is_not_mistaken_for_a_person() -> None:
@@ -791,12 +967,167 @@ def test_refuses_a_concept_it_cannot_draw(concept: str) -> None:
         render_pronoun_svg(concept)
 
 
+# ── Possessives: the same scene, and a bag in every lit pair of hands ──────
+#
+# A possessive is not a second cast and not a second layout. It is its
+# nominative render with a bag added to every lit referent and nothing else
+# changed — which is exactly what keeps Tagalog `siya` ("he/she") and `niya`
+# ("his/her") two different words pointing at two different pictures, and the
+# property worth testing is a DIFFERENCE rather than a geometry: strip the bags
+# and the two renders must be byte-identical.
+
+#: The bag palette the user approved, 2026-09-28. Held as a literal here rather
+#: than imported from the renderer, because "the renderer agrees with itself" is
+#: not what pins a colour — the first mockup's orange was 1.40:1 on the lit body
+#: it hangs against, which is a number no structural test would have complained
+#: about.
+_BAG_FILL = "#ffd23f"
+_BAG_STROKE = "#6b4a00"
+
+#: A bag is two elements: the handle arc above it and the rounded rect. The rect
+#: is the one with ``rx="3"`` (the outline rounds at 16, the bubble at 14); the
+#: handle is the one path stroked at 2.4, a width nothing else in these pictures
+#: uses. Both are stripped together — a bag missing its handle is still a bag.
+_BAG_ELEMENT = re.compile(r'<rect [^>]*\brx="3"[^>]*/>|<path [^>]*\bstroke-width="2\.4"[^>]*/>')
+
+
+def _strip_bags(svg: bytes) -> bytes:
+    """*svg* with every bag element removed, and nothing else touched."""
+    text = svg.decode()
+    assert _BAG_ELEMENT.search(text), "this render has no bag to strip"
+    return _BAG_ELEMENT.sub("", text).encode()
+
+
+def _translate(svg: bytes) -> str:
+    return next(el.get("transform") for el in _root(svg).iter() if el.tag == f"{_SVG}g" and el.get("transform"))
+
+
+def _retarget(svg: bytes, other: bytes) -> bytes:
+    """*svg* carrying the group translate *other* has."""
+    mine, theirs = _translate(svg), _translate(other)
+    assert svg.decode().count(mine) == 1, "one group, one translate"
+    return svg.decode().replace(mine, theirs).encode()
+
+
+def _hung_on(picture: Picture, bag: Bag) -> Figure | None:
+    """The lit body *bag* hangs on, or ``None`` if it hangs on nobody.
+
+    "On" is a POSITION, read off the two centres: a bag belongs to exactly one
+    figure, and that figure is a filled one. A bag over a pale listener has no
+    owner, which is a different card from "my".
+    """
+    hosts = [f for f in picture.figures if abs(f.cx - bag.cx) <= 1]
+    return hosts[0] if len(hosts) == 1 and hosts[0].lit else None
+
+
+def _in_front_of(bag: Bag, host: Figure) -> bool:
+    """A carried bag is in front of the body, not hovering over the head."""
+    return host.body_top <= bag.top and bag.bottom <= host.body_bottom
+
+
+@pytest.mark.parametrize("concept", _POSSESSIVES)
+def test_every_lit_referent_carries_exactly_one_bag(concept: str) -> None:
+    """One bag per lit referent — the whole difference from the nominative scene.
+
+    The count is read off the markup and compared with the transcribed number
+    rather than with whatever the renderer happened to emit. WHICH figure holds
+    it is a separate check (:func:`_hung_on`), because a bag on the wrong figure
+    leaves the count right.
+    """
+    picture = _parse(render_pronoun_svg(concept))
+    lit = [f for f in picture.figures if f.lit] + [c for c in picture.cats if c.lit]
+    assert len(picture.bags) == len(lit) == _BAGS[concept[: -len("_poss")]]
+
+
+@pytest.mark.parametrize("concept", [c for c in _POSSESSIVES if c != "it_poss"])
+def test_each_bag_hangs_on_the_body_it_belongs_to(concept: str) -> None:
+    """Centred on a LIT head, inside that body's own y-range, one bag per figure."""
+    picture = _parse(render_pronoun_svg(concept))
+    for bag in picture.bags:
+        host = _hung_on(picture, bag)
+        assert host is not None, f"a bag at x={bag.cx:.1f} hangs on no lit body"
+        assert host.body_bottom == pytest.approx(picture.ground, abs=0.01), "a body stands on the ground"
+        assert _in_front_of(bag, host), f"the bag at y={bag.top:.1f} is not in front of its body"
+
+
+@pytest.mark.parametrize("concept", [c for c in _POSSESSIVES if c != "it_poss"])
+def test_a_possessive_is_its_nominative_scene_with_bags_and_nothing_else(concept: str) -> None:
+    """Strip the bags and the two renders are the same bytes.
+
+    Derived by stripping, not by trusting the code path: a renderer that
+    quietly re-laid-out the possessive scene would pass a test that only compared
+    the two calls, and would show up here as a difference.
+    """
+    nominative = render_pronoun_svg(concept[: -len("_poss")])
+    assert _strip_bags(render_pronoun_svg(concept)) == nominative
+    assert _translate(render_pronoun_svg(concept)) == _translate(nominative)
+
+
+def test_the_cats_possessive_moves_its_group_and_nothing_else() -> None:
+    """The one scene that cannot be a bare addition, and its exception is proved.
+
+    A bag wider than the cat stands beside it, so the group has to be centred a
+    little wider — a different translate. Stripping the bags leaves exactly that
+    and nothing else: unequal first, equal once the translate is put back.
+    """
+    possessive, nominative = render_pronoun_svg("it_poss"), render_pronoun_svg("it")
+    stripped = _strip_bags(possessive)
+    assert _translate(possessive) != _translate(nominative)
+    assert stripped != nominative
+    assert _retarget(stripped, nominative) == nominative
+
+
+def test_the_cats_bag_stands_on_the_ground_clear_of_the_cat() -> None:
+    """The one referent with no hands: the bag is ON the ground, to its right.
+
+    Right, because the cat faces left into the conversation. Clear of every
+    shape the cat is made of, so the two do not read as one object. The tail is
+    not one of those shapes — it is a stroked line with no fill — which is
+    recorded in ``Cat.filled`` rather than assumed here.
+    """
+    picture = _parse(render_pronoun_svg("it_poss"))
+    assert len(picture.bags) == 1
+    bag, cat = picture.bags[0], picture.cats[0]
+    assert abs(bag.bottom - picture.ground) <= 0.5, (
+        f"the bag's bottom is at y={bag.bottom}, the ground at {picture.ground}"
+    )
+    assert bag.left > cat.cx, "the bag is to the RIGHT of the cat"
+    for left, right in cat.filled:
+        assert bag.left > right or bag.right < left, f"the bag overlaps the cat's shape at x={left}..{right}"
+    # And clear of the tail too, stroke included (width 5): an overlapping bag hides
+    # the tail's tip and reads as the cat holding it (orchestrator audit, 2026-09-28).
+    assert bag.left > cat.right + 2.5, f"the bag (left x={bag.left}) covers the cat's tail (reach x={cat.right})"
+
+
+@pytest.mark.parametrize("concept", _POSSESSIVES)
+def test_the_bag_is_painted_in_the_approved_palette(concept: str) -> None:
+    """The user rejected the first mockup's orange; the two colours are pinned."""
+    for bag in _parse(render_pronoun_svg(concept)).bags:
+        assert (bag.fill, bag.stroke) == (_BAG_FILL, _BAG_STROKE)
+
+
+@pytest.mark.parametrize("concept", _POSSESSIVES)
+def test_every_bag_is_drawn_on_top_of_the_figures(concept: str) -> None:
+    """A bag painted under a body would be a body wearing a bag, not carrying one."""
+    group = next(el for el in _root(render_pronoun_svg(concept)).iter() if el.tag == f"{_SVG}g")
+    children = list(group)
+    bags = [i for i, el in enumerate(children) if el.tag == f"{_SVG}rect" and el.get("rx") == "3"]
+    handles = [i for i, el in enumerate(children) if el.tag == f"{_SVG}path" and el.get("stroke-width") == "2.4"]
+    heads = [i for i, el in enumerate(children) if el.tag == f"{_SVG}circle" and el.get("r") == "12"]
+    assert len(bags) == len(handles), "every bag has its handle"
+    assert min(bags) > max(heads), "every head is painted before every bag"
+    assert min(handles) > max(heads), "and every handle with it"
+
+
 # ── Contrast: the measured palette, recomputed from the markup ─────────────
 
 #: The brief's measured WCAG ratios. Each is RE-COMPUTED from the fills and
 #: strokes the SVG actually carries, held to >= 3.0, and additionally held to
 #: within 0.01 of the figure measured before this renderer was written — a
 #: palette drifting toward the background would clear a bare floor for a while.
+#: The three "bag" rows are the possessive's own colours; a scene with no bags
+#: has no such roles and is skipped, and the reachability test below is what
+#: stops them from quietly never being measured at all.
 _MEASURED: dict[tuple[str, str], float] = {
     ("lit", "bg"): 6.23,
     ("lit-stroke", "bg"): 9.80,
@@ -804,12 +1135,15 @@ _MEASURED: dict[tuple[str, str], float] = {
     ("line", "pale"): 3.50,
     ("accent", "bg"): 4.46,
     ("line", "bubble"): 4.08,
+    ("bag", "lit"): 4.57,
+    ("bag-stroke", "bg"): 7.60,
+    ("bag-stroke", "bag"): 5.58,
 }
 
 
-def _palette(concept: str) -> dict[str, str]:
+def _palette(svg: bytes) -> dict[str, str]:
     """The palette roles actually present in this picture, off its attributes."""
-    root = _root(render_pronoun_svg(concept))
+    root = _root(svg)
     roles = {
         "bg": root[0].get("fill"),
         "bubble": next(el for el in root.iter() if el.tag == f"{_SVG}rect" and el.get("fill") == "#ffffff").get("fill"),
@@ -822,14 +1156,28 @@ def _palette(concept: str) -> dict[str, str]:
     marks = {el.get("stroke") for el in root.iter() if el.get("stroke") == _ACCENT}
     if marks:
         roles["accent"] = marks.pop()
+    # The bag, found the same way the picture's own tests find it: by its shape.
+    # A recoloured bag is still the bag, so the contrast check gets to see it.
+    bag = next((el for el in root.iter() if el.tag == f"{_SVG}rect" and el.get("rx") == "3"), None)
+    if bag is not None:
+        roles["bag"] = bag.get("fill")
+        roles["bag-stroke"] = bag.get("stroke")
     return roles
+
+
+def _contrast_floor(svg: bytes) -> float:
+    """The worst ratio among the pairs this picture actually uses."""
+    roles = _palette(svg)
+    return min(_contrast(roles[one], roles[two]) for one, two in _MEASURED if one in roles and two in roles)
 
 
 @pytest.mark.parametrize("concept", PRONOUN_CONCEPTS)
 def test_every_colour_pair_in_this_picture_is_legible(concept: str) -> None:
     """The pale figures are why this exists: at 1.10:1 on the background an
-    unlit person is a shape nobody can see, which no structural test catches."""
-    roles = _palette(concept)
+    unlit person is a shape nobody can see, which no structural test catches.
+    The bag is why it grew: the first mockup's orange was 1.40:1 on the lit
+    body it hangs against, and the user asked for better."""
+    roles = _palette(render_pronoun_svg(concept))
     for (one, two), measured in _MEASURED.items():
         if one not in roles or two not in roles:
             continue
@@ -841,7 +1189,10 @@ def test_every_colour_pair_in_this_picture_is_legible(concept: str) -> None:
 def test_every_measured_pair_is_still_reachable_in_some_picture() -> None:
     """Otherwise a colour could be dropped and the floor test would never know."""
     present = {
-        (one, two) for concept in PRONOUN_CONCEPTS for (one, two) in _MEASURED if {one, two} <= set(_palette(concept))
+        (one, two)
+        for concept in PRONOUN_CONCEPTS
+        for (one, two) in _MEASURED
+        if {one, two} <= set(_palette(render_pronoun_svg(concept)))
     }
     assert present == set(_MEASURED)
 
@@ -850,7 +1201,7 @@ def test_a_pale_person_and_the_outline_share_one_structural_colour() -> None:
     """``pale-stroke`` and ``line`` are the same colour wherever both appear, so
     the palette holds exactly one structural grey."""
     for concept in PRONOUN_CONCEPTS:
-        roles = _palette(concept)
+        roles = _palette(render_pronoun_svg(concept))
         if "pale-stroke" in roles:
             assert roles["pale-stroke"] == roles["line"]
 
@@ -880,10 +1231,15 @@ def test_neighbour_concepts_are_told_apart_by_their_own_row(first: str, second: 
     assert not _matches(picture, _EXPECTED[second]), f"the {first} render also shows {second}"
 
 
-def test_the_only_duplicate_row_is_the_deliberate_one() -> None:
-    """Otherwise the list above could be vacuous — and ``we_two``/``we_incl``
-    are the one pair the drawing is *supposed* to collapse."""
-    assert _SAME == [("we_incl", "we_two")]
+def test_the_only_duplicate_rows_are_the_deliberate_ones() -> None:
+    """Otherwise the list above could be vacuous — ``we_two``/``we_incl`` and
+    their possessives are the pairs the drawing is *supposed* to collapse.
+
+    Compared unordered: the list above walks the concepts in render order and so
+    hands the two members back the other way round from the table above.
+    """
+    assert {frozenset(pair) for pair in _SAME} == {frozenset(pair) for pair in _COLLAPSED}
+    assert len(_SAME) == len(_COLLAPSED)
 
 
 # ── The probes: each checker, shown to reject a real near-miss ─────────────
@@ -914,6 +1270,29 @@ def _person_markup(cx: int, fill: str, stroke: str) -> str:
 #: ``stroke-linecap`` the diagonal brings with it, so swapping only ``d`` would
 #: leave a mark that is neither.
 _MARK_ELEMENT = re.compile(rf'<path d="[^"]*" stroke="{re.escape(_ACCENT)}"[^>]*/>')
+
+
+def _bag_markup(cx: int, top: int) -> str:
+    """A whole bag, in the markup the renderer emits, for splicing.
+
+    Written out rather than captured from a render, so a probe says where the
+    bag is instead of asserting whatever the builder happened to put there. The
+    handle's 5-unit stem under a 6-radius arc is the approved mockup's own
+    geometry, and it is written out here for the same reason: a checker that
+    read its expectations out of the renderer would pass a renderer that grew a
+    sixth unit of stem.
+    """
+    return (
+        f'<path d="M{cx - 6} {top} v-5 a6 6 0 0 1 12 0 v5" fill="none" '
+        f'stroke="{_BAG_STROKE}" stroke-width="2.4"/>'
+        f'<rect x="{cx - 12}" y="{top}" width="24" height="18" rx="3" fill="{_BAG_FILL}" '
+        f'stroke="{_BAG_STROKE}" stroke-width="2"/>'
+    )
+
+
+def _own_bag(svg: bytes, bag: Bag) -> tuple[int, int]:
+    """A bag's centre and top in the render's own coordinates, for splicing."""
+    return round(bag.cx - _dx(svg)), round(bag.top)
 
 
 def _mark_path(svg: bytes) -> str:
@@ -1037,3 +1416,96 @@ def test_the_checker_rejects_a_cat_mistaken_for_a_listener() -> None:
     assert after["cats"] == 0
     assert after["outside"] == 1
     assert not _matches(_parse(mutated), _EXPECTED["it"])
+
+
+# ── The bag probes: the same five near-misses, in the possessive half ──────
+#
+# Each of these is a mutation a renderer could plausibly ship and a learner
+# would have no way to report: a bag in the wrong hands, a missing bag, a bag
+# that vanishes into the body it hangs on, a bag floating where nothing is, and
+# the palette the user already rejected once. Every one is a real render's own
+# markup, spliced.
+
+
+def test_the_checker_rejects_a_bag_handed_to_somebody_it_does_not_belong_to() -> None:
+    """``i_poss`` with the bag passed to the pale listener: "his", not "my".
+
+    The count is untouched — one bag, one lit referent — so only the OWNERSHIP
+    check can catch it, which is the point of reading the position.
+    """
+    svg = render_pronoun_svg("i_poss")
+    picture = _parse(svg)
+    listener = next(f for f in picture.figures if not f.lit)
+    assert _hung_on(picture, picture.bags[0]) is not None
+    mutated = _mutate(svg, _bag_markup(*_own_bag(svg, picture.bags[0])), _bag_markup(_own(svg, listener.cx), 162))
+    after = _parse(mutated)
+    assert _row(after)["bags"] == 1, "the count still holds; only who holds it changed"
+    assert _hung_on(after, after.bags[0]) is None
+    assert _hung_on(picture, picture.bags[0]) is not None, "and the real render's bag does have an owner"
+    # The oracle ROW is deliberately not asked to catch this one: it counts bags,
+    # and a bag in the wrong hands is still one bag. Ownership is a position, so
+    # it is a predicate of its own — and this probe is the reason it exists.
+
+
+def test_the_checker_rejects_a_lit_referent_carrying_no_bag() -> None:
+    """``they_many_poss`` with one bag gone: "their", short one referent.
+
+    The scene is untouched — three lit others, as before — so nothing but the
+    count can see it.
+    """
+    svg = render_pronoun_svg("they_many_poss")
+    picture = _parse(svg)
+    assert (len(picture.bags), len([f for f in picture.figures if f.lit])) == (3, 3)
+    mutated = _mutate(svg, _bag_markup(*_own_bag(svg, picture.bags[-1])), "")
+    after = _parse(mutated)
+    assert _row(after)["bags"] == 2
+    assert len([f for f in after.figures if f.lit]) == 3, "only a bag is missing, not a referent"
+    assert not _matches(after, _EXPECTED["they_many_poss"])
+
+
+def test_the_contrast_check_rejects_the_bag_the_user_already_rejected() -> None:
+    """The first mockup's orange, back again: 1.40:1 on the body it hangs on.
+
+    The bag is still a bag, so it is still found — a checker that looked for the
+    approved fill would report no bags and wave this through.
+    """
+    svg = render_pronoun_svg("i_poss")
+    assert _contrast_floor(svg) >= 3.0
+    mutated = _mutate(svg, f'fill="{_BAG_FILL}"', 'fill="#b8572f"')
+    after = _parse(mutated)
+    assert len(after.bags) == 1, "a recoloured bag is a wrong bag, not no bag"
+    assert _contrast(_palette(mutated)["bag"], _LIT) == pytest.approx(1.40, abs=0.01)
+    assert _contrast_floor(mutated) < 3.0
+
+
+def test_the_checker_rejects_a_bag_hovering_above_the_head() -> None:
+    """A bag carried at head height: still on the right figure, still one bag.
+
+    Ownership survives the move, so the check that has to catch it is the one
+    that reads the bag's y-range against the body's — which is why that is a
+    separate predicate and not a consequence of the x-match.
+    """
+    svg = render_pronoun_svg("i_poss")
+    cx, _ = _own_bag(svg, _parse(svg).bags[0])
+    assert _in_front_of(_parse(svg).bags[0], _hung_on(_parse(svg), _parse(svg).bags[0]))
+    mutated = _mutate(svg, _bag_markup(cx, 162), _bag_markup(cx, 104))
+    after = _parse(mutated)
+    host = _hung_on(after, after.bags[0])
+    assert host is not None, "it is still on the lit figure; only its height moved"
+    assert host.body_top > after.bags[0].bottom
+    assert not _in_front_of(after.bags[0], host)
+
+
+def test_the_checker_rejects_the_cats_bag_floating_off_the_ground() -> None:
+    """``it_poss`` with the bag at carrying height instead of standing height.
+
+    Still right of the cat and still clear of it, so again only the ground check
+    can see it.
+    """
+    svg = render_pronoun_svg("it_poss")
+    cx, top = _own_bag(svg, _parse(svg).bags[0])
+    assert top == 180
+    mutated = _mutate(svg, _bag_markup(cx, top), _bag_markup(cx, top - 18))
+    after = _parse(mutated)
+    assert after.bags[0].left > after.cats[0].cx, "it is still to the right of the cat"
+    assert abs(after.bags[0].bottom - after.ground) > 0.5

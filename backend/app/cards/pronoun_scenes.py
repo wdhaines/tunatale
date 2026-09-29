@@ -47,6 +47,19 @@ both, and a contrast the drawing cannot show is not a distinction worth drawing.
 They are asserted byte-identical so that splitting them later is a decision
 somebody makes on purpose rather than an accident that survives.
 
+**A possessive is not a second cast; it is this scene with a bag added to every
+lit referent** (tunatale-uy38, the user 2026-09-28). Tagalog ``siya`` ("he/she")
+and ``niya`` ("his/her") are the same conversation with the same filled figures,
+so if the possessive drew its own layout the two words would be told apart by
+anything but the bags — and a learner could not say which difference they were
+being asked to see. One layout and one addition is therefore the whole design:
+the render is its nominative counterpart plus :func:`_bag` per lit referent, and
+the tests assert that as a *difference* (strip the bags, get the other render
+back byte for byte) rather than trusting the code path. The one referent with no
+hands is the cat, whose bag therefore stands **on the ground** to the right of
+it, clear of the animal — the single case where the group also has to move to
+stay centred, and the single exception the byte-for-byte test allows.
+
 Nothing here is per-language. The concept ids are the *picture's* key, and a
 language's own words are mapped onto them by the caller — which is where the
 language lives, and what keeps this module clear of one.
@@ -63,6 +76,9 @@ from app.cards.spatial_scenes import _ACCENT, _BOX_STROKE
 #: this list is refused rather than approximated, because a picture that puts the
 #: referent inside the conversation when the card asked for "he" is worse than no
 #: picture, because it is confidently wrong.
+#:
+#: The fourteen possessives follow their nominatives, in the same order, and are
+#: the SAME SCENE plus a bag per lit referent — see :func:`render_pronoun_svg`.
 PRONOUN_CONCEPTS: tuple[str, ...] = (
     "i",
     "you_one",
@@ -78,12 +94,40 @@ PRONOUN_CONCEPTS: tuple[str, ...] = (
     "you_many",
     "they_two",
     "they_many",
+    "i_poss",
+    "you_one_poss",
+    "he_poss",
+    "she_poss",
+    "third_one_poss",
+    "it_poss",
+    "we_two_poss",
+    "we_many_poss",
+    "we_incl_poss",
+    "we_excl_poss",
+    "you_two_poss",
+    "you_many_poss",
+    "they_two_poss",
+    "they_many_poss",
 )
 
-#: The outline of a *filled* figure. The only colour new in this module: the
-#: pale fill's own outline would be invisible against it, so a lit figure needs
-#: a dark one to read as a solid shape rather than a silhouette.
+#: The suffix that turns a concept into its possessive. One suffix, one rule: the
+#: scene is looked up under the nominative name, so there is exactly one layout
+#: in this module and "his" cannot drift away from "he".
+_POSSESSIVE = "_poss"
+
+#: The outline of a *filled* figure. The only colour new in this module for the
+#: nominative cast: the pale fill's own outline would be invisible against it, so
+#: a lit figure needs a dark one to read as a solid shape rather than a silhouette.
 _REF_STROKE = "#1f406f"
+
+#: The bag a lit referent carries in a possessive scene. The user rejected the
+#: first mockup's orange: it was 1.40:1 against the filled body it hangs on, and
+#: a bag nobody can see is not a picture of possession. These are 4.57:1 on the
+#: body, 7.60:1 on the background and 5.58:1 on the bag's own fill — all
+#: comfortably past the 3.0 the tests hold every colour pair in these pictures
+#: to, and recomputed from the markup rather than asserted here.
+BAG_FILL = "#ffd23f"
+BAG_STROKE = "#6b4a00"
 
 # ── One frame for every concept ─────────────────────────────────────────────
 # The same 260x220 the spatial pictures use, so a deck mixes them without the
@@ -138,6 +182,28 @@ _MARK_CROSS = 8
 _MARK_ARM = 4
 _MARK_ARROW = 6
 _MARK_DIAGONAL = _MARK_R * 0.7071
+
+#: A bag: this wide and tall, rounded at this corner, with a handle arc of this
+#: radius standing this far above it. It is as wide as a body and a shade wider
+#: than a head, which is what makes "the lit referent is carrying this" read
+#: without a label. The handle's RISE and its arc's RADIUS are different
+#: numbers on purpose — the approved mockup drew a 6-radius arc over a 5-unit
+#: stem, and the markup is transcribed rather than tidied.
+_BAG_W = 24
+_BAG_H = 18
+_BAG_RX = 3
+_BAG_HANDLE_R = 6
+_BAG_HANDLE_DY = 5
+
+#: How high a CARRIED bag hangs: its bottom this far above the ground, which puts
+#: it across the referent's chest rather than at their feet.
+_BAG_CARRY_DY = 36
+
+#: The cat's bag, which has no hands to hold it: this far to the right of the
+#: animal, standing on the ground rather than hanging (its top is the ground
+#: minus one bag height), and — being wider than the cat — the reason the
+#: ``it_poss`` group is centred wider than the ``it`` one.
+_CAT_BAG_DX = 48
 
 
 def _n(value: float) -> str:
@@ -234,6 +300,23 @@ def _bubble(x: float) -> str:
     )
 
 
+def _bag(x: float, y: float) -> str:
+    """A bag hanging at ``(x, y)`` — the one thing a possessive render adds.
+
+    The handle goes down first and the body over it, the same document-order
+    convention the rest of this module uses, and the caller appends these after
+    every figure: a bag is always painted ON TOP of the person carrying it, so
+    it reads as held rather than as a box behind them.
+    """
+    r, dy = _BAG_HANDLE_R, _BAG_HANDLE_DY
+    return (
+        f'<path d="M{_n(x - r)} {_n(y)} v-{dy} a{r} {r} 0 0 1 {2 * r} 0 v{dy}" fill="none" '
+        f'stroke="{BAG_STROKE}" stroke-width="2.4"/>'
+        f'<rect x="{_n(x - _BAG_W / 2)}" y="{_n(y)}" width="{_BAG_W}" height="{_BAG_H}" '
+        f'rx="{_BAG_RX}" fill="{BAG_FILL}" stroke="{BAG_STROKE}" stroke-width="2"/>'
+    )
+
+
 class _Scene(NamedTuple):
     """One concept, as who is in it and who is the referent.
 
@@ -277,6 +360,15 @@ def render_pronoun_svg(concept: str) -> bytes:
     quietly in the wrong place is a thing a unit test fails rather than a thing a
     learner is misled by.
 
+    A possessive (``<concept>_poss``) is the SAME scene with a bag added to every
+    lit referent. The cast is looked up under the nominative name rather than
+    being laid out twice, so the two renders cannot drift apart: strip the bags
+    and this one is the other one byte for byte, and the tests assert exactly
+    that by stripping rather than by comparing the two calls. The ``it_poss``
+    exception is the cat's bag, which has no hands to hold it — it stands on the
+    ground beside the animal, and being wider than the cat it widens the group so
+    the cast stays centred.
+
     Raises ``ValueError`` for a concept this module cannot draw, rather than
     emitting a near-miss: a picture showing the referent inside the conversation
     when the card asked for "he" is worse than no picture, because it is
@@ -286,7 +378,8 @@ def render_pronoun_svg(concept: str) -> bytes:
         raise ValueError(
             f"{concept!r} is not a renderable pronoun concept; expected one of {', '.join(PRONOUN_CONCEPTS)}"
         )
-    scene = _SCENES[concept]
+    possessive = concept.endswith(_POSSESSIVE)
+    scene = _SCENES[concept[: -len(_POSSESSIVE)] if possessive else concept]
     # A listener is always drawn even when none is the referent: "we, and not
     # them" needs an inside to be outside of.
     listeners = max(1, sum(1 for role in scene.lit if role.startswith("L")))
@@ -298,6 +391,14 @@ def render_pronoun_svg(concept: str) -> bytes:
     # does not put the cast off to one side. Widths are the figures' own reach:
     # a cat's tail is the widest thing in any of these scenes.
     right = outside_x[-1] + (_GAP_CAT if scene.it_cat else _BODY_HALF + 2) if outside_x else panel_right
+    # Every lit referent's own x — which is where its bag goes, since a bag is
+    # carried and therefore rides inside the reach the cast is already centred on.
+    lit_x = ([_SPEAKER_X] if "S" in scene.lit else []) + [x for i, x in enumerate(inside_x) if f"L{i}" in scene.lit]
+    lit_x += [x for x in outside_x if not scene.it_cat]
+    if possessive and scene.it_cat:
+        # The one reach a bag adds: the cat's is wider than the cat is, so the
+        # group is centred on the pair of them rather than on the cat alone.
+        right = outside_x[-1] + _CAT_BAG_DX + _BAG_W / 2 + 2
     dx = (_W - right) / 2
 
     parts = [
@@ -312,6 +413,14 @@ def render_pronoun_svg(concept: str) -> bytes:
     parts += [_person(x, f"L{i}" in scene.lit, scene.markers.get(f"L{i}")) for i, x in enumerate(inside_x)]
     for i, x in enumerate(outside_x):
         parts.append(_cat(x) if scene.it_cat else _person(x, True, scene.markers.get(f"O{i}")))
+    if possessive:
+        # Last, so every bag is painted over every figure: one hanging at chest
+        # height in each lit referent's hands, or — for the cat, which has no
+        # hands — one standing on the ground to its right.
+        if scene.it_cat:
+            parts.append(_bag(outside_x[-1] + _CAT_BAG_DX, _G - _BAG_H))
+        else:
+            parts += [_bag(x, _G - _BAG_CARRY_DY) for x in lit_x]
     svg = (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {_W} {_H}" width="{_W}" height="{_H}">'
         f'<rect x="0" y="0" width="{_W}" height="{_H}" fill="{_BG}"/>'
