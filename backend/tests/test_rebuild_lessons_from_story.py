@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -439,7 +440,9 @@ def _seed_drifted(tmp_path: Path) -> ContentStore:
 
     That is the real corpus: on 2026-09-29 the live day-11 rebuild changed 67
     key-phrase texts (170 -> 172 phrases) and none in the other six sections.
-    The drift is simulated by editing one stored key-phrase chunk.
+    The drift is simulated the way it really arrives: the drill's phrase COUNT
+    changes (one stored buildup chunk more than today's builder emits), which
+    an L2 respelling alone would not do — voices_only tolerates that one.
     """
     store = ContentStore(str(tmp_path / "content.sqlite"))
     store.save_curriculum(
@@ -455,7 +458,7 @@ def _seed_drifted(tmp_path: Path) -> ContentStore:
     lesson = build_lesson_from_story(_story(), language=_pre_ucpg_language())
     kp = next(s for s in lesson.sections if s.section_type.value == "key_phrases")
     l2 = next(p for p in kp.phrases if p.language_code == _LANG)
-    l2.text = l2.text + "?"
+    kp.phrases.insert(kp.phrases.index(l2), replace(l2, text=l2.text + "?"))
     store.save_lesson("lesson-day-1", "cur-1", 1, lesson)
     return store
 
@@ -544,3 +547,49 @@ class TestVoicesOnly:
         _run(store, monkeypatch, capsys, "--go")
 
         assert [p.text for p in _section(store, "key_phrases").phrases] != before
+
+
+def _seed_l2_drift(tmp_path: Path) -> ContentStore:
+    """A dialogue section whose NORWEGIAN text today's builders would respell.
+
+    The live laptop venv does exactly this: its enunciated pass re-splits
+    'forsvare' as 'for, svare' (2026-09-29), in all three slow sections, while
+    every role and every English line is unchanged. Simulated on one slow L2 line.
+    """
+    store = _seed_drifted(tmp_path)
+    lesson = store.get_lesson("lesson-day-1")
+    slow = next(s for s in lesson.sections if s.section_type.value == "slow_translated")
+    l2 = next(p for p in slow.phrases if p.language_code == _LANG)
+    l2.text = "for, " + l2.text
+    store.update_lesson_data("lesson-day-1", lesson)
+    return store
+
+
+class TestVoicesOnlyL2Drift:
+    _record = staticmethod(TestGo._record)
+
+    def test_a_section_with_drifted_l2_text_still_gets_the_english_cast(self, tmp_path, monkeypatch, capsys):
+        """A voice is a function of ROLE, never of the L2 wording, so L2 drift must not block it."""
+        store = _seed_l2_drift(tmp_path)
+        self._record(monkeypatch, store, [])
+
+        _run(store, monkeypatch, capsys, "--go", "--voices-only")
+
+        by_text = {p.text: p.voice_id for p in _section(store, "slow_translated").phrases if p.language_code == "en"}
+        assert by_text["Thank you."] == get_language(_LANG).tts_en_voice_map["female-2"]
+
+    def test_the_drifted_l2_text_is_kept(self, tmp_path, monkeypatch, capsys):
+        store = _seed_l2_drift(tmp_path)
+        before = [p.text for p in _section(store, "slow_translated").phrases]
+        self._record(monkeypatch, store, [])
+
+        _run(store, monkeypatch, capsys, "--go", "--voices-only")
+
+        assert [p.text for p in _section(store, "slow_translated").phrases] == before
+
+    def test_the_plan_does_not_call_it_kept(self, tmp_path, monkeypatch, capsys):
+        store = _seed_l2_drift(tmp_path)
+
+        _rc, out = _run(store, monkeypatch, capsys, "--dry-run", "--voices-only")
+
+        assert "kept stored text: key_phrases)" in out

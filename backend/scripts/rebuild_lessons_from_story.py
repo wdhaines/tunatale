@@ -129,20 +129,27 @@ def voices_only(stored: Lesson, rebuilt: Lesson) -> tuple[Lesson, list[str]]:
     text-identical. A voice change that the user is judging BY EAR must not
     arrive with different drills in it (tunatale-ucpg).
 
-    So, per section: when the rebuilt section says the same thing — same texts,
-    languages and roles, phrase for phrase — its voices are copied onto the
-    stored phrases. When it does not, the stored section is KEPT and only its
-    narrator lines move to the new narrator, because that is the one voice that
-    can be reassigned without the builder: it is every English phrase whose
-    voice is the lesson's old narrator.
+    So, per section: when the rebuilt section lines up with the stored one —
+    same languages and roles, phrase for phrase, and the same ENGLISH text —
+    its voices are copied onto the stored phrases, whose text is kept. L2 text
+    is deliberately not compared: a voice is a function of the role, never of
+    the L2 wording, and the live laptop venv respells enunciated L2 ('forsvare'
+    -> 'for, svare', 2026-09-29) in all three slow sections while every role
+    and English line is unchanged. When a section does not line up (key-phrase
+    drills whose count changed), it is KEPT and only its narrator lines move to
+    the new narrator, the one voice reassignable without the builder: every
+    English phrase whose voice is the lesson's old narrator.
     """
+
+    def shape(section: Section) -> list[tuple[str, str | None, str | None]]:
+        return [(p.language_code, p.role, p.text if p.language_code == "en" else None) for p in section.phrases]
+
     by_type = {s.section_type: s for s in rebuilt.sections}
     kept: list[str] = []
     sections: list[Section] = []
     for ss in stored.sections:
         rs = by_type.get(ss.section_type)
-        shape = [(p.text, p.language_code, p.role) for p in ss.phrases]
-        if rs is not None and shape == [(p.text, p.language_code, p.role) for p in rs.phrases]:
+        if rs is not None and shape(ss) == shape(rs):
             phrases = [replace(sp, voice_id=rp.voice_id) for sp, rp in zip(ss.phrases, rs.phrases, strict=True)]
         else:
             kept.append(ss.section_type.value)
