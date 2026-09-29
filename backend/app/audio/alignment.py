@@ -185,7 +185,7 @@ def resample_to_model_rate(samples: np.ndarray, rate: int, target: int = MODEL_S
     so any DOWNsample through it aliases — audibly, and silently.
 
     *target* is a parameter rather than the constant because the delivery path
-    (``render_service._transcode_to_delivery``) needs the section files' rate,
+    (``render_service._read_title_pcm``) needs the lesson's assembly rate,
     not the alignment model's. Default preserves every existing caller.
     """
     if rate == target:

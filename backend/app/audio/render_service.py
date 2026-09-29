@@ -10,7 +10,7 @@ import tempfile
 import uuid
 import weakref
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, Collection
+from collections.abc import Awaitable, Callable, Collection, Iterable, Iterator
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -22,132 +22,13 @@ from app.audio.alignment import resample_to_model_rate
 from app.audio.cues import Cue, CueTiming, build_cue_manifest
 from app.audio.paths import resolve_audio_path
 from app.audio.ports import TTSExhausted
-from app.audio.transcode import CODEC_EXT, encode_audio
+from app.audio.transcode import CODEC_EXT, encode_audio_stream
 from app.config import settings
 from app.generation.section_builder import SECTION_TITLES
 from app.models.lesson import SectionType
 from app.storage.store import ContentStore
 
 logger = logging.getLogger(__name__)
-
-
-# How far a concatenated file's duration may sit from the sum of its inputs
-# before the join is treated as broken. Measured on product Opus, not guessed:
-# real drift is **+0.0065s** — the output runs a hair LONGER than the sum — on
-# both a 2-file and a 7-file concat, and it does not accumulate with piece count
-# (6 boundaries would be 120ms if it did). The smallest entry that can go
-# missing is a 3.0s inter-section boundary, so this bound sits ~77x above the
-# observed noise and 6x below the smallest real loss.
-#
-# Deliberately generous, because this check runs on the render path and a false
-# positive would block every render — an outage worse than the bug it guards.
-# Deliberately two-sided, because the two measured failures push in OPPOSITE
-# directions: a missing entry truncates, while a heterogeneous-codec entry
-# (an mp3 among Opus) blows the output timestamps up to 32434s from 3s of input.
-_CONCAT_DURATION_TOLERANCE_S = 0.5
-
-
-def _concat_stream_copy(file_paths: list[Path], output_path: Path) -> None:
-    """Concatenate media files byte-for-byte via ffmpeg's concat demuxer, ``-c copy``.
-
-    Codec-agnostic despite what it is usually handed: under
-    ``audio_delivery_codec == "wav"`` every input here is WAV. The precondition
-    is not the codec, it is that all inputs share stream parameters exactly
-    (codec, sample rate, channels).
-    The output is a valid Ogg/Opus file. No re-encoding occurs — every packet
-    is copied verbatim, so the concatenated file's audio is bit-identical to the
-    concatenation of the inputs' decoded audio.
-
-    Raises ``RuntimeError`` if ffmpeg exits non-zero, if any input cannot be
-    probed, **or** if the joined file's duration does not match the sum of its
-    inputs. Those last two are not belt-and-braces: ffmpeg exits **0** on the
-    failure that matters here, so the return code alone cannot see it.
-    """
-    if not file_paths:
-        raise ValueError("concat requires at least one file")
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    if len(file_paths) == 1:
-        output_path.write_bytes(file_paths[0].read_bytes())
-        return
-
-    # ⚠️ The concat demuxer resolves a RELATIVE entry against the LIST FILE's
-    # own directory, not the process CWD — and the list file is written next to
-    # the output. So a path that is perfectly valid from the caller's CWD can
-    # resolve somewhere else entirely, and does: the four truncated Norwegian
-    # lessons (tunatale-c7tx) held ``output/audio/<uuid>.opus`` in
-    # ``audio_files.file_path`` while the list file sat in
-    # ``backend/output/audio/``. Absolute entries remove the question.
-    resolved = [fp.resolve() for fp in file_paths]
-
-    # Probed BEFORE ffmpeg runs, for two reasons. It names the unusable input —
-    # "which section is broken?" is the question an operator actually has, and
-    # ffmpeg's own stderr is thrown away on the exit-0 path. And it is the
-    # expected total the postcondition below compares against.
-    expected_s = 0.0
-    for fp in resolved:
-        try:
-            expected_s += _read_audio_duration(fp)
-        except RuntimeError as exc:
-            raise RuntimeError(f"concat input is unreadable and would be silently dropped: {fp} ({exc})") from exc
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", dir=str(output_path.parent), delete=False) as concat_list:
-        for fp in resolved:
-            concat_list.write(f"file '{fp}'\n")
-        concat_list_path = concat_list.name
-
-    try:
-        proc = subprocess.run(
-            [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                # ⚠️ Without -y, ffmpeg asks "Overwrite? [y/N]", reads EOF, prints
-                # "Not overwriting - exiting" — and EXITS 0, having written
-                # nothing. A third way for this call to fail silently, found by
-                # the postcondition below rather than by reading the code. Every
-                # caller here writes to a fresh uuid path so it is not biting
-                # today; -y makes the intent explicit instead of accidental.
-                "-y",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                concat_list_path,
-                "-c",
-                "copy",
-                str(output_path),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(f"ffmpeg concat failed ({proc.returncode}): {proc.stderr}")
-    finally:
-        Path(concat_list_path).unlink(missing_ok=True)
-
-    # ⚠️ A zero exit is NOT proof the join is whole. Measured directly with real
-    # Opus files and this exact argv (tunatale-c7tx): when a MID-list entry is
-    # unopenable, ffmpeg logs "Impossible to open" plus "Error during demuxing",
-    # returns **0**, and writes a file truncated at that entry. Input #0 is the
-    # only position that exits non-zero, which is why the existing
-    # returncode check — true, and insufficient — let four Norwegian lessons
-    # ship with 267s of audio under a 1400s caption timeline.
-    #
-    # An existence preflight would not be enough either: an entry that EXISTS
-    # and holds garbage truncates exactly the same way, at exit 0. Duration is
-    # the only signal that covers both, since stderr is captured above and
-    # discarded on the success path.
-    actual_s = _read_audio_duration(output_path)
-    if abs(actual_s - expected_s) > _CONCAT_DURATION_TOLERANCE_S:
-        output_path.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"ffmpeg concat produced a file that does not match its inputs (it exited 0): "
-            f"{output_path.name} decoded to {actual_s:.2f}s but its {len(resolved)} inputs "
-            f"sum to {expected_s:.2f}s. ffmpeg's stderr was: {proc.stderr.strip() or '(empty)'}"
-        )
 
 
 # Map from slow section type → the structural-twin section type whose L2 line
@@ -401,67 +282,132 @@ async def _render_lesson_audio(
     }
 
 
-def _read_audio_duration(path: Path) -> float:
-    """Read the duration of an audio file in seconds via ffprobe.
+def _read_title_pcm(src: Path, rate: int) -> np.ndarray:
+    """Decode *src* to mono float32 at *rate*.
 
-    Raises ``RuntimeError`` if ffprobe fails or the duration is invalid.
+    The TTS hands back MP3 at its own rate whatever the caller names the file,
+    and the lesson is assembled as ONE stream at the assembly rate, so the
+    title has to be converted before it can sit in it.
+
+    Downmix FIRST so the resample is single-channel, then hand the resample to
+    ``resample_to_model_rate`` — its docstring already rejects hand-rolled
+    resamplers, and np.interp has no anti-aliasing filter and aliases on any
+    downsample. This is the body the old ``_transcode_to_delivery`` carried,
+    minus the encode: the title no longer round-trips through the delivery
+    codec on its way into the lesson.
+    """
+    raw, src_rate = sf.read(str(src), dtype="float32", always_2d=True)
+    mono = raw.mean(axis=1).astype("float32")
+    return resample_to_model_rate(mono, src_rate, rate).reshape(-1, 1).astype("float32")
+
+
+def _decode_section_pcm(src: Path, rate: int) -> np.ndarray:
+    """Decode *src* to mono float32 at *rate* as raw ``f32le`` from ffmpeg.
+
+    ffmpeg rather than soundfile because the inputs are Opus, and rather than
+    a second encode because a section that has already been encoded does not
+    need to be encoded again to join a stream.
+
+    Raises ``RuntimeError`` if the file cannot be decoded, **or** if it decodes
+    to no samples at all. Both are loud on purpose. A stored ``file_path`` that
+    no longer resolves, and a row holding a file that was truncated or never
+    finished, each used to reach the concat demuxer and each used to come out
+    the other side as a lesson quietly missing a section (tunatale-c7tx): the
+    join swallowed the failure, because a mid-list entry that cannot be opened
+    is not an error ffmpeg reports — it exits **0** and truncates. The empty
+    case exits 0 too, which is why the length check is not folded into the
+    return-code check.
     """
     proc = subprocess.run(
         [
-            "ffprobe",
-            "-v",
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
             "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(path),
+            "-i",
+            str(src),
+            "-ac",
+            "1",
+            "-ar",
+            str(rate),
+            "-f",
+            "f32le",
+            "pipe:1",
         ],
         capture_output=True,
-        text=True,
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"ffprobe failed ({proc.returncode}): {proc.stderr}")
-    try:
-        return float(proc.stdout.strip())
-    except ValueError as e:
-        raise RuntimeError(f"invalid duration from ffprobe: {proc.stdout.strip()!r}") from e
+        raise RuntimeError(
+            f"ffmpeg could not decode a lesson section ({proc.returncode}): {src} "
+            f"({proc.stderr.decode(errors='replace').strip()})"
+        )
+    pcm = np.frombuffer(proc.stdout, dtype="<f4")
+    if pcm.size == 0:
+        raise RuntimeError(f"ffmpeg decoded a lesson section to no samples: {src}")
+    return pcm.astype("float32").reshape(-1, 1)
 
 
-def _transcode_to_delivery(src: Path, dest: Path, rate: int) -> None:
-    """Re-encode *src* into the delivery codec at *rate*, mono.
+def _lesson_pcm_pieces(
+    piece_descriptions: list[str],
+    title_path: Path,
+    section_paths: list[Path],
+    boundary_frames: int,
+    rate: int,
+    piece_ms: list[int],
+) -> Iterator[np.ndarray]:
+    """Yield the full lesson's PCM one piece at a time, in layout order.
 
-    Every input to the concat demuxer must share stream parameters exactly. The
-    TTS hands back MP3 whatever the filename says, so its output has to be
-    normalised before it can sit beside the Opus section files.
+    A generator, not a list: a lesson is minutes of audio and each piece is
+    decoded when the encoder asks for it, so peak memory is one section rather
+    than the lesson — the same reason ``encode_audio_stream`` exists.
+
+    *piece_ms* is appended to as each piece is yielded, carrying that piece's
+    ``round(n_samples * 1000 / rate)``. It is the only measurement of how long
+    anything is, by design: the manifest's timing has to describe the samples
+    the encoder received, and the files those samples came from are not the
+    file that came out.
+
+    Nothing is decoded ahead. Piece k+1 does not exist until the consumer asks
+    for it, which is what makes a missing or unreadable section fail at its own
+    seam instead of part-way into a multi-minute encode, and it is observable
+    from outside — see the laziness test in the reassembly tests.
     """
-    # Downmix FIRST so the resample is single-channel, then hand the resample to
-    # ffmpeg via the helper whose docstring already rejects hand-rolled
-    # resamplers — np.interp has no anti-aliasing filter and aliases on any
-    # downsample.
-    raw, src_rate = sf.read(str(src), dtype="float32", always_2d=True)
-    mono = raw.mean(axis=1).astype("float32")
-    samples = resample_to_model_rate(mono, src_rate, rate).reshape(-1, 1).astype("float32")
-    if settings.audio_delivery_codec == "wav":
-        sf.write(str(dest), samples, rate, subtype="PCM_16")
-        return
-    dest.write_bytes(encode_audio(samples, rate, settings.audio_delivery_codec, settings.audio_delivery_bitrate))
+    # ONE shared silence buffer for every boundary. It is written out on the
+    # spot and never retained, so allocating it per boundary would cost a
+    # transient allocation of a 3-second buffer for nothing.
+    boundary = np.zeros((boundary_frames, 1), dtype="float32")
+    for description in piece_descriptions:
+        if description == "title":
+            samples = _read_title_pcm(title_path, rate)
+        elif description == "boundary":
+            samples = boundary
+        else:
+            samples = _decode_section_pcm(section_paths[int(description.split("_")[1])], rate)
+        piece_ms.append(round(samples.shape[0] * 1000 / rate))
+        yield samples
 
 
-def _write_silence(path: Path, duration_ms: int, rate: int) -> None:
-    """Write *duration_ms* of silence in the delivery codec.
+def _write_full_lesson_pcm(path: Path, pieces: Iterable[np.ndarray], rate: int) -> None:
+    """Write *pieces* to *path* as ONE continuous file — never joined first.
 
-    Must match the section files' stream parameters EXACTLY — same codec, rate,
-    channel count and bitrate — or ffmpeg's concat demuxer refuses the copy. The
-    rate is passed in from the freshly rendered section rather than assumed, and
-    the buffer is mono because that is what the renderer produces.
+    ⚠️ ONE encode, not a join of already-encoded parts. A stream-copied Opus
+    join is not sample-preserving: each piece's encoder pre-skip and final-frame
+    padding survive inside the joined stream, so every seam adds about one
+    Opus frame of decoded audio — measured at +20 ms per seam, cumulative, and
+    this layout has one boundary per section. ``encode_audio_stream``'s
+    docstring carries the same warning and the render path has always acted on
+    it; this is the reassembly path doing the same thing.
+
+    WAV is the streaming soundfile write ``LessonRenderer._write_audio_stream``
+    uses: soundfile writes incrementally through an open handle, so the PCM
+    never has to be held whole on this path either.
     """
-    frames = int(round(rate * duration_ms / 1000))
-    samples = np.zeros((frames, 1), dtype="float32")
     if settings.audio_delivery_codec == "wav":
-        sf.write(str(path), samples, rate, subtype="PCM_16")
+        with sf.SoundFile(str(path), "w", samplerate=rate, channels=1, subtype="PCM_16") as out:
+            for samples in pieces:
+                out.write(samples)
         return
-    path.write_bytes(encode_audio(samples, rate, settings.audio_delivery_codec, settings.audio_delivery_bitrate))
+    encode_audio_stream(pieces, rate, settings.audio_delivery_codec, settings.audio_delivery_bitrate, path)
 
 
 def _cues_from_relative(lesson, rel_cues: list[tuple[int, int, int]], section_idx: int, rate: int) -> list[Cue]:
@@ -492,13 +438,25 @@ async def reassemble_lesson_audio(
     """Rebuild a lesson's audio by re-rendering the requested sections.
 
     Every section named in *section_types* is re-rendered; every other section's
-    file is reused byte-for-byte and the full lesson is stitched with ffmpeg's
-    concat demuxer under ``-c copy``, so no audio outside the requested sections
-    is re-synthesized OR re-encoded (tunatale-1d85). The title is
-    re-synthesized — one TTS call per lesson for the lesson title, plus one per
-    re-rendered section title, since the TTS cache is keyed (voice, rate, text)
-    and a renamed title misses — because it is not persisted separately from the
-    full-lesson file.
+    file is reused byte-for-byte, so no audio outside the requested sections is
+    re-synthesized OR re-encoded (tunatale-1d85). The title is re-synthesized —
+    one TTS call per lesson for the lesson title, plus one per re-rendered
+    section title, since the TTS cache is keyed (voice, rate, text) and a renamed
+    title misses — because it is not persisted separately from the full-lesson
+    file.
+
+    ⚠️ The FULL file IS re-encoded, and has to be. It used to be joined with
+    ffmpeg's concat demuxer under ``-c copy``, on the reasoning that copying
+    packets cannot change audio. It can: a stream-copied Opus join is not
+    sample-preserving, because each piece's encoder pre-skip and final-frame
+    padding stop being trimmed once the piece sits inside a joined stream. Every
+    seam then adds about one Opus frame of decoded audio — measured at +20 ms per
+    seam, cumulative — and this layout has one boundary per section, so a
+    7-section lesson ran +112 ms ahead of its own caption timeline by the end.
+    ffprobe could not see any of it: FORMAT duration is computed from granule
+    positions and cancels the pre-skip on both sides. So the pieces are decoded
+    to PCM and encoded ONCE (see ``_write_full_lesson_pcm``), which is what the
+    render path has always done. The per-section FILES are still untouched.
 
     ⚠️ It calls ``renderer.render_section``, NOT ``renderer.render``. ``render``
     renders the WHOLE lesson: it would synthesize every phrase of every section,
@@ -544,11 +502,9 @@ async def reassemble_lesson_audio(
 
         # ⚠️ The TTS writes MP3 BYTES regardless of the filename — its cache is
         # <digest>.mp3, and LessonRenderer.render names its own temp file
-        # "title.mp3" then DECODES it before assembling. Handing that file
-        # straight to the concat demuxer alongside Opus sections fails with
-        # "Unsupported codec id in stream 0", because one input is a different
-        # codec. So decode it and re-encode it to the delivery codec at the
-        # sections' own rate before it joins the concat list.
+        # "title.mp3" then DECODES it before assembling. So the title is decoded
+        # too (``_read_title_pcm``), at the assembly rate and downmixed to mono,
+        # rather than encoded into the delivery codec and decoded back.
         raw_title = scratch / "title.mp3"
         await tts.synthesize(lesson.title, lesson.narrator_voice, raw_title, rate="+0%")
 
@@ -563,58 +519,81 @@ async def reassemble_lesson_audio(
             target_rel_cues[i] = rel_cues
             target_rates[i] = rate
 
-        # The concat demuxer runs under -c copy and FAILS on heterogeneous
-        # streams, so a rate disagreement is real breakage. One assembly rate for
-        # the title clip, the boundary and the ms->frames conversion; each
-        # target's OWN rate still goes into its own per-section cues.
+        # One assembly rate for the whole stream: it is what the title is
+        # resampled to, what every section is decoded at, and the rate the
+        # ms->frames conversion below divides back out of. A disagreement is
+        # therefore real breakage — there is no one timeline to put both
+        # sections' timings on. Each target's OWN rate still goes into its own
+        # per-section cues.
         rates = sorted(set(target_rates.values()))
         if len(rates) > 1:
             raise ValueError(
                 f"re-rendered sections {[t.name for t in section_types]} report differing "
-                f"rates {rates}; a concat under -c copy cannot join heterogeneous streams"
+                f"rates {rates}; one lesson is one stream and cannot be assembled at two"
             )
         assembly_rate = rates[0]
-
-        title_path = scratch / f"title.{ext}"
-        _transcode_to_delivery(raw_title, title_path, assembly_rate)
-
-        boundary_path = scratch / f"boundary.{ext}"
-        _write_silence(boundary_path, boundary_ms, assembly_rate)
 
         # ⚠️ resolve_audio_path, not Path(...), for the REUSED rows. A recorded
         # path is where a render was written, and four Norwegian rows hold a
         # relative ``output/audio/<uuid>.opus`` that resolves against neither
-        # this process's CWD nor the concat list file's directory. Taken
-        # literally it fed the demuxer a path that does not exist, and the join
-        # came out truncated at exactly that section (tunatale-c7tx). Same
-        # resolver the serving endpoints already use (tunatale-kbb.15).
+        # this process's CWD nor anything else the reassemble might have handed
+        # it to. Taken literally it pointed at a file that does not exist, and
+        # the lesson came out truncated at exactly that section (tunatale-c7tx).
+        # Same resolver the serving endpoints already use (tunatale-kbb.15).
         section_paths = [
             new_target_paths[i] if i in targets else resolve_audio_path(r["file_path"])
             for i, r in enumerate(section_rows)
         ]
 
-        # Absolute timing in MILLISECONDS throughout. Working in frames needs a
-        # sample rate, and every rate that appears here cancels out of the final
-        # answer — carrying one only creates a constant to get wrong.
-        title_ms = round(_read_audio_duration(title_path) * 1000)
-        durations_ms = [round(_read_audio_duration(p) * 1000) for p in section_paths]
+        # The piece ORDER is fixed by the number of sections alone — no duration
+        # enters it — so it is settled before anything is decoded. The layout
+        # that carries the TIMING is asked for again below, from the sample
+        # counts the encoder actually received.
+        piece_order = _assembly.lesson_layout([0] * len(section_paths), 0, boundary_ms).piece_descriptions
 
-        # Shared layout owns the piece order and the N-vs-N-1 boundary count for
-        # BOTH the file concatenation and the cue manifest below.  piece_
-        # descriptions starts with "title"; everything after it is stitched in
-        # the shared order exactly as LessonRenderer.render does.
-        layout = _assembly.lesson_layout(durations_ms, title_ms, boundary_ms)
-        pieces: list[Path] = [title_path]
-        for desc in layout.piece_descriptions[1:]:  # skip title
-            if desc == "boundary":
-                pieces.append(boundary_path)
-            else:
-                sec_idx = int(desc.split("_")[1])
-                pieces.append(section_paths[sec_idx])
-
+        # ONE encode from ONE stream of PCM: every piece is decoded at the
+        # assembly rate as the encoder reaches it and never held longer than
+        # that. piece_ms is appended to per piece and is where all the timing
+        # below comes from.
+        piece_ms: list[int] = []
         new_full_id = str(uuid.uuid4())
         new_full_path = audio_dir / f"{new_full_id}.{ext}"
-        _concat_stream_copy(pieces, new_full_path)
+        try:
+            _write_full_lesson_pcm(
+                new_full_path,
+                _lesson_pcm_pieces(
+                    piece_order,
+                    raw_title,
+                    section_paths,
+                    _assembly._ms_to_frames(boundary_ms, assembly_rate),
+                    assembly_rate,
+                    piece_ms,
+                ),
+                assembly_rate,
+            )
+        except BaseException:
+            # A piece that fails to decode stops the stream, but the encoder
+            # still finalises everything it was fed — a truncated full file in
+            # audio_dir, beside re-rendered section files no row will ever
+            # reference. The old concat path unlinked its output on failure;
+            # this keeps that, and also drops the new sections.
+            new_full_path.unlink(missing_ok=True)
+            for path in new_target_paths.values():
+                path.unlink(missing_ok=True)
+            raise
+
+        # Absolute timing in MILLISECONDS throughout, and from SAMPLE COUNTS.
+        # ffprobe would answer a different question: the duration of the FILES
+        # this lesson was built from, not of the samples the encoder was
+        # handed. Those differ by the padding those files carry, and the full
+        # file's own audio is what every cue in the manifest has to land on.
+        title_ms = piece_ms[0]
+        # Every boundary is the same shared buffer, so the first is every one.
+        boundary_ms = next(ms for ms, desc in zip(piece_ms, piece_order, strict=True) if desc == "boundary")
+        durations_ms = [ms for ms, desc in zip(piece_ms, piece_order, strict=True) if desc.startswith("section_")]
+
+    # Shared layout owns the piece order and the N-vs-N-1 boundary count for
+    # BOTH the stream written above and the cue manifest below.
 
     # Per-section cues, in the SAME form derive_section_cues stores: reused
     # sections keep what they already had; the re-rendered ones are rebuilt.
