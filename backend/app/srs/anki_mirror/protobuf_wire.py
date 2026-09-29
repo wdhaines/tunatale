@@ -169,6 +169,25 @@ def pb_replace_or_insert_varint(blob: bytes, field_number: int, new_value: int) 
     return blob + tag_wire0 + new_value_bytes
 
 
+def pb_replace_or_insert_len(blob: bytes, field_number: int, payload: bytes) -> bytes:
+    """Return *blob* with the named LEN-delimited field's payload set to *payload*.
+
+    The first LEN field with that number is replaced where it stands (so every
+    other field keeps its bytes and position); if absent, the field is appended.
+    Only wire type 2 matches — a varint with the same number is left alone.
+    """
+    new_field = encode_tag(field_number, 2) + encode_varint(len(payload)) + payload
+    pos = 0
+    while pos < len(blob):
+        tag, next_pos = decode_varint(blob, pos)
+        wire_type = tag & 0x7
+        field_end = skip_field(blob, next_pos, wire_type)
+        if tag >> 3 == field_number and wire_type == 2:
+            return blob[:pos] + new_field + blob[field_end:]
+        pos = field_end
+    return blob + new_field
+
+
 def pb_remove_field(blob: bytes, field_number: int) -> bytes:
     """Return *blob* with all occurrences of *field_number* removed.
 

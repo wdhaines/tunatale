@@ -7,8 +7,10 @@ from app.srs.anki_mirror.protobuf_wire import (
     decode_varint,
     encode_varint,
     encode_varint_field,
+    find_len_field,
     find_varint_field,
     pb_remove_field,
+    pb_replace_or_insert_len,
     pb_replace_or_insert_varint,
     skip_field,
 )
@@ -56,6 +58,41 @@ class TestReplaceOrInsertVarint:
         assert find_varint_field(result, 4) == 1
         assert find_varint_field(result, 3) == 100
         assert find_varint_field(result, 7) == 200
+
+
+def _len_field(field_number: int, payload: bytes) -> bytes:
+    return encode_varint((field_number << 3) | 2) + encode_varint(len(payload)) + payload
+
+
+class TestReplaceOrInsertLen:
+    def test_replaces_the_payload_and_keeps_every_other_field_in_place(self):
+        blob = _len_field(1, b"qfmt") + _len_field(2, b"afmt") + encode_varint_field(4, 9) + _len_field(255, b"{}")
+        result = pb_replace_or_insert_len(blob, 1, b"a much longer front template")
+        assert find_len_field(result, 1) == b"a much longer front template"
+        assert find_len_field(result, 2) == b"afmt"
+        assert find_varint_field(result, 4) == 9
+        assert find_len_field(result, 255) == b"{}"
+        # Replaced where it stood: the first bytes are still field 1's tag.
+        assert result.startswith(encode_varint((1 << 3) | 2))
+
+    def test_shrinking_the_payload_keeps_the_blob_parseable(self):
+        blob = _len_field(1, b"x" * 200) + _len_field(2, b"afmt")
+        result = pb_replace_or_insert_len(blob, 1, b"y")
+        assert find_len_field(result, 1) == b"y"
+        assert find_len_field(result, 2) == b"afmt"
+
+    def test_appends_when_absent(self):
+        blob = _len_field(2, b"afmt")
+        result = pb_replace_or_insert_len(blob, 3, b"css")
+        assert find_len_field(result, 3) == b"css"
+        assert find_len_field(result, 2) == b"afmt"
+
+    def test_skips_a_varint_field_with_the_same_number(self):
+        # Wire type is part of the match: a varint field 1 is not the LEN field 1.
+        blob = encode_varint_field(1, 7)
+        result = pb_replace_or_insert_len(blob, 1, b"q")
+        assert find_varint_field(result, 1) == 7
+        assert find_len_field(result, 1) == b"q"
 
 
 class TestRemoveField:
