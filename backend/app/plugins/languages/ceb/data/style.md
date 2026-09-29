@@ -74,7 +74,7 @@ Write prices and times in WORDS, never digits.
 **No Bislish code-switching.** Do not switch into English phrases mid-sentence ("Wait lang",
 "Sorry kaayo", "Actually, ..."). A single everyday word that Cebuano speakers use as their own
 ("okay", as in "Okay ra ko") is acceptable; English clauses are not. Everyday loans in nativized spelling ARE correct:
-- From Spanish: "oras" (time), "mesa", "silya", "kutsara", "bintana", "kwarto", "sapatos",
+- From Spanish: "oras" (time), "lamesa" (table; not "mesa"), "silya", "kutsara", "bintana", "kwarto", "sapatos",
   "gusto" (want/like), "pero" (but), "siguro" (maybe), "sige" (okay)
 - From English: "traysikel", "dyip", "bus", "taksi", "kape"
 Never reach for a rare purist coinage to avoid a loan.

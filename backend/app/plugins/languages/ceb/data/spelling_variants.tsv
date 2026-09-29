@@ -1,0 +1,10 @@
+# Cebuano spelling variants: one word, spelled two ways (the user, 2026-09-28).
+# Hand-kept. scripts/build_cebuano_lemma_table.py (rule 7) makes every reading of `variant` read as `main`,
+# so a lesson using either spelling matches the one card. Affixed and linker forms follow (puwedeng -> pwede).
+#
+# The main spelling is the one Cebuano news uses more (cebuano_frequency.tsv.gz, before this merge):
+# pwede 1535 vs puwede 594; lamesa 172 vs mesa 26. Tagalog's KWF orthography prefers the u-spelling
+# (puwede, kuwarto); Cebuano has no standard of that weight and its writers mostly use the short one.
+variant	main	note
+puwede	pwede	Spanish puede; Tagalog-style spelling
+mesa	lamesa	Spanish la mesa, article fused; mesa is understood but rarer

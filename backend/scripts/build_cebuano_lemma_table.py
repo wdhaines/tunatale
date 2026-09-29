@@ -84,6 +84,7 @@ DEFAULT_SOURCE = _BACKEND / "scripts/local/kaikki/Cebuano.jsonl"
 OUTPUT = _BACKEND / "app/plugins/languages/ceb/data/cebuano_lemmas.tsv.gz"
 BASE_LIST = _BACKEND / "app/plugins/languages/ceb/data/base625.tsv"
 CLOSED_CLASS = _BACKEND / "app/plugins/languages/ceb/data/closed_class.tsv"
+SPELLING_VARIANTS = _BACKEND / "app/plugins/languages/ceb/data/spelling_variants.tsv"
 
 # base625.tsv's category column → the UPOS a base-list word keeps. Everything
 # else in that list is a thing (nouns, colours, places), so NOUN.
@@ -410,8 +411,57 @@ def apply_closed_class(rows: Rows, entries: Iterable[tuple[str, str, str]]) -> R
     return out
 
 
+def load_spelling_variants(path: Path) -> list[tuple[str, str]]:
+    """``(variant, main)`` pairs of the hand-kept spelling-variant list.
+
+    Raises on a variant listed twice, a word mapped to itself, or a chain (a
+    main spelling that is itself listed as a variant): each is a typo that would
+    otherwise ship silently, and a chain would leave some readings one hop short.
+    """
+    import csv
+
+    with open(path, encoding="utf-8") as fh:
+        body = [line for line in fh if line.strip() and not line.startswith("#")]
+    pairs: list[tuple[str, str]] = []
+    for row in csv.DictReader(body, delimiter="\t"):
+        variant, main = row["variant"], row["main"]
+        if variant == main:
+            raise ValueError(f"{path}: {variant} is mapped to itself")
+        if any(v == variant for v, _ in pairs):
+            raise ValueError(f"{path}: {variant} is listed twice")
+        pairs.append((variant, main))
+    variants = {v for v, _ in pairs}
+    for variant, main in pairs:
+        if main in variants:
+            raise ValueError(f"{path}: {variant} -> {main} is a chain; {main} is itself listed as a variant")
+    return pairs
+
+
+def apply_spelling_variants(rows: Rows, pairs: Iterable[tuple[str, str]]) -> Rows:
+    """Send every reading whose lemma is a variant to its main spelling.
+
+    Affixed and linker forms follow (``puwedeng`` -> ``pwede``), because they
+    carry the variant as their lemma. A variant Wiktionary lacks gets the main
+    spelling's default reading. A main spelling with no reading at all raises:
+    it is a typo, and mapping real words onto it would orphan them.
+    """
+    out: Rows = set(rows)
+    for variant, main in pairs:
+        main_default = next((r for r in out if r[0] == main and r[3] == 1), None)
+        if main_default is None:
+            raise ValueError(f"spelling variant {variant}: main spelling {main} has no reading in the table")
+        out = {(s, u, main if lem == variant else lem, d) for s, u, lem, d in out}
+        if not any(r[0] == variant for r in out):
+            out.add((variant, main_default[1], main, 1))
+    return out
+
+
 def build_from_path(
-    source: Path, output: Path, base_list: Path | None = None, closed_class: Path | None = None
+    source: Path,
+    output: Path,
+    base_list: Path | None = None,
+    closed_class: Path | None = None,
+    spelling_variants: Path | None = None,
 ) -> dict:
     """Build the table from *source* JSONL into *output* ``.tsv.gz``, print the report."""
     sha_hex = _sha256(source)
@@ -468,6 +518,10 @@ def build_from_path(
     # Rule 6: the hand-curated closed-class list overrides (tunatale-u8nz.21).
     if closed_class is not None:
         rows = apply_closed_class(rows, load_closed_class(closed_class))
+    # Rule 7: hand-kept spelling variants read as their main spelling (the user,
+    # 2026-09-28: pwede/puwede, lamesa/mesa). Last, so no earlier rule re-splits them.
+    if spelling_variants is not None:
+        rows = apply_spelling_variants(rows, load_spelling_variants(spelling_variants))
 
     # Emit
     out = io.StringIO()
@@ -523,7 +577,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.source.exists():
         parser.error(f"source extract not found: {args.source}")
-    build_from_path(args.source, OUTPUT, BASE_LIST, CLOSED_CLASS)
+    build_from_path(args.source, OUTPUT, BASE_LIST, CLOSED_CLASS, SPELLING_VARIANTS)
     return 0
 
 

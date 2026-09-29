@@ -92,6 +92,7 @@ adv	consequently	busa	unconfirmed	consequently; hence; as a result; therefore, f
 verb	examine	susi	unconfirmed	to examine; to inspect
 adv	alike	susama	unconfirmed	alike
 noun	guard	bantay	unconfirmed	guard; sentinel; watchman
+adv	can, allowed	pwede	reviewed	maybe
 noun	sum	kabat	unconfirmed	the sum; a quantity obtained by addition or aggregation
 noun	issue	isyu	unconfirmed	issue (instalment of a publication)
 noun	driver	drayber	unconfirmed	a driver (a person who drives a motorized vehicle)
@@ -128,7 +129,6 @@ adj	complete, full	hingpit	reviewed	thorough; complete; absolute
 noun	interview	interbyu	reviewed	an interview
 noun	method, way	pamaagi	reviewed	system
 noun	school	tunghaan	reviewed	a school
-adv	can, allowed	pwede	reviewed	maybe
 verb	attend	tambong	reviewed	to attend
 noun	boyfriend, girlfriend	uyab	reviewed	boyfriend; girlfriend; lover
 noun	trip, travel	biyahe	reviewed	a journey; a travel; a trip
@@ -346,7 +346,6 @@ verb	replace	hulip	unconfirmed	to replace; to take the place of; to supply the w
 noun	truth	kamatuoran	unconfirmed	truth; veracity
 noun	forgiveness	pasaylo	unconfirmed	forgiveness
 noun	ombudsman	ombudsman	unconfirmed	an ombudsman
-adv	maybe	puwede	unconfirmed	maybe
 noun	capital city	kaulohan	unconfirmed	a capital city
 noun	killer	mamumuno	unconfirmed	killer; murderer
 noun	resolution	resolusyon	unconfirmed	resolution (a formal statement adopted by an assembly, or during any other formal meeting)
@@ -971,3 +970,4 @@ adj	crazy	animal	unconfirmed	crazy
 noun	spirit	espiritu	unconfirmed	a spirit
 noun	compassion	kaluoy	unconfirmed	compassion
 noun	candle	kandila	unconfirmed	candle
+verb	retract	bakwi	unconfirmed	to retract
