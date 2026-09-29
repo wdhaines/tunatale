@@ -14,8 +14,8 @@ _DECK_ID = 1
 def _make_decks_db(common_blob: bytes | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.execute("CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, usn INTEGER)")
-    conn.execute("INSERT INTO col (id, crt, mod, usn) VALUES (1, 1704067200, 0, 0)")
+    conn.execute("CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, usn INTEGER, ls INTEGER)")
+    conn.execute("INSERT INTO col (id, crt, mod, usn, ls) VALUES (1, 1704067200, 0, 0, 0)")
     conn.execute("CREATE TABLE decks (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, common BLOB)")
     blob = common_blob if common_blob is not None else _REAL_BLOB
     conn.execute("INSERT INTO decks VALUES (?, '0. Slovene', 0, 0, ?)", (_DECK_ID, blob))
@@ -294,8 +294,8 @@ class TestSetDeckStudiedToday:
 def _make_cards_db(col_usn: int = 5) -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.execute("CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, usn INTEGER)")
-    conn.execute("INSERT INTO col (id, crt, mod, usn) VALUES (1, 1704067200, 0, ?)", (col_usn,))
+    conn.execute("CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, usn INTEGER, ls INTEGER)")
+    conn.execute("INSERT INTO col (id, crt, mod, usn, ls) VALUES (1, 1704067200, 0, ?, 0)", (col_usn,))
     conn.execute(
         "CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER, did INTEGER, ord INTEGER, "
         "mod INTEGER, usn INTEGER, type INTEGER, queue INTEGER, due INTEGER, ivl INTEGER, "

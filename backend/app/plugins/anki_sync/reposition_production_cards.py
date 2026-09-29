@@ -45,7 +45,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from app.plugins.anki_sync.add_production_template import PRODUCTION_TEMPLATE
-from app.plugins.anki_sync.sync_writer import _PRODUCTION_BAND_CEILING, _PRODUCTION_BAND_FLOOR
+from app.plugins.anki_sync.sync_writer import _PRODUCTION_BAND_CEILING, _PRODUCTION_BAND_FLOOR, bump_col_mod
 
 #: NEW cards TunaTale minted as a production direction: one at the notetype's
 #: ``Production`` template, or the single card of a Cloze note (the non-imageable
@@ -181,8 +181,9 @@ def apply_repositioning(conn: sqlite3.Connection, plan: RepositionPlan) -> None:
         "UPDATE cards SET due = ?, mod = ?, usn = -1 WHERE id = ?",
         [(new_due, ts, card_id) for card_id, new_due in plan.moves],
     )
-    # col.mod only — never col.usn, which is the sync anchor (Layer 61).
-    conn.execute("UPDATE col SET mod = ?", (ts,))
+    # col.mod only — never col.usn, which is the sync anchor (Layer 61). And in
+    # MILLISECONDS, not the seconds ``ts`` cards.mod takes (tunatale-6zoc).
+    bump_col_mod(conn)
 
 
 def read_cloze_base_note_ids(tt_conn: sqlite3.Connection) -> dict[int, int]:
