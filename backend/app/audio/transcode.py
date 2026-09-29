@@ -48,8 +48,12 @@ EXT_MEDIA_TYPE: dict[str, str] = {
 # Each pins the output container format explicitly because the pipe target has
 # no extension for ffmpeg to infer from. AAC uses fragmented MP4 so the moov
 # atom can be written to a non-seekable pipe.
+#
+# Opus runs at effort 5, not libopus's default 10: a render is ~96% libopus CPU,
+# and 5 took ~3.2x less of it while sounding the same in the user's blind ear
+# test (tunatale-guzo.4, 2026-09-29). 8 was tried too and cost the same as 10.
 _FFMPEG_ARGS: dict[str, list[str]] = {
-    "opus": ["-c:a", "libopus", "-f", "ogg"],
+    "opus": ["-c:a", "libopus", "-compression_level", "5", "-f", "ogg"],
     "mp3": ["-c:a", "libmp3lame", "-f", "mp3"],
     "aac": ["-c:a", "aac", "-movflags", "frag_keyframe+empty_moov", "-f", "mp4"],
 }

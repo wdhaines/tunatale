@@ -7,6 +7,8 @@ internal seam; ffmpeg is a true process boundary but running it is cheap here).
 
 from __future__ import annotations
 
+import subprocess
+
 import numpy as np
 import pytest
 import soundfile as sf
@@ -62,6 +64,47 @@ class TestEncodeAudio:
         samples, rate = _silence()
         with pytest.raises(RuntimeError, match="ffmpeg"):
             encode_audio(samples, rate, "opus", "not-a-bitrate")
+
+
+def _speechlike(duration_ms: int = 2000, rate: int = 24000) -> tuple[np.ndarray, int]:
+    """A deterministic, non-silent signal: silence gives every effort level the same bits."""
+    t = np.arange(round(duration_ms / 1000 * rate)) / rate
+    tone = 0.3 * np.sin(2 * np.pi * 220 * t) * (1 + np.sin(2 * np.pi * 3 * t)) / 2
+    noise = 0.05 * np.random.default_rng(7).standard_normal(t.size)
+    return (tone + noise).astype("float32").reshape(-1, 1), rate
+
+
+def _ffmpeg(args: list[str], stdin: bytes) -> bytes:
+    return subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", *args], input=stdin, capture_output=True, check=True
+    ).stdout
+
+
+def _decoded(opus: bytes) -> bytes:
+    """PCM of an Ogg Opus stream. Compared instead of the file, whose Ogg serial number is random."""
+    return _ffmpeg(["-i", "pipe:0", "-f", "s16le", "pipe:1"], opus)
+
+
+def _reference_opus(samples: np.ndarray, rate: int, level: int) -> bytes:
+    args = ["-i", "pipe:0", "-c:a", "libopus", "-f", "ogg", "-b:a", "28k", "-compression_level", str(level), "pipe:1"]
+    return _ffmpeg(args, _wav_bytes(samples, rate))
+
+
+class TestOpusEffort:
+    def test_opus_encodes_at_effort_five(self):
+        """Level 5, the user's pick from a blind ear test (tunatale-guzo.4, 2026-09-29).
+
+        libopus defaults to 10, its slowest; 5 took ~3.2x less encode CPU and
+        was indistinguishable blind. The level is read off the AUDIO: the app's
+        encode must decode to the same samples as a direct level-5 encode, and
+        the level-10 control proves this signal separates the two at all.
+        """
+        samples, rate = _speechlike()
+        got = _decoded(encode_audio(samples, rate, "opus", "28k"))
+        at_five = _decoded(_reference_opus(samples, rate, 5))
+        at_ten = _decoded(_reference_opus(samples, rate, 10))
+        assert at_five != at_ten, "control: this signal must encode differently at 5 and 10"
+        assert got == at_five
 
 
 class TestCodecMaps:
