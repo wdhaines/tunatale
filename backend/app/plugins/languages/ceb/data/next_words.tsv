@@ -103,106 +103,91 @@ verb	urge	awhag	unconfirmed	to urge
 verb	involve	lambigit	unconfirmed	to involve, to relate
 noun	passenger	pasahero	unconfirmed	a passenger
 noun	clinic	tambalanan	unconfirmed	a clinic
-noun	something to be done	buhaton	unconfirmed	something to be done
-adj	difficult	lisod	unconfirmed	difficult; hard
-noun	last day of the novena for a dead person	tapos	unconfirmed	the last day of the novena for a dead person
-noun	pili tree	pili	unconfirmed	pili tree (Canarium ovatum)
-noun	province	probinsiya	unconfirmed	province
-adj	future	umaabot	unconfirmed	future; forthcoming; upcoming; approaching
-noun	step	lakang	unconfirmed	step; pace
+adj	difficult	lisod	reviewed	difficult; hard
+noun	finish, end	tapos	reviewed	the last day of the novena for a dead person
+noun	choose	pili	reviewed	pili tree (Canarium ovatum)
+noun	province	probinsiya	reviewed	province
+adj	upcoming	umaabot	reviewed	future; forthcoming; upcoming; approaching
+noun	step (a measure taken)	lakang	reviewed	step; pace
 adv	downwards	paubos	unconfirmed	downwards
-noun	guest	bisita	unconfirmed	guest; visitor
-adv	immediately	gilayon	unconfirmed	immediately
-noun	tattoo	patik	unconfirmed	a tattoo; an image made in the skin with ink and a needle
-adj	acquainted	sinati	unconfirmed	acquainted; familiar
-noun	record of events	saysay	unconfirmed	a record of events; recital of transactions; a relation or narrative; a report; a description; an account
-adj	past	lapas	unconfirmed	past (having already happened)
-adj	personal	personal	unconfirmed	personal (of or pertaining to a particular person; relating to, or affecting, an individual, or each of many individuals; peculiar or proper to private concerns; not public or general)
-noun	care	labot	unconfirmed	care; concern
-noun	fund	pundo	unconfirmed	fund, funding
-verb	be upset and agitated	ayaw	unconfirmed	to be upset and agitated, or to cry, when parent or owner leaves or tries to leave
-adj	our	namo	unconfirmed	our (exclusive of person spoken to)
-verb	create	mugna	unconfirmed	to create
-adj	orderly	himutang	unconfirmed	orderly, tidy
-noun	common term of address to a girl	day	unconfirmed	common term of address to a girl
-adj	personal	pribado	unconfirmed	personal; concerning only to a person or a specific group; private;
-noun	resident	molupyo	unconfirmed	a resident; a person, animal or plant living at a certain location or in a certain area
-noun	news	balita	unconfirmed	news
-adj	rural	bukidnon	unconfirmed	rural
-adv	maybe	basin	unconfirmed	maybe
-adj	thorough	hingpit	unconfirmed	thorough; complete; absolute
-noun	interview	interbyu	unconfirmed	an interview
-noun	system	pamaagi	unconfirmed	system
-noun	school	tunghaan	unconfirmed	a school
-adv	maybe	pwede	unconfirmed	maybe
-verb	attend	tambong	unconfirmed	to attend
-noun	boyfriend	uyab	unconfirmed	boyfriend; girlfriend; lover
-noun	journey	biyahe	unconfirmed	a journey; a travel; a trip
-noun	male employee	empleyado	unconfirmed	a male employee
-verb	administer	dumala	unconfirmed	to administer; to manage
-noun	dawn	kaadlawon	unconfirmed	dawn
-noun	council	konseho	unconfirmed	council
-noun	method	paagi	unconfirmed	method; system; means
-noun	owner	tag-iya	unconfirmed	an owner
-noun	capitol	kapitolyo	unconfirmed	capitol
-verb	rely	salig	unconfirmed	to rely
-verb	return	uli	unconfirmed	to return
-noun	tropical cyclone	bagyo	unconfirmed	tropical cyclone; typhoon; storm
-noun	poblacion	poblacion	unconfirmed	a poblacion
-adj	early	sayo	unconfirmed	early
-noun	bread roll with a rounded cube shape	bohol	unconfirmed	a bread roll with a rounded cube shape
-adv	also	pod	unconfirmed	also; too
-noun	vaccine	bakuna	unconfirmed	vaccine; vaccination
-noun	any of several crab species:	dawat	unconfirmed	any of several crab species:
-noun	ceremony held after the pamalaye  wherein the man returns to the woman’s family to find out whether or not they accept the proposal	sayod	unconfirmed	a ceremony held after the pamalaye (marriage proposal) wherein the man returns to the woman’s family to find out whether or not they accept the proposal, by which all formal agreements and terms are stated, and the couple is officially engaged.
-adj	correct	sakto	unconfirmed	correct
-noun	behavior	lihok	unconfirmed	a behavior
-noun	name	pangalan	unconfirmed	name
-noun	student	tinun-an	unconfirmed	a student; a pupil
-noun	garbage	basura	unconfirmed	garbage; useless or disposable material; waste material of any kind
-noun	streets or paths	kadalanan	unconfirmed	streets or paths; all the roads; in the world, in a city, or town
+noun	visitor; visit	bisita	reviewed	guest; visitor
+adv	immediately	gilayon	reviewed	immediately
+noun	publish, print	patik	reviewed	a tattoo; an image made in the skin with ink and a needle
+adj	experience (undergo)	sinati	reviewed	acquainted; familiar
+noun	account, statement	saysay	reviewed	a record of events; recital of transactions; a relation or narrative; a report; a description; an account
+adj	exceed; violate	lapas	reviewed	past (having already happened)
+adj	personal	personal	reviewed	personal (of or pertaining to a particular person; relating to, or affecting, an individual, or each of many individuals; peculiar or proper to private concerns; not public or general)
+noun	fund	pundo	reviewed	fund, funding
+verb	create	mugna	reviewed	to create
+adj	be located	himutang	reviewed	orderly, tidy
+adj	private	pribado	reviewed	personal; concerning only to a person or a specific group; private;
+noun	resident	molupyo	reviewed	a resident; a person, animal or plant living at a certain location or in a certain area
+noun	news	balita	reviewed	news
+adv	maybe	basin	reviewed	maybe
+adj	complete, full	hingpit	reviewed	thorough; complete; absolute
+noun	interview	interbyu	reviewed	an interview
+noun	method, way	pamaagi	reviewed	system
+noun	school	tunghaan	reviewed	a school
+adv	can, allowed	pwede	reviewed	maybe
+verb	attend	tambong	reviewed	to attend
+noun	boyfriend, girlfriend	uyab	reviewed	boyfriend; girlfriend; lover
+noun	trip, travel	biyahe	reviewed	a journey; a travel; a trip
+noun	employee	empleyado	reviewed	a male employee
+verb	manage	dumala	reviewed	to administer; to manage
+noun	dawn, early morning	kaadlawon	reviewed	dawn
+noun	council	konseho	reviewed	council
+noun	way, means	paagi	reviewed	method; system; means
+noun	owner	tag-iya	reviewed	an owner
+noun	provincial capitol	kapitolyo	reviewed	capitol
+verb	trust, rely on	salig	reviewed	to rely
+verb	go home, return	uli	reviewed	to return
+noun	typhoon, storm	bagyo	reviewed	tropical cyclone; typhoon; storm
+noun	town center	poblacion	reviewed	a poblacion
+adj	early	sayo	reviewed	early
+noun	vaccine	bakuna	reviewed	vaccine; vaccination
+noun	accept, receive	dawat	reviewed	any of several crab species:
+noun	know (be aware)	sayod	reviewed	a ceremony held after the pamalaye (marriage proposal) wherein the man returns to the woman’s family to find out whether or not they accept the proposal, by which all formal agreements and terms are stated, and the couple is officially engaged.
+adj	correct, right	sakto	reviewed	correct
+noun	act, move	lihok	reviewed	a behavior
+noun	name	pangalan	reviewed	name
+noun	student	tinun-an	reviewed	a student; a pupil
+noun	garbage	basura	reviewed	garbage; useless or disposable material; waste material of any kind
+noun	streets, roads	kadalanan	reviewed	streets or paths; all the roads; in the world, in a city, or town
 noun	act of jutting out higher than something	labaw	unconfirmed	act of jutting out higher than something; stick out farther from the margin or limit
-adj	affected	apektado	unconfirmed	affected
-noun	sibling	igsuon	unconfirmed	a sibling, brother or sister
-verb	sneak out	sibat	unconfirmed	to sneak out
-noun	value	balor	unconfirmed	a value; the quality (positive or negative) that renders something desirable or valuable
-noun	situation	sitwasyon	unconfirmed	situation
-verb	be able to help	makatabang	unconfirmed	to be able to help
-noun	dance	sinulog	unconfirmed	a dance, often by candle vendors in Cebu, where performers brandish candles in the air while dancing and reciting a prayer
-noun	decision	desisyon	unconfirmed	decision
-noun	threat	hulga	unconfirmed	a threat
-verb	avoid by moving suddenly out of the way	likay	unconfirmed	to avoid by moving suddenly out of the way; to dodge
-verb	reach	kab-ot	unconfirmed	to reach; to extend, stretch, or thrust out (for example a limb or object held in the hand)
-noun	promise	saad	unconfirmed	promise; vow
-noun	traffic	trapiko	unconfirmed	traffic (pedestrians or vehicles on roads)
+adj	affected	apektado	reviewed	affected
+noun	sibling	igsuon	reviewed	a sibling, brother or sister
+verb	flee, escape	sibat	reviewed	to sneak out
+noun	value, worth	balor	reviewed	a value; the quality (positive or negative) that renders something desirable or valuable
+noun	situation	sitwasyon	reviewed	situation
+noun	decision	desisyon	reviewed	decision
+noun	threat	hulga	reviewed	a threat
+verb	avoid	likay	reviewed	to avoid by moving suddenly out of the way; to dodge
+verb	reach, achieve	kab-ot	reviewed	to reach; to extend, stretch, or thrust out (for example a limb or object held in the hand)
+noun	promise	saad	reviewed	promise; vow
+noun	traffic	trapiko	reviewed	traffic (pedestrians or vehicles on roads)
 noun	father	papa	unconfirmed	a father; a (generally human) male who begets a child
-adv	how	unsaon	unconfirmed	how
-noun	action	kalihokan	unconfirmed	an action; something done so as to accomplish a purpose
-noun	motive	motibo	unconfirmed	a motive
-adj	easy	sayon	unconfirmed	easy, simple, effortless
-noun	economy	ekonomiya	unconfirmed	an economy
-noun	right	katungod	unconfirmed	a right; a legal or moral entitlement
-noun	endeavor	paningkamot	unconfirmed	endeavor
-adv	commonly	sagad	unconfirmed	commonly; usually
-noun	Term of address to a male friend	bay	unconfirmed	Term of address to a male friend
-noun	farmer	mag-uuma	unconfirmed	a farmer
-adj	solved	sulbad	unconfirmed	solved
-noun	congressman	kongresista	unconfirmed	congressman; congresswoman; representative
-adv	here	diri	unconfirmed	here (place closer to speaker than listener)
-noun	question	pangutana	unconfirmed	a question
-adv	beneath	ilawom	unconfirmed	beneath
-noun	advice	tambag	unconfirmed	an advice
-noun	surroundings	palibot	unconfirmed	surroundings
-noun	character	personahe	unconfirmed	a character; a being in a story
-noun	mall	mall	unconfirmed	mall; shopping center
-adj	plural	daghanan	unconfirmed	plural
-num	thousand	mil	unconfirmed	thousand
-verb	confiscate	sakmit	unconfirmed	to confiscate; to nab
-noun	shooting	pagpamusil	unconfirmed	shooting (instance of shooting)
-noun	witness	saksi	unconfirmed	witness
-noun	rebel	rebelde	unconfirmed	rebel
-verb	dare	hagit	unconfirmed	to dare; to defy or challenge (someone to do something)
-noun	ordinance	ordinansa	unconfirmed	ordinance
+noun	activity, event	kalihokan	reviewed	an action; something done so as to accomplish a purpose
+noun	motive	motibo	reviewed	a motive
+adj	easy	sayon	reviewed	easy, simple, effortless
+noun	economy	ekonomiya	reviewed	an economy
+noun	right (entitlement)	katungod	reviewed	a right; a legal or moral entitlement
+noun	effort	paningkamot	reviewed	endeavor
+adv	usually	sagad	reviewed	commonly; usually
+noun	farmer	mag-uuma	reviewed	a farmer
+adj	solve	sulbad	reviewed	solved
+noun	congressman, representative	kongresista	reviewed	congressman; congresswoman; representative
+adv	here	diri	reviewed	here (place closer to speaker than listener)
+noun	question	pangutana	reviewed	a question
+adv	under, beneath	ilawom	reviewed	beneath
+noun	advice	tambag	reviewed	an advice
+noun	surroundings	palibot	reviewed	surroundings
+noun	personnel, staff	personahe	reviewed	a character; a being in a story
+noun	mall	mall	reviewed	mall; shopping center
+verb	seize, confiscate	sakmit	reviewed	to confiscate; to nab
+noun	witness	saksi	reviewed	witness
+noun	rebel	rebelde	reviewed	rebel
+verb	challenge	hagit	reviewed	to dare; to defy or challenge (someone to do something)
+noun	ordinance	ordinansa	reviewed	ordinance
 noun	health	panglawas	unconfirmed	health
 noun	one's proper place under the sun	luna	unconfirmed	one's proper place under the sun
 noun	employee	trabahante	unconfirmed	an employee; especially one who does manual labor

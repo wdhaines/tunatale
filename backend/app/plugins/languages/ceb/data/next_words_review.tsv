@@ -102,3 +102,103 @@ taho	report	reviewed
 luwas	safe	reviewed
 libre	free (no charge)	reviewed
 rason	reason	reviewed
+# Batch 2 (2026-09-28, orchestrator): proposals 101-200, same method — each root read in three FineWeb-2 native-news
+# sentences plus its most frequent surface forms. Unsure rows left out on purpose: paubos (the counted sense is
+# "gipaubos sa imbestigasyon", subjected to), labaw (comparative "more than / excessive"), papa (Santo Papa vs "dad").
+buhaton		dropped	a form of buhat ("to be done", "what to do"), not a root
+lisod	difficult	reviewed
+tapos	finish, end	reviewed	counted sense is matapos/natapos; the dictionary's first sense is a novena day
+pili	choose	reviewed	counted sense is gipili/napili; the dictionary's first sense is the pili tree
+probinsiya	province	reviewed
+umaabot	upcoming	reviewed
+lakang	step (a measure taken)	reviewed
+bisita	visitor; visit	reviewed
+gilayon	immediately	reviewed
+patik	publish, print	reviewed	counted sense is gipatik ("published in"); the dictionary's first sense is a tattoo
+sinati	experience (undergo)	reviewed	counted sense is nakasinati/nasinati, not "acquainted"
+saysay	account, statement	reviewed
+lapas	exceed; violate	reviewed	counted sense is molapas/paglapas, not "past"
+personal	personal	reviewed
+labot		dropped	"way labot" (including), "labot niini" (about this); cloze material
+pundo	fund	reviewed
+ayaw		dropped	negative imperative "don't"; cloze material
+namo		dropped	pronoun "our/us (exclusive)"; pronoun material, not a base word
+mugna	create	reviewed
+himutang	be located	reviewed	counted sense is nahimutang ("located in"), not "orderly"
+day		dropped	English code-switch ("Valentine's Day")
+pribado	private	reviewed
+molupyo	resident	reviewed
+balita	news	reviewed
+bukidnon		dropped	the province name Bukidnon
+basin	maybe	reviewed
+hingpit	complete, full	reviewed
+interbyu	interview	reviewed
+pamaagi	method, way	reviewed
+tunghaan	school	reviewed
+pwede	can, allowed	reviewed
+tambong	attend	reviewed
+uyab	boyfriend, girlfriend	reviewed
+biyahe	trip, travel	reviewed
+empleyado	employee	reviewed
+dumala	manage	reviewed
+kaadlawon	dawn, early morning	reviewed
+konseho	council	reviewed
+paagi	way, means	reviewed
+tag-iya	owner	reviewed
+kapitolyo	provincial capitol	reviewed
+salig	trust, rely on	reviewed
+uli	go home, return	reviewed
+bagyo	typhoon, storm	reviewed
+poblacion	town center	reviewed
+sayo	early	reviewed
+bohol		dropped	the province name Bohol, not the bread roll
+pod		dropped	particle "also, too" (colloquial usab); cloze material
+bakuna	vaccine	reviewed
+dawat	accept, receive	reviewed	counted sense is gidawat/modawat; the dictionary's first sense is a crab
+sayod	know (be aware)	reviewed	counted sense is nasayod/masayod, not the betrothal ceremony
+sakto	correct, right	reviewed
+lihok	act, move	reviewed
+pangalan	name	reviewed
+tinun-an	student	reviewed
+basura	garbage	reviewed
+kadalanan	streets, roads	reviewed
+apektado	affected	reviewed
+igsuon	sibling	reviewed
+sibat	flee, escape	reviewed
+balor	value, worth	reviewed
+sitwasyon	situation	reviewed
+makatabang		dropped	a form of tabang ("able to help"), not a root
+sinulog		dropped	the Sinulog festival, a proper name
+desisyon	decision	reviewed
+hulga	threat	reviewed
+likay	avoid	reviewed
+kab-ot	reach, achieve	reviewed
+saad	promise	reviewed
+trapiko	traffic	reviewed
+unsaon		dropped	a form of unsa ("how to"), question word; cloze material
+kalihokan	activity, event	reviewed
+motibo	motive	reviewed
+sayon	easy	reviewed
+ekonomiya	economy	reviewed
+katungod	right (entitlement)	reviewed
+paningkamot	effort	reviewed
+sagad	usually	reviewed
+bay		dropped	tokenizer artifact: "ba'y" (question particle + existential), not the term of address
+mag-uuma	farmer	reviewed
+sulbad	solve	reviewed	counted sense is masulbad/pagsulbad, not "solved"
+kongresista	congressman, representative	reviewed
+diri	here	reviewed
+pangutana	question	reviewed
+ilawom	under, beneath	reviewed
+tambag	advice	reviewed
+palibot	surroundings	reviewed
+personahe	personnel, staff	reviewed	counted sense (hospital personahe); the dictionary's first sense is a story character
+mall	mall	reviewed
+daghanan		dropped	a form of daghan (kadaghanan, "the majority"), not a root
+mil		dropped	abbreviation of milyon in peso amounts ("P600 mil"), not "thousand"
+sakmit	seize, confiscate	reviewed
+pagpamusil		dropped	a form of pusil ("shooting"), not a root
+saksi	witness	reviewed
+rebelde	rebel	reviewed
+hagit	challenge	reviewed
+ordinansa	ordinance	reviewed
