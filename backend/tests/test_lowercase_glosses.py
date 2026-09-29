@@ -1,8 +1,8 @@
 """Tests for the one-shot lowercase-token_glosses migration."""
 
 from app.models.lesson import Lesson, Section, SectionType
-from app.storage.lowercase_glosses import _is_lowercase, _lowercase_keys, lowercase_glosses
 from app.storage.store import ContentStore
+from scripts.storage_archive.lowercase_glosses import _is_lowercase, _lowercase_keys, lowercase_glosses
 
 
 def _lesson(token_glosses: dict[str, str]) -> Lesson:

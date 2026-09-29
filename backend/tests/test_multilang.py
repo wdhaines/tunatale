@@ -309,22 +309,24 @@ class TestGenerateStoryUsesTheRequestsDatabase:
                 key_phrases=[KeyPhraseInfo(phrase=self.SENTENCE, translation="how are you")],
                 sections=[
                     # KEY_PHRASES specifically: annotate_chunk_upos walks that
-                    # section and no other, and iterates lesson.key_phrases
-                    # against it, needing 2 + len(breakdown) phrases per key
-                    # phrase or it warns and skips. A lesson missing either half
-                    # caches nothing, and the assertion below would then pass
+                    # section and no other, splitting it into one group per key
+                    # phrase by structure (an L2 head followed by the narrator
+                    # translation — section_builder.key_phrase_groups), and
+                    # warns and skips when the group count disagrees with
+                    # lesson.key_phrases. A lesson missing either half caches
+                    # nothing, and the assertion below would then pass
                     # vacuously in BOTH directions — a clean negative, not an
-                    # oracle. Padded generously; the exact count is not the point.
+                    # oracle. So: title, head, translation, then chunks.
                     Section(
                         section_type=SectionType.KEY_PHRASES,
                         phrases=[
-                            Phrase(
-                                text=self.SENTENCE,
-                                role="male-1",
-                                voice_id="nb-NO-FinnNeural",
-                                language_code="no",
-                            )
-                            for _ in range(24)
+                            Phrase(text="Key Phrases", role="narrator", voice_id="en-US-GuyNeural", language_code="en"),
+                            Phrase(text=self.SENTENCE, role="male-1", voice_id="nb-NO-FinnNeural", language_code="no"),
+                            Phrase(text="how are you", role="narrator", voice_id="en-US-GuyNeural", language_code="en"),
+                            *(
+                                Phrase(text=word, role="male-1", voice_id="nb-NO-FinnNeural", language_code="no")
+                                for word in self.SENTENCE.split()
+                            ),
                         ],
                     )
                 ],

@@ -8,7 +8,7 @@ are already all-lowercase.
 
 Run once:
 
-    uv run python -m app.storage.lowercase_glosses
+    uv run python -m scripts.storage_archive.lowercase_glosses
 
 Safe to re-run (idempotent — skips lessons already lowercased).
 """

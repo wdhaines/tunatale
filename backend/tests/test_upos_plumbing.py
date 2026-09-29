@@ -485,12 +485,16 @@ class TestAnnotateChunkUpos:
         # Second (from "jeg sporet" key phrase) → VERB
         assert span_1_2[1].upos == "VERB"
 
-    def test_no_tag_when_key_phrase_arithmetic_fails(self, tmp_path: Path, srs_db: SRSDatabase) -> None:
-        """When the key-phrase arithmetic doesn't land, tag nothing and warn."""
+    def test_no_tag_when_section_group_count_mismatches(self, tmp_path: Path, srs_db: SRSDatabase) -> None:
+        """When the section's group count doesn't match the key phrase count, tag nothing and warn.
+
+        Two groups against one declared key phrase. This is a structural
+        inconsistency and stays loud; a merely-outdated chunk count is not one
+        and is covered by ``test_tags_stored_section_with_fewer_chunks_*`` below.
+        """
         from app.generation.lemma_annotation import annotate_chunk_upos
         from app.srs.lemmatizer import TokenAnalysis
 
-        # Build a lesson with an extra phrase that breaks the arithmetic
         l2 = "nb-NO-PernilleNeural"
         en = "en-US-GuyNeural"
         lesson = Lesson(
@@ -503,8 +507,9 @@ class TestAnnotateChunkUpos:
                         Phrase(text="Key Phrases", voice_id=en, language_code="en", role="narrator"),
                         Phrase(text="sporet", voice_id=l2, language_code="no"),
                         Phrase(text="the track", voice_id=en, language_code="no", role="narrator"),
-                        # Extra phrase that breaks the expected count
-                        Phrase(text="extra", voice_id=l2, language_code="no"),
+                        # A second group: L2 phrase followed by a narrator translation
+                        Phrase(text="sporet", voice_id=l2, language_code="no"),
+                        Phrase(text="the track", voice_id=en, language_code="no", role="narrator"),
                     ],
                 )
             ],
@@ -519,6 +524,75 @@ class TestAnnotateChunkUpos:
         with pytest.warns(UserWarning, match="key phrase"):
             count = annotate_chunk_upos(lesson, srs_db, lemmatizer=lem, model_version="test-v1")
         assert count == 0
+
+    def test_tags_stored_section_with_fewer_chunks_than_todays_rules(self, tmp_path: Path, srs_db: SRSDatabase) -> None:
+        """A4 — a stored section holding FEWER chunks than today's rules still tags.
+
+        Built by the real section builder, then one breakdown chunk deleted: the
+        shape of a lesson stored before the rules changed (8 of the 11 stored
+        Norwegian lessons, measured 2026-09-29). Re-deriving today's breakdown
+        would demand 10 phrases, find 9, and return 0 with a warning. The stored
+        section's own structure says there is exactly one group, and its two
+        remaining ``source_word`` chunks are tagged.
+        """
+        from app.generation.lemma_annotation import annotate_chunk_upos
+        from app.generation.section_builder import build_key_phrases_section
+        from app.srs.lemmatizer import TokenAnalysis
+
+        section = build_key_phrases_section(
+            [{"phrase": "sporet er kaldt", "translation": "the track is cold"}],
+            {"female-1": "nb-NO-PernilleNeural"},
+            "en-US-GuyNeural",
+            "no",
+        )
+        # Phrase 7 is the chunk "ret" (source_word="sporet"). Removing it leaves
+        # a group one phrase shorter than today's rules expect.
+        assert section.phrases[7].source_word == "sporet"
+        del section.phrases[7]
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="no",
+            sections=[section],
+            key_phrases=[KeyPhraseInfo(phrase="sporet er kaldt", translation="the track is cold")],
+        )
+        lem = _UposLemmatizer({"sporet er kaldt": [TokenAnalysis(surface="sporet", lemma="spor", upos="NOUN")]})
+
+        count = annotate_chunk_upos(lesson, srs_db, lemmatizer=lem, model_version="test-v1")
+
+        assert count == 2  # NOT 0 — the two surviving source_word chunks
+        tagged = [p for p in section.phrases if p.upos == "NOUN"]
+        assert [p.text for p in tagged] == ["spo", "sporet"]
+
+    def test_tags_stored_section_with_more_chunks_than_todays_rules(self, tmp_path: Path, srs_db: SRSDatabase) -> None:
+        """A4 mirror — one breakdown chunk INSERTED into the stored section."""
+        from app.generation.lemma_annotation import annotate_chunk_upos
+        from app.generation.section_builder import build_key_phrases_section
+        from app.srs.lemmatizer import TokenAnalysis
+
+        section = build_key_phrases_section(
+            [{"phrase": "sporet er kaldt", "translation": "the track is cold"}],
+            {"female-1": "nb-NO-PernilleNeural"},
+            "en-US-GuyNeural",
+            "no",
+        )
+        section.phrases.insert(
+            8, Phrase(text="sporet", voice_id="nb-NO-PernilleNeural", language_code="no", source_word="sporet")
+        )
+
+        lesson = Lesson(
+            title="Day 1",
+            language_code="no",
+            sections=[section],
+            key_phrases=[KeyPhraseInfo(phrase="sporet er kaldt", translation="the track is cold")],
+        )
+        lem = _UposLemmatizer({"sporet er kaldt": [TokenAnalysis(surface="sporet", lemma="spor", upos="NOUN")]})
+
+        count = annotate_chunk_upos(lesson, srs_db, lemmatizer=lem, model_version="test-v1")
+
+        assert count == 4
+        tagged = [p for p in section.phrases if p.upos == "NOUN"]
+        assert [p.text for p in tagged] == ["ret", "sporet", "spo", "sporet"]
 
     def test_no_lemmatizer_model_version_left_untouched(self, tmp_path: Path, srs_db: SRSDatabase) -> None:
         """A lesson with no lemmatizer model version is left untouched."""

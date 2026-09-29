@@ -99,16 +99,21 @@ def annotate_chunk_upos(lesson: Lesson, srs_db: SRSDatabase, *, lemmatizer: obje
     externally, ``anyio.to_thread.run_sync`` for the NLP work, and failures
     swallowed with a warning — tagging must never break generation.
 
-    Returns the number of phrases tagged. Walks the KEY_PHRASES section using the
-    same arithmetic as ``_build_key_phrases_refs``: one title phrase, then
-    ``2 + len(breakdown)`` per key phrase. This attaches each chunk to *its own*
-    key phrase — never a lesson-wide surface→upos map, because a word can be a
-    noun in one key phrase and a verb in another.
+    Returns the number of phrases tagged. Walks the KEY_PHRASES section by the
+    groups :func:`key_phrase_groups` reads off that section's own structure —
+    the same segmentation ``_build_key_phrases_refs`` uses, and for the same
+    reason: a stored section is a snapshot laid out under the breakdown rules as
+    they were at generation time, so re-deriving each key phrase's phrase count
+    from today's rules breaks every stored lesson the rules have since moved
+    past. Within a group the layout is L2 text, translation, then breakdown
+    chunks. This attaches each chunk to *its own* key phrase — never a
+    lesson-wide surface→upos map, because a word can be a noun in one key phrase
+    and a verb in another.
     """
     if not model_version:
         return 0
 
-    from app.generation.section_builder import build_word_breakdown_spans
+    from app.generation.section_builder import key_phrase_groups
     from app.srs.lemmatizer import TokenAnalysis, analyze_sentence_cached
 
     kp_section = next(
@@ -121,28 +126,20 @@ def annotate_chunk_upos(lesson: Lesson, srs_db: SRSDatabase, *, lemmatizer: obje
     l2_code = lesson.language_code
     phrases = kp_section.phrases
     count = 0
-    phrase_idx = 0
 
-    # Skip title phrase (first phrase in the section)
-    if phrases and phrases[0].language_code != l2_code:
-        phrase_idx = 1
+    groups = key_phrase_groups(kp_section, l2_code)
+    if len(groups) != len(lesson.key_phrases):
+        import warnings
 
-    for kp in lesson.key_phrases:
-        breakdown = build_word_breakdown_spans(kp.phrase, l2_code)
-        expected = 2 + len(breakdown)
+        warnings.warn(
+            f"annotate_chunk_upos: key phrase group count mismatch: section has {len(groups)} "
+            f"group(s), lesson declares {len(lesson.key_phrases)} key phrase(s) — skipping",
+            UserWarning,
+            stacklevel=2,
+        )
+        return 0
 
-        remaining = len(phrases) - phrase_idx
-        if remaining < expected:
-            import warnings
-
-            warnings.warn(
-                f"annotate_chunk_upos: key phrase arithmetic mismatch for {kp.phrase!r}: "
-                f"expected {expected} phrases, {remaining} remaining — skipping",
-                UserWarning,
-                stacklevel=2,
-            )
-            return 0
-
+    for kp, group in zip(lesson.key_phrases, groups, strict=True):
         # Analyze this key phrase's sentence
         try:
             analyses: list[TokenAnalysis] = analyze_sentence_cached(
@@ -157,19 +154,16 @@ def annotate_chunk_upos(lesson: Lesson, srs_db: SRSDatabase, *, lemmatizer: obje
                 UserWarning,
                 stacklevel=2,
             )
-            phrase_idx += expected
             continue
 
-        # Walk the expected phrases: L2 text (idx 0), EN translation (idx 1),
-        # then breakdown chunks (idx 2..expected-1)
-        for i in range(2, expected):
-            chunk_phrase = phrases[phrase_idx + i]
+        # Walk the group: L2 text (idx 0), EN translation (idx 1), then the
+        # breakdown chunks (idx 2..), however many the section actually holds.
+        for i in range(2, len(group)):
+            chunk_phrase = phrases[group.start + i]
             if chunk_phrase.source_word is not None:
                 upos = surface_to_upos.get(chunk_phrase.source_word.lower(), "")
                 if upos:
                     chunk_phrase.upos = upos
                     count += 1
-
-        phrase_idx += expected
 
     return count

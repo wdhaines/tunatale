@@ -2,8 +2,8 @@
 
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.lesson import Lesson, Section, SectionType
-from app.storage.backfill_curriculum_day_titles import backfill_curriculum_day_titles
 from app.storage.store import ContentStore
+from scripts.storage_archive.backfill_curriculum_day_titles import backfill_curriculum_day_titles
 
 
 def _lesson(title: str) -> Lesson:

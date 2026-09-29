@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from app.generation.section_builder import build_word_breakdown_spans
+from app.generation.section_builder import key_phrase_groups
 from app.models.lesson import Lesson, SectionType
 
 
@@ -97,10 +97,33 @@ def _build_dialogue_refs(lesson: Lesson, timing: list[CueTiming], section_idx: i
 
 
 def _build_key_phrases_refs(lesson: Lesson, timing: list[CueTiming], section_idx: int) -> list[Cue]:
-    """Build cues for the key_phrases section by consuming expected counts."""
+    """Build cues for the key_phrases section from the section's own group structure.
+
+    The groups come from :func:`key_phrase_groups`, which reads the stored
+    section's shape. It does NOT re-run the breakdown rules over
+    ``lesson.key_phrases`` to work out how many phrases each one occupies: a
+    stored section is a snapshot laid out under the rules as they were then, and
+    re-deriving the count from today's rules makes every re-render of an older
+    lesson die with a phrase-count mismatch — after all the TTS is done. Measured
+    2026-09-29, 8 of 11 stored Norwegian lessons failed that arithmetic.
+
+    Each timing entry is mapped to its group by ``te.phrase_index``, so timing is
+    free to skip phrases without the group boundaries shifting underneath it.
+    A structural inconsistency is still loud: a group count that disagrees with
+    ``lesson.key_phrases``, or a timing entry landing in no group at all, raises.
+    """
     section = lesson.sections[section_idx]
     cues: list[Cue] = []
     l2_code = lesson.language_code
+
+    groups = key_phrase_groups(section, l2_code)
+    if len(groups) != len(lesson.key_phrases):
+        raise ValueError(
+            f"Key phrase phrase-count mismatch: section has {len(groups)} key-phrase "
+            f"group(s), lesson declares {len(lesson.key_phrases)} key phrase(s)"
+        )
+
+    group_of: dict[int, int] = {phrase_index: k for k, group in enumerate(groups) for phrase_index in group}
 
     phrase_idx = 0  # index into timing entries
 
@@ -123,41 +146,27 @@ def _build_key_phrases_refs(lesson: Lesson, timing: list[CueTiming], section_idx
         )
         phrase_idx += 1
 
-    for kp_idx, kp in enumerate(lesson.key_phrases):
-        breakdown = build_word_breakdown_spans(kp.phrase, l2_code)
-        expected = 2 + len(breakdown)
-
-        remaining = len(timing) - phrase_idx
-        if remaining < expected:
+    for te in timing[phrase_idx:]:
+        k = group_of.get(te.phrase_index)
+        if k is None:
             raise ValueError(
-                f"Key phrase phrase-count mismatch: expected {expected} phrases "
-                f"for key_phrase[{kp_idx}], got {remaining} remaining phrases"
+                f"Key phrase phrase-count mismatch: phrase {te.phrase_index} of section "
+                f"{section_idx} belongs to no key-phrase group"
             )
-
-        ref = {"kind": "key_phrase", "target_index": kp_idx}
-        for _ in range(expected):
-            te = timing[phrase_idx]
-            phrase = section.phrases[te.phrase_index]
-            cues.append(
-                Cue(
-                    index=0,
-                    start_ms=0,
-                    end_ms=0,
-                    section_index=section_idx,
-                    section_type=SectionType.KEY_PHRASES.value,
-                    phrase_index=te.phrase_index,
-                    role=phrase.role,
-                    language_code=phrase.language_code,
-                    text=phrase.text,
-                    ref=ref,
-                )
+        phrase = section.phrases[te.phrase_index]
+        cues.append(
+            Cue(
+                index=0,
+                start_ms=0,
+                end_ms=0,
+                section_index=section_idx,
+                section_type=SectionType.KEY_PHRASES.value,
+                phrase_index=te.phrase_index,
+                role=phrase.role,
+                language_code=phrase.language_code,
+                text=phrase.text,
+                ref={"kind": "key_phrase", "target_index": k},
             )
-            phrase_idx += 1
-
-    if phrase_idx < len(timing):
-        raise ValueError(
-            f"Key phrase phrase-count mismatch: {len(timing) - phrase_idx} "
-            f"extra phrases remain after consuming {len(lesson.key_phrases)} key phrases"
         )
 
     return cues

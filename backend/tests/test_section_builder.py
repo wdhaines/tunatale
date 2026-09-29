@@ -13,8 +13,9 @@ from app.generation.section_builder import (
     build_slow_translated_section,
     build_translated_section,
     build_word_breakdown,
+    key_phrase_groups,
 )
-from app.models.lesson import SectionType
+from app.models.lesson import Phrase, Section, SectionType
 
 # ── build_word_breakdown ──────────────────────────────────────────────────
 
@@ -776,3 +777,116 @@ def test_slow_translated_uses_slow_word_fn_without_a_compound_breakdown(monkeypa
 
     l2 = [p.text for p in section.phrases if p.language_code == "zz"]
     assert l2 == ["<en> ... <to>"]
+
+
+# ── key_phrase_groups ───────────────────────────────────────────────────
+#
+# The inverse of build_key_phrases_section. It reads the section's own shape
+# rather than re-running today's breakdown rules, so a lesson stored under
+# older rules still segments correctly. A group HEAD is an L2 phrase whose
+# SUCCESSOR is a narrator phrase; a group runs to the next head, or the end.
+
+
+def _kp_section(*, chunks_per_kp: list[int], l2: str = "no", narrator_l2: bool = False) -> Section:
+    """A hand-built KEY_PHRASES section: title, then (L2, translation, chunks…) per key phrase.
+
+    *narrator_l2* puts the translation in the L2 language while still marking it
+    ``role="narrator"`` — the shape some stored lessons actually have, and the
+    case where "is L2" alone is not enough to recognise a head.
+    """
+    phrases = [Phrase(text="Key Phrases", voice_id="en", language_code="en", role="narrator")]
+    for kp, n_chunks in enumerate(chunks_per_kp):
+        phrases.append(Phrase(text=f"kp{kp}", voice_id="l2", language_code=l2))
+        phrases.append(
+            Phrase(text=f"tr{kp}", voice_id="en", language_code=l2 if narrator_l2 else "en", role="narrator")
+        )
+        phrases.extend(Phrase(text=f"c{kp}_{c}", voice_id="l2", language_code=l2) for c in range(n_chunks))
+    return Section(section_type=SectionType.KEY_PHRASES, phrases=phrases)
+
+
+def test_key_phrase_groups_title_only_section_is_empty():
+    assert key_phrase_groups(_kp_section(chunks_per_kp=[]), "no") == []
+
+
+def test_key_phrase_groups_key_phrase_with_zero_chunks_is_a_valid_group():
+    groups = key_phrase_groups(_kp_section(chunks_per_kp=[0]), "no")
+    assert groups == [range(1, 3)]
+    assert len(groups[0]) == 2  # head + translation, no breakdown at all
+
+
+def test_key_phrase_groups_three_key_phrases_with_3_0_5_chunks():
+    groups = key_phrase_groups(_kp_section(chunks_per_kp=[3, 0, 5]), "no")
+    assert groups == [range(1, 6), range(6, 8), range(8, 15)]
+    assert [len(g) for g in groups] == [5, 2, 7]  # 2 + chunks
+
+
+def test_key_phrase_groups_l2_chunk_followed_by_l2_chunk_is_not_a_head():
+    """Chunks are plain L2 phrases, so a chunk+chunk pair must stay inside its group."""
+    assert key_phrase_groups(_kp_section(chunks_per_kp=[2]), "no") == [range(1, 5)]
+
+
+def test_key_phrase_groups_last_l2_phrase_has_no_successor_so_is_not_a_head():
+    """The section's final phrase cannot be a head — a head needs a narrator after it.
+
+    It is a chunk of the last group, which is how a stored section carrying one
+    more chunk than today's rules would read.
+    """
+    section = _kp_section(chunks_per_kp=[0])
+    section.phrases.append(Phrase(text="stray", voice_id="l2", language_code="no"))
+    assert key_phrase_groups(section, "no") == [range(1, 4)]
+
+
+def test_key_phrase_groups_english_non_narrator_phrase_is_not_a_head():
+    """An English phrase with no narrator role, even followed by a narrator, is not a head."""
+    section = _kp_section(chunks_per_kp=[0])
+    section.phrases.insert(1, Phrase(text="en stray", voice_id="en", language_code="en"))
+    assert key_phrase_groups(section, "no") == [range(2, 4)]
+
+
+def test_key_phrase_groups_narrator_followed_by_narrator_is_not_a_head():
+    """A narrator phrase preceded by a narrator phrase is not a head.
+
+    Guards the inverse error: an implementation that treats a narrator phrase as
+    a head on the strength of its ROLE alone, without the L2 check. The successor
+    test alone is not enough either.
+    """
+    section = _kp_section(chunks_per_kp=[1])
+    section.phrases.insert(1, Phrase(text="scene label", voice_id="en", language_code="en", role="narrator"))
+    # 0 title(en,narrator) 1 scene label(en,narrator) 2 kp0(no) 3 tr0(en,narrator) 4 c0_0(no)
+    assert key_phrase_groups(section, "no") == [range(2, 5)]
+
+
+def test_key_phrase_groups_l2_code_translation_keeps_its_group():
+    """A translation carrying the L2 language code does not add a group.
+
+    The head test is ``language_code == l2_code`` plus a narrator successor. A
+    translation is a narrator phrase, so the real builder's ``en`` translation is
+    never a head — but a stored section can carry ``language_code == l2`` on it
+    (the shape the UPOS fixtures use), and as long as nothing narrator-role
+    follows, it stays inside its group rather than splitting it in two.
+    """
+    section = _kp_section(chunks_per_kp=[2], narrator_l2=True)
+    assert key_phrase_groups(section, "no") == [range(1, 5)]  # 2 + 2 chunks
+
+
+def test_key_phrase_groups_ignores_a_different_l2_code():
+    """The same section read as another language has no heads at all."""
+    section = _kp_section(chunks_per_kp=[1, 1])
+    assert key_phrase_groups(section, "sl") == []
+
+
+def test_key_phrase_groups_inverts_build_key_phrases_section():
+    """Every group the builder produces is a contiguous run covering the section body."""
+    section = build_key_phrases_section(
+        [
+            {"phrase": "sporet er kaldt", "translation": "the track is cold"},
+            {"phrase": "jeg vil ha en kaffe", "translation": "I would like a coffee"},
+        ],
+        {"female-1": "nb-NO-PernilleNeural"},
+        "en-US-GuyNeural",
+        "no",
+    )
+    groups = key_phrase_groups(section, "no")
+    assert groups == [range(1, 11), range(11, 25)]
+    # Contiguous, ordered, and together they cover every phrase after the title.
+    assert [i for g in groups for i in g] == list(range(1, len(section.phrases)))

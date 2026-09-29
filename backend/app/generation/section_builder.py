@@ -189,15 +189,17 @@ def build_key_phrases_section(
 ) -> Section:
     """Build the KEY_PHRASES section.
 
-    For each phrase:
-    1. L2 phrase (female-1)
-    2. Narrator translation
-    3. L2 phrase repeat (female-1)
-    4. Word breakdown steps (female-1)
+    Emits, in order: one English narrator title phrase, then per key phrase
+    1. the L2 phrase (female-1)
+    2. the narrator translation (``role="narrator"``)
+    3. zero or more L2 word-breakdown steps (female-1)
 
     A map that names a ``key-phrases`` voice gets that voice for every L2 line
     instead of female-1 (tunatale-w4m7.16: Tagalog's fil-PH voices ignore IPA,
     so its breakdown is spoken by a Multilingual voice that honours it).
+
+    Key phrases with a missing phrase or translation are skipped with a warning,
+    so the group count can be lower than ``len(key_phrases)``.
     """
     female_1_voice = l2_voice_map.get("key-phrases") or l2_voice_map.get("female-1", narrator_voice)
     phrases: list[Phrase] = [
@@ -230,6 +232,45 @@ def build_key_phrases_section(
             )
 
     return Section(section_type=SectionType.KEY_PHRASES, phrases=phrases)
+
+
+def key_phrase_groups(section: Section, l2_code: str) -> list[range]:
+    """The KEY_PHRASES section's key-phrase groups, as phrase-index ranges.
+
+    The structural inverse of :func:`build_key_phrases_section`, and the reason
+    that builder is the ONLY place breakdown rules are applied. A section is a
+    SNAPSHOT: it was laid out at generation time, under whatever the breakdown
+    rules were then. Re-deriving the phrase count from today's rules — as both
+    this module's callers used to — assumes those rules never changed. They do,
+    and a stored lesson then fails to re-render, after all the TTS is done
+    (measured 2026-09-29: 8 of 11 stored Norwegian lessons disagree with today's
+    arithmetic).
+
+    So the segmentation is read off the section instead. A group HEAD is a
+    phrase whose ``language_code`` is *l2_code* and whose SUCCESSOR has
+    ``role == "narrator"``; a group runs from its head up to (not including) the
+    next head, or the section end. Phrases before the first head are the title.
+
+    Both halves of that test carry their weight. Breakdown chunks are plain L2
+    phrases, so "is L2" alone would make every chunk a head; chunks are never
+    followed by a narrator phrase, so the successor test is what keeps them
+    inside their group. And the last phrase of a section cannot be a head at
+    all, having no successor — which is exactly what makes a stored section with
+    one more chunk than today's rules read correctly.
+
+    Returns an empty list for a title-only section. Takes no position on how
+    many groups a section SHOULD have; callers compare that to
+    ``lesson.key_phrases`` and decide.
+    """
+    phrases = section.phrases
+    # The final phrase is excluded: a head is defined by having a successor.
+    heads = [
+        i for i in range(len(phrases) - 1) if phrases[i].language_code == l2_code and phrases[i + 1].role == "narrator"
+    ]
+    bounds = [*heads, len(phrases)]
+    # strict=False: the two sides are deliberately offset — N+1 bounds paired as N
+    # consecutive groups. strict=True would raise on the final unpaired bound.
+    return [range(start, end) for start, end in zip(bounds, bounds[1:], strict=False)]
 
 
 def build_natural_speed_section(

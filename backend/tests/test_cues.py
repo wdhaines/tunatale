@@ -3,7 +3,7 @@
 import pytest
 
 from app.audio.cues import CueTiming, build_cue_manifest
-from app.generation.section_builder import build_word_breakdown
+from app.generation.section_builder import build_key_phrases_section, build_word_breakdown
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 
 
@@ -404,8 +404,15 @@ class TestBuildCueManifestKeyPhrases:
         for i in range(1 + kp_count, total):
             assert cues[i].ref == {"kind": "key_phrase", "target_index": 1}
 
-    def test_phrase_count_mismatch_raises(self):
-        """A leftover phrase count after consuming all key phrases raises loudly."""
+    def test_key_phrase_with_no_breakdown_chunks_is_a_valid_group(self):
+        """A group is head + translation; zero breakdown chunks is a legal shape.
+
+        This test used to assert ``ValueError``, deriving the expected count as
+        ``2 + len(build_word_breakdown("hvala", "sl"))``. The section is
+        structurally sound — the L2 phrase at index 1 is followed by a narrator —
+        so it is one group of length 2 against one declared key phrase, and the
+        manifest builds.
+        """
         lesson = Lesson(
             title="Test",
             language_code="sl",
@@ -421,17 +428,23 @@ class TestBuildCueManifestKeyPhrases:
                 )
             ],
         )
-        # Only 3 phrases (title + L2 + trans), expected 1 + (2 + n_breakdown) = 1+2+2=5
         total = 3
         timing = [
             CueTiming(section_index=0, phrase_index=i, start_frame=i * 1000, end_frame=(i + 1) * 1000)
             for i in range(total)
         ]
-        with pytest.raises(ValueError, match="Key phrase phrase-count mismatch"):
-            build_cue_manifest(lesson, timing, rate=1000)
+        cues = build_cue_manifest(lesson, timing, rate=1000)
 
-    def test_too_many_phrases_raises(self):
-        """Extra phrases beyond expected key phrase count also raise."""
+        assert _target_indices(cues) == ["narration", 0, 0]
+
+    def test_trailing_l2_phrase_is_a_chunk_of_the_last_group(self):
+        """A trailing L2 phrase with no narrator after it is a chunk, not a leftover.
+
+        This test used to assert ``ValueError`` for 'too many phrases'. A head is
+        defined by having a narrator SUCCESSOR, so the final L2 phrase cannot be
+        one: it belongs to the last group. That is exactly how a stored section
+        carrying one more chunk than today's rules would read.
+        """
         lesson = Lesson(
             title="Test",
             language_code="sl",
@@ -453,8 +466,9 @@ class TestBuildCueManifestKeyPhrases:
             CueTiming(section_index=0, phrase_index=i, start_frame=i * 1000, end_frame=(i + 1) * 1000)
             for i in range(total)
         ]
-        with pytest.raises(ValueError, match="Key phrase phrase-count mismatch"):
-            build_cue_manifest(lesson, timing, rate=1000)
+        cues = build_cue_manifest(lesson, timing, rate=1000)
+
+        assert _target_indices(cues) == ["narration", 0, 0, 0]
 
 
 class TestBuildCueManifestMultiSection:
@@ -682,8 +696,14 @@ class TestBuildCueManifestEdgeCases:
         cues = build_cue_manifest(lesson, timing, rate=1000)
         assert len(cues) == 1  # only title
 
-    def test_key_phrases_extra_phrases_after_all_consumed_raises(self):
-        """When extra phrases exist after consuming all key phrases, raise."""
+    def test_extra_chunk_after_a_complete_breakdown_is_kept(self):
+        """A full builder breakdown plus one extra chunk is one longer group.
+
+        This test used to assert ``ValueError`` for phrases 'left over after
+        consuming all key phrases'. The trailing L2 phrase cannot be a head, so
+        the group simply runs one phrase longer — the shape a section stored
+        under an older, chunk-richer rule has.
+        """
         lesson = Lesson(
             title="Test",
             language_code="sl",
@@ -711,8 +731,9 @@ class TestBuildCueManifestEdgeCases:
             CueTiming(section_index=0, phrase_index=i, start_frame=i * 1000, end_frame=(i + 1) * 1000)
             for i in range(total)
         ]
-        with pytest.raises(ValueError, match="Key phrase phrase-count mismatch"):
-            build_cue_manifest(lesson, timing, rate=1000)
+        cues = build_cue_manifest(lesson, timing, rate=1000)
+
+        assert _target_indices(cues) == ["narration"] + [0] * (2 + n + 1)
 
     def test_key_phrases_first_timing_not_index_zero(self):
         """First timing entry with phrase_index != 0 skips title ref (defensive)."""
@@ -745,3 +766,126 @@ class TestBuildCueManifestEdgeCases:
         cues = build_cue_manifest(lesson, timing, rate=1000)
         # Title still exists via separate timing entry
         assert len(cues) == total - 1
+
+
+# ---------------------------------------------------------------------------
+# A stored KEY_PHRASES section is a SNAPSHOT taken at generation time. Anything
+# that re-derives how many phrases a key phrase occupies — by re-running
+# today's breakdown rules over its text — silently assumes the rules have not
+# changed since. They have (measured 2026-09-29: 8 of 11 stored Norwegian
+# lessons fail today's arithmetic), and the failure lands as a ValueError
+# AFTER all the TTS is done. These tests pin the structural segmentation
+# instead: a group is delimited by the section's own shape.
+# ---------------------------------------------------------------------------
+
+_NO_KP_PHRASES = [
+    {"phrase": "sporet er kaldt", "translation": "the track is cold"},
+    {"phrase": "jeg vil ha en kaffe", "translation": "I would like a coffee"},
+]
+
+
+def _no_lesson() -> tuple[Lesson, Section]:
+    """A Norwegian lesson whose KEY_PHRASES section is built by the real builder."""
+    section = build_key_phrases_section(_NO_KP_PHRASES, {"female-1": "nb-NO-PernilleNeural"}, "en-US-GuyNeural", "no")
+    lesson = Lesson(
+        title="Day 1",
+        language_code="no",
+        sections=[section],
+        key_phrases=[KeyPhraseInfo(phrase=kp["phrase"], translation=kp["translation"]) for kp in _NO_KP_PHRASES],
+    )
+    return lesson, section
+
+
+def _timing_for(section: Section) -> list[CueTiming]:
+    """One timing entry per phrase, in order."""
+    return [
+        CueTiming(section_index=0, phrase_index=i, start_frame=i * 1000, end_frame=(i + 1) * 1000)
+        for i in range(len(section.phrases))
+    ]
+
+
+def _target_indices(cues) -> list[int | str]:
+    """A cue's ref target, or "narration" for the section title."""
+    return ["narration" if c.ref == {"kind": "narration"} else c.ref["target_index"] for c in cues]
+
+
+class TestStoredSectionIsNotRederived:
+    """Cues are segmented by the stored section's structure, not by today's rules."""
+
+    def test_freshly_built_section_matches_literal_refs(self):
+        """A5 — behaviour preservation, pinned against LITERALS not against the new code.
+
+        ``build_key_phrases_section`` emits title + (L2, translation, chunks…) per
+        key phrase: group 0 is phrases 1..10 and group 1 is phrases 11..24.
+        """
+        lesson, section = _no_lesson()
+        assert len(section.phrases) == 25
+
+        cues = build_cue_manifest(lesson, _timing_for(section), rate=1000)
+
+        assert _target_indices(cues) == (["narration"] + [0] * 10 + [1] * 14), (
+            "group 0 is phrases 1..10 and group 1 is phrases 11..24 — assert the FULL list, not a count"
+        )
+
+    def test_missing_breakdown_chunk_does_not_break_the_manifest(self):
+        """A1 — a chunk DELETED from group 0 (a lesson stored under older rules).
+
+        Group 0 becomes phrases 1..9, group 1 phrases 10..23. The old arithmetic
+        demanded 10 for key_phrase[0] and raised here, after all the TTS.
+        """
+        lesson, section = _no_lesson()
+        del section.phrases[5]  # an L2 breakdown chunk inside group 0
+        assert len(section.phrases) == 24
+
+        cues = build_cue_manifest(lesson, _timing_for(section), rate=1000)
+
+        assert _target_indices(cues) == ["narration"] + [0] * 9 + [1] * 14
+
+    def test_extra_breakdown_chunk_does_not_break_the_manifest(self):
+        """A1 mirror — a chunk INSERTED into group 0.
+
+        Group 0 becomes phrases 1..11, group 1 phrases 12..25. The extra chunk is
+        plain L2, and L2 is never followed by a narrator phrase, so it stays a
+        chunk of group 0 rather than being mistaken for a group head.
+        """
+        lesson, section = _no_lesson()
+        section.phrases.insert(6, Phrase(text="kald", voice_id="nb-NO-PernilleNeural", language_code="no"))
+        assert len(section.phrases) == 26
+
+        cues = build_cue_manifest(lesson, _timing_for(section), rate=1000)
+
+        assert _target_indices(cues) == ["narration"] + [0] * 11 + [1] * 14
+
+
+class TestGroupCountMismatchStillRaises:
+    """A structural inconsistency must stay LOUD — only the arithmetic moved."""
+
+    def test_more_groups_than_key_phrases_raises(self):
+        """A3(a) — the section holds 2 groups, the lesson declares 1 key phrase."""
+        lesson, section = _no_lesson()
+        lesson.key_phrases = lesson.key_phrases[:1]
+
+        with pytest.raises(ValueError, match="^Key phrase phrase-count mismatch"):
+            build_cue_manifest(lesson, _timing_for(section), rate=1000)
+
+    def test_more_key_phrases_than_groups_raises(self):
+        """A3(b) — the section holds 1 group, the lesson declares 2 key phrases."""
+        lesson, section = _no_lesson()
+        del section.phrases[10:]
+
+        with pytest.raises(ValueError, match="^Key phrase phrase-count mismatch"):
+            build_cue_manifest(lesson, _timing_for(section), rate=1000)
+
+    def test_timing_entry_outside_every_group_raises(self):
+        """An L2 phrase sitting BEFORE the first group head is in no group at all.
+
+        Phrase 1 ('stray') is L2 but is followed by another L2 phrase, so it is
+        not a head; phrase 2 is the first head. A timing entry for phrase 1 has
+        nowhere to attach and is an inconsistency, not a silent skip.
+        """
+        lesson, section = _no_lesson()
+        section.phrases.insert(1, Phrase(text="stray", voice_id="nb-NO-PernilleNeural", language_code="no"))
+        section.phrases.insert(2, Phrase(text="sporet er kaldt", voice_id="nb-NO-PernilleNeural", language_code="no"))
+
+        with pytest.raises(ValueError, match="^Key phrase phrase-count mismatch"):
+            build_cue_manifest(lesson, _timing_for(section), rate=1000)
