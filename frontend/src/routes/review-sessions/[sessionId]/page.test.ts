@@ -1232,8 +1232,73 @@ describe("hands-free carries on into the next review session", () => {
 
       cap.els[0].dispatchEvent(new Event("ended"));
 
-      expect(mockGoto).toHaveBeenCalledWith("/review-sessions/sess-2");
+      await vi.waitFor(() => expect(mockGoto).toHaveBeenCalledWith("/review-sessions/sess-2"));
       expect(sessionStorage.getItem("handsFreeHandoff")).toBe("1");
+    } finally {
+      cap.restore();
+    }
+  });
+
+  // tunatale-yoj4: the sibling list is fetched once on mount, and a failed
+  // fetch ended the run silently. It is re-read when the run ends.
+  it("re-reads the sibling list at the end of the run, so a failed mount fetch still hands off", async () => {
+    seedOnLastPass();
+    vi.mocked(api.listReviewSessions)
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue([
+        { id: "sess-2", session_date: "2026-09-07" },
+        { id: "sess-1", session_date: "2026-09-02" },
+      ] as never);
+    const cap = captureAudio();
+    try {
+      render(Page, { props: { data: pageData() } });
+      await vi.waitFor(() => expect(api.listReviewSessions).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(cap.els.length).toBeGreaterThan(0));
+
+      cap.els[0].dispatchEvent(new Event("ended"));
+
+      await vi.waitFor(() => expect(mockGoto).toHaveBeenCalledWith("/review-sessions/sess-2"));
+      expect(sessionStorage.getItem("handsFreeHandoff")).toBe("1");
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("records the hand-off decision in the on-device trace", async () => {
+    seedOnLastPass();
+    localStorage.setItem("mediaTrace", "on");
+    vi.mocked(api.listReviewSessions).mockResolvedValue([
+      { id: "sess-2", session_date: "2026-09-07" },
+      { id: "sess-1", session_date: "2026-09-02" },
+    ] as never);
+    const cap = captureAudio();
+    try {
+      render(Page, { props: { data: pageData() } });
+      await vi.waitFor(() => expect(cap.els.length).toBeGreaterThan(0));
+      cap.els[0].dispatchEvent(new Event("ended"));
+      await vi.waitFor(() => expect(mockGoto).toHaveBeenCalled());
+      const lines = JSON.parse(localStorage.getItem("mediaTraceLog") ?? "[]") as string[];
+      expect(lines.some((l) => / handoff:goto to=sess-2( |$)/.test(l))).toBe(true);
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("records a failed re-read and the stop it causes", async () => {
+    seedOnLastPass();
+    localStorage.setItem("mediaTrace", "on");
+    vi.mocked(api.listReviewSessions).mockRejectedValue(new Error("offline"));
+    const cap = captureAudio();
+    try {
+      render(Page, { props: { data: pageData() } });
+      await vi.waitFor(() => expect(cap.els.length).toBeGreaterThan(0));
+      cap.els[0].dispatchEvent(new Event("ended"));
+      const lines = () => JSON.parse(localStorage.getItem("mediaTraceLog") ?? "[]") as string[];
+      await vi.waitFor(() =>
+        expect(lines().some((l) => / handoff:none session=sess-1 known=0( |$)/.test(l))).toBe(true),
+      );
+      expect(lines().some((l) => l.endsWith(" handoff:map-failed err=Error: offline"))).toBe(true);
+      expect(mockGoto).not.toHaveBeenCalled();
     } finally {
       cap.restore();
     }

@@ -5,6 +5,7 @@
 	import type { LessonAudio, TranscriptData, ListenResponse, PeerSyncResult, DayProgress } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import { handsFreePref } from '$lib/stores/handsFreePref.svelte';
+	import { mediaTrace } from '$lib/mediaTrace';
 	import LessonPlayer from '$lib/components/LessonPlayer.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import Transcript from '$lib/components/Transcript.svelte';
@@ -134,9 +135,24 @@
 	//
 	// No next day means the run stops here, which is the right end of a
 	// curriculum — never a wrap back to day one.
-	function onSequenceEnd() {
+	//
+	// The map is re-read here rather than trusted from mount (tunatale-yoj4): a
+	// mount fetch that failed left it empty, and a day generated since mount was
+	// missing from it — both ended the run as if this were the last day, and said
+	// nothing. A failed re-read keeps whatever mount had. Every outcome is written
+	// to the on-device trace, because on a drive nobody sees the screen.
+	async function onSequenceEnd() {
+		try {
+			dayLessons = await api.getCurriculumProgress(data.curriculum.id);
+		} catch (err) {
+			mediaTrace(`handoff:map-failed err=${String(err)}`);
+		}
 		const next = nextLesson;
-		if (!next) return;
+		if (!next) {
+			mediaTrace(`handoff:none day=${data.lesson.day} known=${dayLessons.length}`);
+			return;
+		}
+		mediaTrace(`handoff:goto to=${next.lesson_id}`);
 		handsFreePref.armHandoff();
 		void goto(`/c/${data.curriculum.id}/l/${next.lesson_id}`);
 	}

@@ -164,13 +164,131 @@ describe("hands-free carries on into the next day", () => {
 
       cap.els[0].dispatchEvent(new Event("ended"));
 
-      expect(mockGoto).toHaveBeenCalledWith("/c/cid-1/l/lid-2");
+      await waitFor(() => expect(mockGoto).toHaveBeenCalledWith("/c/cid-1/l/lid-2"));
       // Without the baton the next page loads paused and on the saved
       // selection — the run would silently die at the lesson boundary.
       expect(sessionStorage.getItem("handsFreeHandoff")).toBe("1");
     } finally {
       cap.restore();
     }
+  });
+
+  // tunatale-yoj4: the day map is fetched once on mount, and a failed fetch
+  // left it empty — so the run ended with nowhere to go and said nothing. The
+  // map is re-read when the run ends, which is the only moment it matters.
+  it("re-reads the day map at the end of the run, so a failed mount fetch still hands off", async () => {
+    seedOnLastPass();
+    mockGetProgress
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue([d(1, 1, "lid-1"), d(2, 2, "lid-2")]);
+    const cap = captureAudio();
+    try {
+      render(Page, {
+        props: { data: { curriculum, lesson, audio: trackAudio, transcript: null } },
+      });
+      await waitFor(() => expect(mockGetProgress).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(cap.els.length).toBeGreaterThan(0));
+
+      cap.els[0].dispatchEvent(new Event("ended"));
+
+      await waitFor(() => expect(mockGoto).toHaveBeenCalledWith("/c/cid-1/l/lid-2"));
+      expect(sessionStorage.getItem("handsFreeHandoff")).toBe("1");
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("re-reads the day map at the end of the run, so a day added since mount is found", async () => {
+    seedOnLastPass();
+    mockGetProgress
+      .mockResolvedValueOnce([d(1, 1, "lid-1")])
+      .mockResolvedValue([d(1, 1, "lid-1"), d(2, 2, "lid-2")]);
+    const cap = captureAudio();
+    try {
+      render(Page, {
+        props: { data: { curriculum, lesson, audio: trackAudio, transcript: null } },
+      });
+      await waitFor(() => expect(mockGetProgress).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(cap.els.length).toBeGreaterThan(0));
+
+      cap.els[0].dispatchEvent(new Event("ended"));
+
+      await waitFor(() => expect(mockGoto).toHaveBeenCalledWith("/c/cid-1/l/lid-2"));
+    } finally {
+      cap.restore();
+    }
+  });
+
+  describe("the on-device trace records the hand-off decision", () => {
+    const traceLines = () => JSON.parse(localStorage.getItem("mediaTraceLog") ?? "[]") as string[];
+
+    it("records the lesson it hands off to", async () => {
+      seedOnLastPass();
+      localStorage.setItem("mediaTrace", "on");
+      mockGetProgress.mockResolvedValue([d(1, 1, "lid-1"), d(2, 2, "lid-2")]);
+      const cap = captureAudio();
+      try {
+        render(Page, {
+          props: { data: { curriculum, lesson, audio: trackAudio, transcript: null } },
+        });
+        await waitFor(() => expect(cap.els.length).toBeGreaterThan(0));
+        cap.els[0].dispatchEvent(new Event("ended"));
+        await waitFor(() => expect(mockGoto).toHaveBeenCalled());
+        expect(traceLines().some((l) => / handoff:goto to=lid-2( |$)/.test(l))).toBe(true);
+      } finally {
+        cap.restore();
+      }
+    });
+
+    it("records a stop on the last day, with how many days it knew", async () => {
+      seedOnLastPass();
+      localStorage.setItem("mediaTrace", "on");
+      mockGetProgress.mockResolvedValue([d(1, 1, "lid-1"), d(2, 2, "lid-2")]);
+      const cap = captureAudio();
+      try {
+        render(Page, {
+          props: {
+            data: {
+              curriculum,
+              lesson: { ...lesson, day: 2 },
+              audio: trackAudio,
+              transcript: null,
+            },
+          },
+        });
+        await waitFor(() => expect(cap.els.length).toBeGreaterThan(0));
+        cap.els[0].dispatchEvent(new Event("ended"));
+        await waitFor(() =>
+          expect(traceLines().some((l) => / handoff:none day=2 known=2( |$)/.test(l))).toBe(true),
+        );
+        expect(mockGoto).not.toHaveBeenCalled();
+      } finally {
+        cap.restore();
+      }
+    });
+
+    it("records a failed re-read and then the stop it causes", async () => {
+      seedOnLastPass();
+      localStorage.setItem("mediaTrace", "on");
+      mockGetProgress.mockRejectedValue(new Error("offline"));
+      const cap = captureAudio();
+      try {
+        render(Page, {
+          props: { data: { curriculum, lesson, audio: trackAudio, transcript: null } },
+        });
+        await waitFor(() => expect(cap.els.length).toBeGreaterThan(0));
+        cap.els[0].dispatchEvent(new Event("ended"));
+        await waitFor(() =>
+          expect(traceLines().some((l) => / handoff:none day=1 known=0( |$)/.test(l))).toBe(true),
+        );
+        expect(traceLines().some((l) => l.endsWith(" handoff:map-failed err=Error: offline"))).toBe(
+          true,
+        );
+        expect(mockGoto).not.toHaveBeenCalled();
+      } finally {
+        cap.restore();
+      }
+    });
   });
 
   it("stops on the LAST day rather than wrapping to day one", async () => {

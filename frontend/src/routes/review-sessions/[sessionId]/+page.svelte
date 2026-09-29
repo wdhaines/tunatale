@@ -17,6 +17,7 @@
 	import ManualStoryPanel from '$lib/components/ManualStoryPanel.svelte';
 	import { invalidateAll, goto } from '$app/navigation';
 	import { handsFreePref } from '$lib/stores/handsFreePref.svelte';
+	import { mediaTrace } from '$lib/mediaTrace';
 	import { nextSessionAfter } from '$lib/reading/nextReviewSession';
 	import type { SessionOrderable } from '$lib/reading/nextReviewSession';
 
@@ -99,9 +100,21 @@
 
 	// The session equivalent of the lesson page's next-day hand-off. A session
 	// has no day, so date order is the ordering — see nextReviewSession.ts.
-	function onSequenceEnd() {
+	//
+	// Re-read at the end rather than trusted from mount, and traced, for the
+	// same reasons as the lesson page's hand-off (tunatale-yoj4).
+	async function onSequenceEnd() {
+		try {
+			siblingSessions = await api.listReviewSessions();
+		} catch (err) {
+			mediaTrace(`handoff:map-failed err=${String(err)}`);
+		}
 		const next = nextSessionAfter(siblingSessions, data.session.id);
-		if (!next) return;
+		if (!next) {
+			mediaTrace(`handoff:none session=${data.session.id} known=${siblingSessions.length}`);
+			return;
+		}
+		mediaTrace(`handoff:goto to=${next.id}`);
 		handsFreePref.armHandoff();
 		void goto(`/review-sessions/${next.id}`);
 	}
