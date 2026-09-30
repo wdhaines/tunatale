@@ -58,6 +58,18 @@ _SHAPES: dict[str, tuple[int, bool, bool]] = {
     "behind": (1, True, False),
     "top": (1, False, False),
     "bottom": (1, False, False),
+    # Norwegian separates GOING from BEING there, plus boundary and slope words;
+    # these eight give each such word its own picture (tunatale-fsyd, the user's
+    # eye, 2026-09-29). Blocks here count box bodies: a house is one, a ledge is
+    # one, a staircase is three.
+    "into": (1, True, True),
+    "within": (0, True, False),
+    "outside_of": (0, True, False),
+    "outdoors": (1, True, False),
+    "up_there": (1, True, False),
+    "down_there": (1, True, False),
+    "further_down": (3, True, False),
+    "further_up": (3, True, False),
 }
 
 #: The brief's measured WCAG ratios. Each is RE-COMPUTED from the fills and
@@ -87,6 +99,33 @@ _DISCRIMINATED: tuple[tuple[str, str], ...] = (
     ("left", "right"),
     ("top", "bottom"),
     ("beside", "out"),
+    # The eight added 2026-09-29, each against the picture it used to share and
+    # against its own new neighbour: the report was two words on one picture.
+    ("into", "in"),
+    ("in", "into"),
+    ("within", "in"),
+    ("in", "within"),
+    ("within", "outside_of"),
+    ("outside_of", "within"),
+    ("outdoors", "out"),
+    ("out", "outdoors"),
+    ("outdoors", "beside"),
+    ("outside_of", "outdoors"),
+    ("up_there", "up"),
+    ("up", "up_there"),
+    ("up_there", "on"),
+    ("on", "up_there"),
+    ("up_there", "down_there"),
+    ("down_there", "up_there"),
+    ("down_there", "down"),
+    ("down", "down_there"),
+    ("down_there", "beside"),
+    ("further_down", "under"),
+    ("under", "further_down"),
+    ("further_up", "above"),
+    ("above", "further_up"),
+    ("further_down", "further_up"),
+    ("further_up", "further_down"),
 )
 
 
@@ -142,6 +181,12 @@ class Picture(NamedTuple):
     painted: list[str]
     root: ET.Element
     rims: list[list[tuple[float, float]]]  # an open container's outline: sides and floor, no top
+    boundaries: list[Box]  # a dashed fence line standing on the ground: an area, not a container
+    roofs: int  # a house's roof over its body
+    rails: list[Arrow]  # a ladder's two uprights
+    rungs: list[Arrow]
+    poles: list[Arrow]  # the reference marker's pole, standing on a step
+    pennants: int
 
 
 def _root(svg: bytes) -> ET.Element:
@@ -210,6 +255,12 @@ def _parse(svg: bytes) -> Picture:
         rims=[
             [tuple(float(v) for v in pt.split(",")) for pt in el.get("points").split()] for el in _by_class(svg, "rim")
         ],
+        boundaries=[_rect_of(el) for el in _by_class(svg, "boundary") if el.get("stroke-dasharray")],
+        roofs=len(_by_class(svg, "roof")),
+        rails=_lines(svg, "rail"),
+        rungs=_lines(svg, "rung"),
+        poles=_lines(svg, "pole"),
+        pennants=len(_by_class(svg, "pennant")),
     )
 
 
@@ -383,7 +434,7 @@ def _is_out(p: Picture) -> bool:
 def _is_on(p: Picture) -> bool:
     """The ball resting on the body's top edge, with no gap at all."""
     block, ball = _one_block(p), p.ball
-    if block is None or ball is None or p.painted != ["box", "ball"]:
+    if block is None or ball is None or p.painted != ["box", "ball"] or p.rails:
         return False
     return _touches(ball.cy + ball.r, block.y) and block.x <= ball.cx <= block.x + block.w
 
@@ -490,6 +541,125 @@ def _is_bottom(p: Picture) -> bool:
     return _touches(band.y + band.h, block.y + block.h) and _touches(band.w, block.w) and band.h <= block.h / 3
 
 
+def _on_ground(p: Picture) -> bool:
+    return p.ball is not None and _touches(p.ball.cy + p.ball.r, p.ground)
+
+
+def _is_into(p: Picture) -> bool:
+    """GOING in: the ball above an open container, an arrow from it down into the body."""
+    block, ball, arrow = _one_block(p), p.ball, p.arrow
+    if block is None or ball is None or arrow is None or not _is_open(p):
+        return False
+    return (
+        ball.cy + ball.r < block.y
+        and block.x <= ball.cx <= block.x + block.w
+        and abs(_dx(arrow)) <= _TOUCH
+        and _dy(arrow) > 0
+        and arrow.y1 >= ball.cy + ball.r - _TOUCH
+        and block.x < arrow.x2 < block.x + block.w
+        and block.y < arrow.y2 < block.y + block.h
+    )
+
+
+def _is_within(p: Picture) -> bool:
+    """Inside an AREA: a dashed boundary on the ground, the ball on the ground inside it."""
+    ball = p.ball
+    if p.blocks or ball is None or p.arrow is not None or len(p.boundaries) != 1:
+        return False
+    area = p.boundaries[0]
+    return (
+        _on_ground(p)
+        and _touches(area.y + area.h, p.ground)
+        and area.x + _CLEAR <= ball.cx - ball.r
+        and ball.cx + ball.r + _CLEAR <= area.x + area.w
+        and area.y + _CLEAR <= ball.cy - ball.r
+    )
+
+
+def _is_outside_of(p: Picture) -> bool:
+    """The same boundary, the ball on the ground clear of it."""
+    ball = p.ball
+    if p.blocks or ball is None or p.arrow is not None or len(p.boundaries) != 1:
+        return False
+    area = p.boundaries[0]
+    return _on_ground(p) and _touches(area.y + area.h, p.ground) and _side_gap(area, ball) > _CLEAR
+
+
+def _is_outdoors(p: Picture) -> bool:
+    """A house (a body under a roof), the ball out on the ground, nothing moving."""
+    block, ball = _one_block(p), p.ball
+    if block is None or ball is None or p.arrow is not None or p.roofs != 1:
+        return False
+    return _on_ground(p) and _disjoint(_body(block), _disc(ball)) and _side_gap(block, ball) > ball.r
+
+
+def _ledge_and_ladder(p: Picture) -> Box | None:
+    """A tall ledge on the ground with a ladder against the face nearer the ball's side."""
+    block = _one_block(p)
+    if block is None or len(p.rails) != 2 or len(p.rungs) < 3 or p.arrow is not None:
+        return None
+    tall = block.h >= 4 * p.ball.r if p.ball else False
+    reaches = all(min(r.y1, r.y2) <= block.y and _touches(max(r.y1, r.y2), p.ground) for r in p.rails)
+    return block if tall and reaches and _touches(block.y + block.h, p.ground) else None
+
+
+def _is_up_there(p: Picture) -> bool:
+    """BEING up: resting on top of the ledge the ladder climbs. No arrow: a place."""
+    ball = p.ball
+    block = _ledge_and_ladder(p) if ball else None
+    return block is not None and _touches(ball.cy + ball.r, block.y) and block.x <= ball.cx <= block.x + block.w
+
+
+def _is_down_there(p: Picture) -> bool:
+    """BEING down: on the ground at the ladder's foot, the ladder between it and the ledge."""
+    ball = p.ball
+    block = _ledge_and_ladder(p) if ball else None
+    if block is None:
+        return False
+    rails = sorted(r.x1 for r in p.rails)
+    return _on_ground(p) and ball.cx + ball.r <= rails[0] + _TOUCH and rails[1] <= block.x + _TOUCH
+
+
+def _steps_and_marker(p: Picture) -> tuple[list[Box], float] | None:
+    """Three steps rising left to right, and the marker's pole standing on one tread.
+
+    Returns the steps and the marker's tread height (its pole's foot), or None.
+    """
+    if len(p.blocks) != 3 or len(p.poles) != 1 or p.pennants != 1 or p.arrow is not None or p.ball is None:
+        return None
+    steps = sorted(p.blocks, key=lambda b: b.x)
+    rising = all(a.y > b.y for a, b in zip(steps, steps[1:], strict=False))
+    grounded = all(_touches(b.y + b.h, p.ground) for b in steps)
+    foot = max(p.poles[0].y1, p.poles[0].y2)
+    on_a_tread = any(_touches(foot, b.y) for b in steps)
+    return (steps, foot) if rising and grounded and on_a_tread else None
+
+
+def _tread_of(p: Picture, steps: list[Box]) -> Box | None:
+    ball = p.ball
+    return next((b for b in steps if _touches(ball.cy + ball.r, b.y) and b.x <= ball.cx <= b.x + b.w), None)
+
+
+def _is_further_down(p: Picture) -> bool:
+    """On a step LOWER than the marker's (larger y, the axis grows downward)."""
+    found = _steps_and_marker(p)
+    if found is None:
+        return False
+    steps, marker = found
+    tread = _tread_of(p, steps)
+    return tread is not None and tread.y > marker + _TOUCH
+
+
+def _is_further_up(p: Picture) -> bool:
+    """On a step HIGHER than the marker's."""
+    found = _steps_and_marker(p)
+    if found is None:
+        return False
+    steps, marker = found
+    tread = _tread_of(p, steps)
+    return tread is not None and tread.y < marker - _TOUCH
+
+
 _PREDICATES: dict[str, Callable[[Picture], bool]] = {
     "up": _is_up,
     "down": _is_down,
@@ -506,6 +676,14 @@ _PREDICATES: dict[str, Callable[[Picture], bool]] = {
     "behind": _is_behind,
     "top": _is_top,
     "bottom": _is_bottom,
+    "into": _is_into,
+    "within": _is_within,
+    "outside_of": _is_outside_of,
+    "outdoors": _is_outdoors,
+    "up_there": _is_up_there,
+    "down_there": _is_down_there,
+    "further_down": _is_further_down,
+    "further_up": _is_further_up,
 }
 
 
@@ -513,7 +691,7 @@ _PREDICATES: dict[str, Callable[[Picture], bool]] = {
 
 
 def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
-    """Fifteen ids, and the renderer refuses everything outside this list."""
+    """Twenty-three ids, and the renderer refuses everything outside this list."""
     assert SPATIAL_CONCEPTS == (
         "up",
         "down",
@@ -530,6 +708,14 @@ def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
         "behind",
         "top",
         "bottom",
+        "into",
+        "within",
+        "outside_of",
+        "outdoors",
+        "up_there",
+        "down_there",
+        "further_down",
+        "further_up",
     )
     assert set(_SHAPES) == set(SPATIAL_CONCEPTS)
     assert set(_PREDICATES) == set(SPATIAL_CONCEPTS)
@@ -562,7 +748,25 @@ def test_the_arrow_shaft_is_axis_aligned_and_reaches_the_ball(concept: str) -> N
 
 
 @pytest.mark.parametrize(
-    "concept", ["in", "out", "on", "under", "above", "beside", "in_front", "behind", "top", "bottom"]
+    "concept",
+    [
+        "in",
+        "out",
+        "on",
+        "under",
+        "above",
+        "beside",
+        "in_front",
+        "behind",
+        "top",
+        "bottom",
+        "into",
+        "outdoors",
+        "up_there",
+        "down_there",
+        "further_down",
+        "further_up",
+    ],
 )
 def test_every_block_rests_on_the_ground_except_the_table(concept: str) -> None:
     """A block floating in mid-air would leave the relation unreadable."""
@@ -733,11 +937,15 @@ def _roles(concept: str) -> dict[str, str]:
         # An open container outlines itself with its rim, not its body.
         stroke = bodies[0].get("stroke")
         roles["box-stroke"] = _by_class(svg, "rim")[0].get("stroke") if stroke == "none" else stroke
+    boundaries = _by_class(svg, "boundary")
+    if boundaries and "box-stroke" not in roles:
+        roles["box-stroke"] = boundaries[0].get("stroke")
     balls = _by_class(svg, "ball")
     if balls:
         roles["ball"] = balls[0].get("fill")
     accents = {el.get("stroke") for el in _by_class(svg, "shaft")} | {el.get("fill") for el in _by_class(svg, "head")}
     accents |= {el.get("fill") for el in _by_class(svg, "highlight")}
+    accents |= {el.get("fill") for el in _by_class(svg, "pennant")}
     if accents:
         assert len(accents) == 1, f"{concept} draws more than one accent colour: {accents}"
         roles["accent"] = accents.pop()
@@ -805,9 +1013,13 @@ def test_refuses_a_concept_it_cannot_draw(concept: str) -> None:
 
 @pytest.mark.parametrize("concept", SPATIAL_CONCEPTS)
 def test_only_in_draws_an_open_container(concept: str) -> None:
-    """Every other box is closed, so an open top can only ever mean "in"."""
+    """Every other box is closed, so an open top can only ever mean "in".
+
+    ``into`` shares the container on purpose (2026-09-29): it is the GOING half
+    of the same pair, and the arrow is what separates it from resting inside.
+    """
     picture = _parse(render_spatial_svg(concept))
-    if concept == "in":
+    if concept in ("in", "into"):
         assert _is_open(picture)
     else:
         assert picture.rims == []
