@@ -55,6 +55,19 @@ class TestDataFiles:
     def test_no_spatial_word_is_also_a_number(self, code) -> None:
         assert [w for w in _words(code) if number_picture(w, code) is not None] == []
 
+    def test_no_two_norwegian_words_share_a_picture(self) -> None:
+        """A picture card must not be ambiguous: distinct words, distinct drawings.
+
+        The user found inn and innenfor on one picture (2026-09-29); six groups
+        of Norwegian words shared one then. Norwegian only for now: Slovene
+        (nad/zgoraj, pod/spodaj, poleg/zraven) and Cebuano (kilid/tupad,
+        taliwala/tunga) still share, and some of those are near-synonyms, which
+        is a separate call for the user.
+        """
+        words = _words("no")
+        shared = {c: sorted(w for w, k in words.items() if k == c) for c in set(words.values())}
+        assert {c: ws for c, ws in shared.items() if len(ws) > 1} == {}
+
     def test_a_language_without_a_file_has_no_spatial_words(self) -> None:
         assert load_spatial_words("en") == {}
         assert spatial_picture("under", "en", "under") is None
@@ -77,6 +90,15 @@ class TestGlossGuard:
             ("out", "outside"),
             ("between", "between"),
             ("up", "UP"),
+            # The eight added 2026-09-29, on the glosses their Norwegian words carry.
+            ("into", "in, into"),
+            ("within", "inside, within"),
+            ("outside_of", "outside"),
+            ("outdoors", "outside; outdoors"),
+            ("up_there", "up (there)"),
+            ("down_there", "down (there)"),
+            ("further_down", "below"),
+            ("further_up", "above"),
         ],
     )
     def test_a_gloss_that_names_the_relation_matches(self, concept, gloss) -> None:
@@ -117,6 +139,16 @@ class TestDispatch:
             ("zunaj", "sl", "outside", "out"),
             ("kaliwa", "tl", "to the left", "left"),
             ("Under", "no", "under", "under"),
+            # The user's report (2026-09-29): inn and innenfor were one picture.
+            ("inn", "no", "in", "into"),
+            ("innenfor", "no", "inside, within", "within"),
+            ("utenfor", "no", "outside", "outside_of"),
+            ("ute", "no", "outside", "outdoors"),
+            ("ut", "no", "out", "out"),
+            ("oppe", "no", "up", "up_there"),
+            ("nede", "no", "down", "down_there"),
+            ("nedenfor", "no", "below", "further_down"),
+            ("ovenfor", "no", "above", "further_up"),
         ],
     )
     def test_a_spatial_word_is_drawn_as_its_concept(self, word, code, gloss, concept) -> None:

@@ -12,7 +12,7 @@ can check, and so is not a test at all. Same argument, one word class down, as
 ``app.cards.number_scenes``: the pictures look like diagrams, and the cost of
 that was accepted for the number work too.
 
-**One visual convention for all fifteen concepts**, so a learner meets the same
+**One visual convention for every concept**, so a learner meets the same
 two objects every time and only the relation changes: a **box** (the reference
 object), a **ball** (the thing that is somewhere relative to it), an **arrow**
 for the four direction words, and a **highlight band** for the two that name a
@@ -69,6 +69,19 @@ SPATIAL_CONCEPTS: tuple[str, ...] = (
     "behind",
     "top",
     "bottom",
+    # Norwegian separates GOING somewhere (inn, ut, opp, ned) from BEING there
+    # (inni, ute, oppe, nede), and has boundary (innenfor, utenfor) and slope
+    # (nedenfor, ovenfor) words; with fifteen concepts six groups of its words
+    # shared one picture ("inn and innenfor are identical", the user, 2026-09-29).
+    # These eight give each its own, chosen by eye from drafts (tunatale-fsyd).
+    "into",
+    "within",
+    "outside_of",
+    "outdoors",
+    "up_there",
+    "down_there",
+    "further_down",
+    "further_up",
 )
 
 #: The box outline, and every structural line with it. Chosen over the counting
@@ -374,6 +387,148 @@ def _bottom() -> list[str]:
     return [_block(_CX - _BLOCK_W / 2, _BLOCK_TALL_Y, _BLOCK_W, _BLOCK_TALL_H, band=_G - _BAND_H)]
 
 
+# ── Going and being there, boundaries and slopes (tunatale-fsyd) ──────────────
+# The eight concepts that give Norwegian's going/being, boundary and slope words
+# a picture each. The same box, ball, arrow and palette, plus four props that
+# carry the relation the box alone cannot: a dashed boundary (an area, not a
+# container), a roof (a house: "outdoors"), a ladder (a climb, so a ledge's top
+# and foot read as up there and down there rather than `on` and `beside`), and
+# steps with a marker (further up or down than a reference point).
+
+_LEDGE_X = 140.0
+_LEDGE_W = 90.0
+_LEDGE_H = 120.0
+_RAILS = (95.0, 125.0)
+_RUNG_GAP = 22
+
+_STEP_X0 = 35.0
+_STEP_W = 63.0
+_STEP_RISE = 42.0
+
+
+def _boundary(x: float, width: float, top: float) -> str:
+    """A fenced area seen from the side: a dashed outline standing on the ground."""
+    return (
+        f'<rect class="boundary" x="{_n(x)}" y="{_n(top)}" width="{_n(width)}" height="{_n(_G - top)}" rx="10" '
+        f'fill="none" stroke="{_BOX_STROKE}" stroke-width="4" stroke-dasharray="12 9"/>'
+    )
+
+
+def _house(x: float, width: float, wall_h: float, roof_h: float) -> str:
+    """A body with a roof and a door: the one prop that says "a building"."""
+    y = _G - wall_h
+    roof = f"{_n(x - 8)},{_n(y)} {_n(x + width / 2)},{_n(y - roof_h)} {_n(x + width + 8)},{_n(y)}"
+    return (
+        '<g class="house">'
+        f'<rect class="box-body" x="{_n(x)}" y="{_n(y)}" width="{_n(width)}" height="{_n(wall_h)}" '
+        f'fill="{_ROD_FILL}" stroke="{_BOX_STROKE}" stroke-width="3"/>'
+        f'<polygon class="roof" points="{roof}" fill="{_ROD_FILL}" stroke="{_BOX_STROKE}" stroke-width="3" '
+        'stroke-linejoin="round"/>'
+        f'<rect class="door" x="{_n(x + width / 2 - 11)}" y="{_n(_G - 36)}" width="22" height="36" fill="none" '
+        f'stroke="{_BOX_STROKE}" stroke-width="3"/>'
+        "</g>"
+    )
+
+
+def _ledge_with_ladder() -> list[str]:
+    """A tall ledge on the ground, a ladder against its left face reaching past its top."""
+    top = _G - _LEDGE_H
+    rails = [
+        f'<line class="rail" x1="{_n(x)}" y1="{_G}" x2="{_n(x)}" y2="{_n(top - 10)}" stroke="{_BOX_STROKE}" '
+        'stroke-width="4" stroke-linecap="round"/>'
+        for x in _RAILS
+    ]
+    rungs = [
+        f'<line class="rung" x1="{_n(_RAILS[0])}" y1="{_n(y)}" x2="{_n(_RAILS[1])}" y2="{_n(y)}" '
+        f'stroke="{_BOX_STROKE}" stroke-width="4" stroke-linecap="round"/>'
+        for y in range(_G - 18, int(top) - 10, -_RUNG_GAP)
+    ]
+    return [_block(_LEDGE_X, top, _LEDGE_W, _LEDGE_H), f'<g class="ladder">{"".join(rails + rungs)}</g>']
+
+
+def _steps() -> tuple[str, list[tuple[float, float]]]:
+    """Three steps rising to the right; returns the markup and each tread's (centre x, top y)."""
+    bodies, treads = [], []
+    for i in range(3):
+        x = _STEP_X0 + i * _STEP_W
+        height = (i + 1) * _STEP_RISE
+        bodies.append(
+            f'<rect class="box-body" x="{_n(x)}" y="{_n(_G - height)}" width="{_n(_STEP_W)}" height="{_n(height)}" '
+            f'fill="{_ROD_FILL}" stroke="{_BOX_STROKE}" stroke-width="3"/>'
+        )
+        treads.append((x + _STEP_W / 2, _G - height))
+    return f'<g class="steps">{"".join(bodies)}</g>', treads
+
+
+def _marker(x: float, base_y: float) -> str:
+    """The reference point on the middle step: a pole and a pennant in the accent."""
+    top = base_y - 44
+    return (
+        '<g class="marker">'
+        f'<line class="pole" x1="{_n(x)}" y1="{_n(base_y)}" x2="{_n(x)}" y2="{_n(top)}" stroke="{_BOX_STROKE}" '
+        'stroke-width="4" stroke-linecap="round"/>'
+        f'<polygon class="pennant" points="{_n(x)},{_n(top)} {_n(x + 26)},{_n(top + 9)} {_n(x)},{_n(top + 18)}" '
+        f'fill="{_ACCENT}"/>'
+        "</g>"
+    )
+
+
+def _into() -> list[str]:
+    """GOING in: the ball above an open container, an arrow carrying it down into it.
+
+    ``in`` (the ball resting inside) is the BEING-there half of the same pair.
+    """
+    ball_y = 40.0
+    return [
+        _block(_CX - _BLOCK_W / 2, _BLOCK_Y, _BLOCK_W, _BLOCK_H, open_top=True),
+        _ball(_CX, ball_y),
+        _arrow(_CX, ball_y + _BALL_R + 6, _CX, _BLOCK_Y + 40.0),
+    ]
+
+
+def _within() -> list[str]:
+    """Inside an AREA (a boundary line), not inside a container: no walls, no floor."""
+    return [_boundary(55.0, 150.0, 70.0), _ball(_CX, _G - _BALL_R)]
+
+
+def _outside_of() -> list[str]:
+    """:func:`_within`'s boundary, with the ball standing clear of it."""
+    return [_boundary(25.0, 130.0, 70.0), _ball(200.0, _G - _BALL_R)]
+
+
+def _outdoors() -> list[str]:
+    """Out of doors: a house, and the ball out on the ground well clear of it."""
+    return [_house(30.0, 100.0, 80.0, 50.0), _ball(195.0, _G - _BALL_R)]
+
+
+def _up_there() -> list[str]:
+    """BEING up: resting on the ledge the ladder climbs. No arrow — a place, not a movement.
+
+    The ladder is load-bearing: without it the picture is ``on`` a tall box
+    (the first draft, judged by eye 2026-09-29).
+    """
+    return [*_ledge_with_ladder(), _ball(_LEDGE_X + _LEDGE_W / 2, _G - _LEDGE_H - _BALL_R)]
+
+
+def _down_there() -> list[str]:
+    """BEING down: on the ground at the ladder's foot. Without the ladder, ``beside``."""
+    return [*_ledge_with_ladder(), _ball(55.0, _G - _BALL_R)]
+
+
+def _further_down() -> list[str]:
+    """On a step BELOW the marker's step: lower down than a reference point."""
+    stair, treads = _steps()
+    (x0, y0), (x1, y1), _ = treads
+    return [stair, _marker(x1 - 8, y1), _ball(x0, y0 - _BALL_R)]
+
+
+def _further_up() -> list[str]:
+    """On a step ABOVE the marker's step."""
+    stair, treads = _steps()
+    _, (x1, y1), (x2, y2) = treads
+    return [stair, _marker(x1 - 8, y1), _ball(x2, y2 - _BALL_R)]
+
+
 _SCENES: dict[str, Callable[[], list[str]]] = {
     "up": _up,
     "down": _down,
@@ -390,6 +545,14 @@ _SCENES: dict[str, Callable[[], list[str]]] = {
     "behind": _behind,
     "top": _top,
     "bottom": _bottom,
+    "into": _into,
+    "within": _within,
+    "outside_of": _outside_of,
+    "outdoors": _outdoors,
+    "up_there": _up_there,
+    "down_there": _down_there,
+    "further_down": _further_down,
+    "further_up": _further_up,
 }
 
 

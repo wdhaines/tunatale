@@ -52,6 +52,18 @@ _CONCEPT_GLOSSES: dict[str, frozenset[str]] = {
     "behind": frozenset({"behind", "back", "rear"}),
     "top": frozenset({"top"}),
     "bottom": frozenset({"bottom"}),
+    # Going vs being there, boundary and slope words (tunatale-fsyd). Broad on
+    # purpose, like the sets above: the guard exists to refuse a homograph's
+    # OTHER sense, not to pick between spatial senses — the word's concept in
+    # spatial.json already did that.
+    "into": frozenset({"in", "into", "inside", "inward", "inwards"}),
+    "within": frozenset({"within", "inside", "in", "inner"}),
+    "outside_of": frozenset({"outside", "out", "beyond", "outer"}),
+    "outdoors": frozenset({"outdoors", "outdoor", "outside", "out"}),
+    "up_there": frozenset({"up", "upstairs", "high", "above"}),
+    "down_there": frozenset({"down", "downstairs", "low", "below"}),
+    "further_down": frozenset({"below", "down", "beneath", "lower", "under", "further"}),
+    "further_up": frozenset({"above", "up", "higher", "over", "further"}),
 }
 
 _WORD = re.compile(r"[^\W\d_]+")
