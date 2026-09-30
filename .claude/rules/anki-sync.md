@@ -64,7 +64,7 @@ To delete notes/cards while keeping AnkiWeb in sync, write a grave row instead o
 
   This bullet used to say "set `col.usn=-1`", contradicting the Layer 61 rule 20 lines up, and all three delete scripts followed it. Because deletes deliberately leave `scm` alone, they fall outside the "one-shot migrations force a one-way sync anyway" carve-out: a delete run left the collection with `col.usn=-1` and no other symptom, silently armed. **Fired 2026-08-02** — a phone session advanced the server's USN, and the next desktop sync demanded a full download (`scm` re-stamped mid-sync, `col.usn=-1`, 0 dirty rows). Pinned by `tests/test_anki_grave_ignored_lemma_cards.py::test_preserves_col_usn`.
 
-Canonical pattern (mirror `scripts/anki_archive/delete_phonology_demos.py` or `scripts/anki_archive/cleanup_function_word_notes.py`):
+Canonical pattern (mirror `scripts/anki_archive/delete_phonology_demos.py`):
 
 ```python
 _GRAVE_KIND_CARD, _GRAVE_KIND_NOTE = 0, 1
@@ -105,7 +105,7 @@ Never call `sqlite3.connect` on `collection.anki2` directly. Use `app.plugins.an
 
 ## When building a new Anki migration
 
-- Add it under `backend/app/plugins/anki_sync/`, following the shape of `archive/backfill_guids.py` or `archive/migrate_homonyms.py`.
+- Add it under `backend/app/plugins/anki_sync/`, following the shape of an existing migration there, such as `migrate_number_clozes.py` or `add_image_field.py`.
 - Tests under `backend/tests/test_anki_<name>.py` — build minimal in-memory DBs, no real `collection.anki2`.
 - If the migration bumps `col.scm`, the module docstring MUST point to this file.
 - TDD red-green always (see `.claude/rules/tdd.md`).
@@ -144,7 +144,7 @@ The contract:
 - **State must be `SRSState.NEW`.** `dirty_fsrs` stays 0; `last_review` stays NULL; `introduced_at` stays NULL until the first grade. The card is *added*, not *graded* — those are different events.
 - **Want the card to appear on the same day?** It does, automatically: `get_review_queue` tail-appends NEW-state latecomers to the frozen `session_main_queue` (`app/api/srs.py` near line 1138). REVIEW-state latecomers are dropped (mirrors Anki excluding graduations from today's flow). Don't fight this — if you need a card to land mid-session, it must be NEW.
 
-Canonical reference: `app/api/srs.py::listen` and its tests in `tests/test_api.py::TestListenClozeIntegration`. New UIs should follow the same shape end-to-end (`SyntacticUnit` → `upsert_by_guid` → wait for next sync → linked).
+Canonical reference: `app/api/srs.py::listen` and its tests in `tests/test_api_listen.py::TestListenClozeIntegration`. New UIs should follow the same shape end-to-end (`SyntacticUnit` → `upsert_by_guid` → wait for next sync → linked).
 
 Tests for a new card-adding UI must cover:
 - Round-trip through `sync_create_new` (use `_make_dual_collection_conn()` for vocab or `_make_cloze_collection_conn()` for cloze, both in `test_anki_sync_create_new.py`).

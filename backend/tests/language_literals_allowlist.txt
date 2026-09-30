@@ -1,6 +1,6 @@
 # Sanctioned plugin/registry homes where hardcoded language literals
 # legitimately live. TunaTale is language-plugin based ("No hardcoded
-# language logic" in root CLAUDE.md) — these are the modules that ARE the
+# language logic" in root AGENTS.md) — these are the modules that ARE the
 # plugin/registry layer, so language codes, names, engine names, and TTS
 # voice ids are expected and exempt from the checker.
 #

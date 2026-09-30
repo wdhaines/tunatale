@@ -5,7 +5,7 @@ uncompressed WAV. WAV is ~10-20× larger than speech-tuned Opus, which matters
 when a phone streams lessons over mobile data. This module turns an assembled
 buffer into compressed bytes for delivery.
 
-ffmpeg is already a system dependency (root CLAUDE.md: "CI requires ffmpeg as
+ffmpeg is already a system dependency (root AGENTS.md: "CI requires ffmpeg as
 system dependency"); we shell out to it rather than rely on libsndfile's codec
 support, which varies by build and can't set a speech bitrate.
 """

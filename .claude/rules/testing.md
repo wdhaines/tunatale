@@ -84,12 +84,12 @@ above true rather than aspirational, and it is maintained by hand:
 
 | CI-only | why it is not local |
 |---|---|
-| `backend-hostile-tz` (UTC+14, UTC−12) | a second and third full suite run would triple the local gate for an axis that changes only when a fixture does date arithmetic |
+| `backend-hostile-tz` (one instance, `Etc/GMT-3`) | a second and third full suite run would triple the local gate for an axis that changes only when a fixture does date arithmetic |
 | `backend-hostile-hour` (computed 04:xx zone) | same; and its whole trick is varying with wall-clock time, which a pre-commit gate cannot meaningfully sample |
 
 **Local-only: nothing.** Keep it that way.
 
-### ⚠️ The dependency-group split is REAL as of 2026-08-31 — this section describes the world before that
+### CI installs only the `dev` group
 
 **CI installs FEWER packages than your laptop, deliberately.** Every backend job
 runs `uv sync --no-default-groups --group dev` with **`UV_NO_SYNC: "1"` set at
@@ -113,40 +113,9 @@ UV_PROJECT_ENVIRONMENT=/tmp/ci-venv uv sync --no-default-groups --group dev
 UV_PROJECT_ENVIRONMENT=/tmp/ci-venv UV_NO_SYNC=1 uv run pytest …
 ```
 
-The rest of this section is **history**, kept because its lesson about install
-flags still holds and because the measurement was correct when it was made.
-
-#### (superseded 2026-08-31) There is no dependency-group split — the flags that implied one were fake
-
-**Both gates install the same packages.** This was believed to be a real
-divergence (and `tunatale-as5` was filed saying so): CI's install steps read
-`uv sync --all-groups --no-group slovene --no-group norwegian --no-group
-alignment`, so CI supposedly ran without classla/stanza/torch/transformers and
-never exercised syllable slicing for real.
-
-**Measured 2026-08-14, that is false, and the flags were deleted.**
-`pyproject.toml` sets `[tool.uv] default-groups = ['dev','slovene','norwegian',
-'alignment']`, and a bare `uv run` re-syncs to the DEFAULT groups before running
-anything — so the step after the install put every excluded package straight
-back. The control, run into a throwaway env:
-
-```
-uv sync --all-groups --no-group slovene --no-group norwegian --no-group alignment
-  → transformers: False   torch: False
-uv run python -c ...
-  → Installed 37 packages in 475ms
-  → transformers: True    torch: True    alignment_installed(): True
-```
-
-The live confirmation is in CI's own `e2e` log: the app prints `Syllable slicing
-enabled for: no`, a line guarded by `if slicers:` that cannot appear on the empty
-dict the flags were believed to produce.
-
-**The lesson generalises past this instance:** an install-step flag is not
-evidence about the environment a test ran in. `uv run` will re-sync underneath
-it. If you ever want CI to genuinely run lean, `default-groups` or `--no-sync` is
-the lever — and that would create a real divergence needing an owner, which this
-never had.
+An install-step flag is not evidence about the environment a test ran in: a bare
+`uv run` re-syncs to `[tool.uv] default-groups` underneath it, which is why
+`UV_NO_SYNC` is set at job level.
 
 ⚠️ Three smaller divergences that are NOT bugs, so nobody re-files them:
 - **The gitignored content directories.** `backend/media/` and
@@ -157,8 +126,8 @@ never had.
   the lifespan would create a plain directory where a volume failed to mount,
   which is the "unmounted volume reads green" bug `app/api/health.py` exists to
   prevent. Deployments must provision them too — `tunatale-kbb.7`.
-- **Coverage measures different sets.** Local folds `--run-oracle` into the covered pytest run; CI's `backend` job omits it and a separate `oracle-parity` job runs those tests `--no-cov`. Both reach 100%, so CI's is the *stricter* claim (100% without oracle tests contributing). Fine under "CI authoritative".
-- **ffmpeg** is installed on `backend`, the hostile jobs and `e2e`, but not on `oracle-parity` / `peer-sync` — they never touch the audio pipeline.
+- **Coverage measures different sets.** Local folds `--run-oracle` into the covered pytest run; CI's `backend` job omits it and the `anki-gates` job runs those tests `--no-cov`. Both reach 100%, so CI's is the *stricter* claim (100% without oracle tests contributing). Fine under "CI authoritative".
+- **ffmpeg** is installed on `backend`, the hostile jobs and `e2e`, but not on `anki-gates` — they never touch the audio pipeline.
 
 ## Test Tiers
 
@@ -168,7 +137,7 @@ the sabotage-drill criterion for when a test comes down — see
 `.claude/rules/test-tiers.md`.*
 
 1. **`./test.sh`** (pre-commit, mandatory) — three parallel groups: backend (lint + format + checkers + full pytest incl. `--run-oracle`, with coverage), frontend (fmt + lint + svelte-check + vitest + Playwright e2e), and peer-sync.
-2. **CI** (every push to `main` / every PR) — eight parallel job instances: `backend` (unit + coverage + boundary check), `backend-hostile-tz` (×2), `backend-hostile-hour`, `frontend`, `e2e`, `oracle-parity`, `peer-sync`. An oracle or peer-sync failure is a parity/round-trip regression, not a unit bug — debug it as such. A hostile-tz/hour failure is a fixture doing date arithmetic across `ANKI_ROLLOVER_HOUR` — suspect the test before the product code.
+2. **CI** (every push to `main` / every PR) — six parallel jobs: `backend` (unit + coverage + boundary check), `backend-hostile-tz`, `backend-hostile-hour`, `frontend`, `e2e`, and `anki-gates` (oracle parity + peer-sync). An oracle or peer-sync failure is a parity/round-trip regression, not a unit bug — debug it as such. A hostile-tz/hour failure is a fixture doing date arithmetic across `ANKI_ROLLOVER_HOUR` — suspect the test before the product code.
 
    **A fixture that asserts a day fact MUST declare its zone**, with `tests/_helpers/localtz.py` (`local_timezone`, `timezone_with_local_hour`). The col-day boundary is 04:00 **local**, so *which* timestamps share a col-day is a function of the reader's zone — an undeclared zone is an assumption, not a default. Pin the narrowest scope that fails (one test, or one class), never a whole module: over-pinning blinds the hostile jobs to the real zone bugs they exist for.
 

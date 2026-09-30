@@ -64,7 +64,7 @@ All are `LanguageConfig` fields. Who uses what today:
 ## Voices and cost
 
 - **The voice id picks the vendor.** `app/audio/tts_router.py` dispatches on the suffix: `…Neural` goes to Azure and `…Gemini` to Gemini-TTS through Cloud TTS (`app/audio/gemini_tts.py`, `cf84720`). Gemini ids mirror Azure's shape (`ceb-PH-KoreGemini`) on purpose, so the registry's locale-slicing invariants hold unchanged. Cebuano is on Gemini because Azure has no `ceb-PH` voice.
-- **Never an Azure Dragon HD voice**: `test_no_voice_map_names_a_paid_hd_voice`, and the pricing section of `CLAUDE.md`.
+- **Never an Azure Dragon HD voice**: `test_no_voice_map_names_a_paid_hd_voice`, and `.claude/rules/paid-vendors.md`.
 - **When the native locale has only one voice per gender** (Azure `fil-PH`: Blessica and Angelo), the second woman and man are Multilingual voices under a `<lang>` wrapper.
 - **Pick the cast by measurement, in this order:** STT word error rate on ~10 A1 sentences, then median F0 distance (Praat) against a ≥13.7 Hz minimum gap between same-gender voices. Measure on *this* language's text: the Norwegian pitch map did not transfer (Dustin measured 160.0 Hz on Norwegian and 136.5 on Tagalog). Gains come from integrated loudness (ffmpeg `ebur128`) to −20 LUFS. The narrator's gain has to appear in every plugin's table.
 - **Price the first render before running it:** `uv run python scripts/report_render_cost.py --language <code> --all`. Quote the incremental figure. The script prices Gemini in audio tokens (`9d60400`).

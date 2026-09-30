@@ -5,7 +5,7 @@ Scans ``backend/app/**/*.py`` for string literals that look like hardcoded
 language-specific values (bare language codes, language names, NLP engine
 names, or TTS voice ids) living outside the sanctioned plugin/registry
 modules. No-hardcoded-language-logic is a house convention (see root
-``CLAUDE.md`` "Key Conventions") — language-specific behavior should route
+``AGENTS.md`` "Key Conventions") — language-specific behavior should route
 through a language plugin (``TextPreprocessor``, voice maps, etc.), not a
 literal string scattered through general-purpose code.
 
