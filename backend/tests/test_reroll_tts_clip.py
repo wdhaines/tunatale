@@ -351,8 +351,8 @@ def test_o6_an_azure_only_text_is_refused_with_its_reason(tmp_path: Path, capsys
 # deliberate limit rather than a shortcut: the script derives ``slicer_enabled``
 # from the language, and Cebuano has no ``AlignmentConfig`` while
 # ``alignment_installed()`` itself is True locally and False in CI (AGENTS.md
-# § "CI RUNS LEAN"). A slicer test through ``main`` would therefore assert on
-# whichever machine ran it. This asserts the same property in a place that is
+# § "Testing Quirks": CI installs lean). A slicer test through ``main`` would
+# therefore assert on whichever machine ran it. This asserts the same property in a place that is
 # the same everywhere — the two legs are merged, and the Azure legs are absent
 # from the Gemini candidate set entirely.
 # ---------------------------------------------------------------------------

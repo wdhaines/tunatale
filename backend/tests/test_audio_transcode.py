@@ -1,6 +1,6 @@
 """Tests for app.audio.transcode — WAV → compressed delivery encoding.
 
-ffmpeg is a real CI/system dependency (root CLAUDE.md), so these run it for real
+ffmpeg is a real CI/system dependency (root AGENTS.md), so these run it for real
 rather than mocking the subprocess (the mock-boundary rule forbids faking an
 internal seam; ffmpeg is a true process boundary but running it is cheap here).
 """

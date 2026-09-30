@@ -4,7 +4,7 @@ AI-generated audio language curricula — Pimsleur-style listening with content 
 
 ## Developer Commands
 
-**⚠️ Must run `./test.sh` before every commit — the full suite must pass, or you DO NOT commit.** (Enforced by a commit-gate hook — see Hooks below.)
+Run `./test.sh` before every commit; the full suite must pass or you do not commit. A commit-gate hook enforces this.
 
 ```bash
 # Full suite (root): lint + format + checkers + pytest + svelte-check + vitest + playwright + peer-sync
@@ -23,6 +23,14 @@ cd frontend && bun run test:e2e                 # playwright
 # Dev servers (backend :8000, frontend :5173):
 ./start-dev.sh
 ```
+
+**How to run the gate.** Use the absolute path, make the gate the last statement of the command, and treat the log as the only evidence:
+
+```bash
+/Users/wdhaines/CascadeProjects/tunatale/test.sh > /tmp/gate.txt 2>&1
+```
+
+Anything after the gate — an `echo $?`, even on its own line — replaces its exit status, and a relative path silently misses when an earlier `cd` persisted; both have produced fictional greens here. In the log, require `=== All checks passed ===` (the failure form is `=== FAILED (backend=N frontend=N peer_sync=N) ===`), 100.00% backend coverage, and a ruff file count no lower than the previous run's (`awk -F'\t' '$3=="Ruff format check"' .git/tt-test-history.log`; a drop means discovery broke). Never pipe `./test.sh` (a hook denies it), and never `cd` away from the repo in a session that will run the gate.
 
 ## Architecture
 
@@ -63,90 +71,26 @@ All commands use `uv run` (no manual venv activation). Never commit `.env`. Groq
 - **Coverage fails at <100%** (`pyproject.toml: fail_under = 100`)
 - **SRS tests**: `sqlite:///:memory:` via `srs_db` fixture
 - **Anki tests**: use the `fake_anki_db*` fixtures from `conftest.py` — never a real `collection.anki2`
-- **Mock-boundary check**: `./test.sh` + CI fail any `patch("app.…")` not in `backend/tests/mock_allowlist.txt`. **Zero tolerance** — the grandfather ledger was drained to empty and deleted (2026-07-30); the allowlist is the only escape hatch and additions need sign-off. See `.claude/rules/testing.md`
-- **Peer-sync tests** (`--run-peer-sync`): auto-start a throwaway `anki.syncserver`. Tier 1 as of 2026-08-14 — a third parallel group in `./test.sh`, not a manual step.
-- **CI is authoritative; `./test.sh` is a strict SUBSET of it** (`tunatale-as5`, 2026-08-14). Green locally is necessary but not sufficient. **Adding a check to `test.sh` obliges you to add it to `ci.yml` in the same commit**; the reverse is not required. Six parallel job instances in `.github/workflows/ci.yml` — backend (ruff → checkers → pytest), `backend-hostile-tz` (×1, `Etc/GMT-3`), `backend-hostile-hour`, frontend, `e2e` (Playwright), and `anki-gates` (oracle-parity + peer-sync in one job, because job COUNT is what drives the tail). `backend-hostile-tz` runs ONE instance inside UTC+2..+4, not a matrix at the extremes, because that band is where the only offset bug this repo has ever found reproduces — an extremes matrix is measured blind to it. Job COUNT, not job speed, drives the CI tail. The measurement and the redundancy argument are in the comment above the job. **THREE jobs override the workflow's `TZ: UTC`** — `backend-hostile-tz` (offset), `backend-hostile-hour` (clock), and `anki-gates`, which runs BOTH Anki gates at the 04:00 rollover via `.github/actions/hostile-hour-tz`. The Anki gates must run at the rollover specifically: `backend-hostile-hour` sits in the band on every run but passes no `--run-oracle`, so it can never catch a parity bug there, and a parity job left at `TZ: UTC` reaches the band about once in 600 runs — which is not a defence. Neither job is misconfigured on its own; the hole is at their intersection. ⚠️ If `anki-gates` goes red at the boundary while `backend` is green, suspect PRODUCT code first — the opposite of the guidance for `backend-hostile-tz`, because only `anki-gates` has an oracle to tell "TT and Anki disagree about the day" from "a fixture encodes a wall-clock assumption". The clock/offset jobs are the only CI-only checks; there are no local-only ones. ⚠️ **CI RUNS LEAN, and that split is real** (`0344f42`, 2026-08-31, `tunatale-ouk.6`/`.9`): every backend job installs `uv sync --no-default-groups --group dev` with `UV_NO_SYNC: "1"` at job level, so classla/stanza/torch/transformers are absent there. **A test may import only what the `dev` group declares** — anything transitive through the language groups (e.g. `yaml` via transformers) is green locally and `ModuleNotFoundError` in all four backend jobs. Declare it in `dev`; never widen CI's groups. Full rationale: `.claude/rules/testing.md` § "What a green gate means".
+- **Mock-boundary check**: `./test.sh` + CI fail any `patch("app.…")` not in `backend/tests/mock_allowlist.txt`. There is no grandfather ledger; the allowlist is the only escape hatch and additions need the user's sign-off. See `.claude/rules/testing.md`.
+- **Peer-sync tests** (`--run-peer-sync`) auto-start a throwaway `anki.syncserver` and run as a third parallel group in `./test.sh`.
+- **CI is authoritative; `./test.sh` is a strict subset of it.** Green locally is necessary, not sufficient. If you add a check to `test.sh`, add it to `.github/workflows/ci.yml` in the same commit (the reverse is not required). The clock/offset jobs — `backend-hostile-tz`, `backend-hostile-hour`, and `anki-gates` at the 04:00 rollover — are the only CI-only checks. If `anki-gates` is red at the boundary while `backend` is green, suspect product code first.
+- **CI installs lean** (`uv sync --no-default-groups --group dev`), so a test may import only what the `dev` group declares. Anything that arrives transitively through the language groups (e.g. `yaml` via transformers) passes locally and fails all four backend jobs with `ModuleNotFoundError`. Declare it in `dev`; never widen CI's groups.
 
-## Paid vendor usage — price it before you run it
+CI job layout and its rationale: `.claude/rules/gate-and-ci.md`. The local/CI asymmetries: `.claude/rules/testing.md` § "What a green gate means".
 
-**The Speech resource is F0 (free tier).** Read from the field, not inferred:
-`az cognitiveservices account list --query "[].{name:name,sku:sku.name}"` →
-`TunaTale / F0 / SpeechServices / eastus`, and the `AZURE_SPEECH_KEY` in
-`backend/.env` matches `key2` of that resource (compared by hash — never print
-the key; one was leaked to a transcript on 2026-09-12 and had to be rotated).
-It is the only Speech account in the subscription.
+## Paid vendors — price a render before running it
 
-**So standard/Multilingual Neural characters do NOT bill — they consume a
-500K/month allowance, and the failure mode is a THROTTLE, not an invoice.**
+- The Azure Speech resource is **F0 (free tier)**, read from `sku.name`. Standard and Multilingual Neural characters draw on a 500K/month allowance; exceeding it throttles rather than bills.
+- **Azure Neural HD (Dragon) voices are ruled out** (the user's call). HD bills from the first character even on F0. Enforced by `test_languages.py::test_no_voice_map_names_a_paid_hd_voice`.
+- **Before any TTS render, price it in billable characters** with `backend/scripts/report_render_cost.py` and put the number in your report. Quote the incremental figure for "what will this run cost" and say which figure you quote; cold and incremental have differed ~7x. There is no usable Azure-side character meter, so this local estimate is the only instrument.
+- Never print a key; compare keys by hash.
 
-⚠️ **This paragraph replaced a confident wrong claim, and how it got wrong is
-the reusable part.** It read "this resource behaves like S0, where characters
-bill", inferred from two real measurements: TTS sustained **49 requests in a
-60-second window** where F0 documents 20/60s, and Dragon HD answered 200 where
-F0 is not supposed to serve it. Both observations still stand and are still
-unexplained. They were an inference from *behaviour* to *configuration*, and
-`sku.name` outranks them. **Nobody had read the field.** When a claim about
-configuration can be settled by reading configuration, read it.
-
-**Azure Neural HD (Dragon) voices are still RULED OUT** (user's call,
-2026-09-12), and the F0 finding does not soften it: HD is a separate billing
-line at $22/1M **excluded from the F0 allowance**, so it bills from the first
-character even here. Enforced by
-`test_languages.py::test_no_voice_map_names_a_paid_hd_voice` (an HD id is the
-only voice id containing a colon). Not a quality judgement — Andrew-HD had the
-best measured WER and was the ear-test favourite — and it is also the one voice
-family that cannot be regression-tested, being nondeterministic by design.
-
-**Price a render before running it, in characters, and put the number in the
-report.** Compute cache misses with the adapter's own `_cache_path` against the
-real `tts_cache_dir`; that is not merely the cheapest way, it is the ONLY way:
-
-⚠️ **There is no usable Azure-side character meter.** `SynthesizedCharacters`
-appears in `az monitor metrics list-definitions` and is **not queryable** — the
-error enumerates what is (`TotalCalls, SuccessfulCalls, TotalErrors,
-BlockedCalls, ServerErrors, ClientErrors, SuccessRate, Ratelimit`). And the
-queryable ones are not trustworthy for this: measured 2026-09-13, `TotalCalls`
-returned **0 for a day in which hundreds of syntheses demonstrably happened**,
-and `Ratelimit` returned no data at all. **So a `BlockedCalls` of 0 proves
-nothing** — zero is also what a lagging or broken meter returns, the same
-clean-negative trap `.claude/rules/tdd.md` is about. Nothing cloud-side will
-catch an error in your local estimate; the local estimate is the instrument.
-
-**Price it with the tracked instrument, not from a remembered number**
-(`backend/scripts/report_render_cost.py`, shipped 2026-09-15):
-
-```bash
-cd backend
-uv run python scripts/report_render_cost.py --language no --all   # incremental
-uv run python scripts/report_render_cost.py --language no --all \
-    --cache-dir "$(mktemp -d)"                                    # cold, from empty
-```
-
-Quote the **incremental** number for "what will this run cost" and the cold one
-only for "what does this cost from empty". They have differed by ~7x, which is
-the whole reason to say which one you are quoting.
-
-⚠️ **This replaced two hardcoded figures, and how they were wrong is the
-reusable part.** It read *"a cold render of the whole stored Norwegian
-curriculum is ~69k characters"* beside a `263 clips (~11k chars)` incremental
-figure. Both were **text counts, not billable counts** — the cold figure is
-really **157,196** billable characters, because markup counts while `<speak>`
-and `<voice>` do not. The gap is not rounding: `sum(len(text))` over that corpus
-is 80,489, and its ~2,019 distinct requests each add ~36 characters of
-`<prosody>` wrapper. In a corpus of thousands of short utterances **the markup
-dominates**, so a text count understates by ~2x.
-
-That anchor sat three paragraphs below "the billable unit is NOT `len(text)`"
-and modelled the exact error this section exists to prevent. It was stale by
-construction too — it said "all nine lessons" and there are now eleven. A number
-measured against a living corpus rots the way a bare `file:line` citation does,
-and the fix is the one this file already prescribes there: cite the thing that
-regenerates the answer, not the answer.
+Measurements, commands, and the wrong claims these replaced: `.claude/rules/paid-vendors.md`.
 
 ## Key Conventions
 
-- **No hardcoded language logic** — resolve every per-language facet through the registry `app/languages.py` (`get_language` / `get_preprocessor` / … / `resolve_language_context(code, settings)`). Enforced: `scripts/check_language_literals.py` (`./test.sh` + CI) fails on language literals (`"sl"`/`"no"`, `Slovene`/`Norwegian`, `classla`/`stanza`, `*-Neural` voices) in `backend/app/**` outside allowlisted plugin modules (`tests/language_literals_allowlist.txt`). **Zero tolerance** — its ledger drained 13 → 0 and was deleted (2026-07-30). Rationale: `docs/language-plugin-hardening.md`.
-- **API contract drift** — backend→frontend type safety via a committed OpenAPI schema. `scripts/dump_openapi.py` writes `frontend/src/lib/api-schema.json`; `scripts/check_openapi_snapshot.py` enforces (a) snapshot freshness and (b) a **zero-tolerance** untyped-endpoint gate: every 2xx JSON response must declare a `response_model=`. Its shrink-only ledger drained 70 → 0 over eleven batches and was deleted (2026-08-02), like the mock / language-literal / date-today ledgers before it (`7b34c73`) — there is no escape hatch left. Frontend derives types via `openapi-typescript`; `bun run check:api` catches stale types. Fix commands: `uv run python scripts/dump_openapi.py` (backend), `bun run gen:api` (frontend).
+- **No hardcoded language logic** — resolve every per-language facet through the registry `app/languages.py` (`get_language` / `get_preprocessor` / … / `resolve_language_context(code, settings)`). `scripts/check_language_literals.py` (`./test.sh` + CI) fails on language literals (`"sl"`/`"no"`, `Slovene`/`Norwegian`, `classla`/`stanza`, `*-Neural` voices) in `backend/app/**` outside the plugin modules allowlisted in `tests/language_literals_allowlist.txt`. There is no grandfather ledger. Rationale: `docs/language-plugin-hardening.md`.
+- **API contract drift** — backend→frontend type safety via a committed OpenAPI schema. `scripts/dump_openapi.py` writes `frontend/src/lib/api-schema.json`; `scripts/check_openapi_snapshot.py` enforces snapshot freshness and that every 2xx JSON response declares a `response_model=` (no escape hatch). The frontend derives types via `openapi-typescript`; `bun run check:api` catches stale types. Fix commands: `uv run python scripts/dump_openapi.py` (backend), `bun run gen:api` (frontend).
 - **No module-level side effects** — config via Pydantic Settings in `app/config.py`
 - **Anki safety**: hard invariants in `.claude/rules/anki-safety-core.md` (always loaded for Claude Code; other agents read it before any Anki/SRS work); full protocol in `.claude/rules/anki-sync.md`
 - **Cloze items**: set `card_type="cloze"` on the `SyntacticUnit`; PRODUCTION direction only; sync via `OfflineWriter.create_cloze_note()` against Anki's built-in Cloze notetype
@@ -154,56 +98,27 @@ regenerates the answer, not the answer.
 
 ## Instruction Files (path-scoped, lazy-loaded)
 
-Most `.claude/rules/*.md` carry `paths:` frontmatter — Claude Code auto-loads a rule when reading files it covers, keeping session startup lean (~20k tokens). A rule not appearing at session start is by design; don't "fix" it by removing the frontmatter. Non-Claude agents: read the relevant rule before working in its domain.
+Most `.claude/rules/*.md` carry `paths:` frontmatter, so Claude Code loads a rule only when it reads a file the rule covers. A rule missing at session start is by design; don't "fix" it by removing the frontmatter. Non-Claude agents: read the relevant rule before working in its domain.
 
 - `anki-safety-core.md`, `tdd.md` — always loaded (no `paths`)
-- `testing.md` — mock boundaries (enforced), cassettes, where tests run, pragma discipline → `backend/tests/**`
+- `testing.md` — mock boundaries (enforced), cassettes, where tests run, pragma discipline → `backend/tests/**`, `test.sh`
 - `test-tiers.md` — what a test is ABOUT: the seam discriminator (is the value engine-computed or app-computed?), no fourth tier, and the sabotage-drill retirement criterion → `frontend/tests/**`, `frontend/src/**`, `backend/tests/**`
 - `frontend-coverage-gate.md` — Svelte 5 phantom-branch filter → `frontend/**`
+- `gate-and-ci.md` — CI job layout, hook mechanics, and the incidents behind the gate rules → `test.sh`, `.github/**`, `.claude/hooks/**`
+- `paid-vendors.md` — Azure Speech tier, HD-voice ban, render pricing → TTS/audio code and render scripts
 - `anki-sync.md` — USN protocol, safety envelope, graves, migrations, card-adding-UI contract → `backend/app/plugins/anki_sync/**`, `backend/app/api/anki.py`, Anki tests
 - `anki-queue-parity.md` — REQUIRED before changing SRS/queue/sync behavior or debugging any TT↔Anki divergence → `backend/app/srs/**`, `backend/app/api/srs.py`, `backend/app/plugins/anki_sync/**`, SRS/parity tests
 - `anki-oracle-harness.md` — parity harness guide → `backend/tests/test_parity_*.py`, `backend/tests/anki_oracle/**`
+- Skill `beads` (`.claude/skills/beads/`) — bd conventions and traps; load it before bd work (see below)
 
 ## Hooks (`.claude/settings.json`)
 
-- **Commit gate** (PreToolUse): `git commit` asks for confirmation unless `./test.sh` has passed on the exact current tree — `test.sh` records a tree fingerprint via `.claude/hooks/commit_gate.py --record` on success. A *failing* run deletes the fingerprint, so a flaky green cannot outlive a red on the same tree. It matches `git commit` only in **command position**, ignoring quoted arguments — `opencode run ... "Run: git commit"` commits nothing and is not gated (fixed 2026-08-31; a shell `-c` argument is exempt from that narrowing, since there the quoted string is a command line).
-- **Pipe guard** (PreToolUse): `.claude/hooks/gate_pipe_guard.py` **denies** any command that pipes `./test.sh` (`| tail`, `| tee`, `| grep`). A pipeline's `$?` is the last command's, so a failed gate reads as 0, and `tail -n` throws away the failure detail you piped in order to see. Searching for the string (`grep test.sh …`, `cat test.sh | head`) is unaffected. test.sh also tees every run to `.git/tt-test-last.log` and names it in the FAILED banner.
-- **Per-step history** (`.git/tt-test-history.log`, added 2026-09-03): every `./test.sh` check runs through a `log_step` wrapper that appends one TSV line per step, on *every* local run — `timestamp  group  step-name  exit-code  elapsed-seconds  1min-load  tree-id`. Column 7 (added 2026-09-10) is `commit_gate.py::tree_id`, HEAD plus the dirty-tree fingerprint, and it is what separates a flake (same tree, red then green) from a fix. Lines before it have six columns; `test.sh` carries the same-tree query in a comment. Unlike `tt-test-last.log` this is append-only and accumulates across runs, so a local flake rate can be read back the same way CI's is (CI's comes from GitHub's own run archive; nothing local kept an equivalent history before this — see `tunatale-xw6s`, `tunatale-hvbv`). Query it directly, e.g. `awk -F'\t' '$3=="E2E smoke tests"' .git/tt-test-history.log`.
-- ⚠️ **Canonical gate invocation — absolute path, gate LAST, and the LOG is the
-  only evidence:**
-  ```bash
-  cd /Users/wdhaines/CascadeProjects/tunatale
-  /Users/wdhaines/CascadeProjects/tunatale/test.sh > /tmp/gate.txt 2>&1
-  # ← NOTHING after this line. No `echo`, no cleanup, nothing.
-  ```
-  Then read `/tmp/gate.txt`: require `=== All checks passed ===` (the failure form
-  is `=== FAILED (backend=N frontend=N peer_sync=N) ===`), 100.00% backend
-  coverage, and a sane ruff count — it only ever grows, so compare it against the
-  previous run rather than any number written here (which rots):
-  `awk -F'\t' '$3=="Ruff format check"' .git/tt-test-history.log`. A DROP, or a
-  two-digit N, means discovery broke.
-  **Two fictional greens on 2026-07-29, same root class:**
-  1. `./test.sh > log 2>&1; echo "EXIT=$?"` printed `EXIT=0` while the log said
-     `no such file or directory: ./test.sh` — an earlier `cd` had persisted across
-     tool calls, so the relative path missed.
-  2. The "fix" of putting `echo "REAL_GATE_EXIT=$?"` on its **own line** was ALSO
-     wrong: it prints the gate's status, but the *script's* exit status is still
-     the echo's, so the harness reported success on a run whose log ended in
-     `=== FAILED (backend=1 frontend=0) ===`.
+- **Commit gate** (PreToolUse): `git commit` asks for confirmation unless `./test.sh` passed on the exact current tree; a failing run deletes the recorded fingerprint. Do not click past that prompt.
+- **Pipe guard** (PreToolUse): denies piping `./test.sh`. Every run is teed to `.git/tt-test-last.log`, and each step appends a line to `.git/tt-test-history.log` (TSV; its tree-id column separates a flake from a fix).
+- **Submodule-pointer auto-stage** (PreToolUse): stages the `.beads-tasks` pointer onto any commit that already carries other content. Nothing to remember; it never blocks and does not change the gate fingerprint.
+- **Agent mail** (SessionStart): lists the newest unread mail. **Coverage-artifact cleanup** (SessionEnd).
 
-  **The rule that actually holds: any command after the gate steals the exit
-  status — separate line or not.** Make the gate the final statement, and treat
-  the log tail as the sole evidence. Never trust a reported exit code, your own
-  `echo`, or a log's size alone.
-  **Rules, for every agent and every gate run:** absolute path always; never `cd`
-  away from the repo in a session that will run the gate; keep `echo $?` in its own
-  statement or omit it; and treat the log tail as the sole evidence — an exit code
-  from a compound statement proves nothing. Same failure class the pipe guard was
-  built for, reached from a different direction. The commit gate is the backstop
-  (it prompts when no fingerprint matches the tree) — do not click past that
-  prompt.
-- **Submodule-pointer auto-stage** (PreToolUse): `.claude/hooks/stage_submodule_pointer.py` stages `.beads-tasks` onto any `git commit` that already carries other content, so the "pointer rides code commits" rule needs no reader. Guards (all fail open — it can never block a commit): initialised submodule, actually drifted, HEAD contained in a remote-tracking branch, not `--dry-run`, and something else already going in. **It is order-independent with the commit gate**: `ignore = all` keeps the gitlink out of `git diff HEAD --name-only`, which is what the gate fingerprints, so staging it cannot invalidate a green `./test.sh` (verified 2026-08-10 — byte-identical fingerprint before and after).
-- **Coverage-artifact cleanup** (SessionEnd): deletes `backend/**/*.py,cover` and `backend/coverage.json` (pytest `--cov` leftovers; also gitignored).
+Mechanics and history: `.claude/rules/gate-and-ci.md`.
 
 ## Critical Rules
 
@@ -218,300 +133,32 @@ When completing a phase or fix, the definition of done includes pasting the veri
 2. **CI Actions run URL** — after push, confirm all parallel jobs are green and provide the link.
 3. **Commit message** — states what was verified (and how), plus any non-obvious mechanism or diagnostic signature that would help the next person debugging this class of bug.
 
-This convention exists because "Done" with no output was the gap in both Phase 3 and Phase 5 — the fix was correct, but the acceptance evidence was missing.
+## Delegation — BP is the default executor
 
-## Delegation and cost — BP is the default executor
+Orchestrator tokens are the scarce resource; Big Pickle's (the free executor, via the `bp-delegate` skill) are not. Delegating mechanical work is the default, and doing a multi-file mechanical edit inline should have a reason you could state.
 
-**Orchestrator tokens are the scarce resource; BP's are free.** Delegating
-mechanical work to Big Pickle (the free Sonnet-class executor, via the
-`bp-delegate` skill) is the DEFAULT, not an optimization to remember. Doing a
-multi-file mechanical edit inline is the exception, and it should have a reason
-you could state.
-
-**Delegate:** multi-file mechanical edits, test additions against a pinned
-oracle, doc sweeps, ledger burn-downs, renames/refactors with a mechanical rule
-— anything whose hard part is typing rather than deciding.
-
-**Also NEW ARTIFACTS, not just edits to existing ones** (widened 2026-09-04,
-`tunatale-7330`), when BOTH hold: the artifact has **≥2 in-repo siblings** to
-pattern-match, and the oracle is a **measured literal table** you produced
-yourself. A new `scripts/check_*.py` plus its test plus its `test.sh` and
-`ci.yml` wiring is the reference shape — nine siblings existed, and the 9-row
-route table was measured before the brief was written. BP scored 6/6 on the
-pre-registered failure modes, including the two that most invited improvisation:
-adding a CI *job* instead of a step, and allowlisting the one route that looked
-like a violation and was not.
-
-⚠️ **Widening the WORK does not widen the AUDIT — it tightens it.** All three
-defects that survived that delivery sat in the space *between* the cases the
-brief enumerated. See the detector rule in the bp-delegate skill's audit
-protocol.
-
-**Do NOT delegate, regardless of cost:**
-- Anything touching Anki / SRS / sync semantics (`.claude/rules/anki-safety-core.md`).
-- Oracle **design** — deciding what would falsify a claim. Executing a supplied
-  oracle is fine; choosing it is not.
-- The final `./test.sh` gate, the audit of BP's diff, and the merge decision.
-  Those are what the orchestrator is *for*.
-
-**The economics that actually govern this:** the written brief is the expensive
-artifact and the executor is swappable — when BP's quota is out, the same brief
-runs on haiku or sonnet. So the question is never "is BP available", it is "is
-this work brief-able".
-
-**The threshold, stated so it is not re-litigated every session:** if writing
-the brief would cost more than doing the work, do the work. A three-line fix you
-already have full context on is not worth a brief. A twenty-file sweep is — and
-*especially* then, because that is the shape that burns orchestrator context for
-no judgement.
-
-**Do not delegate work that is already finished.** The failure mode is not
-stupidity, it is timing: a "use BP" instruction arriving mid-task tempts you to
-dispatch something you just completed. Check `git status` before briefing.
-
-**Batch, because delegation is not free either.** Every dispatch costs a brief
-plus an audit of the returned diff. Three related tasks in one brief cost one
-audit; three separate dispatches cost three.
+- **Delegate** work whose hard part is typing rather than deciding: multi-file mechanical edits, test additions against a pinned oracle, doc sweeps, ledger burn-downs, renames and refactors with a mechanical rule. New artifacts qualify too when they have ≥2 in-repo siblings to pattern-match and the oracle is a measured literal table you produced (reference shape: a `scripts/check_*.py` plus its test and its `test.sh`/`ci.yml` wiring, `tunatale-7330`). Widening the work tightens the audit: surviving defects cluster between the cases a brief enumerates.
+- **Never delegate:** anything touching Anki/SRS/sync semantics; oracle design (deciding what would falsify a claim — executing a supplied oracle is fine); the final `./test.sh` gate, the audit of the returned diff, and the merge decision.
+- **Threshold:** if writing the brief costs more than doing the work, do the work. The brief is the expensive artifact and the executor is swappable (haiku, sonnet, or SWE via `swe-delegate` when BP's quota is out), so the question is whether the work is brief-able, not whether BP is available.
+- Check `git status` before briefing, so you never delegate finished work. Batch related tasks into one brief, since every dispatch costs a brief plus an audit.
 
 ## Committing, Pushing, and Merging
 
-**Committing is standing-authorized; merging into `main` is the checkpoint the
-user babysits** (2026-08-13). Commit and push freely under the rules below — the
-`./test.sh` gate, not a permission prompt, is what stands between a change and
-history.
+Committing and pushing are standing-authorized; merging into `main` is the checkpoint the user watches. The repo is public, so the merge is the irreversible, world-visible step.
 
-**Route by weight, and the routing is a judgement call, not a checklist:**
+- **Small and self-contained** (docs, a settings field, a one-module fix, a test addition): commit to `main` and push without asking.
+- **Substantial** (anything touching Anki/SRS/sync, spanning several modules, or whose blast radius you would have to think about): branch and open a PR, then stop. The user approves the merge. A run of direct-to-`main` commits on work that should have been branched means this checkpoint has silently stopped existing.
+- **If it feels risky for any reason you can name, ask**, even when it is small.
+- **Don't stack a PR on another open PR's branch.** Merging the parent deletes the base branch, and GitHub closes the child PR for good (#103 → #104). Base the second PR on `main` and state the merge order in its body, or keep going on the same branch.
+- Executors (BP et al.) leave their work uncommitted by default (`.beads-tasks/DISPATCH-PREAMBLE.md`). The orchestrator may let one commit on its own branch for mechanical work — never for Anki/SRS/sync.
+- Always: `./test.sh` green on the exact tree before every commit, never amend an audited commit, and beads sync stays standing-authorized.
 
-- **Small and self-contained** — docs, a settings field, a one-module fix, a test
-  addition — goes straight to `main` and is pushed without asking.
-- **Substantial** — anything touching Anki/SRS/sync, anything spanning several
-  modules, anything whose blast radius you would have to think about — goes on a
-  branch and opens a PR. **Stop at the open PR.** The user approves the merge.
-- **When it feels risky for any reason you can name, ask** — even if it is small
-  by the rule above. Latitude to route was granted explicitly; latitude to skip
-  the gate was not.
+## Issue Tracking — bd (beads)
 
-⚠️ **Do not STACK a PR on another open PR's branch** (2026-09-03). "Stop at the
-open PR" makes this tempting: work continues, so the next branch is cut from the
-one still waiting for approval and its PR is based there. Merging the parent
-then deletes that base branch, and **GitHub auto-closes the child PR and will
-not let it be reopened** — the branch and commits survive, but the PR, its
-description and its review history do not. Recovering it means opening a NEW PR
-from the same branch retargeted to `main` and waiting out a fresh CI run
-(#103 → #104 died this way → recreated as #105). Base the second PR on `main`
-and say in its body that it should merge after the first, or simply keep going
-on the same branch when the work is one story.
+The backlog and its dependency ordering live in bd; `bd ready --exclude-type=epic` lists unblocked work. **Load the `beads` skill before any bd write, sync, mail, or brief** — it holds this repo's conventions and these traps in full:
 
-**Why the checkpoint is the merge and not the commit:** a local commit is cheap
-and revertible, and gating it bought a round-trip per change without buying
-safety — the same reasoning `f884e52` applied to beads sync. A merge into `main`
-on a **public** repo is the irreversible, world-visible step, so that is where
-the human belongs.
-
-⚠️ **This only works if branches exist.** From 2026-08-12 to 2026-08-13 every
-commit landed directly on `main` with no branch and no PR, which silently
-emptied this checkpoint of meaning — a merge gate cannot fire when nothing
-merges. If you notice a run of direct-to-`main` commits on work that was
-supposed to be branched, that is the failure mode, not a shortcut that worked.
-
-**Weak-model executors (BP et al.) committing their own work is the
-orchestrator's call**, case by case. `.beads-tasks/DISPATCH-PREAMBLE.md` still
-says leave it uncommitted, and that remains the safe default: auditing a
-working-tree diff is easier than auditing history you are forbidden to amend.
-Let an executor commit only on its own branch, only when the work is mechanical
-enough that the audit is a formality — and never for Anki/SRS/sync changes.
-
-Unchanged by any of this: `./test.sh` green on the exact tree before every
-commit, never amend an audited commit, and beads sync stays standing-authorized.
-
-<!-- BEGIN BEADS INTEGRATION (hand-trimmed 2026-08-18 from bd's stock template;
-     a future `bd setup opencode` will NOT match this and must not be applied
-     blindly). -->
-## Issue Tracking with bd (beads)
-
-The BP dispatch backlog and its dependency ordering live in **bd (beads)**, not
-in prose queue tables. This block is guidance, not permission to override
-repository, user, or orchestrator instructions.
-
-```bash
-bd ready --exclude-type=epic                  # unblocked work (epics are containers, not work)
-bd ready --parent <epic> --exclude-type=epic  # ...scoped to one theme
-bd show <id> --json | jq -r '.[0].description'    # ALWAYS --json; see bugs below
-bd create "title" -d "..." -p 0-4             # 0 critical .. 4 backlog
-bd dep add <child> <parent>                   # child is blocked by parent
-bd update <id> --claim  /  bd close <id> --reason "..."
-bd graph --all --html   /  --compact          # browse the backlog, edges included
-```
-
-Full reference: `bd --help`, and **`bd prime` — run it by hand** whenever you
-want the current command and flag reference. It is authoritative and
-self-updating in a way this hand-written section can never be, and it is only
-~100 lines.
-
-**Do not wire it into a SessionStart hook.** The objection is mechanism, not
-content: auto-injected, its "Core Rules" block arrives as authoritative context
-every session, and the predicted drift is an agent that quietly stops writing
-briefs and stops committing. ⚠️ **That drift is a prediction and has never been
-measured.** The ban stands on asymmetry — running it by hand costs nothing, and
-the failure it guards against would be silent.
-
-⚠️ **Two of bd's own "Core Rules" conflict with this repo's** (audited against
-the real output; re-audit if bd's rules change):
-- **"Create beads issue BEFORE writing code"** — a real conflict, and ours is
-  the sloppier side: most commits here have no bead.
-- **"Do NOT use MEMORY.md"** — a real conflict where we are right for this
-  situation. Its stated reason is that they "fragment across accounts"; this is
-  one user on one machine, and MEMORY.md is the harness's own system, not a
-  choice bd can override.
-
-Its other rules look like conflicts and are not: tracking does live in bd
-(`.beads-tasks/briefs/` holds documents, not a task list), and "stealth mode (no
-git ops)" is bd echoing OUR OWN config — a privacy guard, see below.
-
-⚠️ **bd's JSON is not one shape, and a wrong field name returns a clean negative
-rather than an error.** Verify any field against a record whose answer you
-already know before believing a count. All three of these produced confident
-wrong conclusions on 2026-08-18:
-- the field is **`parent`**, not `parent_id`;
-- **`dependency_count` counts only `blocks` edges** while the `dependencies`
-  array also carries `parent-child` and `discovered-from` — they disagree on 47
-  of 58 open issues, which looks exactly like a bug and is not one;
-- `bd show --json` uses a different shape again from `bd list` / `bd export`.
-
-⚠️ **A `parent-child` edge BLOCKS the child when the parent is a `task`, but not
-when it is an `epic`** (verified 2026-08-24). A task parented to another open
-task drops out of `bd ready` and appears in `bd blocked` as *"Blocked by 1 open
-dependencies: [<parent>]"*. Epic children are unaffected — which is why
-`bd ready --exclude-type=epic` works at all, and why this goes unnoticed.
-Parenting a task to an open task **while also** adding `bd dep add <parent>
-<child>` creates a mutual block and the child is silently invisible; the symptom
-is a bead you just filed never appearing in `bd ready`. Use an epic as the
-container, or express the ordering with a `blocks` edge alone and leave the
-parent unset.
-
-⚠️ **`bd comment` succeeds SILENTLY — no output is not failure.** Retrying on the
-apparent silence posts it twice (done, 2026-08-24). Confirm with the
-`comment_count` field; `.comments` comes back empty and is not the field, which
-makes the wrong check look like a confirmed failure. Same clean-negative class as
-the JSON-shape traps above.
-
-⚠️ **Two upstream bugs, hands-on verified — do not rediscover them blind:**
-- plain `bd show <id>` mangles technical content (strips code fences, garbles
-  `Promise<boolean>` into `Promise****`). The stored data is fine; only the
-  pretty-printer is broken. Always `--json | jq`. (gastownhall/beads#5495)
-- `bd dep add <child> <parent>` and `bd create --deps blocks:<id>` are inverses:
-  `--deps blocks:X` means "this new issue blocks X," not "is blocked by X."
-  Verify every edge right after wiring it.
-<!-- END BEADS INTEGRATION -->
-
-## Beads + TunaTale specifics
-
-- **Sync is standing-authorized — after any `bd create` / `close` / `dep add`
-  batch run `./.beads-tasks/sync.sh`, do not ask.** `.beads/` is stealth-mode
-  and its Dolt backups sit on the same disk, so nothing leaves this machine until
-  that script runs. It pushes the Dolt store, exports, renders `GRAPH.md`,
-  commits and pushes.
-  ⚠️ **A bd WRITE is freeze-safe; a bd SYNC is not.** `.beads/` is gitignored, so
-  `bd create` / `close` / `comment` leave `git status` untouched and are safe
-  while another agent holds uncommitted work. `sync.sh` COMMITS AND PUSHES the
-  parent repo, so running it then lands a commit under that agent and moves HEAD
-  beneath their gate fingerprint. Standing authorisation means you need not ask;
-  it does not mean any moment is safe. In a two-agent session, sync after the
-  other agent's commit lands, not during their freeze. (Learned 2026-09-13, when
-  the peer session deliberately wrote a bd comment mid-freeze — correctly — and
-  deliberately did NOT sync.)
-- **Stealth mode (`no-git-ops`) is a privacy guard, not a preference.** `.beads/`
-  must sit at the PARENT repo root (bd stops walking up at a git root, so from
-  inside `.beads-tasks/` it never finds `../.beads`) — and that root's origin is
-  the PUBLIC repo. With bd's automatic git operations on, they would write
-  `refs/dolt/data` to the public remote, and **a hidden ref is unlisted, not
-  private**. It costs nothing: stealth suppresses only *automatic* git ops, so
-  `bd dolt push` via `sync.sh` still works. Full reasoning:
-  `.beads-tasks/briefs/design-beads-github-sync-2026-08.md` § Appendix B.
-- **The backlog is private, and the Dolt remote is the whole mechanism.** The
-  store travels as the hidden ref `refs/dolt/data` on the **private**
-  tunatale-tasks repo — deliberately NOT this repo's origin, which is public.
-  **A hidden ref is unlisted, not private**; anything on a public remote is
-  world-fetchable. `sync.sh` refuses to push if the remote ever stops containing
-  `tunatale-tasks` — never relax that guard. `bd-export.jsonl` is a secondary
-  human-diffable copy; restore from the Dolt ref, not the JSONL.
-- **Browse with `npx beads-ui start`** (mantoni/beads-ui; serves
-  `http://127.0.0.1:3000`, talks to the `bd` CLI so it reads the live store, and
-  never leaves localhost — verified working 2026-08-18). `bd graph <epic>
-  --compact` is the terminal equivalent. ⚠️ **`bd graph --all --html`
-  degenerates on this backlog and should not be the default suggestion.** Every
-  node is colored by status and nearly everything here is `open`; 39 of 52 open
-  issues sit at layer 0, and `forceX(150 + layer*220)` pulls all 39 identical
-  blue 130×40 rects into one column with `forceCollide(50)` — a solid blue slab,
-  not a graph. Two further defects, both measured 2026-08-18: its help calls the
-  HTML "self-contained" and that is FALSE (it pulls d3 from `https://d3js.org`,
-  so it needs the network and cannot be published as an Artifact without inlining
-  d3), and `bd graph <id> --html` does NOT scope — it still emitted all 52 nodes
-  for a 22-issue epic, though it did recompute the layers. `--compact` scopes
-  correctly.
-  ⚠️ **How this got into a doc is the lesson:** the adoption control counted
-  nodes and edges (52/57, agreeing with `--dot` and `bd list`) and never looked
-  at the rendered picture. The data was right and the view was unusable —
-  a control has to test the property you are actually claiming.
-  The GitHub Issues mirror was retired 2026-08-18 (`tunatale-93s`; rationale in
-  `cc7ddea`) and the tab is disabled.
-- **A fresh clone has no bd data — run `./beads-bootstrap.sh`.** A default clone
-  fetches only `refs/heads/*` and `refs/tags/*`, and bd's auto-detection looks at
-  *this* repo's origin — the wrong repo, on purpose. Needs read access to the
-  private tasks repo; without it the clone step fails, which is expected.
-  **An empty backlog after bootstrap is a red flag, not "nothing to do"** — the
-  script exits non-zero on 0 open issues for exactly that reason.
-- **Agent mail lives in bd** — `./.beads-tasks/mail.sh inbox` / `read <id>` /
-  `MAIL_ID=orch ./.beads-tasks/mail.sh send peer "subject" "body"` — for talking
-  to another Claude session sharing this tree. `unread == open`, addressing is a
-  `to-*` label, and message beads are excluded from `bd list` / `bd ready` /
-  `GRAPH.md`. A `SessionStart` hook surfaces unread mail; without it a session
-  never looks. ⚠️ **Mail is in neither `bd-export.jsonl` nor the Dolt push** — it
-  is the one thing here with no off-machine copy. Anything that must survive
-  belongs in an issue.
-- **Related issues get an epic, once a theme produces more than two.** `bd ready`
-  sorts by priority across the WHOLE backlog, so loose siblings scatter across
-  unrelated work and the reader cannot see they are one piece. Retrofit the
-  moment you notice you are creating the third (`bd update <id> --parent <epic>`
-  reparents, so there is no cost to doing it late). The epic carries the
-  through-line, the ordering rationale, and anything explicitly OUT of scope —
-  the cheapest place to stop an executor widening the work. It does not restate
-  its children. `tunatale-vnf` is the reference shape.
-- **Method vs work.** `.beads-tasks/DISPATCH-PREAMBLE.md` holds what binds
-  *every* delegated run (fence, prohibitions, escalation, report contract). An
-  issue holds only what is true of *that* task. Never restate the preamble inside
-  an issue — two copies drift, and the one the executor read is the one you did
-  not edit.
-- **Short work inline, long briefs as files.** A screenful goes in the issue
-  description. Anything longer, or carrying a big oracle table, goes in
-  `.beads-tasks/briefs/` — genre-prefixed (`brief-`, `findings-`, `testplan-`,
-  `handoff-`, `design-`) — with the issue holding scope, `Source: <path> §
-  <section>`, and the decisive oracles. Never both. `.beads-tasks/archive/` holds
-  docs whose work shipped and which exist nowhere else. Prefer a file for length
-  and citability, NOT because bd edits are unreviewable — they are versioned in
-  `bd-export.jsonl`, and the prose diff is one command:
-  ```bash
-  desc () { git show "$1:bd-export.jsonl" | jq -r --arg id "$2" 'select(.id==$id).description'; }
-  diff <(desc HEAD~1 tunatale-xyz) <(desc HEAD tunatale-xyz)
-  ```
-  `docs/briefs/` is retired: gitignored *permanence* is what killed it, not
-  files. Do not author anything new there.
-- **Closing a bd issue is not authorization to commit.** It records that the
-  described work is done; the `./test.sh` gate and the diff audit still stand
-  between that and anything shipping.
-- **The `.beads-tasks` pointer is auto-staged — there is nothing to remember.**
-  `.claude/hooks/stage_submodule_pointer.py` stages it onto any commit already
-  carrying other content; every guard fails open, and it never manufactures a
-  pointer-only commit. Order-independent with the commit gate, because
-  `ignore = all` keeps the gitlink out of what the gate fingerprints. Check drift
-  with `git submodule status` (leading `+` = behind, space = current).
-  ⚠️ `ignore = all` also hides the gitlink from `git diff` / `git status` **even
-  when it is staged** — pass `--ignore-submodules=none`, or you will conclude the
-  hook silently no-opped when it did not. Closures land at most one commit late
-  by construction: a close cites the hash of the commit that shipped it, so it
-  cannot be inside that commit. Do not try to engineer that away.
-- **Why a submodule and not a sibling clone:** the BP fence blocks reads outside
-  the project directory, and an outside path does not error — it ends the run at
-  exit 0 with zero files changed. Dispatch docs must be reachable *inside* the
-  checkout, and the backlog must stay private. `git submodule update --init` 403s
-  for anyone else; expected, breaks nothing.
+- Plain `bd show` mangles code; always `bd show <id> --json | jq -r '.[0].description'`.
+- `bd dep add <child> <parent>` and `bd create --deps blocks:<id>` point in opposite directions. Verify every edge right after wiring it.
+- A wrong JSON field name returns a clean negative, not an error (the field is `parent`, not `parent_id`).
+- After a `bd create` / `close` / `dep add` batch, run `./.beads-tasks/sync.sh` without asking — but not while another agent holds uncommitted work, because it commits and pushes.
+- Closing a bead is not authorization to commit.

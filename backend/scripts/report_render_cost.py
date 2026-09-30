@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Read-only report: price a render in Azure-billable characters BEFORE it runs.
 
-CLAUDE.md mandates pricing every render in characters before running it, because
+AGENTS.md mandates pricing every render in characters before running it, because
 there is no usable Azure-side character meter (``SynthesizedCharacters`` is not
 queryable; the queryable metrics returned 0 for a day that demonstrably
-synthesized hundreds of clips — see AGENTS.md § "Paid vendor usage"). The local
+synthesized hundreds of clips — see ``.claude/rules/paid-vendors.md``). The local
 estimate IS the instrument, and this script is that instrument, tracked.
 
 For every distinct synthesis key in each cost leg of the requested lessons, it
@@ -55,7 +55,7 @@ even when sliced; the slicer leg is an ADDITIONAL parent-word request.
 
 Read-only by construction: this script never calls ``synthesize``. It tests
 cache existence with the adapter's OWN ``_cache_path`` against the real
-``settings.tts_cache_dir`` (or ``--cache-dir``), exactly as CLAUDE.md
+``settings.tts_cache_dir`` (or ``--cache-dir``), exactly as ``.claude/rules/paid-vendors.md``
 prescribes — the adapter's ``_cache_path`` is the only address space that
 decides hit-vs-miss, and ``_billable_body`` is the only billable unit.
 
@@ -528,7 +528,7 @@ def _select_lessons(store: ContentStore, code: str, lesson_ids: list[str] | None
     """Lessons named by ``--lesson``, or every stored lesson of *code*.
 
     ``--all`` (and the default, when no selector is given) prices the whole
-    stored curriculum of the language — the number CLAUDE.md means by "what does
+    stored curriculum of the language — the number ``paid-vendors.md`` means by "what does
     this cost from empty?". A named lesson of another language is priced as
     asked but called out, so a mis-typed id cannot silently report another
     language's cost.

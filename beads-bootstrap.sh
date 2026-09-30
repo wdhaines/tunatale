@@ -23,7 +23,7 @@
 #
 # Requires read access to the private repo (gh auth / git credentials). If you
 # do not have it, this fails at the clone step and that is expected — see
-# CLAUDE.md. Verified end-to-end against a fresh clone on 2026-08-10: 16 open
+# .claude/skills/beads/SKILL.md. Verified end-to-end against a fresh clone on 2026-08-10: 16 open
 # issues and both dependency edges recovered.
 
 set -euo pipefail
