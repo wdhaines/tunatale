@@ -322,7 +322,22 @@ class LessonRenderer:
         calc: NaturalPauseCalculator,
         pace_files: list[Path] | None = None,
     ) -> tuple[_Audio, list[tuple[int, int, int]]]:
+        """One section as a single joined buffer — see :meth:`_assemble_section_parts`."""
+        parts, section_cues = self._assemble_section_parts(section, phrase_files, calc, pace_files)
+        return _concat(parts), section_cues
+
+    def _assemble_section_parts(
+        self,
+        section: Section,
+        phrase_files: list[Path],
+        calc: NaturalPauseCalculator,
+        pace_files: list[Path] | None = None,
+    ) -> tuple[list[_Audio], list[tuple[int, int, int]]]:
         """Synchronous assembly of a section's audio from pre-synthesised phrase files.
+
+        Returns the section's pieces (phrase clips and pauses) in playback order,
+        NOT joined: a caller that only writes the section streams them straight
+        to the encoder and never holds a second, concatenated copy.
 
         Extracted so the caller can offload it with ``asyncio.to_thread`` and
         keep the event loop responsive during file I/O and numpy operations.
@@ -367,7 +382,7 @@ class LessonRenderer:
                 pause = _silence(pause_ms, phrase_audio)
                 parts.append(pause)
                 current_frame += len(pause.samples)
-        return _concat(parts), section_cues
+        return parts, section_cues
 
     async def _render_section(
         self,
@@ -380,6 +395,35 @@ class LessonRenderer:
         tally: _ClipTally | None = None,
     ) -> tuple[_Audio, list[tuple[int, int, int]]]:
         """Render a single section to an audio buffer (no boundary silence).
+
+        Synthesis (:meth:`_synthesize_section`) then assembly. ``render`` calls
+        the two halves separately so it can hold one section's audio at a time.
+        """
+        play_files, phrase_files = await self._synthesize_section(
+            section, tmp, section_idx, language_code, synth_memo, memo_lock, tally
+        )
+        return await asyncio.to_thread(
+            self._assemble_section_audio,
+            section,
+            play_files,
+            self._calc,
+            phrase_files,
+        )
+
+    async def _synthesize_section(
+        self,
+        section: Section,
+        tmp: Path,
+        section_idx: int,
+        language_code: str,
+        synth_memo: dict[_MemoKey, tuple[Path, asyncio.Task]],
+        memo_lock: asyncio.Lock,
+        tally: _ClipTally | None = None,
+    ) -> tuple[list[Path], list[Path]]:
+        """Synthesize (and slice) one section's phrases; returns ``(play_files, pace_files)``.
+
+        Everything a section needs on disk and nothing in memory: the audio
+        stays in files until :meth:`_assemble_section_parts` reads it.
 
         Args:
             section: The Section to render.
@@ -397,9 +441,9 @@ class LessonRenderer:
                 so the counting calls are skipped entirely.
 
         Returns:
-            Tuple of (Audio buffer, per-phrase timing).
-            Timing entries are (phrase_index, start_frame, end_frame) relative
-            to the section start, in frames (not ms).
+            ``(play_files, pace_files)``, one per phrase: the file to PLAY (a
+            sliced chunk where the slicer applied) and the isolated TTS render
+            that decides the following pause.
         """
         if tally is None:
             tally = _ClipTally()
@@ -592,15 +636,7 @@ class LessonRenderer:
         # Offload the sync assembly (file I/O + numpy) so the event loop stays
         # responsive.
         play_files = await self._apply_slicing(section, phrase_files, tmp, section_idx, language_code, ipa_indices)
-
-        assembled = await asyncio.to_thread(
-            self._assemble_section_audio,
-            section,
-            play_files,
-            self._calc,
-            phrase_files,
-        )
-        return assembled
+        return play_files, phrase_files
 
     async def _apply_slicing(
         self,
@@ -729,8 +765,11 @@ class LessonRenderer:
                 get_tts_voice_gain_db(Language.english().code, lesson.narrator_voice),
             )
 
-            # Render all sections concurrently — phrases within each section are
-            # also parallelised; the TTS adapter's _semaphore caps total concurrency.
+            # Synthesize all sections concurrently — phrases within each section
+            # are also parallelised; the TTS adapter's _semaphore caps total
+            # concurrency. Only SYNTHESIS runs concurrently: it is network-bound
+            # and its output is files on disk. Assembly happens below, one
+            # section at a time (tunatale-guzo.5).
             # A render-scoped synthesis cache reuses identical utterances across
             # sections (e.g. the shared L2 line + English gloss in the translated
             # and en_translated sections) instead of re-running TTS for each.
@@ -740,12 +779,12 @@ class LessonRenderer:
             tally = _ClipTally(on_progress=on_progress or _report_nowhere)
             section_tasks = [
                 asyncio.ensure_future(
-                    self._render_section(section, tmp, i, lesson.language_code, synth_memo, memo_lock, tally)
+                    self._synthesize_section(section, tmp, i, lesson.language_code, synth_memo, memo_lock, tally)
                 )
                 for i, section in enumerate(lesson.sections)
             ]
             try:
-                section_results = await asyncio.gather(*section_tasks)
+                section_plans = await asyncio.gather(*section_tasks)
             except BaseException:
                 # gather STOPS WAITING on the first failure; it does not cancel
                 # the siblings it was waiting on. Left alone they keep
@@ -767,25 +806,53 @@ class LessonRenderer:
                     return_exceptions=True,
                 )
                 raise
-            section_audios = [r[0] for r in section_results]
-            section_cue_lists = [r[1] for r in section_results]
             logger.debug("All sections TTS → %.0f ms", (time.perf_counter() - t0) * 1000)
 
-            if section_paths is not None:
-                for section_idx, sec_audio in enumerate(section_audios):
+            # ONE section's audio at a time (tunatale-guzo.5). Each section is
+            # assembled, written, and released before the next is read, keeping
+            # only what the timeline needs: its frame count and relative cues.
+            # Holding every section at once is what put a 45.8-min lesson at a
+            # 445 MB peak on a 1 GB box — the lesson's audio alone is 264 MB of
+            # float32. The pieces are streamed to the encoder unjoined, so not
+            # even one section is ever concatenated on the sections-only path.
+            #
+            # The full-lesson export (``output_path``) is the exception: it is
+            # ONE encode over every section (joining encoded parts drifts +20 ms
+            # per seam — see ``_write_audio_stream``), so it must keep them. No
+            # production caller asks for it since guzo.3; tests and scripts do.
+            section_frames: list[int] = []
+            section_cue_lists: list[list[tuple[int, int, int]]] = []
+            kept_audios: list[_Audio] = []
+            for section_idx, (section, (play_files, pace_files)) in enumerate(
+                zip(lesson.sections, section_plans, strict=True)
+            ):
+                pieces, sec_cues = await asyncio.to_thread(
+                    self._assemble_section_parts, section, play_files, self._calc, pace_files
+                )
+                section_frames.append(sum(len(p.samples) for p in pieces))
+                section_cue_lists.append(sec_cues)
+                sec_rate = pieces[0].rate
+                if output_path is not None:
+                    joined = _concat(pieces)
+                    kept_audios.append(joined)
+                    pieces = [joined]
+                if section_paths is not None:
                     sp = section_paths[section_idx]
                     sp.parent.mkdir(parents=True, exist_ok=True)
                     t0 = time.perf_counter()
-                    await asyncio.to_thread(self._write_audio, sp, sec_audio)
+                    # `_write_audio_stream` drains `pieces`, releasing each clip
+                    # as it is handed to the encoder.
+                    await asyncio.to_thread(self._write_audio_stream, sp, pieces, sec_rate)
                     logger.debug("Section %d export → %.0f ms", section_idx, (time.perf_counter() - t0) * 1000)
+                del pieces
 
             # Assemble full lesson using the shared layout.
             # lesson_layout owns the piece order, the boundary count (N for N
             # sections) AND the boundary value.  The actual frame offsets come
-            # from the audio objects themselves, not from the ms-based layout —
-            # this avoids rounding differences between the two domains.
+            # from the sections' measured frame counts, not from the ms-based
+            # layout — this avoids rounding differences between the two domains.
             boundary_ms = self._calc.get_section_boundary_pause()
-            sec_durations_ms = [round(len(s.samples) / title_audio.rate * 1000) for s in section_audios]
+            sec_durations_ms = [round(frames / title_audio.rate * 1000) for frames in section_frames]
             layout = _assembly.lesson_layout(
                 sec_durations_ms, round(len(title_audio.samples) / title_audio.rate * 1000), boundary_ms
             )
@@ -809,7 +876,7 @@ class LessonRenderer:
                     if desc == "boundary":
                         parts.append(boundary)
                     else:
-                        parts.append(section_audios[int(desc.split("_")[1])])
+                        parts.append(kept_audios[int(desc.split("_")[1])])
 
             # Build cue manifest with absolute frame offsets.  Walk the shared
             # layout's piece order once, accumulating frame offsets so the
@@ -844,7 +911,7 @@ class LessonRenderer:
                             end_frame=current_abs_frame + rel_end,
                         )
                     )
-                current_abs_frame += len(section_audios[sec_idx].samples)
+                current_abs_frame += section_frames[sec_idx]
 
             rate = int(title_audio.rate)
             cues = build_cue_manifest(lesson, timing_entries, rate)

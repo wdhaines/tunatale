@@ -224,9 +224,11 @@ class TestTheStreamingEncoder:
     ``monkeypatch.setattr("app.audio.renderer...")``, which the mock-boundary
     rule forbids — and it would be testing the patch. What the renderer does
     with it is covered by the timeline tests above; what it guarantees is here.
-    The peak-memory claim itself is measured out of band (see the PR), because
-    numpy buffers are allocated outside tracemalloc's view and a unit test that
-    pretended to measure them would be decoration.
+    ⚠️ CORRECTED 2026-09-30 (bd tunatale-guzo.5): this used to say numpy
+    buffers are allocated outside tracemalloc's view. On numpy 2.5.2 they are
+    NOT — a control allocating a 5.76 MB array and its 11.52 MB concatenation
+    reported a tracemalloc peak of exactly their sum. Peak memory is therefore
+    unit-testable, and test_renderer_memory.py does it.
 
     ⚠️ CORRECTED 2026-09-21 (bd tunatale-rwkz.5): that holds for the numpy
     buffers, but NOT for the copy this writer used to make. ``.tobytes()``
