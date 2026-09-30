@@ -51,6 +51,14 @@ def derive_section_cues(cues: list[Cue], lesson) -> dict[int, list[Cue]]:
     For SLOW_SPEED / SLOW_TRANSLATED sections, each L2 line cue's ``text`` is
     overwritten with the natural (non-slowed) text from the structural-twin
     section so that the player subtitle never shows ellipsis-broken text.
+
+    ⚠️ The twin's text comes from the LESSON, not from the twin's cues in
+    *cues*. A line ref's ``target_index`` counts L2 phrases in section order,
+    so line n of the twin is its n-th L2 phrase. Reading it from the manifest
+    made the scrub depend on the twin having been rendered in the same call:
+    reassemble_lesson_audio builds each re-rendered section's cues alone, the
+    twin was never there, and every lesson re-voiced by
+    rebuild_lessons_from_story showed ``Dober ... dan`` in its slow captions.
     """
     l2_code = lesson.language_code
 
@@ -66,18 +74,10 @@ def derive_section_cues(cues: list[Cue], lesson) -> dict[int, list[Cue]]:
         source_type = _SLOW_TEXT_SOURCE.get(section.section_type)
         if source_type is None:
             continue
-        # Find the structural-twin group index.
-        twin_idx: int | None = None
-        for other_idx, other_sec in enumerate(lesson.sections):
-            if other_sec.section_type == source_type:
-                twin_idx = other_idx
-                break
-        if twin_idx is None or twin_idx not in groups:
+        twin = next((s for s in lesson.sections if s.section_type == source_type), None)
+        if twin is None:
             continue
-        text_map: dict[int, str] = {}
-        for c in groups[twin_idx]:
-            if c.language_code == l2_code and c.ref and c.ref.get("kind") == "line":
-                text_map.setdefault(c.ref["target_index"], c.text)
+        text_map = {n: p.text for n, p in enumerate(p for p in twin.phrases if p.language_code == l2_code)}
         if text_map:
             scrub_maps[sec_idx] = text_map
 

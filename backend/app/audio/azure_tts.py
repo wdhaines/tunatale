@@ -325,15 +325,20 @@ class AzureTTSService:
         — it pronounced "meniju" as the English word "manager". 8 of 9 words
         wrong. With the wrapper: 0 of 9, for that voice and five others.
 
-        The wrapper is omitted when the voice already speaks *speak_locale*,
-        which is both correct and load-bearing: on a native voice the wrapper
-        was measured to produce byte-identical PCM, so emitting it would change
-        the cache key of the entire existing corpus to say nothing new.
+        The wrapper is omitted only for a NATIVE voice already speaking
+        *speak_locale*: there it was measured to produce byte-identical PCM, so
+        emitting it would change the cache key of the entire existing corpus to
+        say nothing new. A Multilingual voice detects per utterance even in its
+        own locale — measured 2026-09-30, en-US-EmmaMultilingualNeural read the
+        English "Come in, come in." as Tagalog ("Kumain, Kumain.") without the
+        wrapper and correctly with it — so it is always told.
         """
         if not speak_locale:
             return None
         voice_locale = "-".join(voice_id.split("-")[:2])
-        return None if speak_locale == voice_locale else speak_locale
+        if speak_locale == voice_locale and "Multilingual" not in voice_id:
+            return None
+        return speak_locale
 
     @staticmethod
     def _billable_body(

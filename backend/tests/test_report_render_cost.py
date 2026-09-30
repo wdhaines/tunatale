@@ -58,7 +58,9 @@ _BILLABLE_BODY_ORACLE = [
     ("Hei", FINN, "+0%", None, "nb-NO", 33),
     ("Hei", FINN, "+0%", None, None, 33),  # a native voice emits no <lang> for its own locale
     ("Hei", EMMA, "+0%", None, "nb-NO", 63),
-    ("Hello", EMMA, "+0%", None, "en-US", 35),
+    # A Multilingual voice is wrapped even in its own locale: it detects the
+    # language per utterance (test_azure_tts.py, "Come in, come in." 2026-09-30).
+    ("Hello", EMMA, "+0%", None, "en-US", 65),
     ("Hei", FINN, "-25%", None, "nb-NO", 34),
     ("ja & nei", FINN, "+0%", None, "nb-NO", 42),
     ("sno", FINN, "+0%", {"sno": "ˈsnuː"}, "nb-NO", 78),
@@ -238,7 +240,7 @@ def test_rule2_aggregate_phoneme_leg_shows_in_chars_not_misses(tmp_path: Path) -
 
 # ---------------------------------------------------------------------------
 # Rule 3 — speak_locale is the target locale ONLY for phrases in the section's
-# language; a narrator (English) line must get None.
+# language; an English line gets the English locale, as the renderer sends it.
 # ---------------------------------------------------------------------------
 
 
@@ -247,7 +249,7 @@ def test_rule3_speak_locale_only_for_phrases_in_target_language(tmp_path: Path) 
         [
             _natural(
                 Phrase("Hei", EMMA, "no"),  # bilingual ML voice + wrapped in <lang nb-NO>: 63
-                Phrase("Hei", EMMA, "en"),  # narrator line, bare: 33
+                Phrase("Hei", EMMA, "en"),  # English line, wrapped in <lang en-US>: 63
             )
         ]
     )
@@ -255,10 +257,11 @@ def test_rule3_speak_locale_only_for_phrases_in_target_language(tmp_path: Path) 
 
     assert cost.phrase.distinct == 2  # the two speak_locales are distinct cache keys
     assert cost.phrase.misses == 2
-    # 63 (no phrase, wrapped) + 33 (en phrase, unwrapped) = 96.
-    # A script that never passed speak_locale bills 66; one that always passes
-    # it bills 126 — 96 is the discriminator between all three.
-    assert cost.phrase.billable_chars == 96
+    # 63 (no phrase, <lang nb-NO>) + 63 (en phrase, <lang en-US>) = 126. A
+    # script that never passed speak_locale bills 66. One that sent the target
+    # locale for the English line also bills 126 but collapses the two into
+    # one key, which distinct == 2 above rules out.
+    assert cost.phrase.billable_chars == 126
 
 
 # ---------------------------------------------------------------------------
@@ -634,13 +637,13 @@ def test_the_gemini_estimate_follows_the_speaking_rate(tmp_path: Path) -> None:
 
 def test_the_two_providers_are_counted_in_separate_legs(tmp_path: Path) -> None:
     """Oracle 3. An English narrator line beside a Cebuano one, one provider
-    each: the Azure leg is unchanged at its own measured billable (42) and the
+    each: the Azure leg is unchanged at its own measured billable (72) and the
     Gemini leg is untouched by its presence."""
     cost = _price_ceb(
         [
             _ceb_lesson(
                 _ceb_phrase("Maayong buntag"),
-                Phrase("Good morning", EMMA, "en"),  # narrator: no <lang> wrapper
+                Phrase("Good morning", EMMA, "en"),  # Multilingual: wrapped in <lang en-US>
             )
         ],
         cache_dir=tmp_path / "cache",
@@ -648,8 +651,8 @@ def test_the_two_providers_are_counted_in_separate_legs(tmp_path: Path) -> None:
 
     assert cost.phrase.distinct == 1
     assert cost.phrase.misses == 1
-    assert cost.phrase.billable_chars == 42
-    assert cost.phrase.billable_chars == len(AzureTTSService._billable_body("Good morning", EMMA, "+0%", None, None))
+    assert cost.phrase.billable_chars == 72
+    assert cost.phrase.billable_chars == len(AzureTTSService._billable_body("Good morning", EMMA, "+0%", None, "en-US"))
     # Identical to Oracle 1: the Azure leg did not absorb the Cebuano key.
     assert cost.gemini_phrase.chars == 14
     assert cost.gemini_phrase.audio_tokens == pytest.approx(350 / 11)

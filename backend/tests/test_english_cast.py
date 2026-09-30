@@ -337,11 +337,24 @@ async def test_an_italian_voice_reading_english_is_told_it_is_english(tmp_path):
     assert seen == {"Mappa ble flyttet.": "nb-NO", "The file was moved.": "en-US"}
 
 
-def test_the_english_locale_leaves_an_en_us_voice_cache_key_alone():
-    """No existing English clip may become a cache miss because of the wrapper."""
+def test_the_english_locale_leaves_a_native_en_us_voice_cache_key_alone():
+    """A native voice cannot mis-detect, so its English clips stay cache hits."""
     az = AzureTTSService(cache_dir=Path("/nonexistent"), key="k", region="r")
     text = "It's almost eleven."
-    assert az._cache_path(text, _DAVIS, "+0%", None, "en-US") == az._cache_path(text, _DAVIS, "+0%")
+    assert az._cache_path(text, "en-US-GuyNeural", "+0%", None, "en-US") == az._cache_path(
+        text, "en-US-GuyNeural", "+0%"
+    )
+
+
+def test_the_multilingual_narrator_is_told_its_english_is_english():
+    """Davis is Multilingual: without <lang> he guesses the language per line.
+
+    This used to pin the opposite (no wrapper, so no cache miss) for Davis. The
+    stand-ins it covered mis-detected "Come in, come in." as Tagalog on 2026-09-30;
+    see test_azure_tts.py::test_a_multilingual_voice_is_wrapped_even_in_its_own_locale.
+    """
+    ssml = AzureTTSService._build_ssml("It's almost eleven.", _DAVIS, "+0%", speak_locale="en-US")
+    assert '<lang xml:lang="en-US">' in ssml
 
 
 def test_the_renderer_factory_knows_the_english_locale():
