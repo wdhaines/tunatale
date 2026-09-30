@@ -64,6 +64,8 @@ _CONCEPT_GLOSSES: dict[str, frozenset[str]] = {
     "down_there": frozenset({"down", "downstairs", "low", "below"}),
     "further_down": frozenset({"below", "down", "beneath", "lower", "under", "further"}),
     "further_up": frozenset({"above", "up", "higher", "over", "further"}),
+    "side": frozenset({"side", "edge", "flank"}),
+    "middle": frozenset({"middle", "centre", "center", "mid"}),
 }
 
 _WORD = re.compile(r"[^\W\d_]+")
