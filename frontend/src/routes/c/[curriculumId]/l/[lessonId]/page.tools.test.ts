@@ -896,3 +896,98 @@ describe("repairing a lesson that lost its glosses", () => {
     await waitFor(() => expect(getByRole("button", { name: /restore glosses/i })).toBeTruthy());
   });
 });
+
+// Re-render audio from the tools (bd tunatale-9paa). The component's own
+// behaviour is pinned in RerenderAudio.test.ts; these pin the page's side: it is
+// offered only when there is audio to re-render, it names THIS lesson, and the
+// new audio and its cues replace the old ones on screen.
+describe("re-render audio in the lesson tools", () => {
+  const rendered = (sectionAudioId: string) => ({
+    audio_id: "a1",
+    lesson_id: "l1",
+    sections: [
+      {
+        audio_id: sectionAudioId,
+        section_index: 0,
+        section_type: "key_phrases",
+        title: "Key Phrases",
+      },
+      { audio_id: "s2", section_index: 1, section_type: "natural_speed", title: "Natural Speed" },
+    ],
+  });
+  const mockEstimate = vi.mocked(api.estimateLessonRerender);
+  const mockRerender = vi.mocked(api.rerenderLesson);
+
+  it("offers the lesson's sections and prices the whole lesson", async () => {
+    render(Page, { props: { data: { curriculum, lesson, audio: rendered("s1"), transcript } } });
+
+    expect(screen.getByRole("checkbox", { name: "Key Phrases" })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "Natural Speed" })).toBeTruthy();
+    await waitFor(() => expect(mockEstimate).toHaveBeenCalledWith("l1", null));
+  });
+
+  it("is not offered before the lesson has audio: Render Audio is the way in", () => {
+    render(Page, { props: { data: { curriculum, lesson, audio: null, transcript: null } } });
+
+    expect(screen.queryByText("Re-render audio")).toBeNull();
+    expect(mockEstimate).not.toHaveBeenCalled();
+  });
+
+  it("re-renders the chosen sections, then shows the new audio and its cues", async () => {
+    mockRerender.mockResolvedValue(rendered("s9") as never);
+    const fresh = { ...transcript, lesson_id: "l1" } as TranscriptData;
+    mockGetTranscript.mockResolvedValue(fresh);
+    const { container } = render(Page, {
+      props: { data: { curriculum, lesson, audio: rendered("s1"), transcript } },
+    });
+
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Key Phrases" }));
+    await fireEvent.click(screen.getByRole("button", { name: /re-render 1 section/i }));
+
+    expect(mockRerender).toHaveBeenCalledWith("l1", ["natural_speed"]);
+    // The downloads follow the new rows: s1 was replaced by s9.
+    await waitFor(() =>
+      expect(
+        container.querySelector<HTMLAnchorElement>(".section-dl-btn")!.getAttribute("href"),
+      ).toBe("/api/audio/s9"),
+    );
+    // Cue timings moved with the re-rendered section, so the transcript is re-read.
+    expect(mockGetTranscript).toHaveBeenCalledWith("l1");
+  });
+
+  it("a render that lands after navigating to another lesson does not paint over it", async () => {
+    let finish!: (a: never) => void;
+    mockRerender.mockReturnValue(new Promise((r) => (finish = r)));
+    const { container, rerender } = render(Page, {
+      props: { data: { curriculum, lesson, audio: rendered("s1"), transcript } },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: /re-render all sections/i }));
+
+    const lessonB = { ...lesson, id: "l2", title: "Day 2: Fish", day: 2 };
+    const audioB = { ...rendered("b1"), lesson_id: "l2" };
+    await rerender({ data: { curriculum, lesson: lessonB, audio: audioB, transcript } });
+    finish(rendered("s9") as never);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(
+      container.querySelector<HTMLAnchorElement>(".section-dl-btn")!.getAttribute("href"),
+    ).toBe("/api/audio/b1");
+    expect(mockGetTranscript).not.toHaveBeenCalledWith("l1");
+  });
+
+  it("a failed transcript re-read still shows the new audio", async () => {
+    mockRerender.mockResolvedValue(rendered("s9") as never);
+    mockGetTranscript.mockRejectedValue(new Error("offline"));
+    const { container } = render(Page, {
+      props: { data: { curriculum, lesson, audio: rendered("s1"), transcript } },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: /re-render all sections/i }));
+
+    await waitFor(() =>
+      expect(
+        container.querySelector<HTMLAnchorElement>(".section-dl-btn")!.getAttribute("href"),
+      ).toBe("/api/audio/s9"),
+    );
+  });
+});

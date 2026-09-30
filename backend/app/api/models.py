@@ -214,6 +214,38 @@ class RenderAudioRequest(BaseModel):
     lesson_id: str
 
 
+class SectionSelection(BaseModel):
+    """Which sections a tools-menu re-render names (tunatale-9paa).
+
+    ``section_types`` omitted or null means the whole lesson; a list names
+    ``SectionType`` values. An empty list, an unknown value, or a section the
+    lesson lacks is refused with 422 before any work.
+    """
+
+    section_types: list[str] | None = None
+
+
+class LessonSectionSelection(SectionSelection):
+    """Body of POST /api/audio/render-estimate and POST /api/audio/rerender."""
+
+    lesson_id: str
+
+
+class RenderEstimateResponse(BaseModel):
+    """What a re-render would cost before the click (``render_cost.estimate_render``).
+
+    ``billable_chars`` is Azure's billed unit, against ``monthly_allowance`` on
+    the F0 tier; cached clips cost nothing. The lesson title's one clip is not
+    counted.
+    """
+
+    billable_chars: int
+    new_clips: int
+    cached_clips: int
+    gemini_usd: float
+    monthly_allowance: int
+
+
 # ── Curriculum models ────────────────────────────────────────────────────────
 
 

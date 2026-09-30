@@ -44,7 +44,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
-from app.api import app_state
+from app.api import app_state, rerender
 from app.api._serializers import serialize_lesson
 
 # Reached across modules rather than duplicated. These are the shared post-generation
@@ -64,9 +64,11 @@ from app.api.models import (
     ListReviewSessionsResponse,
     ReglossReviewSessionResponse,
     RenderAudioResponse,
+    RenderEstimateResponse,
     ReviewSessionRenderStatusResponse,
     ReviewSessionResponse,
     ReviewSessionSourceResponse,
+    SectionSelection,
 )
 from app.audio.render_service import render_lesson_audio
 from app.generation.glossing import ensure_dialogue_glosses
@@ -601,6 +603,35 @@ async def render_review_session(session_id: str, request: Request):
         raise HTTPException(status_code=503, detail=str(e)) from e
     finally:
         renders.discard(session_id)
+
+
+@router.post("/{session_id}/render-estimate", status_code=200, response_model=RenderEstimateResponse)
+async def estimate_review_session_rerender(session_id: str, body: SectionSelection, request: Request):
+    """What re-rendering the chosen sections of a session would cost (tunatale-9paa)."""
+    lesson = request.state.content_store.get_review_session(session_id)
+    if lesson is None:
+        raise HTTPException(status_code=404, detail="Review session not found")
+    return rerender.estimate(lesson, body.section_types)
+
+
+@router.post("/{session_id}/rerender", status_code=200, response_model=RenderAudioResponse)
+async def rerender_review_session(session_id: str, body: SectionSelection, request: Request):
+    """Re-render a session, or only its chosen sections (tunatale-9paa).
+
+    Shares ``review_renders`` with the render route above, so a re-render and a
+    render of the same session exclude each other.
+    """
+    lesson = request.state.content_store.get_review_session(session_id)
+    if lesson is None:
+        raise HTTPException(status_code=404, detail="Review session not found")
+    return await rerender.rerender(
+        request,
+        session_id,
+        lesson,
+        body.section_types,
+        app_state.review_renders(request.app),
+        "A render is already in progress for this session",
+    )
 
 
 @router.get(

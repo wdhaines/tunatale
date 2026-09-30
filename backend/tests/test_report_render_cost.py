@@ -366,6 +366,23 @@ def test_rule5_slicer_skips_words_under_two_syllables(tmp_path: Path) -> None:
         assert cost.slicer.misses == 0
 
 
+def test_rule5_slicer_without_a_syllabifier_prices_the_parent(tmp_path: Path) -> None:
+    """No syllabify_fn means no way to know the word splits, so the parent is
+    priced anyway: an estimate may err high, never low. (The real slicer always
+    has one — AlignmentConfig.syllabify_fn — so this is the caller's unknown.)"""
+    lesson = _lesson([_natural(_phrase("snø", source_word="snømann", syllable_span=(0, 1)))])
+    cost = _price(
+        [lesson],
+        planner=None,
+        syllabify_fn=None,
+        slicer_enabled=True,
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert cost.slicer.distinct == 1
+    assert cost.slicer.billable_chars == 38  # "snømann" at the parent rate, as above
+
+
 def test_rule5_slicer_gated_off_when_disabled(tmp_path: Path) -> None:
     """slicer_enabled is the renderer's own gate (build_slicers returns nothing
     when the capability is closed or the language has no alignment wiring)."""

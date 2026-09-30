@@ -69,6 +69,9 @@ ROUTE_TABLE: list[tuple[str, str, str, bool, bool, str]] = [
     ("GET", "/api/review-sessions/{session_id}", "get_review_session", False, False, ""),
     ("POST", "/api/review-sessions/{session_id}/render", "render_review_session", False, False, ""),
     ("GET", "/api/review-sessions/{session_id}/render-status", "get_review_session_render_status", False, False, ""),
+    # Re-render from the tools (tunatale-9paa): re-synthesizes the stored text, never writes it.
+    ("POST", "/api/review-sessions/{session_id}/render-estimate", "estimate_review_session_rerender", False, False, ""),
+    ("POST", "/api/review-sessions/{session_id}/rerender", "rerender_review_session", False, False, ""),
     ("POST", "/api/review-sessions/{session_id}/regloss", "regloss_review_session", False, False, _REGLOSS_EXEMPTION),
     ("DELETE", "/api/review-sessions/{session_id}", "delete_review_session", False, False, ""),
 ]

@@ -230,6 +230,7 @@ async def lifespan(app: FastAPI):
     # warning, then plain synthesis), because the database is a build artifact
     # and a fresh clone must still render.
     app.state.renderer = build_lesson_renderer(tts, db_map, settings)
+    app.state.tts = tts
     # Empty for a language with no pronunciation lexicon.
     if app.state.renderer._phoneme_planners:
         logger.info("Lexicon pronunciation enabled for: %s", ", ".join(sorted(app.state.renderer._phoneme_planners)))
