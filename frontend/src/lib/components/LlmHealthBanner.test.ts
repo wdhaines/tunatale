@@ -50,7 +50,7 @@ afterEach(() => {
 describe("LlmHealthBanner", () => {
   it("renders nothing when status is null", () => {
     const { container } = render(LlmHealthBanner);
-    expect(container.querySelector(".health-banner")).toBeNull();
+    expect(container.querySelector(".banner")).toBeNull();
   });
 
   it("renders nothing when healthy is true", () => {
@@ -62,7 +62,7 @@ describe("LlmHealthBanner", () => {
       llm_mode: "live",
     });
     const { container } = render(LlmHealthBanner);
-    expect(container.querySelector(".health-banner")).toBeNull();
+    expect(container.querySelector(".banner")).toBeNull();
   });
 
   it("renders nothing in mock mode even when unhealthy", () => {
@@ -74,7 +74,7 @@ describe("LlmHealthBanner", () => {
       llm_mode: "mock",
     });
     const { container } = render(LlmHealthBanner);
-    expect(container.querySelector(".health-banner")).toBeNull();
+    expect(container.querySelector(".banner")).toBeNull();
   });
 
   it("shows banner with last_error message and ago_s", () => {
@@ -85,7 +85,10 @@ describe("LlmHealthBanner", () => {
       fallback_allowed: false,
       llm_mode: "live",
     });
-    const { getByText } = render(LlmHealthBanner);
+    const { getByText, container } = render(LlmHealthBanner);
+    // Positive twin of the `.banner` null checks above, so they cannot pass
+    // because the selector matches nothing at all.
+    expect(container.querySelector(".banner.banner-danger")).not.toBeNull();
     expect(getByText(/Groq returned HTTP 401/)).toBeTruthy();
     expect(getByText(/15s ago/)).toBeTruthy();
     expect(getByText(/Check now/)).toBeTruthy();

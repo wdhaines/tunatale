@@ -78,6 +78,7 @@ from app.generation.story import (
     StoryGenerationError,
     build_lesson_from_story,
     build_review_session_prompts,
+    with_glosses_from,
 )
 from app.storage.lesson_io import export_review_session, validate_story
 
@@ -645,7 +646,8 @@ async def regloss_review_session(session_id: str, request: Request):
     if row is None:
         raise HTTPException(status_code=404, detail="Review session not found")
 
-    lesson = store.get_review_session(session_id)
+    stored = store.get_review_session(session_id)
+    lesson = stored
     story = lesson.generation_metadata.get("story")
     if story is None:
         raise HTTPException(
@@ -659,10 +661,13 @@ async def regloss_review_session(session_id: str, request: Request):
 
     try:
         validate_story(story, language=language)
-        lesson = build_lesson_from_story(
-            story,
-            language=language,
-            review_words=row["review_requested"] or (),
+        lesson = with_glosses_from(
+            stored,
+            build_lesson_from_story(
+                story,
+                language=language,
+                review_words=row["review_requested"] or (),
+            ),
         )
     except (StoryGenerationError, ValueError) as e:
         raise HTTPException(status_code=422, detail=str(e)) from e

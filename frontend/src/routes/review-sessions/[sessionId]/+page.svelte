@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Banner from '$lib/components/Banner.svelte';
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { LessonAudio, TranscriptData } from '$lib/api';
@@ -394,6 +395,23 @@
 </script>
 
 <main>
+	<!-- y0bk.3: a session whose gloss pass came back empty. The pass degrades
+	     silently on purpose, so this banner is the only trace of a total loss
+	     (two sessions shipped that way on 2026-09-08), and it carries the repair.
+	     ⚠️ `=== 0`, not falsy: null is a session stored before the count existed.
+	     The shared Banner since 2026-09-29, same as the lesson page. -->
+	{#if data.session.gloss_entry_count === 0}
+		<Banner
+			tone="warning"
+			actionLabel={t('reviewSessions.restoreGlosses')}
+			busyLabel={t('reviewSessions.restoring')}
+			busy={reglossing}
+			onaction={handleRegloss}
+		>
+			<span>{t('reviewSessions.glossNotice')}</span>
+			<span>{t('reviewSessions.keepsDialogue')}</span>
+		</Banner>
+	{/if}
 	<LessonReader
 		title={data.session.title}
 		content={data.session}
@@ -418,22 +436,6 @@
 				<h1>{data.session.title}</h1>
 				{#if error}
 					<p class="error" role="alert">{error}</p>
-				{/if}
-				<!-- y0bk.3. The gloss pass degrades silently on purpose — it keeps a story
-				     that is already paid for rather than 502ing — so without this the only
-				     trace of a total loss is a log line on a terminal with no file sink.
-				     Two sessions shipped that way on 2026-09-08 and a human noticing dead
-				     hovers was the first alarm.
-
-				     ⚠️ `=== 0` and NOT a falsy check: null means a session stored before the
-				     count existed, and telling its reader the glosses are missing would be a
-				     fabrication about every session in the store. Same measured-zero versus
-				     never-measured distinction the reused figure above already makes.
-
-				     Costs a row only in the failure case, so it does not undo the header
-				     compaction in 4293cd3. -->
-				{#if data.session.gloss_entry_count === 0}
-					<p class="gloss-notice">{t('reviewSessions.glossNotice')}</p>
 				{/if}
 			</div>
 		{/snippet}
@@ -474,18 +476,6 @@
 		     returning reader something they already know. Still one tap away. -->
 		<p class="muted">{t('reviewSessions.sessionExplainer')}</p>
 		<AudioDownloads {audio} />
-		<!-- Shown ONLY on a measured zero. `=== 0`, never falsiness: null means a
-		     session stored before the count existed, and offering to "restore"
-		     glosses nobody established were missing would put a pointless LLM call
-		     in front of every pre-existing session. -->
-		{#if data.session.gloss_entry_count === 0}
-			<div class="regen-row">
-				<button class="regen-btn" onclick={handleRegloss} disabled={reglossing}>
-					{reglossing ? t('reviewSessions.restoring') : t('reviewSessions.restoreGlosses')}
-				</button>
-				<span class="muted">{t('reviewSessions.keepsDialogue')}</span>
-			</div>
-		{/if}
 		<div class="regen-row">
 			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
 				{regenerating ? t('reviewSessions.rewriting') : t('reviewSessions.rewriteDialogue')}
@@ -622,11 +612,6 @@
 	/* Muted, not danger-red: the session plays and reads fine, it is one
 	   enrichment that is missing. Styling it as an error would teach the reader
 	   to dismiss the row, which is the opposite of what it is for. */
-	.gloss-notice {
-		color: var(--color-muted);
-		margin: 0;
-		font-size: 0.85rem;
-	}
 	/* The `<details>` chrome is duplicated from the lesson reader rather than
 	   shared, deliberately: a shared shell would have to style content each page
 	   passes IN, and Svelte scopes a slot's styles to the parent — so it could

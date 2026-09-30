@@ -249,3 +249,22 @@ class TestReglossReviewSession:
         # Session row is unchanged
         row = stored.get_review_session_row("bad-story")
         assert row is not None
+
+
+class TestReglossKeepsTheStoredSession:
+    """Same rule as the lesson twin: a re-gloss changes glosses and nothing else."""
+
+    async def test_sections_and_narrator_are_the_stored_ones(self, stored):
+        lesson = _lesson(story=_story())
+        lesson.narrator_voice = "en-US-GuyNeural"
+        stored.save_review_session("s1", "no", "2026-09-09", lesson)
+        before = stored.get_review_session("s1")
+        app.state.llm = _mock_llm()
+
+        resp = await _post("/api/review-sessions/s1/regloss")
+
+        assert resp.status_code == 200
+        after = stored.get_review_session("s1")
+        assert after.sections == before.sections
+        assert after.narrator_voice == "en-US-GuyNeural"
+        assert after.generation_metadata["gloss_entry_count"] == 2

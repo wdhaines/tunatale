@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import logging
 from collections.abc import Sequence
 from typing import NamedTuple
@@ -448,6 +449,26 @@ class StoryGenerator:
 
     def _parse_response(self, data: dict, language: Language, *, review_words: Sequence[str] = ()) -> Lesson:
         return build_lesson_from_story(data, language=language, review_words=review_words)
+
+
+def with_glosses_from(stored: Lesson, rebuilt: Lesson) -> Lesson:
+    """*stored*, carrying *rebuilt*'s generation metadata — the ONE re-gloss write.
+
+    A re-gloss changes glosses and nothing else. Glosses feed no section, so the
+    lesson rebuilt around the new ones differs from the stored lesson only in
+    what today's builders do differently: the voice cast (a lesson re-glossed
+    after tunatale-ucpg would name Davis and the English cast over audio that
+    still speaks Guy) and drifted key-phrase drills (67 of 170 on the live
+    day-11 lesson). Neither is re-rendered by a re-gloss, so storing the rebuilt
+    lesson put a transcript out of step with its own audio.
+
+    Metadata is MERGED, rebuilt over stored, so anything written after the
+    build (render bookkeeping, say) survives while every derived gloss field is
+    replaced.
+    """
+    return dataclasses.replace(
+        stored, generation_metadata={**stored.generation_metadata, **rebuilt.generation_metadata}
+    )
 
 
 def build_lesson_from_story(data: dict, language: Language, *, review_words: Sequence[str] = ()) -> Lesson:
