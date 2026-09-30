@@ -9,60 +9,103 @@ paths:
 
 # Anki Sync Protocol
 
-*Path-scoped rule: auto-loads when a file matching the `paths:` frontmatter is read. The always-loaded hard invariants live in `anki-safety-core.md`; this file is the full protocol.*
+*The always-loaded hard invariants live in `anki-safety-core.md`; this file is the
+full protocol.*
 
-Any tool under `backend/app/plugins/anki_sync/` that writes to `collection.anki2` must preserve AnkiWeb sync consistency. Skip this and the user's next sync re-uploads hundreds of cards every time.
+Any tool under `backend/app/plugins/anki_sync/` that writes to `collection.anki2`
+must preserve AnkiWeb sync consistency. Skip this and the user's next sync
+re-uploads hundreds of cards every time.
 
 ## The USN desync trap
 
-Anki tracks sync state via `col.usn` + per-row `usn`. Rules:
+Anki tracks sync state via `col.usn` plus a per-row `usn`:
 - `row.usn = -1`: dirty, push on next sync
-- `row.usn > col.usn`: Anki thinks "newer than server knows" → push
+- `row.usn > col.usn`: Anki thinks "newer than the server knows" → push
 - `row.usn <= col.usn`: clean
 
-**Forced full uploads preserve local row USNs but reset `col.usn`.** After a full upload, any row whose `usn > 0` (or whatever the server set `col.usn` to) is perpetually seen as dirty. Result: every subsequent incremental sync re-uploads those rows forever. Anki has no self-repair.
+**Forced full uploads preserve local row USNs but reset `col.usn`.** After a full
+upload, any row whose `usn` exceeds the new `col.usn` is seen as dirty forever,
+so every later incremental sync re-uploads it. Anki has no self-repair.
 
 ## 4-step workflow for schema-changing migrations
 
-A migration "bumps schema" when it modifies `col.scm` — e.g., adding a notetype field, adding a field config. This forces AnkiWeb to demand a full upload.
+A migration "bumps schema" when it modifies `col.scm` — e.g., adding a notetype
+field or a field config. That forces AnkiWeb to demand a full upload.
 
-1. **Run the migration.** It must also bump `notetypes.mtime_secs`, set `notetypes.usn = -1`, and update `col.scm`. Skipping any of these triggers Anki's "Check Database" on next open, which does the bumps itself and surprises the user.
-2. **Tell the user: open Anki → File → Sync → Upload to AnkiWeb.** This is unavoidable after any `col.scm` change.
-3. **After Anki closes, run `uv run python -m app.plugins.anki_sync.normalize_usns`.** Resets `cards.usn`, `notes.usn`, `revlog.usn` where they're `> col.usn` back to `col.usn`. No content change — just aligns bookkeeping.
-4. **Re-anchor TT's OWN sync mirror:**
+1. **Run the migration.** It must also bump `notetypes.mtime_secs`, set
+   `notetypes.usn = -1`, and update `col.scm`. Skipping any of these triggers
+   Anki's "Check Database" on next open, which does the bumps itself and surprises
+   the user.
+2. **Tell the user: open Anki → File → Sync → Upload to AnkiWeb.** This is
+   unavoidable after any `col.scm` change.
+3. **After Anki closes, run `uv run python -m app.plugins.anki_sync.normalize_usns`.**
+   It resets `cards.usn`, `notes.usn` and `revlog.usn` where they exceed
+   `col.usn` back to `col.usn`. No content changes — it only aligns bookkeeping.
+4. **Re-anchor TT's own sync mirror:**
 
    ```bash
    cd backend && uv run python -m app.plugins.anki_sync.sync_orchestrator --bootstrap
    ```
 
-   Steps 1–3 only reconcile Anki ↔ AnkiWeb. TT keeps a **separate** collection at `~/.tunatale/tt_collection.anki2` (`settings.tt_collection_path`) — a different file from the desktop collection — and after the full upload that mirror is behind the server, so the next peer-sync aborts on the pull leg with:
+   Steps 1–3 only reconcile Anki ↔ AnkiWeb. TT keeps a **separate** collection at
+   `~/.tunatale/tt_collection.anki2` (`settings.tt_collection_path`), a different
+   file from the desktop collection. After the full upload that mirror is behind
+   the server, so the next peer-sync aborts on the pull leg with:
 
        AnkiWeb requires a one-way FULL_SYNC (required=2) on the pull leg
 
-   **That abort is correct behaviour, not a bug** — peer-sync refuses rather than clobber. The gap was only ever documentation. `--bootstrap` is download-only (`bootstrap_collection()` issues `create_collection` + `full_download` against `tt_collection_path`, never touching `anki_collection_path` and never pushing), so it cannot send a half-migrated collection anywhere.
+   That abort is correct behaviour — peer-sync refuses rather than clobber.
+   `--bootstrap` is download-only (`bootstrap_collection()` issues
+   `create_collection` + `full_download` against `tt_collection_path`, never
+   touching `anki_collection_path` and never pushing), so it cannot send a
+   half-migrated collection anywhere. Every schema migration needs this step.
 
-   Hit for real on 2026-08-15 during the Norwegian production-capability migration (`tunatale-qf6.6`), whose runbook was missing this step. Every future schema migration hits the same wall, which is why it is a numbered step rather than a footnote.
-
-Data-only migrations (e.g., `backfill_guids` — rewrites `notes.guid`, sets `notes.usn=-1`) stay within incremental-sync territory and do NOT need steps 2–4.
+Data-only migrations (e.g., rewriting `notes.guid` with `notes.usn=-1`) stay
+within incremental sync and do not need steps 2–4.
 
 ## Required writes for every mutation
 
 When writing to Anki tables, always:
-- **`notes`/`cards` mutation**: set `usn = -1` and `mod = now_ts` on every touched row. Without `usn=-1`, Anki's integrity check re-detects the change on next open and bumps `col.scm` itself, forcing a full sync.
-- **`col` mutation**: `UPDATE col SET mod = ?` after any batch write. **Do NOT set `col.usn = -1`** (Layer 61). `col.usn` is the sync *anchor* — the server's last USN — not a per-row dirty flag. The content rows you touch (`cards`/`notes`/`revlog`/`decks`) each carry their own `usn = -1`, which is what actually pushes; bumping `col.mod` tells Anki the collection changed. Clobbering `col.usn` to `-1` is invisible single-device, but the moment another device (e.g. the phone) advances the server's USN, AnkiWeb can't reconcile the desktop's `usn=-1` incrementally and **demands a full sync** (reproduced 2026-05-29 — see `_bump_col` in `app/plugins/anki_sync/sync.py`). The one-shot migration scripts that still write `col.usn=-1` are out of scope: they bump `col.scm` and intentionally force a one-way sync anyway.
-- **Schema change (fields, notetypes)**: bump `notetypes.mtime_secs`, set `notetypes.usn = -1`, and `UPDATE col SET scm = ?` (all three, not just one).
+- **`notes`/`cards` mutation**: set `usn = -1` and `mod = now_ts` on every touched
+  row. Without `usn=-1`, Anki's integrity check re-detects the change on next
+  open and bumps `col.scm` itself, forcing a full sync.
+- **`col` mutation**: `UPDATE col SET mod = ?` after any batch write. **Do not set
+  `col.usn = -1`** (Layer 61). `col.usn` is the sync *anchor* — the server's last
+  USN — not a per-row dirty flag. The content rows you touch
+  (`cards`/`notes`/`revlog`/`decks`) each carry their own `usn = -1`, which is
+  what actually pushes; bumping `col.mod` tells Anki the collection changed.
+  Setting `col.usn` to `-1` is invisible on one device, but once another device
+  (e.g. the phone) advances the server's USN, AnkiWeb cannot reconcile the
+  desktop's `usn=-1` incrementally and **demands a full sync** (see `_bump_col` in
+  `app/plugins/anki_sync/sync_writer.py`). The one-shot migration scripts that
+  still write `col.usn=-1` are out of scope: they bump `col.scm` and force a
+  one-way sync anyway.
+- **Schema change (fields, notetypes)**: bump `notetypes.mtime_secs`, set
+  `notetypes.usn = -1`, and `UPDATE col SET scm = ?` — all three, not just one.
 
 ## Deletes — the `graves` table
 
-To delete notes/cards while keeping AnkiWeb in sync, write a grave row instead of a bare `DELETE`. Anki's sync layer uses `graves` to tell the server what was removed.
+To delete notes or cards while keeping AnkiWeb in sync, write a grave row instead
+of a bare `DELETE`. Anki's sync layer uses `graves` to tell the server what was
+removed.
 
-- `graves` columns: `oid INTEGER NOT NULL, type INTEGER NOT NULL, usn INTEGER NOT NULL`, `PRIMARY KEY (oid, type)`.
-- `type` constants (from `rslib/src/storage/graves/mod.rs:13-19`): `0 = Card`, `1 = Note`, `2 = Deck`.
-- One grave per card AND one grave per note (Anki's `remove_notes_inner` does this in `rslib/src/notes/mod.rs:502-515`). For a note with two cards: 2 grave rows of `type=0` (the cids) + 1 grave row of `type=1` (the nid).
-- `usn=-1` on every new grave row (client-side; the server rewrites it during sync).
-- Bump `col.mod` only. **Don't** set `col.usn=-1` (Layer 61 — same rule as every other mutation above; the grave rows already carry `usn=-1`, which is what pushes). **Don't** touch `col.scm` — deletes are data-only, no full upload.
-
-  This bullet used to say "set `col.usn=-1`", contradicting the Layer 61 rule 20 lines up, and all three delete scripts followed it. Because deletes deliberately leave `scm` alone, they fall outside the "one-shot migrations force a one-way sync anyway" carve-out: a delete run left the collection with `col.usn=-1` and no other symptom, silently armed. **Fired 2026-08-02** — a phone session advanced the server's USN, and the next desktop sync demanded a full download (`scm` re-stamped mid-sync, `col.usn=-1`, 0 dirty rows). Pinned by `tests/test_anki_grave_ignored_lemma_cards.py::test_preserves_col_usn`.
+- `graves` columns: `oid INTEGER NOT NULL, type INTEGER NOT NULL, usn INTEGER NOT NULL`,
+  `PRIMARY KEY (oid, type)`.
+- `type` constants (from `rslib/src/storage/graves/mod.rs:13-19`): `0 = Card`,
+  `1 = Note`, `2 = Deck`.
+- One grave per card AND one grave per note (Anki's `remove_notes_inner` does
+  this in `rslib/src/notes/mod.rs:502-515`). A note with two cards gets two
+  `type=0` rows (the cids) and one `type=1` row (the nid).
+- `usn=-1` on every new grave row (client-side; the server rewrites it during
+  sync).
+- Bump `col.mod` only. Don't set `col.usn=-1` (Layer 61, as above — the grave rows
+  already carry `usn=-1`, which is what pushes), and don't touch `col.scm`:
+  deletes are data-only, with no full upload. Because deletes leave `scm` alone,
+  the one-shot-migration carve-out does not cover them. A delete that sets
+  `col.usn=-1` leaves the collection silently armed: the next time a phone session
+  advances the server's USN, the desktop sync demands a full download (with `scm`
+  re-stamped mid-sync and 0 dirty rows). Pinned by
+  `tests/test_anki_grave_ignored_lemma_cards.py::test_preserves_col_usn`.
 
 Canonical pattern (mirror `scripts/anki_archive/delete_phonology_demos.py`):
 
@@ -77,11 +120,21 @@ conn.execute("DELETE FROM notes WHERE id=?", (nid,))
 conn.execute("UPDATE col SET mod=?", (int(time.time() * 1000),))  # NOT usn=-1 — Layer 61
 ```
 
-Verify post-write: each deleted nid has exactly one type=1 grave; each deleted cid has exactly one type=0 grave.
+Verify after writing: each deleted nid has exactly one `type=1` grave, and each
+deleted cid exactly one `type=0` grave.
 
 ### Reading graves on pull — honoring Anki-side deletes (Layer 68)
 
-The above is the *write* side (TT-originated deletes). The *read* side: `detect_and_reset_orphans` (`app/plugins/anki_sync/sync.py`) must distinguish an **intentional Anki delete** from a wipe before deciding to recover a missing card. It reads `OfflineReader.get_grave_note_ids()` (`graves WHERE type=1`) — a note grave means hard-delete the TT collocation (`db.delete_collocations_for_graves`); a note missing *without* a grave means resurrect (reset pointers + re-mint, the force-full-download net). **Don't "simplify" `detect_and_reset_orphans` to recover every missing card** — that reintroduces the resurrection loop (deleted cards keep coming back). Note-level only; a bare card grave on a still-live note keeps the recovery path.
+The above is the write side (TT-originated deletes). On the read side,
+`detect_and_reset_orphans` (`app/plugins/anki_sync/sync.py`) must distinguish an
+**intentional Anki delete** from a wipe before deciding to recover a missing card.
+It reads `OfflineReader.get_grave_note_ids()` (`graves WHERE type=1`): a note
+grave means hard-delete the TT collocation (`db.delete_collocations_for_graves`);
+a note missing *without* a grave means resurrect (reset pointers and re-mint, the
+force-full-download net). **Don't "simplify" `detect_and_reset_orphans` to recover
+every missing card** — that reintroduces the resurrection loop, where deleted
+cards keep coming back. This is note-level only; a bare card grave on a
+still-live note keeps the recovery path.
 
 ## Diagnostic (safe while Anki is open — read-only)
 
@@ -93,11 +146,12 @@ sqlite3 "file:$HOME/Library/Application%20Support/Anki2/Will/collection.anki2?mo
    SELECT 'revlog_gt_col=' || SUM(CASE WHEN usn > (SELECT usn FROM col) THEN 1 ELSE 0 END) FROM revlog;"
 ```
 
-Any `*_gt_col > 0` means step 3 (normalize_usns) is pending.
+Any `*_gt_col > 0` means step 3 (`normalize_usns`) is pending.
 
 ## Safety envelope — always use it
 
-Never call `sqlite3.connect` on `collection.anki2` directly. Use `app.plugins.anki_sync.safety.safe_open(..., mode="rw"|"ro")`. It handles:
+Never call `sqlite3.connect` on `collection.anki2` directly. Use
+`app.plugins.anki_sync.safety.safe_open(..., mode="rw"|"ro")`. It handles:
 - Lock probe (aborts if Anki is running)
 - SHA256 backup to `~/.tunatale/anki-backups/`
 - Backup validation (integrity_check + row-count match)
@@ -105,48 +159,115 @@ Never call `sqlite3.connect` on `collection.anki2` directly. Use `app.plugins.an
 
 ## When building a new Anki migration
 
-- Add it under `backend/app/plugins/anki_sync/`, following the shape of an existing migration there, such as `migrate_number_clozes.py` or `add_image_field.py`.
-- Tests under `backend/tests/test_anki_<name>.py` — build minimal in-memory DBs, no real `collection.anki2`.
-- If the migration bumps `col.scm`, the module docstring MUST point to this file.
+- Add it under `backend/app/plugins/anki_sync/`, following the shape of an
+  existing migration there, such as `migrate_number_clozes.py` or
+  `add_image_field.py`.
+- Tests go under `backend/tests/test_anki_<name>.py` — build minimal in-memory
+  DBs, never a real `collection.anki2`.
+- If the migration bumps `col.scm`, the module docstring must point to this file.
 - TDD red-green always (see `.claude/rules/tdd.md`).
 
 ## One sync sequence — never fork the phase list (the b0a4b8a class)
 
-There is exactly **one** definition of "the steps a sync runs": `run_full_sync` in `app/plugins/anki_sync/sync.py`. (Since the 2026-06-11 split, `sync.py` is the runner + re-export facade; the `AnkiSync` engine is in `sync_engine.py`, collection I/O in `sync_reader.py`/`sync_writer.py`, leaf helpers in `sync_common.py` — import and patch through `app.plugins.anki_sync.sync` as before.) It does `warn_if_guid_collisions → detect_and_reset_orphans → sync_create_new → sync_push → sync_pull → (every `refresh_*` deck-config sync + Anki→TT media refresh + soak heartbeat)`.
+There is exactly **one** definition of "the steps a sync runs": `run_full_sync`
+in `app/plugins/anki_sync/sync.py`. `sync.py` is the runner and re-export facade:
+the `AnkiSync` engine is in `sync_engine.py`, collection I/O in
+`sync_reader.py`/`sync_writer.py`, leaf helpers in `sync_common.py`; import and
+patch through `app.plugins.anki_sync.sync`. It runs `warn_if_guid_collisions →
+detect_and_reset_orphans → sync_create_new → sync_push → sync_pull → (every
+refresh_* deck-config sync + Anki→TT media refresh + soak heartbeat)`.
 
-`warn_if_guid_collisions` is a report-only tripwire (runs on dry-runs too): it WARNs `GUID_COLLISION` when two Anki notes share the same `(text, POS)` and therefore collapse to one TT guid, leaving one collocation with two candidate cards free to alternate between them. Keyed on text **plus disambig** — POS homonyms (`løfte` noun/verb) are legitimate and must not trip it. Pairs with `RELINK_TRACE` in `db_sync.set_anki_ids`, which catches the alternation itself. Both added after the 2026-08-02 `foran` incident. The single sync path funnels through `main()` into it:
+`warn_if_guid_collisions` is a report-only tripwire (it runs on dry-runs too). It
+warns `GUID_COLLISION` when two Anki notes share the same `(text, POS)` and so
+collapse to one TT guid, leaving one collocation with two candidate cards that
+can alternate between them. It is keyed on text **plus disambig**, because POS
+homonyms (`løfte` noun/verb) are legitimate and must not trip it. It pairs with
+`RELINK_TRACE` in `db_sync.set_anki_ids`, which catches the alternation itself.
 
-- **`POST /api/anki/peer-sync`** (`app/api/anki.py`, the ONLY HTTP sync endpoint) → `peer_sync` → `main` (`sync_orchestrator.py` → `sync.py:main`) — the path the UI Sync button uses; threads the LLM/image `media_fn` and the media dir through, and the active language via `_tt_settings(language_code)` (per-language db + deck + target_language).
+The single sync path funnels through `main()`:
 
-`main()` is the internal reconcile driver `peer_sync` calls — **not** a standalone command. (The `python -m app.plugins.anki_sync.sync` CLI entry and its `--all-languages` multi-deck loop + `--force-fsrs` interactive gate were removed 2026-06-30: peer-sync is the sole sync path, single-language per request; sync both languages with two UI syncs. The automatic force-fsrs *write* path in `sync_push` — recovered / `KNOWN` / `fsrs_force_next` cards — stays; only the manual `--force-fsrs` flag + its ack flow went.) The legacy `POST /api/anki/sync` + `GET /api/anki/status` endpoints were deleted 2026-06-10 — AnkiWeb-only direction. Do not reintroduce a second HTTP sync path.
+- **`POST /api/anki/peer-sync`** (`app/api/anki.py`, the only HTTP sync endpoint)
+  → `peer_sync` → `main` (`sync_orchestrator.py` → `sync.py:main`). This is the
+  path the UI Sync button uses. It threads the LLM/image `media_fn` and the media
+  dir through, and the active language via `_tt_settings(language_code)`
+  (per-language db, deck and target_language).
 
-The **only** legitimate per-caller differences are `media_fn`/`media_dir` and the `_tt_settings` language. Everything else lives in `run_full_sync`.
+`main()` is the internal reconcile driver that `peer_sync` calls, not a
+standalone command. There is no sync CLI: peer-sync is the sole sync path,
+single-language per request, so syncing two languages takes two UI syncs. The
+automatic force-fsrs write path in `sync_push` (recovered / `KNOWN` /
+`fsrs_force_next` cards) remains. Do not reintroduce a second HTTP sync path.
 
-**Do NOT inline a sync phase into one entry point.** A second entry point that runs a *different subset* of phases is the `b0a4b8a` regression: when the Sync button was repointed from `/api/anki/sync` to `peer_sync`, the peer reconcile (`main`) ran only `push`+`pull`, silently dropping **`sync_create_new`** (TT-added cards never reached Anki) **and every `refresh_*`** (Anki-side FSRS-param / desired-retention / daily-cap / load-balancer changes never reached TT). Unit tests + the 100% coverage gate did not catch it: each function was green in isolation, and the orchestrator tests `patch("app.plugins.anki_sync.sync.main")`, so nothing crossed the seam.
+The only legitimate per-caller differences are `media_fn`/`media_dir` and the
+`_tt_settings` language. Everything else lives in `run_full_sync`.
 
-New sync phase? Add it to `run_full_sync`, not to a call site. Three independent nets pin this (all run in CI):
+**Don't inline a sync phase into one entry point.** A second entry point that
+runs a *different subset* of phases is the b0a4b8a regression. When the Sync
+button was repointed to `peer_sync`, the peer reconcile ran only push and pull,
+silently dropping **`sync_create_new`** (TT-added cards never reached Anki) and
+**every `refresh_*`** (Anki-side FSRS-param, desired-retention, daily-cap and
+load-balancer changes never reached TT). Unit tests and the 100% coverage gate
+missed it: each function was green in isolation, and the orchestrator tests
+patched `main`, so nothing crossed the seam.
 
-1. **`tests/test_anki_sync_main.py::TestRunFullSync`** — the contract test; asserts the full ordered phase set (incl. all `refresh_*` by name and the media-refresh phase) against a mocked sync object. The *only* sanctioned place to pin the phase list.
-2. **`tests/test_anki_sync_orchestrator.py::TestSociableSync`** — the b0a4b8a guard: the real `peer_sync` internals run against a real on-disk `SyntheticCollection`, only the `_run_driver` subprocess faked. An unlinked TT collocation must come out linked with a real `notes` row — if a phase is dropped from `run_full_sync`, this goes red (sabotage-drilled 2026-06-10).
-3. **`test_anki_peer_sync_selfhost.py`** (`--run-peer-sync`, auto-started server) — full round-trips against a real sync server, incl. `test_media_round_trip_parity` (both media directions).
+A new sync phase goes in `run_full_sync`, not in a call site. Three independent
+nets pin this, all run in CI:
 
-If you add a phase and only `TestRunFullSync` needs updating, you did it right; if you found yourself editing an entry point's body, stop and move it into the helper.
+1. **`tests/test_anki_sync_main.py::TestRunFullSync`** — the contract test. It
+   asserts the full ordered phase set (including every `refresh_*` by name and the
+   media-refresh phase) against a mocked sync object, and it is the only
+   sanctioned place to pin the phase list.
+2. **`tests/test_anki_sync_orchestrator.py::TestSociableSync`** — the b0a4b8a
+   guard. The real `peer_sync` internals run against a real on-disk
+   `SyntheticCollection` with only the `_run_driver` subprocess faked; an unlinked
+   TT collocation must come out linked with a real `notes` row, so dropping a
+   phase from `run_full_sync` turns it red.
+3. **`test_anki_peer_sync_selfhost.py`** (`--run-peer-sync`, auto-started server)
+   — full round-trips against a real sync server, including
+   `test_media_round_trip_parity` (both media directions).
+
+If you add a phase and only `TestRunFullSync` needs updating, you did it right. If
+you find yourself editing an entry point's body, stop and move the change into
+`run_full_sync`.
 
 ## When building a new UI that adds cards
 
-Any UI that originates cards in TT (the `/listen` lesson flow, a future LingQ-style unknown-word marker, manual add forms, etc.) must drop its rows into the same shape `sync_create_new` expects, or sync will skip them / mis-link them.
+Any UI that originates cards in TT (the `/listen` lesson flow, a future
+LingQ-style unknown-word marker, manual add forms, and so on) must write its rows
+in the shape `sync_create_new` expects, or sync will skip or mis-link them.
 
 The contract:
 
-- **Use `db.upsert_by_guid()` or `db.add_collocation()`.** Never write to `collocations` / `collocation_directions` with raw SQL. Those helpers compute the guid, set the schema invariants (including `due_date` ↔ `anki_due` consistency after the 2026-05 fix), and handle re-insert idempotency.
-- **Set `card_type` correctly on the `SyntacticUnit`**: `"vocab"` (creates both `recognition` + `production` directions) or `"cloze"` (creates `production` only, routes through `OfflineWriter.create_cloze_note` against Anki's built-in Cloze notetype).
-- **Leave `anki_note_id` and `anki_card_id` as `None`.** `sync_create_new` mints the Anki note via `OfflineWriter.create_note`, reads back the per-`ord` card ids, and writes them via `db.set_anki_ids` on success. A UI that pre-populates these will either link to the wrong Anki row or skip the create-new path entirely.
-- **State must be `SRSState.NEW`.** `dirty_fsrs` stays 0; `last_review` stays NULL; `introduced_at` stays NULL until the first grade. The card is *added*, not *graded* — those are different events.
-- **Want the card to appear on the same day?** It does, automatically: `get_review_queue` tail-appends NEW-state latecomers to the frozen `session_main_queue` (`app/api/srs.py` near line 1138). REVIEW-state latecomers are dropped (mirrors Anki excluding graduations from today's flow). Don't fight this — if you need a card to land mid-session, it must be NEW.
+- **Use `db.upsert_by_guid()` or `db.add_collocation()`.** Never write to
+  `collocations` / `collocation_directions` with raw SQL. Those helpers compute
+  the guid, set the schema invariants (including `due_date` ↔ `anki_due`
+  consistency), and handle re-insert idempotency.
+- **Set `card_type` correctly on the `SyntacticUnit`**: `"vocab"` (creates both
+  `recognition` and `production` directions) or `"cloze"` (creates `production`
+  only, routed through `OfflineWriter.create_cloze_note` against Anki's built-in
+  Cloze notetype).
+- **Leave `anki_note_id` and `anki_card_id` as `None`.** `sync_create_new` mints
+  the Anki note via `OfflineWriter.create_note`, reads back the per-`ord` card ids,
+  and writes them via `db.set_anki_ids` on success. A UI that pre-populates them
+  will either link to the wrong Anki row or skip the create-new path entirely.
+- **State must be `SRSState.NEW`.** `dirty_fsrs` stays 0, `last_review` stays
+  NULL, and `introduced_at` stays NULL until the first grade. The card is *added*,
+  not *graded* — those are different events.
+- **Same-day appearance is automatic.** `get_review_queue` (`app/api/srs.py`)
+  tail-appends NEW-state latecomers to the frozen `session_main_queue`;
+  REVIEW-state latecomers are dropped, mirroring Anki excluding graduations from
+  today's flow. If you need a card to land mid-session, it must be NEW.
 
-Canonical reference: `app/api/srs.py::listen` and its tests in `tests/test_api_listen.py::TestListenClozeIntegration`. New UIs should follow the same shape end-to-end (`SyntacticUnit` → `upsert_by_guid` → wait for next sync → linked).
+Canonical reference: the listen route (`app/api/srs.py::mark_lesson_listened`) and
+its tests in `tests/test_api_listen.py::TestListenClozeIntegration`. New UIs
+should follow the same shape end to end (`SyntacticUnit` → `upsert_by_guid` →
+wait for the next sync → linked).
 
 Tests for a new card-adding UI must cover:
-- Round-trip through `sync_create_new` (use `_make_dual_collection_conn()` for vocab or `_make_cloze_collection_conn()` for cloze, both in `test_anki_sync_create_new.py`).
-- Re-running the UI on the same input is idempotent (no duplicate collocations, no duplicate Anki notes).
-- The card surfaces in `/review-queue` on the same day without requiring a sync (NEW-state tail-append).
+- A round-trip through `sync_create_new` (use `_make_collection_conn()` for vocab
+  or `_make_cloze_collection_conn()` for cloze, both in
+  `test_anki_sync_create_new.py`).
+- Idempotency: re-running the UI on the same input creates no duplicate
+  collocations and no duplicate Anki notes.
+- The card surfaces in `/review-queue` on the same day without a sync (the
+  NEW-state tail-append).

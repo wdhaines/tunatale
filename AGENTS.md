@@ -30,7 +30,7 @@ cd frontend && bun run test:e2e                 # playwright
 /Users/wdhaines/CascadeProjects/tunatale/test.sh > /tmp/gate.txt 2>&1
 ```
 
-Anything after the gate — an `echo $?`, even on its own line — replaces its exit status, and a relative path silently misses when an earlier `cd` persisted; both have produced fictional greens here. In the log, require `=== All checks passed ===` (the failure form is `=== FAILED (backend=N frontend=N peer_sync=N) ===`), 100.00% backend coverage, and a ruff file count no lower than the previous run's (`awk -F'\t' '$3=="Ruff format check"' .git/tt-test-history.log`; a drop means discovery broke). Never pipe `./test.sh` (a hook denies it), and never `cd` away from the repo in a session that will run the gate.
+Anything after the gate — an `echo $?`, even on its own line — replaces its exit status, and a relative path silently misses when an earlier `cd` persisted; both have produced fictional greens here. In the log, require `=== All checks passed ===` (the failure form is `=== FAILED (backend=N frontend=N peer_sync=N) ===`), 100.00% backend coverage, and a ruff `N files already formatted` count no lower than in the previous run's log (a drop means discovery broke; `.git/tt-test-history.log` records exit codes and timings, not this count). Never pipe `./test.sh` (a hook denies it), and never `cd` away from the repo in a session that will run the gate.
 
 ## Architecture
 
@@ -116,7 +116,7 @@ Most `.claude/rules/*.md` carry `paths:` frontmatter, so Claude Code loads a rul
 - **Commit gate** (PreToolUse): `git commit` asks for confirmation unless `./test.sh` passed on the exact current tree; a failing run deletes the recorded fingerprint. Do not click past that prompt.
 - **Pipe guard** (PreToolUse): denies piping `./test.sh`. Every run is teed to `.git/tt-test-last.log`, and each step appends a line to `.git/tt-test-history.log` (TSV; its tree-id column separates a flake from a fix).
 - **Submodule-pointer auto-stage** (PreToolUse): stages the `.beads-tasks` pointer onto any commit that already carries other content. Nothing to remember; it never blocks and does not change the gate fingerprint.
-- **Agent mail** (SessionStart): lists the newest unread mail. **Coverage-artifact cleanup** (SessionEnd).
+- **Agent mail and claims** (SessionStart): lists the newest unread mail and the beads in progress with their claimants. **Coverage-artifact cleanup** (SessionEnd).
 
 Mechanics and history: `.claude/rules/gate-and-ci.md`.
 
@@ -160,5 +160,6 @@ The backlog and its dependency ordering live in bd; `bd ready --exclude-type=epi
 - Plain `bd show` mangles code; always `bd show <id> --json | jq -r '.[0].description'`.
 - `bd dep add <child> <parent>` and `bd create --deps blocks:<id>` point in opposite directions. Verify every edge right after wiring it.
 - A wrong JSON field name returns a clean negative, not an error (the field is `parent`, not `parent_id`).
+- **Claim a bead when you start it, as your location:** `bd update <id> --claim --actor "$(basename "$PWD")@$(git branch --show-current)"`. Every session shares one git identity, so a bare `--claim` can't tell sessions apart; the `worktree@branch` actor says who holds the bead and where the work lives. A claim held by another actor is refused, and that refusal is the coordination. Check `bd list --status in_progress` before starting work, and close what you claimed when it merges.
 - After a `bd create` / `close` / `dep add` batch, run `./.beads-tasks/sync.sh` without asking — but not while another agent holds uncommitted work, because it commits and pushes.
 - Closing a bead is not authorization to commit.
