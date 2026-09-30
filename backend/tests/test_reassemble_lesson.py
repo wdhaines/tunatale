@@ -1439,6 +1439,66 @@ class TestReassembleArbitrarySectionSet:
         assert "48000" in message and "44100" in message, message
 
 
+class TestReassembledSlowCaptionsCarryTheNaturalText:
+    """A re-rendered slow section's captions show the line, not the TTS string.
+
+    The slow sections synthesize ``"Dober ... dan"`` so the voice pauses between
+    words; the player caption must read ``"Dober dan"``. A full render gets that
+    from derive_section_cues, which copies each slow line's text from its
+    normal-speed twin. The reassemble built each target section's cues on its
+    own, so the twin was never in the manifest and the scrub silently did
+    nothing: every lesson re-voiced by rebuild_lessons_from_story showed the
+    ellipses in its slow captions (user, 2026-09-30).
+
+    The fixture's slow line is otherwise identical to the natural one, which
+    would make this vacuous, so the slow phrase here carries the real shape.
+    """
+
+    @staticmethod
+    def _lesson_with_a_slowed_line() -> Lesson:
+        lesson = _build_test_lesson()
+        slow = lesson.sections[3]
+        assert slow.section_type == SectionType.SLOW_SPEED
+        slow.phrases[1] = replace(slow.phrases[1], text="Dober ... dan")
+        return lesson
+
+    @staticmethod
+    def _slow_l2_captions(store: ContentStore, lesson: Lesson) -> list[str]:
+        row = next(r for r in store.list_audio_files_for_lesson(lesson.title) if r["section_index"] == 3)
+        return [c["text"] for c in json.loads(row["cues_json"]) if c["language_code"] == "sl"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "targets",
+        [
+            pytest.param({SectionType.SLOW_SPEED}, id="slow-only"),
+            pytest.param(
+                {SectionType.KEY_PHRASES, SectionType.NATURAL_SPEED, SectionType.TRANSLATED, SectionType.SLOW_SPEED},
+                id="every-section",
+            ),
+        ],
+    )
+    async def test_slow_section_captions_are_scrubbed(self, tmp_path: Path, targets) -> None:
+        from app.audio.render_service import reassemble_lesson_audio
+
+        store = ContentStore(":memory:")
+        lesson = self._lesson_with_a_slowed_line()
+        audio_dir = tmp_path / "audio"
+        _populate_store(store, lesson, audio_dir, [2.0, 5.0, 8.0, 5.0])
+
+        await reassemble_lesson_audio(
+            store=store,
+            renderer=_make_fake_renderer(),
+            tts=_CountingTTS(),
+            audio_dir=audio_dir,
+            lesson_id=lesson.title,
+            lesson=lesson,
+            section_types=targets,
+        )
+
+        assert self._slow_l2_captions(store, lesson) == ["Dober dan"]
+
+
 class TestAnUnusableSectionIsNeverSilent:
     """A section the reassemble cannot read must be LOUD, not dropped.
 

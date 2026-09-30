@@ -8,6 +8,7 @@ functions. That is why this file needs no ``mock_allowlist.txt`` entry.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import httpx
 import pytest
@@ -916,6 +917,39 @@ def test_a_native_voice_is_not_wrapped():
     wrapper would be markup with no meaning.
     """
     assert AzureTTSService._build_ssml("hagen", _VOICE, "+0%", speak_locale="nb-NO") == _PLAIN_SSML
+
+
+# MEASURED 2026-09-30 (user report: "very bad pronunciation (non-English) of
+# come in, come in" in a Cebuano lesson's English). A Multilingual voice
+# detects the language per utterance EVEN IN ITS OWN LOCALE, so "the voice
+# already speaks it" is true of a native voice and false of a Multilingual one.
+# "Come in, come in." in en-US, transcribed by Azure STT in en-US:
+#
+#   voice                              no <lang>                 <lang en-US>
+#   en-US-EmmaMultilingualNeural       "Kumain, Kumain."  0.10   "Come in, come in." 0.87
+#   en-US-NancyMultilingualNeural      "Comin comeen."    0.05   "Come in, come in." 0.92
+#   en-US-AdamMultilingualNeural       "Coming."          0.10   "Come in, come in." 0.91
+#   en-US-DustinMultilingualNeural     "Kumeyin Kumayin." 0.06   "Come in, come in." 0.93
+#   en-US-DavisMultilingualNeural      "Cumin, Cumin."    0.06   "Come in, come in." 0.82
+#   en-US-GuyNeural (native control)   "Come in, come in." 0.80  "Come in, come in." 0.79
+#
+# Every Multilingual English reader in the cast, narrator included, failed
+# unwrapped; the native control did not. Emma read it as Tagalog "kumain".
+
+_ML_EN_VOICE = "en-US-EmmaMultilingualNeural"
+
+
+def test_a_multilingual_voice_is_wrapped_even_in_its_own_locale():
+    ssml = AzureTTSService._build_ssml("Come in, come in.", _ML_EN_VOICE, "+0%", speak_locale="en-US")
+
+    assert '<lang xml:lang="en-US"><prosody rate="+0%">Come in, come in.</prosody></lang>' in ssml
+
+
+def test_a_multilingual_voice_in_its_own_locale_gets_its_own_cache_key():
+    """The unwrapped clip is the mis-detected one, so it must not be served."""
+    az = AzureTTSService(cache_dir=Path("/nonexistent"), key="k", region="r")
+    text = "Come in, come in."
+    assert az._cache_path(text, _ML_EN_VOICE, "+0%", None, "en-US") != az._cache_path(text, _ML_EN_VOICE, "+0%")
 
 
 @pytest.mark.parametrize("speak_locale", [None, ""], ids=["none", "empty"])
