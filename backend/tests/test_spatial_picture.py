@@ -55,18 +55,23 @@ class TestDataFiles:
     def test_no_spatial_word_is_also_a_number(self, code) -> None:
         assert [w for w in _words(code) if number_picture(w, code) is not None] == []
 
-    @pytest.mark.parametrize("code", ["no", "ceb"])
+    #: Pairs the user decided MAY share a picture: true synonyms, where a second
+    #: drawing would invent a distinction the language does not make (Slovene
+    #: poleg / zraven, both "beside"; "we can ignore the synonyms", 2026-09-29).
+    _SYNONYMS_MAY_SHARE: dict[str, dict[str, list[str]]] = {"sl": {"beside": ["poleg", "zraven"]}}
+
+    @pytest.mark.parametrize("code", ["no", "ceb", "sl", "tl"])
     def test_no_two_words_share_a_picture(self, code) -> None:
         """A picture card must not be ambiguous: distinct words, distinct drawings.
 
         The user found inn and innenfor on one picture (2026-09-29); six groups
-        of Norwegian words and two Cebuano pairs (kilid/tupad, taliwala/tunga)
-        shared one then. Slovene (nad/zgoraj, pod/spodaj, poleg/zraven) still
-        does, and is next.
+        of Norwegian words, two Cebuano pairs (kilid/tupad, taliwala/tunga) and
+        two Slovene ones (nad/zgoraj, pod/spodaj) shared one then. The only
+        sharing left is the user's recorded synonym exception above.
         """
         words = _words(code)
         shared = {c: sorted(w for w, k in words.items() if k == c) for c in set(words.values())}
-        assert {c: ws for c, ws in shared.items() if len(ws) > 1} == {}
+        assert {c: ws for c, ws in shared.items() if len(ws) > 1} == self._SYNONYMS_MAY_SHARE.get(code, {})
 
     def test_a_language_without_a_file_has_no_spatial_words(self) -> None:
         assert load_spatial_words("en") == {}
@@ -157,6 +162,12 @@ class TestDispatch:
             ("tunga", "ceb", "middle", "middle"),
             ("tupad", "ceb", "beside", "beside"),
             ("taliwala", "ceb", "between", "between"),
+            # Slovene (2026-09-29): the Norwegian going/being split again — nad
+            # "above (something)" vs zgoraj "up there", pod vs spodaj.
+            ("zgoraj", "sl", "up; upstairs", "up_there"),
+            ("spodaj", "sl", "down; downstairs", "down_there"),
+            ("nad", "sl", "above", "above"),
+            ("pod", "sl", "under", "under"),
         ],
     )
     def test_a_spatial_word_is_drawn_as_its_concept(self, word, code, gloss, concept) -> None:
