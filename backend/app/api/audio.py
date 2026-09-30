@@ -159,7 +159,11 @@ async def download_lesson_zip(lesson_id: str, request: Request):
         rows = store.list_audio_files_for_lesson(lesson_id)
         if rows:
             break
-    full_row = next((r for r in rows if r["section_index"] is None), None)
+    # A full-lesson row with NO file is the normal shape of a lesson rendered
+    # since tunatale-guzo.3: the row keeps the timeline, the concatenation is
+    # not encoded. It is dropped here, and with it the `_00_Full` member — a
+    # legacy row that still has its file is zipped exactly as before.
+    full_row = next((r for r in rows if r["section_index"] is None and r["file_path"]), None)
     section_rows = [r for r in rows if r["section_index"] is not None]
 
     if not section_rows:
@@ -212,6 +216,13 @@ async def get_audio(audio_id: str, request: Request):
             break
     else:
         raise HTTPException(status_code=404, detail="Audio not found")
+
+    # A full-lesson row with no file is served as missing, not as a crash:
+    # `Path(None)` is a TypeError, and the row exists to carry the timeline,
+    # not to be downloaded. Same 404 a genuinely absent file gets, because
+    # from this endpoint's point of view the two are the same fact.
+    if row["file_path"] is None:
+        raise HTTPException(status_code=404, detail="Audio file missing")
 
     # Resolved, not taken literally: the recorded string may name another
     # machine's home directory or a CWD this process does not have. See

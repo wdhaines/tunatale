@@ -66,7 +66,8 @@ class _RecordingRenderer:
                 await self._hold.wait()
             else:
                 await asyncio.sleep(0)
-            full_path.write_bytes(b"audio")
+            if full_path is not None:
+                full_path.write_bytes(b"audio")
             for p in section_paths or []:
                 p.write_bytes(b"audio")
             return []

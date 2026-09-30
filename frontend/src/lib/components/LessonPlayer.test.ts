@@ -270,6 +270,62 @@ const audioMissingCurrentSection: LessonAudio = {
 };
 
 describe("LessonPlayer", () => {
+  // tunatale-guzo.3: a render produces ONLY the section files, so the
+  // full-lesson URL 404s for any lesson rendered since. In track mode the
+  // player must never assign it, and must always hold a SECTION src before
+  // anything can call play() — the invariant these three tests pin.
+  describe("no full-lesson file (track mode)", () => {
+    it("track mode: a persisted selection naming a missing section falls back to the FIRST section", () => {
+      // audioMissingCurrentSection has key_phrases + slow_speed but NOT
+      // natural_speed, which is what the default dialogue·natural selection
+      // resolves to. selectTrack no-ops there, so without the fallback the
+      // player would be left on whatever src it had — nothing at all now.
+      const srcSpy = vi.spyOn(HTMLMediaElement.prototype, "src", "set");
+      render(LessonPlayer, { props: { audio: audioMissingCurrentSection } });
+      const srcs = srcSpy.mock.calls.map((c) => c[0]);
+      expect(srcs).toContain("/api/audio/s1"); // first section in sections order
+      expect(srcs).not.toContain("/api/audio/a1"); // the full-lesson URL
+      srcSpy.mockRestore();
+    });
+
+    it("track mode: the hands-free hand-off plays a SECTION src, not the full one", async () => {
+      localStorage.setItem("handsFree", "on");
+      sessionStorage.setItem("handsFreeHandoff", "1");
+      // No mockImplementation: this file's beforeAll already spies `play` to
+      // dispatch the "play" event the controller listens for. Overriding it
+      // (mockResolvedValue) would stop the event, and mockRestore hands the
+      // previous spy back intact — so observe by calling through.
+      const playSpy = vi.spyOn(HTMLMediaElement.prototype, "play");
+      const srcSpy = vi.spyOn(HTMLMediaElement.prototype, "src", "set");
+      render(LessonPlayer, { props: { audio: audioMissingCurrentSection } });
+      await tick();
+      expect(playSpy).toHaveBeenCalled();
+      // The src in effect AT the moment play() ran — not merely one assigned
+      // at some point — is what decides whether a byte is ever fetched.
+      const firstPlay = playSpy.mock.invocationCallOrder[0];
+      const before = srcSpy.mock.calls
+        .map((c, i) => ({ order: srcSpy.mock.invocationCallOrder[i], url: c[0] as string }))
+        .filter((s) => s.order < firstPlay);
+      expect(before.length).toBeGreaterThan(0);
+      expect(before[before.length - 1].url).toBe("/api/audio/s1");
+      // mockClear, NOT mockRestore: this file's beforeAll has ALREADY spied
+      // `play` (to dispatch the "play" event), so this is a spy of a spy and
+      // restoring it unwinds past that one to jsdom's unimplemented original.
+      // Clearing the call log leaves the beforeAll behaviour in place.
+      playSpy.mockClear();
+      srcSpy.mockRestore();
+    });
+
+    it("legacy mode: src is still initialised to the full-lesson URL", () => {
+      // Legacy lessons kept their full file (rendered before tunatale-guzo.3),
+      // so the legacy path is untouched and still starts on the full track.
+      const srcSpy = vi.spyOn(HTMLMediaElement.prototype, "src", "set");
+      render(LessonPlayer, { props: { audio: audioWithCues } });
+      expect(srcSpy.mock.calls.map((c) => c[0])).toContain("/api/audio/a1");
+      srcSpy.mockRestore();
+    });
+  });
+
   describe("basic transport", () => {
     it("does not render an audio element (controller owns the only one)", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithNoSections } });
@@ -1482,13 +1538,16 @@ describe("LessonPlayer", () => {
       expect(urls).toEqual(["/api/audio/s1"]);
     });
 
-    it("trackMode: falls back to the full track when the resolved section is missing", () => {
-      // selectTrack no-ops on a missing section, so the player stays on the
-      // full concatenated track — the prefetch must cover what actually plays.
+    it("trackMode: prefetches NOTHING when the resolved section is missing", () => {
+      // tunatale-guzo.3. This used to expect the full track, because selectTrack
+      // no-opped on a missing section and the player stayed on whatever src it
+      // had — which was the full concatenated track. It no longer is: there is
+      // no full file to fall back onto, and the player now selects the lesson's
+      // FIRST section instead. Prefetching the full URL would fetch a 404.
       render(LessonPlayer, { props: { audio: audioMissingCurrentSection } });
       expect(vi.mocked(maybePrefetchLesson)).toHaveBeenCalledTimes(1);
       const urls = vi.mocked(maybePrefetchLesson).mock.calls[0][0];
-      expect(urls).toEqual(["/api/audio/a1"]);
+      expect(urls).toEqual([]);
     });
   });
 

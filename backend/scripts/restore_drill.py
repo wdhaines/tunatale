@@ -202,7 +202,12 @@ def verify_audio(db: Path, tree_root: Path, drill: Drill) -> None:
     """
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
-        rows = con.execute("SELECT lesson_id, file_path, cues_json FROM audio_files").fetchall()
+        # `file_path IS NOT NULL` is the skip, not a crash path: since
+        # tunatale-guzo.3 a full-lesson row carries the timeline and no file, and
+        # there is nothing in the restored tree for it to name.
+        rows = con.execute(
+            "SELECT lesson_id, file_path, cues_json FROM audio_files WHERE file_path IS NOT NULL"
+        ).fetchall()
     except sqlite3.OperationalError as exc:
         print(f"  [skip] {db.name}: no usable audio_files table ({exc})")
         return
@@ -213,7 +218,7 @@ def verify_audio(db: Path, tree_root: Path, drill: Drill) -> None:
         con.close()
 
     if not rows:
-        print(f"  [skip] {db.name}: no audio_files rows")
+        print(f"  [skip] {db.name}: no audio_files rows with a file")
         return
 
     start = time.monotonic()

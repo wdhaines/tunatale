@@ -373,6 +373,174 @@ class TestSectionAudioStorage:
         assert row["section_index"] == 0
         assert row["section_type"] == "key_phrases"
 
+    def test_schema_migration_relaxes_file_path_to_nullable(self, tmp_path):
+        """An old NOT NULL file_path is rebuilt as nullable, keeping every row.
+
+        A render produces ONLY the section files, so the full-lesson row keeps
+        its timeline but has no file. SQLite cannot drop a NOT NULL in place, so
+        the table is rebuilt — which is a rewrite of the whole table, and the
+        thing that has to survive it is every value in every column.
+        """
+        import sqlite3
+
+        db_file = str(tmp_path / "not-null.db")
+        old_schema = [
+            ("id", "TEXT", 0),
+            ("lesson_id", "TEXT", 1),
+            ("file_path", "TEXT", 1),  # notnull=1: the constraint being removed
+            ("section_index", "INTEGER", 0),
+            ("section_type", "TEXT", 0),
+            ("created_at", "TEXT", 0),
+            ("cues_json", "TEXT", 0),
+        ]
+        conn = sqlite3.connect(db_file)
+        conn.execute("""
+            CREATE TABLE audio_files (
+                id TEXT PRIMARY KEY,
+                lesson_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                section_index INTEGER,
+                section_type TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                cues_json TEXT
+            )
+        """)
+        rows = [
+            ("full1", "l1", "full1.wav", None, None, "2026-01-01 00:00:00", '[{"index": 0}]'),
+            ("sec0", "l1", "sec0.wav", 0, "key_phrases", "2026-01-01 00:00:01", "[]"),
+            ("sec1", "l1", "sec1.wav", 1, "natural_speed", "2026-01-01 00:00:02", None),
+        ]
+        conn.executemany("INSERT INTO audio_files VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+        conn.commit()
+        conn.close()
+
+        with ContentStore(db_file):
+            pass
+
+        def _dump() -> tuple[list[tuple], list[tuple]]:
+            c = sqlite3.connect(db_file)
+            try:
+                info = c.execute("PRAGMA table_info(audio_files)").fetchall()
+                kept = c.execute(
+                    "SELECT id, lesson_id, file_path, section_index, section_type,"
+                    " created_at, cues_json FROM audio_files ORDER BY id"
+                ).fetchall()
+            finally:
+                c.close()
+            return info, kept
+
+        info, kept = _dump()
+        notnull = {row[1]: row[3] for row in info}
+        assert notnull["file_path"] == 0, f"file_path is still NOT NULL: {info}"
+        # Every other column keeps its own declared constraint.
+        assert notnull["lesson_id"] == 1
+        assert {row[1] for row in info} == {name for name, _t, _n in old_schema}
+        # The rebuild must not quietly drop the key: save_audio_file writes with
+        # INSERT OR REPLACE, and without it a re-save appends a duplicate row.
+        pk = {row[1] for row in info if row[5]}
+        assert pk == {"id"}, f"primary key lost in the rebuild: {pk}"
+        # The rebuild re-declares every column, so a lost DEFAULT would show up
+        # as a silently different schema for every row written after it.
+        dflt = {row[1]: row[4] for row in info}
+        assert dflt["created_at"] == "datetime('now')", f"created_at default lost: {dflt}"
+
+        assert kept == sorted(rows, key=lambda r: r[0]), f"rows changed across the rebuild: {kept}"
+
+        # Idempotent: a second open changes nothing.
+        with ContentStore(db_file):
+            pass
+        assert _dump() == (info, kept)
+
+        # And the rebuilt table is actually writable with a NULL file_path.
+        with ContentStore(db_file) as store:
+            store.save_audio_file("full2", "l2", None, cues_json="[]")
+            store.save_audio_file("sec0", "l1", "sec0-again.wav", section_index=0, section_type="key_phrases")
+        c = sqlite3.connect(db_file)
+        try:
+            assert c.execute("SELECT file_path FROM audio_files WHERE id = 'full2'").fetchone() == (None,)
+            replaced = c.execute("SELECT count(*) FROM audio_files WHERE id = 'sec0'").fetchone()
+        finally:
+            c.close()
+        assert replaced == (1,), f"re-saving an existing id duplicated it: {replaced}"
+
+    def test_relax_rebuild_is_atomic_when_a_step_fails(self, tmp_path):
+        """A failure part-way through the rebuild must leave the ORIGINAL table.
+
+        The rebuild is four statements — rename, create, copy, drop — and it
+        runs against the user's live database and the production one. Python's
+        sqlite3 opens an implicit transaction only before INSERT/UPDATE/DELETE/
+        REPLACE, so under the default isolation the ALTER TABLE and the CREATE
+        TABLE each commit themselves. A process killed between them leaves no
+        ``audio_files`` table at all, and the NEXT open's
+        ``CREATE TABLE IF NOT EXISTS`` then makes an empty one: every lesson in
+        the database silently loses its audio rows, with no error anywhere.
+
+        The failure is injected through a connection wrapper passed as an
+        ARGUMENT — a plain test double, not a patch — which raises on the
+        ``CREATE TABLE audio_files`` statement and delegates everything else.
+        """
+        import sqlite3
+
+        db_file = str(tmp_path / "atomic.db")
+        conn = sqlite3.connect(db_file)
+        conn.execute("""
+            CREATE TABLE audio_files (
+                id TEXT PRIMARY KEY,
+                lesson_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                section_index INTEGER,
+                section_type TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                cues_json TEXT
+            )
+        """)
+        conn.executemany(
+            "INSERT INTO audio_files VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("full1", "l1", "full1.wav", None, None, "2026-01-01 00:00:00", '[{"index": 0}]'),
+                ("sec0", "l1", "sec0.wav", 0, "key_phrases", "2026-01-01 00:00:01", "[]"),
+            ],
+        )
+        conn.commit()
+
+        class _FailOnCreate:
+            """Delegates to a real connection, but explodes on the CREATE TABLE."""
+
+            def __init__(self, real):
+                self._real = real
+
+            def execute(self, sql, *args):
+                if sql.strip().startswith("CREATE TABLE audio_files"):
+                    raise sqlite3.OperationalError("injected failure after the rename")
+                return self._real.execute(sql, *args)
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        store = ContentStore(":memory:")
+        try:
+            with pytest.raises(sqlite3.OperationalError, match="injected failure"):
+                store._relax_audio_files_file_path(_FailOnCreate(conn))
+        finally:
+            conn.close()
+
+        # Re-open independently: what survived is what the next process sees.
+        check = sqlite3.connect(db_file)
+        try:
+            tables = {r[0] for r in check.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            assert "audio_files" in tables, (
+                f"the table was renamed away and never rebuilt — every lesson in this "
+                f"database has just lost its audio rows: {tables}"
+            )
+            notnull = {r[1]: r[3] for r in check.execute("PRAGMA table_info(audio_files)").fetchall()}
+            assert notnull.get("file_path") == 1, f"the original NOT NULL table was not restored: {notnull}"
+            rows = check.execute("SELECT id, file_path, cues_json FROM audio_files ORDER BY id").fetchall()
+        finally:
+            check.close()
+        assert rows == [("full1", "full1.wav", '[{"index": 0}]'), ("sec0", "sec0.wav", "[]")], (
+            f"the rows did not survive the failed rebuild: {rows}"
+        )
+
     def test_schema_migration_cues_json_read_write(self, tmp_path):
         """cues_json can be read/written via save/get_audio_file_row."""
         from app.storage.store import ContentStore
@@ -466,6 +634,97 @@ class TestDeleteResolvesRecordedPaths:
 
         assert paths == [audio_dir / "ghost.wav"]
         paths[0].unlink(missing_ok=True)
+
+
+class TestFileLessFullRowDeletesCleanly:
+    """Every delete sweep survives a full-lesson row that has no file.
+
+    A render now produces ONLY the section files (tunatale-guzo.3), so the
+    full-lesson row keeps its timeline and has ``file_path`` NULL. Each of these
+    methods reads EVERY row of a lesson / session / curriculum and hands the
+    result to ``resolve_audio_path``, which does ``Path(value)`` — and
+    ``Path(None)`` raises ``TypeError``. A row that is perfectly legal in the
+    schema would turn every curriculum delete, every day delete and every
+    review-session delete into a 500.
+
+    The contract, identical for all six: the NULL row is still deleted, it
+    contributes no path (there is no file for the caller to unlink), and the one
+    section file that does exist is still reported. Guarding one of the six and
+    not the other five is the failure this test is built to make impossible to
+    ship.
+    """
+
+    @staticmethod
+    def _seed(store, monkeypatch, tmp_path, *, owner, with_curriculum, with_session):
+        """One NULL full row + one section row with a file, under a real owner.
+
+        *owner* is the id the audio rows hang off, which is NOT always a lesson:
+        the review-session deletes select ``audio_files WHERE lesson_id =
+        session_id``, so those rows belong under the session's id. Seeding them
+        under "l1" there would make the test pass for the wrong reason — an
+        empty result set raises nothing.
+        """
+        audio_dir = tmp_path / "audio"
+        audio_dir.mkdir()
+        monkeypatch.setattr(settings, "audio_dir", audio_dir)
+        lesson = Lesson(
+            title="Test",
+            language_code="no",
+            generation_metadata={"source_prompt": "x", "model": "y"},
+        )
+        if with_curriculum:
+            store.save_curriculum("c1", _make_curriculum("c1"))
+            store.save_lesson("l1", "c1", 2, lesson)
+        else:
+            store.save_lesson("l1", "c1", 2, lesson)
+        if with_session:
+            store.save_review_session("s1", "no", "2026-09-29", lesson)
+        store.save_audio_file("full1", owner, None, cues_json="[]")
+        store.save_audio_file("sec0", owner, "sec0.wav", section_index=0, section_type="key_phrases")
+        return audio_dir
+
+    @pytest.mark.parametrize(
+        ("method", "kwargs", "owner", "with_curriculum", "with_session", "survivor_check"),
+        [
+            ("delete_audio_files_for_lesson", {"lesson_id": "l1"}, "l1", False, False, "lesson"),
+            ("delete_lesson", {"lesson_id": "l1"}, "l1", False, False, "lesson-gone"),
+            ("delete_lessons_for_day", {"curriculum_id": "c1", "day": 2}, "l1", True, False, "lesson-gone"),
+            ("delete_curriculum", {"curriculum_id": "c1"}, "l1", True, False, "lesson-gone"),
+            ("delete_review_session_audio", {"session_id": "s1"}, "s1", False, True, "session-stays"),
+            ("delete_review_session", {"session_id": "s1"}, "s1", False, True, "session-gone"),
+        ],
+        ids=[
+            "delete_audio_files_for_lesson",
+            "delete_lesson",
+            "delete_lessons_for_day",
+            "delete_curriculum",
+            "delete_review_session_audio",
+            "delete_review_session",
+        ],
+    )
+    def test_delete_survives_a_file_less_full_row(
+        self, store, monkeypatch, tmp_path, method, kwargs, owner, with_curriculum, with_session, survivor_check
+    ):
+        audio_dir = self._seed(
+            store, monkeypatch, tmp_path, owner=owner, with_curriculum=with_curriculum, with_session=with_session
+        )
+
+        paths = getattr(store, method)(**kwargs)
+
+        assert paths == [audio_dir / "sec0.wav"], (
+            f"{method} must delete the file-less row without raising AND still report the "
+            f"section file it really owns, so the caller can unlink it"
+        )
+        assert store.get_audio_file_row("full1") is None, f"{method} left the NULL row behind"
+        assert store.get_audio_file_row("sec0") is None, f"{method} left a row with a real file behind"
+        if survivor_check == "lesson":
+            assert store.get_lesson("l1") is not None, "delete_audio_files_for_lesson must KEEP the lesson"
+        elif survivor_check == "lesson-gone":
+            assert store.get_lesson("l1") is None
+        elif survivor_check == "session-stays":
+            assert store.get_review_session("s1") is not None
+        else:
+            assert store.get_review_session("s1") is None
 
 
 class TestLessonDays:

@@ -101,7 +101,17 @@ interface Deps {
   storage?: Storage;
   lessonId: string;
   lessonTitle?: string;
-  audioUrl: string;
+  /**
+   * The full-lesson audio URL, or null when there IS no full-lesson file.
+   *
+   * tunatale-guzo.3: a render now produces only the section files, so a lesson
+   * rendered since has no full file and this URL 404s. Track mode passes null
+   * and the init must then leave `src` alone — a browser's default is "", a
+   * relative URL that resolves to the current page rather than to audio, and
+   * `audioEl.src = null` would be worse still (it stringifies to "null").
+   * A section is selected by `selectTrack` before anything can play.
+   */
+  audioUrl: string | null;
   audio: LessonAudio;
   sectionUrl?: (audioId: string) => string;
   // Fired when a hands-free run reaches the end of HANDS_FREE_SEQUENCE and has
@@ -464,7 +474,11 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   });
 
   audioEl.preload = "metadata";
-  audioEl.src = deps.audioUrl;
+  // Only when there IS a full-lesson file. Track mode passes null, and a src
+  // of "null"/"" here would be the source the user presses play against.
+  if (deps.audioUrl !== null) {
+    audioEl.src = deps.audioUrl;
+  }
 
   // MediaSession wiring
   if (mediaSession) {

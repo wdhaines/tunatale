@@ -673,7 +673,7 @@ class LessonRenderer:
     async def render(
         self,
         lesson: Lesson,
-        output_path: Path,
+        output_path: Path | None,
         section_paths: list[Path] | None = None,
         *,
         on_progress: Callable[[int, int], None] | None = None,
@@ -686,7 +686,11 @@ class LessonRenderer:
 
         Args:
             lesson: Lesson with sections and phrases.
-            output_path: Destination file path for the full lesson (written as WAV).
+            output_path: Destination file path for the full lesson (written as
+                WAV), or None to render the sections and NO full file. The
+                concatenation is ~140s of a ~345s render (tunatale-guzo.3) and
+                nothing plays it — a lesson is listened to section by section —
+                so the row that keeps the timeline simply has no file behind it.
             section_paths: Optional list of paths for per-section output WAVs.
                            Must have same length as lesson.sections if provided.
             on_progress: Called as ``(done, total)`` over DISTINCT clips, both
@@ -700,6 +704,11 @@ class LessonRenderer:
         Returns:
             Timing manifest (list of Cue objects) for the rendered lesson.
         """
+        if output_path is None and section_paths is None:
+            raise ValueError(
+                f"render() for lesson {lesson.title!r} was given neither a full output_path "
+                "nor section_paths: it would synthesize a whole lesson and deliver nothing"
+            )
         t_start = time.perf_counter()
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -788,12 +797,19 @@ class LessonRenderer:
             # is the ~340 MB allocation this bead removes, and nothing below
             # needs the joined buffer — the cue offsets are computed from the
             # piece LENGTHS, which is why this could be split at all.
-            parts: list[_Audio | None] = [title_audio]
-            for desc in layout.piece_descriptions[1:]:
-                if desc == "boundary":
-                    parts.append(boundary)
-                else:
-                    parts.append(section_audios[int(desc.split("_")[1])])
+            #
+            # Built ONLY for the export below. `boundary` itself is needed either
+            # way (the cue offsets measure it), but the list of references is
+            # not, and a caller rendering sections alone is not paying to
+            # assemble an order it will not concatenate.
+            parts: list[_Audio | None] = []
+            if output_path is not None:
+                parts.append(title_audio)
+                for desc in layout.piece_descriptions[1:]:
+                    if desc == "boundary":
+                        parts.append(boundary)
+                    else:
+                        parts.append(section_audios[int(desc.split("_")[1])])
 
             # Build cue manifest with absolute frame offsets.  Walk the shared
             # layout's piece order once, accumulating frame offsets so the
@@ -833,19 +849,20 @@ class LessonRenderer:
             rate = int(title_audio.rate)
             cues = build_cue_manifest(lesson, timing_entries, rate)
 
+        # From the LAYOUT, not from a joined buffer: there no longer is one,
+        # and the layout is the same source the cue offsets come from — so this
+        # line cannot drift from the timeline it reports on.
+        audio_ms = layout.piece_offsets_ms[-1] + layout.piece_durations_ms[-1]
+        wall_ms = (time.perf_counter() - t_start) * 1000
+        if output_path is None:
+            logger.info("Rendered lesson sections only (audio: %d ms, wall: %.0f ms)", audio_ms, wall_ms)
+            return cues
+
         output_path.parent.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
         await asyncio.to_thread(self._write_audio_stream, output_path, parts, rate)
         logger.debug("Full lesson export → %.0f ms", (time.perf_counter() - t0) * 1000)
-        logger.info(
-            "Rendered lesson to %s (audio: %d ms, wall: %.0f ms)",
-            output_path,
-            # From the LAYOUT, not from a joined buffer: there no longer is one,
-            # and the layout is the same source the cue offsets come from — so
-            # this line cannot drift from the timeline it reports on.
-            layout.piece_offsets_ms[-1] + layout.piece_durations_ms[-1],
-            (time.perf_counter() - t_start) * 1000,
-        )
+        logger.info("Rendered lesson to %s (audio: %d ms, wall: %.0f ms)", output_path, audio_ms, wall_ms)
 
         return cues
 

@@ -49,22 +49,6 @@
 	// untrack marks the initial-value reads as intentional (state_referenced_locally).
 	const init = untrack(() => ({ audio, lessonTitle }));
 
-	const ctrl = createPlaybackController({
-		lessonId: init.audio.lesson_id,
-		lessonTitle: init.lessonTitle || init.audio.lesson_id,
-		audioUrl: api.audioUrl(init.audio.audio_id),
-		audio: init.audio,
-		// Without this, selectTrack falls back to identity and sets audioEl.src to
-		// a bare section id — a broken relative URL that never loads.
-		sectionUrl: (id) => api.audioUrl(id),
-		// Read through the closure rather than captured: `onSequenceEnd` is a
-		// prop, and the controller is built once at init, so capturing the value
-		// here would freeze whatever the first render passed.
-		onHandsFreeEnd: () => onSequenceEnd?.()
-	});
-
-	controller = ctrl;
-
 	const hasCues =
 		init.audio.cues !== null && init.audio.cues !== undefined && init.audio.cues.length > 0;
 
@@ -78,6 +62,29 @@
 	const hasSectionCues =
 		init.audio.sections.length > 0 && init.audio.sections.every((s) => (s.cues?.length ?? 0) > 0);
 	const trackMode = hasCues && hasSectionCues;
+
+	// Declared above the controller because the controller needs trackMode: a
+	// lesson rendered since tunatale-guzo.3 has NO full-lesson file, so handing
+	// the controller that URL would have it set a src that 404s. In track mode
+	// the player passes null and `applyTrack` supplies a section instead —
+	// before onMount, nothing plays. A legacy lesson still has its full file
+	// and keeps it. All three read only `init.audio`, which is why the move is
+	// free.
+	const ctrl = createPlaybackController({
+		lessonId: init.audio.lesson_id,
+		lessonTitle: init.lessonTitle || init.audio.lesson_id,
+		audioUrl: trackMode ? null : api.audioUrl(init.audio.audio_id),
+		audio: init.audio,
+		// Without this, selectTrack falls back to identity and sets audioEl.src to
+		// a bare section id — a broken relative URL that never loads.
+		sectionUrl: (id) => api.audioUrl(id),
+		// Read through the closure rather than captured: `onSequenceEnd` is a
+		// prop, and the controller is built once at init, so capturing the value
+		// here would freeze whatever the first render passed.
+		onHandsFreeEnd: () => onSequenceEnd?.()
+	});
+
+	controller = ctrl;
 
 	const sectionTypes = new Set(init.audio.sections.map((s) => s.section_type));
 	const hasAllSections =
@@ -221,9 +228,41 @@
 		englishMode = order[(idx + 1) % order.length];
 	}
 
+	// The lesson's FIRST section, in `audio.sections` order (lowest
+	// section_index) — used only when the selection resolves to a section this
+	// lesson does not have.
+	function firstSectionType(): SectionType | null {
+		const first = init.audio.sections.reduce<(typeof init.audio.sections)[number] | null>(
+			(acc, s) => (acc === null || s.section_index < acc.section_index ? s : acc),
+			null
+		);
+		// The API types section_type as plain string; the controller wants the
+		// union, and an unrecognised value would be a section the controller
+		// cannot select anyway.
+		return (first?.section_type as SectionType | undefined) ?? null;
+	}
+
 	function applyTrack() {
-		if (selectedSectionType) {
-			ctrl.selectTrack(selectedSectionType);
+		// selectTrack no-ops on a section the lesson lacks, which used to be
+		// survivable: the player was still sitting on the full concatenated
+		// track. It no longer is — tunatale-guzo.3 removed that file, and track
+		// mode is handed a null audioUrl — so a no-op here would leave the
+		// element with whatever src it had, which for a fresh mount is none at
+		// all. Falling back to the first section keeps the invariant the hands-
+		// free hand-off and the transport both depend on: in track mode there is
+		// a SECTION src before anything can call play().
+		//
+		// The fallback lives HERE, not in selectTrack, because it is specific to
+		// the phase/enunciation selection: the hands-free advance, prev, and
+		// playRef all reach selectTrack too, and each has already chosen a
+		// section from the ones the lesson HAS (nextPassAfter / findLast /
+		// findCueInSection). A fallback inside selectTrack would silently
+		// re-point those at the first section, which is a different bug.
+		const type = firstSectionType();
+		if (selectedSectionType && type) {
+			ctrl.selectTrack(init.audio.sections.some((s) => s.section_type === selectedSectionType)
+				? selectedSectionType
+				: type);
 			ctrl.setEnunciationRate(resolveRate(enunLevel));
 		}
 	}
@@ -355,9 +394,13 @@
 		const byType = new Map(sections.map((s) => [s.section_type, s.audio_id]));
 		const currentType = resolveSectionType(phase, enunLevel, englishMode);
 		const currentUrl = currentType ? byType.get(currentType) : undefined;
-		// Resolved section missing: applyTrack's selectTrack no-ops there too, so
-		// the player stays on the full concatenated track — prefetch that instead.
-		if (!currentUrl) return [api.audioUrl(fullAudioId)];
+		// Resolved section missing. This used to prefetch the full track, because
+		// the player was left sitting on it. It is not any more: a render no
+		// longer produces a full-lesson file (tunatale-guzo.3), so that URL is a
+		// 404 and prefetching it would warm nothing. applyTrack selects the
+		// lesson's first section here, which is not prefetched either — the next
+		// selection re-runs this.
+		if (!currentUrl) return [];
 
 		const nextIdx = (currentEnunIndex + 1) % ENUNCIATION_OPTIONS.length;
 		const nextType = resolveSectionType(phase, ENUNCIATION_OPTIONS[nextIdx].level, englishMode);
@@ -382,9 +425,10 @@
 		// Seed the persisted phase/enunciation/English selection and make it
 		// effective. Gated on trackMode: without per-section cues the phase
 		// model doesn't apply, so we leave the legacy full-lesson track in
-		// place. selectTrack no-ops on a missing section, so a persisted
-		// selection that a given lesson can't satisfy safely falls back to the
-		// initial track.
+		// place. A persisted selection naming a section this lesson lacks
+		// falls back to its first section inside applyTrack — it cannot fall
+		// back to the full track any more, there being no full track
+		// (tunatale-guzo.3).
 		if (trackMode) {
 			lessonPlayerPref.init();
 			const sel = lessonPlayerPref.selection;
@@ -413,8 +457,10 @@
 					// it on every hands-free restart — which the controller reads as a
 					// stale offset and discards, landing on Natural at 0 (tunatale-muff).
 					// Selected AFTER hands-free is on, so the mirror does not persist it.
-					// selectTrack no-ops on a section this lesson lacks, and the
-					// controller then discards the offset itself.
+					// The resume's section is applied directly rather than through
+					// applyTrack, so it is NOT covered by the first-section
+					// fallback: a resume naming a section this lesson lacks
+					// no-ops, and the track applyTrack already selected stands.
 					ctrl.selectTrack(ctrl.resumeSection, null, true);
 				}
 			}

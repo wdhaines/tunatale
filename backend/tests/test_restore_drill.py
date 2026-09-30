@@ -411,6 +411,32 @@ def test_verify_audio_tolerates_unparseable_cues(tmp_path: Path, silent_opus: Pa
     assert drill.failures == []
 
 
+def test_verify_audio_skips_a_row_with_no_file(tmp_path: Path, silent_opus: Path, capsys):
+    """A full-lesson row with no file is not a restore fault.
+
+    Since tunatale-guzo.3 every lesson has one: it carries the timeline, and the
+    concatenation was never encoded. It must be skipped — neither counted as a
+    file to verify nor reported as a missing one.
+    """
+    tree = tmp_path / "tree"
+    (tree / "output/audio").mkdir(parents=True)
+    shutil.copy2(silent_opus, tree / "output/audio/x.opus")
+    db = tmp_path / "db.db"
+    _make_db(
+        db,
+        audio=[
+            ("lesson-1", None, json.dumps([{"end_ms": 1500}])),
+            ("lesson-1", "output/audio/x.opus", json.dumps([{"end_ms": 1500}])),
+        ],
+    )
+    drill = Drill()
+
+    verify_audio(db, tree, drill)
+
+    assert drill.failures == []
+    assert "1 files" in capsys.readouterr().out, "the file-less row was counted as a file"
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 

@@ -202,8 +202,9 @@ async def test_render_lesson_audio_retries_a_throttled_lesson(tmp_path, monkeypa
             attempts += 1
             if attempts == 1:
                 raise TTSExhausted("Azure TTS synthesis failed after 6 attempts")
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_bytes(b"full")
+            if output_path is not None:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_bytes(b"full")
             for sp in section_paths or []:
                 sp.parent.mkdir(parents=True, exist_ok=True)
                 sp.write_bytes(b"sec")

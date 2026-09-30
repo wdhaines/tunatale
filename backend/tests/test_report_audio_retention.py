@@ -84,6 +84,28 @@ def test_audio_of_a_deleted_lesson_is_flagged_as_orphaned(tmp_path):
     assert rows["fresh"].orphaned is False
 
 
+def test_a_row_with_no_file_is_skipped_not_counted_as_missing(tmp_path):
+    """A full-lesson row carries the timeline and no file since guzo.3.
+
+    It must not appear as a missing file: a pruning report that counted one
+    missing file per lesson would send an operator after files that were never
+    meant to exist.
+    """
+    audio = tmp_path / "audio"
+    audio.mkdir()
+    make_db(tmp_path / "no.db", audio)
+    con = sqlite3.connect(tmp_path / "no.db")
+    con.execute("INSERT INTO audio_files VALUES ('anofile', 'fresh', NULL, NULL, NULL, '2026-06-01 00:00:00', '[]')")
+    con.commit()
+    con.close()
+
+    report = collect([tmp_path / "no.db"], audio, NOW)
+    rows = {r.lesson_id: r for r in report.lessons}
+
+    assert rows["fresh"].missing == 1, "the one genuinely missing file, and only that one"
+    assert rows["fresh"].files == 2, "the file-less row is not a file on disk"
+
+
 def test_files_no_database_references_are_reported(tmp_path):
     report, _ = by_id(tmp_path)
     assert report.unreferenced == {"stray.opus": 700}
