@@ -166,7 +166,7 @@ class TestCapabilityCheck:
     def test_missing_db_is_loud(self, tmp_path: Path) -> None:
         db = tmp_path / "never-built.sqlite3"
         assert not nst_lexicon_installed(db)
-        with pytest.raises(FileNotFoundError, match="build_nst_lexicon"):
+        with pytest.raises(FileNotFoundError, match="app.build_data"):
             NstLexicon(db).resolve("snømann")
 
     def test_built_db_reports_installed(self, tmp_path: Path) -> None:

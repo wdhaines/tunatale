@@ -4,7 +4,9 @@ Stage 1 of lexicon adoption: this module is **called by nothing** — it ships t
 facet, the data extract, and the resolver; wiring ``<phoneme>`` into the TTS
 path is stage 2. The committed artifact is a lean gzipped 4-column extract
 (``nst_lexicon.tsv.gz``); the indexed SQLite database is a BUILD ARTIFACT,
-gitignored, produced by ``scripts/build_nst_lexicon.py build``. The source
+gitignored, produced by ``python -m app.build_data`` (the Dockerfile and
+``switch.sh`` run it; ``scripts/build_nst_lexicon.py build`` still works for a
+bare rebuild, unstamped, so the next ``app.build_data`` redoes it). The source
 lexicon is CC0 (the National Library of Norway).
 
 Resolution rules (measured against the real data — do not re-derive):
@@ -37,7 +39,7 @@ DATA_DIR = Path(__file__).parent / "data"
 EXTRACT_PATH = DATA_DIR / "nst_lexicon.tsv.gz"
 DB_PATH = DATA_DIR / "nst_lexicon.sqlite3"
 
-BUILD_COMMAND = "uv run python scripts/build_nst_lexicon.py build"
+BUILD_COMMAND = "python -m app.build_data"
 
 # UPOS (stanza's UD tags) -> NST POS tag. ``None`` marks UD tags with NO
 # confident NST equivalent: supplying them degrades to no-POS behaviour rather

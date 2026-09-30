@@ -3,12 +3,14 @@
 from pathlib import Path
 
 from app.cards.vocab_notetype import NORWEGIAN_VOCAB
-from app.languages import AlignmentConfig, LanguageConfig, PlannerExample, register
+from app.languages import AlignmentConfig, BuiltData, LanguageConfig, PlannerExample, register
 from app.models.language import NARRATOR_VOICE, Language
 from app.plugins.languages.no.a1_morphology import NORWEGIAN_A1_MORPHOLOGY
 from app.plugins.languages.no.alignment import MODEL_ID, NORWEGIAN_VOWELS, create_aligner
 from app.plugins.languages.no.l2_scoring import score_norwegian_l2
-from app.plugins.languages.no.lexicon import create_nst_lexicon
+from app.plugins.languages.no.lexicon import DB_PATH as NST_DB_PATH
+from app.plugins.languages.no.lexicon import EXTRACT_PATH as NST_EXTRACT_PATH
+from app.plugins.languages.no.lexicon import build_lexicon_db, create_nst_lexicon
 from app.plugins.languages.no.morphology import is_definite_form, is_lemma_plausible
 from app.plugins.languages.no.multiword import trapped_pairs
 from app.plugins.languages.no.norwegian_breakdown import (
@@ -156,5 +158,11 @@ register(
         phoneme_planner_factory=create_phoneme_planner,
         # Built from Stanza by scripts/build_stanza_lemma_table.py (tunatale-kbb.18).
         lemma_table_path=Path(__file__).parent / "data" / "stanza_lemmas.tsv.gz",
+        # The NST lexicon is gitignored and BUILT from its committed extract.
+        # Registered so `python -m app.build_data` (Dockerfile, switch.sh) builds
+        # it: before this nothing that ships did, and without it compound
+        # splitting lost its veto silently ('forsvare' -> 'for, svare' on the
+        # live instance, tunatale-ip8q).
+        built_data=(BuiltData(extract=NST_EXTRACT_PATH, db=NST_DB_PATH, build=build_lexicon_db),),
     ),
 )
