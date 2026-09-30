@@ -70,6 +70,11 @@ _SHAPES: dict[str, tuple[int, bool, bool]] = {
     "down_there": (1, True, False),
     "further_down": (3, True, False),
     "further_up": (3, True, False),
+    # Two more parts of the box, beside top and bottom (Cebuano kilid "side"
+    # and tunga "middle", which shared beside and between; the user's eye,
+    # 2026-09-29).
+    "side": (1, False, False),
+    "middle": (1, False, False),
 }
 
 #: The brief's measured WCAG ratios. Each is RE-COMPUTED from the fills and
@@ -126,6 +131,15 @@ _DISCRIMINATED: tuple[tuple[str, str], ...] = (
     ("above", "further_up"),
     ("further_down", "further_up"),
     ("further_up", "further_down"),
+    ("side", "top"),
+    ("side", "bottom"),
+    ("top", "side"),
+    ("middle", "top"),
+    ("middle", "bottom"),
+    ("top", "middle"),
+    ("bottom", "middle"),
+    ("side", "middle"),
+    ("middle", "side"),
 )
 
 
@@ -660,6 +674,35 @@ def _is_further_up(p: Picture) -> bool:
     return tread is not None and tread.y < marker - _TOUCH
 
 
+def _is_side(p: Picture) -> bool:
+    """No ball: a band hard against the block's right edge, full height, a third its width."""
+    block = _one_block(p)
+    if block is None or p.ball is not None or len(p.bands) != 1:
+        return False
+    band = p.bands[0]
+    return (
+        _touches(band.x + band.w, block.x + block.w)
+        and _touches(band.y, block.y)
+        and _touches(band.h, block.h)
+        and band.w <= block.w / 3
+    )
+
+
+def _is_middle(p: Picture) -> bool:
+    """No ball: a full-width band centred on the block's height, touching neither edge."""
+    block = _one_block(p)
+    if block is None or p.ball is not None or len(p.bands) != 1:
+        return False
+    band = p.bands[0]
+    return (
+        _touches(band.w, block.w)
+        and _touches(band.y + band.h / 2, block.y + block.h / 2)
+        and band.y > block.y + _CLEAR
+        and band.y + band.h < block.y + block.h - _CLEAR
+        and band.h <= block.h / 3
+    )
+
+
 _PREDICATES: dict[str, Callable[[Picture], bool]] = {
     "up": _is_up,
     "down": _is_down,
@@ -684,6 +727,8 @@ _PREDICATES: dict[str, Callable[[Picture], bool]] = {
     "down_there": _is_down_there,
     "further_down": _is_further_down,
     "further_up": _is_further_up,
+    "side": _is_side,
+    "middle": _is_middle,
 }
 
 
@@ -691,7 +736,7 @@ _PREDICATES: dict[str, Callable[[Picture], bool]] = {
 
 
 def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
-    """Twenty-three ids, and the renderer refuses everything outside this list."""
+    """Twenty-five ids, and the renderer refuses everything outside this list."""
     assert SPATIAL_CONCEPTS == (
         "up",
         "down",
@@ -716,6 +761,8 @@ def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
         "down_there",
         "further_down",
         "further_up",
+        "side",
+        "middle",
     )
     assert set(_SHAPES) == set(SPATIAL_CONCEPTS)
     assert set(_PREDICATES) == set(SPATIAL_CONCEPTS)
@@ -766,6 +813,8 @@ def test_the_arrow_shaft_is_axis_aligned_and_reaches_the_ball(concept: str) -> N
         "down_there",
         "further_down",
         "further_up",
+        "side",
+        "middle",
     ],
 )
 def test_every_block_rests_on_the_ground_except_the_table(concept: str) -> None:
@@ -881,7 +930,7 @@ def test_draws_exactly_the_elements_its_row_asks_for(concept: str) -> None:
     picture = _parse(render_spatial_svg(concept))
     assert (len(picture.blocks), picture.ball is not None, picture.arrow is not None) == (blocks, ball, arrow)
     assert len(picture.legs) == (2 if concept == "under" else 0)
-    assert len(picture.bands) == (1 if concept in ("top", "bottom") else 0)
+    assert len(picture.bands) == (1 if concept in ("top", "bottom", "side", "middle") else 0)
 
 
 @pytest.mark.parametrize("concept", SPATIAL_CONCEPTS)

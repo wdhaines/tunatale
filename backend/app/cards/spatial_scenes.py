@@ -82,6 +82,11 @@ SPATIAL_CONCEPTS: tuple[str, ...] = (
     "down_there",
     "further_down",
     "further_up",
+    # Two more parts of the box, beside top and bottom: Cebuano kilid ("side")
+    # shared tupad's `beside` and tunga ("middle") shared taliwala's `between`
+    # (the user's eye, 2026-09-29).
+    "side",
+    "middle",
 )
 
 #: The box outline, and every structural line with it. Chosen over the counting
@@ -171,6 +176,7 @@ def _block(
     table: bool = False,
     band: float | None = None,
     open_top: bool = False,
+    side_band: bool = False,
 ) -> str:
     """The reference object: one body, plus whatever else the concept hangs on it.
 
@@ -209,6 +215,11 @@ def _block(
     if band is not None:
         parts.append(
             f'<rect class="highlight" x="{_n(x)}" y="{_n(band)}" width="{_n(width)}" height="{_BAND_H}" fill="{_ACCENT}"/>'
+        )
+    if side_band:
+        parts.append(
+            f'<rect class="highlight" x="{_n(x + width - _BAND_H)}" y="{_n(y)}" width="{_BAND_H}" '
+            f'height="{_n(height)}" fill="{_ACCENT}"/>'
         )
     return f'<g class="box">{"".join(parts)}</g>'
 
@@ -529,6 +540,17 @@ def _further_up() -> list[str]:
     return [stair, _marker(x1 - 8, y1), _ball(x2, y2 - _BALL_R)]
 
 
+def _side() -> list[str]:
+    """:func:`_top`'s band stood upright against the block's right edge: "the side of it"."""
+    return [_block(_CX - _BLOCK_W / 2, _BLOCK_TALL_Y, _BLOCK_W, _BLOCK_TALL_H, side_band=True)]
+
+
+def _middle() -> list[str]:
+    """The band centred on the block's height, clear of both edges: "the middle of it"."""
+    band_top = _BLOCK_TALL_Y + (_BLOCK_TALL_H - _BAND_H) / 2
+    return [_block(_CX - _BLOCK_W / 2, _BLOCK_TALL_Y, _BLOCK_W, _BLOCK_TALL_H, band=band_top)]
+
+
 _SCENES: dict[str, Callable[[], list[str]]] = {
     "up": _up,
     "down": _down,
@@ -553,6 +575,8 @@ _SCENES: dict[str, Callable[[], list[str]]] = {
     "down_there": _down_there,
     "further_down": _further_down,
     "further_up": _further_up,
+    "side": _side,
+    "middle": _middle,
 }
 
 

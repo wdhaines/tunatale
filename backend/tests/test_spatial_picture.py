@@ -55,16 +55,16 @@ class TestDataFiles:
     def test_no_spatial_word_is_also_a_number(self, code) -> None:
         assert [w for w in _words(code) if number_picture(w, code) is not None] == []
 
-    def test_no_two_norwegian_words_share_a_picture(self) -> None:
+    @pytest.mark.parametrize("code", ["no", "ceb"])
+    def test_no_two_words_share_a_picture(self, code) -> None:
         """A picture card must not be ambiguous: distinct words, distinct drawings.
 
         The user found inn and innenfor on one picture (2026-09-29); six groups
-        of Norwegian words shared one then. Norwegian only for now: Slovene
-        (nad/zgoraj, pod/spodaj, poleg/zraven) and Cebuano (kilid/tupad,
-        taliwala/tunga) still share, and some of those are near-synonyms, which
-        is a separate call for the user.
+        of Norwegian words and two Cebuano pairs (kilid/tupad, taliwala/tunga)
+        shared one then. Slovene (nad/zgoraj, pod/spodaj, poleg/zraven) still
+        does, and is next.
         """
-        words = _words("no")
+        words = _words(code)
         shared = {c: sorted(w for w, k in words.items() if k == c) for c in set(words.values())}
         assert {c: ws for c, ws in shared.items() if len(ws) > 1} == {}
 
@@ -99,6 +99,8 @@ class TestGlossGuard:
             ("down_there", "down (there)"),
             ("further_down", "below"),
             ("further_up", "above"),
+            ("side", "side"),
+            ("middle", "middle, centre"),
         ],
     )
     def test_a_gloss_that_names_the_relation_matches(self, concept, gloss) -> None:
@@ -149,6 +151,12 @@ class TestDispatch:
             ("nede", "no", "down", "down_there"),
             ("nedenfor", "no", "below", "further_down"),
             ("ovenfor", "no", "above", "further_up"),
+            # Cebuano (2026-09-29): kilid shared tupad's "beside", tunga shared
+            # taliwala's "between".
+            ("kilid", "ceb", "side", "side"),
+            ("tunga", "ceb", "middle", "middle"),
+            ("tupad", "ceb", "beside", "beside"),
+            ("taliwala", "ceb", "between", "between"),
         ],
     )
     def test_a_spatial_word_is_drawn_as_its_concept(self, word, code, gloss, concept) -> None:
